@@ -23,7 +23,6 @@ def provider_generation_credentials(
 ) -> Mapping[GenerationApiProvider, SecretStr]:
     """Validate configured generation keys without importing provider engines."""
 
-    configured = settings.generation_api_provider_list
     candidates: dict[GenerationApiProvider, SecretStr | None] = {
         "openai": settings.openai_generation_api_key,
         "anthropic": settings.anthropic_generation_api_key,
@@ -34,7 +33,7 @@ def provider_generation_credentials(
         "xai": settings.xai_generation_api_key,
     }
     credentials: dict[GenerationApiProvider, SecretStr] = {}
-    for provider in configured:
+    for provider in settings.generation_api_provider_list:
         value = candidates[provider]
         if value is None or not value.get_secret_value().strip():
             raise CredentialMissing(message=f"no {provider} generation credential configured")
@@ -45,8 +44,7 @@ def provider_generation_credentials(
 def generation_continuation_cipher(settings: Settings) -> GenerationContinuationCipher:
     """Decode the one deployment-owned AES-256 continuation key."""
 
-    value = settings.effective_generation_continuation_encryption_key
-    encoded = value.get_secret_value()
+    encoded = settings.effective_generation_continuation_encryption_key.get_secret_value()
     try:
         key = base64.b64decode(encoded, validate=True)
     except (binascii.Error, ValueError) as error:
@@ -64,10 +62,3 @@ def embedding_credential(settings: Settings) -> ProviderCredential:
     if settings.openai_api_key is None:
         raise CredentialMissing(message="no openai credential configured")
     return ProviderCredential(provider="openai", key=settings.openai_api_key)
-
-
-__all__ = [
-    "embedding_credential",
-    "generation_continuation_cipher",
-    "provider_generation_credentials",
-]

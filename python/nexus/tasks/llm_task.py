@@ -28,8 +28,7 @@ class LlmTaskSpec:
 
 
 def run_llm_task[R](
-    spec: LlmTaskSpec,
-    handler: Callable[[Session, ExecutionRuntime], Awaitable[R]],
+    spec: LlmTaskSpec, handler: Callable[[Session, ExecutionRuntime], Awaitable[R]]
 ) -> R | RescheduleRequested:
     """Run one async generation task with one session and one owned event loop."""
 
@@ -53,16 +52,17 @@ def run_llm_task[R](
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
             trust_env=False,
         ) as http_client:
-            tools = compose_tool_runtime(
-                compose_configured_web_search_provider(http_client, settings=settings)
+            return await handler(
+                db,
+                compose_generation_execution_runtime(
+                    settings,
+                    http_client=http_client,
+                    catalog=build_generation_catalog_service(settings),
+                    tools=compose_tool_runtime(
+                        compose_configured_web_search_provider(http_client, settings=settings)
+                    ),
+                ),
             )
-            runtime = compose_generation_execution_runtime(
-                settings,
-                http_client=http_client,
-                catalog=build_generation_catalog_service(settings),
-                tools=tools,
-            )
-            return await handler(db, runtime)
 
     loop = asyncio.new_event_loop()
     try:
@@ -78,6 +78,3 @@ def run_llm_task[R](
     finally:
         loop.close()
         db.close()
-
-
-__all__ = ["LlmTaskSpec", "run_llm_task"]

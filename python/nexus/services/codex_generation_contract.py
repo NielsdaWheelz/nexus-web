@@ -1,4 +1,4 @@
-"""Strict private v2 wire contract for Codex generations."""
+"""Strict private v2/v3 wire contract for Codex generations over the UDS."""
 
 from __future__ import annotations
 
@@ -15,41 +15,35 @@ from pydantic import (
     Field,
     JsonValue,
     StringConstraints,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
 
 from nexus.schemas.presence import Absent, Presence, Present
-from nexus.services.generation_intent import (
+from nexus.services.generation_spec import (
     BearerToolGrant,
+    CodexDispatchTargetSnapshot,
+    CodexPersonalSelection,
     GenerationIntent,
+    GenerationSpecWire,
     JsonSchemaOutput,
+    StrictJsonOutputSnapshot,
     TextOutput,
+    TextOutputSnapshot,
     WireTaggedModel,
     utf8_size,
     validate_intent_bounds,
 )
-from nexus.services.generation_selection import CodexPersonalSelection
-from nexus.services.generation_spec import (
-    CodexDispatchTargetSnapshot,
-    GenerationSpecWire,
-    StrictJsonOutputSnapshot,
-    TextOutputSnapshot,
-)
 
 if TYPE_CHECKING:
-    from provider_runtime.agent_runtime import (
-        AgentModelCatalog,
-        AgentModelFacts,
-        AgentUpgradeFacts,
-    )
+    from provider_runtime.agent_runtime import AgentModelCatalog, AgentModelFacts
 
 COMMAND_SCHEMA_VERSION = "nexus-generation-command.v3"
 COMMAND_DRAFT_SCHEMA_VERSION = "nexus-generation-command-draft.v1"
 ADMISSION_SCHEMA_VERSION = "nexus-generation-admission.v2"
 EVENT_SCHEMA_VERSION = "nexus-generation-event.v2"
 HEALTH_SCHEMA_VERSION = "nexus-generation-health.v2"
-REJECTION_SCHEMA_VERSION = "nexus-generation-rejection.v2"
 MODEL_CATALOG_SCHEMA_VERSION = "nexus-codex-model-catalog.v1"
 MAX_OUTPUT_SCHEMA_BYTES = 64 * 1024
 MAX_TOOL_GRANT_BYTES = 16 * 1024
@@ -69,20 +63,18 @@ MAX_COMMAND_BODY_BYTES = (
     + COMMAND_ENVELOPE_BYTES
 )
 
-
 CatalogKey = Annotated[str, StringConstraints(min_length=1, max_length=256)]
 CatalogRevision = Annotated[str, StringConstraints(min_length=1, max_length=256)]
 Sha256Hex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+AcceptedAt = Annotated[
+    str, StringConstraints(pattern=r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$")
+]
 
 
 class CodexCatalogReasoning(WireTaggedModel):
     key: CatalogKey
     label: Annotated[str, StringConstraints(min_length=1, max_length=1_000)]
     native_wire_value: CatalogKey
-
-
-class CodexCatalogUpgrade(WireTaggedModel):
-    target_key: CatalogKey
 
 
 class CodexCatalogModel(WireTaggedModel):
@@ -94,8 +86,6 @@ class CodexCatalogModel(WireTaggedModel):
     input_modalities: tuple[Literal["text", "image"], ...] = Field(min_length=1)
     reasoning: tuple[CodexCatalogReasoning, ...] = Field(min_length=1, max_length=16)
     source_default_reasoning: Presence[CatalogKey]
-    upgrade: Presence[CodexCatalogUpgrade]
-    retirement: Absent
     row_fingerprint: Sha256Hex
 
     @model_validator(mode="after")
@@ -141,6 +131,45 @@ class CodexModelCatalog(WireTaggedModel):
         return self
 
 
+def codex_model_catalog_to_wire(catalog: AgentModelCatalog) -> CodexModelCatalog:
+    """Translate the external AgentRuntime value at the private-host boundary."""
+
+    return CodexModelCatalog(
+        backend_contract_revision=catalog.backend_contract_revision,
+        definition_revision=catalog.definition_revision,
+        native_revision=_to_wire(catalog.native_revision),
+        observed_at=catalog.observed_at,
+        models=tuple(_codex_model_to_wire(model) for model in catalog.models),
+    )
+
+
+def _codex_model_to_wire(model: AgentModelFacts) -> CodexCatalogModel:
+    return CodexCatalogModel(
+        key=model.key,
+        dispatch_model=model.dispatch_model,
+        label=model.label,
+        source_context_window=_to_wire(model.source_context_window),
+        source_max_output_tokens=_to_wire(model.source_max_output_tokens),
+        input_modalities=model.input_modalities,
+        reasoning=tuple(
+            CodexCatalogReasoning(
+                key=reasoning.key,
+                label=reasoning.label,
+                native_wire_value=reasoning.native_wire_value,
+            )
+            for reasoning in model.reasoning
+        ),
+        source_default_reasoning=_to_wire(model.source_default_reasoning),
+        row_fingerprint=model.row_fingerprint,
+    )
+
+
+def _to_wire[T](value: RuntimeAbsent | RuntimePresent[T]) -> Absent | Present[T]:
+    if isinstance(value, RuntimeAbsent):
+        return Absent()
+    return Present[T](value=value.value)
+
+
 class _GenerationCommandFacts(WireTaggedModel):
     """Grant-free semantic facts shared by admission and dispatch."""
 
@@ -149,7 +178,7 @@ class _GenerationCommandFacts(WireTaggedModel):
     intent: GenerationIntent
 
     @model_validator(mode="after")
-    def _matches_frozen_spec(self) -> Self:
+    def _matches_frozen_spec(self, info: ValidationInfo) -> Self:
         if not isinstance(self.spec.selection, CodexPersonalSelection) or not isinstance(
             self.spec.resolved_dispatch_target, CodexDispatchTargetSnapshot
         ):
@@ -159,30 +188,29 @@ class _GenerationCommandFacts(WireTaggedModel):
             instructions_max_bytes=self.spec.bounds.instructions_max_bytes,
             input_max_bytes=self.spec.bounds.input_max_bytes,
         )
-        if _text_digest(self.intent.instructions) != self.spec.instructions_digest:
-            raise ValueError("instructions differ from the frozen GenerationSpec")
-        if _text_digest(self.intent.input) != self.spec.input_digest:
-            raise ValueError("input differs from the frozen GenerationSpec")
-        if _digest(self.intent.model_dump(mode="json", by_alias=True)) != (
-            self.spec.prompt_payload_ref.payload_digest
-        ):
-            raise ValueError("intent differs from the frozen prompt payload identity")
-        _validate_output_contract(self)
-
         plan = self.spec.model_tool_plan_snapshot
         if isinstance(plan, Present):
             if plan.value.exposure.type != "Native":
                 raise ValueError("Codex ModelTools requires Native tool exposure")
-        elif not isinstance(plan, Absent):
-            assert_never(plan)
-        if isinstance(self.intent.output, JsonSchemaOutput):
-            schema_bytes = _canonical_json_bytes(self.intent.output.schema_)
-            if len(schema_bytes) > MAX_OUTPUT_SCHEMA_BYTES:
-                raise ValueError(f"schema bytes exceed {MAX_OUTPUT_SCHEMA_BYTES} bytes")
-        if isinstance(plan, Present):
             plan_bytes = len(_canonical_json_bytes(plan.value.model_dump(mode="json")))
             if plan_bytes > MAX_MODEL_TOOL_PLAN_BYTES:
                 raise ValueError(f"model tool plan bytes exceed {MAX_MODEL_TOOL_PLAN_BYTES} bytes")
+        if isinstance(self.intent.output, JsonSchemaOutput):
+            schema_bytes = len(_canonical_json_bytes(self.intent.output.schema_))
+            if schema_bytes > MAX_OUTPUT_SCHEMA_BYTES:
+                raise ValueError(f"schema bytes exceed {MAX_OUTPUT_SCHEMA_BYTES} bytes")
+        # The digests prove bytes this process did not produce; check them once,
+        # where JSON crossed the host boundary, not on every in-process rebuild.
+        if info.mode == "json":
+            if _text_digest(self.intent.instructions) != self.spec.instructions_digest:
+                raise ValueError("instructions differ from the frozen GenerationSpec")
+            if _text_digest(self.intent.input) != self.spec.input_digest:
+                raise ValueError("input differs from the frozen GenerationSpec")
+            if _digest(self.intent.model_dump(mode="json", by_alias=True)) != (
+                self.spec.prompt_payload_ref.payload_digest
+            ):
+                raise ValueError("intent differs from the frozen prompt payload identity")
+            _validate_output_contract(self)
         return self
 
 
@@ -201,14 +229,10 @@ class GenerationCommand(_GenerationCommandFacts):
     @model_validator(mode="after")
     def _dispatch_authority_is_exact(self) -> Self:
         plan = self.spec.model_tool_plan_snapshot
-        if isinstance(plan, Present):
-            if self.tool_grant is None:
-                raise ValueError("ModelTools generation requires a bearer grant")
-        elif isinstance(plan, Absent):
-            if self.tool_grant is not None:
-                raise ValueError("NoModelTools generation forbids a bearer grant")
-        else:
-            assert_never(plan)
+        if isinstance(plan, Present) and self.tool_grant is None:
+            raise ValueError("ModelTools generation requires a bearer grant")
+        if isinstance(plan, Absent) and self.tool_grant is not None:
+            raise ValueError("NoModelTools generation forbids a bearer grant")
         if self.tool_grant is not None:
             grant_bytes = utf8_size(self.tool_grant.token.get_secret_value())
             if grant_bytes > MAX_TOOL_GRANT_BYTES:
@@ -227,6 +251,21 @@ class GenerationAdmissionRequest(WireTaggedModel):
     request_fingerprint: Sha256Hex
     turn_timeout_seconds: int = Field(gt=0)
     model_tool_plan_fingerprint: Sha256Hex
+
+
+class GenerationAdmission(WireTaggedModel):
+    """One replay-stable pre-provider acceptance of the sole host slot."""
+
+    schema_version: Literal["nexus-generation-admission.v2"] = ADMISSION_SCHEMA_VERSION
+    request_id: UUID
+    admission_id: UUID
+    admitted_at: AcceptedAt
+    runtime_deadline_seconds: int = Field(gt=0)
+
+    @field_validator("admitted_at")
+    @classmethod
+    def _admitted_at_is_utc(cls, value: str) -> str:
+        return _utc_instant(value, "admitted_at")
 
 
 FailureKind = Literal[
@@ -266,8 +305,8 @@ class GenerationSessionRef(WireTaggedModel):
     transport: Literal["sdk"]
     native_session_id: Annotated[str, StringConstraints(min_length=1, max_length=256)]
     profile_key: Literal["codex-personal"]
-    state_root_fingerprint: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
-    cwd_fingerprint: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+    state_root_fingerprint: Sha256Hex
+    cwd_fingerprint: Sha256Hex
 
 
 class GenerationText(WireTaggedModel):
@@ -284,10 +323,8 @@ class GenerationToolUse(WireTaggedModel):
 
     @model_validator(mode="after")
     def _completion_has_result(self) -> Self:
-        if self.phase == "completed" and self.succeeded is None:
-            raise ValueError("completed tool use requires succeeded")
-        if self.phase != "completed" and self.succeeded is not None:
-            raise ValueError("succeeded is valid only for completed tool use")
+        if (self.phase == "completed") != (self.succeeded is not None):
+            raise ValueError("succeeded is required for, and only for, completed tool use")
         return self
 
 
@@ -305,48 +342,14 @@ class GenerationPermissionRequest(WireTaggedModel):
 
     @model_validator(mode="after")
     def _tool_name_matches_operation(self) -> Self:
-        if self.operation == "tool_use" and self.tool_name is None:
-            raise ValueError("tool_use permission request requires tool_name")
-        if self.operation != "tool_use" and self.tool_name is not None:
-            raise ValueError("tool_name is valid only for tool_use permission requests")
+        if (self.operation == "tool_use") != (self.tool_name is not None):
+            raise ValueError("tool_name is required for, and only for, tool_use requests")
         return self
 
 
 class GenerationNative(WireTaggedModel):
     kind: Literal["native"] = "native"
     native_type: Annotated[str, StringConstraints(min_length=1, max_length=128)]
-
-
-AcceptedAt = Annotated[
-    str,
-    StringConstraints(
-        pattern=r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$",
-    ),
-]
-
-
-class GenerationAdmission(WireTaggedModel):
-    """One replay-stable pre-provider acceptance of the sole host slot."""
-
-    schema_version: Literal["nexus-generation-admission.v2"] = ADMISSION_SCHEMA_VERSION
-    request_id: UUID
-    admission_id: UUID
-    admitted_at: AcceptedAt
-    runtime_deadline_seconds: int = Field(gt=0)
-
-    @field_validator("admitted_at")
-    @classmethod
-    def _admitted_at_is_utc(cls, value: str) -> str:
-        try:
-            parsed = datetime.fromisoformat(value[:-1] + "+00:00")
-        except ValueError as error:
-            raise ValueError("admitted_at must be a real UTC RFC3339 instant") from error
-        if parsed.tzinfo is None or parsed.utcoffset() is None:
-            raise ValueError("admitted_at must be UTC")
-        return value
-
-
-Diagnostic = Annotated[str, StringConstraints(min_length=1, max_length=1_000)]
 
 
 class GenerationTerminal(WireTaggedModel):
@@ -357,7 +360,6 @@ class GenerationTerminal(WireTaggedModel):
     structured_output: dict[str, JsonValue] | None
     session_ref: GenerationSessionRef | None
     usage: GenerationUsage | None
-    diagnostics: tuple[Diagnostic, ...] = Field(max_length=8)
     accepted_at: AcceptedAt
     sdk_version: Annotated[str, StringConstraints(min_length=1, max_length=128)]
     runtime_version: Annotated[str, StringConstraints(min_length=1, max_length=128)]
@@ -365,30 +367,20 @@ class GenerationTerminal(WireTaggedModel):
     @field_validator("accepted_at")
     @classmethod
     def _accepted_at_is_utc(cls, value: str) -> str:
-        try:
-            parsed = datetime.fromisoformat(value[:-1] + "+00:00")
-        except ValueError as error:
-            raise ValueError("accepted_at must be a real UTC RFC3339 instant") from error
-        if parsed.tzinfo is None or parsed.utcoffset() is None:
-            raise ValueError("accepted_at must be UTC")
-        return value
+        return _utc_instant(value, "accepted_at")
 
     @model_validator(mode="after")
     def _terminal_state(self) -> Self:
-        if self.status == "succeeded" and self.failure is not None:
-            raise ValueError("successful terminal cannot carry failure")
-        if self.status == "succeeded" and self.diagnostics:
-            raise ValueError("successful terminal cannot carry diagnostics")
-        if self.status == "succeeded" and self.session_ref is None:
-            raise ValueError("successful terminal requires session reference")
-        if self.status == "failed" and self.failure is None:
-            raise ValueError("failed terminal requires failure")
-        if self.status != "succeeded" and self.structured_output is not None:
+        if self.status == "succeeded":
+            if self.failure is not None:
+                raise ValueError("successful terminal cannot carry failure")
+            if self.session_ref is None:
+                raise ValueError("successful terminal requires session reference")
+            return self
+        if self.structured_output is not None:
             raise ValueError("non-success terminal cannot carry structured output")
-        if self.status != "succeeded" and not self.diagnostics:
-            raise ValueError("non-success terminal requires diagnostics")
-        if self.status == "cancelled" and self.failure is not None:
-            raise ValueError("cancelled terminal cannot carry failure")
+        if (self.status == "failed") != (self.failure is not None):
+            raise ValueError("failure is required for, and only for, a failed terminal")
         return self
 
 
@@ -421,9 +413,10 @@ class GenerationHealth(WireTaggedModel):
     runtime_version: Annotated[str, StringConstraints(min_length=1, max_length=128)]
 
 
-class GenerationCapacityRejection(WireTaggedModel):
-    schema_version: Literal["nexus-generation-rejection.v2"] = REJECTION_SCHEMA_VERSION
-    kind: Literal["capacity_unavailable"] = "capacity_unavailable"
+def capacity_rejection_bytes() -> bytes:
+    """The only body that proves the host accepted nothing."""
+
+    return b'{"schema_version":"nexus-generation-rejection.v2","kind":"capacity_unavailable"}'
 
 
 NormalizedFailureCode = Literal[
@@ -473,13 +466,7 @@ def normalized_failure(kind: str) -> NormalizedFailureCode:
 
 
 def retained_terminal_error_detail(terminal: GenerationTerminal) -> str | None:
-    """Return the closed diagnostic detail safe for durable domain state.
-
-    Host diagnostics are bounded and redacted for transport observation, but an
-    operator-attached terminal is not itself proof that submitted diagnostic text
-    came from the host. Durable state therefore retains only facts derived from
-    the terminal's closed status/failure algebra.
-    """
+    """Derive the durable detail from the terminal's own closed status algebra."""
 
     if terminal.status == "succeeded":
         return None
@@ -489,138 +476,6 @@ def retained_terminal_error_detail(terminal: GenerationTerminal) -> str | None:
         raise AssertionError("failed generation terminal has no failure kind")
     normalized_failure(terminal.failure.kind)
     return f"codex generation failed: {terminal.failure.kind}"
-
-
-def codex_model_catalog_to_wire(catalog: AgentModelCatalog) -> CodexModelCatalog:
-    """Translate the external AgentRuntime value at the private-host boundary."""
-
-    return CodexModelCatalog(
-        backend_contract_revision=catalog.backend_contract_revision,
-        definition_revision=catalog.definition_revision,
-        native_revision=_runtime_presence_to_wire(catalog.native_revision),
-        observed_at=catalog.observed_at,
-        models=tuple(_codex_model_to_wire(model) for model in catalog.models),
-    )
-
-
-def codex_model_catalog_from_wire(catalog: CodexModelCatalog) -> AgentModelCatalog:
-    """Recover the public AgentRuntime value after strict private-wire decoding."""
-
-    from provider_runtime.agent_runtime import AgentModelCatalog
-
-    return AgentModelCatalog(
-        backend_contract_revision=catalog.backend_contract_revision,
-        definition_revision=catalog.definition_revision,
-        native_revision=_wire_presence_to_runtime(catalog.native_revision),
-        observed_at=catalog.observed_at,
-        models=tuple(_codex_model_from_wire(model) for model in catalog.models),
-        diagnostics=(),
-    )
-
-
-def _codex_model_to_wire(model: AgentModelFacts) -> CodexCatalogModel:
-    upgrade: Absent | Present[CodexCatalogUpgrade]
-    if isinstance(model.upgrade, RuntimePresent):
-        upgrade = Present[CodexCatalogUpgrade](
-            value=CodexCatalogUpgrade(target_key=model.upgrade.value.target_key)
-        )
-    else:
-        upgrade = Absent()
-    return CodexCatalogModel(
-        key=model.key,
-        dispatch_model=model.dispatch_model,
-        label=model.label,
-        source_context_window=_runtime_presence_to_wire(model.source_context_window),
-        source_max_output_tokens=_runtime_presence_to_wire(model.source_max_output_tokens),
-        input_modalities=model.input_modalities,
-        reasoning=tuple(
-            CodexCatalogReasoning(
-                key=reasoning.key,
-                label=reasoning.label,
-                native_wire_value=reasoning.native_wire_value,
-            )
-            for reasoning in model.reasoning
-        ),
-        source_default_reasoning=_runtime_presence_to_wire(model.source_default_reasoning),
-        upgrade=upgrade,
-        retirement=Absent(),
-        row_fingerprint=model.row_fingerprint,
-    )
-
-
-def _codex_model_from_wire(model: CodexCatalogModel) -> AgentModelFacts:
-    from provider_runtime.agent_runtime import (
-        AgentModelFacts,
-        AgentReasoningFacts,
-        AgentUpgradeFacts,
-    )
-
-    upgrade: RuntimeAbsent | RuntimePresent[AgentUpgradeFacts]
-    if isinstance(model.upgrade, Present):
-        upgrade = RuntimePresent(AgentUpgradeFacts(target_key=model.upgrade.value.target_key))
-    else:
-        upgrade = RuntimeAbsent()
-    return AgentModelFacts(
-        key=model.key,
-        dispatch_model=model.dispatch_model,
-        label=model.label,
-        source_context_window=_wire_presence_to_runtime(model.source_context_window),
-        source_max_output_tokens=_wire_presence_to_runtime(model.source_max_output_tokens),
-        input_modalities=model.input_modalities,
-        reasoning=tuple(
-            AgentReasoningFacts(
-                key=reasoning.key,
-                label=reasoning.label,
-                native_wire_value=reasoning.native_wire_value,
-            )
-            for reasoning in model.reasoning
-        ),
-        source_default_reasoning=_wire_presence_to_runtime(model.source_default_reasoning),
-        upgrade=upgrade,
-        retirement=RuntimeAbsent(),
-        row_fingerprint=model.row_fingerprint,
-    )
-
-
-def _runtime_presence_to_wire[T](value: RuntimeAbsent | RuntimePresent[T]) -> Absent | Present[T]:
-    if isinstance(value, RuntimeAbsent):
-        return Absent()
-    return Present[T](value=value.value)
-
-
-def _wire_presence_to_runtime[T](value: Absent | Present[T]) -> RuntimeAbsent | RuntimePresent[T]:
-    if isinstance(value, Absent):
-        return RuntimeAbsent()
-    return RuntimePresent(value.value)
-
-
-def capacity_rejection_bytes() -> bytes:
-    return b'{"schema_version":"nexus-generation-rejection.v2","kind":"capacity_unavailable"}'
-
-
-def _digest(value: object) -> str:
-    return hashlib.sha256(_canonical_json_bytes(value)).hexdigest()
-
-
-def _canonical_json_bytes(value: object) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=True, allow_nan=False, sort_keys=True, separators=(",", ":")
-    ).encode()
-
-
-def _text_digest(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-
-def _validate_output_contract(command: _GenerationCommandFacts) -> None:
-    output = command.intent.output
-    frozen = command.spec.output_contract
-    if isinstance(output, TextOutput) and isinstance(frozen, TextOutputSnapshot):
-        return
-    if isinstance(output, JsonSchemaOutput) and isinstance(frozen, StrictJsonOutputSnapshot):
-        if (output.name, output.schema_) == (frozen.name, frozen.json_schema):
-            return
-    raise ValueError("generation output differs from the frozen GenerationSpec")
 
 
 def generation_draft_fingerprint(draft: GenerationCommandDraft) -> str:
@@ -638,24 +493,17 @@ def generation_command_draft(command: GenerationCommand) -> GenerationCommandDra
     """Project a dispatchable command back to its exact admitted facts."""
 
     return GenerationCommandDraft(
-        request_id=command.request_id,
-        spec=command.spec,
-        intent=command.intent,
+        request_id=command.request_id, spec=command.spec, intent=command.intent
     )
 
 
 def generation_command_from_draft(
-    draft: GenerationCommandDraft,
-    *,
-    tool_grant: BearerToolGrant | None,
+    draft: GenerationCommandDraft, *, tool_grant: BearerToolGrant | None
 ) -> GenerationCommand:
     """Create the only dispatchable command after successful host admission."""
 
     return GenerationCommand(
-        request_id=draft.request_id,
-        spec=draft.spec,
-        intent=draft.intent,
-        tool_grant=tool_grant,
+        request_id=draft.request_id, spec=draft.spec, intent=draft.intent, tool_grant=tool_grant
     )
 
 
@@ -678,47 +526,36 @@ def generation_admission_request(draft: GenerationCommandDraft) -> GenerationAdm
     )
 
 
-__all__ = [
-    "ADMISSION_SCHEMA_VERSION",
-    "COMMAND_DRAFT_SCHEMA_VERSION",
-    "COMMAND_SCHEMA_VERSION",
-    "COMMAND_ENVELOPE_BYTES",
-    "EVENT_SCHEMA_VERSION",
-    "MODEL_CATALOG_SCHEMA_VERSION",
-    "MAX_COMMAND_BODY_BYTES",
-    "MAX_ADMISSION_BODY_BYTES",
-    "MAX_OUTPUT_SCHEMA_BYTES",
-    "MAX_MODEL_TOOL_PLAN_BYTES",
-    "MAX_MODEL_CATALOG_BODY_BYTES",
-    "MAX_TOOL_GRANT_BYTES",
-    "FAILURE_KIND_TO_NORMALIZED",
-    "NormalizedFailureCode",
-    "GenerationCapacityRejection",
-    "CodexModelCatalog",
-    "GenerationAdmission",
-    "GenerationAdmissionRequest",
-    "GenerationCommand",
-    "GenerationCommandDraft",
-    "GenerationContractDefect",
-    "GenerationEvent",
-    "GenerationFailure",
-    "GenerationFrame",
-    "GenerationHealth",
-    "GenerationNative",
-    "GenerationPermissionRequest",
-    "GenerationSessionRef",
-    "GenerationTerminal",
-    "GenerationText",
-    "GenerationToolUse",
-    "GenerationUsage",
-    "GenerationUsageEvent",
-    "capacity_rejection_bytes",
-    "codex_model_catalog_from_wire",
-    "codex_model_catalog_to_wire",
-    "normalized_failure",
-    "retained_terminal_error_detail",
-    "generation_admission_request",
-    "generation_command_draft",
-    "generation_command_from_draft",
-    "generation_draft_fingerprint",
-]
+def _validate_output_contract(command: _GenerationCommandFacts) -> None:
+    output = command.intent.output
+    frozen = command.spec.output_contract
+    if isinstance(output, TextOutput) and isinstance(frozen, TextOutputSnapshot):
+        return
+    if isinstance(output, JsonSchemaOutput) and isinstance(frozen, StrictJsonOutputSnapshot):
+        if (output.name, output.schema_) == (frozen.name, frozen.json_schema):
+            return
+    raise ValueError("generation output differs from the frozen GenerationSpec")
+
+
+def _utc_instant(value: str, label: str) -> str:
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError as error:
+        raise ValueError(f"{label} must be a real UTC RFC3339 instant") from error
+    if parsed.utcoffset() is None:
+        raise ValueError(f"{label} must be UTC")
+    return value
+
+
+def _digest(value: object) -> str:
+    return hashlib.sha256(_canonical_json_bytes(value)).hexdigest()
+
+
+def _canonical_json_bytes(value: object) -> bytes:
+    return json.dumps(
+        value, ensure_ascii=True, allow_nan=False, sort_keys=True, separators=(",", ":")
+    ).encode()
+
+
+def _text_digest(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()

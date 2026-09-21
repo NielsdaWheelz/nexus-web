@@ -254,7 +254,7 @@ def _media_unit_model_name() -> str:
     # Bounded indexing children may import this owner but must not preload the
     # generation/tool/provider graph merely to publish or tear down an index.
     from nexus.services import generation_policy
-    from nexus.services.generation_selection import CodexPersonalSelection
+    from nexus.services.generation_spec import CodexPersonalSelection
 
     selection = generation_policy.background_operation_policy(MEDIA_UNIT_OPERATION).selection
     if not isinstance(selection, CodexPersonalSelection):

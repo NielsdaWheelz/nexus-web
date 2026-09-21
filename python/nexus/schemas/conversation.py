@@ -31,7 +31,7 @@ from nexus.schemas.presence import Absent, Presence, Present, absent, present
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import RetrievalContextRef, RetrievalLocator, RetrievalResultRef
 from nexus.schemas.search_types import SEARCH_RESULT_TYPES
-from nexus.services.generation_selection import GenerationSelectionSpec
+from nexus.services.generation_spec import GenerationSelectionSpec
 
 # Valid assistant tool-call statuses - must match message_tool_calls.status
 MESSAGE_TOOL_STATUSES = Literal["pending", "running", "complete", "error", "cancelled"]

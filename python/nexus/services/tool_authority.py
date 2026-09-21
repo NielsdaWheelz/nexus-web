@@ -45,7 +45,6 @@ from nexus.schemas.presence import Present
 from nexus.services.durable_step_journal import stable_generation_id
 from nexus.services.generation_spec import (
     GenerationSpec,
-    decode_generation_spec_document,
     generation_fact_digest,
 )
 from nexus.services.llm_ledger import (
@@ -996,10 +995,7 @@ def _lock_authority(
     )
     if generation is None:
         raise ToolAuthorityRefused("generation is absent or terminal")
-    try:
-        spec = decode_generation_spec_document(generation.spec.value)
-    except ValueError as error:
-        raise AssertionError("persisted GenerationSpec violates semantic authority") from error
+    spec = generation.spec
     if projection is not None:
         projection.lock_owner(db, user_id=user_id, owner=owner)
     if not lock_running_job_claim(db, context=job_context):
