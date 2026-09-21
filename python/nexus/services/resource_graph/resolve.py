@@ -26,7 +26,6 @@ from nexus.auth.permissions import (
 )
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.services import library_entries, library_entry_listing
-from nexus.services.artifacts.registry import visible_persisted_subject_sql
 from nexus.services.contributor_credits import (
     media_author_credits_join_sql,
     media_author_names_agg_sql,
@@ -408,6 +407,8 @@ def _dossier(
 def _load_artifact(
     db: Session, items: list[ResourceRef], viewer_id: UUID
 ) -> list[ResolvedResource]:
+    from nexus.services.artifacts.subjects import visible_persisted_subject_sql
+
     def build(ref: ResourceRef, row: Any) -> ResolvedResource:
         subject = str(row[3] or "Dossier")
         return _dossier(
@@ -438,6 +439,8 @@ def _load_artifact(
 def _load_artifact_revision(
     db: Session, items: list[ResourceRef], viewer_id: UUID
 ) -> list[ResolvedResource]:
+    from nexus.services.artifacts.subjects import visible_persisted_subject_sql
+
     def build(ref: ResourceRef, row: Any) -> ResolvedResource:
         subject = f"{row[4] or 'Dossier'} ({'current' if row[6] else 'historical'})"
         return _dossier(

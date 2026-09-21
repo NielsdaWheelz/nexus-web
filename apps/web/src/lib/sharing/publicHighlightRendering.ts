@@ -1,7 +1,6 @@
 import type { PdfPageViewLike } from "@/components/pdfReaderRuntime";
 import { buildCanonicalCursor } from "@/lib/highlights/canonicalCursor";
-import { canonicalCpToRawCp } from "@/lib/highlights/canonicalText";
-import { codepointToUtf16 } from "@/lib/highlights/codepoints";
+import { resolveDomTextRanges } from "@/lib/highlights/domTextRanges";
 import {
   isValidPdfRect,
   projectPdfQuadToViewportRect,
@@ -41,36 +40,12 @@ export function installExactPublicTextHighlight(
     return null;
   }
 
-  const overlaps = cursor.nodes
-    .flatMap((mapping) => {
-      const start = Math.max(target.startOffset, mapping.start);
-      const end = Math.min(target.endOffset, mapping.end);
-      return start < end ? [{ mapping, start, end }] : [];
-    })
-    .sort((left, right) => right.start - left.start);
-  if (overlaps.length === 0) {
-    return null;
-  }
+  const ranges = resolveDomTextRanges(cursor, target.startOffset, target.endOffset);
+  if (ranges === null) return null;
 
   const marks: HTMLElement[] = [];
   try {
-    for (const { mapping, start, end } of overlaps) {
-      const rawText = mapping.node.data;
-      const rawStart = canonicalCpToRawCp(
-        rawText,
-        start - mapping.start,
-        mapping.trimLeadCp,
-      );
-      const rawEnd = canonicalCpToRawCp(
-        rawText,
-        end - mapping.start,
-        mapping.trimLeadCp,
-      );
-      if (rawStart >= rawEnd) continue;
-
-      const range = document.createRange();
-      range.setStart(mapping.node, codepointToUtf16(rawText, rawStart));
-      range.setEnd(mapping.node, codepointToUtf16(rawText, rawEnd));
+    for (const range of ranges.reverse()) {
       const mark = document.createElement("mark");
       mark.dataset.nexusPublicHighlightSegment = "true";
       range.surroundContents(mark);

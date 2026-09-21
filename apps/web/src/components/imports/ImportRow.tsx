@@ -6,10 +6,8 @@ import Button from "@/components/ui/Button";
 import Pill, { type PillTone } from "@/components/ui/Pill";
 import ResourceRow from "@/components/ui/ResourceRow";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
-import {
-  RESOURCE_ACTION_BLOCKED_REASON_COPY,
-  useResourceActionMenuModel,
-} from "@/lib/actions/resourceActionRuntime";
+import { useResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime";
+import { RESOURCE_ACTION_BLOCKED_REASON_COPY } from "@/lib/actions/resourceActionMenu";
 import type { ResourceActionId } from "@/lib/actions/resourceActions";
 import { assertNever } from "@/lib/assertNever";
 import type { ImportRef } from "@/lib/imports/importRef";

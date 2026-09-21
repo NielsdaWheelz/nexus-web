@@ -742,15 +742,11 @@ accepted child model turn through the private UDS host; a ProviderRuntime API
 tool loop creates one child per accepted provider call and advances only from a
 sealed persisted continuation. Completed children replay without dispatch;
 accepted ambiguity requires exact operator reconciliation.
-Within `dossier_build`, `services/artifacts/generation_step.py` is the sole
-Artifact owner of the exact `synthesis` and `document-repair` request
-fingerprints, memoized result envelope, and
-`Prepared | Uncertain | Completed` transitions; the engine keeps their
-streaming and unary transports explicit.
-The request-scoped dossier idea resolver uses the same generation service and
-read-only UDS mount from the API process; API and worker clients receive no
-credential mount. The existing PostgreSQL queue, leases, and publication owners
-remain unchanged.
+Within `dossier_build`, `services/artifacts/generation.py` is the sole
+Artifact owner of the exact `synthesis` request fingerprint, memoized result
+envelope, and `Prepared | Uncertain | Completed` transitions; the engine keeps
+its streaming transport explicit. The existing PostgreSQL queue, leases, and
+publication owners remain unchanged.
 See [modules/llms.md](modules/llms.md).
 
 Eligible Chat and background runs use one canonical tool authority. Codex
@@ -1040,13 +1036,12 @@ The backend separates three owners:
   manifest, coverage, freshness, citation materialization, and final document
   compilation;
 - the generic engine owns idempotent build creation, durable execution,
-  one primary/repair document-acceptance phase, terminal children, revision
-  history, Make current, cancellation, and events.
+  document acceptance, terminal children, revision history, Make current,
+  cancellation, and events.
 
-`services/artifacts/registry.py` composes each policy and binding into one
-immutable eight-scheme registration. Callers perform one correlated lookup;
-there is no second mutable policy map or package-initializer registration side
-effect.
+`services/artifacts/subjects.py` holds the one eight-entry binding table.
+Callers look a subject scheme up once; there is no second mutable policy map or
+package-initializer registration side effect.
 
 Revision responses use the binding's stored manifest directly, including the
 Idea subject id for its owning user; Idea subject routes remain unavailable.
@@ -1528,11 +1523,10 @@ A canonical authorship graph split across single owners: `contributor_taxonomy.p
 `contributors.py` (the public author-operations facade: search, contributor
 detail, distinct works, ref resolve/hydrate for panes, observed role-slice
 replacement, media-author PUT/reset, rename, and the transaction-scoped
-target-cleanup/orphan-prune helpers — no second identity/write path exists),
-two private collaborators it alone calls (`_contributor_identity.py` for
-identity-row resolution/creation/alias attachment, `_contributor_credit_writes.py`
-for all credit-row DML and the media manual/automatic pin), `_contributor_replay.py`
-(forced-new-edit replay memos), and `contributor_credits.py` (the read-side
+target-cleanup helper — no second identity/write path exists),
+`contributor_writes.py` (the one write module it calls: identity-row
+resolution/creation/alias attachment, all credit-row DML, and the media
+manual/automatic pin), and `contributor_credits.py` (the read-side
 credit junction: canonical credit relation + visible-work queries). Every final
 `contributors` row is active — there is no self-FK, status, merge, split, or
 tombstone; duplicates were collapsed once by migration 0179 and never merge at
@@ -1551,8 +1545,9 @@ adapters and that facade. An absent carrier means no observation; a malformed
 container, tuple, media identity, observation, or source is a same-system defect
 and never degrades to empty authorship. Visibility predicates
 (`visible_podcast_ids_cte_sql`, `visible_content_credit_rows_sql`,
-`visible_contributor_ids_cte_sql`) live solely in `auth/permissions.py`;
-persisted-chat-ref checks live in `chat_context_refs.py`. There is no `/authors`
+`visible_contributor_ids_cte_sql`) live solely in `auth/permissions.py`.
+An orphaned contributor is already invisible under those predicates, so nothing
+prunes contributor rows. There is no `/authors`
 directory or root Authors pane; author search lives in desktop Nexus
 at `/search?kinds=people`, and author chips link to the `/authors/{handle}`
 detail-only pane (works list).

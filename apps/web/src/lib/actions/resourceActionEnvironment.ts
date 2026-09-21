@@ -28,21 +28,18 @@ export type ResourceActionOfflineState =
     };
 
 export type ResourceActionOfflineReadingAvailability =
-  | Exclude<LocalAvailability, { readonly kind: "Ready" }>
-  | {
-      readonly kind: "Ready";
-      readonly sizeBytes: number;
-      readonly contentType: string;
-      readonly updatedAt: string;
-      readonly hasDevicePosition: boolean;
-    };
+  | { readonly kind: Exclude<LocalAvailability["kind"], "Ready"> }
+  | { readonly kind: "Ready"; readonly hasDevicePosition: boolean };
 
 export type ResourceActionOfflineReadingState =
   | { readonly kind: "Loading" }
   | { readonly kind: "Unavailable" }
   | {
       readonly kind: "Ready";
-      readonly byRef: ReadonlyMap<CanonicalResourceRef, ResourceActionOfflineReadingAvailability>;
+      readonly byRef: ReadonlyMap<
+        CanonicalResourceRef,
+        ResourceActionOfflineReadingAvailability
+      >;
     };
 
 /**
@@ -54,8 +51,7 @@ export interface ResourceActionEnvironment {
   readonly platform: "Web" | "Android";
   readonly connectivity: "Online" | "Offline";
   readonly offline: ResourceActionOfflineState;
-  /** Dedicated verified-reading replica; absent in non-Android/test hosts. */
-  readonly offlineReading?: ResourceActionOfflineReadingState;
+  readonly offlineReading: ResourceActionOfflineReadingState;
   readonly lectern: ResourceActionLecternState;
   readonly playbackByRef: ReadonlyMap<
     CanonicalResourceRef,
@@ -75,11 +71,4 @@ export function offlineMediaByRefFromInventory(
     byRef.set(assumeCanonicalResourceRef(`media:${item.mediaId}`), item.state);
   }
   return byRef;
-}
-
-/** Android iff the Android shell hosts the client; Web otherwise. Pure. */
-export function platformFromAndroidShell(
-  androidShell: boolean,
-): "Web" | "Android" {
-  return androidShell ? "Android" : "Web";
 }

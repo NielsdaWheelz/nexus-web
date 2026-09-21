@@ -1,16 +1,7 @@
-// Codepoint <-> UTF-16 conversions for highlight offsets.
-//
-// JavaScript strings are UTF-16, but canonical highlight offsets are codepoint
-// indices so astral characters (emoji, etc.) align with the backend. These
-// helpers are the single source of truth used by the cursor builder, the
-// selection translator, and the DOM segment applier.
+// Unicode codepoint counts and conversion to JavaScript UTF-16 indices.
 
 export function codepointLength(str: string): number {
   return [...str].length;
-}
-
-export function utf16ToCodepoint(str: string, utf16Index: number): number {
-  return [...str.slice(0, utf16Index)].length;
 }
 
 export function codepointToUtf16(str: string, codepointOffset: number): number {

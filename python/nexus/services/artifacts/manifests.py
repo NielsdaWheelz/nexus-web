@@ -1,11 +1,8 @@
-"""Typed dossier input manifests.
+"""The eight typed dossier input manifests.
 
-Stored in ``artifact_revisions.input_manifest`` (JSONB), discriminated by
-``kind`` (the spec-pinned lowercase subject scheme). Coverage on the head read is
-DERIVED from these; freshness is the binding's ``manifests_equal(stored, live)``
-(no LLM). Deliberately minimal — only the freshness / coverage / citation-candidate
-/ migration fields each binding needs. Owned absence uses ``Presence[T]``
-(``docs/rules/boundaries.md``).
+Stored in ``artifact_revisions.input_manifest`` (jsonb) and decoded key-exact by
+the web. Freshness compares a stored manifest with the subject's live one; the
+head's coverage projection is derived from the same value.
 """
 
 from __future__ import annotations
@@ -22,11 +19,6 @@ class _Manifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-# ---------------------------------------------------------------------------
-# Per-media disposition (A21) — how each aggregate member was treated.
-# ---------------------------------------------------------------------------
-
-
 class MediaDisposition(StrEnum):
     Included = "Included"
     OmittedNoReadyUnit = "OmittedNoReadyUnit"
@@ -36,31 +28,17 @@ class MediaDisposition(StrEnum):
 
 
 class MediaManifestEntry(_Manifest):
-    """One media member of an aggregate manifest (Library/Podcast/Contributor)."""
-
     media_ref: str
     content_fingerprint: str
     disposition: MediaDisposition
 
 
 class EvidenceOmission(_Manifest):
-    """One evidence span the Media binding offered the model but did not cite/cover."""
-
     evidence_ref: str
-
-
-# ---------------------------------------------------------------------------
-# Conversation completeness.
-# ---------------------------------------------------------------------------
 
 
 class ConversationComplete(_Manifest):
     kind: Literal["Complete"] = "Complete"
-
-
-# ---------------------------------------------------------------------------
-# The input manifests (A21) — discriminated by `kind`.
-# ---------------------------------------------------------------------------
 
 
 class MediaInputManifestV1(_Manifest):
@@ -143,6 +121,8 @@ class IdeaInputManifestV1(_Manifest):
     omitted_sources: list[IdeaOmittedSource] = Field(default_factory=list)
 
 
+AggregateManifestV1 = LibraryInputManifestV1 | PodcastInputManifestV1 | ContributorInputManifestV1
+
 InputManifestV1 = Annotated[
     MediaInputManifestV1
     | ConversationInputManifestV1
@@ -154,3 +134,12 @@ InputManifestV1 = Annotated[
     | IdeaInputManifestV1,
     Field(discriminator="kind"),
 ]
+
+
+def aggregate_entries(manifest: AggregateManifestV1) -> list[MediaManifestEntry]:
+    """The media members of an aggregate manifest under its per-kind key."""
+    if isinstance(manifest, LibraryInputManifestV1):
+        return manifest.media
+    if isinstance(manifest, PodcastInputManifestV1):
+        return manifest.episodes
+    return manifest.works

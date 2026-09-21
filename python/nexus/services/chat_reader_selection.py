@@ -1,13 +1,10 @@
-"""Canonical owner of the reader-quote snapshot: build, revise, encode/decode,
-project, and render.
+"""The reader-quote snapshot: build, digest, encode/decode, project, render.
 
-A reader quote is captured once, at send, from the locked Highlight into an
-immutable ``ReaderSelectionSnapshot`` persisted on the user message. Every later
-read — transcript, reload, branch switch, rerun, and prompt assembly — derives
-from that snapshot, never the live Highlight. This module is the sole place the
-snapshot is created, JSON-encoded/decoded, digested into a revision, projected
-to the wire, and rendered into the prompt. No JSON fallback or version metadata
-exists; malformed trusted data is a defect.
+A reader quote is captured once, at send, from the locked highlight into an
+immutable snapshot persisted on the user message. Every later read derives from
+that snapshot, never the live highlight. The encoding is a persisted contract:
+only ``ReaderSelectionSnapshot`` fields are serialized, and the revision is
+SHA-256 over their sorted compact JSON.
 """
 
 from __future__ import annotations
@@ -15,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 from uuid import UUID
+from xml.sax.saxutils import escape as xml_escape
 
 from pydantic import TypeAdapter
 from sqlalchemy.orm import Session
@@ -45,13 +43,7 @@ _MEDIA_LOCATOR_ADAPTER: TypeAdapter[MediaRetrievalLocator] = TypeAdapter(MediaRe
 def build_reader_selection_snapshot(
     db: Session, *, viewer_id: UUID, key: ReaderSelectionKey
 ) -> ReaderSelectionSnapshot:
-    """Resolve the locked Highlight into the immutable snapshot.
-
-    Raises a typed reader-selection error for an absent/forbidden/mismatched,
-    geometry-only, or over-limit Highlight. Callers acquire the Highlight row
-    lock (send) before invoking this so the derived fields are consistent with
-    the revision they compare against.
-    """
+    """Resolve the locked highlight into the immutable snapshot."""
     highlight = db.get(Highlight, key.highlight_id)
     if highlight is None:
         raise ApiError(ApiErrorCode.E_READER_SELECTION_NOT_FOUND, "Highlight not found")
@@ -62,7 +54,6 @@ def build_reader_selection_snapshot(
             ApiErrorCode.E_READER_SELECTION_NOT_FOUND,
             "media_id does not match the highlight anchor media",
         )
-
     media = db.get(Media, key.media_id)
     if media is None:
         raise ApiError(ApiErrorCode.E_READER_SELECTION_NOT_FOUND, "Media not found")
@@ -73,43 +64,18 @@ def build_reader_selection_snapshot(
     )
     if resolved.missing or resolved.quote is None:
         raise ApiError(ApiErrorCode.E_READER_SELECTION_NOT_FOUND, "Highlight quote unresolved")
-    quote = resolved.quote
 
-    exact = quote.exact
+    exact = resolved.quote.exact
     if not exact.strip():
         raise ApiError(
             ApiErrorCode.E_READER_SELECTION_GEOMETRY_ONLY,
             "A geometry-only highlight cannot be quoted",
         )
-    prefix = quote.prefix or ""
-    suffix = quote.suffix or ""
-    source_label = (quote.source_label or "").strip()
+    prefix = resolved.quote.prefix or ""
+    suffix = resolved.quote.suffix or ""
+    source_label = (resolved.quote.source_label or "").strip()
     if not source_label:
         raise ApiError(ApiErrorCode.E_READER_SELECTION_NOT_FOUND, "Highlight source is unreadable")
-
-    _reject_over_limit(source_label=source_label, exact=exact, prefix=prefix, suffix=suffix)
-
-    locator = _MEDIA_LOCATOR_ADAPTER.validate_python(
-        highlight_locator(
-            typed.anchor.model_dump(mode="json"),
-            media_kind=media.kind,
-            exact=exact,
-            prefix=prefix,
-            suffix=suffix,
-        )
-    )
-
-    return ReaderSelectionSnapshot(
-        key=key,
-        source_label=source_label,
-        exact=exact,
-        prefix=prefix,
-        suffix=suffix,
-        locator=locator,
-    )
-
-
-def _reject_over_limit(*, source_label: str, exact: str, prefix: str, suffix: str) -> None:
     if (
         len(source_label) > MAX_READER_SELECTION_SOURCE_LABEL
         or len(exact) > MAX_READER_SELECTION_EXACT
@@ -121,106 +87,78 @@ def _reject_over_limit(*, source_label: str, exact: str, prefix: str, suffix: st
             "Reader selection exceeds a bounded field limit",
         )
 
+    return ReaderSelectionSnapshot(
+        key=key,
+        source_label=source_label,
+        exact=exact,
+        prefix=prefix,
+        suffix=suffix,
+        locator=_MEDIA_LOCATOR_ADAPTER.validate_python(
+            highlight_locator(
+                typed.anchor.model_dump(mode="json"),
+                media_kind=media.kind,
+                exact=exact,
+                prefix=prefix,
+                suffix=suffix,
+            )
+        ),
+    )
+
+
+def encode_reader_selection_snapshot(snapshot: ReaderSelectionSnapshot) -> dict[str, object]:
+    """The JSON object persisted in ``messages.reader_selection_snapshot``."""
+    return snapshot.model_dump(mode="json", include=set(ReaderSelectionSnapshot.model_fields))
+
+
+def decode_reader_selection_snapshot(raw: object) -> ReaderSelectionSnapshot:
+    """Strict: a non-object or unknown key is a trusted-state defect."""
+    if not isinstance(raw, dict):
+        raise AssertionError("reader_selection_snapshot must be a JSON object")
+    return ReaderSelectionSnapshot.model_validate(raw)
+
 
 def compute_reader_selection_revision(snapshot: ReaderSelectionSnapshot) -> str:
-    """Lowercase SHA-256 hex over the snapshot's canonical answer/display fields.
-
-    A compare-on-send precondition, never part of the idempotency identity. UUIDs
-    serialize lowercase-hyphenated and keys are sorted, so equal snapshots always
-    digest equal.
-    """
+    """Lowercase SHA-256 over the encoded snapshot: the compare-on-send precondition."""
     canonical = json.dumps(
         encode_reader_selection_snapshot(snapshot), sort_keys=True, separators=(",", ":")
     )
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def encode_reader_selection_snapshot(snapshot: ReaderSelectionSnapshot) -> dict[str, object]:
-    """Encode the snapshot fields to the JSON object persisted in
-    ``messages.reader_selection_snapshot``. Only the snapshot's own fields are
-    encoded: ``ReaderSelectionOut``/``Preview`` subclasses carry derived fields
-    that must never reach the digest or the stored row."""
-    return snapshot.model_dump(mode="json", include=set(ReaderSelectionSnapshot.model_fields))
-
-
-def decode_reader_selection_snapshot(raw: object) -> ReaderSelectionSnapshot:
-    """Strictly decode a stored snapshot object. JSON ``null`` / non-object /
-    unknown-key data is a trusted-state defect, never a soft ``Absent``."""
-    if not isinstance(raw, dict):
-        raise AssertionError("reader_selection_snapshot must be a JSON object")
-    return ReaderSelectionSnapshot.model_validate(raw)
-
-
 def reader_selection_out(
     db: Session, *, viewer_id: UUID, snapshot: ReaderSelectionSnapshot
 ) -> ReaderSelectionOut:
-    """Project the immutable snapshot to the message wire.
-
-    Live Highlight readability *gates* activation (a deleted/forbidden source
-    yields ``kind="none"``), but the immutable locator's media — not the live
-    Highlight anchor — *determines the destination*, so an edit that moves the
-    Highlight can never redirect a historical quote (Domain Rule 8, AC11). The
-    client positions within that media reader from the immutable locator.
-    """
-    visible = can_read_highlight(db, viewer_id, snapshot.key.highlight_id)
+    """Live readability gates activation; the immutable locator fixes the destination."""
     activation = resource_activation_for_ref(
         db,
         viewer_id=viewer_id,
         ref=ResourceRef(scheme="media", id=snapshot.key.media_id),
-        missing=not visible,
+        missing=not can_read_highlight(db, viewer_id, snapshot.key.highlight_id),
     )
-    return ReaderSelectionOut(
-        key=snapshot.key,
-        source_label=snapshot.source_label,
-        exact=snapshot.exact,
-        prefix=snapshot.prefix,
-        suffix=snapshot.suffix,
-        locator=snapshot.locator,
-        activation=activation,
-    )
+    return ReaderSelectionOut.model_validate({**dict(snapshot), "activation": activation})
 
 
 def reader_selection_preview(
     db: Session, *, viewer_id: UUID, key: ReaderSelectionKey
 ) -> ReaderSelectionPreview:
-    """Build the pending-quote-card projection for a locked Highlight.
-
-    Resolves the immutable snapshot (raising the typed reader-selection error for
-    an absent/forbidden/mismatched, geometry-only, or over-limit Highlight),
-    projects it to the wire with current activation, and digests its canonical
-    answer/display fields into the compare-on-send ``revision``.
-    """
     snapshot = build_reader_selection_snapshot(db, viewer_id=viewer_id, key=key)
     out = reader_selection_out(db, viewer_id=viewer_id, snapshot=snapshot)
-    revision = compute_reader_selection_revision(snapshot)
-    return ReaderSelectionPreview(
-        key=out.key,
-        source_label=out.source_label,
-        exact=out.exact,
-        prefix=out.prefix,
-        suffix=out.suffix,
-        locator=out.locator,
-        activation=out.activation,
-        revision=revision,
+    return ReaderSelectionPreview.model_validate(
+        {**dict(out), "revision": compute_reader_selection_revision(snapshot)}
     )
 
 
 def render_reader_selection_prompt_block(snapshot: ReaderSelectionSnapshot) -> str:
-    """The sole current-turn quote-text block: ``<reader_selection>``."""
-    return render_quote_block(
-        "reader_selection",
-        exact=snapshot.exact,
-        prefix=snapshot.prefix or None,
-        suffix=snapshot.suffix or None,
-        source_label=snapshot.source_label,
-    )
+    return _render_quote(snapshot, "reader_selection")
 
 
 def render_historical_reader_selection_prompt_block(snapshot: ReaderSelectionSnapshot) -> str:
-    """The bounded quote-text block inserted immediately before a historical
-    quoted user turn."""
+    return _render_quote(snapshot, "historical_reader_selection")
+
+
+def _render_quote(snapshot: ReaderSelectionSnapshot, tag: str) -> str:
     return render_quote_block(
-        "historical_reader_selection",
+        tag,
         exact=snapshot.exact,
         prefix=snapshot.prefix or None,
         suffix=snapshot.suffix or None,
@@ -229,10 +167,7 @@ def render_historical_reader_selection_prompt_block(snapshot: ReaderSelectionSna
 
 
 def render_subject_metadata_block(snapshot: ReaderSelectionSnapshot) -> str:
-    """The selection-backed ``<subject>``: identity/source metadata only — the
-    quote text lives solely in ``<reader_selection>`` so it appears exactly once."""
-    from xml.sax.saxutils import escape as xml_escape
-
+    """Identity and source only: the quote text appears once, in its own block."""
     source_attr = xml_escape(snapshot.source_label, {'"': "&quot;"})
     return (
         f'<subject kind="reader_highlight" source="{source_attr}">\n'

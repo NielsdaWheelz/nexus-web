@@ -1,12 +1,4 @@
-"""Shared XML renderer for quote-shaped prompt blocks.
-
-One renderer for every passage shown to the model with prefix/exact/suffix
-context: the ``<quote>`` inside a ``<resource>`` highlight, the
-``<reader_selection>`` turn anchor, and the ``<assistant_selection>`` branch
-anchor. Every leaf is ``xml_escape``d at the interpolation site
-(generated-text.md). Named ``chat_quote`` to avoid the unrelated
-the X resource-reference renderer in ``x_rendering`` (HTML quote posts).
-"""
+"""The one XML renderer for quote-shaped prompt blocks."""
 
 from __future__ import annotations
 

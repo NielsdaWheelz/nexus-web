@@ -28,14 +28,14 @@ verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, o
 | substrate: db schema (models 4.3k + migrations) | 12.9k | 5k | squash migrations to one baseline after 0231–0236 deploy | migrations squashed to a 0236 baseline (size/squash), 8606 lines; models.py open |
 | deploy/release (release.py 8.1k + scripts) | 2.7k | 1k | linear deploy script keeping backup-before-migrate + first-attempt provenance | done (size/deploy): release.py 8,071→620, driven over ssh; compose/Caddyfile/cloud-init/env are the fixed remainder |
 | docs (rules subtree 3.9k, modules 5.8k, architecture 2.3k, chapbook 1.4k, tickets 2k) | 17.9k | 9k | keep rules/local-rules/runbook/tickets; demote uncited module docs | open |
-| reader (epub, pdf, web article, selection/highlights; MediaPaneBody 7.6k, PdfReader 3.6k) | 46.3k | 15k | reauthor: one reader shell, one find | open |
+| reader (epub, pdf, web article, selection/highlights; MediaPaneBody 7.6k, PdfReader 3.6k) | 46.3k | 15k | reauthor: one reader shell, one find | initial-content ownership unified; unicode selection, painting, find, and margin mapping share provenance; full reauthoring open |
 | reader-apparatus (footnotes, bibliography, latex, publisher extractors, doc map, margin rail) | 13.3k | 3k | keep footnotes/endnotes; delete latex, pdf legal-footnote, 6 publisher extractors, doc-map presenters | open |
-| ingest-imports (url/file/youtube/x/email/arxiv/remote, upload sessions, imports workspace, metadata intelligence) | 27.8k | 8k | reauthor; decide x, email, arxiv | python source-ingest first pass landed (size/ingest-py): 12.5k→9.2k, −26%; imports history, metadata intelligence and the web Add/imports flow open |
+| ingest-imports (url/file/youtube/x/email/arxiv/remote, upload sessions, imports workspace, metadata intelligence) | 27.8k | 8k | reauthor; decide x, email, arxiv | python source-ingest first pass landed (size/ingest-py): 12.5k→9.2k, −26%; node acquisition/extraction reauthored (cleanup/node-ingest): 1,011→502 lines, −50%; imports history, metadata intelligence and the web Add/imports flow open |
 | media-core | 5.7k | 3k | reauthor | open |
-| chat (runs, conversations, forks, composer, tails) | 29.6k | 10k | reauthor; 17 chat_run_* files → 3 | open |
+| chat (runs, conversations, forks, composer, tails) | 29.6k | 10k | reauthor; 17 chat_run_* files → 3 | api admission/read/cancel database phases own their sessions on worker threads (cleanup/chat-database); reauthoring open |
 | chat-tools (runtime, authority, MCP, six tools) | 5.8k | 2.5k | reauthor: six tools + one dispatcher | first pass landed (size/chat-tools) at 5.8k, −32%; remaining levers: MCP transport 0.9k, HostTable research plan 0.5k, ledger density |
 | generation (catalog, ledger, codex + 7 provider APIs, picker) | 10.2k | 3k | codex + 1–2 providers; drop model lifecycle | python first pass landed (size/generation-py): 10.9k→7.6k, −30%; model lifecycle deleted; picker web 2.6k open |
-| dossiers (engine 3.4k, ten subject bindings, web document runtime) | 18.7k | 5k | reauthor: one engine, one binding table | open |
+| dossiers (engine 3.4k, ten subject bindings, web document runtime) | 14.6k | 5k | reauthor: one engine, one binding table | python first pass landed (size/dossiers-py): 12.0k→7.4k, −39%; web document runtime 7.2k open |
 | oracle-atlas (oracle, plates, concordance, corpus ops, atlas, manifests, deploy plate train) | 12.6k | 0–4k | deferred by owner 2026-09-21; keep and reauthor: delete, or keep at 4k | open |
 | synapse-connections (resonance, synapse, dawn write, connections surface, reading slate) | 7.8k | 2k | keep synapse + connections; DELETE dawn write (decided 2026-09-21); reading slate deferred | dawn write deleted (size/dawn); rest open |
 | search-browse-nexus (index, 11 retrievers, browse adapters, nexus launcher, switchboard, /search) | 26.4k | 8k | reauthor: one search UI, one retriever | python search/index/retrieval first pass landed (size/search-py) at 6.0k of 9.0k, −33%; browse and the three web search UIs open |
@@ -45,16 +45,16 @@ verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, o
 | library (libraries, entries, listing, placement 3.2k) | 15.5k | 5k | reauthor | open |
 | library-sharing (memberships, invitations, governance) | 5.0k | 2k | keep, reauthor | open |
 | resource-sharing (grants, public /s reader, share overlay) | 7.2k | 2.5k | keep grants + link; /s reader reuses the reader | open |
-| notes-pages (daily pages, two body editors, highlights service) | 12.2k | 4k | one editor | open |
-| authors (contributors, credits, taxonomy, author pane) | 7.3k | 2k | reauthor | open |
+| notes-pages (daily pages, two body editors, highlights service) | 11.2k | 4k | one editor | python first pass landed (size/notes-py): 3.5k→2.4k, −30%; web 8.7k (two body editors) open |
+| authors (contributors, credits, taxonomy, author pane) | 6.0k | 2k | reauthor | python first pass landed (size/contributors-py): 3.2k→2.0k, −39%; web 4.0k open |
 | offline-android (delivery, packages, downloads, two kotlin stores) | 17.6k | 8k | one store | open |
 | vault (export/sync/watch CLI + pane) | 1.9k | 0–1k | deferred by owner 2026-09-21; keep and reauthor: keep at 1k or delete | open |
 | billing-settings (billing, entitlements, quota, 7 settings panes) | 4.4k | 2k | keep, reauthor | open |
-| auth-extension (auth, users, sessions, extension 2.8k of which 2.3k vendored Readability) | 4.9k | 2k | deferred by owner 2026-09-21; keep and reauthor extension; keep auth | open |
+| auth-extension (auth, users, sessions, extension 2.8k of which 2.3k vendored Readability) | 4.9k | 2k | deferred by owner 2026-09-21; keep and reauthor extension; keep auth | capture routing 351→334 lines: one permission/classification owner fixes denied inspection and duplicate prompts; auth and the remaining extension remain open |
 | substrate: resource graph (refs, edges, citations) | 5.2k | 2k | reauthor | first pass landed (size/resource-graph-py): 6.6k→4.9k, −25%; two blocks await the action-menu rewrite |
-| substrate: action menu (snapshot→planner→runtime→cache) | 11.4k | 1.5k | one catalog + one menu | open |
+| substrate: action menu (snapshot→menu→runtime/cache) | 11.4k | 1.5k | one catalog + one menu | catalog/environment/menu/runtime core: 3,265→2,168 lines and 104,151→70,217 bytes; direct capability-to-command projection replaces intent/plan/dispatch layers. cache, mutation leases, editor handoff and remaining substrate stay open |
 | substrate: workspace/panes (store, host, memento, mobile chrome, pane find, route model) | 20.7k | 6k | reauthor | open |
-| substrate: api/auth/bff (proxy, sse, session; BFF routes already collapsed) | 14.5k | 4k | reauthor | open |
+| substrate: api/auth/bff (proxy, sse, session; BFF routes already collapsed) | 13.9k | 4k | reauthor | bff transport 940→328 lines: one forwarding owner with explicit session/public/share/extension lanes; server JSON fetch now owns its deadline through body consumption; auth, client consolidation and sse remain open |
 | substrate: ui primitives (+3.5k css, fonts/legal) | 14.3k | 6k | reauthor css | open |
 | substrate: jobs/worker | 6.6k | 2k | reauthor | open |
 | codex agent host (+ deploy isolation) | 4.4k | 2k | keep; declare isolation in compose, not python | open |

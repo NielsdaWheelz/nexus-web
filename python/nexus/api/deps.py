@@ -3,18 +3,13 @@
 from typing import Annotated
 from uuid import UUID
 
-import httpx
 from fastapi import Header, Request
 
 from nexus.auth.bearer import parse_bearer_token
-from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import set_stream_jti
 from nexus.services import stream_tokens
 from nexus.services.generation_catalog import GenerationCatalogService
-from nexus.services.generation_runtime import compose_generation_execution_runtime
-from nexus.services.llm_execution import ExecutionRuntime
-from nexus.services.tool_runtime.catalog import ComposedToolRuntime
 from nexus.services.tool_runtime.declarations import BROWSER_TOOL_PROJECTION_REVISION
 
 TOOL_PROJECTION_HEADER = "X-Nexus-Tool-Projection"
@@ -46,23 +41,6 @@ def get_stream_viewer(request: Request) -> UUID:
     verified = stream_tokens.verify_stream_token(token)
     set_stream_jti(verified.jti)
     return verified.user_id
-
-
-def get_generation_runtime(request: Request) -> ExecutionRuntime:
-    """Compose request-scoped routing over process-owned clients and catalogs."""
-
-    http_client = getattr(request.app.state, "httpx_client", None)
-    tools = getattr(request.app.state, "tool_runtime", None)
-    if not isinstance(http_client, httpx.AsyncClient):
-        raise RuntimeError("generation HTTP client is not initialized")
-    if not isinstance(tools, ComposedToolRuntime):
-        raise RuntimeError("generation tool runtime is not initialized")
-    return compose_generation_execution_runtime(
-        get_settings(),
-        http_client=http_client,
-        catalog=get_generation_catalog_service(request),
-        tools=tools,
-    )
 
 
 def get_generation_catalog_service(request: Request) -> GenerationCatalogService:

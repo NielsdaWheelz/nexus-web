@@ -1,462 +1,114 @@
-/**
- * Apply highlight segments to DOM.
- *
- * This module transforms sanitized HTML by wrapping highlighted text ranges
- * in <span> elements with appropriate data attributes and classes.
- *
- * The algorithm:
- * 1. Parse html_sanitized into a detached DOM tree
- * 2. Build canonical cursor (maps text nodes to canonical offsets)
- * 3. Run segmenter on highlights to get disjoint segments
- * 4. Split text nodes at segment boundaries
- * 5. Wrap segments in <span> with data-active-highlight-ids, data-highlight-top, class
- * 6. Insert highlight anchors (one per highlight at its start position)
- * 7. Serialize DOM back to HTML string
- *
- * All DOM work happens on a detached DOM tree, never mutating the live DOM.
- *
- * Active highlight ids are stored in data-active-highlight-ids as
- * space-delimited tokens for efficient CSS ~= selector matching.
- *
- * @see apps/web/README.md (Highlight Libraries / applySegments.ts)
- * @see python/nexus/services/canonicalize.py
- */
-
-import {
-  buildCanonicalCursor,
-  validateCanonicalText,
-  type CanonicalCursorResult,
-  type CanonicalNode,
-} from "./canonicalCursor";
-import { canonicalCpToRawCp } from "./canonicalText";
-import { codepointLength, codepointToUtf16 } from "./codepoints";
+import { buildCanonicalCursor } from "./canonicalCursor";
+import { resolveDomTextRanges } from "./domTextRanges";
 import {
   segmentHighlights,
   type NormalizedHighlight,
-  type Segment,
   type HighlightColor,
 } from "./segmenter";
 
-// =============================================================================
-// Types
-// =============================================================================
-
-/**
- * Input highlight data for rendering.
- * This is the shape returned by the API after normalization.
- */
 export type HighlightInput = {
   id: string;
   start_offset: number;
   end_offset: number;
   color: HighlightColor;
-  created_at: string; // ISO timestamp
+  created_at: string;
 };
 
-/**
- * Result of applying highlights to HTML.
- */
 type ApplyHighlightsResult = {
-  /** The transformed HTML with highlight spans */
   html: string;
-  /** IDs of highlights that failed to render */
   failedIds: string[];
-  /** Whether canonical text validation passed */
   validationPassed: boolean;
 };
 
-// =============================================================================
-// Constants
-// =============================================================================
-
-/**
- * Highlight color CSS classes.
- */
-const COLOR_CLASSES: Record<HighlightColor, string> = {
-  yellow: "hl-yellow",
-  green: "hl-green",
-  blue: "hl-blue",
-  pink: "hl-pink",
-  purple: "hl-purple",
-};
-
-// =============================================================================
-// Helpers
-// =============================================================================
-
-/**
- * Normalize highlight input from API to the format expected by segmenter.
- */
-export function normalizeHighlights(
-  highlights: HighlightInput[]
-): NormalizedHighlight[] {
-  return highlights.map((h) => ({
-    id: h.id,
-    start: h.start_offset,
-    end: h.end_offset,
-    color: h.color,
-    created_at_ms: Date.parse(h.created_at),
-  }));
-}
-
-/**
- * Find the text node and offset within it for a given canonical offset.
- * Returns null if the offset doesn't fall within any mapped text node.
- */
-function findNodeAtOffset(
-  nodes: CanonicalNode[],
-  canonicalOffset: number
-): { node: Text; offsetInNode: number } | null {
-  for (const mapping of nodes) {
-    if (canonicalOffset >= mapping.start && canonicalOffset < mapping.end) {
-      return {
-        node: mapping.node,
-        offsetInNode: canonicalOffset - mapping.start,
-      };
-    }
-  }
-  // Special case: offset at the very end of the last node
-  if (nodes.length > 0) {
-    const last = nodes[nodes.length - 1];
-    if (canonicalOffset === last.end) {
-      // Return position at end of last node
-      const nodeText = [...(last.node.textContent || "")];
-      return {
-        node: last.node,
-        offsetInNode: nodeText.length,
-      };
-    }
-  }
-  return null;
-}
-
-// =============================================================================
-// DOM Manipulation
-// =============================================================================
-
-/**
- * Create a highlight span element.
- *
- * Use space-delimited IDs in data-active-highlight-ids for efficient CSS `~=`
- * selector matching in hover interactions.
- */
-function createHighlightSpan(
-  doc: Document,
-  segment: Segment
-): HTMLSpanElement {
-  const span = doc.createElement("span");
-  span.setAttribute("data-active-highlight-ids", segment.activeIds.join(" "));
-  span.setAttribute("data-highlight-top", segment.topmostId);
-  span.className = segment.activeIds.some((id) => id.startsWith("evidence-"))
-    ? `${COLOR_CLASSES[segment.topmostColor]} hl-evidence`
-    : COLOR_CLASSES[segment.topmostColor];
-  return span;
-}
-
-/**
- * Create a highlight anchor element.
- */
-function createHighlightAnchor(doc: Document, highlightId: string): HTMLSpanElement {
-  const anchor = doc.createElement("span");
-  anchor.setAttribute("data-highlight-anchor", highlightId);
-  return anchor;
-}
-
-/**
- * Wrap a portion of text in a highlight span.
- * Handles the case where the range spans across the entire text node.
- */
-function wrapTextRange(
-  doc: Document,
-  node: Text,
-  startOffset: number,
-  endOffset: number,
-  segment: Segment
-): HTMLSpanElement {
-  const text = node.textContent || "";
-  const codepoints = [...text];
-  const totalCodepoints = codepoints.length;
-
-  // Clamp offsets
-  const clampedStart = Math.max(0, Math.min(startOffset, totalCodepoints));
-  const clampedEnd = Math.max(clampedStart, Math.min(endOffset, totalCodepoints));
-
-  // Convert to UTF-16 offsets
-  const utf16Start = codepointToUtf16(text, clampedStart);
-  const utf16End = codepointToUtf16(text, clampedEnd);
-
-  // Create the span
-  const span = createHighlightSpan(doc, segment);
-
-  if (utf16Start === 0 && utf16End >= text.length) {
-    // Wrap entire node
-    const parent = node.parentNode;
-    if (parent) {
-      parent.replaceChild(span, node);
-      span.appendChild(node);
-    }
-  } else {
-    // Need to split
-    let targetNode = node;
-
-    // Split at start if needed
-    if (utf16Start > 0) {
-      targetNode = node.splitText(utf16Start);
-    }
-
-    // Split at end if needed (relative to target node now)
-    const targetText = targetNode.textContent || "";
-    const relativeEnd = utf16End - utf16Start;
-    if (relativeEnd < targetText.length) {
-      targetNode.splitText(relativeEnd);
-    }
-
-    // Wrap the target node
-    const parent = targetNode.parentNode;
-    if (parent) {
-      parent.replaceChild(span, targetNode);
-      span.appendChild(targetNode);
-    }
-  }
-
-  return span;
-}
-
-// =============================================================================
-// Main Functions
-// =============================================================================
-
-/**
- * Apply highlight segments to a DOM tree.
- *
- * This is the core rendering function that transforms the DOM by:
- * 1. Splitting text nodes at segment boundaries
- * 2. Wrapping highlighted text in span elements
- * 3. Inserting highlight anchors
- *
- * @param root - The root element to transform (will be mutated)
- * @param cursorResult - The canonical cursor result
- * @param segments - The highlight segments from segmenter
- * @param highlights - The original highlights (for anchor placement)
- * @returns Set of highlight IDs that were successfully rendered
- */
-function applySegmentsToDom(
-  root: Element,
-  cursorResult: CanonicalCursorResult,
-  segments: Segment[],
-  highlights: NormalizedHighlight[]
-): Set<string> {
-  const doc = root.ownerDocument;
-  const renderedHighlightIds = new Set<string>();
-  const anchorInserted = new Set<string>();
-
-  // Build a map of highlight ID to highlight for anchor placement
-  const highlightMap = new Map<string, NormalizedHighlight>();
-  for (const h of highlights) {
-    highlightMap.set(h.id, h);
-  }
-
-  // Process segments in reverse order to avoid offset invalidation
-  // (Later segments have higher offsets, processing them first means
-  // earlier segments' offsets remain valid)
-  const sortedSegments = [...segments].sort((a, b) => b.start - a.start);
-
-  // Track span start offsets for anchor placement
-  const spanStartOffsets = new Map<HTMLSpanElement, number>();
-
-  for (const segment of sortedSegments) {
-    // Find all text nodes that this segment spans
-    const nodeMappings: Array<{
-      mapping: CanonicalNode;
-      startInNode: number;
-      endInNode: number;
-    }> = [];
-
-    for (const mapping of cursorResult.nodes) {
-      // Check if this mapping overlaps with the segment
-      const overlapStart = Math.max(segment.start, mapping.start);
-      const overlapEnd = Math.min(segment.end, mapping.end);
-
-      if (overlapStart < overlapEnd) {
-        nodeMappings.push({
-          mapping,
-          startInNode: overlapStart - mapping.start,
-          endInNode: overlapEnd - mapping.start,
-        });
-      }
-    }
-
-    // Process nodes in reverse order (within this segment)
-    nodeMappings.sort((a, b) => b.mapping.start - a.mapping.start);
-
-    let firstSpanForSegment: HTMLSpanElement | null = null;
-    let firstSpanStart = Infinity;
-
-    for (const { mapping, startInNode, endInNode } of nodeMappings) {
-      try {
-        // startInNode/endInNode are in cursor-trimmed (canonical) space.
-        // Convert to raw-text space using canonicalCpToRawCp which properly
-        // handles internal whitespace collapsing (e.g. "a   b" → "a b"),
-        // not just leading whitespace.
-        const rawNodeText = mapping.node.textContent || "";
-        const rawStartInNode = canonicalCpToRawCp(rawNodeText, startInNode, mapping.trimLeadCp);
-        const rawEndInNode = canonicalCpToRawCp(rawNodeText, endInNode, mapping.trimLeadCp);
-
-        const span = wrapTextRange(
-          doc,
-          mapping.node,
-          rawStartInNode,
-          rawEndInNode,
-          segment
-        );
-
-        const spanStart = mapping.start + startInNode;
-        spanStartOffsets.set(span, spanStart);
-
-        // Track the first span (will be the one with lowest offset)
-        if (spanStart < firstSpanStart) {
-          firstSpanForSegment = span;
-          firstSpanStart = spanStart;
-        }
-
-        // Mark all active highlights as rendered
-        for (const id of segment.activeIds) {
-          renderedHighlightIds.add(id);
-        }
-      } catch (error) {
-        console.warn("highlight_render_failed", {
-          segmentStart: segment.start,
-          segmentEnd: segment.end,
-          reason: error instanceof Error ? error.message : "unknown",
-        });
-      }
-    }
-
-    // Insert anchors for highlights that start in this segment
-    if (firstSpanForSegment) {
-      for (const highlightId of segment.activeIds) {
-        if (anchorInserted.has(highlightId)) continue;
-
-        const highlight = highlightMap.get(highlightId);
-        if (!highlight) continue;
-
-        // Check if this highlight starts within this segment
-        if (highlight.start >= segment.start && highlight.start < segment.end) {
-          // Insert anchor before the first span of this segment
-          const anchor = createHighlightAnchor(doc, highlightId);
-          const parent = firstSpanForSegment.parentNode;
-          if (parent) {
-            parent.insertBefore(anchor, firstSpanForSegment);
-            anchorInserted.add(highlightId);
-          }
-        }
-      }
-    }
-  }
-
-  // Insert anchors for any highlights that weren't covered
-  // (This handles edge cases where a highlight's start is exactly at a segment boundary)
-  for (const highlight of highlights) {
-    if (anchorInserted.has(highlight.id)) continue;
-    if (!renderedHighlightIds.has(highlight.id)) continue;
-
-    // Find where to insert the anchor
-    const location = findNodeAtOffset(cursorResult.nodes, highlight.start);
-    if (location) {
-      const anchor = createHighlightAnchor(doc, highlight.id);
-      const parent = location.node.parentNode;
-      if (parent) {
-        parent.insertBefore(anchor, location.node);
-        anchorInserted.add(highlight.id);
-      }
-    }
-  }
-
-  return renderedHighlightIds;
-}
-
-/**
- * Apply highlights to sanitized HTML.
- *
- * This is the main entry point for highlight rendering. It:
- * 1. Parses the HTML into a detached DOM
- * 2. Validates canonical text (aborts if mismatch)
- * 3. Runs the segmenter
- * 4. Applies segments to DOM
- * 5. Serializes back to HTML
- *
- * @param htmlSanitized - The sanitized HTML from the fragment
- * @param canonicalText - The canonical text from the fragment
- * @param highlights - The highlights to render
- * @returns The result with transformed HTML
- */
+/** Decorate a detached DOM using exact source spans; canonical text is unchanged. */
 export function applyHighlightsToHtml(
   htmlSanitized: string,
   canonicalText: string,
-  highlights: HighlightInput[]
+  highlights: HighlightInput[],
 ): ApplyHighlightsResult {
-  // If no highlights, return original HTML
   if (highlights.length === 0) {
-    return {
-      html: htmlSanitized,
-      failedIds: [],
-      validationPassed: true,
-    };
+    return { html: htmlSanitized, failedIds: [], validationPassed: true };
   }
 
-  // Parse HTML into detached DOM
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(
+  const doc = new DOMParser().parseFromString(
     `<div id="__highlight_root__">${htmlSanitized}</div>`,
-    "text/html"
+    "text/html",
   );
   const root = doc.getElementById("__highlight_root__");
-
   if (!root) {
     return {
       html: htmlSanitized,
-      failedIds: highlights.map((h) => h.id),
+      failedIds: highlights.map((highlight) => highlight.id),
       validationPassed: false,
     };
   }
-
-  // Build canonical cursor and validate.
-  const cursorResult = buildCanonicalCursor(root);
-  const validationPassed = validateCanonicalText(cursorResult, canonicalText);
-
-  if (!validationPassed) {
-    // Abort highlight rendering, return original HTML
+  const cursor = buildCanonicalCursor(root);
+  if (cursor.emitted !== canonicalText) {
     return {
       html: htmlSanitized,
-      failedIds: highlights.map((h) => h.id),
+      failedIds: highlights.map((highlight) => highlight.id),
       validationPassed: false,
     };
   }
 
-  // Normalize highlights for segmenter
-  const normalized = normalizeHighlights(highlights);
+  // NFC can map several canonical codepoints to one raw codepoint. Project
+  // before segmenting so that shared source text receives every active id.
+  const byNode = new Map<Node, NormalizedHighlight[]>();
+  for (const highlight of highlights) {
+    const ranges = resolveDomTextRanges(
+      cursor,
+      highlight.start_offset,
+      highlight.end_offset,
+    );
+    for (const range of ranges ?? []) {
+      const projected = {
+        id: highlight.id,
+        color: highlight.color,
+        created_at_ms: Date.parse(highlight.created_at),
+        start: range.startOffset,
+        end: range.endOffset,
+      };
+      const existing = byNode.get(range.startContainer);
+      if (existing) existing.push(projected);
+      else byNode.set(range.startContainer, [projected]);
+    }
+  }
 
-  // Run segmenter
-  const textLength = codepointLength(canonicalText);
-  const { segments, droppedIds } = segmentHighlights(textLength, normalized);
-
-  // Apply segments to DOM
-  const renderedIds = applySegmentsToDom(root, cursorResult, segments, normalized);
-
-  // Calculate failed IDs
-  const failedIds = [
-    ...droppedIds,
-    ...highlights
-      .filter((h) => !renderedIds.has(h.id) && !droppedIds.includes(h.id))
-      .map((h) => h.id),
-  ];
-
-  // Serialize back to HTML
-  const html = root.innerHTML;
-
+  const rendered = new Set<string>();
+  for (const { node } of cursor.nodes) {
+    const projected = byNode.get(node);
+    if (!projected) continue;
+    const { segments } = segmentHighlights(node.length, projected);
+    const firstSpans = new Map<string, HTMLSpanElement>();
+    // Split from the end so earlier UTF-16 offsets keep referring to this node.
+    for (const segment of segments.reverse()) {
+      const target = segment.start > 0 ? node.splitText(segment.start) : node;
+      const length = segment.end - segment.start;
+      if (length < target.length) target.splitText(length);
+      const span = doc.createElement("span");
+      span.dataset.activeHighlightIds = segment.activeIds.join(" ");
+      span.dataset.highlightTop = segment.topmostId;
+      span.className = `hl-${segment.topmostColor}`;
+      if (segment.activeIds.some((id) => id.startsWith("evidence-"))) {
+        span.classList.add("hl-evidence");
+      }
+      target.replaceWith(span);
+      span.append(target);
+      for (const id of segment.activeIds) firstSpans.set(id, span);
+    }
+    for (const [id, span] of firstSpans) {
+      if (rendered.has(id)) continue;
+      const anchor = doc.createElement("span");
+      anchor.dataset.highlightAnchor = id;
+      span.before(anchor);
+      rendered.add(id);
+    }
+  }
   return {
-    html,
-    failedIds,
+    html: root.innerHTML,
+    failedIds: highlights
+      .filter((highlight) => !rendered.has(highlight.id))
+      .map((highlight) => highlight.id),
     validationPassed: true,
   };
 }

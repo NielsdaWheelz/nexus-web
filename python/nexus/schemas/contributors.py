@@ -1,23 +1,4 @@
-"""Contributor DTOs.
-
-Wire-case seam (D-1). The five author-surface endpoints — ``GET /contributors``,
-``GET /contributors/{handle}``, ``GET /contributors/{handle}/works``,
-``PATCH /contributors/{handle}`` and ``PUT /media/{id}/authors`` — speak STRICT
-camelCase both directions:
-
-- request models accept camel keys only (``alias`` + ``populate_by_name=False`` +
-  ``extra="forbid"``), so a snake payload is rejected;
-- response models serialise camel via ``ok(model, by_alias=True)`` and re-validate
-  their own camel dump on replay. They keep ``populate_by_name=True`` so the facade
-  can construct them with ordinary snake field names while replay's
-  ``Model.model_validate(stored_camel_dump)`` still round-trips (D-42).
-
-EMBEDDED credits inside the existing media/search/podcast/library GET DTOs stay
-snake_case: the narrowed :class:`ContributorCreditOut` (D-33) carries no aliases
-and rides the snake ``ok(by_alias=False)`` wire. The podcast subscribe payload
-rides the same snake surface via the snake-strict :class:`ContributorCreditIn`
-(v2, D-4).
-"""
+"""Contributor DTOs: snake-case embedded credits, strict camelCase author surfaces."""
 
 from __future__ import annotations
 
@@ -25,76 +6,57 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
-from nexus.services.contributor_taxonomy import clean_contributor_display
-
-# Bounds are inlined literals (matching migration D-32 / observation value types):
-# credited/display names 200 code points, raw role 80, one author slice 20 rows,
-# clientMutationId 1..120 (the existing resource_mutations key length).
-_MAX_NAME_CODE_POINTS = 200
-_MAX_RAW_ROLE_LENGTH = 80
-_MAX_AUTHORS_PER_SLICE = 20
-_MAX_CLIENT_MUTATION_ID = 120
+from nexus.services.contributor_taxonomy import (
+    MAX_CONTRIBUTOR_NAME_CODE_POINTS,
+    MAX_CREDITS_PER_MANAGED_ROLE,
+    MAX_RAW_ROLE_LENGTH,
+    ContributorRole,
+    clean_contributor_display,
+)
 
 
 def _require_nonblank_name(value: str) -> str:
-    # Whitespace-only names pass min_length but clean to empty downstream (a
-    # ValueError-turned-500 or an empty-display contributor); reject at the
-    # boundary. The literal is preserved — cleaning stays a service concern.
+    # Whitespace-only names pass min_length but clean to empty downstream.
     if not clean_contributor_display(value):
         raise ValueError("must not be blank")
     return value
 
 
-_NonblankName = Annotated[str, AfterValidator(_require_nonblank_name)]
-
-ContributorRole = Literal[
-    "author",
-    "editor",
-    "translator",
-    "host",
-    "guest",
-    "narrator",
-    "creator",
-    "producer",
-    "publisher",
-    "channel",
-    "organization",
-    "unknown",
+_Name = Annotated[
+    str,
+    Field(min_length=1, max_length=MAX_CONTRIBUTOR_NAME_CODE_POINTS),
+    AfterValidator(_require_nonblank_name),
 ]
+# 120 is the resource_mutations idempotency key length.
+_ClientMutationId = Annotated[str, Field(min_length=1, max_length=120)]
 
 
-# ---------------------------------------------------------------------------
-# Snake-strict adapter input (podcast subscribe payload rides the snake surface)
-# ---------------------------------------------------------------------------
+class _CamelRequest(BaseModel):
+    """Camel keys only: a snake payload or an unknown key is a 422."""
+
+    model_config = ConfigDict(populate_by_name=False, extra="forbid")
+
+
+class _CamelResponse(BaseModel):
+    """Serialised camel by ``ok(by_alias=True)``; constructed and replayed by either name."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
 
 class ContributorCreditIn(BaseModel):
-    """Typed provider credit (v2, D-4): snake-only, strict, server facts dropped.
+    """Typed provider credit: snake-only, strict; ordinal/source/confidence are server-owned."""
 
-    ``ordinal`` (list order is the order), ``source``/``source_ref`` and
-    ``confidence`` are server-owned and no longer client inputs. An unknown role
-    is rejected by the closed vocabulary (422-shaped validation).
-    """
-
-    credited_name: str = Field(min_length=1, max_length=_MAX_NAME_CODE_POINTS)
+    credited_name: str = Field(min_length=1, max_length=MAX_CONTRIBUTOR_NAME_CODE_POINTS)
     role: ContributorRole
-    raw_role: str | None = Field(default=None, max_length=_MAX_RAW_ROLE_LENGTH)
+    raw_role: str | None = Field(default=None, max_length=MAX_RAW_ROLE_LENGTH)
 
     model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=False, extra="forbid")
 
 
-# ---------------------------------------------------------------------------
-# Embedded snake credit (narrowed, D-33) — media/search/podcast/library GET DTOs
-# ---------------------------------------------------------------------------
-
-
 class ContributorCreditOut(BaseModel):
-    """One effective credit fact, embedded snake-case in existing GET DTOs.
+    """One credit fact, embedded snake-case in the media/search/podcast/library DTOs.
 
-    Handle-bearing credits link to author detail; handle-less text-fact credits
-    (podcast browse/discovery previews, D-9) leave the handle/href absent.
-    Removed vs. the legacy shape: ``id``, ``source``, ``source_ref``,
-    ``resolution_status``, ``confidence`` and the nested full contributor.
+    Handle-less text-fact credits (browse/discovery previews) leave handle/href absent.
     """
 
     contributor_handle: str | None = None
@@ -108,66 +70,35 @@ class ContributorCreditOut(BaseModel):
     model_config = ConfigDict(from_attributes=True, extra="forbid")
 
 
-# ---------------------------------------------------------------------------
-# Author-surface request models — STRICT camelCase, snake rejected
-# ---------------------------------------------------------------------------
-
-
-class ExistingAuthorBinding(BaseModel):
-    """Bind a manual author row to an already-visible contributor."""
-
+class ExistingAuthorBinding(_CamelRequest):
     kind: Literal["existing"]
     contributor_handle: str = Field(alias="contributorHandle", min_length=1)
 
-    model_config = ConfigDict(populate_by_name=False, extra="forbid")
 
-
-class NewAuthorBinding(BaseModel):
-    """Bind a manual author row to an explicit, deliberately-distinct new person."""
-
+class NewAuthorBinding(_CamelRequest):
     kind: Literal["new"]
-    display_name: _NonblankName = Field(
-        alias="displayName", min_length=1, max_length=_MAX_NAME_CODE_POINTS
-    )
-
-    model_config = ConfigDict(populate_by_name=False, extra="forbid")
+    display_name: _Name = Field(alias="displayName")
 
 
 AuthorBindingIn = Annotated[ExistingAuthorBinding | NewAuthorBinding, Field(discriminator="kind")]
 
 
-class ManualAuthorRowIn(BaseModel):
+class ManualAuthorRowIn(_CamelRequest):
     """One ordered manual author row. Every row is role ``author``."""
 
-    credited_name: _NonblankName = Field(
-        alias="creditedName", min_length=1, max_length=_MAX_NAME_CODE_POINTS
-    )
+    credited_name: _Name = Field(alias="creditedName")
     binding: AuthorBindingIn
 
-    model_config = ConfigDict(populate_by_name=False, extra="forbid")
 
-
-class ManualMediaAuthorsRequest(BaseModel):
-    """PUT /media/{id}/authors — manual branch: the complete ordered author slice."""
-
-    client_mutation_id: str = Field(
-        alias="clientMutationId", min_length=1, max_length=_MAX_CLIENT_MUTATION_ID
-    )
+class ManualMediaAuthorsRequest(_CamelRequest):
+    client_mutation_id: _ClientMutationId = Field(alias="clientMutationId")
     mode: Literal["manual"]
-    authors: list[ManualAuthorRowIn] = Field(max_length=_MAX_AUTHORS_PER_SLICE)
-
-    model_config = ConfigDict(populate_by_name=False, extra="forbid")
+    authors: list[ManualAuthorRowIn] = Field(max_length=MAX_CREDITS_PER_MANAGED_ROLE)
 
 
-class AutomaticMediaAuthorsRequest(BaseModel):
-    """PUT /media/{id}/authors — reset branch: clears the pin, rejects ``authors``."""
-
-    client_mutation_id: str = Field(
-        alias="clientMutationId", min_length=1, max_length=_MAX_CLIENT_MUTATION_ID
-    )
+class AutomaticMediaAuthorsRequest(_CamelRequest):
+    client_mutation_id: _ClientMutationId = Field(alias="clientMutationId")
     mode: Literal["automatic"]
-
-    model_config = ConfigDict(populate_by_name=False, extra="forbid")
 
 
 MediaAuthorsPutRequest = Annotated[
@@ -176,49 +107,30 @@ MediaAuthorsPutRequest = Annotated[
 ]
 
 
-class ContributorRenameRequest(BaseModel):
-    """PATCH /contributors/{handle} — replayable display-name rename."""
-
-    client_mutation_id: str = Field(
-        alias="clientMutationId", min_length=1, max_length=_MAX_CLIENT_MUTATION_ID
-    )
-    display_name: _NonblankName = Field(
-        alias="displayName", min_length=1, max_length=_MAX_NAME_CODE_POINTS
-    )
-
-    model_config = ConfigDict(populate_by_name=False, extra="forbid")
+class ContributorRenameRequest(_CamelRequest):
+    client_mutation_id: _ClientMutationId = Field(alias="clientMutationId")
+    display_name: _Name = Field(alias="displayName")
 
 
-# ---------------------------------------------------------------------------
-# Author-surface response models — camelCase, replay-round-trippable
-# ---------------------------------------------------------------------------
-
-
-class MediaAuthorCreditOut(BaseModel):
+class MediaAuthorCreditOut(_CamelResponse):
     contributor_handle: str = Field(alias="contributorHandle")
     href: str
     display_name: str = Field(alias="displayName")
     credited_name: str = Field(alias="creditedName")
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
-
-class MediaAuthorsOut(BaseModel):
+class MediaAuthorsOut(_CamelResponse):
     author_mode: Literal["automatic", "manual"] = Field(alias="authorMode")
     authors: list[MediaAuthorCreditOut]
     can_edit_authors: bool = Field(alias="canEditAuthors")
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
-
-class ContributorWorkExampleOut(BaseModel):
+class ContributorWorkExampleOut(_CamelResponse):
     title: str
     href: str
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class ContributorSearchItemOut(BaseModel):
+class ContributorSearchItemOut(_CamelResponse):
     handle: str
     href: str
     display_name: str = Field(alias="displayName")
@@ -226,31 +138,23 @@ class ContributorSearchItemOut(BaseModel):
     work_examples: list[ContributorWorkExampleOut] = Field(alias="workExamples", max_length=2)
     matched_alias: str | None = Field(default=None, alias="matchedAlias")
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
-
-class ContributorSearchPageOut(BaseModel):
+class ContributorSearchPageOut(_CamelResponse):
     contributors: list[ContributorSearchItemOut]
     next_cursor: str | None = Field(default=None, alias="nextCursor")
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
-
-class ContributorRoleFactOut(BaseModel):
+class ContributorRoleFactOut(_CamelResponse):
     credited_name: str = Field(alias="creditedName")
     role: ContributorRole
     raw_role: str | None = Field(default=None, alias="rawRole")
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
-
-class ResourceActionSubjectOut(BaseModel):
+class ResourceActionSubjectOut(_CamelResponse):
     ref: str
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
-
-class ContributorDetailOut(BaseModel):
+class ContributorDetailOut(_CamelResponse):
     handle: str
     href: str
     display_name: str = Field(alias="displayName")
@@ -258,15 +162,11 @@ class ContributorDetailOut(BaseModel):
     can_rename: bool = Field(alias="canRename")
     action_subject: ResourceActionSubjectOut = Field(alias="actionSubject")
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
-
-class ContributorWorkItemOut(BaseModel):
+class ContributorWorkItemOut(_CamelResponse):
     title: str
     href: str
     content_kind: str = Field(alias="contentKind")
     date: str | None = None
     role_facts: list[ContributorRoleFactOut] = Field(alias="roleFacts")
     action_subject: ResourceActionSubjectOut | None = Field(alias="actionSubject")
-
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
