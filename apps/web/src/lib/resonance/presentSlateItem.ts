@@ -1,64 +1,27 @@
 import { absent, present } from "@/lib/api/presence";
+import { readActivity, type ReadStatus } from "@/lib/collections/readState";
 import type {
-  CollectionActivity,
   CollectionRowView,
   ConsumptionModality,
 } from "@/lib/collections/types";
-import type { SlateItem, SlateReason, SlateTarget } from "@/lib/resonance/contract";
-import { assertNever } from "@/lib/assertNever";
+import type { ConsumptionState } from "@/lib/lectern/contract";
+import type { SlateItem, SlateTarget } from "@/lib/resonance/contract";
 
-export function presentSlateReason(reason: SlateReason): string {
-  switch (reason.kind) {
-    case "Continue":
-      return "Continue where you left off";
-    case "AddedToNexus":
-      return "Added to Nexus";
-    case "Published":
-      return "Published";
-    case "NewEpisode":
-      return "New episode";
-    case "Connected":
-      return reason.edgeOrigin === "synapse"
-        ? `Synapse · connected with ${reason.anchor.label}`
-        : `Connected with ${reason.anchor.label}`;
-    case "SharedAuthor":
-      return `Shared author · ${reason.authorName} · with ${reason.anchor.label}`;
-    case "Similar":
-      return `Similar to ${reason.anchor.label}`;
-    default:
-      return assertNever(reason);
-  }
-}
+const SLATE_READ_STATE: Record<ConsumptionState, ReadStatus> = {
+  Unread: "unread",
+  InProgress: "in_progress",
+  Finished: "finished",
+};
 
 function modalityFor(target: SlateTarget): ConsumptionModality {
-  if (
-    target.kind === "Podcast" ||
-    (target.kind === "Media" && target.mediaKind === "podcast_episode")
-  ) {
+  if (target.kind === "Podcast" || target.mediaKind === "podcast_episode") {
     return "Listen";
   }
-  if (target.kind === "Media" && target.mediaKind === "video") {
-    return "Watch";
-  }
-  return "Read";
+  return target.mediaKind === "video" ? "Watch" : "Read";
 }
 
 export function presentSlateItem(item: SlateItem): CollectionRowView {
-  const { target } = item;
-  const reasonText = presentSlateReason(item.reason);
-  const contextText =
-    target.subtitle.kind === "Present"
-      ? `${target.subtitle.value} · ${reasonText}`
-      : reasonText;
-  const activity =
-    item.reason.kind === "Continue" && item.reason.progress.kind === "Present"
-      ? present<CollectionActivity>({
-          kind: "InProgress",
-          modality: modalityFor(target),
-          fraction: item.reason.progress,
-          remainingMinutes: absent(),
-        })
-      : absent<CollectionActivity>();
+  const { target, consumption, readingTimeEstimate } = item;
   return {
     id: target.ref,
     kind:
@@ -70,17 +33,32 @@ export function presentSlateItem(item: SlateItem): CollectionRowView {
     primary: { kind: "link", href: target.href, paneLabelHint: target.title },
     title: { text: target.title },
     contributors: [],
-    publicationDate:
-      item.reason.kind === "Published"
-        ? present(item.reason.publishedOn)
-        : item.reason.kind === "NewEpisode"
-          ? present(item.reason.publishedAt)
-          : absent(),
-    context: present({ kind: "Text", text: contextText }),
-    activity,
+    publicationDate: item.publicationDate,
+    context:
+      target.subtitle.kind === "Present"
+        ? present({ kind: "Text", text: target.subtitle.value })
+        : absent(),
+    activity:
+      consumption.kind === "Present"
+        ? readActivity(
+            {
+              read_state: SLATE_READ_STATE[consumption.value.state],
+              progressFraction:
+                consumption.value.progress.kind === "Present"
+                  ? present({ value: consumption.value.progress.value })
+                  : absent(),
+            },
+            modalityFor(target),
+            readingTimeEstimate.kind === "Present"
+              ? {
+                  totalMinutes: present(readingTimeEstimate.value.totalMinutes),
+                  remainingMinutes: readingTimeEstimate.value.remainingMinutes,
+                }
+              : { totalMinutes: absent(), remainingMinutes: absent() },
+          )
+        : absent(),
     exceptionalStatus: absent(),
     localAvailability: absent(),
-    relatedMediaId: absent(),
     actionSubject: target.actionSubject,
     selected: false,
   };

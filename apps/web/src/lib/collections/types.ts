@@ -14,6 +14,7 @@ import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
 import type {
+  NonNegativeMinutes,
   PositiveCount,
   PositiveMinutes,
   ProgressFraction,
@@ -39,7 +40,7 @@ export type InProgressActivity =
       readonly kind: "InProgress";
       readonly modality: ConsumptionModality;
       readonly fraction: { readonly kind: "Present"; readonly value: ProgressFraction };
-      readonly remainingMinutes: Presence<PositiveMinutes>;
+      readonly remainingMinutes: Presence<NonNegativeMinutes>;
     }
   | {
       readonly kind: "InProgress";
@@ -47,7 +48,7 @@ export type InProgressActivity =
       readonly fraction: { readonly kind: "Absent" };
       readonly remainingMinutes: {
         readonly kind: "Present";
-        readonly value: PositiveMinutes;
+        readonly value: NonNegativeMinutes;
       };
     };
 
@@ -56,6 +57,7 @@ export type CollectionActivity =
       readonly kind: "Unread";
       readonly modality: ConsumptionModality;
       readonly totalMinutes: Presence<PositiveMinutes>;
+      readonly remainingMinutes: Presence<NonNegativeMinutes>;
     }
   | InProgressActivity
   | {
@@ -99,7 +101,6 @@ export interface CollectionRowView {
   readonly activity: Presence<CollectionActivity>;
   readonly exceptionalStatus: Presence<ExceptionalStatus>;
   readonly localAvailability: Presence<LocalAvailability>;
-  readonly relatedMediaId: Presence<string>;
   /**
    * The canonical resource suffix for this row's one contextual More menu.
    * `null` means a non-resource row, which may contribute only `flatActions`.

@@ -1,6 +1,6 @@
 /** Pure semantic projection for one podcast-episode row. */
 
-import { absent, present, type Presence } from "@/lib/api/presence";
+import { absent, type Presence } from "@/lib/api/presence";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { LocalAvailability } from "@/lib/offlineMedia/contract";
 import type { CollectionRowView } from "@/lib/collections/types";
@@ -73,7 +73,6 @@ export function presentEpisode(
     ),
     exceptionalStatus: exceptionalStatus(item.processing_status),
     localAvailability,
-    relatedMediaId: present(item.id),
     actionSubject: {
       ref: canonicalResourceRef({ scheme: "media", id: item.id }),
     },

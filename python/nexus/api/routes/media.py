@@ -11,23 +11,20 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db, get_repeatable_read_db
+from nexus.db.session import get_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok, success_response
 from nexus.schemas.contributors import MediaAuthorsPutRequest
 from nexus.schemas.media import MediaIntelligenceOut, MediaLibrariesRequest
-from nexus.schemas.resource_graph import RelatedMediaOut, endpoint_out
 from nexus.services import contributors as contributors_service
 from nexus.services import library_entries, media_intelligence, media_source_ingest
 from nexus.services import media as media_service
 from nexus.services import media_deletion as media_deletion_service
-from nexus.services.resonance import service as resonance_service
 
 router = APIRouter(tags=["media"])
 
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 DbDep = Annotated[Session, Depends(get_db)]
-RepeatableReadDbDep = Annotated[Session, Depends(get_repeatable_read_db)]
 
 
 @router.get("/media")
@@ -93,19 +90,6 @@ def get_media_libraries(media_id: UUID, viewer: ViewerDep, db: DbDep) -> dict:
 @router.get("/media/{media_id}/fragments")
 def get_media_fragments(media_id: UUID, viewer: ViewerDep, db: DbDep) -> dict:
     return ok(media_service.list_fragments_for_viewer(db, viewer.user_id, media_id))
-
-
-@router.get("/media/{media_id}/related")
-def get_related_media(
-    media_id: UUID,
-    viewer: ViewerDep,
-    db: RepeatableReadDbDep,
-    limit: int = Query(default=8, ge=1, le=20),
-) -> dict:
-    peers = resonance_service.related_media(
-        db, viewer_id=viewer.user_id, media_id=media_id, limit=limit
-    )
-    return ok(RelatedMediaOut(peers=[endpoint_out(peer) for peer in peers]))
 
 
 @router.post("/media/{media_id}/libraries", status_code=204)

@@ -18,7 +18,7 @@ import {
   type MediaProcessingStatus,
 } from "@/lib/status/mediaProcessing";
 import type { MediaKind } from "@/lib/media/kind";
-import type { ReadingTimeEstimatePresence } from "@/lib/libraries/readingTime";
+import type { ReadingTimeEstimatePresence } from "@/lib/media/readingTime";
 
 export interface MediaPresenterItem extends ReadStateFields {
   id: string;
@@ -94,7 +94,6 @@ export function presentMedia(
     ),
     exceptionalStatus: exceptionalStatus(item.processing_status),
     localAvailability: absent(),
-    relatedMediaId: present(item.id),
     actionSubject: {
       ref: canonicalResourceRef({ scheme: "media", id: item.id }),
     },

@@ -1,8 +1,5 @@
 import { decodePresence, type Presence } from "@/lib/api/presence";
-import type {
-  PositiveMinutes,
-  ProgressFraction,
-} from "@/lib/consumption/activityFacts";
+import type { ProgressFraction } from "@/lib/consumption/activityFacts";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
 import {
   MEDIA_KINDS,
@@ -10,21 +7,15 @@ import {
 } from "@/lib/media/kind";
 import {
   expectBoolean,
-  expectExactRecord,
   expectFiniteNumber,
-  expectInteger,
   expectOneOf,
   expectRecord,
 } from "@/lib/validation";
 
-const INT32_MAX = 2_147_483_647;
-
-export interface ReadingTimeEstimate {
-  totalMinutes: PositiveMinutes;
-  remainingMinutes: Presence<PositiveMinutes>;
-}
-
-export type ReadingTimeEstimatePresence = Presence<ReadingTimeEstimate>;
+import {
+  decodeReadingTimeEstimate,
+  type ReadingTimeEstimatePresence,
+} from "@/lib/media/readingTime";
 
 type DecodedReadingTimeEntry<T> = T extends {
   kind: "media";
@@ -48,37 +39,6 @@ type DecodedReadingTimeEntry<T> = T extends {
           readingTimeEstimate: ReadingTimeEstimatePresence;
         }
       : never;
-
-function decodeMinutes(raw: unknown, name: string): number {
-  const value = expectInteger(raw, name);
-  if (value < 1 || value > INT32_MAX) {
-    throw new TypeError(`${name} must be between 1 and ${INT32_MAX}`);
-  }
-  return value;
-}
-
-function decodeEstimate(raw: unknown): ReadingTimeEstimate {
-  const value = expectExactRecord(
-    raw,
-    ["totalMinutes", "remainingMinutes"],
-    "readingTimeEstimate.value",
-  );
-  const totalMinutes = {
-    value: decodeMinutes(
-      value.totalMinutes,
-      "readingTimeEstimate.value.totalMinutes",
-    ),
-  };
-  const remainingMinutes = decodePresence(value.remainingMinutes, (minutes) =>
-    ({
-      value: decodeMinutes(
-        minutes,
-        "readingTimeEstimate.value.remainingMinutes.value",
-      ),
-    }),
-  );
-  return { totalMinutes, remainingMinutes };
-}
 
 function decodeSourceHost(
   kind: MediaKind,
@@ -107,7 +67,10 @@ export function decodeLibraryReadingTimeEntry(
     ["media", "podcast"] as const,
     "Library entry kind",
   );
-  const estimate = decodePresence(entry.readingTimeEstimate, decodeEstimate);
+  const estimate = decodePresence(
+    entry.readingTimeEstimate,
+    decodeReadingTimeEstimate,
+  );
 
   if (entryKind === "podcast") {
     const decoded = {

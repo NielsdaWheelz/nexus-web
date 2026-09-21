@@ -6,6 +6,7 @@ import base64
 import binascii
 import hashlib
 import json
+import math
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -22,11 +23,12 @@ _INT64_MAX = 2**63 - 1
 _FAMILY_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9:.]{0,127}\Z", re.ASCII)
 _CURSOR_PATTERN = re.compile(r"[A-Za-z0-9_-]+\Z", re.ASCII)
 
-type KeysetScalar = int | datetime | UUID | str | None
+type KeysetScalar = int | float | datetime | UUID | str | None
 
 
 class KeysetValueKind(str, Enum):
     Int = "int"
+    FloatOrNull = "float_or_null"
     DateTime = "datetime"
     DateTimeOrNull = "datetime_or_null"
     Uuid = "uuid"
@@ -75,6 +77,12 @@ def _encode_value(kind: KeysetValueKind, value: KeysetScalar) -> object:
             ):
                 raise ValueError("Invalid keyset integer")
             return value
+        case KeysetValueKind.FloatOrNull:
+            if value is None:
+                return None
+            if not isinstance(value, float) or not math.isfinite(value):
+                raise ValueError("Invalid nullable keyset float")
+            return value
         case KeysetValueKind.DateTime:
             if not isinstance(value, datetime):
                 raise TypeError("Invalid keyset datetime")
@@ -118,6 +126,12 @@ def _decode_value(kind: KeysetValueKind, value: object) -> KeysetScalar:
                 or isinstance(value, bool)
                 or not _INT64_MIN <= value <= _INT64_MAX
             ):
+                raise ValueError
+            return value
+        case KeysetValueKind.FloatOrNull:
+            if value is None:
+                return None
+            if not isinstance(value, float) or not math.isfinite(value):
                 raise ValueError
             return value
         case KeysetValueKind.DateTime:

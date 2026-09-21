@@ -477,7 +477,7 @@ export function decodeChapter(raw: unknown): ChapterOut {
   };
 }
 
-function decodeConsumption(raw: unknown): ConsumptionInfo {
+export function decodeConsumption(raw: unknown): ConsumptionInfo {
   const rec = expectExactRecord(
     raw,
     ["state", "progress", "progressResettable"],

@@ -100,12 +100,6 @@ class ConnectionPageOut(ResourceGraphModel):
     next_cursor: str | None
 
 
-class RelatedMediaOut(ResourceGraphModel):
-    """Deterministic related peers for one media; a hidden peer comes back ``missing``."""
-
-    peers: list[ConnectionEndpointOut]
-
-
 class ContextRefOut(ResourceGraphModel):
     id: UUID
     conversation_id: UUID

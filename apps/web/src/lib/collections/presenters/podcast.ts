@@ -79,7 +79,6 @@ export function presentPodcast(item: PodcastPresenterItem): CollectionRowView {
     activity: activity(item.syncStatus, item.unplayedCount),
     exceptionalStatus: exceptionalStatus(item.syncStatus),
     localAvailability: absent(),
-    relatedMediaId: absent(),
     actionSubject: {
       ref: canonicalResourceRef({ scheme: "podcast", id: item.id }),
     },

@@ -53,6 +53,25 @@ _INSERT = text("""
 """).bindparams(bindparam("locator", type_=JSONB))
 
 
+def current_position_rows_sql() -> str:
+    """Current viewer cursor facts; a missing row and an empty locator both start at zero.
+
+    ``positioned`` distinguishes unknown whole-document progress from an empty
+    cursor. PDF page positions deliberately carry no whole-document progression.
+    The composing query binds ``viewer_id``.
+    """
+    return """
+        SELECT media_id,
+               locator IS NOT NULL AS positioned,
+               CASE WHEN locator->>'kind' IN ('web', 'epub')
+                    THEN (locator->'locations'->>'total_progression')::float8
+                    ELSE NULL::float8
+               END AS total_progression
+        FROM reader_media_state
+        WHERE user_id = :viewer_id
+    """
+
+
 def supports_media_kind(media_kind: str) -> bool:
     return media_kind in _LOCATOR_KIND
 

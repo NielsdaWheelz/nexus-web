@@ -13,6 +13,7 @@ from nexus.db.models import MediaKind, ProcessingStatus, TranscriptCoverage, Tra
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
 from nexus.schemas.media import CapabilitiesOut
 from nexus.services.media_processing_state import is_metadata_enrichment_eligible
+from nexus.services.pdf_readiness import pdf_quote_text_readiness_rows_sql
 
 SourceRecoveryRestriction = Literal["NotOwner", "SameSourceTerminal", "SourceNotReacquirable"]
 type SourceRecoveryAnswer = RetrySourceOffer | RepairSourceOffer | SourceRecoveryRestriction | None
@@ -70,6 +71,29 @@ def can_edit_media_authors(*, can_read: bool, is_creator: bool) -> bool:
 
 def is_document_status_ready(processing_status: str | ProcessingStatus) -> bool:
     return processing_status == ProcessingStatus.ready_for_reading.value
+
+
+def media_file_exists_sql(media_id_expr: str) -> str:
+    """The original-file fact shared by capability queries and Media hydration."""
+    return f"EXISTS (SELECT 1 FROM media_file mf WHERE mf.media_id = {media_id_expr})"
+
+
+def quotable_document_rows_sql() -> str:
+    """Document ids/kinds whose current artifacts support ``can_quote``.
+
+    This is the queryable document half of ``derive_capabilities``, including
+    original-file and complete PDF text checks. Visibility belongs to callers.
+    """
+    return f"""
+        SELECT m.id AS media_id, m.kind AS media_kind
+        FROM media m
+        LEFT JOIN ({pdf_quote_text_readiness_rows_sql()}) pdf ON pdf.media_id = m.id
+        WHERE m.processing_status = '{ProcessingStatus.ready_for_reading.value}'
+          AND (
+              m.kind IN ('web_article', 'epub')
+              OR (m.kind = 'pdf' AND {media_file_exists_sql("m.id")} AND pdf.quote_text_ready)
+          )
+    """
 
 
 def is_same_source_terminal_error(error_code: str | None) -> bool:

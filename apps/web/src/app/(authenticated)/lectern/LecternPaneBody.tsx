@@ -3,6 +3,7 @@
 import { Play } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import CollectionView from "@/components/collections/CollectionView";
+import QuickReadsSection from "@/components/collections/QuickReadsSection";
 import ReadingSlateSection from "@/components/collections/ReadingSlateSection";
 import {
   FeedbackNotice,
@@ -514,6 +515,7 @@ export default function LecternPaneBody() {
           />
         )}
       </section>
+      <QuickReadsSection isActive={isPaneActive} />
       <ReadingSlateSection
         returnScope="Lectern.ReadingSlate"
         destination={{ kind: "Lectern" }}

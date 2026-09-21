@@ -128,6 +128,7 @@ import {
 import {
   consumptionProjectionSnapshot,
   useConsumptionProjectionRevision,
+  type ConsumptionProjectionChange,
 } from "@/lib/consumption/projectionRevision";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
@@ -151,12 +152,12 @@ type Library = LibraryOut;
 type LibraryEntry = LibraryEntryListItem;
 type LibraryEntryPage = CollectionPage<LibraryEntry>;
 
-// The two process-local fact revisions the pane binds every entry request to.
+// The process-local fact revisions the pane binds every entry request to.
 // A committed page records the revisions it was fetched at; a later advance
 // (that this pane reacts to) drives one reconciliation of the current view.
 interface LibraryRevisions {
   placement: number;
-  consumption: number;
+  consumption: ConsumptionProjectionChange;
 }
 
 interface EntryReconciliationRequest {
@@ -282,13 +283,13 @@ function libraryEntryFilterFields(entry: LibraryEntry): readonly string[] {
   ];
 }
 
-// A view whose row membership depends on canonical consumption facts: In
-// Progress (only InProgress rows) or any Unfinished completion (Finished rows
-// drop out). An unfiltered All-items view is consumption-insensitive, so a bare
-// heartbeat never refetches it — the immediate local media patch suffices.
+// Membership and remaining-time order can change on consumption writes.
+// Other views refresh only for duration changes or affected placements.
 function viewIsConsumptionSensitive(view: LibraryEntryView): boolean {
   return (
-    view.projection.kind === "InProgress" || completionOf(view) === "unfinished"
+    view.order.kind === "Remaining" ||
+    view.projection.kind === "InProgress" ||
+    completionOf(view) === "unfinished"
   );
 }
 
@@ -306,17 +307,17 @@ export default function LibraryPaneBody() {
   const isPaneActive = usePaneIsActive();
   const paneId = paneRuntime?.paneId ?? `library-${id}`;
 
-  // The two process-local fact revisions. A placement advance can change which
+  // The process-local fact revisions. A placement advance can change which
   // media are filed (and whether Unfiled qualifies); a consumption advance can
-  // change which media are InProgress/Unfinished. The revision values never
-  // enter an API query — they are the pane's local request identity and the
+  // change row state, duration, membership, and remaining-time order. Revisions
+  // never enter an API query — they are the pane's local request identity and the
   // trigger for reconciling the current view against fresh authoritative truth.
   const placementChange = useLibraryPlacementRevision();
   const consumptionChange = useConsumptionProjectionRevision();
   const placementRevisionRef = useRef(placementChange.revision);
   placementRevisionRef.current = placementChange.revision;
-  const consumptionRevisionRef = useRef(consumptionChange.revision);
-  consumptionRevisionRef.current = consumptionChange.revision;
+  const consumptionChangeRef = useRef(consumptionChange);
+  consumptionChangeRef.current = consumptionChange;
 
   // The pane URL owns the library view (order + completion) via a strict, total
   // codec; `decodedView` is a discriminated result and `view` is null only when
@@ -489,7 +490,7 @@ export default function LibraryPaneBody() {
       ? initialRestored.entries.revisions
       : {
           placement: placementChange.revision,
-          consumption: consumptionChange.revision,
+          consumption: consumptionChange,
         },
   );
   // Bumped when a first-page result is revision-stale so the exact same
@@ -658,21 +659,25 @@ export default function LibraryPaneBody() {
   // the current process revisions this pane reacts to. The All (default) pane is
   // stale on any placement mismatch; a named/system pane is stale only when a
   // change SINCE its captured revision actually affected it (or was Unknown) —
-  // judged across every intermediate change, not just the latest scope. Consumption
-  // matters only for a consumption-sensitive view.
+  // judged across every intermediate change, not just the latest scope. Every
+  // view renders duration; other consumption changes affect membership/order
+  // only in sensitive views. Bare heartbeats preserve ordinary pagination.
   const revisionsAreStale = useCallback(
-    (captured: LibraryRevisions, view: LibraryEntryView): boolean => {
+    (captured: LibraryRevisions, entryView: LibraryEntryView): boolean => {
       const placementStale =
         placementChange.revision !== captured.placement &&
         (isDefaultLibrary ||
           libraryPlacementAffectedSince(captured.placement, id));
       const consumptionStale =
-        consumptionChange.revision !== captured.consumption &&
-        viewIsConsumptionSensitive(view);
-      return placementStale || consumptionStale;
+        viewIsConsumptionSensitive(entryView) &&
+        consumptionChange.revision !== captured.consumption.revision;
+      const durationStale =
+        consumptionChange.durationRevision !==
+        captured.consumption.durationRevision;
+      return placementStale || consumptionStale || durationStale;
     },
     [
-      consumptionChange.revision,
+      consumptionChange,
       placementChange.revision,
       id,
       isDefaultLibrary,
@@ -711,7 +716,7 @@ export default function LibraryPaneBody() {
       const path = firstPageRequestPath;
       const revisions: LibraryRevisions = {
         placement: placementRevisionRef.current,
-        consumption: consumptionRevisionRef.current,
+        consumption: consumptionChangeRef.current,
       };
       if (
         requestKey === null ||
@@ -862,7 +867,7 @@ export default function LibraryPaneBody() {
       }
       const serial = requestEntryReconciliation(current.entries.view, {
         placement: placementRevisionRef.current,
-        consumption: consumptionRevisionRef.current,
+        consumption: consumptionChangeRef.current,
       });
       revalidationSourceKeyRef.current = sourceKey;
       return revalidation.wait({
@@ -910,7 +915,7 @@ export default function LibraryPaneBody() {
       }
       requestEntryReconciliation(current.entries.view, {
         placement: libraryPlacementSnapshot().revision,
-        consumption: consumptionProjectionSnapshot().revision,
+        consumption: consumptionProjectionSnapshot(),
       });
     },
     [clearAllVisitData, requestEntryReconciliation, viewIsCommitted],
@@ -1091,7 +1096,7 @@ export default function LibraryPaneBody() {
     if (entryReconciliationRequest !== null) return;
     const current: LibraryRevisions = {
       placement: placementChange.revision,
-      consumption: consumptionChange.revision,
+      consumption: consumptionChange,
     };
     if (
       !revisionsAreStale(committedRevisionsRef.current, controller.entries.view)
@@ -1100,7 +1105,7 @@ export default function LibraryPaneBody() {
     }
     requestEntryReconciliation(controller.entries.view, current);
   }, [
-    consumptionChange.revision,
+    consumptionChange,
     controller,
     entryReconciliationRequest,
     isPaneActive,
@@ -1126,10 +1131,11 @@ export default function LibraryPaneBody() {
       if ((isInitialView || view === null) && bootstrapSeedClaimable) {
         committedViewInvalidatedRef.current = false;
         // The bootstrap seed is only claimed at process revision zero, so its
-        // committed baseline is exactly {0, 0}. A later advance reconciles it.
+        // committed baseline has only zero revisions. A later relevant advance
+        // reconciles it.
         const seedRevisions: LibraryRevisions = {
           placement: 0,
-          consumption: 0,
+          consumption: { revision: 0, durationRevision: 0 },
         };
         committedRevisionsRef.current = seedRevisions;
         setController({
@@ -1231,7 +1237,7 @@ export default function LibraryPaneBody() {
     committedViewInvalidatedRef.current = false;
     const committedRevisions: LibraryRevisions = {
       placement: placementRevisionRef.current,
-      consumption: consumptionRevisionRef.current,
+      consumption: consumptionChangeRef.current,
     };
     committedRevisionsRef.current = committedRevisions;
     setController({
@@ -1427,7 +1433,7 @@ export default function LibraryPaneBody() {
       committedView,
       {
         placement: placementRevisionRef.current,
-        consumption: consumptionRevisionRef.current,
+        consumption: consumptionChangeRef.current,
       },
       "RefreshList",
     );
@@ -1583,10 +1589,7 @@ export default function LibraryPaneBody() {
   const hideFinished =
     committedView !== null && completionOf(committedView) === "unfinished";
   const isInProgressView = committedView?.projection.kind === "InProgress";
-  // Immediate local filtering mirrors the committed projection so a consumption
-  // mutation removes a row before its reconciliation lands: under the unfinished
-  // filter a newly-finished media row drops out; under In Progress a media row
-  // that is no longer in_progress (Mark Finished/Unread/Reset) drops out.
+  // Apply the committed projection's consumption filters to the installed rows.
   const isVisibleEntry = useCallback(
     (entry: LibraryEntry): boolean => {
       if (removedEntryIds.ids.has(libraryTargetId(entry))) return false;
@@ -2002,7 +2005,7 @@ export default function LibraryPaneBody() {
           entryReconciliationRequest.view,
           {
             placement: libraryPlacementSnapshot().revision,
-            consumption: consumptionProjectionSnapshot().revision,
+            consumption: consumptionProjectionSnapshot(),
           },
           entryReconciliationRequest.recovery,
         )

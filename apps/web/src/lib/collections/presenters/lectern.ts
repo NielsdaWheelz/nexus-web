@@ -56,7 +56,6 @@ export function presentLecternItem(
     ),
     exceptionalStatus: absent(),
     localAvailability: absent(),
-    relatedMediaId: absent(),
     actionSubject: item.actionSubject,
     selected: false,
   };

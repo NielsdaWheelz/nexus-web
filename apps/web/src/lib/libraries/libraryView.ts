@@ -1,7 +1,6 @@
 // Library-specific view: closed order/projection/completion/type values plus a
 // strict, total URLSearchParams <-> LibraryEntryView codec, view-selector
-// helpers, and exact product labels. See
-// docs/cutovers/library-entry-type-filter-and-filter-row-reflow-hard-cutover.md.
+// helpers, and exact product labels.
 
 import {
   MEDIA_KINDS,
@@ -16,6 +15,7 @@ export type LibraryEntryOrder =
   | { kind: "Title"; direction: SortDirection }
   | { kind: "Creator"; direction: SortDirection }
   | { kind: "Published"; direction: SortDirection }
+  | { kind: "Remaining"; direction: SortDirection }
   | { kind: "Added"; direction: SortDirection };
 
 export type Completion = "all" | "unfinished";
@@ -47,14 +47,15 @@ export type DecodedLibraryView =
   | { kind: "Valid"; view: LibraryEntryView }
   | { kind: "Invalid" };
 
-type FactualSortKey = "title" | "creator" | "published" | "added";
+type FactualSortKey = "title" | "creator" | "published" | "added" | "remaining";
 
 function isFactualSortKey(value: string): value is FactualSortKey {
   return (
     value === "title" ||
     value === "creator" ||
     value === "published" ||
-    value === "added"
+    value === "added" ||
+    value === "remaining"
   );
 }
 
@@ -100,6 +101,8 @@ function orderForFactualSort(
       return { kind: "Published", direction };
     case "added":
       return { kind: "Added", direction };
+    case "remaining":
+      return { kind: "Remaining", direction };
     default:
       return assertNever(sort);
   }
@@ -203,6 +206,10 @@ export function encodeLibraryView(
       break;
     case "Added":
       next.set("sort", "added");
+      next.set("direction", view.order.direction);
+      break;
+    case "Remaining":
+      next.set("sort", "remaining");
       next.set("direction", view.order.direction);
       break;
     default:
@@ -487,6 +494,8 @@ export type LibraryOrderPresetId =
   | "creator-desc"
   | "published-newest"
   | "published-oldest"
+  | "remaining-shortest"
+  | "remaining-longest"
   | "added-newest"
   | "added-oldest";
 
@@ -502,6 +511,8 @@ export function orderToPresetId(order: LibraryEntryOrder): LibraryOrderPresetId 
       return order.direction === "desc" ? "published-newest" : "published-oldest";
     case "Added":
       return order.direction === "desc" ? "added-newest" : "added-oldest";
+    case "Remaining":
+      return order.direction === "asc" ? "remaining-shortest" : "remaining-longest";
     default:
       return assertNever(order);
   }
@@ -527,6 +538,10 @@ export function presetIdToOrder(id: LibraryOrderPresetId): LibraryEntryOrder {
       return { kind: "Added", direction: "desc" };
     case "added-oldest":
       return { kind: "Added", direction: "asc" };
+    case "remaining-shortest":
+      return { kind: "Remaining", direction: "asc" };
+    case "remaining-longest":
+      return { kind: "Remaining", direction: "desc" };
     default:
       return assertNever(id);
   }
@@ -555,6 +570,10 @@ export function presetLabel(
       return "Added — newest";
     case "added-oldest":
       return "Added — oldest";
+    case "remaining-shortest":
+      return "Remaining time — shortest first";
+    case "remaining-longest":
+      return "Remaining time — longest first";
     default:
       return assertNever(id);
   }
@@ -568,6 +587,8 @@ const NON_DEFAULT_ORDER_PRESET_IDS: readonly LibraryOrderPresetId[] = [
   "creator-desc",
   "published-newest",
   "published-oldest",
+  "remaining-shortest",
+  "remaining-longest",
   "added-newest",
   "added-oldest",
 ];

@@ -3,11 +3,10 @@
 import {
   Fragment,
   useId,
-  useState,
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { CheckCircle2, Waypoints } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import type { SortableActivatorProps } from "@/components/sortable/SortableList";
 import EmphasisSegments from "@/components/ui/EmphasisSegments";
@@ -22,10 +21,8 @@ import type {
   ExceptionalStatus,
 } from "@/lib/collections/types";
 import type { LocalAvailability } from "@/lib/offlineMedia/contract";
-import { useRelatedMedia } from "@/lib/resonance/useRelatedMedia";
 import { formatByteCount } from "@/lib/text/formatByteCount";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import ConnectionRail from "./ConnectionRail";
 import {
   collectionActivityText,
   formatCollectionPublicationDate,
@@ -254,22 +251,7 @@ export default function CollectionRow({
   readonly rowActionsAvailable?: boolean;
   readonly viewTransitionName?: string;
 }) {
-  const [showPeers, setShowPeers] = useState(false);
-  const disclosureId = useId();
   const reorderHintId = useId();
-
-  const relatedMediaId =
-    row.relatedMediaId.kind === "Present" ? row.relatedMediaId.value : null;
-  const hasPeerAffordance = relatedMediaId !== null;
-  const related = useRelatedMedia(showPeers ? relatedMediaId : null);
-  const relatedStatus =
-    relatedMediaId !== null && showPeers
-      ? related.loading
-        ? "loading"
-        : related.error
-          ? "error"
-          : "ready"
-      : "idle";
 
   const title = row.title.segments
     ? (
@@ -394,33 +376,6 @@ export default function CollectionRow({
       },
     );
   }
-  if (rowActionsAvailable && hasPeerAffordance) {
-    occurrenceActions.push({
-      kind: "command",
-      id: "ViewAction.Collection.Connections",
-      label: "Connections and related",
-      icon: <Waypoints size={16} aria-hidden="true" />,
-      state: showPeers
-        ? {
-            kind: "disclosure",
-            expanded: true,
-            controls: disclosureId,
-            menuLabels: {
-              collapsed: "Show connections and related",
-              expanded: "Hide connections and related",
-            },
-          }
-        : {
-            kind: "disclosure",
-            expanded: false,
-            menuLabels: {
-              collapsed: "Show connections and related",
-              expanded: "Hide connections and related",
-            },
-          },
-      onSelect: () => setShowPeers((visible) => !visible),
-    });
-  }
   const sections: readonly ContextActionSection[] = [
     { id: "Occurrence", actions: occurrenceActions },
     {
@@ -438,21 +393,6 @@ export default function CollectionRow({
       reorderHintId={reorderHintId}
     />
   ) : undefined;
-
-  const expanded =
-    (showPeers && hasPeerAffordance) || panel ? (
-      <>
-        {showPeers && hasPeerAffordance ? (
-          <div id={disclosureId}>
-            <ConnectionRail
-              related={related.data ? [...related.data] : []}
-              relatedStatus={relatedStatus}
-            />
-          </div>
-        ) : null}
-        {panel}
-      </>
-    ) : undefined;
 
   const rootStyle: CSSProperties | undefined = viewTransitionName
     ? { viewTransitionName }
@@ -475,7 +415,7 @@ export default function CollectionRow({
       status={status}
       primaryControl={primaryControl}
       actions={actions}
-      expanded={expanded}
+      expanded={panel}
     />
   );
 }

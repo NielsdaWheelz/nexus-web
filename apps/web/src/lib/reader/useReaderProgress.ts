@@ -269,11 +269,10 @@ export function useReaderProgress(
             baseRevision,
             ...(keepalive ? { keepalive: true } : {}),
           });
-          if (generationRef.current !== generation) {
-            return;
-          }
           if (result.kind === "Conflict") {
-            apply({ type: "save_conflicted", current: result.canonical });
+            if (generationRef.current === generation) {
+              apply({ type: "save_conflicted", current: result.canonical });
+            }
             return;
           }
           const snapshot = canonicalSaveSnapshot(result);
@@ -283,9 +282,13 @@ export function useReaderProgress(
           if (snapshot.state !== "Positioned") {
             throw new Error("Cursor write returned an Empty snapshot");
           }
+          // A teardown flush still changes server facts after this reader's
+          // generation ends. Publish before guarding local state installation.
+          publishConsumptionProjectionChange({ durationChanged: true });
+          if (generationRef.current !== generation) {
+            return;
+          }
           apply({ type: "save_succeeded", snapshot });
-          // A durable reader-state write can change read_state/InProgress.
-          publishConsumptionProjectionChange();
           if (
             isTerminalReaderLocator(locator) &&
             isTerminalReaderLocator(snapshot.locator) &&

@@ -51,6 +51,7 @@ from nexus.services.capabilities import (
     SourceRecoveryAnswer,
     derive_capabilities,
     is_text_document_ready,
+    media_file_exists_sql,
 )
 from nexus.services.consumption import projection
 from nexus.services.content_indexing import SearchRecoveryFacts, search_recovery
@@ -182,7 +183,7 @@ _SELECT_EXPRESSIONS: dict[str, str] = {
     "provider_id": "m.provider_id",
     "created_at": "m.created_at",
     "updated_at": "m.updated_at",
-    "has_file": "EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id)",
+    "has_file": media_file_exists_sql("m.id"),
     "is_creator": "m.created_by_user_id = :viewer_id",
     "source_refresh_available": _SOURCE_REFRESH_AVAILABLE_SQL,
     "original_published_date": "m.original_published_date",
@@ -279,6 +280,7 @@ class CompactMediaTarget:
     title: str
     subtitle: Absent | Present[str]
     image_url: Absent | Present[str]
+    publication_date: Presence[PublicationDate]
     href: str
 
 
@@ -353,6 +355,7 @@ def hydrate_compact_media_targets(
     Podcast episodes borrow the parent podcast's title and artwork; every other
     kind uses its publisher as subtitle and has no image.
     """
+    from nexus.services.podcasts.episodes import episode_publication_rows_sql
     from nexus.services.resource_graph.refs import ResourceRef
     from nexus.services.resource_items.routing import resource_activations_for_refs
 
@@ -366,11 +369,15 @@ def hydrate_compact_media_targets(
                 m.id AS media_id,
                 m.kind AS media_kind,
                 m.title,
+                CASE WHEN m.kind = 'podcast_episode'
+                     THEN to_char(pe.published_at AT TIME ZONE 'UTC', 'YYYY-MM-DD')
+                     ELSE m.original_published_date
+                END AS publication_date,
                 CASE WHEN m.kind = 'podcast_episode' THEN p.title ELSE m.publisher END AS subtitle,
                 CASE WHEN m.kind = 'podcast_episode' THEN p.image_url ELSE NULL END AS image_url
             FROM media m
             JOIN visible_media vm ON vm.media_id = m.id
-            LEFT JOIN podcast_episodes pe ON pe.media_id = m.id
+            LEFT JOIN ({episode_publication_rows_sql()}) pe ON pe.media_id = m.id
             LEFT JOIN podcasts p ON p.id = pe.podcast_id
             WHERE m.id = ANY(:media_ids)
         """),
@@ -397,6 +404,7 @@ def hydrate_compact_media_targets(
             title=str(row["title"]),
             subtitle=presence_from_nullable(_nullable_str(row["subtitle"])),
             image_url=presence_from_nullable(_nullable_str(row["image_url"])),
+            publication_date=presence_from_nullable(row["publication_date"]),
             href=cast(str, activations[ResourceRef(scheme="media", id=media_id).uri].href),
         )
     return hydrated
