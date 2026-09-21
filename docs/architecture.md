@@ -1718,19 +1718,19 @@ The **Lectern** is the one ordered, mixed-media list of outstanding intentions
 Playing** is one device-local audio session, not a second durable list.
 `services/consumption/` is the sole backend consumption owner, split by table:
 `_lectern_store.py` (`consumption_queue_items` membership/order + the
-canonical `LecternSnapshot`), `_state_store.py` (`consumption_overrides`
-explicit `Unread`/`Finished` plus the natural-end override revision),
+canonical `LecternSnapshot`), `state.py` (`consumption_overrides` explicit
+`Unread`/`Finished` plus the natural-end override revision, and
+`reader_engagement_states` current-state reader recency — `last_engaged_at`
+plus, for non-PDF locators, a monotonic `max_total_progression`),
 `_listening_store.py` (`podcast_listening_states`
 position/duration/nullable established episode rate + heartbeat fencing tokens
-`write_revision`/`reset_epoch`), `_reader_cursor_store.py`
+`write_revision`/`reset_epoch`), `reader_cursor.py`
 (`reader_media_state` revisioned
-`Empty`/`Positioned` cursor CAS), `_reader_engagement_store.py`
-(`reader_engagement_states`, the sole DML owner of current-state reader
-recency — `last_engaged_at` plus, for non-PDF locators, a monotonic
-`max_total_progression`), `_activity_store.py`
+`Empty`/`Positioned` cursor CAS), `activity_store.py`
 (`consumption_activity_spans` and `consumption_completion_facts` DML),
-`_activity_stats.py` (read-time aggregation/sessionization), and `_projection.py`
-(the combined explicit-override + reader-engagement read model, plus batched
+`activity_stats.py` (read-time aggregation/sessionization), `stats_read.py`
+(the Stats and Sessions wire payloads), and `projection.py` (the combined
+explicit-override + reader-engagement read model, plus batched
 `PlayerDescriptor`s reusing `derive_playback_source`). Consumption exposes
 policy-neutral engagement and complete queue-membership reads to Resonance; it
 does not own a second public Recent product. `GET /lectern/slate` builds the

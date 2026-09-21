@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from functools import partial
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -16,51 +15,30 @@ from nexus.services.consumption import service as consumption
 
 
 def get(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    expected_account_id: UUID,
-    media_id: UUID,
+    db: Session, *, viewer_id: UUID, expected_account_id: UUID, media_id: UUID
 ) -> OfflineReaderState:
     _require_expected_account(viewer_id, expected_account_id)
     cursor = consumption.get_reader_cursor(db, viewer_id, media_id)
     generation = reader_publication.read_publication_generation(db, media_id=media_id)
     if generation is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    return OfflineReaderState(
-        account_id=viewer_id,
-        reader_generation=generation,
-        cursor=cursor,
-    )
+    return OfflineReaderState(account_id=viewer_id, reader_generation=generation, cursor=cursor)
 
 
 def put(
-    *,
-    viewer_id: UUID,
-    expected_account_id: UUID,
-    media_id: UUID,
-    write: OfflineReaderWrite,
+    *, viewer_id: UUID, expected_account_id: UUID, media_id: UUID, write: OfflineReaderWrite
 ) -> OfflineReaderState:
     _require_expected_account(viewer_id, expected_account_id)
-    # The consumption package owns this precondition: a session that already
-    # holds a transaction would silently keep the ambient isolation level and
-    # cost this write its serializable-equivalent linearization.
-    db = consumption.fresh_session()
-    try:
+    # A session already holding a transaction would keep the ambient isolation
+    # level and cost this write its serializable-equivalent linearization.
+    with consumption.fresh_session() as db:
         return retry_serializable(
-            db,
-            "offline_reader_cursor_write",
-            partial(_put_in_serializable_attempt, db, viewer_id, media_id, write),
+            db, "offline_reader_cursor_write", lambda: _put(db, viewer_id, media_id, write)
         )
-    finally:
-        db.close()
 
 
-def _put_in_serializable_attempt(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-    write: OfflineReaderWrite,
+def _put(
+    db: Session, viewer_id: UUID, media_id: UUID, write: OfflineReaderWrite
 ) -> OfflineReaderState:
     # Visibility is checked before the generation comparison so a stale or
     # foreign media id cannot become an existence oracle.
@@ -69,10 +47,7 @@ def _put_in_serializable_attempt(
     if generation is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     if generation != write.expected_reader_generation:
-        raise ConflictError(
-            ApiErrorCode.E_READER_CONTENT_CHANGED,
-            "Reader publication changed",
-        )
+        raise ConflictError(ApiErrorCode.E_READER_CONTENT_CHANGED, "Reader publication changed")
     cursor = consumption.put_reader_cursor_in_txn(
         db,
         viewer_id=viewer_id,
@@ -80,16 +55,11 @@ def _put_in_serializable_attempt(
         write=CursorWrite(locator=write.locator, base_revision=write.base_revision),
     )
     db.commit()
-    return OfflineReaderState(
-        account_id=viewer_id,
-        reader_generation=generation,
-        cursor=cursor,
-    )
+    return OfflineReaderState(account_id=viewer_id, reader_generation=generation, cursor=cursor)
 
 
 def _require_expected_account(viewer_id: UUID, expected_account_id: UUID) -> None:
     if expected_account_id != viewer_id:
         raise ForbiddenError(
-            ApiErrorCode.E_FORBIDDEN,
-            "Account binding does not match authenticated viewer",
+            ApiErrorCode.E_FORBIDDEN, "Account binding does not match authenticated viewer"
         )

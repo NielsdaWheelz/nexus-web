@@ -57,7 +57,7 @@ from nexus.services.capabilities import (
     derive_capabilities,
     is_text_document_ready,
 )
-from nexus.services.consumption import _projection
+from nexus.services.consumption import projection
 from nexus.services.content_indexing import SearchRecoveryFacts, search_recovery
 from nexus.services.contributor_credits import (
     load_contributor_credits_for_media,
@@ -496,7 +496,7 @@ def list_collection_media_for_viewer_by_ids(
     ]
     pdf_readiness = batch_pdf_quote_text_ready(db, pdf_ids) if pdf_ids else {}
     contributors_by_media = load_contributor_credits_for_media(db, visible_ids)
-    read_states = _projection.media_read_states(
+    read_states = projection.media_read_states(
         db,
         viewer_id=viewer_id,
         media_ids=visible_ids,
@@ -999,7 +999,7 @@ def _apply_consumption_state(
         return
 
     media_ids = [media.id for media in media_outs]
-    states = _projection.media_read_states(db, viewer_id=viewer_id, media_ids=media_ids)
+    states = projection.media_read_states(db, viewer_id=viewer_id, media_ids=media_ids)
     for media in media_outs:
         state = states.get(media.id)
         if state is not None:
@@ -1014,7 +1014,7 @@ def _apply_consumption_state(
     doc_media_ids = [media.id for media in media_outs if media.listening_state is None]
 
     if audio_media_ids:
-        listening_engaged_at_by_id = _projection.listening_recency(
+        listening_engaged_at_by_id = projection.listening_recency(
             db, viewer_id=viewer_id, media_ids=audio_media_ids
         )
         for media in media_outs:
@@ -1022,7 +1022,7 @@ def _apply_consumption_state(
                 media.last_engaged_at = listening_engaged_at_by_id.get(media.id)
 
     if doc_media_ids:
-        doc_engaged_at_by_id = _projection.reader_engagement_recency(
+        doc_engaged_at_by_id = projection.reader_engagement_recency(
             db, viewer_id=viewer_id, media_ids=doc_media_ids
         )
         for media in media_outs:
@@ -1038,7 +1038,7 @@ def _apply_consumption_state(
         media.id for media in media_outs if media.kind == MediaKind.podcast_episode.value
     ]
     if episode_media_ids:
-        descriptors = _projection.player_descriptors(
+        descriptors = projection.player_descriptors(
             db, viewer_id=viewer_id, media_ids=episode_media_ids
         )
         for index, media in enumerate(media_outs):

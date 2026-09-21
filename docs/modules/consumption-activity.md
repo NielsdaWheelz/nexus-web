@@ -47,10 +47,11 @@ All breakdowns, sessions, streaks, and Year presentation derive from effective
 
 | Concern | Owner |
 | --- | --- |
-| Span and exclusion DML | `python/nexus/services/consumption/_activity_store.py` |
+| Span and exclusion DML | `python/nexus/services/consumption/activity_store.py` |
 | Replayable writes and public reads | `python/nexus/services/consumption/service.py` |
-| Aggregation, filtering, sessions | `python/nexus/services/consumption/_activity_stats.py` |
-| Completion policy | `python/nexus/services/consumption/_policy.py` |
+| Aggregation, filtering, sessions | `python/nexus/services/consumption/activity_stats.py` |
+| Completion policy and the read-state derivation | `python/nexus/services/consumption/projection.py` |
+| Stats and Sessions wire payloads | `python/nexus/services/consumption/stats_read.py` |
 | Strict transport shapes | Python activity schema and web Consumption decoders |
 | Browser capture | `apps/web/src/lib/consumption/activityRecorder.ts` |
 | Browser durability and health | `activityOutbox.ts` and `activityRuntime.ts` |

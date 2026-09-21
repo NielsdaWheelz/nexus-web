@@ -8,7 +8,7 @@
 Web refresh (`web_article_ingest.py:231`) and browser recapture
 (`media_source_ingest.py:3427`) replace fragments without reconciling saved reader
 positions. `reader_publication.py:222` advances generation without cursor repair;
-`_reader_cursor_store.py:82` loads schema-valid stale references. New writes are
+`reader_cursor.py:82` loads schema-valid stale references. New writes are
 validated, but `DocumentReaderSession.ts:86` cannot select the deleted fragment.
 
 The populated clone audit found one such cursor among 206 web media. Its saved

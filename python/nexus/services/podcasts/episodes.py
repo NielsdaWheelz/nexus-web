@@ -38,7 +38,7 @@ from nexus.services.collection_revisions import (
     read_collection_revision,
     require_collection_revision,
 )
-from nexus.services.consumption import _projection
+from nexus.services.consumption import projection
 from nexus.services.consumption import service as consumption_service
 from nexus.services.keyset_cursor import (
     KeysetValueKind,
@@ -90,7 +90,7 @@ def resolve_episode_selection_ids(
                     SELECT
                         pe.media_id,
                         {
-                    _projection.episode_state_case_sql(
+                    projection.episode_state_case_sql(
                         listening_alias="pls", override_alias="co", episode_alias="pe"
                     )
                 } AS episode_state
@@ -98,7 +98,7 @@ def resolve_episode_selection_ids(
                     JOIN visible_media vm ON vm.media_id = pe.media_id
                     LEFT JOIN media_transcript_states mts ON mts.media_id = pe.media_id
                     {
-                    _projection.episode_state_joins_sql(
+                    projection.episode_state_joins_sql(
                         user_param=":viewer_id",
                         media_expr="pe.media_id",
                         listening_alias="pls",
@@ -229,14 +229,14 @@ def list_podcast_episodes_for_viewer(
                         CASE WHEN pe.duration_seconds IS NULL THEN 1 ELSE 0 END AS duration_missing,
                         (NULLIF(BTRIM(pe.description_text), '') IS NOT NULL) AS has_show_notes,
                         {
-                    _projection.episode_state_case_sql(
+                    projection.episode_state_case_sql(
                         listening_alias="pls", override_alias="co", episode_alias="pe"
                     )
                 } AS episode_state
                     FROM podcast_episodes pe
                     JOIN visible_media vm ON vm.media_id = pe.media_id
                     {
-                    _projection.episode_state_joins_sql(
+                    projection.episode_state_joins_sql(
                         user_param=":viewer_id",
                         media_expr="pe.media_id",
                         listening_alias="pls",
