@@ -419,8 +419,10 @@ the same chunk/span/embedding pipeline; notes no longer have a parallel
 
 **Media Intelligence** — `media_summaries` is one current summary head per
 Media content fingerprint; `media_claims` holds ordered grounded claims whose
-targets are exact `evidence_span` rows. `services/media_intelligence.py` is the
-sole storage owner and publishes audience-gated single/batch projections.
+targets are exact `evidence_span` rows. `services/media_intelligence_lifecycle.py`
+owns the head lifecycle, `tasks/media_unit_build.py` publishes or fails a unit,
+and `services/media_intelligence.py` publishes audience-gated single/batch
+projections.
 Media Intelligence is current-only reusable interpretation, not Dossier
 revision history.
 
@@ -1330,7 +1332,7 @@ The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
   tool plan → append route-neutral events → finalize. The client merely
   tails `chat_run_events` over SSE and reconciles through bounded repeatable-read
   `GET /chat-runs/{id}` snapshots.
-- **Context assembly** (`context_assembler.py`, `prompt_budget.py`): a
+- **Context assembly** (`context_assembler.py`): a
   context-admitted, lane-ordered plan (system → scope → attached context → retrieved
   evidence → web evidence → history → current user). The prompt plan stores
   token counts, lane metadata, and text-free block manifests, but no prompt hashes

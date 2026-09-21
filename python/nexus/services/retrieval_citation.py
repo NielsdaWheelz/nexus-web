@@ -1,14 +1,11 @@
-"""Retrieval telemetry: the one validated `message_retrievals` writer.
+"""The one validated ``message_retrievals`` writer.
 
-Turns a ``SearchResultOut`` (from ``search.service.get_search_result``) into a
-``RetrievalCitation`` whose ``result_ref``/``locator`` pass the strict retrieval
-validators, and inserts it as a ``message_retrievals`` row.
-
-This is the single owner of "make a retrieval row": ``app_search``,
-``web_search``, attached ``<resources>``, and ``read_resource`` evidence all go
-through it, so the validator-sensitive shape lives in exactly one place.
-Candidate numbering and final citation publication do not live here. Chat owns
-both phases; this module only persists retrieval facts.
+Turns a ``SearchResultOut`` into a ``RetrievalCitation`` whose
+``result_ref``/``locator`` pass the strict retrieval validators, and inserts it
+as a retrieval row. ``app_search``, ``web_search``, attached ``<resources>`` and
+``read_resource`` evidence all go through it, so the validator-sensitive shape
+lives in exactly one place. Candidate numbering and citation publication are
+Chat's, not this module's.
 """
 
 from __future__ import annotations
@@ -68,9 +65,9 @@ class RetrievalCitation:
     def result_ref_json(self) -> dict[str, Any]:
         if self.result_type == "web_result":
             # Web rows carry the provider payload verbatim (url/source/rank/…);
-            # it is built by web_search and already validator-shaped.
+            # web_search builds it already validator-shaped.
             return self.result_ref
-        common = {
+        common: dict[str, Any] = {
             "type": self.result_type,
             "id": self.source_id,
             "result_type": self.result_type,
@@ -87,123 +84,61 @@ class RetrievalCitation:
             "score": self.score,
             "selected": self.selected,
         }
-        if self.result_type == "media":
-            return common
-        if self.result_type == "podcast":
-            return {
-                **common,
-                "contributors": self.contributors,
-            }
-        if self.result_type in {"episode", "video"}:
-            return common
-        if self.result_type == "content_chunk":
-            return {
-                **common,
-                "source_kind": self.result_ref["source_kind"],
-                "citation_label": self.citation_label,
-                "evidence_span_id": self.evidence_span_id,
-                "evidence_span_ids": self.result_ref.get("evidence_span_ids", []),
-                "locator": self.locator,
-                "media_id": self.media_id,
-                "media_kind": self.media_kind,
-            }
-        if self.result_type == "fragment":
-            return {
-                **common,
-                "citation_label": self.citation_label,
-                "locator": self.locator,
-                "media_id": self.media_id,
-                "media_kind": self.media_kind,
-            }
-        if self.result_type == "contributor":
-            return {
-                **common,
-                "contributor_handle": self.result_ref["contributor_handle"],
-            }
-        if self.result_type == "page":
-            return common
-        if self.result_type == "note_block":
-            return {
-                **common,
-                "body_text": self.result_ref["body_text"],
-                "highlight_excerpt": self.result_ref.get("highlight_excerpt"),
-                "locator": self.locator,
-            }
-        if self.result_type == "highlight":
-            return {
-                **common,
-                "color": self.result_ref["color"],
-                "exact": self.result_ref["exact"],
-                "citation_label": self.citation_label,
-                "locator": self.locator,
-                "media_id": self.media_id,
-                "media_kind": self.media_kind,
-            }
-        if self.result_type == "message":
-            return {
-                **common,
-                "conversation_id": self.result_ref["conversation_id"],
-                "seq": self.result_ref["seq"],
-                "locator": self.locator,
-            }
-        if self.result_type == "evidence_span":
-            return {
-                "type": "evidence_span",
-                "id": self.source_id,
-                "result_type": "evidence_span",
-                "source_id": self.source_id,
-                "title": self.title,
-                "source_label": self.source_label,
-                "snippet": self.snippet,
-                "deep_link": self.deep_link,
-                "citation_target": self.citation_target,
-                "citation_label": self.citation_label or "",
-                "context_ref": self.context_ref,
-                "evidence_span_id": self.evidence_span_id or self.source_id,
-                "locator": self.locator,
-                "media_id": self.media_id or self.result_ref.get("media_id"),
-                "media_kind": self.media_kind,
-                "score": self.score,
-                "selected": self.selected,
-            }
-        if self.result_type == "reader_apparatus_item":
-            return {
-                **common,
-                "apparatus_kind": self.result_ref["apparatus_kind"],
-                "locator": self.locator,
-                "media_id": self.media_id,
-                "media_kind": self.media_kind,
-            }
-        if self.result_type == "conversation":
-            return {
-                "type": "conversation",
-                "id": self.source_id,
-                "result_type": "conversation",
-                "source_id": self.source_id,
-                "title": self.title,
-                "source_label": self.source_label,
-                "snippet": self.snippet,
-                "deep_link": self.deep_link,
-                "citation_target": self.citation_target,
-                "context_ref": self.context_ref,
-                "locator": None,
-                "media_id": None,
-                "media_kind": None,
-                "score": self.score,
-                "selected": self.selected,
-            }
-        if self.result_type == "artifact":
-            return {
-                **common,
-                "revision_id": self.result_ref["revision_id"],
-                "subject_ref": self.result_ref["subject_ref"],
-            }
-        if self.result_type == "web_result":
-            # The web-search citation already carries the full validated
-            # ``WebRetrievalResultRef`` shape (extra fields the compact model does
-            # not hold, e.g. extra_snippets/published_at); pass it through.
-            return self.result_ref
-        raise ValueError(f"Unsupported result type: {self.result_type}")
+        match self.result_type:
+            case "media" | "episode" | "video" | "page":
+                return common
+            case "podcast":
+                return {**common, "contributors": self.contributors}
+            case "content_chunk":
+                return {
+                    **common,
+                    "source_kind": self.result_ref["source_kind"],
+                    "citation_label": self.citation_label,
+                    "evidence_span_id": self.evidence_span_id,
+                    "evidence_span_ids": self.result_ref.get("evidence_span_ids", []),
+                }
+            case "fragment":
+                return {**common, "citation_label": self.citation_label}
+            case "contributor":
+                return {**common, "contributor_handle": self.result_ref["contributor_handle"]}
+            case "note_block":
+                return {
+                    **common,
+                    "body_text": self.result_ref["body_text"],
+                    "highlight_excerpt": self.result_ref.get("highlight_excerpt"),
+                }
+            case "highlight":
+                return {
+                    **common,
+                    "color": self.result_ref["color"],
+                    "exact": self.result_ref["exact"],
+                    "citation_label": self.citation_label,
+                }
+            case "message":
+                return {
+                    **common,
+                    "conversation_id": self.result_ref["conversation_id"],
+                    "seq": self.result_ref["seq"],
+                }
+            case "evidence_span":
+                return {
+                    **common,
+                    "citation_label": self.citation_label or "",
+                    "evidence_span_id": self.evidence_span_id or self.source_id,
+                    "media_id": self.media_id or self.result_ref.get("media_id"),
+                }
+            case "reader_apparatus_item":
+                return {**common, "apparatus_kind": self.result_ref["apparatus_kind"]}
+            case "conversation":
+                return {**common, "locator": None, "media_id": None, "media_kind": None}
+            case "artifact":
+                return {
+                    **common,
+                    "revision_id": self.result_ref["revision_id"],
+                    "subject_ref": self.result_ref["subject_ref"],
+                }
+            case _:
+                raise ValueError(f"Unsupported result type: {self.result_type}")
 
 
 def citation_from_search_result(
@@ -236,7 +171,6 @@ def citation_from_search_result(
             if isinstance(evidence_span_ids, list) and evidence_span_ids
             else None
         )
-    result_ref = dict(payload)
     return RetrievalCitation(
         result_type=result_type,
         source_id=str(payload["source_id"] if result_type == "web_result" else payload["id"]),
@@ -254,31 +188,28 @@ def citation_from_search_result(
         score=float(payload["score"]) if payload.get("score") is not None else None,
         contributors=_contributors_from_search_payload(payload),
         filters=filters,
-        result_ref=result_ref,
+        result_ref=dict(payload),
     )
 
 
 def _contributors_from_search_payload(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
     source = payload.get("source")
-    if isinstance(source, Mapping):
-        contributors = source.get("contributors")
-        if isinstance(contributors, list):
-            return [dict(item) for item in contributors if isinstance(item, Mapping)]
-    contributors = payload.get("contributors")
+    contributors = source.get("contributors") if isinstance(source, Mapping) else None
+    if not isinstance(contributors, list):
+        contributors = payload.get("contributors")
     if isinstance(contributors, list):
         return [dict(item) for item in contributors if isinstance(item, Mapping)]
     return []
 
 
 def _locator_from_search_payload(payload: Mapping[str, Any]) -> dict[str, Any] | None:
-    result_type = str(payload.get("type") or "")
     locator = payload.get("locator")
     if isinstance(locator, dict):
         validated = retrieval_locator_json(locator)
         if validated is not None:
             return validated
-    if result_type in STRICT_LOCATOR_RESULT_TYPES:
-        raise ValueError(f"{result_type} search result is missing locator")
+    if str(payload.get("type") or "") in STRICT_LOCATOR_RESULT_TYPES:
+        raise ValueError(f"{payload.get('type')} search result is missing locator")
     return None
 
 
@@ -342,12 +273,12 @@ def insert_retrieval_row(
 ) -> UUID:
     """Upsert one ``message_retrievals`` row from a citation; return its id.
 
-    The single validated insert path. ``result_ref``/``context_ref``/``locator``
-    are validated by the retrieval schema before the row is written.
-    Candidate and final-citation fields are never written here. Chat assigns
-    ``citation_candidate_ordinal`` when evidence is exposed to the model and
-    ``cited_edge_id`` only during final publication.
+    ``result_ref``/``context_ref``/``locator`` are validated by the retrieval
+    schema before the row is written. ``citation_candidate_ordinal`` and
+    ``cited_edge_id`` belong to Chat's numbering and publication phases and are
+    never written here.
     """
+
     payload = {
         "tool_call_id": tool_call_id,
         "ordinal": ordinal,
@@ -370,8 +301,8 @@ def insert_retrieval_row(
     }
     existing = db.execute(
         _SELECT_RETRIEVAL, {"tool_call_id": tool_call_id, "ordinal": ordinal}
-    ).first()
+    ).scalar_one_or_none()
     if existing is None:
         return db.execute(_INSERT_RETRIEVAL, payload).scalar_one()
-    db.execute(_UPDATE_RETRIEVAL, {**payload, "retrieval_id": existing[0]})
-    return existing[0]
+    db.execute(_UPDATE_RETRIEVAL, {**payload, "retrieval_id": existing})
+    return existing

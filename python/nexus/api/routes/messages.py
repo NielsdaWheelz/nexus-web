@@ -1,11 +1,4 @@
-"""Message API routes.
-
-Routes for deleting a single message. Each route is transport-only and calls
-exactly one service function.
-
-Routes:
-- DELETE /api/messages/{message_id}
-"""
+"""Message API routes: delete one message and its subtree."""
 
 from typing import Annotated
 from uuid import UUID
@@ -27,16 +20,13 @@ def delete_message(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Delete a single message.
+    """Delete a message; the conversation too when it was the last one."""
 
-    If this is the last message in the conversation, deletes the conversation too.
-
-    Errors:
-        E_MESSAGE_NOT_FOUND (404): Message doesn't exist or viewer is not conversation owner.
-    """
-    result = conversations_service.delete_message(
-        db=db,
-        viewer_id=viewer.user_id,
-        message_id=message_id,
+    return ok(
+        conversations_service.delete_message(
+            db=db,
+            viewer_id=viewer.user_id,
+            message_id=message_id,
+        ),
+        by_alias=True,
     )
-    return ok(result, by_alias=True)

@@ -1,19 +1,7 @@
-"""Per-kind media read access for inspect/read tools.
+"""Per-kind media read access for the inspect and read tools.
 
-Three operations, one place:
-- ``get_media_read_map_for_viewer`` — an ordered, navigable section list
-  (the agent's ``inspect_resource`` read map).
-- ``load_media_document`` — the whole canonical body + char count (the read
-  tool's ``media:`` full / too_large read).
-- ``read_page_range`` — a PDF page-range slice of ``media.plain_text`` (the read
-  tool's ``page_range:`` evidence read).
-
-Sections are neutral (not the frontend-coupled ``MediaNavigationOut``): each
-points at evidence the read tool can actually open (``fragment:`` or
-``page_range:``). web/epub section data is reused from ``reader_navigation`` (no
-SQL duplicated; one-way dependency — ``reader_navigation`` does not import this);
-pdf and podcast/video SQL is owned here. Missing/forbidden media returns
-``None``; never raises to a tool (errors.md).
+Missing, forbidden, or not-ready media yields ``None``; a tool never sees an
+exception from here.
 """
 
 from __future__ import annotations
@@ -26,7 +14,6 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiError
-from nexus.schemas.presence import Absent, Present
 from nexus.services.capabilities import is_text_document_ready
 from nexus.services.media_document_metrics import load_media_summary_metrics
 from nexus.services.pdf_readiness import is_pdf_quote_text_ready
@@ -72,217 +59,112 @@ class DocumentRead:
 
 @dataclass(frozen=True)
 class MediaDocumentSummary:
-    """Prompt-facing document metrics owned by the document access layer."""
-
     section_count: int | None
     word_count: int | None
+
+
+@dataclass(frozen=True)
+class _Readable:
+    kind: str
+    title: str
+
+
+def _readable(db: Session, viewer_id: UUID, media_id: UUID) -> _Readable | None:
+    """The media's kind and title when this viewer may read its current text."""
+    if not can_read_media(db, viewer_id, media_id):
+        return None
+    row = db.execute(
+        text(
+            "SELECT m.kind, m.title, m.processing_status, mts.transcript_state,"
+            " mts.transcript_coverage FROM media m"
+            " LEFT JOIN media_transcript_states mts ON mts.media_id = m.id WHERE m.id = :id"
+        ),
+        {"id": media_id},
+    ).first()
+    if row is None:
+        return None
+    kind = str(row.kind)
+    if not is_text_document_ready(
+        kind, row.processing_status, row.transcript_state, row.transcript_coverage
+    ):
+        return None
+    if kind == "pdf" and not is_pdf_quote_text_ready(db, media_id):
+        return None
+    return _Readable(kind=kind, title=str(row.title))
 
 
 def get_media_read_map_for_viewer(
     db: Session, viewer_id: UUID, media_id: UUID
 ) -> MediaReadMap | None:
-    if not can_read_media(db, viewer_id, media_id):
+    readable = _readable(db, viewer_id, media_id)
+    if readable is None:
         return None
-    row = db.execute(
-        text("""
-            SELECT m.kind, m.title, m.processing_status,
-                   mts.transcript_state, mts.transcript_coverage
-            FROM media m
-            LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
-            WHERE m.id = :id
-        """),
-        {"id": media_id},
-    ).fetchone()
-    if row is None:
-        return None
-    kind = str(row[0])
-    title = str(row[1])
-    if not is_text_document_ready(
-        kind,
-        str(row[2]),
-        str(row[3]) if row[3] is not None else None,
-        str(row[4]) if row[4] is not None else None,
-    ):
-        return None
-    if kind in ("web_article", "epub"):
+    if readable.kind in ("web_article", "epub"):
         sections = _heading_sections(db, viewer_id, media_id)
         if sections is None:
             return None
-    elif kind == "pdf":
-        if not is_pdf_quote_text_ready(db, media_id):
-            return None
+    elif readable.kind == "pdf":
         sections = _page_sections(db, media_id)
-    elif kind in ("podcast_episode", "video"):
-        sections = _transcript_sections(db, media_id)
     else:
-        # justify-service-invariant-check: the persisted media-kind discriminant
-        # is broader than this readable-map branch union.
-        # justify-defect: every readable kind must have an explicit map policy.
-        raise AssertionError(f"Unhandled media kind for media read map: {kind}")
-    numbered_sections = [
-        replace(section, ordinal=ordinal) for ordinal, section in enumerate(sections, start=1)
-    ]
-    total = len(numbered_sections)
+        sections = _transcript_sections(db, media_id)
+    numbered = [replace(section, ordinal=ordinal) for ordinal, section in enumerate(sections, 1)]
     return MediaReadMap(
         media_id=media_id,
-        kind=kind,
-        title=title,
-        sections=numbered_sections[:_MAX_MAP_SECTIONS],
-        total_sections=total,
+        kind=readable.kind,
+        title=readable.title,
+        sections=numbered[:_MAX_MAP_SECTIONS],
+        total_sections=len(numbered),
     )
 
 
 def load_media_document_summary(
     db: Session, viewer_id: UUID, media_id: UUID
 ) -> MediaDocumentSummary | None:
-    """Return the same user-visible metrics as inspect/read for a media item.
-
-    ``resource_graph.resolve`` uses this for the pointer summary so section
-    counts do not drift from the media read map's per-kind ownership rules.
-    """
-    if not can_read_media(db, viewer_id, media_id):
+    """The same metrics inspect/read report, for the resource-graph pointer summary."""
+    readable = _readable(db, viewer_id, media_id)
+    if readable is None:
         return None
-    row = db.execute(
-        text("""
-            SELECT m.kind, m.processing_status, mts.transcript_state, mts.transcript_coverage
-            FROM media m
-            LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
-            WHERE m.id = :id
-        """),
-        {"id": media_id},
-    ).fetchone()
-    if row is None:
-        return None
-    kind = str(row[0])
-    if not is_text_document_ready(
-        kind,
-        str(row[1]),
-        str(row[2]) if row[2] is not None else None,
-        str(row[3]) if row[3] is not None else None,
-    ):
-        return None
-    if kind == "pdf":
-        if not is_pdf_quote_text_ready(db, media_id):
-            return None
-        metrics = load_media_summary_metrics(db, media_id)
-        if isinstance(metrics.source_section_count, Absent):
-            # justify-service-invariant-check: generic Presence cannot encode its
-            # correlation with the already-discriminated media kind.
-            # justify-defect: the metrics owner promises a PDF section count.
-            raise AssertionError(f"Missing PDF section count for media {media_id}")
-        return MediaDocumentSummary(
-            section_count=metrics.source_section_count.value,
-            word_count=metrics.word_count,
-        )
-    if kind in ("web_article", "epub"):
+    metrics = load_media_summary_metrics(db, media_id)
+    section_count = metrics.source_section_count
+    if readable.kind in ("web_article", "epub"):
         try:
             section_count = len(get_media_navigation_for_viewer(db, viewer_id, media_id).sections)
         except ApiError:
-            # justify-ignore-error: retain the read-map contract's absent section count.
+            # justify-ignore-error: navigation is not ready; the section count is absent.
             section_count = None
-        metrics = load_media_summary_metrics(db, media_id)
-        if isinstance(metrics.source_section_count, Present):
-            # justify-service-invariant-check: generic Presence cannot encode its
-            # correlation with the already-discriminated media kind.
-            # justify-defect: navigation, not source metrics, owns document sections.
-            raise AssertionError(f"Unexpected source section count for media {media_id}")
-        return MediaDocumentSummary(
-            section_count=section_count,
-            word_count=metrics.word_count,
-        )
-    if kind in ("podcast_episode", "video"):
-        metrics = load_media_summary_metrics(db, media_id)
-        if isinstance(metrics.source_section_count, Absent):
-            # justify-service-invariant-check: generic Presence cannot encode its
-            # correlation with the already-discriminated media kind.
-            # justify-defect: the metrics owner promises timed-media fragment count.
-            raise AssertionError(f"Missing transcript section count for media {media_id}")
-        return MediaDocumentSummary(
-            section_count=metrics.source_section_count.value,
-            word_count=metrics.word_count,
-        )
-    # justify-service-invariant-check: the persisted media-kind discriminant is
-    # broader than this summary function's finite runtime branches.
-    # justify-defect: every supported readable kind must be handled above.
-    raise AssertionError(f"Unhandled media kind for document summary: {kind}")
+    return MediaDocumentSummary(section_count=section_count, word_count=metrics.word_count)
 
 
 def load_media_document(db: Session, viewer_id: UUID, media_id: UUID) -> DocumentRead | None:
-    if not can_read_media(db, viewer_id, media_id):
+    readable = _readable(db, viewer_id, media_id)
+    if readable is None:
         return None
-    row = db.execute(
-        text("""
-            SELECT m.kind, m.title, m.plain_text, m.processing_status,
-                   mts.transcript_state, mts.transcript_coverage
-            FROM media m
-            LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
-            WHERE m.id = :id
-        """),
-        {"id": media_id},
-    ).fetchone()
-    if row is None:
-        return None
-    kind = str(row[0])
-    title = str(row[1])
-    if not is_text_document_ready(
-        kind,
-        str(row[3]),
-        str(row[4]) if row[4] is not None else None,
-        str(row[5]) if row[5] is not None else None,
-    ):
-        return None
-    if kind == "pdf":
-        if not is_pdf_quote_text_ready(db, media_id):
-            return None
-        body = str(row[2] or "")
-    elif kind in ("web_article", "epub"):
-        body = _join_fragments(db, media_id)
-    elif kind in ("podcast_episode", "video"):
-        body = _join_fragments(db, media_id)
+    if readable.kind == "pdf":
+        body = str(_plain_text(db, media_id) or "")
     else:
-        # justify-service-invariant-check: the persisted media-kind discriminant
-        # is broader than this readable-document branch union.
-        # justify-defect: every readable kind must have an explicit body policy.
-        raise AssertionError(f"Unhandled media kind for full read: {kind}")
-    return DocumentRead(media_id=media_id, kind=kind, title=title, body=body, char_count=len(body))
+        body = _join_fragments(db, media_id)
+    return DocumentRead(media_id, readable.kind, readable.title, body, len(body))
 
 
 def read_page_range(
     db: Session, viewer_id: UUID, media_id: UUID, page_start: int, page_end: int
 ) -> str | None:
-    if not can_read_media(db, viewer_id, media_id):
+    readable = _readable(db, viewer_id, media_id)
+    if readable is None or readable.kind != "pdf":
         return None
-    row = db.execute(
-        text("SELECT kind, plain_text, processing_status FROM media WHERE id = :id"),
-        {"id": media_id},
-    ).fetchone()
-    if row is None:
-        return None
-    if str(row[0]) != "pdf":
-        return None
-    if not is_text_document_ready(str(row[0]), str(row[2])):
-        return None
-    if not is_pdf_quote_text_ready(db, media_id):
-        return None
-    plain_text = row[1]
+    plain_text = _plain_text(db, media_id)
     if plain_text is None:
         return None
     bounds = db.execute(
         text(
-            """
-            SELECT MIN(start_offset), MAX(end_offset)
-            FROM pdf_page_text_spans
-            WHERE media_id = :id AND page_number BETWEEN :a AND :b
-            """
+            "SELECT MIN(start_offset), MAX(end_offset) FROM pdf_page_text_spans"
+            " WHERE media_id = :id AND page_number BETWEEN :a AND :b"
         ),
         {"id": media_id, "a": page_start, "b": page_end},
-    ).fetchone()
+    ).first()
     if bounds is None or bounds[0] is None:
         return None
     return str(plain_text)[int(bounds[0]) : int(bounds[1])]
-
-
-# --- section builders (per kind) -------------------------------------------------
 
 
 def _heading_sections(
@@ -291,57 +173,34 @@ def _heading_sections(
     try:
         nav = get_media_navigation_for_viewer(db, viewer_id, media_id)
     except ApiError:
-        # justify-ignore-error: media exists and is readable (checked above); a
-        # remaining ApiError means navigation is not ready yet → the map is not
-        # available. Do not silently return a successful empty map.
+        # justify-ignore-error: navigation is not ready, so there is no map to serve.
         return None
-    fragment_ids = [s.target.fragment_id for s in nav.sections]
-    previews = _fragment_previews(db, fragment_ids)
-    sections: list[MediaReadMapSection] = []
-    for nav_section in nav.sections:
-        sections.append(
-            MediaReadMapSection(
-                label=nav_section.label or "(section)",
-                section_kind="heading",
-                read_uri=f"fragment:{nav_section.target.fragment_id}",
-                preview=previews.get(nav_section.target.fragment_id, ""),
-                fragment_id=nav_section.target.fragment_id,
-            )
+    previews = _fragment_previews(db, [s.target.fragment_id for s in nav.sections])
+    return [
+        MediaReadMapSection(
+            label=section.label or "(section)",
+            section_kind="heading",
+            read_uri=f"fragment:{section.target.fragment_id}",
+            preview=previews.get(section.target.fragment_id, ""),
+            fragment_id=section.target.fragment_id,
         )
-    return sections
+        for section in nav.sections
+    ]
 
 
 def _page_sections(db: Session, media_id: UUID) -> list[MediaReadMapSection]:
-    plain_text = str(
-        db.scalar(text("SELECT plain_text FROM media WHERE id = :id"), {"id": media_id}) or ""
-    )
-    rows = db.execute(
-        text(
-            """
-            SELECT page_number, page_label, start_offset, end_offset
-            FROM pdf_page_text_spans
-            WHERE media_id = :id
-            ORDER BY page_number ASC
-            """
-        ),
-        {"id": media_id},
-    ).fetchall()
+    plain_text = str(_plain_text(db, media_id) or "")
     sections: list[MediaReadMapSection] = []
     group: list[tuple[int, str | None, int, int]] = []
 
     def flush() -> None:
         first_page, first_label, group_start, _ = group[0]
         last_page, last_label, _, group_end = group[-1]
-        first_display = first_label or str(first_page)
-        last_display = last_label or str(last_page)
-        label = (
-            f"Page {first_display}"
-            if first_page == last_page
-            else f"Pages {first_display}-{last_display}"
-        )
+        first = first_label or str(first_page)
+        last = last_label or str(last_page)
         sections.append(
             MediaReadMapSection(
-                label=label,
+                label=f"Page {first}" if first_page == last_page else f"Pages {first}-{last}",
                 section_kind="page_range",
                 read_uri=f"page_range:{media_id}:{first_page}-{last_page}",
                 preview=_preview(plain_text[group_start:group_end]),
@@ -350,6 +209,13 @@ def _page_sections(db: Session, media_id: UUID) -> list[MediaReadMapSection]:
             )
         )
 
+    rows = db.execute(
+        text(
+            "SELECT page_number, page_label, start_offset, end_offset FROM pdf_page_text_spans"
+            " WHERE media_id = :id ORDER BY page_number ASC"
+        ),
+        {"id": media_id},
+    )
     for row in rows:
         group.append((int(row[0]), str(row[1]) if row[1] else None, int(row[2]), int(row[3])))
         if group[-1][3] - group[0][2] >= _PAGE_GROUP_CHARS:
@@ -361,65 +227,52 @@ def _page_sections(db: Session, media_id: UUID) -> list[MediaReadMapSection]:
 
 
 def _transcript_sections(db: Session, media_id: UUID) -> list[MediaReadMapSection]:
-    chapters: list[tuple[str, int, int | None]] = [
+    chapters = [
         (str(row[0]), int(row[1]), int(row[2]) if row[2] is not None else None)
         for row in db.execute(
             text(
-                """
-                SELECT title, t_start_ms, t_end_ms
-                FROM podcast_episode_chapters
-                WHERE media_id = :id
-                ORDER BY chapter_idx ASC
-                """
+                "SELECT title, t_start_ms, t_end_ms FROM podcast_episode_chapters"
+                " WHERE media_id = :id ORDER BY chapter_idx ASC"
             ),
             {"id": media_id},
-        ).fetchall()
+        )
     ]
-    fragments = db.execute(
+    sections: list[MediaReadMapSection] = []
+    for row in db.execute(
         text(
-            """
-            SELECT id, canonical_text, t_start_ms, t_end_ms
-            FROM fragments
-            WHERE media_id = :id
-            ORDER BY t_start_ms ASC NULLS LAST, idx ASC
-            """
+            "SELECT id, canonical_text, t_start_ms, t_end_ms FROM fragments"
+            " WHERE media_id = :id ORDER BY t_start_ms ASC NULLS LAST, idx ASC"
         ),
         {"id": media_id},
-    ).fetchall()
-    sections: list[MediaReadMapSection] = []
-    for row in fragments:
-        canonical_text = str(row[1] or "")
+    ):
+        preview = _preview(str(row[1] or ""))
         t_start_ms = int(row[2]) if row[2] is not None else None
-        t_end_ms = int(row[3]) if row[3] is not None else None
         sections.append(
             MediaReadMapSection(
-                label=_preview(canonical_text) or "(segment)",
+                label=preview or "(segment)",
                 section_kind="transcript_segment",
                 read_uri=f"fragment:{row[0]}",
-                preview=_preview(canonical_text),
+                preview=preview,
                 t_start_ms=t_start_ms,
-                t_end_ms=t_end_ms,
+                t_end_ms=int(row[3]) if row[3] is not None else None,
                 parent_label=_chapter_label(chapters, t_start_ms),
             )
         )
     return sections
 
 
-# --- shared helpers --------------------------------------------------------------
+def _plain_text(db: Session, media_id: UUID) -> str | None:
+    return db.scalar(text("SELECT plain_text FROM media WHERE id = :id"), {"id": media_id})
 
 
 def _join_fragments(db: Session, media_id: UUID) -> str:
     rows = db.execute(
         text(
-            """
-            SELECT canonical_text
-            FROM fragments
-            WHERE media_id = :id
-            ORDER BY t_start_ms ASC NULLS LAST, idx ASC
-            """
+            "SELECT canonical_text FROM fragments WHERE media_id = :id"
+            " ORDER BY t_start_ms ASC NULLS LAST, idx ASC"
         ),
         {"id": media_id},
-    ).fetchall()
+    )
     return "\n\n".join(str(row[0] or "") for row in rows)
 
 
@@ -429,7 +282,7 @@ def _fragment_previews(db: Session, fragment_ids: list[UUID]) -> dict[UUID, str]
     rows = db.execute(
         text("SELECT id, canonical_text FROM fragments WHERE id = ANY(:ids)"),
         {"ids": fragment_ids},
-    ).fetchall()
+    )
     return {row[0]: _preview(str(row[1] or "")) for row in rows}
 
 
@@ -440,13 +293,11 @@ def _chapter_label(
         return None
     fallback: str | None = None
     for title, chapter_start, chapter_end in chapters:
-        if chapter_start <= t_start_ms:
-            fallback = title
-        if chapter_start <= t_start_ms and (chapter_end is None or t_start_ms < chapter_end):
+        if chapter_start > t_start_ms:
+            break
+        fallback = title
+        if chapter_end is None or t_start_ms < chapter_end:
             return title
-        if chapter_start <= t_start_ms:
-            continue
-        break
     return fallback
 
 

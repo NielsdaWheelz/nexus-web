@@ -225,8 +225,9 @@ unexpected timeouts. See
 - [open] secret scanning · 2026-09-18 pr #334 · gitguardian repeats an operator-classified false positive on a compose variable reference: [ticket](tickets/gitguardian-repeats-classified-variable-reference.md).
 - [open] oi-175 · chat tool runtime · 2026-09-21 reauthoring · p3 · `tool_call_delta` has no producer but remains in the event vocabulary, the CHECK and the browser decoder; removal needs one owner preflight count: [ticket](tickets/tool-call-delta-event-has-no-producer.md).
 - [open] oi-176 · consumption · 2026-09-21 reauthoring · p3 · the python and SQL read-state ladders enter the audio arm on different predicates for a podcast episode with no audio: [ticket](tickets/consumption-read-state-divergence.md).
-- [open] oi-177 · dossiers · 2026-09-21 reauthoring · p3 · the three artifact_learn_* tables have no writer and await a 0240 drop: [ticket](tickets/artifact-learn-tables-are-write-free.md).
+- [open] oi-177 · dossiers · 2026-09-21 reauthoring · p3 · the three artifact_learn_* tables have no writer and await a drop in the next alembic revision: [ticket](tickets/artifact-learn-tables-are-write-free.md).
 - [open] oi-178 · dossiers · 2026-09-21 reauthoring · p2 · a recheck raising DossierInputTooLarge escapes the terminal writers and leaves a build active with no terminal: [ticket](tickets/dossier-recheck-can-raise-past-the-terminal-writer.md).
+- [open] oi-179 · chat · 2026-09-21 reauthoring · p3 · chat_prompt_assemblies keeps three columns (budget_breakdown, included_retrieval_ids, prompt_block_manifest) nothing reads; drop in the next alembic revision: [ticket](tickets/chat-prompt-assembly-columns-have-no-reader.md).
 
 - [open] 2026-09-21 chat-database repair · chat worker runs synchronous database work on its execution loop: [ticket](tickets/chat-worker-database-work-runs-on-its-execution-loop.md).
 - [open] 2026-09-21 chat-database repair · request session release runs on the api event loop: [ticket](tickets/request-db-session-release-runs-on-event-loop.md).

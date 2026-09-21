@@ -34,9 +34,9 @@ fail admission instead of silently reducing the research capability.
 
 initial sampling reads source prefixes bounded in sql by
 `metadata_enrichment_max_content_chars` before normalization. source order stays
-plain text, ready indexed chunks, ready indexed blocks, fragments, podcast notes,
-then description. leading whitespace or markup consumes that raw window; the
-agent can inspect further through its scoped tools. metadata row queries defer
+plain text, ready indexed chunks, fragments, podcast notes, then description.
+leading whitespace or markup consumes that raw window; the agent can inspect
+further through its scoped tools. metadata row queries defer
 the full plain text so sampling does not load the whole document into the light
 worker.
 

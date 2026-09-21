@@ -1,9 +1,9 @@
-"""Reader profile and per-media reader state schemas."""
+"""Reader target, profile, and persisted resume-state schemas."""
 
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, FiniteFloat, model_validator
 
 from nexus.schemas.presence import Presence
 
@@ -11,6 +11,17 @@ ThemeValue = Literal["light", "dark"]
 FontFamilyValue = Literal["serif", "sans"]
 FocusModeValue = Literal["off", "distraction_free", "paragraph", "sentence"]
 HyphenationValue = Literal["auto", "off"]
+QUOTE_MAX_CODE_POINTS = 256
+QUOTE_CONTEXT_MAX_CODE_POINTS = 128
+
+
+def _non_blank(value: str) -> str:
+    if not value.strip():
+        raise ValueError("value cannot be blank")
+    return value
+
+
+NonBlankStr = Annotated[str, AfterValidator(_non_blank)]
 
 
 class ReaderTargetModel(BaseModel):
@@ -88,11 +99,7 @@ class ResolvedHighlightReaderTargetResponse(ReaderTargetModel):
 
 
 class ReaderProfileOut(BaseModel):
-    """Response schema for reader profile.
-
-    Exactly the seven preference fields: creation metadata (``created_at``) is
-    database-clock-only and never appears here.
-    """
+    """Exactly the seven preference fields; ``created_at`` never appears here."""
 
     theme: ThemeValue
     font_size_px: int = Field(ge=12, le=28)
@@ -106,7 +113,7 @@ class ReaderProfileOut(BaseModel):
 
 
 class ReaderProfilePatch(BaseModel):
-    """PATCH body for reader profile (partial update)."""
+    """Partial update; numeric strings must fail rather than silently coerce."""
 
     theme: ThemeValue | None = None
     font_size_px: int | None = Field(default=None, ge=12, le=28)
@@ -116,41 +123,16 @@ class ReaderProfilePatch(BaseModel):
     focus_mode: FocusModeValue | None = None
     hyphenation: HyphenationValue | None = None
 
-    # strict=True: numeric strings and non-integer numeric forms for the int
-    # fields must fail validation rather than silently coerce.
     model_config = ConfigDict(strict=True, extra="forbid")
 
     @model_validator(mode="after")
-    def reject_null_values(self) -> "ReaderProfilePatch":
-        """Profile fields are non-nullable; explicit null should fail fast."""
-        for field_name in (
-            "theme",
-            "font_size_px",
-            "line_height",
-            "font_family",
-            "column_width_ch",
-            "focus_mode",
-            "hyphenation",
-        ):
-            if field_name in self.model_fields_set and getattr(self, field_name) is None:
-                raise ValueError(f"{field_name} cannot be null")
-        return self
-
-    @model_validator(mode="after")
-    def require_at_least_one_field(self) -> "ReaderProfilePatch":
-        """An empty patch has nothing to apply and is rejected."""
+    def validate_patch(self) -> "ReaderProfilePatch":
         if not self.model_fields_set:
             raise ValueError("at least one field is required")
+        for field_name in self.model_fields_set:
+            if getattr(self, field_name) is None:
+                raise ValueError(f"{field_name} cannot be null")
         return self
-
-
-def _reject_blank_string_fields(model: BaseModel, field_names: tuple[str, ...]) -> None:
-    """Reject blank strings for the named fields on a model."""
-
-    for field_name in field_names:
-        value = getattr(model, field_name)
-        if value is not None and not value.strip():
-            raise ValueError(f"{field_name} cannot be blank")
 
 
 class ReaderStateModel(BaseModel):
@@ -160,68 +142,35 @@ class ReaderStateModel(BaseModel):
 
 
 class ReaderTextLocations(ReaderStateModel):
-    """Canonical text location fields shared by non-PDF reader states."""
-
     text_offset: int | None = Field(ge=0)
     progression: float | None = Field(ge=0.0, le=1.0)
     total_progression: float | None = Field(ge=0.0, le=1.0)
     position: int | None = Field(ge=1)
 
 
-QUOTE_MAX_CODE_POINTS = 256
-QUOTE_CONTEXT_MAX_CODE_POINTS = 128
-
-
 class ReaderQuoteContext(ReaderStateModel):
-    """Quote-context fields shared by non-PDF reader states."""
-
-    quote: str | None = Field(max_length=QUOTE_MAX_CODE_POINTS)
-    quote_prefix: str | None = Field(max_length=QUOTE_CONTEXT_MAX_CODE_POINTS)
-    quote_suffix: str | None = Field(max_length=QUOTE_CONTEXT_MAX_CODE_POINTS)
+    quote: NonBlankStr | None = Field(max_length=QUOTE_MAX_CODE_POINTS)
+    quote_prefix: NonBlankStr | None = Field(max_length=QUOTE_CONTEXT_MAX_CODE_POINTS)
+    quote_suffix: NonBlankStr | None = Field(max_length=QUOTE_CONTEXT_MAX_CODE_POINTS)
 
     @model_validator(mode="after")
     def validate_quote_context(self) -> "ReaderQuoteContext":
-        """Reject blank quote fields and require quote text for quote context."""
-
-        _reject_blank_string_fields(self, ("quote", "quote_prefix", "quote_suffix"))
         if self.quote is None and (self.quote_prefix is not None or self.quote_suffix is not None):
             raise ValueError("quote_prefix and quote_suffix require quote")
         return self
 
 
 class ReaderFragmentTarget(ReaderStateModel):
-    """Target fragment for web and transcript resume state."""
-
-    fragment_id: str
-
-    @model_validator(mode="after")
-    def validate_fragment_target(self) -> "ReaderFragmentTarget":
-        """Reject blank fragment targets."""
-
-        _reject_blank_string_fields(self, ("fragment_id",))
-        return self
+    fragment_id: NonBlankStr
 
 
 class ReaderEpubTarget(ReaderStateModel):
-    """EPUB target fields for persisted resume state."""
-
     fragment_id: UUID
-    href_path: str
-    anchor_id: Presence[Annotated[str, Field(min_length=1)]]
-
-    @model_validator(mode="after")
-    def validate_epub_target(self) -> "ReaderEpubTarget":
-        """Reject blank EPUB target strings."""
-
-        _reject_blank_string_fields(self, ("href_path",))
-        if self.anchor_id.kind == "Present" and not self.anchor_id.value.strip():
-            raise ValueError("anchor_id cannot be blank")
-        return self
+    href_path: NonBlankStr
+    anchor_id: Presence[Annotated[str, Field(min_length=1), AfterValidator(_non_blank)]]
 
 
 class PdfReaderResumeState(ReaderStateModel):
-    """Persisted reader state for PDF media."""
-
     kind: Literal["pdf"]
     page: int = Field(ge=1)
     page_progression: float | None = Field(ge=0.0, le=1.0)
@@ -230,8 +179,6 @@ class PdfReaderResumeState(ReaderStateModel):
 
 
 class WebReaderResumeState(ReaderStateModel):
-    """Persisted reader state for web articles."""
-
     kind: Literal["web"]
     target: ReaderFragmentTarget
     locations: ReaderTextLocations
@@ -239,8 +186,6 @@ class WebReaderResumeState(ReaderStateModel):
 
 
 class TranscriptReaderResumeState(ReaderStateModel):
-    """Persisted reader state for transcript readers."""
-
     kind: Literal["transcript"]
     target: ReaderFragmentTarget
     locations: ReaderTextLocations
@@ -248,8 +193,6 @@ class TranscriptReaderResumeState(ReaderStateModel):
 
 
 class EpubReaderResumeState(ReaderStateModel):
-    """Persisted reader state for EPUB readers."""
-
     kind: Literal["epub"]
     target: ReaderEpubTarget
     locations: ReaderTextLocations
@@ -266,10 +209,7 @@ ReaderResumeState = Annotated[
 
 
 class ReaderCursorEmpty(BaseModel):
-    """Snapshot for a user/media pair with no positioned cursor.
-
-    An absent row is revision ``0``; a persisted tombstone carries revision
-    ``>= 1`` and fences stale writes."""
+    """No positioned cursor: an absent row is revision 0, a tombstone is >= 1."""
 
     model_config = ConfigDict(extra="forbid")
     state: Literal["Empty"] = "Empty"
@@ -277,8 +217,6 @@ class ReaderCursorEmpty(BaseModel):
 
 
 class ReaderCursorPositioned(BaseModel):
-    """Snapshot of the one canonical cursor for a user/media pair."""
-
     model_config = ConfigDict(extra="forbid")
     state: Literal["Positioned"] = "Positioned"
     revision: int = Field(ge=1)

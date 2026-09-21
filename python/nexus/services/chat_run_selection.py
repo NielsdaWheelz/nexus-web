@@ -1,8 +1,8 @@
-"""Single read projection for one frozen Chat generation selection.
+"""Read projection for one frozen Chat generation selection.
 
-The durable ``ChatRun.generation_spec`` is the sole dispatch truth. Read paths
-must combine it with one explicit catalog observation; they never infer a
-selection from mutable policy, provider fields, browser state, or a default.
+``ChatRun.generation_spec`` is the sole dispatch truth. Read paths combine it
+with exactly one explicit catalog observation; they never infer a selection
+from mutable policy, provider fields, browser state, or a default.
 """
 
 from __future__ import annotations
@@ -46,15 +46,10 @@ def run_selection_out(
 ) -> RunSelectionOut:
     """Project immutable dispatch facts plus exactly one current observation."""
 
-    # justify-defect: malformed durable Chat facts are storage corruption.
     try:
         spec = read_generation_history(run.generation_spec)
     except (TypeError, ValueError) as error:
         raise AssertionError(f"Chat run {run.id} carries an invalid generation spec") from error
-    # justify-service-invariant-check: generic history also represents background work.
-    # justify-defect: a Chat row must retain its original Chat admission identity.
-    if spec.operation != "chat" or spec.selection_source != "ChatRun":
-        raise AssertionError(f"Chat run {run.id} carries a non-Chat generation spec")
     if (catalog_snapshot is None) == (pair is None):
         raise ValueError("run selection projection requires exactly one catalog observation")
     if catalog_snapshot is not None:

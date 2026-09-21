@@ -21,34 +21,32 @@ from nexus.schemas.media import (
 from nexus.schemas.presence import absent, presence_from_nullable, present
 from nexus.services.capabilities import is_document_status_ready
 from nexus.services.epub_read import read_epub_navigation
-from nexus.services.reader_publication import read_publication_generation
 from nexus.services.reader_structure import DocumentPoint, SectionRangeInput, resolve_section_ends
 
 
 def get_media_navigation_for_viewer(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
+    db: Session, viewer_id: UUID, media_id: UUID
 ) -> MediaNavigationOut:
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     row = db.execute(
-        text("SELECT kind, processing_status FROM media WHERE id = :media_id"),
+        text(
+            "SELECT m.kind, m.processing_status, rp.generation FROM media m"
+            " LEFT JOIN reader_publications rp ON rp.media_id = m.id WHERE m.id = :media_id"
+        ),
         {"media_id": media_id},
     ).one_or_none()
     if row is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    if row.kind not in {"epub", "web_article"}:
+    if row.kind not in ("epub", "web_article"):
         error = ApiError(ApiErrorCode.E_INVALID_KIND, "Endpoint only supports reader navigation")
         error.status_code = 409
         raise error
-    if not is_document_status_ready(str(row.processing_status)):
+    if not is_document_status_ready(str(row.processing_status)) or row.generation is None:
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
-    generation = read_publication_generation(db, media_id=media_id)
-    if generation is None:
-        # justify-defect: canonical document content is installed by the publication owner.
-        raise AssertionError("Readable document has no reader publication")
-    return read_media_navigation(db, media_id=media_id, kind=row.kind, generation=generation)
+    return read_media_navigation(
+        db, media_id=media_id, kind=row.kind, generation=int(row.generation)
+    )
 
 
 def read_media_navigation(
@@ -58,19 +56,18 @@ def read_media_navigation(
     kind: Literal["epub", "web_article"],
     generation: int,
 ) -> MediaNavigationOut:
-    """Read navigation for an authorized, captured source publication."""
+    """Navigation for an authorized, captured source publication."""
     if kind == "epub":
         return read_epub_navigation(db, media_id=media_id, generation=generation)
     from nexus.services.web_article_structure import build_web_article_index_blocks
 
     fragment_rows = (
         db.execute(
-            text("""
-            SELECT f.id, f.idx, char_length(f.canonical_text) AS char_count,
-                   f.canonical_text, f.html_sanitized
-            FROM fragments f
-            WHERE f.media_id = :media_id ORDER BY f.idx
-        """),
+            text(
+                "SELECT f.id, f.idx, char_length(f.canonical_text) AS char_count,"
+                " f.canonical_text, f.html_sanitized"
+                " FROM fragments f WHERE f.media_id = :media_id ORDER BY f.idx"
+            ),
             {"media_id": media_id},
         )
         .mappings()
@@ -78,9 +75,7 @@ def read_media_navigation(
     )
     fragments = [
         ReaderNavigationFragmentOut(
-            fragment_id=row["id"],
-            fragment_idx=row["idx"],
-            char_count=row["char_count"],
+            fragment_id=row["id"], fragment_idx=row["idx"], char_count=row["char_count"]
         )
         for row in fragment_rows
     ]
@@ -146,19 +141,17 @@ def read_media_navigation(
                     else absent(),
                 )
             )
-            node = ReaderNavigationTocNodeOut(
+            nodes[section.section_id] = ReaderNavigationTocNodeOut(
                 id=section.section_id,
                 label=labels[section.section_id],
                 section_id=present(section.section_id),
                 children=[],
             )
-            nodes[section.section_id] = node
         for section in inputs:
-            node = nodes[section.section_id]
             if section.parent_section_id.kind == "Present":
-                nodes[section.parent_section_id.value].children.append(node)
+                nodes[section.parent_section_id.value].children.append(nodes[section.section_id])
             else:
-                roots.append(node)
+                roots.append(nodes[section.section_id])
     return MediaNavigationOut(
         media_id=media_id,
         kind="web_article",
