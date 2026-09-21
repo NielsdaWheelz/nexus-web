@@ -128,26 +128,22 @@ without touching storage. The ETag is route metadata, not a content hash.
 ## Operational Rule
 
 Application release only records the expected manifest digest. Oracle publication
-is the independent host operation
-`deploy/hetzner/reconcile-oracle.sh <current-source-sha>`; runtime requests never
-create, repair, or publish support.
+is the independent host operation `deploy/hetzner/reconcile-oracle.sh`; runtime
+requests never create, repair, or publish support.
 
-The operator binds the current immutable release record, its captured config,
-and the manifest baked into its worker image. With no active attempt it may no-op
-only when exact DB/selector/R2 state and the current marker agree. Before mutation
-it rejects removal of any active work, anchor, or plate key. It then durably
-records its target, stops all app writers, unpublishes first, reconciles ordinary
-library/media/index and plate support through their owners, runs only its exact
-declared jobs, proves exact readiness, and inserts the marker last in one short
-transaction. R2 objects precede DB metadata; no DB transaction spans HTTP, R2,
-or job execution.
+The script reads the expected manifest digest from the running API's `/version`,
+so it always targets whatever release is current. It exits early when exact
+DB/selector/R2 state and the current marker already agree. Otherwise it runs
+`preflight` (which rejects removal of any active work, anchor, or plate key),
+stops all app writers, unpublishes first, reconciles ordinary
+library/media/index and plate support through their owners, publishes, restarts
+the stack, and re-proves exact publication. R2 objects precede DB metadata; no
+DB transaction spans HTTP, R2, or job execution; the marker is inserted last in
+one short transaction.
 
-The operation is replayable by the same SHA and inputs. After unpublish, writers
-normally remain stopped until replay succeeds. One allowed late crash prefix can
-leave the exact publication committed and the captured runtime running before
-`RuntimeRestored` is durable; replay re-stops those exact writer IDs, converges
-and re-proves the same target, then restores the exact recorded runtime.
-Physical garbage collection and destructive manifest removals are out of scope.
+The operation is idempotent: rerun it after a failure. Writers stay stopped if
+it fails mid-sequence, which is deliberate — rerunning converges and restarts
+them. Physical garbage collection and destructive manifest removals are out of scope.
 
 The manifest describes direct ingestable media sources, passage selectors, and
 plate inputs, not corpus text or embeddings. Source URLs must contain the target

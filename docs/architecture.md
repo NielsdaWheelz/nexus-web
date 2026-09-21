@@ -161,10 +161,11 @@ Key topology facts (details: [`deployment.md`](../deployment.md),
   schema, and expected Oracle manifest. The host pulls those digests; it never
   builds application images.
 - `deploy/hetzner/deploy.sh <source-sha>` is the sole application release
-  and resume entrypoint. It captures the exact current content-addressed VPS
-  config path and digest, activates only API/workers, proves them, promotes the
-  exact staged Vercel deployment, then publishes one immutable release record
-  and current pointer. Postgres and Caddy retain identity.
+  entrypoint. It runs `deploy/hetzner/release.py`, one linear idempotent pass
+  (preflight, declared host inputs, images, verified R2 backup, migration,
+  `up --wait`, Caddy reload, health, Codex isolation assertions, `current`
+  pointer), then promotes the exact staged Vercel deployment. There is no
+  attempt state and no resume mode: rerun the same command.
 - VPS and Vercel config publication are explicit prepare-only operations, never
   implicit release steps. Oracle reconcile is a separate current-release
   operation; application release never reads or mutates Oracle.
@@ -178,7 +179,7 @@ Key topology facts (details: [`deployment.md`](../deployment.md),
   POSTs before app code; `apps/web/src/lib/auth/callback-origin.ts` resolves one
   safe app origin from request metadata; `apps/web/src/lib/auth/redirects.ts`
   builds `/auth/callback` URLs; hosted Supabase Auth must have exact callback
-  redirect URLs verified by `deploy/supabase/verify-auth-config.sh`.
+  redirect URLs, reviewed in the Supabase dashboard when auth settings change.
 - Direct Vercel custom-domain frontend deploys leave
   `SERVER_ACTION_ALLOWED_ORIGINS` empty. A host-rewriting frontend proxy must set
   a minimal Next.js domain-pattern list and matching trusted-proxy auth origins.
@@ -351,8 +352,10 @@ epoch and viewer before it can cross the stream.
 
 PostgreSQL is the single source of truth. The schema of record is the live
 database (`pg_dump --schema-only`) plus the **hand-written** Alembic migrations
-(`migrations/alembic/versions/NNNN_*.py`, ~125 of them, linear chain, no
-autogenerate). `python/nexus/db/models.py` holds only the ~90 classes the code
+(`migrations/alembic/versions/NNNN_*.py`, linear chain, no autogenerate).
+Revisions `0001`-`0236` are squashed into one baseline, `0236_baseline.py`,
+which replays the dumped schema and seed rows beside it; the chain continues
+from there. `python/nexus/db/models.py` holds only the ~90 classes the code
 queries through the ORM — it mirrors no constraints or indexes — and many live
 tables are reached only from raw SQL, among them **`background_jobs`**, defined
 in `python/nexus/jobs/`.
@@ -661,8 +664,8 @@ same entrypoint with fixed `interactive` and `background` lanes:
   active aligned slots in that kind's global dedupe namespace, then reconciles
   only priority, so deployment and expired-lease replay cannot retain stale
   ordering policy. Immutable scheduler identity stays exact while the registry
-  declares the optional checkpoint keys that Dawn and the storage orphan sweep
-  may persist; their owning codecs remain responsible for checkpoint values.
+  declares the optional checkpoint keys that the storage orphan sweep may
+  persist; its owning codec remains responsible for checkpoint values.
   The namespace lookup is cross-kind and locks at most 257 rows: more than 256
   active claimants defects the whole transaction before reconciliation.
   Propagated `request_id` values are correlation, not namespace ownership.
@@ -709,7 +712,7 @@ Task catalog (each is a thin handler in `tasks/` that wraps a service):
 `reconcile_stale_ingest_media_job` (periodic),
 `sync_gutenberg_catalog_job` (periodic), `prune_background_jobs_job`
 (periodic), `purge_expired_auth_handoff_codes` (periodic), `synapse_scan`,
-`dawn_write_job` (periodic), `atlas_project_job` (periodic), `media_teardown`,
+`atlas_project_job` (periodic), `media_teardown`,
 `storage_object_cleanup`, and `storage_orphan_sweep` (periodic).
 
 Author identity is resolved inline, synchronously, inside each ingest/enrichment
@@ -727,7 +730,7 @@ rather than proposed and reconciled after the fact.
 > queue-level retries.
 
 **Generation boundary.** Every durable generative job — chat, Oracle,
-synapse, Dawn, dossiers, media summaries, and metadata enrichment — runs through
+synapse, dossiers, media summaries, and metadata enrichment — runs through
 `GenerationService` and `services/llm_execution.py`. Admission freezes the
 exact selection, budgets, output contract, prompt reference, and operation-owned
 tool plan in one `GenerationSpec`; workers never reread mutable policy. All
@@ -1570,7 +1573,7 @@ commands. Commands use resource versions, durable mutation replay, and one
 SERIALIZABLE transaction. Surface activation uses the bounded batch router, so
 heterogeneous rows add no per-occurrence query loop. Intrinsic page-title and
 note-body edits use the resource-item mutation owner. `services/notes.py`
-remains the notes collection, daily-page, dated-capture, and Dawn Write facade.
+remains the notes collection, daily-page, and dated-capture facade.
 A Page list row is exactly `{id,title,updatedAt}`; Page detail adds required
 `dailyPage: Presence<{localDate}>`. `schemas/notes.py` and
 `services/notes.py` own those typed backend shapes and convert nullable daily
@@ -2135,7 +2138,7 @@ the hosted renderer the exact media ID, canonical document kind, and bounded
 `requestedTitle` for enqueue. That title is presentation metadata only; it
 does not authorize work or select package identity.
 
-When validated connectivity is absent, `MainActivity` can load the committed
+When validated connectivity is absent, `MainActivity` can load the packaged
 APK shelf at `appassets.androidplatform.net` without hosted bootstrap. The
 request router serves only packaged static assets and in-memory lease paths;
 PDF byte ranges are handled natively, and every other reserved-host request is
@@ -2188,26 +2191,23 @@ verification has one separate entrypoint, `./scripts/test`.
 - **Build**: `make build` (Next.js), `make build-android[-release]`.
 
 **Deploy** ([`deployment.md`](../deployment.md), sole runbook): each exact
-`main` push triggers one backend publisher. It builds API/worker targets once,
-publishes their GHCR digests and strict manifest, and supplies the immutable host
-bundle. Vercel builds the exact SHA as an unaliased production-target candidate.
-`deploy/hetzner/deploy.sh <source-sha>` validates both lineages, captures current
-content-addressed VPS config by exact path and digest, stops app writers,
-verifies a migration backup when needed, upgrades the linear Alembic head,
-activates only app services by digest, proves the complete backend vector,
-promotes only the bound frontend deployment, then atomically publishes the
-immutable release record/current pointer. Durable phases make the same command
-the sole resume path. Config publication and Oracle reconcile are separate
-explicit operations. Env contracts live in `deploy/env/*` (real values
-untracked, `.example` tracked). Permanent R2 policy is applied via
-`deploy/cloudflare/*`; Supabase hosted Auth state is verified through
-`deploy/supabase/verify-auth-config.sh`.
+`main` push triggers one backend publisher, and only on `run_attempt == 1`. It
+builds API/worker targets once and publishes their GHCR digests in one strict
+candidate manifest. Vercel builds the exact SHA as an unaliased
+production-target candidate. `deploy/hetzner/deploy.sh <source-sha>` resolves
+that manifest from the first CI run, converges the backend in one linear
+idempotent pass, then promotes the bound frontend deployment. Config
+publication and Oracle reconcile are separate explicit operations. Env
+contracts live in `deploy/env/*` (real values untracked, `.example` tracked).
+Permanent R2 policy is applied via `deploy/cloudflare/*`.
 
 **Migrations** are hand-written Alembic files (`migrations/alembic/versions/`,
-linear `NNNN_*` numbering, no autogenerate). Dev: `make migrate`. The PR check
+linear `NNNN_*` numbering, no autogenerate), rooted at the squashed baseline
+`0236_baseline.py`. Dev: `make migrate`. The PR check
 requires one canonical Alembic head without starting a database. Production
-applies the candidate's baked head only inside the release controller, after
-stopped-writer backup proof and before app activation.
+applies the candidate's baked head only inside the release, after the
+stopped-writer verified R2 backup and a revision-ancestry proof, and before the
+services start on the new digests.
 
 **Environment**: `.env.example` is the source of truth for every variable
 ([`rules/codebase.md`](rules/codebase.md)); `make setup` generates local
@@ -2299,7 +2299,7 @@ The things most likely to bite you, distilled:
 | Reader behavior contract                                          | [`modules/reader-implementation.md`](modules/reader-implementation.md), [`modules/reader-design-rationale.md`](modules/reader-design-rationale.md)                                                     |
 | FastAPI bootstrap / middleware / lifecycle                        | `python/nexus/app.py`, `python/nexus/middleware/`, `python/nexus/auth/`                                                                                                                                |
 | DB layer / sessions / LISTEN-NOTIFY                               | `python/nexus/db/` (`engine.py`, `session.py`, `listen.py`)                                                                                                                                            |
-| The schema                                                        | `migrations/alembic/versions/` + the live database (`pg_dump --schema-only`); `python/nexus/db/models.py` is the ORM-mapped classes only                                                               |
+| The schema                                                        | `migrations/alembic/versions/0236_baseline_schema.sql` (the squashed baseline) + the revisions after it + the live database (`pg_dump --schema-only`); `python/nexus/db/models.py` is the ORM-mapped classes only                                                               |
 | Background jobs / worker                                          | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/`                                                                                                                                            |
 | Generation backends                                               | `python/nexus/services/{generation_catalog,generation_policy,generation_service,generation_spec,generation_backend,provider_generation_backend,codex_generation_client,llm_execution,llm_ledger,tool_authority}.py`, `apps/codex_agent/`, [`modules/llms.md`](modules/llms.md) |
 | Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_source_ingest.py`, `source_attempt_failures.py`, `media_fact_revisions.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |

@@ -60,9 +60,8 @@ runcmd:
   - apt-get update
   - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   - usermod -aG docker nexus
-  - install -d -o root -g root -m 0755 /opt/nexus/releases
   - install -d -o root -g root -m 0750 /etc/nexus /etc/nexus/config
-  - install -d -o root -g root -m 0750 /var/lib/nexus/releases /var/lib/nexus/releases/attempts /var/lib/nexus/releases/records /var/lib/nexus/releases/oracle-attempts
+  - install -d -o root -g root -m 0750 /var/lib/nexus/releases
   - install -d -o 10001 -g 10001 -m 0700 /var/lib/nexus/parser-tmp
   - install -d -o root -g root -m 0750 /var/backups/nexus
   # The release controller installs the immutable boot guard before the Codex

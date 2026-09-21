@@ -513,10 +513,6 @@ class Settings(BaseSettings):
     # into a no-op (synapse spec G6).
     synapse_enabled: bool = Field(default=True, alias="SYNAPSE_ENABLED")
 
-    # Dawn write: DAWN_WRITE_ENABLED=false makes the sweep job a no-op.
-    dawn_write_enabled: bool = Field(default=True, alias="DAWN_WRITE_ENABLED")
-    dawn_write_schedule_seconds: int = Field(default=3600, alias="DAWN_WRITE_SCHEDULE_SECONDS")
-
     # Grand atlas projection: the nightly PCA re-projection cadence. 0 (default)
     # leaves atlas_project_job unregistered as periodic; the deploy env sets a
     # positive cadence (prod: 86400). The on-demand trigger still fires on ingest.

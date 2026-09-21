@@ -1,8 +1,4 @@
-import {
-  apiFetch,
-  decodeApiPayload,
-  type ApiPath,
-} from "@/lib/api/client";
+import { apiFetch, decodeApiPayload } from "@/lib/api/client";
 import {
   decodeNoteLocalDate,
   decodeNotePage,
@@ -212,24 +208,3 @@ export async function fetchNotePage(pageId: string): Promise<NotePage> {
   return decodeApiPayload(response, decodeNotePageEnvelope, "Read page");
 }
 
-export interface DawnWrite {
-  id: string;
-  body_md: string;
-  generated_at: string;
-  dismissed_at: string | null;
-}
-
-export async function fetchDawnWrite(localDate: string): Promise<DawnWrite | null> {
-  const params = new URLSearchParams({ local_date: localDate });
-  const response = await apiFetch<{ write: DawnWrite | null }>(
-    `/api/notes/dawn-write?${params}`,
-    { cache: "no-store" },
-  );
-  return response.write;
-}
-
-export async function dismissDawnWrite(writeId: string): Promise<void> {
-  await apiFetch(`/api/notes/dawn-write/${writeId}/dismiss` as ApiPath, {
-    method: "POST",
-  });
-}

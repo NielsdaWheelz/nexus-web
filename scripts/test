@@ -45,6 +45,9 @@ shellcheck "${shell_files[@]}"
 
 (
   cd apps/web
+  # the packaged offline shelf is a build output; building it here both proves
+  # the android asset build and feeds the CSS-token closure check below.
+  bun run build:offline-reading
   bun run lint:css-tokens
   bun run lint
   bun run typecheck
