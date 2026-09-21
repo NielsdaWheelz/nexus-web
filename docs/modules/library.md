@@ -131,7 +131,7 @@ Every INSERT/UPDATE/DELETE on `library_entries` goes through
   read the table under an explicit allowlist: `auth/permissions.py`,
   `services/search/scope.py`, `services/contributors.py`,
   `services/agent_tools/app_search.py`, `services/note_indexing.py`, and
-  `services/artifacts/bindings/library.py`. `services/object_refs.py` is deleted;
+  `services/artifacts/subjects.py`. `services/object_refs.py` is deleted;
   its former note/@-mention reads are superseded by `services/resource_items/
   targets.py` (target search) and the shared frontend target controller — see
   [universal-link-authoring-hard-cutover.md](../cutovers/universal-link-authoring-hard-cutover.md).

@@ -54,7 +54,6 @@ _OPERATION_OWNER_KINDS: dict[str, LlmCallOwnerKind] = {
     "dossier_podcast": "artifact_build",
     "dossier_contributor": "artifact_build",
     "dossier_idea": "artifact_build",
-    "dossier_idea_resolve": "artifact_learn_request",
     "chat": "chat_run",
 }
 _TERMINAL_KINDS = frozenset({"Succeeded", "Failed", "Cancelled"})

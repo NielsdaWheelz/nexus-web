@@ -163,8 +163,7 @@ class CancellationSignal(Protocol):
 class GenerationAdmissionJournal(Protocol):
     """Domain replay journal owning prompt/spec admission beside replay state.
 
-    Implemented by ``JobGenerationJournal`` over ``background_jobs.payload`` and
-    by the Idea-resolution journal over ``artifact_learn_requests.coordination``.
+    Implemented by ``JobGenerationJournal`` over ``background_jobs.payload``.
     Implementations never commit or roll back.
     """
 
@@ -891,8 +890,6 @@ def _capacity_refusal(
         with session_factory() as db:
             request.journal.park_capacity_pause(db, pause)
             db.commit()
-        if request.owner.kind == "artifact_learn_request":
-            raise GenerationCapacityPaused(pause)
         return RescheduleRequested(schedule=GenerationCapacityPaused(pause).schedule)
     terminal_result = encode_failure("capacity_unavailable", pause.explanation)
     with session_factory() as db:

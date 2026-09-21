@@ -1,18 +1,9 @@
-"""Worker entrypoint for the universal dossier engine.
+"""The ``dossier_build`` worker entry point.
 
-``dossier_build`` is the sole task body for the ``dossier_build`` job kind
-(CONTRACTS.md A19/B1a): it reads the job's build id, opens the shared LLM
-worker envelope (db session, event loop, ``ExecutionRuntime``), and hands off
-to ``engine.run_build`` for the entire durable reduce (collect -> ensure MI ->
-reduce[coordination] -> validate citations -> terminal). ``engine.run_build``
-owns every terminal write (success/modeled-failure/cancel), so there is no
-worker-exception status flip here (contrast the deleted D-6
-``_fail_revision_after_worker_exception``): an unexpected exception propagates
-to the queue's own retry/dead-letter policy, which is the durable-execution
-Suspended-advisory model (A8/B4) -- a suspended build is left exactly as it
-was, never gets a synthesized failure written for it, and is repaired only by
-an operator ``requeue_dead_job`` (after fixing the underlying cause) or a user
-Cancel (which terminalizes it and unlocks a new Generate).
+``engine.run_build`` owns the whole attempt and every terminal write, so there
+is no status flip here: an unexpected exception propagates to the queue's
+retry/dead-letter policy, which surfaces the build as Suspended for an operator
+rather than synthesizing a failure for it.
 """
 
 from __future__ import annotations
@@ -41,55 +32,41 @@ from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 def dossier_build(
     *, payload: Mapping[str, Any], context: JobExecutionContext
 ) -> Mapping[str, Any] | RescheduleRequested:
-    """Run one dossier build attempt (job kind ``dossier_build``, A19).
-
-    ``engine.run_build`` is replay-safe (a no-op once the build already has a
-    terminal child) and owns the whole reduce loop + every terminal write.
-    A bare exception propagates to the queue's normal retry/dead-letter
-    machinery (see module docstring).
-    """
+    """Run one dossier build attempt; replay-safe once a terminal child exists."""
     build_id = UUID(str(payload["build_id"]))
-    spec = LlmTaskSpec(label="dossier_build")
     settings = get_settings()
 
-    async def _handler(
+    async def handler(
         db: Session, runtime: ExecutionRuntime
     ) -> Mapping[str, Any] | RescheduleRequested:
         build = db.get(ArtifactBuild, build_id)
-        if build is None:
-            return {"status": "ok", "build_id": str(build_id)}
         job = get_job(db, context.job_id)
-        if job is None:
-            # justify-defect: a claimed worker execution always owns its durable
-            # job row; coordination cannot checkpoint without that lease record.
-            raise AssertionError("dossier worker job disappeared")
+        if build is None or job is None:
+            return {"status": "ok", "build_id": str(build_id)}
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(120.0, connect=10.0),
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
             trust_env=False,
         ) as client:
-            web_provider: WebSearchProvider | None = compose_configured_web_search_provider(
-                client,
-                settings=settings,
-            )
-            tool_runtime = compose_tool_runtime(web_provider)
-            dossier_runtime = DossierBuildRuntime(
-                build_id=build_id,
-                artifact_id=build.artifact_id,
-                job=job,
-                execution_context=context,
-                llm_runtime=runtime,
-                research_tool_operation=tool_runtime.operations["idea_dossier_research"],
-                settings=settings,
+            provider: WebSearchProvider | None = compose_configured_web_search_provider(
+                client, settings=settings
             )
             reschedule = await engine.run_build(
                 db,
                 build_id=build_id,
                 ctx=context,
-                runtime=dossier_runtime,
+                runtime=DossierBuildRuntime(
+                    build_id=build_id,
+                    artifact_id=build.artifact_id,
+                    job=job,
+                    execution_context=context,
+                    llm_runtime=runtime,
+                    research_tool_operation=compose_tool_runtime(provider).operations[
+                        "idea_dossier_research"
+                    ],
+                    settings=settings,
+                ),
             )
-        if reschedule is not None:
-            return reschedule
-        return {"status": "ok", "build_id": str(build_id)}
+        return reschedule or {"status": "ok", "build_id": str(build_id)}
 
-    return run_llm_task(spec, _handler)
+    return run_llm_task(LlmTaskSpec(label="dossier_build"), handler)

@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import assert_never, cast
+from typing import TYPE_CHECKING, assert_never, cast
 from uuid import UUID
 
 from sqlalchemy import text
@@ -31,8 +31,6 @@ from nexus.auth.permissions import (
 )
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.services import library_entries, library_entry_listing
-from nexus.services.artifacts.registry import visible_persisted_subject_sql
-from nexus.services.artifacts.subject_policy import DossierSubjectScheme
 from nexus.services.contributor_credits import (
     media_author_credits_join_sql,
     media_author_names_agg_sql,
@@ -40,6 +38,9 @@ from nexus.services.contributor_credits import (
 from nexus.services.media_read_map import load_media_document_summary
 from nexus.services.resource_graph.highlight_notes import linked_note_blocks_for_highlights
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
+
+if TYPE_CHECKING:
+    from nexus.services.artifacts.subjects import DossierSubjectScheme
 
 INLINE_THRESHOLD_CHARS = 1500
 
@@ -424,6 +425,9 @@ def _load_artifact(
     db: Session, items: list[ResourceRef], *, viewer_id: UUID
 ) -> list[LoadedResource]:
     """Resolve each audience-visible Dossier head to its current revision."""
+    # Imported here: the dossier binding table sits above the resource graph.
+    from nexus.services.artifacts.subjects import visible_persisted_subject_sql
+
     ids = [ref.id for ref in items]
     rows = db.execute(
         text(
@@ -483,6 +487,9 @@ def _load_artifact(
 def _load_artifact_revision(
     db: Session, items: list[ResourceRef], *, viewer_id: UUID
 ) -> list[LoadedResource]:
+    # Imported here: the dossier binding table sits above the resource graph.
+    from nexus.services.artifacts.subjects import visible_persisted_subject_sql
+
     ids = [ref.id for ref in items]
     rows = db.execute(
         text(

@@ -1,8 +1,7 @@
-"""Generic Universal Dossier HTTP routes."""
+"""The universal dossier HTTP surface."""
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from typing import Annotated
 from uuid import UUID
 
@@ -11,12 +10,13 @@ from llm_tools import Available, ToolId
 from pydantic import TypeAdapter
 from sqlalchemy.orm import Session
 
-from nexus.api.deps import get_generation_runtime
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok
 from nexus.schemas.artifact import (
+    CollectionDossierCoverageOut,
+    ConversationDossierCoverageOut,
     DossierBuildAdmittedGenerationOut,
     DossierBuildCreatedOut,
     DossierBuildExactModelToolsOut,
@@ -29,10 +29,14 @@ from nexus.schemas.artifact import (
     DossierHeadOut,
     DossierRevisionOut,
     DossierRevisionSummaryOut,
+    IdeaDossierCoverageOut,
     IdeaDossierIdentityOut,
     LearnDossierBuildAcceptedOut,
     LearnDossierOpenedOut,
     LearnDossierRequest,
+    MediaDossierCoverageOut,
+    NoteDossierCoverageOut,
+    PageDossierCoverageOut,
     ResourceDossierIdentityOut,
 )
 from nexus.schemas.presence import (
@@ -43,19 +47,26 @@ from nexus.schemas.presence import (
     presence_from_nullable,
     present,
 )
-from nexus.services.artifacts import engine
+from nexus.services.artifacts import engine, subjects
 from nexus.services.artifacts import revisions as revision_service
 from nexus.services.artifacts.dossier_types import (
     CancelledEventPayload,
-    DossierSubjectLocator,
     FailedEventPayload,
-    InvalidSubjectLocator,
     WebResearchNotConfigured,
 )
-from nexus.services.artifacts.manifests import InputManifestV1
-from nexus.services.artifacts.registry import dossier_registration
-from nexus.services.artifacts.subject_policy import ResolvedIdeaSubject
-from nexus.services.llm_execution import ExecutionRuntime
+from nexus.services.artifacts.idea import IdeaSubject
+from nexus.services.artifacts.manifests import (
+    ContributorInputManifestV1,
+    ConversationInputManifestV1,
+    InputManifestV1,
+    LibraryInputManifestV1,
+    MediaDisposition,
+    MediaInputManifestV1,
+    NoteInputManifestV1,
+    PageInputManifestV1,
+    PodcastInputManifestV1,
+    aggregate_entries,
+)
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
@@ -68,7 +79,6 @@ from nexus.services.tool_runtime.catalog import ComposedToolRuntime
 router = APIRouter(tags=["dossiers"])
 
 _MANIFEST_ADAPTER: TypeAdapter[InputManifestV1] = TypeAdapter(InputManifestV1)
-_COVERAGE_ADAPTER: TypeAdapter[DossierCoverageOut] = TypeAdapter(DossierCoverageOut)
 
 
 def _require_idea_web_research(request: Request) -> None:
@@ -79,38 +89,62 @@ def _require_idea_web_research(request: Request) -> None:
         raise WebResearchNotConfigured()
 
 
-def _subject_locator(subject_scheme: str, subject_handle: str) -> DossierSubjectLocator:
-    registration = dossier_registration(subject_scheme)
-    if registration is None:
-        raise InvalidSubjectLocator()
-    return registration.policy.decode_locator(subject_handle)
-
-
-def _artifact_ref(raw: str) -> ResourceRef:
+def _ref(raw: str, scheme: str) -> ResourceRef:
     parsed = parse_resource_ref(raw)
-    if isinstance(parsed, ResourceRefParseFailure) or parsed.scheme != "artifact":
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid artifact reference")
+    if isinstance(parsed, ResourceRefParseFailure) or parsed.scheme != scheme:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, f"Invalid {scheme} reference")
     return parsed
 
 
-def _revision_ref(raw: str) -> ResourceRef:
-    parsed = parse_resource_ref(raw)
-    if isinstance(parsed, ResourceRefParseFailure) or parsed.scheme != "artifact_revision":
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid revision reference")
-    return parsed
+def _coverage(manifest: InputManifestV1) -> DossierCoverageOut:
+    """The one coverage projection over the typed manifest union."""
+    if isinstance(manifest, MediaInputManifestV1):
+        return MediaDossierCoverageOut(
+            offered_claim_count=manifest.offered_claim_count,
+            omitted_evidence_refs=[item.evidence_ref for item in manifest.omitted_evidence],
+        )
+    if isinstance(manifest, ConversationInputManifestV1):
+        return ConversationDossierCoverageOut(
+            message_refs=manifest.message_refs,
+            context_refs=manifest.context_refs,
+        )
+    if isinstance(
+        manifest, LibraryInputManifestV1 | PodcastInputManifestV1 | ContributorInputManifestV1
+    ):
+        entries = aggregate_entries(manifest)
+        return CollectionDossierCoverageOut(
+            kind=manifest.kind,
+            included=[
+                entry.media_ref
+                for entry in entries
+                if entry.disposition is MediaDisposition.Included
+            ],
+            omitted=[
+                (entry.media_ref, entry.disposition)
+                for entry in entries
+                if entry.disposition is not MediaDisposition.Included
+            ],
+        )
+    if isinstance(manifest, PageInputManifestV1):
+        return PageDossierCoverageOut(
+            block_refs=manifest.block_refs,
+            connection_refs=manifest.connection_refs,
+        )
+    if isinstance(manifest, NoteInputManifestV1):
+        return NoteDossierCoverageOut(
+            body_present=isinstance(manifest.body_fingerprint, Present),
+            connection_refs=manifest.connection_refs,
+        )
+    return IdeaDossierCoverageOut(
+        seed_count=sum(source.role == "seed" for source in manifest.included_sources),
+        nexus_source_count=sum(source.role == "nexus" for source in manifest.included_sources),
+        web_source_count=sum(source.role == "web" for source in manifest.included_sources),
+        omitted_sources=[(item.locator, item.reason) for item in manifest.omitted_sources],
+    )
 
 
-def _highlight_ref(raw: str) -> ResourceRef:
-    parsed = parse_resource_ref(raw)
-    if isinstance(parsed, ResourceRefParseFailure) or parsed.scheme != "highlight":
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid Highlight reference")
-    return parsed
-
-
-def _revision_out(
-    view: revision_service.RevisionView,
-) -> DossierRevisionOut:
-    manifest, coverage = _manifest_and_coverage(view.subject_scheme, view.input_manifest)
+def _revision_out(view: revision_service.RevisionView) -> DossierRevisionOut:
+    manifest = _MANIFEST_ADAPTER.validate_python(view.input_manifest)
     return DossierRevisionOut(
         artifact_id=view.artifact_id,
         artifact_ref=ResourceRef(scheme="artifact", id=view.artifact_id).uri,
@@ -121,7 +155,7 @@ def _revision_out(
         content_text=view.content_text,
         citations=view.citations,
         input_manifest=manifest,
-        coverage=coverage,
+        coverage=_coverage(manifest),
         instruction=presence_from_nullable(view.instruction),
         creator_user_id=presence_from_nullable(view.creator_user_id),
         model_provider=presence_from_nullable(view.model_provider),
@@ -132,17 +166,15 @@ def _revision_out(
     )
 
 
-def _revision_summary_out(
-    view: revision_service.RevisionSummary,
-) -> DossierRevisionSummaryOut:
-    manifest, coverage = _manifest_and_coverage(view.subject_scheme, view.input_manifest)
+def _revision_summary_out(view: revision_service.RevisionSummary) -> DossierRevisionSummaryOut:
+    manifest = _MANIFEST_ADAPTER.validate_python(view.input_manifest)
     return DossierRevisionSummaryOut(
         revision_id=view.revision_id,
         revision_ref=ResourceRef(scheme="artifact_revision", id=view.revision_id).uri,
         is_current=view.is_current,
         citation_count=view.citation_count,
         input_manifest=manifest,
-        coverage=coverage,
+        coverage=_coverage(manifest),
         instruction=presence_from_nullable(view.instruction),
         creator_user_id=presence_from_nullable(view.creator_user_id),
         model_provider=presence_from_nullable(view.model_provider),
@@ -153,48 +185,30 @@ def _revision_summary_out(
     )
 
 
-def _manifest_and_coverage(
-    subject_scheme: str,
-    raw_manifest: dict,
-) -> tuple[InputManifestV1, DossierCoverageOut]:
-    manifest = _MANIFEST_ADAPTER.validate_python(raw_manifest)
-    registration = dossier_registration(subject_scheme)
-    if registration is None:
-        raise AssertionError(f"no Dossier registration for subject scheme {subject_scheme!r}")
-    coverage = registration.binding.coverage(manifest)
-    return manifest, _COVERAGE_ADAPTER.validate_python({"kind": manifest.kind, **asdict(coverage)})
-
-
 def _admitted_generation_out(
-    view: engine.DossierBuildAdmittedGeneration | None,
+    view: engine.AdmittedGeneration | None,
 ) -> Presence[DossierBuildAdmittedGenerationOut]:
-    """Project the frozen spec read-only; the model-tool arm is total (spec 5.1)."""
     if view is None:
         return absent()
-    spec = view.spec
-    plan, effect_mode = spec.model_tool_plan_snapshot, spec.tool_effect_mode
-    tool_plan: DossierBuildToolPlanOut
+    plan, effect_mode = view.spec.model_tool_plan_snapshot, view.spec.tool_effect_mode
+    tool_plan: DossierBuildToolPlanOut = DossierBuildNoModelToolsOut()
     if isinstance(plan, Present) and isinstance(effect_mode, Present):
         tool_plan = DossierBuildExactModelToolsOut(
             plan_id=plan.value.plan_id,
             plan_revision=plan.value.plan_revision,
             effect_mode=effect_mode.value,
         )
-    elif isinstance(plan, Present) or isinstance(effect_mode, Present):
-        raise AssertionError("admitted Dossier generation has a partial model-tool authority")
-    else:
-        tool_plan = DossierBuildNoModelToolsOut()
     return present(
         DossierBuildAdmittedGenerationOut(
-            selection=spec.selection,
-            display_at_dispatch=spec.display_at_dispatch,
+            selection=view.spec.selection,
+            display_at_dispatch=view.spec.display_at_dispatch,
             tool_plan=tool_plan,
             tool_positions=view.tool_positions,
         )
     )
 
 
-def _active_build_out(view: engine.DossierActiveBuildView) -> DossierBuildSummary:
+def _active_build_out(view: engine.ActiveBuildView) -> DossierBuildSummary:
     return DossierBuildSummary(
         handle=view.handle,
         requester_user_id=presence_from_nullable(view.requester_user_id),
@@ -208,27 +222,22 @@ def _active_build_out(view: engine.DossierActiveBuildView) -> DossierBuildSummar
     )
 
 
-def _unsuccessful_build_out(
-    view: engine.DossierUnsuccessfulBuildView,
-) -> DossierBuildSummary:
+def _unsuccessful_build_out(view: engine.UnsuccessfulBuildView) -> DossierBuildSummary:
+    outcome = view.outcome
     failure: Presence[FailedEventPayload] = absent()
-    cancellation = absent()
-    if view.outcome == "failed":
-        if view.failure_code is None:
-            raise AssertionError("failed Dossier build has no failure code")
+    cancellation: Presence[CancelledEventPayload] = absent()
+    if isinstance(outcome, engine.BuildFailed):
         failure = present(
             FailedEventPayload(
-                failure_code=view.failure_code,
-                detail=presence_from_nullable(view.failure_detail),
+                failure_code=outcome.code,
+                detail=presence_from_nullable(outcome.detail),
             )
         )
     else:
-        if view.cancelled_at is None:
-            raise AssertionError("cancelled Dossier build has no cancellation time")
         cancellation = present(
             CancelledEventPayload(
-                actor=presence_from_nullable(view.cancellation_actor_user_id),
-                at=view.cancelled_at,
+                actor=presence_from_nullable(outcome.actor_user_id),
+                at=outcome.at,
             )
         )
     return DossierBuildSummary(
@@ -244,40 +253,16 @@ def _unsuccessful_build_out(
     )
 
 
-def _head_out(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    head: engine.DossierHeadView,
-) -> DossierHeadOut:
-    registration = dossier_registration(head.subject_scheme)
-    if registration is None:
-        raise AssertionError(f"no Dossier registration for subject scheme {head.subject_scheme!r}")
-    current = absent()
-    if head.current_revision_id is not None:
-        current = present(
-            _revision_out(
-                revision_service.get_revision(
-                    db,
-                    viewer_id=viewer_id,
-                    revision_id=head.current_revision_id,
-                )
-            )
-        )
-    resolved = head.resolved_subject
-    if isinstance(resolved, ResolvedIdeaSubject):
-        identity = IdeaDossierIdentityOut(title=resolved.display_title)
+def _head_out(db: Session, *, viewer_id: UUID, head: engine.DossierHeadView) -> DossierHeadOut:
+    subject = head.subject
+    if isinstance(subject, IdeaSubject):
+        identity = IdeaDossierIdentityOut(title=subject.display_title)
     else:
-        subject = resolve_ref(db, viewer_id=viewer_id, ref=resolved.ref)
-        if subject.missing:
-            raise AssertionError("authorized Resource Dossier subject failed to resolve")
+        resolved = resolve_ref(db, viewer_id=viewer_id, ref=subject)
         identity = ResourceDossierIdentityOut(
-            title=subject.label,
+            title=resolved.label,
             activation=resource_activation_for_ref(
-                db,
-                viewer_id=viewer_id,
-                ref=resolved.ref,
-                missing=subject.missing,
+                db, viewer_id=viewer_id, ref=subject, missing=resolved.missing
             ),
         )
     return DossierHeadOut(
@@ -288,12 +273,18 @@ def _head_out(
             else absent()
         ),
         identity=present(identity),
-        current_revision=current,
-        freshness=(
-            present("Current" if head.freshness == "current" else "Stale")
-            if head.freshness is not None
+        current_revision=(
+            present(
+                _revision_out(
+                    revision_service.get_revision(
+                        db, viewer_id=viewer_id, revision_id=head.current_revision_id
+                    )
+                )
+            )
+            if head.current_revision_id is not None
             else absent()
         ),
+        freshness=presence_from_nullable(head.freshness),
         active_build=(
             present(_active_build_out(head.active_build))
             if head.active_build is not None
@@ -305,8 +296,9 @@ def _head_out(
             else absent()
         ),
         revision_count=head.revision_count,
-        media_abstract=registration.binding.media_abstract(
+        media_abstract=subjects.media_abstract(
             db,
+            subject_scheme=head.subject_scheme,
             subject_id=head.subject_id,
             requester_user_id=viewer_id,
         ),
@@ -320,15 +312,16 @@ def get_dossier(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    locator = _subject_locator(subject_scheme, subject_handle)
-    head = engine.read_head(db, locator=locator, requester_user_id=viewer.user_id)
+    head = engine.read_head(
+        db,
+        subject_scheme=subject_scheme,
+        subject_handle=subject_handle,
+        requester_user_id=viewer.user_id,
+    )
     return ok(_head_out(db, viewer_id=viewer.user_id, head=head))
 
 
-@router.post(
-    "/artifacts/dossiers/{subject_scheme}/{subject_handle}/builds",
-    status_code=202,
-)
+@router.post("/artifacts/dossiers/{subject_scheme}/{subject_handle}/builds", status_code=202)
 def create_dossier_build(
     subject_scheme: str,
     subject_handle: str,
@@ -337,9 +330,10 @@ def create_dossier_build(
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
     body: Annotated[DossierGenerateRequest, Body()],
 ) -> dict:
-    ticket = engine.bootstrap_resource_dossier(
+    ticket = engine.start_build(
         db,
-        locator=_subject_locator(subject_scheme, subject_handle),
+        subject_scheme=subject_scheme,
+        subject_handle=subject_handle,
         requester_user_id=viewer.user_id,
         idempotency_key=idempotency_key,
         instruction=nullable_from_presence(body.instruction),
@@ -354,22 +348,19 @@ def create_dossier_build(
 
 
 @router.post("/artifacts/dossiers/learn")
-async def learn_dossier(
+def learn_dossier(
     request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    runtime: Annotated[ExecutionRuntime, Depends(get_generation_runtime)],
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
     body: Annotated[LearnDossierRequest, Body()],
 ) -> dict:
-    highlight_id = _highlight_ref(body.highlight_ref).id
     _require_idea_web_research(request)
-    outcome = await engine.learn_idea(
+    outcome = engine.learn_idea(
         db,
-        highlight_id=highlight_id,
+        highlight_id=_ref(body.highlight_ref, "highlight").id,
         requester_user_id=viewer.user_id,
         idempotency_key=idempotency_key,
-        runtime=runtime,
     )
     artifact_ref = ResourceRef(scheme="artifact", id=outcome.artifact_id).uri
     if outcome.kind == "Opened":
@@ -390,7 +381,7 @@ def get_dossier_by_ref(
 ) -> dict:
     head = engine.read_artifact_head(
         db,
-        artifact_id=_artifact_ref(artifact_ref).id,
+        artifact_id=_ref(artifact_ref, "artifact").id,
         requester_user_id=viewer.user_id,
     )
     return ok(_head_out(db, viewer_id=viewer.user_id, head=head))
@@ -405,15 +396,13 @@ def regenerate_dossier(
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
     body: Annotated[DossierGenerateRequest, Body()],
 ) -> dict:
-    artifact_id = _artifact_ref(artifact_ref).id
-    head = engine.read_artifact_head(
-        db,
-        artifact_id=artifact_id,
-        requester_user_id=viewer.user_id,
+    artifact_id = _ref(artifact_ref, "artifact").id
+    scheme = engine.artifact_subject_scheme(
+        db, artifact_id=artifact_id, requester_user_id=viewer.user_id
     )
-    if head.subject_scheme == "idea":
+    if scheme == "idea":
         _require_idea_web_research(request)
-    ticket = engine.regenerate_artifact(
+    ticket = engine.start_artifact_build(
         db,
         artifact_id=artifact_id,
         requester_user_id=viewer.user_id,
@@ -435,8 +424,9 @@ def list_dossier_revisions(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    ref = _artifact_ref(artifact_ref)
-    revisions = revision_service.list_revisions(db, viewer_id=viewer.user_id, artifact_id=ref.id)
+    revisions = revision_service.list_revisions(
+        db, viewer_id=viewer.user_id, artifact_id=_ref(artifact_ref, "artifact").id
+    )
     return ok([_revision_summary_out(view) for view in revisions])
 
 
@@ -446,10 +436,13 @@ def get_dossier_revision(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    ref = _revision_ref(artifact_revision_ref)
     return ok(
         _revision_out(
-            revision_service.get_revision(db, viewer_id=viewer.user_id, revision_id=ref.id)
+            revision_service.get_revision(
+                db,
+                viewer_id=viewer.user_id,
+                revision_id=_ref(artifact_revision_ref, "artifact_revision").id,
+            )
         )
     )
 
@@ -462,7 +455,7 @@ def make_dossier_revision_current(
 ) -> Response:
     engine.make_current(
         db,
-        revision_id=_revision_ref(artifact_revision_ref).id,
+        revision_id=_ref(artifact_revision_ref, "artifact_revision").id,
         actor_user_id=viewer.user_id,
     )
     return Response(status_code=204)
@@ -474,9 +467,5 @@ def cancel_dossier_build(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
-    engine.cancel_build(
-        db,
-        build_id=artifact_build_id,
-        actor_user_id=viewer.user_id,
-    )
+    engine.cancel_build(db, build_id=artifact_build_id, actor_user_id=viewer.user_id)
     return Response(status_code=204)
