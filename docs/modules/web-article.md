@@ -18,8 +18,9 @@ by provenance.
   preparation.
 - `content_indexing.py` + `media_content_reindex_job`: durable, revision-fenced
   retrieval indexing after readable source artifacts commit.
-- `node/ingest/{ingest,article_extraction}.mjs`: generic web fetch and
-  extraction. Mozilla
+- `node/ingest/ingest.mjs`: the subprocess request/result boundary;
+  `accepted_url_egress.mjs` owns fixed network acquisition policy and
+  `article_extraction.mjs` owns readable-document selection. Mozilla
   Readability is the default extractor. A unique authored `main` landmark owns
   its input so longer related-content cards cannot outscore the page body;
   absent, multiple, or unreadable main landmarks fall back to the whole
@@ -40,6 +41,32 @@ no-readable-text, and metadata failures update the accepted media row and latest
 source attempt instead of dropping the capture. Retrieval failure never rewrites
 successful source truth; its current durable job is pending, running, or visibly
 suspended.
+
+## node acquisition contract
+
+the subprocess accepts exactly `url` and integer `timeout_ms` (1–120000) on
+stdin. it returns protocol version 1 with a success or modeled source failure
+on stdout; invalid invocation and unexpected defects use stderr and a nonzero
+exit. success preserves final/base url, raw source html, readable html, and
+bounded article metadata. the python adapter owns the outer 40-second timeout.
+
+acquisition admits http(s) urls without credentials or control characters,
+removes fragments, and caps urls at 2048 utf-8 bytes. every redirect gets fresh
+dns admission: all answers must be public, the first answer is dialed directly,
+and the socket peer is checked before the request. tls verifies the original
+hostname. five redirects are allowed; automatic redirects and proxy-based
+resolution are absent.
+
+only html/xhtml is accepted. identity, gzip, deflate, and brotli bodies retain
+separate 10 mib wire, decompressed, decoded-codepoint, and utf-8 source bounds.
+charset decoding tries the header, then the first 2048 bytes of html metadata,
+then utf-8. the acquisition deadline cancels network work; each hop closes its
+response, agent, and socket. extraction runs without executing page scripts.
+
+manual verification: import a public article and its redirecting url through
+the node entrypoint, compare final urls and readable/source html, then verify
+that a loopback url returns `UnsafeDestination`. the repository static gate
+does not check node javascript; report these observations separately.
 
 ## Browse And Preview
 
