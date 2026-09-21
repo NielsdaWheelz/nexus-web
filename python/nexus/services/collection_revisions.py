@@ -31,13 +31,12 @@ ENTRY_VISIBILITY_FAMILIES = (
     CollectionFamily.PodcastSubscriptions,
 )
 
+_CONFLICT_KEYS = (ViewerCollectionRevision.viewer_id, ViewerCollectionRevision.family)
+_INCREMENT = {"revision": ViewerCollectionRevision.revision + 1}
 
-def read_collection_revision(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    family: CollectionFamily,
-) -> int:
+
+def read_collection_revision(db: Session, *, viewer_id: UUID, family: CollectionFamily) -> int:
+    """The viewer's current revision for one family; 0 before its first bump."""
     revision = db.scalar(
         select(ViewerCollectionRevision.revision).where(
             ViewerCollectionRevision.viewer_id == viewer_id,
@@ -48,112 +47,59 @@ def read_collection_revision(
 
 
 def require_collection_revision(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    family: CollectionFamily,
-    expected: int,
+    db: Session, *, viewer_id: UUID, family: CollectionFamily, expected: int
 ) -> int:
+    """The optimistic continuation gate: a stale expectation is E_COLLECTION_CHANGED."""
     revision = read_collection_revision(db, viewer_id=viewer_id, family=family)
     if revision != expected:
-        raise ConflictError(
-            ApiErrorCode.E_COLLECTION_CHANGED,
-            "Collection changed while loading",
-        )
+        raise ConflictError(ApiErrorCode.E_COLLECTION_CHANGED, "Collection changed while loading")
     return revision
 
 
-def bump_collection_revision(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    family: CollectionFamily,
-) -> int:
-    return bump_collection_revisions(
-        db,
-        viewer_ids=(viewer_id,),
-        family=family,
-    )[viewer_id]
+def bump_collection_revision(db: Session, *, viewer_id: UUID, family: CollectionFamily) -> int:
+    """Advance one viewer's revision for one family."""
+    return bump_collection_revisions(db, viewer_ids=(viewer_id,), family=family)[viewer_id]
 
 
 def bump_collection_revisions(
-    db: Session,
-    *,
-    viewer_ids: Collection[UUID],
-    family: CollectionFamily,
+    db: Session, *, viewer_ids: Collection[UUID], family: CollectionFamily
 ) -> dict[UUID, int]:
+    """Advance one family for the named viewers; return their new revisions."""
     unique_viewers = sorted(set(viewer_ids))
     if not unique_viewers:
         return {}
-
-    statement = insert(ViewerCollectionRevision).values(
-        [
-            {
-                "viewer_id": viewer_id,
-                "family": family.value,
-                "revision": 1,
-            }
-            for viewer_id in unique_viewers
-        ]
-    )
-    statement = statement.on_conflict_do_update(
-        index_elements=(
-            ViewerCollectionRevision.viewer_id,
-            ViewerCollectionRevision.family,
-        ),
-        set_={"revision": ViewerCollectionRevision.revision + 1},
-    ).returning(
-        ViewerCollectionRevision.viewer_id,
-        ViewerCollectionRevision.revision,
+    statement = (
+        insert(ViewerCollectionRevision)
+        .values(
+            [
+                {"viewer_id": viewer_id, "family": family.value, "revision": 1}
+                for viewer_id in unique_viewers
+            ]
+        )
+        .on_conflict_do_update(index_elements=_CONFLICT_KEYS, set_=_INCREMENT)
+        .returning(ViewerCollectionRevision.viewer_id, ViewerCollectionRevision.revision)
     )
     return {row.viewer_id: row.revision for row in db.execute(statement)}
 
 
 def bump_collection_families(
-    db: Session,
-    *,
-    viewer_ids: Collection[UUID],
-    families: Collection[CollectionFamily],
+    db: Session, *, viewer_ids: Collection[UUID], families: Collection[CollectionFamily]
 ) -> None:
     """Advance several explicitly owned families for the same affected viewers."""
     for family in sorted(set(families), key=lambda value: value.value):
-        bump_collection_revisions(
-            db,
-            viewer_ids=viewer_ids,
-            family=family,
-        )
+        bump_collection_revisions(db, viewer_ids=viewer_ids, family=family)
 
 
-def bump_all_collection_revisions(
-    db: Session,
-    *,
-    family: CollectionFamily,
-) -> None:
-    values = select(
-        User.id,
-        literal(family.value),
-        literal(1),
-    ).where(literal(True))
+def bump_all_collection_revisions(db: Session, *, family: CollectionFamily) -> None:
+    """Advance one family for every current viewer."""
+    values = select(User.id, literal(family.value), literal(1)).where(literal(True))
     statement = insert(ViewerCollectionRevision).from_select(
-        ("viewer_id", "family", "revision"),
-        values,
+        ("viewer_id", "family", "revision"), values
     )
-    db.execute(
-        statement.on_conflict_do_update(
-            index_elements=(
-                ViewerCollectionRevision.viewer_id,
-                ViewerCollectionRevision.family,
-            ),
-            set_={"revision": ViewerCollectionRevision.revision + 1},
-        )
-    )
+    db.execute(statement.on_conflict_do_update(index_elements=_CONFLICT_KEYS, set_=_INCREMENT))
 
 
-def bump_all_collection_families(
-    db: Session,
-    *,
-    families: Collection[CollectionFamily],
-) -> None:
+def bump_all_collection_families(db: Session, *, families: Collection[CollectionFamily]) -> None:
     """Advance several explicitly owned families for every current viewer."""
     for family in sorted(set(families), key=lambda value: value.value):
         bump_all_collection_revisions(db, family=family)

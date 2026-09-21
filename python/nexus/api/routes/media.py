@@ -224,9 +224,7 @@ def remove_media_library(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    result = library_entries.ensure_media_absent_from_library_for_viewer(
-        db, viewer.user_id, media_id, library_id
-    )
+    result = library_entries.remove_media_from_library(db, viewer.user_id, media_id, library_id)
     return ok(result, by_alias=True)
 
 

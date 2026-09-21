@@ -17,7 +17,6 @@ _INT64_MAX = 2**63 - 1
 _LIMIT_PATTERN = re.compile(r"[1-9][0-9]*\Z", re.ASCII)
 _REVISION_PATTERN = re.compile(r"(?:0|[1-9][0-9]*)\Z", re.ASCII)
 _PAGE_KEYS = frozenset({"limit", "cursor", "collection_revision"})
-_MANUAL_PAGE_KEYS = frozenset({"limit", "cursor"})
 
 CollectionCursor = Annotated[str, Field(strict=True, min_length=1)]
 CollectionRevision = Annotated[int, Field(strict=True, ge=0, le=_INT64_MAX)]
@@ -49,29 +48,45 @@ def _invalid_query() -> InvalidRequestError:
     return InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid collection query")
 
 
-def parse_collection_query(
+def _parse_keys(
     query_items: Iterable[tuple[str, str]],
     *,
     domain_keys: Set[str],
-) -> ParsedCollectionQuery:
-    """Parse one exhaustive-list query before owner-specific typed parsing."""
+    page_keys: Set[str],
+    default_limit: int,
+    max_limit: int,
+) -> tuple[dict[str, str], int]:
     if domain_keys & (_PAGE_KEYS | {"offset"}):
         raise ValueError("Domain collection query keys overlap shared page keys")
-
-    allowed = _PAGE_KEYS | frozenset(domain_keys)
+    allowed = page_keys | frozenset(domain_keys)
     parsed: dict[str, str] = {}
     for key, value in query_items:
         if key not in allowed or key in parsed:
             raise _invalid_query()
         parsed[key] = value
 
-    raw_limit = parsed.pop("limit", "100")
+    raw_limit = parsed.pop("limit", str(default_limit))
     if not _LIMIT_PATTERN.fullmatch(raw_limit):
         raise _invalid_query()
     limit = int(raw_limit)
-    if limit > 200:
+    if limit > max_limit:
         raise _invalid_query()
+    return parsed, limit
 
+
+def parse_collection_query(
+    query_items: Iterable[tuple[str, str]],
+    *,
+    domain_keys: Set[str],
+) -> ParsedCollectionQuery:
+    """Parse one exhaustive-list query before owner-specific typed parsing."""
+    parsed, limit = _parse_keys(
+        query_items,
+        domain_keys=domain_keys,
+        page_keys=_PAGE_KEYS,
+        default_limit=100,
+        max_limit=200,
+    )
     cursor = parsed.pop("cursor", None)
     raw_revision = parsed.pop("collection_revision", None)
     if cursor == "" or raw_revision == "" or (cursor is None) != (raw_revision is None):
@@ -101,29 +116,18 @@ def parse_manual_page_query(
     max_limit: int,
 ) -> ParsedCollectionQuery:
     """Strictly parse an excluded, explicitly paginated collection mode."""
-    if domain_keys & (_PAGE_KEYS | {"offset"}):
-        raise ValueError("Domain collection query keys overlap shared page keys")
     if not 1 <= default_limit <= max_limit:
         raise ValueError("Manual page limits are invalid")
-
-    allowed = _MANUAL_PAGE_KEYS | frozenset(domain_keys)
-    parsed: dict[str, str] = {}
-    for key, value in query_items:
-        if key not in allowed or key in parsed:
-            raise _invalid_query()
-        parsed[key] = value
-
-    raw_limit = parsed.pop("limit", str(default_limit))
-    if not _LIMIT_PATTERN.fullmatch(raw_limit):
-        raise _invalid_query()
-    limit = int(raw_limit)
-    if limit > max_limit:
-        raise _invalid_query()
-
+    parsed, limit = _parse_keys(
+        query_items,
+        domain_keys=domain_keys,
+        page_keys=frozenset({"limit", "cursor"}),
+        default_limit=default_limit,
+        max_limit=max_limit,
+    )
     cursor = parsed.pop("cursor", None)
     if cursor == "":
         raise _invalid_query()
-
     return ParsedCollectionQuery(
         limit=limit,
         cursor=cursor,

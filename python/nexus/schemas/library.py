@@ -24,6 +24,34 @@ _INT32_MAX = 2_147_483_647
 _PositiveInt32 = Annotated[int, Field(strict=True, ge=1, le=_INT32_MAX)]
 
 
+class _Camel(BaseModel):
+    """camelCase wire model: every response key the web decodes exactly."""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+
+
+class _CamelRow(_Camel):
+    """camelCase wire model built straight from a DB row or context object."""
+
+    model_config = ConfigDict(
+        from_attributes=True, alias_generator=to_camel, populate_by_name=True, extra="forbid"
+    )
+
+
+class _CamelIn(BaseModel):
+    """camelCase request model: aliases only, never the python field name."""
+
+    model_config = ConfigDict(
+        alias_generator=to_camel, validate_by_alias=True, validate_by_name=False, extra="forbid"
+    )
+
+
+class _Snake(BaseModel):
+    """snake_case wire model nested inside a camelCase envelope."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class CreateLibraryRequest(BaseModel):
     library_id: UUID
     name: str = Field(..., min_length=1, max_length=100, description="Library name (1-100 chars)")
@@ -37,134 +65,18 @@ class UpdateLibraryRequest(BaseModel):
     )
 
 
-_LIBRARY_MUTATION_OUT_CONFIG = ConfigDict(
-    alias_generator=to_camel,
-    populate_by_name=True,
-    extra="forbid",
-)
+class UpdateLibraryMemberRequest(BaseModel):
+    role: LibraryRole = Field(..., description="New role for the member ('admin' or 'member')")
 
 
-class LibraryDeleteOut(BaseModel):
-    model_config = _LIBRARY_MUTATION_OUT_CONFIG
-
-    library_id: UUID
-    collection_revision: CollectionRevision
-
-
-class LibraryEntryRemovalOut(BaseModel):
-    model_config = _LIBRARY_MUTATION_OUT_CONFIG
-
-    library_entries_collection_revision: CollectionRevision
-
-
-class PodcastPlacementRemovalOut(BaseModel):
-    model_config = _LIBRARY_MUTATION_OUT_CONFIG
-
-    outcome: Literal["Removed", "AlreadyAbsent"]
-    library_entries_collection_revision: CollectionRevision
-
-
-class PodcastPlacementAdditionOut(BaseModel):
-    model_config = _LIBRARY_MUTATION_OUT_CONFIG
-
-    outcome: Literal["Added", "AlreadyPresent"]
-    library_entries_collection_revision: CollectionRevision
-
-
-_LIBRARY_PLACEMENT_OUT_CONFIG = ConfigDict(
-    alias_generator=to_camel,
-    populate_by_name=True,
-    extra="forbid",
-)
-
-
-class LibraryIdentityOut(BaseModel):
-    id: UUID
-    name: str
-
-    model_config = _LIBRARY_PLACEMENT_OUT_CONFIG
-
-
-class SavedInNexusLibraryPlacementDestinationOut(BaseModel):
-    kind: Literal["SavedInNexus"] = "SavedInNexus"
-
-    model_config = _LIBRARY_PLACEMENT_OUT_CONFIG
-
-
-class LibraryLibraryPlacementDestinationOut(BaseModel):
-    kind: Literal["Library"] = "Library"
-    library: LibraryIdentityOut
-
-    model_config = _LIBRARY_PLACEMENT_OUT_CONFIG
-
-
-LibraryPlacementDestinationOut = Annotated[
-    SavedInNexusLibraryPlacementDestinationOut | LibraryLibraryPlacementDestinationOut,
-    Field(discriminator="kind"),
-]
-
-
-class AbsentLibraryPlacementRelationOut(BaseModel):
-    kind: Literal["Absent"] = "Absent"
-
-    model_config = _LIBRARY_PLACEMENT_OUT_CONFIG
-
-
-class DirectLibraryPlacementRelationOut(BaseModel):
-    kind: Literal["Direct"] = "Direct"
-
-    model_config = _LIBRARY_PLACEMENT_OUT_CONFIG
-
-
-class InheritedLibraryPlacementRelationOut(BaseModel):
-    kind: Literal["Inherited"] = "Inherited"
-    provenance: list[LibraryIdentityOut] = Field(min_length=1)
-
-    model_config = _LIBRARY_PLACEMENT_OUT_CONFIG
-
-
-LibraryPlacementRelationOut = Annotated[
-    AbsentLibraryPlacementRelationOut
-    | DirectLibraryPlacementRelationOut
-    | InheritedLibraryPlacementRelationOut,
-    Field(discriminator="kind"),
-]
-
-
-class AvailableLibraryPlacementAvailabilityOut(BaseModel):
-    kind: Literal["Available"] = "Available"
-
-    model_config = _LIBRARY_PLACEMENT_OUT_CONFIG
-
-
-class BlockedLibraryPlacementAvailabilityOut(BaseModel):
-    kind: Literal["Blocked"] = "Blocked"
-    reason: Literal[
-        "RequiresAdmin",
-        "RequiresSubscription",
-        "SystemManaged",
-        "Inherited",
-    ]
-
-    model_config = _LIBRARY_PLACEMENT_OUT_CONFIG
-
-
-LibraryPlacementAvailabilityOut = Annotated[
-    AvailableLibraryPlacementAvailabilityOut | BlockedLibraryPlacementAvailabilityOut,
-    Field(discriminator="kind"),
-]
-
-
-class LibraryPlacementOptionOut(BaseModel):
-    destination: LibraryPlacementDestinationOut
-    relation: LibraryPlacementRelationOut
-    availability: LibraryPlacementAvailabilityOut
-
-    model_config = _LIBRARY_PLACEMENT_OUT_CONFIG
+class TransferLibraryOwnershipRequest(_CamelIn):
+    new_owner_user_handle: UserHandle
 
 
 class LibraryEntryOrderRequest(BaseModel):
     entry_ids: list[UUID] = Field(min_length=1, max_length=500)
+
+    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_entry_ids(self) -> "LibraryEntryOrderRequest":
@@ -172,25 +84,22 @@ class LibraryEntryOrderRequest(BaseModel):
             raise ValueError("entry_ids must not contain duplicates")
         return self
 
+
+class UserLibraryInvitee(_CamelIn):
+    kind: Literal["User"]
+    user_handle: UserHandle
+
+
+class CreateLibraryInviteRequest(BaseModel):
+    invitee: UserLibraryInvitee
+    role: LibraryRole = Field(
+        ..., description="Role to assign to the invitee ('admin' or 'member')"
+    )
+
     model_config = ConfigDict(extra="forbid")
 
 
-class UpdateLibraryMemberRequest(BaseModel):
-    role: LibraryRole = Field(..., description="New role for the member ('admin' or 'member')")
-
-
-class TransferLibraryOwnershipRequest(BaseModel):
-    new_owner_user_handle: UserHandle
-
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        validate_by_alias=True,
-        validate_by_name=False,
-        extra="forbid",
-    )
-
-
-class LibraryOut(BaseModel):
+class LibraryOut(_CamelRow):
     id: UUID
     name: str
     owner_user_handle: UserHandle
@@ -205,36 +114,104 @@ class LibraryOut(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    model_config = ConfigDict(
-        from_attributes=True,
-        alias_generator=to_camel,
-        populate_by_name=True,
-        extra="forbid",
-    )
 
-
-class LibraryRenameOut(BaseModel):
-    model_config = _LIBRARY_MUTATION_OUT_CONFIG
-
+class LibraryRenameOut(_Camel):
     library: LibraryOut
     collection_revision: CollectionRevision
 
 
+class LibraryDeleteOut(_Camel):
+    library_id: UUID
+    collection_revision: CollectionRevision
+
+
+class LibraryEntryRemovalOut(_Camel):
+    library_entries_collection_revision: CollectionRevision
+
+
+class PodcastPlacementRemovalOut(_Camel):
+    outcome: Literal["Removed", "AlreadyAbsent"]
+    library_entries_collection_revision: CollectionRevision
+
+
+class PodcastPlacementAdditionOut(_Camel):
+    outcome: Literal["Added", "AlreadyPresent"]
+    library_entries_collection_revision: CollectionRevision
+
+
+class LibraryIdentityOut(_Camel):
+    id: UUID
+    name: str
+
+
+class SavedInNexusLibraryPlacementDestinationOut(_Camel):
+    kind: Literal["SavedInNexus"] = "SavedInNexus"
+
+
+class LibraryLibraryPlacementDestinationOut(_Camel):
+    kind: Literal["Library"] = "Library"
+    library: LibraryIdentityOut
+
+
+LibraryPlacementDestinationOut = Annotated[
+    SavedInNexusLibraryPlacementDestinationOut | LibraryLibraryPlacementDestinationOut,
+    Field(discriminator="kind"),
+]
+
+
+class AbsentLibraryPlacementRelationOut(_Camel):
+    kind: Literal["Absent"] = "Absent"
+
+
+class DirectLibraryPlacementRelationOut(_Camel):
+    kind: Literal["Direct"] = "Direct"
+
+
+class InheritedLibraryPlacementRelationOut(_Camel):
+    kind: Literal["Inherited"] = "Inherited"
+    provenance: list[LibraryIdentityOut] = Field(min_length=1)
+
+
+LibraryPlacementRelationOut = Annotated[
+    AbsentLibraryPlacementRelationOut
+    | DirectLibraryPlacementRelationOut
+    | InheritedLibraryPlacementRelationOut,
+    Field(discriminator="kind"),
+]
+
+
+class AvailableLibraryPlacementAvailabilityOut(_Camel):
+    kind: Literal["Available"] = "Available"
+
+
+class BlockedLibraryPlacementAvailabilityOut(_Camel):
+    kind: Literal["Blocked"] = "Blocked"
+    reason: Literal["RequiresAdmin", "RequiresSubscription", "SystemManaged", "Inherited"]
+
+
+LibraryPlacementAvailabilityOut = Annotated[
+    AvailableLibraryPlacementAvailabilityOut | BlockedLibraryPlacementAvailabilityOut,
+    Field(discriminator="kind"),
+]
+
+
+class LibraryPlacementOptionOut(_Camel):
+    destination: LibraryPlacementDestinationOut
+    relation: LibraryPlacementRelationOut
+    availability: LibraryPlacementAvailabilityOut
+
+
 class LibraryPageInfo(BaseModel):
+    # `has_more` is derived from `next_cursor`, but `client.ts` requires the field
+    # and asserts the two agree, so it stays on the wire.
     has_more: bool = False
     next_cursor: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 
 
-class LibraryGovernancePageInfo(BaseModel):
+class LibraryGovernancePageInfo(_Camel):
     next_cursor: Presence[LibraryGovernanceCursor]
-
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        populate_by_name=True,
-        extra="forbid",
-    )
 
 
 class LibraryDestinationOut(BaseModel):
@@ -246,34 +223,22 @@ class LibraryDestinationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class LibraryEntryPodcastOut(BaseModel):
+class LibraryEntryPodcastOut(_Camel):
     id: UUID
     title: str
     contributors: list[ContributorCreditOut] = Field(default_factory=list)
     unplayed_count: int = Field(ge=0, default=0)
     published_date: Presence[datetime]
 
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        populate_by_name=True,
-        extra="forbid",
-    )
 
-
-class LibraryEntryPodcastSubscriptionOut(BaseModel):
+class LibraryEntryPodcastSubscriptionOut(_Camel):
     default_playback_speed: Presence[PlaybackRate]
     pause_shortening_mode: Presence[PauseShorteningMode]
     auto_queue: bool = False
     sync_status: PodcastSyncStatus
 
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        populate_by_name=True,
-        extra="forbid",
-    )
 
-
-class LibraryEntryMediaCapabilitiesOut(BaseModel):
+class LibraryEntryMediaCapabilitiesOut(_Snake):
     can_quote: bool
     can_retry: bool
     can_refresh_source: bool
@@ -281,10 +246,8 @@ class LibraryEntryMediaCapabilitiesOut(BaseModel):
     can_edit_authors: bool
     can_delete: bool
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class LibraryEntryMediaOut(BaseModel):
+class LibraryEntryMediaOut(_Snake):
     id: UUID
     kind: Literal["web_article", "epub", "pdf", "podcast_episode", "video"]
     title: str
@@ -293,71 +256,39 @@ class LibraryEntryMediaOut(BaseModel):
     author_mode: Literal["automatic", "manual"]
     original_published_date: Presence[PublicationDate]
     canonical_source_url: str | None
-    processing_status: Literal[
-        "pending",
-        "extracting",
-        "ready_for_reading",
-        "failed",
-        "suspended",
-    ]
+    processing_status: Literal["pending", "extracting", "ready_for_reading", "failed", "suspended"]
     read_state: Literal["unread", "in_progress", "finished"]
     progress_fraction: float | None = Field(default=None, ge=0, le=1)
     progress_resettable: bool
     last_engaged_at: datetime | None = None
     capabilities: LibraryEntryMediaCapabilitiesOut
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class ReadingTimeEstimateOut(BaseModel):
+class ReadingTimeEstimateOut(_Camel):
     total_minutes: _PositiveInt32
     remaining_minutes: Presence[_PositiveInt32]
 
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
 
-
-class LibraryEntryPlacementOut(BaseModel):
+class LibraryEntryPlacementOut(_Camel):
     library_entry_id: UUID
     position: int = Field(ge=0)
 
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        populate_by_name=True,
-        extra="forbid",
-    )
 
-
-class LibraryMediaListItemOut(BaseModel):
+class LibraryMediaListItemOut(_Camel):
     kind: Literal["media"]
     placement: Presence[LibraryEntryPlacementOut]
     added_at: datetime
     media: LibraryEntryMediaOut
-    reading_time_estimate: Presence[ReadingTimeEstimateOut] = Field(
-        serialization_alias="readingTimeEstimate"
-    )
-
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        populate_by_name=True,
-        extra="forbid",
-    )
+    reading_time_estimate: Presence[ReadingTimeEstimateOut]
 
 
-class LibraryPodcastListItemOut(BaseModel):
+class LibraryPodcastListItemOut(_Camel):
     kind: Literal["podcast"]
     placement: Presence[LibraryEntryPlacementOut]
     added_at: datetime
     podcast: LibraryEntryPodcastOut
     subscription: Presence[LibraryEntryPodcastSubscriptionOut]
-    reading_time_estimate: Presence[ReadingTimeEstimateOut] = Field(
-        serialization_alias="readingTimeEstimate"
-    )
-
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        populate_by_name=True,
-        extra="forbid",
-    )
+    reading_time_estimate: Presence[ReadingTimeEstimateOut]
 
 
 LibraryEntryListItemOut = Annotated[
@@ -366,7 +297,7 @@ LibraryEntryListItemOut = Annotated[
 ]
 
 
-class LibraryMemberOut(BaseModel):
+class LibraryMemberOut(_CamelRow):
     user_handle: UserHandle
     role: LibraryRole
     is_owner: bool
@@ -374,15 +305,8 @@ class LibraryMemberOut(BaseModel):
     display_name: Presence[str]
     created_at: datetime
 
-    model_config = ConfigDict(
-        from_attributes=True,
-        alias_generator=to_camel,
-        populate_by_name=True,
-        extra="forbid",
-    )
 
-
-class LibraryInvitationOut(BaseModel):
+class LibraryInvitationOut(_CamelRow):
     invitation_handle: LibraryInvitationHandle
     library_id: UUID
     inviter_user_handle: UserHandle
@@ -394,72 +318,23 @@ class LibraryInvitationOut(BaseModel):
     created_at: datetime
     responded_at: Presence[datetime]
 
-    model_config = ConfigDict(
-        from_attributes=True,
-        alias_generator=to_camel,
-        populate_by_name=True,
-        extra="forbid",
-    )
-
 
 class ViewerLibraryInvitationOut(LibraryInvitationOut):
     library_name: str
 
 
-class UserLibraryInvitee(BaseModel):
-    kind: Literal["User"]
-    user_handle: UserHandle
-
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        validate_by_alias=True,
-        validate_by_name=False,
-        extra="forbid",
-    )
-
-
-class CreateLibraryInviteRequest(BaseModel):
-    invitee: UserLibraryInvitee
-    role: LibraryRole = Field(
-        ..., description="Role to assign to the invitee ('admin' or 'member')"
-    )
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class InviteAcceptMembershipOut(BaseModel):
+class InviteAcceptMembershipOut(_CamelRow):
     library_id: UUID
     user_handle: UserHandle
     role: LibraryRole
 
-    model_config = ConfigDict(
-        from_attributes=True,
-        alias_generator=to_camel,
-        populate_by_name=True,
-        extra="forbid",
-    )
 
-
-class AcceptLibraryInviteResponse(BaseModel):
+class AcceptLibraryInviteResponse(_CamelRow):
     invite: LibraryInvitationOut
     membership: InviteAcceptMembershipOut
     idempotent: bool
 
-    model_config = ConfigDict(
-        from_attributes=True,
-        alias_generator=to_camel,
-        populate_by_name=True,
-        extra="forbid",
-    )
 
-
-class DeclineLibraryInviteResponse(BaseModel):
+class DeclineLibraryInviteResponse(_CamelRow):
     invite: LibraryInvitationOut
     idempotent: bool
-
-    model_config = ConfigDict(
-        from_attributes=True,
-        alias_generator=to_camel,
-        populate_by_name=True,
-        extra="forbid",
-    )
