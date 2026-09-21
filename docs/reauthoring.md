@@ -56,7 +56,7 @@ verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, o
 | substrate: workspace/panes (store, host, memento, mobile chrome, pane find, route model) | 20.7k | 6k | reauthor | open |
 | substrate: api/auth/bff (proxy, sse, session; BFF routes already collapsed) | 13.9k | 4k | reauthor | bff transport 940→328 lines: one forwarding owner with explicit session/public/share/extension lanes; server JSON fetch now owns its deadline through body consumption; auth, client consolidation and sse remain open |
 | substrate: ui primitives (+3.5k css, fonts/legal) | 14.3k | 6k | reauthor css | open |
-| substrate: jobs/worker | 6.6k | 2k | reauthor | open |
+| substrate: jobs/worker | 6.6k | 2k | reauthor | first pass landed (size/jobs-py): 6.4k→4.0k, −38%; queue.py 1,027 (310 SQL lines) and worker.py 707 are the remaining mass |
 | codex agent host (+ deploy isolation) | 4.4k | 2k | keep; declare isolation in compose, not python | open |
 | telemetry | 1.5k | 0.5k | delete rum; keep client-defects + release backup tooling | open |
 | android shell/build, scripts/config | 5.0k | 4k | keep | open |
