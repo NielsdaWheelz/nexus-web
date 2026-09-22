@@ -6,7 +6,7 @@ from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from math import ceil
-from typing import TYPE_CHECKING, Any, Literal, assert_never, cast
+from typing import Any, Literal, cast
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
@@ -50,11 +50,7 @@ from nexus.services.resource_items.capabilities import (
 from nexus.services.retrieval_citation import RetrievalCitation, citation_from_search_result
 from nexus.services.search.service import get_search_result
 
-if TYPE_CHECKING:
-    from nexus.services.generation_service import ChatToolAuthority
-
-
-CHAT_PROMPT_TEMPLATE_REVISION = "chat-context.v4"
+CHAT_PROMPT_TEMPLATE_REVISION = "chat-context.v5"
 MAX_PROMPT_CHARS = 100_000
 
 PromptRole = Literal["system", "user", "assistant"]
@@ -235,10 +231,10 @@ class PromptPlan:
         }
 
 
-def render_system_prompt_block(*, tool_authority: ChatToolAuthority) -> str:
-    """Render assistant instructions for the exact per-run published tool set."""
+def render_system_prompt_block() -> str:
+    """Render assistant instructions for the fixed chat tool plan."""
 
-    read_instructions = (
+    return (
         "You are a reading assistant for the user's saved articles, books, podcasts, "
         "videos, and PDFs. "
         "A <subject> block, when present, is the primary resource the user is asking "
@@ -270,29 +266,23 @@ def render_system_prompt_block(*, tool_authority: ChatToolAuthority) -> str:
         "means the document is too big to read whole, so inspect its map first and "
         "read the sections you need. "
         "Use nexus__document__search to find passages inside one admitted document and "
-        "nexus__relations__list to inspect its admitted one-hop connections."
+        "nexus__relations__list to inspect its admitted one-hop connections. "
+        "You can also act on the user's library when they explicitly ask you to file, "
+        "annotate, connect, or queue — never on your own initiative. "
+        "nexus__library__add(resource_uri, library_id|library_name) files a resource "
+        "into a library the user administers. "
+        "nexus__note__create(markdown, page_uri?) appends a note the user dictates to today's "
+        "daily note, or to a given page. "
+        "nexus__highlight__create(media_uri, exact, prefix?, suffix?, note?) dog-ears an exact "
+        "passage; if exact is not unique, add prefix/suffix or quote more surrounding "
+        "text — an ambiguous quote is refused, so never guess. "
+        "nexus__edge__create(source_uri, target_uri, kind?, rationale) connects two of the "
+        "user's resources with your one-line rationale. "
+        "nexus__queue__add(media_uri) adds a media item to the read/listen-next queue. "
+        "Each write happens immediately and is shown to the user with an Undo; there is "
+        "no undo or delete tool, so do not attempt to remove anything. Use these tools "
+        "only when the user's words ask for the action."
     )
-    if tool_authority == "ReadOnly":
-        return read_instructions
-    if tool_authority == "AdditiveWrites":
-        return read_instructions + (
-            " You can also act on the user's library when they explicitly ask you to file, "
-            "annotate, connect, or queue — never on your own initiative. "
-            "nexus__library__add(resource_uri, library_id|library_name) files a resource "
-            "into a library the user administers. "
-            "nexus__note__create(markdown, page_uri?) appends a note the user dictates to today's "
-            "daily note, or to a given page. "
-            "nexus__highlight__create(media_uri, exact, prefix?, suffix?, note?) dog-ears an exact "
-            "passage; if exact is not unique, add prefix/suffix or quote more surrounding "
-            "text — an ambiguous quote is refused, so never guess. "
-            "nexus__edge__create(source_uri, target_uri, kind?, rationale) connects two of the "
-            "user's resources with your one-line rationale. "
-            "nexus__queue__add(media_uri) adds a media item to the read/listen-next queue. "
-            "Each write happens immediately and is shown to the user with an Undo; there is "
-            "no undo or delete tool, so do not attempt to remove anything. Use these tools "
-            "only when the user's words ask for the action."
-        )
-    assert_never(tool_authority)
 
 
 @dataclass(frozen=True)
@@ -334,7 +324,6 @@ def assemble_chat_context(
     max_context_tokens: int,
     max_output_tokens: int,
     turn_context: ChatRunTurnContext | None,
-    tool_authority: ChatToolAuthority,
 ) -> ContextAssembly:
     """Assemble the provider-neutral chat request for a durable chat run."""
 
@@ -361,7 +350,7 @@ def assemble_chat_context(
         block_id="system",
         role="system",
         lane="system",
-        text=render_system_prompt_block(tool_authority=tool_authority),
+        text=render_system_prompt_block(),
     )
     mandatory_blocks: list[tuple[str, PromptBlock, Mapping[str, object]]] = []
 

@@ -16,7 +16,7 @@ from nexus.services.generation_admission import (
 )
 from nexus.services.generation_catalog import GenerationCatalogService, ResolvedCatalogPair
 from nexus.services.generation_policy import (
-    ChatPerRunTools,
+    EffectMode,
     ExactHostToolPlan,
     ExactModelTools,
     GenerationPolicy,
@@ -47,13 +47,11 @@ from nexus.services.tool_runtime.catalog import (
     freeze_tool_plan_snapshot,
 )
 
-type ChatToolAuthority = Literal["ReadOnly", "AdditiveWrites"]
-
 
 @dataclass(frozen=True, slots=True)
 class ModelToolAdmission:
     operation: FrozenToolOperation
-    effect_mode: ChatToolAuthority
+    effect_mode: EffectMode
     scope: FrozenToolScope
 
 
@@ -76,7 +74,6 @@ class GenerationService:
         *,
         catalog_definition_revision: str,
         pair: ResolvedCatalogPair,
-        tool_authority: ChatToolAuthority,
         scope: FrozenToolScope,
         intent: GenerationIntent,
         prompt_template_revision: str,
@@ -88,13 +85,8 @@ class GenerationService:
             raise ValueError("Chat catalog definition revision must be SHA-256")
         workflow = self._policy.chat.workflow
         policy = workflow.model_tool_policy
-        if not isinstance(policy, ChatPerRunTools):
-            raise GenerationConfigurationDefect("Chat workflow lacks per-run tool authority")
-        plan_id, revision = (
-            (policy.read_plan_id, policy.read_plan_authority_revision)
-            if tool_authority == "ReadOnly"
-            else (policy.additive_write_plan_id, policy.additive_write_plan_authority_revision)
-        )
+        if not isinstance(policy, ExactModelTools):
+            raise GenerationConfigurationDefect("Chat workflow lacks its exact model-tool plan")
         return _freeze_spec(
             operation="chat",
             selection_source="ChatRun",
@@ -109,9 +101,11 @@ class GenerationService:
             host_evidence_revision=None,
             model_tools=ModelToolAdmission(
                 operation=self._required_tool_operation(
-                    plan_id=plan_id, authority_revision=revision, owner="chat"
+                    plan_id=policy.plan_id,
+                    authority_revision=policy.authority_revision,
+                    owner="chat",
                 ),
-                effect_mode=tool_authority,
+                effect_mode=policy.effect_mode,
                 scope=scope,
             ),
         )
@@ -211,10 +205,6 @@ class GenerationService:
             if scope is not None:
                 raise ValueError("NoModelTools background admission received a tool scope")
             return None
-        if not isinstance(policy, ExactModelTools):
-            raise GenerationConfigurationDefect(
-                f"background operation {operation!r} has a non-background tool policy"
-            )
         if scope is None:
             raise ValueError("ExactModelTools background admission requires a frozen scope")
         return ModelToolAdmission(
@@ -337,9 +327,7 @@ def _freeze_spec(
             else Present(value=freeze_tool_plan_snapshot(model_tools.operation))
         ),
         tool_effect_mode=(
-            Absent()
-            if model_tools is None
-            else Present[ChatToolAuthority](value=model_tools.effect_mode)
+            Absent() if model_tools is None else Present[EffectMode](value=model_tools.effect_mode)
         ),
         admitted_tool_scope=(Absent() if model_tools is None else Present(value=model_tools.scope)),
         admitted_tool_scope_digest=(

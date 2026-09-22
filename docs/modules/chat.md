@@ -28,44 +28,6 @@ never in the query.
 Frontend owners live under `apps/web/src/components/chat/*` and
 `apps/web/src/lib/conversations/*`.
 
-## Cutover Specs
-
-Hard-cutover specs that govern chat work. Each owns one axis; they compose.
-
-- `docs/cutovers/chat-scroll-anchoring-hard-cutover.md` — transcript scroll
-  anchoring (hybrid pin-to-top then stick-to-bottom). IMPLEMENTED.
-- `docs/cutovers/chat-subsystem-consolidation-hard-cutover.md` — structural
-  ownership + duplication collapse (message-update reducer, per-run stream
-  context, visibility factory, `chat_run_citations` / `chat_run_tools` /
-  run-event emitter, `run_kit.get_run_events` / `is_run_terminal`). IMPLEMENTED.
-- `docs/cutovers/sota-chat-streaming-hard-cutover.md` — streaming transport,
-  event grammar, coalescing, cursor replay, cancellation. IMPLEMENTED.
-- `docs/cutovers/resource-chat-subject-hard-cutover.md` — historical
-  surface/subject consolidation. Its per-run `chat_subject` request and
-  uncalled server resolver are deleted; generic resource chats now attach
-  initial context refs and reader quotes use the snapshot cutover below.
-- `docs/cutovers/reader-highlight-quote-chat-hard-cutover.md` — reader Highlight
-  quote-to-chat as an immutable per-message reader-selection snapshot; atomic
-  new/existing destination send; removes inline reader chat and the request
-  `chat_subject`. IMPLEMENTED.
-- `docs/cutovers/assistant-message-trust-trail-hard-cutover.md` — assistant
-  trust-trail read model. IMPLEMENTED.
-- `docs/cutovers/chat-publication-thin-spine-hard-cutover.md` — candidate/final
-  citation separation, degraded publication, and terminal run facts.
-  IMPLEMENTED.
-- `docs/cutovers/chat-interface-hard-cutover.md` — readable transcript
-  hierarchy, progressive disclosure, typed send/privacy state, quote reflow,
-  and shared conversation-row activation. IMPLEMENTED.
-- `docs/cutovers/generation-backends-hard-cutover.md` — complete configured
-  catalog, exact per-run selection, route-neutral tools, unified generation
-  ledger, and legacy Chat aggregate reset.
-- `docs/cutovers/conversation-find-hard-cutover.md` — exact selected-path
-  Conversation Find, committed-DOM projection, reversible preview, and source
-  replacement safety. IMPLEMENTED.
-- `docs/cutovers/chat-durable-agent-step-journal-hard-cutover.md` — exact step
-  replay, ambiguous-effect suspension, queue-derived execution advisories, and
-  web-search identity separation. IMPLEMENTED.
-
 ## Durable Execution And Recovery
 
 `chat_runs.py` claims the queued run and executes only its persisted generation
@@ -74,13 +36,15 @@ independently accepted child calls, provider continuation, and replay.
 `services/tool_runtime/` and `tool_authority.py` own the immutable declarations,
 grants, binding/replay policy, and one durable tool executor.
 
-Chat admission freezes exactly one read plan or its additive-write extension.
-`ChatRead` publishes `web.search`, `nexus.search`, `nexus.resource.read`,
+chat admission always freezes `ChatReadAdditiveWrite` with `AdditiveWrites`
+over `ChatAdmittedContext`. it publishes `web.search`, `nexus.search`, `nexus.resource.read`,
 `nexus.document.search`, `nexus.resource.inspect`, and
-`nexus.relations.list`. `ChatReadAdditiveWrite` adds
+`nexus.relations.list`, plus
 `nexus.library.add`, `nexus.note.create`, `nexus.highlight.create`,
-`nexus.edge.create`, and `nexus.queue.add` only after fresh per-run consent.
-Canonical IDs are the only executable identities.
+`nexus.edge.create`, and `nexus.queue.add`. the browser supplies no tool
+authority. owner scope, eight-live-write limit, receipts, and undo remain
+enforced. historical read-only runs retain their frozen facts.
+canonical ids are the only executable identities.
 
 Codex observes the frozen plan through the authenticated MCP mount; API models
 receive the same plan as provider functions. Both adapters call the same
@@ -213,7 +177,7 @@ at the bottom edge; a genuine user scroll-up releases following and shows the
 state is a single `top | bottom | released` mode, not a boolean. Native
 `overflow-anchor` stays disabled; the hook owns anchoring. Streaming follow
 writes are instant and RAF-batched; `behavior: "smooth"` is only for discrete
-jumps. See `docs/cutovers/chat-scroll-anchoring-hard-cutover.md`.
+jumps.
 
 ### Conversation Find
 
@@ -243,31 +207,35 @@ to reading position** restores the saved eye-line and pin mode once.
 ## Send Path
 
 `ChatComposer` owns user input, catalog loading, exact next-run selection,
-off-by-default additive-write authority, and send action wiring. It does not
-construct API branch semantics directly.
+and send action wiring. it does not construct api branch semantics directly.
 
 `useGenerationCatalog` fetches `GET /api/llm-catalog` and retains the last
-decoded semantic catalog while a readiness refresh is stale. The effective
-selection is the explicit draft choice, otherwise the causal assistant run,
-otherwise the developer Chat seed for a new composer. The seed is not a user
-default or stored preference. An unavailable causal selection remains visible
-and requires an explicit replacement; it is never silently substituted.
+decoded catalog while refreshing. it loads initially, refreshes when focus enters
+the controls and after catalog-related refusal, and offers retry when no pair is
+selectable. it has no picker timer.
+initialization waits for restored drafts, resolved history, and a catalog.
+only an uninitialized draft inherits the causal assistant selection or the
+developer seed. failed history blocks initialization and send.
 
-`GenerationSelectionPicker` renders the complete configured catalog as a
-searchable model list with one reasoning choice for the active model. Route,
-model, reasoning, billing class, readiness, and reported capacity stay visible.
-Only a ready `Selectable` pair commits. The browser owns no provider/model/
-reasoning allowlist, default, fallback, or qualification rule — see
+`GenerationSelectionPicker` is controlled: provider and model are native
+selects, effort uses native radio segments. only `Selectable` efforts and
+their parents are alternatives. valid singleton models/efforts are labelled
+values. unavailable current identities remain visible and block execution.
+changing a parent clears its children; a model takes a selectable source default,
+otherwise its sole effort, otherwise requires an explicit effort.
+selection never executes a run. the browser owns no provider/model/
+reasoning allowlist, invented default, or qualification rule — see
 [modules/llms.md](llms.md).
 
 `useConversation` inherits only the exact selection of the causal assistant
-parent. `useChatDraft` stores an explicit selection, the per-run tool authority,
-and the exact in-flight send command under `nx_chat_draft.v3:`. It discards the
-retired v2 profile-shaped record instead of decoding it. Additive-write
-authority is always reset to `ReadOnly` after a send and never inherited.
+parent. `generationSelection.ts` owns the draft union and transitions:
+`Uninitialized | ModelRequired | EffortRequired | Selected`.
+`useChatDraft` stores text, that selection, and the exact in-flight command
+under `nx_chat_draft.v4:`. partial choices survive reload and block send.
+the decoder accepts only this shape; no earlier storage format is read.
 
 `useConversation` is the sole owner of caller-level send availability. It
-derives one `ChatSendCapability`: `Available`, `HistoryLoading`,
+derives one `ChatSendCapability`: `Available`, `HistoryLoading`, `HistoryUnavailable`,
 `AssistantRunning`, or `ReplyTargetUnavailable`. `ChatComposer` exhaustively
 maps that value to send gating and one screen-reader status. Routine blocked
 state never renders in the visible error slot. Draft editing and Stop remain
@@ -284,9 +252,6 @@ and shrinks to its configured cap, then exposes native internal scrolling. The
 composer configures it for two through six rows and restores input focus after
 completed and known-failed sends without taking viewport ownership.
 
-Presentation and proof are governed by
-[`chat-composer-instrument-hard-cutover.md`](../cutovers/chat-composer-instrument-hard-cutover.md).
-
 `buildChatRunBody` is the single frontend `/api/chat-runs` body assembler. It
 produces the hard-cut request shape:
 
@@ -296,7 +261,6 @@ produces the hard-cut request shape:
 - `content`
 - `catalog_definition_revision`
 - `selection` — exact tagged route/model/reasoning
-- `tool_authority` — `ReadOnly | AdditiveWrites`
 - `reader_selection` — `Presence<{ key: ReaderSelectionKey; revision }>`
 
 The branch anchor lives inside `Existing.Reply.branch_anchor`: branch drafts win
@@ -337,12 +301,12 @@ the BFF's structured catch-all (`app/api/[...path]/route.ts`) and both are
 consolidated into one sibling-candidate constructor
 (`services/chat_runs.py`) that each route calls with an explicit
 `rerun`/`regenerate` operation and separate eligibility guards. Each request
-carries an exact selection, the current catalog-definition revision, and
-`tool_authority: ReadOnly`. The primary action reuses the source run's
+carries only an exact selection and the current catalog-definition revision.
+new runs use the fixed additive tool policy. the primary action reuses the source run's
 selection only while the current catalog still marks it rerun-eligible;
 otherwise `CandidateGenerationPicker` requires an explicit replacement. Nothing
-silently substitutes a model, and write authority never
-inherits. Both commands clone the source user turn (content, parent, branch
+silently substitutes a model. candidate edits are local and discarded on close;
+only the explicit rerun/regenerate button admits a run. both commands clone the source user turn (content, parent, branch
 lineage, reader-selection snapshot, turn context) into a new user sibling with a
 pending assistant child and one queued durable run, then select the new
 assistant as the active leaf. The complete migration reset leaves no
@@ -499,7 +463,7 @@ body). Both modes use the same three-line preview and explicit in-place
 expansion. The semantic figure has zero outer margin and cannot exceed its
 containing pane. `ConversationDestinationOverlay` is the existing-chat picker
 (title search over `GET /conversations?q=`). `useChatDraft` persists text, an
-explicit `GenerationSelectionSpec`, per-run tool authority, and the exact send
+explicit `SelectionDraft`, and the exact send
 operation — one idempotency key, immutable `ChatRunCreateRequest`, and
 originating view identity/account
 assembled once before dispatch — in `sessionStorage`, keyed by the structured
@@ -527,7 +491,8 @@ commits only its closed reason. The response is
 projection, prompt, quote, or mutable detail. Accepted presentation always comes
 from the canonical repeatable-read run GET. Rerun and regeneration keep their
 existing rich HTTP responses while sharing the same key/mismatch ledger and
-requiring a fresh exact selection with `ReadOnly` authority.
+requiring a fresh exact selection. a new rerun can create new additions;
+replaying the same command retains its original admission and effects.
 
 The unmarked `GET /conversations` primary index returns the strict
 complete-collection page and drains automatically in `ConversationsPaneBody`. The destination picker always sends an explicit `q`

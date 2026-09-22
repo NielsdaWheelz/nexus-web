@@ -12,7 +12,6 @@ from typing import Final
 
 TOOL_PLAN_AUTHORITY_REVISIONS: Final[MappingProxyType[str, str]] = MappingProxyType(
     {
-        "ChatRead": "dc584f4320765dd8b08e65976380411abe010aca0fbeef4814ca3530512429d1",
         "ChatReadAdditiveWrite": (
             "3fc34933d27eeb7518984e1274a3be5001902dfb8d4a3669bc83160302d2ceff"
         ),

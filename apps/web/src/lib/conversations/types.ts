@@ -36,6 +36,7 @@ export interface ConversationListItem {
 export type ChatSendCapability =
   | { readonly kind: "Available" }
   | { readonly kind: "HistoryLoading" }
+  | { readonly kind: "HistoryUnavailable" }
   | { readonly kind: "AssistantRunning" }
   | { readonly kind: "ReplyTargetUnavailable" };
 

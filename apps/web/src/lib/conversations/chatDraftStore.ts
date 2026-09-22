@@ -1,9 +1,6 @@
 import { apiFetch } from "@/lib/api/client";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
-import {
-  decodeGenerationSelectionSpec,
-  type GenerationSelectionSpec,
-} from "./generationCatalog";
+import { decodeSelectionDraft, type SelectionDraft } from "./generationSelection";
 import {
   decodeChatAdmissionReceipt,
   decodeChatAdmissionResponse,
@@ -14,7 +11,6 @@ import {
 } from "./chatAdmission";
 import {
   expectExactRecord,
-  expectOneOf,
   expectRecord,
   expectString,
 } from "@/lib/validation";
@@ -41,17 +37,15 @@ export type ChatSendOperation =
     };
 export type ChatDraftRecord = Readonly<{
   text: string;
-  selection: GenerationSelectionSpec | null;
-  toolAuthority: ChatRunCreateRequest["tool_authority"];
+  selection: SelectionDraft;
   operation: ChatSendOperation;
 }>;
 export const EMPTY_DRAFT_RECORD: ChatDraftRecord = Object.freeze({
   text: "",
-  selection: null,
-  toolAuthority: "ReadOnly",
+  selection: Object.freeze({ kind: "Uninitialized" }),
   operation: Object.freeze({ kind: "Absent" }),
 });
-export const CHAT_DRAFT_STORAGE_PREFIX = "nx_chat_draft.v3:";
+export const CHAT_DRAFT_STORAGE_PREFIX = "nx_chat_draft.v4:";
 const storeListeners = new Set<() => void>();
 export function subscribeChatDraftStores(listener: () => void): () => void {
   storeListeners.add(listener);
@@ -108,7 +102,7 @@ function assertReceiptDestination(
 export function decodeChatDraftRecord(raw: string): ChatDraftRecord {
   const value = expectExactRecord(
     JSON.parse(raw),
-    ["text", "selection", "toolAuthority", "operation"],
+    ["text", "selection", "operation"],
     "Chat draft",
   );
   const input = expectRecord(value.operation, "Chat operation");
@@ -150,15 +144,7 @@ export function decodeChatDraftRecord(raw: string): ChatDraftRecord {
   } else throw new Error("Invalid chat operation");
   return freeze({
     text: expectString(value.text, "Draft text"),
-    selection:
-      value.selection === null
-        ? null
-        : decodeGenerationSelectionSpec(value.selection, "Chat draft.selection"),
-    toolAuthority: expectOneOf(
-      value.toolAuthority,
-      ["ReadOnly", "AdditiveWrites"] as const,
-      "Chat draft.toolAuthority",
-    ),
+    selection: decodeSelectionDraft(value.selection, "Chat draft.selection"),
     operation,
   });
 }
@@ -203,8 +189,7 @@ export class ChatDraftStore {
   private write(next: ChatDraftRecord): void {
     const empty =
       next.text === "" &&
-      next.selection === null &&
-      next.toolAuthority === "ReadOnly" &&
+      next.selection.kind === "Uninitialized" &&
       next.operation.kind === "Absent";
     const raw = empty ? null : JSON.stringify(next);
     if (raw === null) window.sessionStorage.removeItem(this.storageKey);
@@ -223,21 +208,13 @@ export class ChatDraftStore {
     const record = this.getSnapshot();
     if (record.operation.kind === "Absent") this.write({ ...record, text });
   };
-  setSelection = (selection: GenerationSelectionSpec | null): void => {
+  setSelection = (selection: SelectionDraft): void => {
     const record = this.getSnapshot();
     if (record.operation.kind === "Absent")
       this.write({
         ...record,
-        selection:
-          selection === null ? null : decodeGenerationSelectionSpec(selection),
+        selection: decodeSelectionDraft(selection),
       });
-  };
-  setToolAuthority = (
-    toolAuthority: ChatRunCreateRequest["tool_authority"],
-  ): void => {
-    const record = this.getSnapshot();
-    if (record.operation.kind === "Absent")
-      this.write({ ...record, toolAuthority });
   };
   assertAccount = (accountId: AuthenticatedAccount["accountId"]): void => {
     const operation = this.getSnapshot().operation;

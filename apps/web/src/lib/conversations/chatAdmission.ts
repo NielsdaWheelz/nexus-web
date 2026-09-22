@@ -128,9 +128,9 @@ export function chatAdmissionErrorMessage(
     case "E_MESSAGE_TOO_LONG":
       return "This message is too long. Shorten it and send again.";
     case "E_CATALOG_DEFINITION_STALE":
-      return "Model availability changed — review and confirm again.";
+      return "Model availability changed. Review your selection, then send again.";
     case "E_GENERATION_SELECTION_UNAVAILABLE":
-      return "That exact model and reasoning are unavailable.";
+      return "That exact model and effort are unavailable.";
     case "E_INVALID_GENERATION_SELECTION":
       return "That model selection is invalid.";
     case "E_INVALID_REQUEST":
@@ -279,7 +279,6 @@ export function decodeChatRunCreateRequest(raw: unknown): ChatRunCreateRequest {
       "content",
       "catalog_definition_revision",
       "selection",
-      "tool_authority",
       "reader_selection",
     ],
     "Chat command request",
@@ -330,11 +329,6 @@ export function decodeChatRunCreateRequest(raw: unknown): ChatRunCreateRequest {
     content: nonblank(value.content, "Chat content"),
     catalog_definition_revision: revision,
     selection: decodeGenerationSelectionSpec(value.selection),
-    tool_authority: expectOneOf(
-      value.tool_authority,
-      ["ReadOnly", "AdditiveWrites"] as const,
-      "Chat tool authority",
-    ),
     reader_selection,
   };
 }

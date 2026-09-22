@@ -462,38 +462,31 @@ function decodeModel(raw: unknown, name: string): GenerationModelRow {
   };
 }
 
+export function decodeGenerationRoute(raw: unknown, name: string): GenerationRoute {
+  const routeValue = expectExactRecord(
+    raw,
+    typeof raw === "object" && raw !== null && "kind" in raw && raw.kind === "CodexPersonal"
+      ? ["kind"]
+      : ["kind", "provider"],
+    name,
+  );
+  if (routeValue.kind === "CodexPersonal") return { kind: "CodexPersonal" };
+  if (routeValue.kind !== "ProviderApi") {
+    throw new TypeError(`${name}.kind must be CodexPersonal or ProviderApi`);
+  }
+  return {
+    kind: "ProviderApi",
+    provider: expectOneOf(routeValue.provider, PROVIDERS, `${name}.provider`),
+  };
+}
+
 function decodeRoute(raw: unknown, name: string): GenerationCatalogRoute {
   const value = expectExactRecord(
     raw,
     ["route", "label", "readiness", "billing", "privacy", "processor_chain", "models"],
     name,
   );
-  const routeValue = value.route;
-  if (typeof routeValue !== "object" || routeValue === null || !("kind" in routeValue)) {
-    throw new TypeError(`${name}.route must be a route object`);
-  }
-  let route: GenerationRoute;
-  if (routeValue.kind === "CodexPersonal") {
-    expectExactRecord(routeValue, ["kind"], `${name}.route`);
-    route = { kind: "CodexPersonal" };
-  } else {
-    const providerRoute = expectExactRecord(
-      routeValue,
-      ["kind", "provider"],
-      `${name}.route`,
-    );
-    if (providerRoute.kind !== "ProviderApi") {
-      throw new TypeError(`${name}.route.kind must be CodexPersonal or ProviderApi`);
-    }
-    route = {
-      kind: "ProviderApi",
-      provider: expectOneOf(
-        providerRoute.provider,
-        PROVIDERS,
-        `${name}.route.provider`,
-      ),
-    };
-  }
+  const route = decodeGenerationRoute(value.route, `${name}.route`);
   const models = expectArray(
     value.models,
     (model, index) => decodeModel(model, `${name}.models[${index}]`),
@@ -657,7 +650,8 @@ export function findGenerationCandidate(
     const routeMatches =
       selection.route === "CodexPersonal"
         ? route.route.kind === "CodexPersonal"
-        : route.route.kind === "ProviderApi";
+        : route.route.kind === "ProviderApi" &&
+          selection.model_ref.startsWith(`${route.route.provider}:`);
     if (!routeMatches) continue;
     const modelKey =
       selection.route === "CodexPersonal" ? selection.model : selection.model_ref;

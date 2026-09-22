@@ -154,7 +154,7 @@ function conversationOperationErrorMessage(
       return {
         tone: "Warning",
         requestId: error.requestId,
-        title: "That exact model and reasoning are unavailable.",
+        title: "That exact model and effort are unavailable.",
         message: "Choose a different model; nothing was substituted.",
       };
     case "E_INVALID_GENERATION_SELECTION":
@@ -218,8 +218,6 @@ interface UseConversation {
   inheritedRunSelection: RunSelectionOut | null;
   /** The one caller-owned send capability; ChatComposer owns its presentation. */
   sendCapability: ChatSendCapability;
-  /** Bumped by every admitted rerun/regenerate; each bump re-arms the composer's write grant to off. */
-  writeGrantResetVersion: number;
 
   // identity
   conversationId: string | null;
@@ -289,7 +287,10 @@ export function useConversation(
     messageUpdateReducer,
     [] as ConversationMessage[],
   );
-  const [loading, setLoading] = useState(Boolean(initialConversationId));
+  const [historyState, setHistoryState] = useState<"Loading" | "Unavailable" | "Ready">(
+    initialConversationId ? "Loading" : "Ready",
+  );
+  const loading = historyState === "Loading";
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [projectionReloadRequestId, setProjectionReloadRequestId] = useState<
     string | null
@@ -347,7 +348,6 @@ export function useConversation(
     null,
   );
   const [branchDraft, setBranchDraft] = useState<BranchDraft | null>(null);
-  const [writeGrantResetVersion, setWriteGrantResetVersion] = useState(0);
 
   const rerunningAssistantMessageIds = useStringIdSet();
   const regeneratingAssistantMessageIds = useStringIdSet();
@@ -511,6 +511,7 @@ export function useConversation(
 
   const applyConversationTree = useCallback(
     (tree: ConversationTreeResponse) => {
+      setHistoryState("Ready");
       setTitle(tree.conversation.title);
       dispatchMessages({ type: "set_all", messages: tree.selected_path });
       selectedPathIdsRef.current = messageIdsForPath(
@@ -664,7 +665,7 @@ export function useConversation(
     setConversationId(initialConversationId);
     setTitle("New chat");
     dispatchMessages({ type: "set_all", messages: [] });
-    setLoading(Boolean(initialConversationId));
+    setHistoryState(initialConversationId ? "Loading" : "Ready");
     setError(null);
     setForkOptionsByParentId({});
     setPathCacheByLeafId({});
@@ -693,17 +694,17 @@ export function useConversation(
   useEffect(() => {
     const id = conversationId;
     if (!id) {
-      setLoading(false);
+      setHistoryState("Ready");
       return;
     }
     if (historyResource.status === "loading") {
-      setLoading(true);
+      setHistoryState("Loading");
       setError(null);
       return;
     }
     if (historyResource.status === "error") {
       reportOperationError(historyResource.error, "Load");
-      setLoading(false);
+      setHistoryState("Unavailable");
       return;
     }
     if (
@@ -720,7 +721,6 @@ export function useConversation(
       void tailChatRunRef.current(runData);
     }
     setError(null);
-    setLoading(false);
   }, [
     applyConversationTree,
     conversationId,
@@ -859,7 +859,6 @@ export function useConversation(
       conversationIdRef.current = id;
       setConversationId(id);
       applyConversationTree(tree);
-      setLoading(false);
       setError(null);
       // Terminal receipt runs are already projected by the current tree. Replaying
       // their candidate merge would truncate replies added after that old turn.
@@ -881,7 +880,7 @@ export function useConversation(
   // Rerun and Regenerate are the same client contract over different endpoints:
   // one durable sibling candidate from an owning source run. While a POST is
   // unresolved the source is busy-locked; a network loss retains its key so an
-  // identical explicit retry replays the same command; a confirmed replacement
+  // identical explicit retry replays the same command; a different selection
   // is a different answer identity (spec 5.2) and mints a fresh one; a definite
   // rejection consumes the key so the next invocation mints a fresh one.
   const runCandidateAction = useCallback(
@@ -935,8 +934,7 @@ export function useConversation(
               setError({
                 tone: "Warning",
                 title: "The original model selection is unavailable.",
-                message:
-                  "Choose a different model for this new run; nothing was substituted. Writes are off for reruns.",
+                message: "Choose a different model for this new run; nothing was substituted.",
               });
               return "Failed";
             }
@@ -951,7 +949,6 @@ export function useConversation(
               catalog_definition_revision:
                 selected.catalogDefinitionRevision,
               selection: selected.selection,
-              tool_authority: "ReadOnly",
             },
           };
           keysRef.current.set(assistantMessageId, command);
@@ -967,7 +964,6 @@ export function useConversation(
           `${operation} assistant response`,
         );
         keysRef.current.delete(assistantMessageId);
-        setWriteGrantResetVersion((version) => version + 1);
         onChatRunCreated(response.data);
         return "Committed";
       } catch (err) {
@@ -1372,6 +1368,7 @@ export function useConversation(
   const sendCapability = useMemo<ChatSendCapability>(() => {
     if (!conversationId) return { kind: "Available" };
     if (loading) return { kind: "HistoryLoading" };
+    if (historyState === "Unavailable") return { kind: "HistoryUnavailable" };
     if (messages.length === 0) return { kind: "Available" };
     if (
       messages.some(
@@ -1395,7 +1392,7 @@ export function useConversation(
       return { kind: "ReplyTargetUnavailable" };
     }
     return { kind: "Available" };
-  }, [branchDraft, conversationId, loading, messages, replyParentMessageId]);
+  }, [branchDraft, conversationId, historyState, loading, messages, replyParentMessageId]);
 
   if (asyncDefect !== null) throw asyncDefect.error;
 
@@ -1407,7 +1404,6 @@ export function useConversation(
     replyParentMessageId,
     inheritedRunSelection,
     sendCapability,
-    writeGrantResetVersion,
     conversationId,
     title,
     adoptAdmittedRun,

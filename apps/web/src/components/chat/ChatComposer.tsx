@@ -1,12 +1,12 @@
 /**
  * ChatComposer - message input with exact generation picker and chat-run send.
  *
- * The composer owns generation-catalog loading, causal selection inheritance,
- * and the off-by-default per-run additive-write grant.
+ * The composer owns generation-catalog loading and causal selection inheritance.
  *
  * It DOES own the durable send-attempt machine (via `useChatDraft`): one
  * idempotency key per answer-determining payload identity, replayed on an
- * ambiguous-loss retry and on a stale-revision reconfirmation. It renders the
+ * ambiguous-loss retry. a definite rejection returns to the editable draft.
+ * it renders the
  * one `PendingTurnContext` its owner (`Conversation`) hydrates — a pending
  * `QuotedPassageCard` above the textarea — and gates send on the context kind.
  */
@@ -16,7 +16,6 @@
 import {
   useCallback,
   useEffect,
-  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -39,11 +38,11 @@ import type { ReaderSelectionInput } from "@/lib/api/sse/requests";
 import { buildChatRunBody } from "@/lib/conversations/chatRunBody";
 import type { ChatDraftKey } from "@/lib/conversations/chatDraftKey";
 import {
-  findGenerationCandidate,
   hasSelectableCandidate,
   readinessAction,
   type RunSelectionOut,
 } from "@/lib/conversations/generationCatalog";
+import { selectableGenerationCandidate } from "@/lib/conversations/generationSelection";
 import {
   chatAdmissionErrorMessage,
   type AcceptedChatAdmission,
@@ -117,8 +116,6 @@ interface ChatComposerProps {
   onActivateSource?: (selection: ReaderSelectionOut) => void;
   /** Caller-owned availability for the current conversation history. */
   sendCapability: ChatSendCapability;
-  /** Bumped by the owner after an admitted rerun/regenerate; each bump re-arms the write grant to off. */
-  writeGrantResetVersion?: number;
   /** Active run that can be semantically cancelled without closing the SSE tail. */
   activeRunId?: string | null;
   /** Backend cancel action for the active run. */
@@ -133,6 +130,8 @@ function sendCapabilityMessage(capability: ChatSendCapability): string {
       return "";
     case "HistoryLoading":
       return "Conversation history is loading.";
+    case "HistoryUnavailable":
+      return "Conversation history could not be loaded.";
     case "AssistantRunning":
       return "Assistant response in progress. Your draft is still editable.";
     case "ReplyTargetUnavailable":
@@ -204,7 +203,6 @@ export default function ChatComposer({
   onConversationRefresh,
   onActivateSource,
   sendCapability,
-  writeGrantResetVersion = 0,
   activeRunId = null,
   onCancelRun,
   projectionReloadRequestId: inheritedProjectionReloadRequestId = null,
@@ -221,17 +219,7 @@ export default function ChatComposer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
   const restoreFocusAfterSendRef = useRef(false);
-  const paneIsActiveRef = useRef(isPaneActive);
-  useLayoutEffect(() => {
-    paneIsActiveRef.current = isPaneActive;
-  }, [isPaneActive]);
-  const seededDraftKeyRef = useRef<string | null>(null);
   const isMobileViewport = useIsMobileViewport();
-  const writeDescriptionId = useId();
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [writeAnnouncement, setWriteAnnouncement] = useState("");
-  const [selectionRequiresConfirmation, setSelectionRequiresConfirmation] =
-    useState(false);
   const { accountId } = useAuthenticatedAccount();
 
   const {
@@ -239,8 +227,6 @@ export default function ChatComposer({
     setContent,
     selection,
     setSelection,
-    toolAuthority,
-    setToolAuthority,
     restored,
     activeDraftKey,
     editableDraftKey,
@@ -298,21 +284,12 @@ export default function ChatComposer({
   const {
     catalog,
     loading: catalogLoading,
-    refreshing: catalogRefreshing,
     error: catalogError,
     retry: retryCatalog,
-  } = useGenerationCatalog({ pickerOpen });
-  const effectiveSelection =
-    selection ??
-    inheritedRunSelection?.selection ??
-    catalog?.chat_seed.selection ??
-    null;
-  const effectiveCandidate =
-    catalog === null || effectiveSelection === null
-      ? null
-      : findGenerationCandidate(catalog, effectiveSelection);
+  } = useGenerationCatalog();
+  const effectiveSelection = selection.kind === "Selected" ? selection.selection : null;
   const selectionIsSelectable =
-    effectiveCandidate?.reasoning.chat_state.kind === "Selectable";
+    catalog !== null && selectableGenerationCandidate(catalog, selection) !== null;
   const noSelectablePair =
     catalog !== null && !hasSelectableCandidate(catalog);
   const operatorRecovery =
@@ -322,21 +299,25 @@ export default function ChatComposer({
     "Retry after generation availability has been restored.";
 
   useEffect(() => {
-    if (!restored) return;
-    if (seededDraftKeyRef.current === activeDraftKey) return;
-    if (selection !== null) {
-      seededDraftKeyRef.current = activeDraftKey;
-      return;
-    }
-    if (catalog === null) return;
-    seededDraftKeyRef.current = activeDraftKey;
-    setSelection(inheritedRunSelection?.selection ?? catalog.chat_seed.selection);
+    if (
+      !restored ||
+      catalog === null ||
+      sendCapability.kind === "HistoryLoading" ||
+      sendCapability.kind === "HistoryUnavailable" ||
+      operation.kind !== "Absent" ||
+      selection.kind !== "Uninitialized"
+    ) return;
+    setSelection({
+      kind: "Selected",
+      selection: inheritedRunSelection?.selection ?? catalog.chat_seed.selection,
+    });
   }, [
-    activeDraftKey,
     catalog,
     inheritedRunSelection,
+    operation.kind,
     restored,
     selection,
+    sendCapability.kind,
     setSelection,
   ]);
 
@@ -356,16 +337,7 @@ export default function ChatComposer({
 
   useEffect(() => {
     setError(null);
-    setSelectionRequiresConfirmation(false);
   }, [activeDraftKey]);
-
-  const appliedWriteGrantResetRef = useRef(writeGrantResetVersion);
-  useEffect(() => {
-    if (appliedWriteGrantResetRef.current === writeGrantResetVersion) return;
-    appliedWriteGrantResetRef.current = writeGrantResetVersion;
-    setToolAuthority("ReadOnly");
-    setWriteAnnouncement("Writes are off for the next reply.");
-  }, [setToolAuthority, writeGrantResetVersion]);
 
   useEffect(() => {
     if (sending || !restoreFocusAfterSendRef.current) return;
@@ -381,6 +353,20 @@ export default function ChatComposer({
     pending?.kind === "ReaderHighlight" ? pending.preview : null;
   const pendingBlocksSend =
     pending !== null && pending.kind !== "ReaderHighlight";
+  const projectionReloadRequestId =
+    localProjectionReloadRequestId ?? inheritedProjectionReloadRequestId;
+  const projectionReloadRequired = projectionReloadRequestId !== null;
+  const composerDisabled =
+    operation.kind !== "Absent" || projectionReloadRequired || !restored;
+  const sendDisabled =
+    composerDisabled ||
+    recoveryConflict ||
+    sendCapability.kind !== "Available" ||
+    catalog === null ||
+    effectiveSelection === null ||
+    !selectionIsSelectable ||
+    !content.trim() ||
+    pendingBlocksSend;
 
   // --------------------------------------------------------------------------
   // Send operation (owns the one exact idempotent command)
@@ -401,10 +387,8 @@ export default function ChatComposer({
             code === "E_GENERATION_SELECTION_UNAVAILABLE" ||
             code === "E_INVALID_GENERATION_SELECTION"
           ) {
-            setSelectionRequiresConfirmation(true);
             restoreFocusAfterSendRef.current = false;
             retryCatalog();
-            if (paneIsActiveRef.current) setPickerOpen(true);
             setError({
               tone: "Warning",
               title: chatAdmissionErrorMessage(receipt.outcome.reason),
@@ -502,8 +486,6 @@ export default function ChatComposer({
         // that view switch yet, so no completion callback or focus request owns Q.
         if (recoveredFromAnotherDraft) return;
         if (activeView.current !== view) return;
-        setPickerOpen(false);
-        setWriteAnnouncement("Writes are off for the next reply.");
         restoreFocusAfterSendRef.current = true;
         onClearBranchDraft?.();
       } catch (err) {
@@ -576,15 +558,9 @@ export default function ChatComposer({
   const handleSend = useCallback(() => {
     const trimmed = content.trim();
     if (
-      !trimmed ||
-      sending ||
-      recoveryConflict ||
-      sendCapability.kind !== "Available" ||
+      sendDisabled ||
       catalog === null ||
-      effectiveSelection === null ||
-      !selectionIsSelectable ||
-      selectionRequiresConfirmation ||
-      pendingBlocksSend
+      effectiveSelection === null
     ) {
       return;
     }
@@ -603,7 +579,6 @@ export default function ChatComposer({
       content: trimmed,
       catalogDefinitionRevision: catalog.definition_revision,
       selection: effectiveSelection,
-      toolAuthority,
       branchDraft,
       parentMessageId,
       readerSelection,
@@ -626,15 +601,9 @@ export default function ChatComposer({
     catalog,
     effectiveSelection,
     parentMessageId,
-    pendingBlocksSend,
     postCommand,
     readerHighlight,
-    sendCapability,
-    sending,
-    recoveryConflict,
-    selectionIsSelectable,
-    selectionRequiresConfirmation,
-    toolAuthority,
+    sendDisabled,
   ]);
 
   const handleRetry = useCallback(() => {
@@ -708,23 +677,6 @@ export default function ChatComposer({
 
   // While reconciling, the composer is a LOCKED replay panel: text/selection/quote
   // stay visible but immutable, and the only action is "Retry send".
-  const projectionReloadRequestId =
-    localProjectionReloadRequestId ?? inheritedProjectionReloadRequestId;
-  const projectionReloadRequired = projectionReloadRequestId !== null;
-  const composerDisabled =
-    operation.kind !== "Absent" || projectionReloadRequired || !restored;
-  const sendDisabled =
-    recoveryConflict ||
-    operation.kind !== "Absent" ||
-    sendCapability.kind !== "Available" ||
-    catalog === null ||
-    effectiveSelection === null ||
-    !selectionIsSelectable ||
-    selectionRequiresConfirmation ||
-    !content.trim() ||
-    pendingBlocksSend ||
-    projectionReloadRequired;
-
   if (mountedAccountId !== accountId) {
     // justify-defect: this mounted view must never transfer a pending command
     // to another authenticated account. Retain its storage for the owning user.
@@ -760,8 +712,8 @@ export default function ChatComposer({
         ) : null}
         {reconciling && !recoveryConflict && !projectionReloadRequired && (
           <div className={styles.composerError} role="alert">
-            Send status unknown. The original exact selection and write
-            authority are locked for retry.
+            Send status unknown. The original exact selection and catalog
+            revision are locked for retry.
           </div>
         )}
 
@@ -864,28 +816,21 @@ export default function ChatComposer({
             <span className={styles.selectionStatus} role="status">
               Loading model availability…
             </span>
-          ) : reconciling || acknowledged ? (
-            <span className={styles.selectionStatus}>
-              Original model, reasoning, catalog revision, and write authority
-              preserved.
-            </span>
           ) : catalog !== null ? (
-            <GenerationSelectionPicker
-              catalog={catalog}
-              value={effectiveSelection}
-              contextualSelection={inheritedRunSelection}
-              open={pickerOpen}
-              onOpenChange={setPickerOpen}
-              onConfirm={(nextSelection) => {
-                setSelection(nextSelection);
-                setSelectionRequiresConfirmation(false);
+            <div
+              className={styles.selectionControls}
+              onFocusCapture={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget))
+                  retryCatalog();
               }}
-              disabled={composerDisabled}
-              refreshing={catalogRefreshing}
-              refreshError={catalogError}
-              onRetryRefresh={retryCatalog}
-              writeAuthority={toolAuthority}
-            />
+            >
+              <GenerationSelectionPicker
+                catalog={catalog}
+                value={selection}
+                onChange={setSelection}
+                disabled={composerDisabled}
+              />
+            </div>
           ) : null}
 
           {reconciling && !recoveryConflict && !projectionReloadRequired ? (
@@ -927,57 +872,22 @@ export default function ChatComposer({
             </Button>
           )}
         </div>
-        {noSelectablePair ? (
+        {catalog !== null && catalogError !== null ? (
+          <div className={styles.composerWarning} role="status">
+            Model availability could not be refreshed.{" "}
+            <button type="button" onClick={retryCatalog}>Retry</button>
+          </div>
+        ) : noSelectablePair ? (
           <div className={styles.composerWarning} role="status" aria-live="polite">
-            No model and reasoning pair is currently available for Chat. {operatorRecovery}
+            No model and effort pair is currently available for chat. {operatorRecovery}{" "}
+            <button type="button" onClick={retryCatalog}>Retry</button>
           </div>
         ) : effectiveSelection !== null && !selectionIsSelectable && catalog !== null ? (
           <div className={styles.composerWarning} role="status">
-            The exact selection is unavailable. Open the model picker to review
-            the reason and choose a replacement; nothing was substituted.
-          </div>
-        ) : selectionRequiresConfirmation ? (
-          <div className={styles.composerWarning} role="status">
-            Review and confirm the exact model and reasoning again before sending.
+            The exact selection is unavailable. Choose a replacement; nothing
+            was substituted.
           </div>
         ) : null}
-
-        <div
-          className={styles.writeAuthority}
-          data-armed={toolAuthority === "AdditiveWrites" ? "true" : undefined}
-        >
-          <label>
-            <input
-              type="checkbox"
-              checked={toolAuthority === "AdditiveWrites"}
-              disabled={composerDisabled}
-              aria-describedby={writeDescriptionId}
-              onChange={(event) => {
-                const armed = event.currentTarget.checked;
-                setToolAuthority(armed ? "AdditiveWrites" : "ReadOnly");
-                setWriteAnnouncement(
-                  armed
-                    ? "Additive Nexus writes allowed for this reply only."
-                    : "Nexus writes are off for this reply.",
-                );
-              }}
-            />
-            <span>Allow this reply to add to Nexus</span>
-          </label>
-          <p id={writeDescriptionId} role="note">
-            This reply only: <code>nexus.library.add</code>,{" "}
-            <code>nexus.note.create</code>, <code>nexus.highlight.create</code>,{" "}
-            <code>nexus.edge.create</code>, and <code>nexus.queue.add</code>. Review
-            each write in <a href="#chat-write-authority-help">Trust details and Undo</a>.
-          </p>
-          <p id="chat-write-authority-help" className="sr-only">
-            Assistant Trust details show every write call and provide Undo when
-            the write can be reverted.
-          </p>
-        </div>
-        <span className="sr-only" role="status" aria-live="polite">
-          {writeAnnouncement}
-        </span>
       </div>
     </div>
   );

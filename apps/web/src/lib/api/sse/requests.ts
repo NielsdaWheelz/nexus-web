@@ -23,12 +23,10 @@ export interface ChatRunCreateRequest {
   content: string;
   catalog_definition_revision: string;
   selection: GenerationSelectionSpec;
-  tool_authority: "ReadOnly" | "AdditiveWrites";
   reader_selection: Presence<ReaderSelectionInput>;
 }
 
 export interface ChatRunCandidateRequest {
   catalog_definition_revision: string;
   selection: GenerationSelectionSpec;
-  tool_authority: "ReadOnly" | "AdditiveWrites";
 }

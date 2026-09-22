@@ -179,13 +179,6 @@ _CHAT_RUN_LIMITS: Final[RunLimits] = RunLimits(
     max_elapsed_seconds=900.0,
 )
 
-CHAT_READ_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
-    "ChatRead",
-    "chat_read",
-    (WEB_SEARCH_SPEC.id, *_NEXUS_READ_TOOL_IDS),
-    _CHAT_RUN_LIMITS,
-    exposure="Native",
-)
 CHAT_READ_ADDITIVE_WRITE_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
     "ChatReadAdditiveWrite",
     "chat_read_additive_write",
@@ -258,7 +251,6 @@ METADATA_READ_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
 )
 
 TOOL_PLAN_DEFINITIONS: Final[tuple[ToolPlanDefinition, ...]] = (
-    CHAT_READ_TOOL_DEFINITION,
     CHAT_READ_ADDITIVE_WRITE_TOOL_DEFINITION,
     LIBRARY_DOSSIER_READ_TOOL_DEFINITION,
     IDEA_DOSSIER_READ_TOOL_DEFINITION,
@@ -283,7 +275,6 @@ TOOL_PLAN_DEFINITIONS_BY_ID: Final[MappingProxyType[str, ToolPlanDefinition]] = 
 
 __all__ = [
     "CHAT_READ_ADDITIVE_WRITE_TOOL_DEFINITION",
-    "CHAT_READ_TOOL_DEFINITION",
     "IDEA_DOSSIER_READ_TOOL_DEFINITION",
     "IDEA_DOSSIER_RESEARCH_TOOL_DEFINITION",
     "LIBRARY_DOSSIER_READ_TOOL_DEFINITION",

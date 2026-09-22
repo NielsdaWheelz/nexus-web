@@ -108,7 +108,7 @@ from nexus.services.generation_catalog import (
     InvalidGenerationSelectionError,
     ResolvedCatalogPair,
 )
-from nexus.services.generation_service import ChatToolAuthority, GenerationService
+from nexus.services.generation_service import GenerationService
 from nexus.services.generation_spec import (
     CodexPersonalSelection,
     FrozenToolScope,
@@ -156,7 +156,6 @@ async def create_chat_run(
     content: str,
     catalog_definition_revision: str,
     selection: ExactChatSelection,
-    tool_authority: ChatToolAuthority,
     idempotency_key: str | None,
     catalog: GenerationCatalogService,
     tool_runtime: ComposedToolRuntime,
@@ -173,7 +172,6 @@ async def create_chat_run(
             "content": content,
             "catalog_definition_revision": catalog_definition_revision,
             "selection": selection.model_dump(mode="json"),
-            "tool_authority": tool_authority,
             "reader_selection_key": (
                 {
                     "media_id": str(reader_selection.key.media_id),
@@ -203,7 +201,6 @@ async def create_chat_run(
             reader_selection=reader_selection,
             content=content,
             catalog_definition_revision=catalog_definition_revision,
-            tool_authority=tool_authority,
             pair=resolved,
             generation_service=generation_service,
         )
@@ -229,7 +226,6 @@ async def repeat_assistant_response(
     assistant_message_id: UUID,
     catalog_definition_revision: str,
     selection: ExactChatSelection,
-    tool_authority: Literal["ReadOnly"],
     idempotency_key: str | None,
     catalog: GenerationCatalogService,
     tool_runtime: ComposedToolRuntime,
@@ -247,7 +243,6 @@ async def repeat_assistant_response(
             "source_assistant_message_id": str(assistant_message_id),
             "catalog_definition_revision": catalog_definition_revision,
             "selection": selection.model_dump(mode="json"),
-            "tool_authority": tool_authority,
         }
     )
     pair, catalog_error = await _resolve_catalog_pair(
@@ -486,7 +481,6 @@ def _admit_send(
     reader_selection: ReaderSelectionInput | None,
     content: str,
     catalog_definition_revision: str,
-    tool_authority: ChatToolAuthority,
     pair: ResolvedCatalogPair,
     generation_service: GenerationService,
 ) -> ChatRun:
@@ -577,7 +571,6 @@ def _admit_send(
         chat_subject=chat_subject,
         pair=pair,
         catalog_definition_revision=catalog_definition_revision,
-        tool_authority=tool_authority,
         generation_service=generation_service,
     )
 
@@ -599,7 +592,6 @@ def _resolve_destination(
         conversation = Conversation(
             owner_user_id=viewer_id,
             title=DEFAULT_CONVERSATION_TITLE,
-            sharing="private",
             next_seq=1,
         )
         db.add(conversation)
@@ -733,7 +725,6 @@ def _admit_repeat(
         chat_subject=None,
         pair=pair,
         catalog_definition_revision=catalog_definition_revision,
-        tool_authority="ReadOnly",
         generation_service=generation_service,
     )
 
@@ -835,7 +826,6 @@ def _start_run(
     chat_subject: dict[str, object] | None,
     pair: ResolvedCatalogPair,
     catalog_definition_revision: str,
-    tool_authority: ChatToolAuthority,
     generation_service: GenerationService,
 ) -> ChatRun:
     """Freeze the prompt and spec, append ``meta``, and enqueue the one job."""
@@ -866,7 +856,6 @@ def _start_run(
         turn_context=turn_context,
         pair=pair,
         catalog_definition_revision=catalog_definition_revision,
-        tool_authority=tool_authority,
         generation_service=generation_service,
     )
     ChatRunEventEmitter(db, run).batch(
@@ -898,7 +887,6 @@ def _freeze_admission(
     turn_context: ChatRunTurnContext | None,
     pair: ResolvedCatalogPair,
     catalog_definition_revision: str,
-    tool_authority: ChatToolAuthority,
     generation_service: GenerationService,
 ) -> tuple[GenerationSpec, RunSelectionOut]:
     """Persist one complete Chat prompt and spec before its queue row exists."""
@@ -910,7 +898,6 @@ def _freeze_admission(
             max_context_tokens=pair.effective_context_budget_tokens,
             max_output_tokens=pair.effective_output_budget_tokens,
             turn_context=turn_context,
-            tool_authority=tool_authority,
         )
     except ContextBudgetError as error:
         raise ApiError(
@@ -921,7 +908,6 @@ def _freeze_admission(
         spec = generation_service.freeze_chat_from_pair(
             catalog_definition_revision=catalog_definition_revision,
             pair=pair,
-            tool_authority=tool_authority,
             scope=FrozenToolScope(
                 admitted_refs=tuple(
                     sorted(
