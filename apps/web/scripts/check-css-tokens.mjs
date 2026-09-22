@@ -84,10 +84,6 @@ const runtimeCustomPropertyOwners = new Map([
   ],
   ["--moon", "src/components/theme/SolarEffects.tsx"],
   ["--pane-refresh-offset", "src/components/workspace/PaneShell.tsx"],
-  [
-    "--position",
-    "src/components/reader/ReaderDocumentMapOverviewRail.tsx",
-  ],
 ]);
 
 // Direction §5 — the absence lint. No Tengwar webfont ships, ever: the

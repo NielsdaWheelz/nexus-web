@@ -3,7 +3,10 @@
 import { useState } from "react";
 import { absent, present, type Presence } from "@/lib/api/presence";
 import type { MediaNavigation } from "@/lib/media/readerNavigation";
-import type { ReaderDocumentMapMarker } from "@/lib/reader/documentMap";
+import type {
+  ReaderDocumentMapMarker,
+  ReaderMapMarkerPresentation,
+} from "@/lib/reader/documentMap";
 import {
   projectReaderLocalPoint,
   readerSectionAtPosition,
@@ -22,7 +25,7 @@ export default function ReaderDocumentMapDetail({
   structure,
   currentOffset,
   visibleRange,
-  markers,
+  destinations,
   onNavigateSection,
   onActivateMarker,
   onRevealCurrent,
@@ -32,7 +35,7 @@ export default function ReaderDocumentMapDetail({
   structure: ReaderDocumentStructure;
   currentOffset: Presence<number>;
   visibleRange: Presence<ReaderDocumentOverviewRange>;
-  markers: readonly ReaderDocumentMapMarker[];
+  destinations: readonly ReaderMapMarkerPresentation[];
   onNavigateSection: (sectionId: string) => void;
   onActivateMarker: (marker: ReaderDocumentMapMarker) => void;
   onRevealCurrent: () => void;
@@ -100,7 +103,7 @@ export default function ReaderDocumentMapDetail({
         {structure.length > 0 ? (
           <div className={styles.map}>
             <ReaderDocumentMapOverviewRail
-              markers={markers}
+              destinations={destinations}
               structure={present(structure)}
               visibleRange={visibleRange}
               currentPosition={currentPosition}

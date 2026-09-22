@@ -12,8 +12,8 @@ import { clamp } from "@/lib/clamp";
 import { readViewportSafeBounds } from "@/lib/ui/viewportSafeArea";
 
 /**
- * Position a portaled floating element next to an anchor (a live element or a
- * captured rect), clamped into the viewport and kept in sync on scroll/resize.
+ * Position a viewport-positioned floating element next to a live element or
+ * captured rect, clamped into the viewport and kept in sync on scroll/resize.
  *
  * The floating element must carry the returned `ref` so its size can be
  * measured; `style` is `position: fixed` and is hidden until the first measure
@@ -31,6 +31,8 @@ export function useAnchoredPosition<T extends HTMLElement = HTMLDivElement>(
     gap?: number;
     viewportPadding?: number;
     flip?: boolean;
+    /** Follow transform/layout movement that emits no scroll or resize event. */
+    trackAnchorMovement?: boolean;
   },
 ): {
   ref: RefObject<T | null>;
@@ -44,6 +46,7 @@ export function useAnchoredPosition<T extends HTMLElement = HTMLDivElement>(
     gap = 4,
     viewportPadding = 8,
     flip = false,
+    trackAnchorMovement = false,
   } = opts;
   const ref = useRef<T | null>(null);
   const [style, setStyle] = useState<CSSProperties>({
@@ -52,25 +55,31 @@ export function useAnchoredPosition<T extends HTMLElement = HTMLDivElement>(
   });
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
 
-  const reposition = useCallback(() => {
+  const reposition = useCallback((sampledAnchor?: DOMRect) => {
     const floating = ref.current;
     const anchorElement =
       anchor !== null && "current" in anchor ? anchor.current : anchor;
     if (!enabled || !floating || !anchorElement) return;
-    const a =
+    const a = sampledAnchor ?? (
       anchorElement instanceof HTMLElement
         ? anchorElement.getBoundingClientRect()
-        : anchorElement;
+        : anchorElement
+    );
     const bounds = readViewportSafeBounds({ viewportPadding });
-    const maxWidth = Math.max(0, bounds.right - bounds.left);
+    const horizontal = placement === "left" || placement === "right";
+    const maxWidth = horizontal && flip
+      ? Math.max(
+          0,
+          a.left - gap - bounds.left,
+          bounds.right - a.right - gap,
+        )
+      : Math.max(0, bounds.right - bounds.left);
     const maxHeight = Math.max(0, bounds.bottom - bounds.top);
     floating.style.maxWidth = `${maxWidth}px`;
     floating.style.maxHeight = `${maxHeight}px`;
     const f = floating.getBoundingClientRect();
     const maxLeft = Math.max(bounds.left, bounds.right - f.width);
     const maxTop = Math.max(bounds.top, bounds.bottom - f.height);
-
-    const horizontal = placement === "left" || placement === "right";
 
     let top: number;
     let left: number;
@@ -153,22 +162,44 @@ export function useAnchoredPosition<T extends HTMLElement = HTMLDivElement>(
       return;
     }
     reposition();
+    const handleReposition = () => reposition();
     const viewport = window.visualViewport;
-    const resizeObserver = new ResizeObserver(reposition);
+    const resizeObserver = new ResizeObserver(handleReposition);
     const floating = ref.current;
     if (floating) resizeObserver.observe(floating);
-    window.addEventListener("scroll", reposition, true);
-    window.addEventListener("resize", reposition);
-    viewport?.addEventListener("scroll", reposition);
-    viewport?.addEventListener("resize", reposition);
-    return () => {
-      resizeObserver.disconnect();
-      window.removeEventListener("scroll", reposition, true);
-      window.removeEventListener("resize", reposition);
-      viewport?.removeEventListener("scroll", reposition);
-      viewport?.removeEventListener("resize", reposition);
+    window.addEventListener("scroll", handleReposition, true);
+    window.addEventListener("resize", handleReposition);
+    viewport?.addEventListener("scroll", handleReposition);
+    viewport?.addEventListener("resize", handleReposition);
+    let frame: number | null = null;
+    let previousRect: DOMRect | null = null;
+    const trackMovement = () => {
+      const element = anchor !== null && "current" in anchor ? anchor.current : anchor;
+      if (element instanceof HTMLElement) {
+        const next = element.getBoundingClientRect();
+        if (
+          previousRect === null ||
+          next.x !== previousRect.x ||
+          next.y !== previousRect.y ||
+          next.width !== previousRect.width ||
+          next.height !== previousRect.height
+        ) {
+          reposition(next);
+        }
+        previousRect = next;
+      }
+      frame = window.requestAnimationFrame(trackMovement);
     };
-  }, [enabled, reposition]);
+    if (trackAnchorMovement) frame = window.requestAnimationFrame(trackMovement);
+    return () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      resizeObserver.disconnect();
+      window.removeEventListener("scroll", handleReposition, true);
+      window.removeEventListener("resize", handleReposition);
+      viewport?.removeEventListener("scroll", handleReposition);
+      viewport?.removeEventListener("resize", handleReposition);
+    };
+  }, [anchor, enabled, reposition, trackAnchorMovement]);
 
   return { ref, style, anchorRect };
 }

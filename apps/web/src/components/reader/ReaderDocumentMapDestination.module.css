@@ -1,0 +1,45 @@
+.content,
+.note {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.content {
+  color: var(--ink);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.kind,
+.metadata,
+.noteExcerpt {
+  color: var(--ink-muted);
+}
+
+.kind,
+.title {
+  font-weight: var(--weight-semibold);
+}
+
+.title,
+.excerpt,
+.noteExcerpt {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+}
+
+.title,
+.noteExcerpt {
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.excerpt {
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}

@@ -23,16 +23,19 @@
 }
 
 .track {
+  --reader-map-hit-height: 16px;
+  --reader-map-hit-width: 16px;
+
   position: relative;
   flex: 1 1 auto;
   min-height: 0;
-  margin-block: 12px 24px;
+  margin-block: calc(var(--reader-map-hit-height) / 2);
 }
 
 .track::before {
   position: absolute;
   inset-block: 0;
-  left: 8px;
+  left: 11.5px;
   width: 1px;
   background: var(--edge);
   content: "";
@@ -40,7 +43,7 @@
 
 .band {
   position: absolute;
-  left: 3px;
+  left: 6.5px;
   width: 11px;
   min-height: 2px;
   background: var(--accent);
@@ -51,7 +54,7 @@
 
 .boundary {
   position: absolute;
-  left: 4px;
+  left: 8px;
   width: 8px;
   height: 1px;
   background: var(--edge-subtle);
@@ -59,24 +62,24 @@
 }
 
 .structureLane {
-  left: 0;
+  --reader-map-lane-center: 12px;
 }
 
 .evidenceLane {
-  left: 28px;
+  --reader-map-lane-center: 40px;
 }
 
 .exactMarker {
   position: absolute;
   z-index: 3;
-  width: 16px;
+  left: var(--reader-map-lane-center);
+  width: 0;
   height: 0;
   pointer-events: none;
 }
 
 .markerGlyph {
   position: absolute;
-  left: 8px;
   display: block;
   color: var(--marker-color);
   transform: translate(-50%, -50%);
@@ -123,7 +126,7 @@
 
 .evidenceRange {
   position: absolute;
-  left: 33px;
+  left: 37px;
   width: 6px;
   min-height: 1px;
   background: var(--marker-color);
@@ -134,7 +137,7 @@
 .current {
   position: absolute;
   z-index: 4;
-  left: 8px;
+  left: 12px;
   width: 9px;
   height: 9px;
   border: 2px solid var(--accent);
@@ -146,17 +149,15 @@
 .groupSlot {
   position: absolute;
   z-index: 2;
-  width: 24px;
-  height: 24px;
-  transform: translateY(-50%);
+  left: calc(var(--reader-map-lane-center) - var(--reader-map-hit-width) / 2);
+  width: var(--reader-map-hit-width);
 }
 
 .markerButton {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  width: 24px;
-  height: 24px;
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
   padding: 0;
   color: var(--ink);
   background: transparent;
@@ -173,129 +174,36 @@
   outline-offset: -2px;
 }
 
-.clusterCount {
-  min-width: 10px;
-  padding-inline: 1px;
-  color: var(--ink-muted);
-  background: var(--surface-2);
-  font-size: 9px;
-  line-height: 12px;
-  text-align: center;
-}
-
-.preview,
-.destinationList {
+.groupBracket {
   position: absolute;
-  right: calc(100% + var(--space-2));
-  z-index: var(--z-raised);
-  width: min(18rem, calc(100vw - 64px));
-  padding: var(--space-2);
-  color: var(--ink);
-  background: var(--surface-2);
-  border: 1px solid var(--edge-strong);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-3);
-  font-size: var(--text-xs);
-  line-height: var(--leading-snug);
-}
-
-.preview {
-  top: 50%;
-  display: flex;
-  visibility: hidden;
-  max-height: 18rem;
-  overflow: hidden;
-  flex-direction: column;
-  gap: var(--space-2);
-  pointer-events: none;
-  transform: translateY(-50%);
-}
-
-.groupSlot:hover .preview,
-.groupSlot:focus-within .preview {
-  visibility: visible;
-}
-
-.preview.placeAtStart {
-  top: 12px;
-  transform: none;
-}
-
-.preview.placeAtEnd {
-  top: auto;
-  bottom: 12px;
-  transform: none;
-}
-
-.destinationContent {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-  text-align: left;
-  overflow-wrap: anywhere;
-}
-
-.destinationExcerpt {
-  display: -webkit-box;
-  overflow: hidden;
-  color: var(--ink-muted);
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
-}
-
-.destinationPosition {
-  color: var(--ink-muted);
+  inset-block: 2px;
+  right: 1px;
+  width: 4px;
+  border-block: 1px solid currentcolor;
+  border-right: 1px solid currentcolor;
+  opacity: 0.75;
 }
 
 .destinationList {
-  top: var(--position);
-  max-height: min(18rem, 70vh);
   margin: 0;
-  overflow: auto;
+  padding: 0;
   list-style: none;
-  transform: translateY(-50%);
 }
 
-.destinationList.placeAtStart {
-  top: 0;
-  transform: none;
+.omission {
+  margin: var(--space-2) 0 0;
+  color: var(--ink-muted);
 }
 
-.destinationList.placeAtEnd {
-  top: auto;
-  bottom: 0;
-  transform: none;
-}
-
-.destinationList li + li {
-  border-top: 1px solid var(--edge);
-}
-
-.destinationList button {
-  width: 100%;
-  min-height: 24px;
-  padding: var(--space-2);
-  color: var(--ink);
-  background: transparent;
-  border: 0;
-  border-radius: var(--radius-sm);
-  font: inherit;
-  cursor: pointer;
-}
-
-.destinationList button:hover,
-.destinationList button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
+@media (any-pointer: coarse) {
+  .track {
+    --reader-map-hit-height: 48px;
+    --reader-map-hit-width: 24px;
+  }
 }
 
 @media (forced-colors: active) {
   .rail,
-  .preview,
-  .destinationList,
-  .clusterCount,
   .current,
   .markerConnection {
     color: CanvasText;
@@ -323,8 +231,7 @@
   }
 
   .markerButton:focus-visible,
-  .openDetail:focus-visible,
-  .destinationList button:focus-visible {
+  .openDetail:focus-visible {
     outline-color: Highlight;
   }
 }
