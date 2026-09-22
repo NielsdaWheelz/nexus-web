@@ -60,12 +60,17 @@ export function getTopmostModalLayerToken(): ModalLayerToken | null {
   return layers[layers.length - 1] ?? null;
 }
 
+export function useTopmostModalLayerToken(): ModalLayerToken | null {
+  useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  return getTopmostModalLayerToken();
+}
+
 /** Reactively projects whether a containing modal may own global interaction. */
 export function useIsModalLayerTopmost(
   token: ModalLayerToken | null,
 ): boolean {
-  useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
-  return token === null || getTopmostModalLayerToken() === token;
+  const topmostToken = useTopmostModalLayerToken();
+  return token === null || topmostToken === token;
 }
 
 export function modalBackdropProjection(isTopmost: boolean): {

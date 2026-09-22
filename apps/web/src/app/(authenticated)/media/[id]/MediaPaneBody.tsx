@@ -135,6 +135,7 @@ import ActionMenu from "@/components/ui/ActionMenu";
 import {
   getReaderDocumentMap,
   findEvidenceItem,
+  projectReaderMapMarkers,
   userStanceAssociations,
   type ReaderDocumentMap,
   type ReaderDocumentMapMarker,
@@ -1576,8 +1577,8 @@ export default function MediaPaneBody() {
     readerDocumentMapData,
     readerDocumentMapStatus,
   ]);
-  const documentMapMarkers = useMemo(
-    () => readerDocumentMapData?.markers ?? [],
+  const documentMapDestinations = useMemo(
+    () => readerDocumentMapData ? projectReaderMapMarkers(readerDocumentMapData) : [],
     [readerDocumentMapData],
   );
 
@@ -6524,7 +6525,7 @@ export default function MediaPaneBody() {
         structure={documentStructure.value}
         currentOffset={currentDocumentOffset}
         visibleRange={readerDocumentVisibleRange ? present(readerDocumentVisibleRange) : absent()}
-        markers={documentMapMarkers}
+        destinations={documentMapDestinations}
         onNavigateSection={(sectionId) => {
           const section = readerNavigation.sections.find((entry) => entry.section_id === sectionId);
           if (!section) return;
@@ -6872,7 +6873,7 @@ export default function MediaPaneBody() {
             widthPx: desktopDocumentMapRailWidthPx,
             body: (
               <ReaderDocumentMapOverviewRail
-                markers={documentMapMarkers}
+                destinations={documentMapDestinations}
                 structure={documentStructure}
                 visibleRange={readerDocumentVisibleRange ? present(readerDocumentVisibleRange) : absent()}
                 currentPosition={currentDocumentPosition}
@@ -6887,7 +6888,7 @@ export default function MediaPaneBody() {
     [
       activateDocumentMapMarker,
       desktopDocumentMapRailWidthPx,
-      documentMapMarkers,
+      documentMapDestinations,
       documentStructure,
       currentDocumentPosition,
       openDocumentMap,

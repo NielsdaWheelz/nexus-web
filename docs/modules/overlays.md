@@ -188,6 +188,12 @@ named overlay primitives and own one-layer Back/Escape dismissal.
 - `useHistoryDismiss` owns the one shared synthetic history marker, topmost
   Back dismissal, blocked-dismiss rearming, delayed-pop drain, and
   navigating-close guard. It carries the stay-mounted contract above.
+- anchored nonmodal popovers remain in their owner's dom subtree and use a
+  manual native popover when they must escape clipping. `useAnchoredPosition`
+  owns viewport clamping, optional side flipping, and opt-in live-anchor
+  tracking. the feature owner must compare its containing modal token with the
+  registry's current top token, and must own dismissal, history and focus
+  return. these popovers add no backdrop, focus trap or scroll lock.
 
 ## Rejected Hacks
 

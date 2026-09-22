@@ -380,9 +380,10 @@ The projected range feeds the interactive desktop overview rail and the passive
 mobile Web/EPUB/PDF ribbon. The ribbon paints at the reader surface bottom
 (`bottom: 0`); it consumes no bottom clearance, never rises above Nexus,
 Player, or Android navigation, may be covered by a higher-priority surface, and
-is not workspace fixed chrome. Terminal reader content clears the protected
-band separately through the element-local
-`--mobile-content-bottom-clearance` its pane body publishes. The
+is not workspace fixed chrome. the map control floats above the protected band
+through the element-local `--mobile-content-bottom-clearance`, so nexus and
+player chrome cannot steal its hit region. terminal reader content clears that
+band through the same pane-body publication. The
 [mobile ribbon cutover](../cutovers/mobile-reader-position-ribbon-hard-cutover.md)
 owns its semantic range contract and proof; the
 [bottom geometry cutover](../cutovers/mobile-reader-bottom-geometry-hard-cutover.md)
@@ -401,10 +402,28 @@ owns its placement.
   pinned scope, and activation;
   it owns no scroll listener, content observer, `documentSpan`, content ref, or
   position calculation. A track-only `ResizeObserver` recomputes presentation
-  clusters after fixed-chrome reflow and reads no document geometry
-- separate structure/evidence lanes retain every exact tick. each hit group
-  spans less than 24px; neighboring groups cannot chain across the document.
-  every member remains a named native button.
+  groups after fixed-chrome reflow and reads no document geometry
+- one aggregate projection supplies the whole-document and scoped rails. a
+  highlight destination strictly joins its resolved passage highlight and all
+  note associations; named destinations retain their marker label and preview.
+  callers cannot supply a parallel marker-only representation
+- separate structure/evidence lanes retain every exact tick at x=12px and
+  x=40px. fine input groups points whose span is `<16px`; any coarse input uses
+  `<48px`. grouping compares every member to the first point, so neighboring
+  distances cannot chain across the document
+- one pure layout owns stable group identity and disjoint hit intervals. each
+  singleton target centers on its exact tick. crowded groups expose a bracket,
+  count and complete native-button chooser; every painted center belongs to
+  exactly one target in its lane
+- the shared presenter distinguishes highlight quote from annotation, states
+  missing previews, suppresses exact title/excerpt duplication, and discloses
+  bounded summaries. hover and focus previews never fetch or mutate reader
+  state
+- each rail owns one identity-based preview/chooser state. an in-place manual
+  popover supplies top-layer painting without escaping its modal ancestry.
+  popup eligibility requires its containing modal to be the current top modal;
+  escape, outside interaction, source replacement, regrouping and anchor loss
+  close it under the rail's focus-return contract
 
 ### highlight read paths
 

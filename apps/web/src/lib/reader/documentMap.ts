@@ -1,6 +1,6 @@
 import type { ApiPath } from "@/lib/api/client";
 import { apiFetch } from "@/lib/api/client";
-import type { Presence } from "@/lib/api/presence";
+import { absent, present, type Presence } from "@/lib/api/presence";
 import type { MediaRetrievalLocator } from "@/lib/api/sse/locators";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import type { DocumentEmbed } from "@/lib/media/documentEmbeds";
@@ -259,6 +259,26 @@ export interface ReaderDocumentMapMarker {
   preview: Presence<string>;
 }
 
+export type ReaderMapContent =
+  | {
+      kind: "Highlight";
+      quote: Presence<string>;
+      notes: readonly {
+        noteBlockId: string;
+        excerpt: Presence<string>;
+      }[];
+    }
+  | {
+      kind: "Named";
+      label: string;
+      excerpt: Presence<string>;
+    };
+
+export interface ReaderMapMarkerPresentation {
+  marker: ReaderDocumentMapMarker;
+  content: ReaderMapContent;
+}
+
 export interface ReaderDocumentMap {
   media_id: string;
   generation: Presence<number>;
@@ -356,6 +376,52 @@ export function findEvidenceItem(
     (candidate) => candidate.id === itemId,
   );
   return item ? { scope: "document", item } : null;
+}
+
+export function projectReaderMapMarkers(
+  map: ReaderDocumentMap,
+): readonly ReaderMapMarkerPresentation[] {
+  return map.markers.map((marker): ReaderMapMarkerPresentation => {
+    if (marker.kind !== "Highlight") {
+      return {
+        marker,
+        content: {
+          kind: "Named",
+          label: marker.label,
+          excerpt: marker.preview,
+        },
+      };
+    }
+
+    const location = findEvidenceItem(map.evidence, marker.item_id);
+    if (
+      location === null ||
+      location.scope !== "passage" ||
+      location.item.kind !== "Highlight" ||
+      location.group.resolution.kind !== "Resolved"
+    ) {
+      // justify-defect: a positioned highlight marker must reference its own
+      // resolved passage fact in the same aggregate.
+      throw new Error(
+        `Highlight map marker ${marker.id} has no resolved passage highlight.`,
+      );
+    }
+
+    return {
+      marker,
+      content: {
+        kind: "Highlight",
+        quote: location.item.quote.trim() ? present(location.item.quote) : absent(),
+        notes: highlightNoteAssociations(location.item).map(({ object }) => ({
+          noteBlockId: object.note_block_id,
+          excerpt:
+            object.excerpt.kind === "Present" && object.excerpt.value.trim()
+              ? object.excerpt
+              : absent(),
+        })),
+      },
+    };
+  });
 }
 
 export async function getReaderDocumentMap(

@@ -9,7 +9,10 @@ import { absent, present, type Presence } from "@/lib/api/presence";
 import { buildCanonicalCursor, validateCanonicalText, type CanonicalCursorResult } from "@/lib/highlights/canonicalCursor";
 import type { EpubFragmentContent } from "@/lib/media/epubFragment";
 import type { Fragment } from "@/lib/media/transcriptView";
-import type { ReaderDocumentMapMarker } from "@/lib/reader/documentMap";
+import type {
+  ReaderDocumentMapMarker,
+  ReaderMapMarkerPresentation,
+} from "@/lib/reader/documentMap";
 import { findSourceAnchor, resolveEpubInternalLinkTarget, type EpubRestoreRequest } from "@/lib/reader/epubInternalLinks";
 import {
   captureVisibleCanonicalTextRange,
@@ -420,16 +423,25 @@ function OfflineTextReader({ document, session, initialLocator, onSave }: {
   bodyRef.current = body;
   saveRef.current = onSave;
 
-  const markers = useMemo<ReaderDocumentMapMarker[]>(() => structure.length === 0 ? [] : structure.sections.map((entry) => ({
-    id: `contents:${entry.section.section_id}`,
-    kind: "Contents",
-    item_id: entry.section.section_id,
-    label: entry.section.label,
-    tone: "Neutral",
-    position: entry.start / structure.length,
-    end_position: entry.extent.kind === "Present" ? present(entry.extent.value.end / structure.length) : absent(),
-    preview: absent(),
-  })), [structure]);
+  const destinations = useMemo<ReaderMapMarkerPresentation[]>(() =>
+    structure.length === 0 ? [] : structure.sections.map((entry) => {
+      const marker: ReaderDocumentMapMarker = {
+        id: `contents:${entry.section.section_id}`,
+        kind: "Contents",
+        item_id: entry.section.section_id,
+        label: entry.section.label,
+        tone: "Neutral",
+        position: entry.start / structure.length,
+        end_position: entry.extent.kind === "Present"
+          ? present(entry.extent.value.end / structure.length)
+          : absent(),
+        preview: absent(),
+      };
+      return {
+        marker,
+        content: { kind: "Named", label: marker.label, excerpt: marker.preview },
+      };
+    }), [structure]);
 
   function capture(saveReading: boolean) {
     const viewport = viewportRef.current;
@@ -690,7 +702,7 @@ function OfflineTextReader({ document, session, initialLocator, onSave }: {
         structure={structure}
         currentOffset={current}
         visibleRange={visible}
-        markers={markers}
+        destinations={destinations}
         onNavigateSection={jump}
         onActivateMarker={(marker) => jump(marker.item_id)}
         onRevealCurrent={revealCurrent}
@@ -737,7 +749,7 @@ function OfflineTextReader({ document, session, initialLocator, onSave }: {
           }}
         />
         {structure.length > 0 ? <ReaderDocumentMapOverviewRail
-          markers={markers}
+          destinations={destinations}
           structure={present(structure)}
           visibleRange={visible}
           currentPosition={current.kind === "Present" ? present(current.value / structure.length) : absent()}

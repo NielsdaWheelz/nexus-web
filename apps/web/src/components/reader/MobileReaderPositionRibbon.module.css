@@ -18,7 +18,7 @@
 .mapControl {
   position: absolute;
   inset-inline-end: var(--space-2);
-  bottom: var(--space-2);
+  bottom: calc(var(--mobile-content-bottom-clearance) + var(--space-2));
   z-index: 2;
   min-width: 32px;
   min-height: 32px;
