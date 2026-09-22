@@ -27,6 +27,8 @@ import {
 import Button from "@/components/ui/Button";
 import SelectField from "@/components/ui/SelectField";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
+import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import { presentConversation } from "@/lib/collections/presenters/conversation";
 import { fetchConversationIndex } from "@/lib/conversations/indexApi";
@@ -187,7 +189,6 @@ export default function ConversationsPaneBody() {
   const setView = useCallback(
     (next: UpdatedTitleIndexView) => {
       capturePaneScroll();
-      committedSnapshotRef.current = null;
       setDecodedView({ kind: "Valid", view: next });
     },
     [capturePaneScroll, setDecodedView],
@@ -290,7 +291,6 @@ export default function ConversationsPaneBody() {
     );
     capturePaneScroll();
     refreshPendingRef.current = true;
-    committedSnapshotRef.current = null;
     clearAllVisitData();
     setFeedback(null);
     const version = firstPageVersionRef.current + 1;
@@ -367,8 +367,15 @@ export default function ConversationsPaneBody() {
   // Continuation runs only while the committed view is the requested one, and
   // every page of a chain carries that same view.
   const exhaustion = useExhaustivePagination<ConversationListItem>({
-    active: isPaneActive && controller !== null && !requestsFirstPage,
-    chainKey: `${committedViewKey ?? ""}:${chainEpoch}`,
+    active:
+      isPaneActive && !invalidView && view !== null && controller !== null && !requestsFirstPage,
+    chainKey: JSON.stringify([
+      requestedViewKey,
+      committedViewKey,
+      invalidView,
+      firstPageVersion,
+      chainEpoch,
+    ]),
     cursor: controller?.nextCursor ?? NO_CURSOR,
     collectionRevision: controller?.collectionRevision ?? ZERO_REVISION,
     itemCount: controller?.conversations.length ?? 0,
@@ -411,6 +418,22 @@ export default function ConversationsPaneBody() {
         matchesPaneFilterQuery(query, [row.title.text]),
       ).length;
       const unit = { singular: "chat", plural: "chats" };
+      if (controller !== null && requestsFirstPage) {
+        return {
+          kind: "Retained" as const,
+          visibleCount,
+          loadedCount: rows.length,
+          unit,
+          cause: feedback === null ? "Updating" as const : "Failed" as const,
+        };
+      }
+      if (
+        (controller === null && firstPage.status === "error") ||
+        exhaustion.kind === "ResumeFailed" ||
+        exhaustion.kind === "RefreshRequired"
+      ) {
+        return { kind: "Failed" as const, visibleCount, loadedCount: rows.length, unit };
+      }
       return exhaustion.kind === "Complete"
         ? {
             kind: "Complete" as const,
@@ -425,14 +448,22 @@ export default function ConversationsPaneBody() {
             unit,
           };
     },
-    [exhaustion.kind, rows],
+    [controller, exhaustion.kind, feedback, firstPage.status, requestsFirstPage, rows],
   );
-  const dismissFilterRowsRef = useRef<() => void>(() => undefined);
-  const clearDomainFilters = useCallback(() => {
-    dismissFilterRowsRef.current();
-    pendingCommitFocusRef.current = true;
+  const {
+    query: filterQuery,
+    onQueryChange,
+    clearQuery,
+    rowStatus,
+  } = usePaneFilterRows({
+    sourceKey: "Conversations:mine",
+    getRowStatus: getFilterStatus,
+  });
+  const { inputRef, focusInput } = usePaneCollectionInput();
+  const resetView = useCallback(() => {
+    clearQuery();
     setView(CANONICAL_UPDATED_TITLE_INDEX_VIEW);
-  }, [setView]);
+  }, [clearQuery, setView]);
   const domainFilterControls = useMemo(
     () =>
       invalidView || view === null ? undefined : (
@@ -457,26 +488,53 @@ export default function ConversationsPaneBody() {
               </option>
             ))}
           </SelectField>
-          {view.kind === "Canonical" ? null : (
-            <Button variant="secondary" size="sm" onClick={clearDomainFilters}>
-              Clear filters
-            </Button>
-          )}
         </>
       ),
-    [clearDomainFilters, invalidView, setView, view],
+    [invalidView, setView, view],
   );
-  const { query: filterQuery, publication: search } = usePaneFilterRows({
-    sourceKey: "Conversations:mine",
-    inputLabel: "Filter chats",
-    placeholder: "Filter chats",
-    getRowStatus: getFilterStatus,
-    // Truthful while the controls are published; an invalid view publishes none.
-    activeDomainControlCount:
-      invalidView || view === null || view.kind === "Canonical" ? 0 : 1,
-    filters: domainFilterControls,
-  });
-  dismissFilterRowsRef.current = search.onDismiss;
+  const collection = useMemo(
+    () =>
+      invalidView || view === null
+        ? undefined
+        : {
+            label: "Filter chats",
+            content: (
+              <PaneCollectionBar
+                inputRef={inputRef}
+                inputLabel="Filter chats"
+                placeholder="Filter chats"
+                query={filterQuery}
+                onQueryChange={onQueryChange}
+                onClearQuery={clearQuery}
+                rowStatus={rowStatus}
+                filters={domainFilterControls}
+                controls={
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={resetView}
+                    disabled={view.kind === "Canonical" && !filterQuery.trim()}
+                  >
+                    Reset view
+                  </Button>
+                }
+              />
+            ),
+            focusInput,
+          },
+    [
+      resetView,
+      clearQuery,
+      domainFilterControls,
+      filterQuery,
+      focusInput,
+      inputRef,
+      invalidView,
+      onQueryChange,
+      rowStatus,
+      view,
+    ],
+  );
   const filteredRows = useMemo(
     () =>
       rows.filter((row) =>
@@ -503,7 +561,7 @@ export default function ConversationsPaneBody() {
     [revalidateIndex],
   );
   usePanePrimaryChrome({
-    search,
+    collection,
     refresh: {
       kind: "Refreshable",
       sourceKey: "Conversations:mine",
@@ -534,7 +592,7 @@ export default function ConversationsPaneBody() {
           {
             label: "Reset view",
             onClick: () => {
-              search.onDismiss();
+              clearQuery();
               setDecodedView({
                 kind: "Valid",
                 view: CANONICAL_UPDATED_TITLE_INDEX_VIEW,

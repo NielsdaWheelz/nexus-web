@@ -50,9 +50,9 @@ import { decodeConversationIndexItem } from "@/lib/conversations/indexApi";
 import type { ConversationListItem } from "@/lib/conversations/types";
 
 // The author pane's composed first-paint seed: the lightweight contributor
-// detail plus the first page of distinct works (D-25 cursor pagination). Decoded
-// here so the server seed, the client mount, and prefetch all agree on the typed,
-// brand-checked shape (D-45 — handle parsed at this boundary).
+// detail plus the canonical oldest-first page of distinct works (D-25 cursor
+// pagination). Decoded here so server seed, client mount, and prefetch agree on
+// the typed, brand-checked shape (D-45 — handle parsed at this boundary).
 export interface AuthorPaneSeed {
   detail: ContributorDetail;
   works: readonly ContributorWorkItem[];

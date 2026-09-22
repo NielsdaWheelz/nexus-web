@@ -1343,6 +1343,16 @@ function WorkspaceHost() {
     if (!targetPaneId) {
       return;
     }
+    const focusedElement = document.activeElement;
+    if (
+      previousIsMobile !== isMobile &&
+      pendingPaneFocusPaneIdRef.current === null &&
+      focusedElement instanceof HTMLElement &&
+      focusedElement.closest('[data-pane-collection-controls="true"]') &&
+      paneWrapRefById.current.get(targetPaneId)?.contains(focusedElement)
+    ) {
+      return;
+    }
     const entryDelivery =
       pendingPaneEntryDeliveryByPaneIdRef.current.get(targetPaneId);
     if (
@@ -1443,7 +1453,7 @@ function WorkspaceHost() {
         <div ref={canvasRef} className={styles.paneCanvas} onWheel={onWheel}>
           {renderedPanes.map((pane) => (
             <div
-              key={isMobile ? "mobile-active-pane" : pane.paneId}
+              key={pane.paneId}
               className={styles.paneWrap}
               data-pane-id={pane.paneId}
               data-active={pane.isActive ? "true" : "false"}

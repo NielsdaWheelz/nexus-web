@@ -1,14 +1,7 @@
-.toolbar {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
 .searchForm {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: end;
   gap: var(--space-2);
 }

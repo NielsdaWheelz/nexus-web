@@ -292,6 +292,7 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["search"],
     defaultLabel: "Search",
     labelMode: "static",
+    queryNavigation: "in-place",
     returnMemento: { kind: "ShellScroll" },
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,

@@ -341,13 +341,12 @@ items / show finished.
   zero; the client claims that seed only while both process revisions remain
   zero.
 
-Pane-local Filter is a visit-local view over the committed rows. It matches
+pane-local text filtering is a visit-local view over the committed rows. it matches
 presented entry title and contributor display/credited names after the
-server-owned projection and before the existing order. It never enters
+server-owned projection and before the existing order. it never enters
 `LibraryEntryView`, request, cursor, snapshot, or published pane-header
-metadata. `Type`, `View`,
-`Sort by`, and applicable `Hide finished` render in expanded Pane Search; when
-collapsed, the Filter action marks their non-default state. A query-key row
+metadata. `Type`, `View`, `Sort by`, and applicable `Hide finished` render in
+the always-visible collection band. pane search focuses its input. a query-key row
 change bypasses the collection View Transition, while domain commits and
 mutations retain the existing transition and requested/committed lifecycle.
 

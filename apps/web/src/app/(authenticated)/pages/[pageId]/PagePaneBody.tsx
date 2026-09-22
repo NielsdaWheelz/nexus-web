@@ -32,7 +32,7 @@ import {
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
-import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
+import { usePaneTransientFilterRows } from "@/lib/panes/usePaneFilterRows";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { ResourceSurface } from "@/lib/resources/resourceItems";
 import { resourceSurfaceFilterFields } from "@/components/resource-surface/resourceSurfaceFilterFields";
@@ -188,12 +188,11 @@ export default function PagePaneBody({
     },
     [filterRows, ready],
   );
-  const { query: filterQuery, publication: search } = usePaneFilterRows({
+  const { query: filterQuery, publication: search } = usePaneTransientFilterRows({
     sourceKey,
     inputLabel: "Filter page items",
     placeholder: "Filter items",
     getRowStatus: getFilterStatus,
-    activeDomainControlCount: 0,
   });
   const [page, setPage] = useState<PageView | null>(
     source.kind === "PageRef" && initialPage?.id === source.pageId

@@ -105,9 +105,10 @@ routes, or a typed `Ready`/`Unavailable`/`Failed` resource status with its
 structured credit groups. No publication carries a title.
 
 Pane bodies publish the orthogonal
-`{ header, search, instrument, companionAction, menuActions, actionSubject, refresh }`
-capabilities through `usePanePrimaryChrome`. Each update carries the current
-`routeKey`; `PaneShell` rejects stale updates before validating the header kind.
+`{ header, collection, search, instrument, companionAction, menuActions, actionSubject, refresh }`
+capabilities through `usePanePrimaryChrome`. each update carries the current
+route and source keys; `PaneShell` rejects stale updates before validating the
+publication.
 There is no route-level chrome descriptor, body-mode inference, or ambient title
 override.
 
@@ -119,10 +120,18 @@ six explicitly supported finite standard-scroll panes publish it. Refresh never
 reloads the route or polls for completion, and the gesture is never its only
 path.
 
-`search` is one closed pane-local capability: `FilterRows` derives local primary
-rows, while `FindOccurrences` delegates document matching and exact preview to
-the format owner. `PaneShell` alone owns the shared Filter/Find header action,
-expanded row, focus, and active-pane request consumption. `WorkspaceHost`
+`collection` publishes one labelled, always-visible refinement band as the first
+child of the pane body's existing scrollport. it composes `PaneToolbar` and the
+existing input, select, button, and applied-filter primitives. its `focusInput`
+command reveals and focuses the mounted input. collection cannot coexist with
+`search` or `instrument`; a document may still combine transient search and
+instrument. the band scrolls with results and has no separate mobile chrome
+height or scrollport.
+
+`search` remains transient document/editor find: `FilterRows` matches direct
+page/note items, while `FindOccurrences` delegates document matching and exact
+preview to the format owner. `PaneShell` owns the shared Pane.Search command,
+transient expanded row, focus, and active-pane request consumption. `WorkspaceHost`
 arbitrates bindable `Pane.Search` before the editable-target guard, so
 Cmd/Ctrl+F reaches Page and Note editors; it prevents native Find only when the
 active pane consumes the request. Cmd/Ctrl+K remains Nexus retrieval.
@@ -130,18 +139,12 @@ If the live browser viewport leads React during a responsive host replacement,
 the arbiter carries one pane-and-route-fenced Search handoff; the incoming
 `PaneShell` acknowledges it only after its current publication is ready.
 
-A `FilterRows` producer publishes its domain View/Filter/Sort controls as
-`publication.filters`, ending with `Clear filters`, and reports
-`activeDomainControlCount` — the number of controls differing from that
-surface's canonical default, excluding the local query. `PaneShell` renders the
-collapsed marker and the accessible label **Filter, N control(s) active** from
-that count. The local query lives in `usePaneFilterRows`, keyed on a source key
-that must never embed the domain view: a view change replaces the pane URL on
-the same path, and the local text, the expanded row, and the focused native
-control all have to survive it. Every refinement-capable route therefore
-declares `queryNavigation: "in-place"` so its body is not remounted by the
-replacement, and `usePaneScrollRetention` restores the scrollport once the new
-view commits.
+`usePaneFilterRows` owns visit-local text and honest partial, complete, or
+retained-row status. collection owners compose their domain controls and reset
+behavior, then publish the whole band through the primary chrome record. the
+source key excludes the domain view: same-path in-place refinement preserves
+text, control identity, focus, and scroll. a new source retires local text.
+`usePaneScrollRetention` restores the scrollport once the new view commits.
 
 A resource pane publishes only its canonical `actionSubject`
 (`ResourceActionSubject`). `PaneShell` composes its pane commands and the body's
@@ -289,10 +292,9 @@ activity fact. Successful Add or Subscribe replaces Preview with the canonical
 owned pane after any eligible one-shot position transfer; failure leaves Preview
 and its staged destination choices intact.
 
-Browse and Preview intentionally publish no pane-local `FilterRows` or
-`FindOccurrences` capability. Their own query, facets, section continuation,
-and Preview episode list remain route/body-owned controls rather than a second
-Pane Search implementation.
+browse publishes its remote query and facets as a collection band. its form
+retains draft/commit semantics; the body owns requests and section continuation.
+preview keeps its resource controls and has no collection publication.
 
 ## Target Activation
 

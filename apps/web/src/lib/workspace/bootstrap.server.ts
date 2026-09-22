@@ -15,6 +15,7 @@ import { readDeviceId } from "@/lib/auth/deviceCookie";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
+import { decodeAuthorWorksView } from "@/lib/contributors/workView";
 import { parseReaderProfile } from "@/lib/reader/readerProfileSync";
 import type { ReaderProfile } from "@/lib/reader/types";
 import { expectExactRecord, expectString } from "@/lib/validation";
@@ -66,6 +67,13 @@ function parseWorkspaceEntryIntent(
 // prefetch-on-intent run; only the transport differs (serverResourceFetcher here).
 async function seedPane(href: string): Promise<{ cacheKey: string; data: unknown } | null> {
   const route = resolvePaneRouteModel(href);
+  if (
+    route.id === "author" &&
+    decodeAuthorWorksView(new URLSearchParams(parseWorkspaceHref(href)?.search)).kind ===
+      "Invalid"
+  ) {
+    return null;
+  }
   const loader = route.id === "unsupported" ? undefined : paneResourceLoaders[route.id];
   if (!loader) {
     return null;

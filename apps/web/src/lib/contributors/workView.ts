@@ -1,7 +1,7 @@
 // The Author works view: the closed sort type, a strict total
 // URLSearchParams <-> AuthorWorksView codec, the API query, and the exact
 // `Sort by` inventory. See
-// docs/cutovers/collection-refinement-capability-hard-cutover.md.
+// docs/collection-controls-plan.md.
 
 import { assertNever } from "@/lib/assertNever";
 
@@ -9,10 +9,10 @@ type Direction = "asc" | "desc";
 
 export type AuthorWorksView =
   | { kind: "Canonical" }
-  | { kind: "PublishedOldest" }
+  | { kind: "PublishedNewest" }
   | { kind: "Title"; direction: Direction };
 
-/** Published — newest: the existing default and the sole view with no owned keys. */
+/** Published — oldest: the default and the sole view with no owned keys. */
 export const CANONICAL_AUTHOR_WORKS_VIEW: AuthorWorksView = {
   kind: "Canonical",
 };
@@ -44,9 +44,9 @@ export function decodeAuthorWorksView(
   }
   switch (sort) {
     case "published":
-      // `published&desc` is the canonical view, whose sole address omits both keys.
-      return direction === "asc"
-        ? { kind: "Valid", view: { kind: "PublishedOldest" } }
+      // `published&asc` is the canonical view, whose sole address omits both keys.
+      return direction === "desc"
+        ? { kind: "Valid", view: { kind: "PublishedNewest" } }
         : { kind: "Invalid" };
     case "title":
       return { kind: "Valid", view: { kind: "Title", direction } };
@@ -66,9 +66,9 @@ export function encodeAuthorWorksView(
   switch (view.kind) {
     case "Canonical":
       break;
-    case "PublishedOldest":
+    case "PublishedNewest":
       next.set("sort", "published");
-      next.set("direction", "asc");
+      next.set("direction", "desc");
       break;
     case "Title":
       next.set("sort", "title");
@@ -87,8 +87,8 @@ export function authorWorksViewQuery(view: AuthorWorksView): string {
 }
 
 export const AUTHOR_WORKS_SORT_OPTION_IDS = [
-  "published-newest",
   "published-oldest",
+  "published-newest",
   "title-asc",
   "title-desc",
 ] as const;
@@ -116,9 +116,9 @@ export function authorWorksSortOptionOf(
 ): AuthorWorksSortOptionId {
   switch (view.kind) {
     case "Canonical":
-      return "published-newest";
-    case "PublishedOldest":
       return "published-oldest";
+    case "PublishedNewest":
+      return "published-newest";
     case "Title":
       return view.direction === "asc" ? "title-asc" : "title-desc";
     default:
@@ -130,10 +130,10 @@ export function authorWorksViewForSortOption(
   id: AuthorWorksSortOptionId,
 ): AuthorWorksView {
   switch (id) {
-    case "published-newest":
-      return { kind: "Canonical" };
     case "published-oldest":
-      return { kind: "PublishedOldest" };
+      return { kind: "Canonical" };
+    case "published-newest":
+      return { kind: "PublishedNewest" };
     case "title-asc":
       return { kind: "Title", direction: "asc" };
     case "title-desc":

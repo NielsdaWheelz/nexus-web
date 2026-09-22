@@ -11,27 +11,10 @@ import type {
   ResourceRowPrimary,
 } from "@/lib/collections/types";
 import type { ContributorWorkItem } from "@/lib/contributors/types";
-
-// Singular role labels carried over from AuthorPaneBody. One work role-fact is
-// one credit, and an unrecognized token keeps the established generic label.
-const ROLE_SINGULAR: Readonly<Record<string, string>> = {
-  author: "Author",
-  editor: "Editor",
-  translator: "Translator",
-  host: "Host",
-  guest: "Guest",
-  narrator: "Narrator",
-  creator: "Creator",
-  producer: "Producer",
-  publisher: "Publisher",
-  channel: "Channel",
-  organization: "Organization",
-  unknown: "Contributor",
-};
-
-function roleFactLabel(role: string): string {
-  return ROLE_SINGULAR[role.trim()] ?? "Contributor";
-}
+import {
+  contributorRoleLabel,
+  normalizeContributorRoleToken,
+} from "@/lib/contributors/vocab";
 
 function primaryForWork(work: ContributorWorkItem): ResourceRowPrimary {
   return {
@@ -43,8 +26,18 @@ function primaryForWork(work: ContributorWorkItem): ResourceRowPrimary {
 
 export function presentContributorWork(work: ContributorWorkItem): CollectionRowView {
   const roleContext = [
-    ...new Set(work.roleFacts.map((fact) => roleFactLabel(fact.role))),
+    ...new Set(
+      work.roleFacts.map((fact) =>
+        contributorRoleLabel(normalizeContributorRoleToken(fact.role), 1),
+      ),
+    ),
   ].join(" · ");
+  const context = [
+    roleContext,
+    work.date.kind === "Absent" ? "Publication date unknown" : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return {
     id: work.actionSubject?.ref ?? work.href,
@@ -54,9 +47,9 @@ export function presentContributorWork(work: ContributorWorkItem): CollectionRow
     contributors: [],
     publicationDate: work.date,
     context:
-      roleContext.length === 0
+      context.length === 0
         ? absent()
-        : present({ kind: "Text", text: roleContext }),
+        : present({ kind: "Text", text: context }),
     activity: absent(),
     exceptionalStatus: absent(),
     localAvailability: absent(),

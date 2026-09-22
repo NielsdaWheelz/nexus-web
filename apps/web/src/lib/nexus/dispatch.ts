@@ -16,7 +16,6 @@ import {
   executeResourceShare,
 } from "@/lib/resources/resourceActionExecution";
 import { activateResource } from "@/lib/resources/activation";
-import { requestSearchInputFocus } from "@/lib/search/pendingSearchFocus";
 import type {
   ShareOpenOptions,
   ShareTarget,
@@ -245,9 +244,6 @@ export function dispatchNexusTarget(
     case "InternalHref": {
       const blocked = blockedByAndroid(target.href);
       if (blocked) return blocked;
-      if (resolvePaneRouteModel(target.href).id === "search") {
-        requestSearchInputFocus();
-      }
       return activateTarget(
         { href: target.href, labelHint: target.labelHint },
         context,

@@ -12,7 +12,7 @@ import {
   type NotePulseTarget,
 } from "@/lib/reader/pulseEvent";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
-import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
+import { usePaneTransientFilterRows } from "@/lib/panes/usePaneFilterRows";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ResourceSurface } from "@/lib/resources/resourceItems";
 import {
@@ -91,12 +91,11 @@ export default function NotePaneBody() {
     },
     [filterRows, ready],
   );
-  const { query: filterQuery, publication: search } = usePaneFilterRows({
+  const { query: filterQuery, publication: search } = usePaneTransientFilterRows({
     sourceKey: sourceRef,
       inputLabel: "Filter note items",
       placeholder: "Filter items",
     getRowStatus: getFilterStatus,
-    activeDomainControlCount: 0,
   });
   const [label, setLabel] = useState<string | null>(null);
   const [focusBodySerial, setFocusBodySerial] = useState(0);

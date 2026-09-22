@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
+import type { PaneFilterRowsStatus } from "@/lib/panes/paneFilterRows";
 
 export const PANE_SEARCH_QUERY_MAX_CODEPOINTS = 256;
 
@@ -71,29 +71,7 @@ interface PaneSearchBase {
 export type PaneFilterRowsPublication = PaneSearchBase & {
   readonly kind: "FilterRows";
   readonly rowStatus: PaneFilterRowsStatus;
-  readonly activeDomainControlCount: number;
-  readonly filters?: ReactNode;
-  readonly controls?: ReactNode;
 };
-
-export interface PaneFilterRowsUnit {
-  readonly singular: string;
-  readonly plural: string;
-}
-
-export type PaneFilterRowsStatus =
-  | {
-      readonly kind: "Partial";
-      readonly visibleCount: number;
-      readonly loadedCount: number;
-      readonly unit: PaneFilterRowsUnit;
-    }
-  | {
-      readonly kind: "Complete";
-      readonly visibleCount: number;
-      readonly totalCount: number;
-      readonly unit: PaneFilterRowsUnit;
-    };
 
 export type PaneFindOccurrencesPublication = PaneSearchBase & {
   readonly kind: "FindOccurrences";
@@ -231,6 +209,14 @@ function areFilterRowsStatusesEqual(
       return right.kind === "Partial" && left.loadedCount === right.loadedCount;
     case "Complete":
       return right.kind === "Complete" && left.totalCount === right.totalCount;
+    case "Retained":
+      return (
+        right.kind === "Retained" &&
+        left.loadedCount === right.loadedCount &&
+        left.cause === right.cause
+      );
+    case "Failed":
+      return right.kind === "Failed" && left.loadedCount === right.loadedCount;
   }
 }
 
@@ -251,10 +237,7 @@ export function arePaneSearchPublicationsEqual(
   if (left.kind === "FilterRows") {
     return (
       right.kind === "FilterRows" &&
-      areFilterRowsStatusesEqual(left.rowStatus, right.rowStatus) &&
-      left.activeDomainControlCount === right.activeDomainControlCount &&
-      left.filters === right.filters &&
-      left.controls === right.controls
+      areFilterRowsStatusesEqual(left.rowStatus, right.rowStatus)
     );
   }
   if (right.kind !== "FindOccurrences") return false;

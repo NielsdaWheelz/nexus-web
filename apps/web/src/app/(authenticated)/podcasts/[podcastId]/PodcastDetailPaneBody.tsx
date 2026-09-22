@@ -63,6 +63,8 @@ import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import Button from "@/components/ui/Button";
 import SelectField from "@/components/ui/SelectField";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
+import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
@@ -915,7 +917,7 @@ export default function PodcastDetailPaneBody() {
       controller !== null &&
       controller.queryIdentity === episodeQueryIdentity &&
       !reconciliationPendingRef.current,
-    chainKey: [episodeQueryIdentity, chainEpoch].join(":"),
+    chainKey: [episodeQueryIdentity, reloadNonce, chainEpoch].join(":"),
     cursor: controller?.nextCursor ?? { kind: "Absent" },
     collectionRevision:
       controller?.collectionRevision ?? (0 as CollectionRevision),
@@ -927,20 +929,13 @@ export default function PodcastDetailPaneBody() {
   const activeDomainControlCount =
     view === null ? 0 : activeEpisodeControlCount(view);
   const sortSelectRef = useRef<HTMLSelectElement | null>(null);
-  const dismissFilterRowsRef = useRef<() => void>(() => undefined);
-  // Clear filters and Reset view both remove themselves by installing the
-  // canonical view; the commit that removes them returns focus to Sort by.
+  // Invalid-view recovery removes its own button and returns focus to Sort by.
   const pendingCommitFocusRef = useRef(false);
   useEffect(() => {
     if (!pendingCommitFocusRef.current) return;
     pendingCommitFocusRef.current = false;
     sortSelectRef.current?.focus();
   }, [view]);
-  const resetToCanonicalView = useCallback(() => {
-    dismissFilterRowsRef.current();
-    pendingCommitFocusRef.current = true;
-    setDecodedView({ kind: "Valid", view: CANONICAL_PODCAST_EPISODE_VIEW });
-  }, [setDecodedView]);
   const episodeFilterNodes = useMemo(
     () =>
       view === null ? undefined : (
@@ -980,18 +975,9 @@ export default function PodcastDetailPaneBody() {
               </option>
             ))}
           </SelectField>
-          {activeDomainControlCount > 0 ? (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={resetToCanonicalView}
-            >
-              Clear filters
-            </Button>
-          ) : null}
         </>
       ),
-    [activeDomainControlCount, resetToCanonicalView, setDecodedView, view],
+    [setDecodedView, view],
   );
   const getEpisodeRowStatus = useCallback(
     (query: string) => {
@@ -1004,6 +990,30 @@ export default function PodcastDetailPaneBody() {
           ]),
         ]),
       ).length;
+      if (
+        controller !== null &&
+        (loading || controller.queryIdentity !== episodeQueryIdentity)
+      ) {
+        return {
+          kind: "Retained" as const,
+          visibleCount,
+          loadedCount: episodes.length,
+          unit: { singular: "episode", plural: "episodes" },
+          cause: error === null ? "Updating" as const : "Failed" as const,
+        };
+      }
+      if (
+        (controller === null && error !== null) ||
+        episodeExhaustion.kind === "ResumeFailed" ||
+        episodeExhaustion.kind === "RefreshRequired"
+      ) {
+        return {
+          kind: "Failed" as const,
+          visibleCount,
+          loadedCount: episodes.length,
+          unit: { singular: "episode", plural: "episodes" },
+        };
+      }
       return episodeExhaustion.kind === "Complete"
         ? {
             kind: "Complete" as const,
@@ -1018,21 +1028,69 @@ export default function PodcastDetailPaneBody() {
             unit: { singular: "episode", plural: "episodes" },
           };
     },
-    [episodeExhaustion.kind, episodes],
+    [controller, episodeExhaustion.kind, episodeQueryIdentity, episodes, error, loading],
   );
-  const episodeFilterRows = usePaneFilterRows({
+  const {
+    query: filterQuery,
+    onQueryChange,
+    clearQuery,
+    rowStatus,
+  } = usePaneFilterRows({
     sourceKey: `PodcastDetail.Episodes:${podcastId ?? ""}`,
-    inputLabel: "Filter podcast episodes",
-    placeholder: "Filter episodes",
     getRowStatus: getEpisodeRowStatus,
-    activeDomainControlCount,
-    filters: episodeFilterNodes,
   });
-  dismissFilterRowsRef.current = episodeFilterRows.publication.onDismiss;
+  const resetToCanonicalView = useCallback(() => {
+    clearQuery();
+    setDecodedView({ kind: "Valid", view: CANONICAL_PODCAST_EPISODE_VIEW });
+  }, [clearQuery, setDecodedView]);
+  const { inputRef, focusInput } = usePaneCollectionInput();
+  const collection = useMemo(
+    () =>
+      view === null
+        ? undefined
+        : {
+            label: "Filter podcast episodes",
+            content: (
+              <PaneCollectionBar
+                inputRef={inputRef}
+                inputLabel="Filter podcast episodes"
+                placeholder="Filter episodes"
+                query={filterQuery}
+                onQueryChange={onQueryChange}
+                onClearQuery={clearQuery}
+                rowStatus={rowStatus}
+                filters={episodeFilterNodes}
+                controls={
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={resetToCanonicalView}
+                    disabled={activeDomainControlCount === 0 && !filterQuery.trim()}
+                  >
+                    Reset view
+                  </Button>
+                }
+              />
+            ),
+            focusInput,
+          },
+    [
+      activeDomainControlCount,
+      clearQuery,
+      episodeFilterNodes,
+      filterQuery,
+      focusInput,
+      inputRef,
+      onQueryChange,
+      resetToCanonicalView,
+      rowStatus,
+      view,
+    ],
+  );
   const visibleEpisodes = useMemo(
     () =>
       episodes.filter((episode) =>
-        matchesPaneFilterQuery(episodeFilterRows.query, [
+        matchesPaneFilterQuery(filterQuery, [
           episode.title,
           ...episode.contributors.flatMap((credit) => [
             credit.contributor_display_name ?? "",
@@ -1040,7 +1098,7 @@ export default function PodcastDetailPaneBody() {
           ]),
         ]),
       ),
-    [episodeFilterRows.query, episodes],
+    [episodes, filterQuery],
   );
 
   // Unsubscribe and Settings are canonical resource actions now: the pane
@@ -1136,7 +1194,7 @@ export default function PodcastDetailPaneBody() {
       episodes.length === 0 ||
       !podcastId ||
       view === null ||
-      episodeFilterRows.query.trim() ||
+      filterQuery.trim() ||
       view.state === "played"
     ) {
       return;
@@ -1162,7 +1220,7 @@ export default function PodcastDetailPaneBody() {
     }
   }, [
     captureDetailError,
-    episodeFilterRows.query,
+    filterQuery,
     episodes,
     podcastId,
     reload,
@@ -1339,7 +1397,7 @@ export default function PodcastDetailPaneBody() {
                 unit: "episode",
               },
     },
-    search: episodeFilterRows.publication,
+    collection,
   });
 
   if (asyncDefect !== null) throw asyncDefect.error;
@@ -1352,13 +1410,16 @@ export default function PodcastDetailPaneBody() {
       <FeedbackNotice
         content={{ tone: "Danger", title: "Invalid episodes view" }}
         announcement="Assertive"
-        actions={[{ label: "Reset view", onClick: resetToCanonicalView }]}
+        actions={[{ label: "Reset view", onClick: () => {
+          pendingCommitFocusRef.current = true;
+          resetToCanonicalView();
+        } }]}
       />
     ) : (
       <div style={{ display: "contents" }}>
         <PodcastEpisodeList
           episodes={visibleEpisodes}
-          filterQuery={episodeFilterRows.query}
+          filterQuery={filterQuery}
           loading={loading}
           error={error}
           episodeStateFilter={view.state}

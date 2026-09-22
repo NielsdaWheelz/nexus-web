@@ -4,10 +4,7 @@ import { useCallback, useRef, type MouseEvent as ReactMouseEvent } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import PaneHeaderIdentity from "@/components/ui/PaneHeaderIdentity";
-import {
-  projectActionControlState,
-  type ActionDescriptor,
-} from "@/lib/ui/actionDescriptor";
+import { projectActionControlState } from "@/lib/ui/actionDescriptor";
 import {
   useMobileChrome,
   useMobileChromeSurface,
@@ -15,21 +12,6 @@ import {
 import { usePaneWarmOnIntent } from "@/lib/panes/paneWarm";
 import styles from "./AppNav.module.css";
 import { pointerModality } from "@/lib/ui/pointerModality";
-
-function activeCollapsedFilterAction(
-  actions: readonly ActionDescriptor[],
-): ActionDescriptor | null {
-  return (
-    actions.find(
-      (action) =>
-        action.kind === "command" &&
-        action.id === "Pane.Search" &&
-        action.state?.kind === "disclosure" &&
-        !action.state.expanded &&
-        action.indicator?.kind === "Status",
-    ) ?? null
-  );
-}
 
 export default function MobilePaneBar() {
   const { motionPhase, paneChrome } = useMobileChrome();
@@ -40,7 +22,6 @@ export default function MobilePaneBar() {
 
   const paneActions = paneChrome?.paneActions ?? [];
   const menuActions = paneChrome?.menuActions ?? [];
-  const activeFilterAction = activeCollapsedFilterAction(paneActions);
   const hasHiddenStatus = [...paneActions, ...menuActions].some(
     (action) => action.indicator?.kind === "Status",
   );
@@ -132,11 +113,7 @@ export default function MobilePaneBar() {
         ) : null}
         {paneChrome && hasMoreContent ? (
           <ContextualActionMenu
-            label={
-              activeFilterAction
-                ? `More, ${activeFilterAction.label}`
-                : "More"
-            }
+            label="More"
             sections={[
               { id: "Pane", actions: paneActions },
               { id: "View", actions: menuActions },
