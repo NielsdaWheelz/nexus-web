@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import ImportInspector from "@/components/imports/ImportInspector";
 import ImportsWorkspace from "@/components/imports/ImportsWorkspace";
 import { companionAction } from "@/components/resource-inspector/companionAction";
-import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
 import { absent, present } from "@/lib/api/presence";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
@@ -121,10 +120,6 @@ export default function ImportsPaneBody() {
       publication,
     ],
   );
-  usePanePrimaryChrome(
-    companion === null ? null : { companionAction: companion },
-  );
-
   const onSelect = useCallback(
     (ref: ImportRef | null) => {
       setState({
@@ -144,6 +139,7 @@ export default function ImportsPaneBody() {
       onSelect={onSelect}
       onMatchedEvent={setMatchedEvent}
       onListSettled={setListSettled}
+      companionAction={companion}
     />
   );
 }

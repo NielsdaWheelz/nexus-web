@@ -12,6 +12,8 @@ import {
 import CollectionView from "@/components/collections/CollectionView";
 import SelectField from "@/components/ui/SelectField";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
+import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
 import { notePagesResource } from "@/lib/api/resource";
 import {
   isApiError,
@@ -265,6 +267,18 @@ export default function NotesPaneBody() {
         matchesPaneFilterQuery(query, [page.title]),
       ).length;
       const unit = { singular: "page", plural: "pages" };
+      if (committed !== null && requestsFirstPage) {
+        return {
+          kind: "Retained" as const,
+          visibleCount,
+          loadedCount: pages.length,
+          unit,
+          cause: pagesResource.status === "error" ? "Failed" as const : "Updating" as const,
+        };
+      }
+      if (committed === null && pagesResource.status === "error") {
+        return { kind: "Failed" as const, visibleCount, loadedCount: pages.length, unit };
+      }
       return committed !== null
         ? {
             kind: "Complete" as const,
@@ -279,14 +293,22 @@ export default function NotesPaneBody() {
             unit,
           };
     },
-    [committed, pages],
+    [committed, pages, pagesResource.status, requestsFirstPage],
   );
-  const dismissFilterRowsRef = useRef<() => void>(() => undefined);
-  const clearDomainFilters = useCallback(() => {
-    dismissFilterRowsRef.current();
-    pendingCommitFocusRef.current = true;
+  const {
+    query: filterQuery,
+    onQueryChange,
+    clearQuery,
+    rowStatus,
+  } = usePaneFilterRows({
+    sourceKey: "Notes.Pages",
+    getRowStatus: getFilterStatus,
+  });
+  const { inputRef, focusInput } = usePaneCollectionInput();
+  const resetView = useCallback(() => {
+    clearQuery();
     setView(CANONICAL_UPDATED_TITLE_INDEX_VIEW);
-  }, [setView]);
+  }, [clearQuery, setView]);
   const domainFilterControls = useMemo(
     () =>
       invalidView || view === null ? undefined : (
@@ -311,25 +333,53 @@ export default function NotesPaneBody() {
               </option>
             ))}
           </SelectField>
-          {view.kind === "Canonical" ? null : (
-            <Button variant="secondary" size="sm" onClick={clearDomainFilters}>
-              Clear filters
-            </Button>
-          )}
         </>
       ),
-    [clearDomainFilters, invalidView, setView, view],
+    [invalidView, setView, view],
   );
-  const { query: filterQuery, publication: search } = usePaneFilterRows({
-    sourceKey: "Notes.Pages",
-    inputLabel: "Filter pages",
-    placeholder: "Filter pages",
-    getRowStatus: getFilterStatus,
-    activeDomainControlCount:
-      view === null || invalidView || view.kind === "Canonical" ? 0 : 1,
-    filters: domainFilterControls,
-  });
-  dismissFilterRowsRef.current = search.onDismiss;
+  const collection = useMemo(
+    () =>
+      invalidView || view === null
+        ? undefined
+        : {
+            label: "Filter pages",
+            content: (
+              <PaneCollectionBar
+                inputRef={inputRef}
+                inputLabel="Filter pages"
+                placeholder="Filter pages"
+                query={filterQuery}
+                onQueryChange={onQueryChange}
+                onClearQuery={clearQuery}
+                rowStatus={rowStatus}
+                filters={domainFilterControls}
+                controls={
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={resetView}
+                    disabled={view.kind === "Canonical" && !filterQuery.trim()}
+                  >
+                    Reset view
+                  </Button>
+                }
+              />
+            ),
+            focusInput,
+          },
+    [
+      resetView,
+      clearQuery,
+      domainFilterControls,
+      filterQuery,
+      focusInput,
+      inputRef,
+      invalidView,
+      onQueryChange,
+      rowStatus,
+      view,
+    ],
+  );
   const filteredPages = useMemo(
     () =>
       pages.filter((page) => matchesPaneFilterQuery(filterQuery, [page.title])),
@@ -338,7 +388,7 @@ export default function NotesPaneBody() {
 
   useSetPaneLabel("Notes");
   usePanePrimaryChrome({
-    search,
+    collection,
     header: {
       kind: "Section",
       // The metadata describes the exhaustive committed view, never the subset.
@@ -448,7 +498,7 @@ export default function NotesPaneBody() {
           {
             label: "Reset view",
             onClick: () => {
-              search.onDismiss();
+              clearQuery();
               setDecodedView({
                 kind: "Valid",
                 view: CANONICAL_UPDATED_TITLE_INDEX_VIEW,

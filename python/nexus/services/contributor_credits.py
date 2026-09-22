@@ -54,8 +54,9 @@ def distinct_visible_works_sql() -> str:
 
     Columns: ``contributor_id``; the mutually exclusive ``media_id`` / ``podcast_id`` /
     ``project_gutenberg_catalog_ebook_id``; ``href`` (the route, also the unique
-    tiebreaker); ``title``; ``content_kind``; ``date_key`` (partial ISO text, NULL for
-    podcasts); ``role_facts`` (jsonb by credit ordinal).
+    tiebreaker); ``title``; ``content_kind``; ``date_key`` (media's original
+    publication date as partial ISO text; NULL for podcasts and catalogue-only
+    works); ``role_facts`` (jsonb by credit ordinal).
     """
     return f"""
         SELECT
@@ -75,11 +76,7 @@ def distinct_visible_works_sql() -> str:
                 WHEN vcc.podcast_id IS NOT NULL THEN 'podcast'
                 ELSE 'project_gutenberg_ebook'
             END AS content_kind,
-            CASE
-                WHEN vcc.media_id IS NOT NULL THEN m.original_published_date
-                WHEN vcc.podcast_id IS NOT NULL THEN NULL
-                ELSE pg.issued::text
-            END AS date_key,
+            m.original_published_date AS date_key,
             jsonb_agg(
                 jsonb_build_object(
                     'credited_name', vcc.credited_name,
@@ -96,7 +93,7 @@ def distinct_visible_works_sql() -> str:
         GROUP BY
             vcc.contributor_id, vcc.media_id, vcc.podcast_id,
             vcc.project_gutenberg_catalog_ebook_id,
-            m.title, m.kind, m.original_published_date, p.title, pg.title, pg.issued
+            m.title, m.kind, m.original_published_date, p.title, pg.title
     """
 
 

@@ -10,6 +10,7 @@ import { usePanePublication } from "@/components/workspace/usePanePublication";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import {
   arePanePrimaryChromePublicationsEqual,
+  panePrimaryChromeSourceKey,
   type PanePrimaryChromePublication,
   type PanePrimaryChromePublicationUpdate,
 } from "@/lib/panes/panePublications";
@@ -39,14 +40,16 @@ export function usePanePrimaryChrome(
   publication: PanePrimaryChromePublication | null,
 ): void {
   const publish = useContext(PanePrimaryChromeContext);
-  const routeKey = usePaneRuntime()?.routeKey ?? null;
+  const runtime = usePaneRuntime();
+  const routeKey = runtime?.routeKey ?? null;
+  const sourceKey = runtime ? panePrimaryChromeSourceKey(runtime) : null;
   const publishForRoute = useMemo(
     () =>
-      publish && routeKey
+      publish && routeKey && sourceKey
         ? (next: PanePrimaryChromePublication | null) =>
-            publish({ routeKey, publication: next })
+            publish({ routeKey, sourceKey, publication: next })
         : null,
-    [publish, routeKey],
+    [publish, routeKey, sourceKey],
   );
   usePanePublication({
     publish: publishForRoute,

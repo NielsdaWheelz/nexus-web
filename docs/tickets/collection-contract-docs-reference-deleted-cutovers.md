@@ -15,7 +15,10 @@ browse and offline-reading references.
 
 quick reads corrected the reading-time owner in architecture and module docs,
 documented current duration/slate behavior, and removed library-sorting links.
-those completed changes do not resolve the remaining delegated contracts.
+the collection-controls change corrected the media-metadata link to the deleted
+original-publication cutover and rewrote the affected workspace and pane-search
+contracts. those completed changes do not resolve the remaining delegated
+player and library contracts.
 
 ## prerequisites and proposed fix
 

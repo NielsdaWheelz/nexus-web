@@ -16,7 +16,10 @@ import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import PaneSurface from "@/components/ui/PaneSurface";
+import PaneToolbar from "@/components/ui/PaneToolbar";
+import SelectField from "@/components/ui/SelectField";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
 import {
   browseKindLabel,
   browseSourceLabel,
@@ -146,7 +149,8 @@ export default function BrowsePaneBody() {
       },
   );
   const [draft, setDraft] = useState(validQueryText ?? "");
-  const inputRef = useRef<HTMLInputElement>(null);
+  const committedTextRef = useRef(validQueryText);
+  const { inputRef, focusInput } = usePaneCollectionInput();
   const draftHelpId = useId();
   const [announcements, setAnnouncements] = useState<{
     readonly queryKey: string;
@@ -180,12 +184,10 @@ export default function BrowsePaneBody() {
 
   useEffect(() => {
     if (validQueryText === undefined) return;
+    if (committedTextRef.current === validQueryText) return;
+    committedTextRef.current = validQueryText;
     setDraft(validQueryText);
-    if (!validQueryText) {
-      const frame = window.requestAnimationFrame(() => inputRef.current?.focus());
-      return () => window.cancelAnimationFrame(frame);
-    }
-  }, [currentQueryKey, validQueryText]);
+  }, [validQueryText]);
 
   useEffect(() => {
     if (snapshot.queryKey !== currentQueryKey) {
@@ -258,50 +260,63 @@ export default function BrowsePaneBody() {
     validQuery?.text,
   ]);
 
-  usePanePrimaryChrome({
-    header: { kind: "Section", meta: { kind: "None" } },
-  });
-
   const query = decoded.kind === "Valid" ? decoded.query : null;
-  const sources = query ? browseSourcesForKind(query.kind) : [];
   const normalizedDraft = normalizeBrowseDraft(draft);
   const invalidDraft =
     normalizedDraft !== "" && !isValidBrowseText(normalizedDraft);
-  const toolbar = query ? (
-    <div className={styles.toolbar}>
-      <form
-        className={styles.searchForm}
-        role="search"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (invalidDraft) {
-            inputRef.current?.focus();
-          } else {
-            replaceQuery({ ...query, text: normalizedDraft });
-          }
-        }}
-      >
-        <label>
-          Search
-          <Input
-            ref={inputRef}
-            type="search"
-            size="md"
-            value={draft}
-            maxLength={200}
-            onChange={(event) => setDraft(event.currentTarget.value)}
-            aria-describedby={invalidDraft ? draftHelpId : undefined}
-            aria-invalid={invalidDraft || undefined}
-          />
-        </label>
-        <Button type="submit">Search</Button>
-      </form>
-      {invalidDraft ? (
-        <p id={draftHelpId} className={styles.validationHelp}>
-          Use 1–200 characters without control characters.
-        </p>
-      ) : null}
-      <div className={styles.facets}>
+  const resetView = useCallback(() => {
+    setDraft("");
+    replaceQuery({ text: "", kind: "All", source: null, sort: "Relevance" });
+  }, [replaceQuery]);
+  const toolbar = useMemo(() => query ? (
+    <PaneToolbar
+      variant="Refinement"
+      search={
+        <form
+          className={styles.searchForm}
+          role="search"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (invalidDraft) {
+              inputRef.current?.focus();
+            } else {
+              setDraft(normalizedDraft);
+              replaceQuery({ ...query, text: normalizedDraft });
+            }
+          }}
+        >
+          <label>
+            Search
+            <Input
+              ref={inputRef}
+              type="search"
+              size="md"
+              value={draft}
+              maxLength={200}
+              onChange={(event) => setDraft(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Escape" || event.defaultPrevented) return;
+                event.preventDefault();
+                event.stopPropagation();
+                setDraft("");
+              }}
+              aria-describedby={invalidDraft ? draftHelpId : undefined}
+              aria-invalid={invalidDraft || undefined}
+            />
+          </label>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={!draft}
+            onClick={() => setDraft("")}
+          >
+            Clear text
+          </Button>
+          <Button type="submit">Search</Button>
+        </form>
+      }
+      filters={
+        <div className={styles.facets}>
         <div className={styles.facetGroup} role="group" aria-label="Kind">
           {BROWSE_KINDS.map((kind) => (
             <Button
@@ -315,7 +330,7 @@ export default function BrowsePaneBody() {
             </Button>
           ))}
         </div>
-        {sources.length > 1 ? (
+        {browseSourcesForKind(query.kind).length > 1 ? (
           <div className={styles.facetGroup} role="group" aria-label="Source">
             <Button
               size="sm"
@@ -325,7 +340,7 @@ export default function BrowsePaneBody() {
             >
               All sources
             </Button>
-            {sources.map((source) => (
+            {browseSourcesForKind(query.kind).map((source) => (
               <Button
                 key={source}
                 size="sm"
@@ -339,26 +354,54 @@ export default function BrowsePaneBody() {
           </div>
         ) : null}
         {query.kind === "Video" && query.source === "YouTube" ? (
-          <div className={styles.facetGroup} role="group" aria-label="Sort">
-            {(["Relevance", "Newest"] as const).map((sort) => (
-              <Button
-                key={sort}
-                size="sm"
-                variant="pill"
-                aria-pressed={query.sort === sort}
-                onClick={() => replaceQuery({ ...query, sort })}
-              >
-                {sort}
-              </Button>
-            ))}
-          </div>
-        ) : null}
-      </div>
-    </div>
-  ) : undefined;
+          <SelectField
+            layout="Stacked"
+            label="Sort by"
+            value={query.sort}
+            onChange={(event) =>
+              replaceQuery({ ...query, sort: event.target.value as "Relevance" | "Newest" })
+            }
+          >
+            <option value="Relevance">Relevance</option>
+            <option value="Newest">Newest</option>
+          </SelectField>
+        ) : <span>Sort by: relevance</span>}
+        </div>
+      }
+      controls={
+        <>
+          {invalidDraft ? (
+            <p id={draftHelpId} className={styles.validationHelp}>
+              Use 1–200 characters without control characters.
+            </p>
+          ) : null}
+          <span className={styles.summary}>
+            {query.text ? browseRunSummaryText(runSummary) : "Ready to browse."}
+          </span>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={!draft && !query.text && query.kind === "All" && query.source === null}
+            onClick={resetView}
+          >
+            Reset view
+          </Button>
+        </>
+      }
+    />
+  ) : undefined, [draft, draftHelpId, inputRef, invalidDraft, normalizedDraft, query, replaceQuery, resetView, runSummary]);
+  const collection = useMemo(
+    () => query && toolbar
+      ? { label: "Browse controls", content: toolbar, focusInput }
+      : undefined,
+    [focusInput, query, toolbar],
+  );
+  usePanePrimaryChrome({
+    collection,
+    header: { kind: "Section", meta: { kind: "None" } },
+  });
   const runState = query?.text ? (
     <>
-      <p className={styles.summary}>{browseRunSummaryText(runSummary)}</p>
       <div
         className="sr-only"
         aria-label="Browse result announcements"
@@ -379,7 +422,6 @@ export default function BrowsePaneBody() {
           ? "Discover beyond Nexus. Preview first; add only when it belongs."
           : undefined
       }
-      toolbar={toolbar}
       state={
         decoded.kind === "Invalid" ? (
           <div className={styles.invalid}>

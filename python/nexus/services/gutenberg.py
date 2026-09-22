@@ -111,7 +111,7 @@ def sync_project_gutenberg_catalog(
                     set_={column: statement.excluded[column] for column in _UPSERT_COLUMNS},
                 )
             )
-        # Title/issued changes reorder AuthorWorks even when the authors do not.
+        # Catalog titles affect AuthorWorks ordering even when author credits do not change.
         bump_all_collection_revisions(db, family=CollectionFamily.AuthorWorks)
 
     contributors.replace_observed_role_slices_batch(

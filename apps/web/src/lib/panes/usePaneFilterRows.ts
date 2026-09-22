@@ -1,40 +1,22 @@
-import { useCallback, useMemo, useState, type ReactNode } from "react";
-import type {
-  PaneFilterRowsPublication,
-  PaneFilterRowsStatus,
+import { useCallback, useMemo, useState } from "react";
+import type { PaneFilterRowsStatus } from "@/lib/panes/paneFilterRows";
+import { validatePaneFilterRowsStatus } from "@/lib/panes/paneFilterRows";
+import {
+  truncatePaneSearchQuery,
+  type PaneFilterRowsPublication,
 } from "@/lib/panes/paneSearch";
-
-function requireNonNegativeInteger(label: string, value: number): void {
-  if (!Number.isInteger(value) || value < 0) {
-    throw new Error(`${label} must be a non-negative integer.`);
-  }
-}
-
-function assertUnreachableRowStatus(status: never): never {
-  throw new Error(
-    `Unreachable Pane Filter row status: ${JSON.stringify(status)}`,
-  );
-}
 
 export default function usePaneFilterRows({
   sourceKey,
-  inputLabel,
-  placeholder,
   getRowStatus,
-  activeDomainControlCount,
-  filters,
-  controls,
 }: {
   readonly sourceKey: string;
-  readonly inputLabel: string;
-  readonly placeholder: string;
   readonly getRowStatus: (query: string) => PaneFilterRowsStatus;
-  readonly activeDomainControlCount: number;
-  readonly filters?: ReactNode;
-  readonly controls?: ReactNode;
 }): {
   readonly query: string;
-  readonly publication: PaneFilterRowsPublication;
+  readonly onQueryChange: (query: string) => void;
+  readonly clearQuery: () => void;
+  readonly rowStatus: PaneFilterRowsStatus;
 } {
   const [queryState, setQueryState] = useState({ sourceKey, query: "" });
   if (queryState.sourceKey !== sourceKey) {
@@ -42,62 +24,57 @@ export default function usePaneFilterRows({
   }
   const query = queryState.sourceKey === sourceKey ? queryState.query : "";
   const onQueryChange = useCallback(
-    (nextQuery: string) => setQueryState({ sourceKey, query: nextQuery }),
+    (nextQuery: string) =>
+      setQueryState({
+        sourceKey,
+        query: truncatePaneSearchQuery(nextQuery),
+      }),
     [sourceKey],
   );
-  const onDismiss = useCallback(
+  const clearQuery = useCallback(
     () => setQueryState({ sourceKey, query: "" }),
     [sourceKey],
   );
+  const rowStatus = useMemo(() => {
+    const status = getRowStatus(query);
+    validatePaneFilterRowsStatus(status);
+    return status;
+  }, [getRowStatus, query]);
+  return useMemo(
+    () => ({ query, onQueryChange, clearQuery, rowStatus }),
+    [query, onQueryChange, clearQuery, rowStatus],
+  );
+}
 
-  const publication = useMemo<PaneFilterRowsPublication>(() => {
-    const rowStatus = getRowStatus(query);
-    requireNonNegativeInteger(
-      "Pane Filter active domain control count",
-      activeDomainControlCount,
-    );
-    requireNonNegativeInteger(
-      "Pane Filter visible row count",
-      rowStatus.visibleCount,
-    );
-    switch (rowStatus.kind) {
-      case "Partial":
-        requireNonNegativeInteger(
-          "Pane Filter loaded row count",
-          rowStatus.loadedCount,
-        );
-        break;
-      case "Complete":
-        requireNonNegativeInteger(
-          "Pane Filter total row count",
-          rowStatus.totalCount,
-        );
-        break;
-      default:
-        assertUnreachableRowStatus(rowStatus);
-    }
-    return {
+export function usePaneTransientFilterRows({
+  sourceKey,
+  inputLabel,
+  placeholder,
+  getRowStatus,
+}: {
+  readonly sourceKey: string;
+  readonly inputLabel: string;
+  readonly placeholder: string;
+  readonly getRowStatus: (query: string) => PaneFilterRowsStatus;
+}): {
+  readonly query: string;
+  readonly publication: PaneFilterRowsPublication;
+} {
+  const { query, onQueryChange, clearQuery, rowStatus } = usePaneFilterRows({
+    sourceKey,
+    getRowStatus,
+  });
+  const publication = useMemo<PaneFilterRowsPublication>(
+    () => ({
       kind: "FilterRows",
       query,
       inputLabel,
       placeholder,
       onQueryChange,
-      onDismiss,
+      onDismiss: clearQuery,
       rowStatus,
-      activeDomainControlCount,
-      filters,
-      controls,
-    };
-  }, [
-    activeDomainControlCount,
-    controls,
-    filters,
-    getRowStatus,
-    inputLabel,
-    onDismiss,
-    onQueryChange,
-    placeholder,
-    query,
-  ]);
-  return useMemo(() => ({ query, publication }), [publication, query]);
+    }),
+    [query, inputLabel, placeholder, onQueryChange, clearQuery, rowStatus],
+  );
+  return useMemo(() => ({ query, publication }), [query, publication]);
 }

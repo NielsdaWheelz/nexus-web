@@ -1,7 +1,16 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState } from "react";
-import AppliedFilters from "@/components/search/AppliedFilters";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { X } from "lucide-react";
+import AppliedFilters from "@/components/ui/AppliedFilters";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -15,6 +24,8 @@ import SelectField from "@/components/ui/SelectField";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import Toggle from "@/components/ui/Toggle";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
 import { absent, present, type Presence } from "@/lib/api/presence";
 import {
   IMPORT_STAGES,
@@ -35,6 +46,7 @@ import type { HistoryEntry, ImportItem } from "@/lib/imports/importsClient";
 import { useImportsPage } from "@/lib/imports/useImportsPage";
 import { formatLocalDateInTimeZone } from "@/lib/localDate";
 import { MEDIA_KINDS, type MediaKind } from "@/lib/media/kind";
+import type { PaneCompanionAction } from "@/lib/panes/panePublications";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import {
   IMPORTS_STALE_REFRESH_NOTICE,
@@ -81,6 +93,7 @@ export interface ImportsWorkspaceProps {
    * owns the return memento and cannot see this read, so the list reports it.
    */
   readonly onListSettled: (settled: boolean) => void;
+  readonly companionAction: PaneCompanionAction | null;
 }
 
 const REASON_OPTIONS = [...SAFE_FAILURE_CODES].sort((left, right) =>
@@ -88,6 +101,11 @@ const REASON_OPTIONS = [...SAFE_FAILURE_CODES].sort((left, right) =>
     IMPORT_FAILURE_COPY[right].reason,
   ),
 );
+const IMPORTS_ORDER_LABEL: Readonly<Record<ImportsView, string>> = {
+  NeedsAttention: "Stage, oldest failure first",
+  InProgress: "Newest accepted first",
+  History: "Newest matched event first",
+};
 
 function chosen<T extends string>(
   raw: string,
@@ -114,6 +132,7 @@ export default function ImportsWorkspace({
   onSelect,
   onMatchedEvent,
   onListSettled,
+  companionAction,
 }: ImportsWorkspaceProps) {
   const { summary, loadState, refresh } = useImports();
   const { displayTimeZone } = useRenderEnvironment();
@@ -147,17 +166,12 @@ export default function ImportsWorkspace({
   }, [displayTimeZone, explicitView, resolvedView]);
 
   if (resolvedView === null) {
-    // The counts choose the view, so a first read that never arrived leaves no
-    // view for the failure below to be reported inside: this entry carries its
-    // own recovery.
-    return loadState.kind === "Failed" ? (
-      <FeedbackNotice
-        content={importsLoadErrorMessage(loadState.error)}
-        announcement="Assertive"
-        actions={[{ label: "Try again", onClick: () => void refresh() }]}
+    return (
+      <UnresolvedImportsWorkspace
+        companionAction={companionAction}
+        loadState={loadState}
+        refresh={refresh}
       />
-    ) : (
-      <PaneLoadingState label="Loading imports" announcement="Polite" />
     );
   }
   return (
@@ -169,7 +183,35 @@ export default function ImportsWorkspace({
       onSelect={onSelect}
       onMatchedEvent={onMatchedEvent}
       onListSettled={onListSettled}
+      companionAction={companionAction}
     />
+  );
+}
+
+function UnresolvedImportsWorkspace({
+  companionAction,
+  loadState,
+  refresh,
+}: {
+  readonly companionAction: PaneCompanionAction | null;
+  readonly loadState: ReturnType<typeof useImports>["loadState"];
+  readonly refresh: ReturnType<typeof useImports>["refresh"];
+}) {
+  const chrome = useMemo(
+    () => (companionAction === null ? null : { companionAction }),
+    [companionAction],
+  );
+  usePanePrimaryChrome(chrome);
+  // Counts choose the first view. A failed initial summary has no valid view
+  // to publish controls for, but retains the retry path and inspector action.
+  return loadState.kind === "Failed" ? (
+    <FeedbackNotice
+      content={importsLoadErrorMessage(loadState.error)}
+      announcement="Assertive"
+      actions={[{ label: "Try again", onClick: () => void refresh() }]}
+    />
+  ) : (
+    <PaneLoadingState label="Loading imports" announcement="Polite" />
   );
 }
 
@@ -181,12 +223,18 @@ function ImportsWorkspaceView({
   onSelect,
   onMatchedEvent,
   onListSettled,
+  companionAction,
 }: ImportsWorkspaceProps & { readonly view: ImportsView }) {
   const { summary, loadState, observation, refresh } = useImports();
   const display = useRenderEnvironment();
   const page = useImportsPage(view, state);
-  const chips = appliedImportsFilters(view, state, display.displayLocale);
+  const chips = useMemo(
+    () => appliedImportsFilters(view, state, display.displayLocale),
+    [display.displayLocale, state, view],
+  );
   const listRef = useRef<HTMLDivElement>(null);
+  const { inputRef, focusInput } = usePaneCollectionInput();
+  const statusId = useId();
 
   const listSettled = page.status !== "loading";
   useEffect(() => {
@@ -231,8 +279,29 @@ function ImportsWorkspaceView({
       ?.focus();
   }, [selectedRef]);
 
-  const update = (next: Partial<ImportsUrlState>) =>
-    onStateChange({ ...state, ...next });
+  const update = useCallback(
+    (next: Partial<ImportsUrlState>) => onStateChange({ ...state, ...next }),
+    [onStateChange, state],
+  );
+  const commitQuery = useCallback(() => {
+    const value = draft.trim();
+    update({ q: value === "" ? absent() : present(value) });
+  }, [draft, update]);
+  const clearQuery = useCallback(() => {
+    setDraft("");
+    update({ q: absent() });
+    inputRef.current?.focus({ preventScroll: true });
+  }, [inputRef, update]);
+  const resetView = useCallback(() => {
+    setDraft("");
+    onStateChange(
+      importsViewSelection(
+        withoutImportsFilters(state),
+        view,
+        formatLocalDateInTimeZone(new Date(), display.displayTimeZone),
+      ),
+    );
+  }, [display.displayTimeZone, onStateChange, state, view]);
   const viewCount = (candidate: ImportsView): number | null => {
     if (summary === null || candidate === "History") return null;
     return candidate === "NeedsAttention"
@@ -256,6 +325,265 @@ function ImportsWorkspaceView({
   const datesBound = importsDateFilterLabel(importsDateBounds(state));
   const sections = importStageSections(page.groups, page.items);
   const grouped = view === "NeedsAttention" && sections.length > 0;
+  const lastReadCount = `Showing ${page.items.length} of ${page.matchedCount} matching imports from the last read`;
+  const resultStatus =
+    page.status === "loading"
+      ? "Loading imports"
+      : page.status === "error"
+        ? "Imports failed to load"
+        : page.refreshFailed || loadState.kind === "Failed"
+          ? `Last update failed. ${lastReadCount}`
+          : lastReadCount;
+  const collectionContent = useMemo(
+    () => (
+      <div className={styles.collectionControls}>
+        <PaneToolbar
+          variant="Refinement"
+          search={
+            <form
+              className={styles.search}
+              onSubmit={(event) => {
+                event.preventDefault();
+                commitQuery();
+              }}
+            >
+              <Input
+                ref={inputRef}
+                type="search"
+                size="sm"
+                aria-label="Search imports"
+                aria-describedby={statusId}
+                aria-keyshortcuts="Escape"
+                placeholder="Search titles, files and sources"
+                value={draft}
+                autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                data-pane-collection-input="true"
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Escape" || event.defaultPrevented) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setDraft("");
+                }}
+              />
+              {draft || state.q.kind === "Present" ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  type="button"
+                  aria-label="Clear text filter"
+                  title="Clear text filter"
+                  onClick={clearQuery}
+                >
+                  <X size={15} aria-hidden="true" />
+                </Button>
+              ) : null}
+              <button type="submit" className="sr-only" tabIndex={-1}>
+                Apply search
+              </button>
+            </form>
+          }
+          filters={
+            <>
+              <SelectField
+                layout="Inline"
+                label="Type"
+                size="sm"
+                value={text(state.mediaKind)}
+                onChange={(event) =>
+                  update({
+                    mediaKind: chosen<MediaKind>(event.target.value, MEDIA_KINDS),
+                  })
+                }
+              >
+                <option value="">Any type</option>
+                {MEDIA_KINDS.map((kind) => (
+                  <option key={kind} value={kind}>
+                    {importKindLabel(kind)}
+                  </option>
+                ))}
+              </SelectField>
+              <SelectField
+                layout="Inline"
+                label="Stage"
+                size="sm"
+                value={text(state.stage)}
+                onChange={(event) =>
+                  update({
+                    stage: chosen<ImportStage>(event.target.value, IMPORT_STAGES),
+                  })
+                }
+              >
+                <option value="">Any stage</option>
+                {IMPORT_STAGES.map((stage) => (
+                  <option key={stage} value={stage}>
+                    {importStageLabel(stage)}
+                  </option>
+                ))}
+              </SelectField>
+              {view === "InProgress" ? null : (
+                <SelectField
+                  layout="Inline"
+                  label="Reason"
+                  size="sm"
+                  value={text(state.failureCode)}
+                  onChange={(event) =>
+                    update({
+                      failureCode: chosen<SafeFailureCode>(
+                        event.target.value,
+                        SAFE_FAILURE_CODES,
+                      ),
+                    })
+                  }
+                >
+                  <option value="">Any reason</option>
+                  {REASON_OPTIONS.map((code) => (
+                    <option key={code} value={code}>
+                      {IMPORT_FAILURE_COPY[code].reason}
+                    </option>
+                  ))}
+                </SelectField>
+              )}
+              {view !== "History" ? null : (
+                <>
+                  <SelectField
+                    layout="Inline"
+                    label="State"
+                    size="sm"
+                    value={text(state.currentState)}
+                    onChange={(event) =>
+                      update({
+                        currentState: chosen<ImportStateKind>(
+                          event.target.value,
+                          IMPORT_STATE_KINDS,
+                        ),
+                      })
+                    }
+                  >
+                    <option value="">Any state</option>
+                    {IMPORT_STATE_KINDS.map((kind) => (
+                      <option key={kind} value={kind}>
+                        {IMPORT_STATE_KIND_LABEL[kind]}
+                      </option>
+                    ))}
+                  </SelectField>
+                  <Toggle
+                    size="sm"
+                    label="Had failures"
+                    checked={
+                      state.hadFailures.kind === "Present" &&
+                      state.hadFailures.value
+                    }
+                    onCheckedChange={(next) =>
+                      update({ hadFailures: next ? present(true) : absent() })
+                    }
+                  />
+                  <div
+                    role="group"
+                    aria-label={datesBound}
+                    className={styles.dateGroup}
+                  >
+                    <span aria-hidden="true" className={styles.dateGroupLabel}>
+                      {datesBound}
+                    </span>
+                    <label className={styles.dateField}>
+                      <span>From</span>
+                      <input
+                        type="date"
+                        value={text(state.from)}
+                        onChange={(event) =>
+                          update({
+                            from:
+                              event.target.value === ""
+                                ? absent()
+                                : present(event.target.value),
+                          })
+                        }
+                      />
+                    </label>
+                    <label className={styles.dateField}>
+                      <span>Before</span>
+                      <input
+                        type="date"
+                        value={text(state.before)}
+                        onChange={(event) =>
+                          update({
+                            before:
+                              event.target.value === ""
+                                ? absent()
+                                : present(event.target.value),
+                          })
+                        }
+                      />
+                    </label>
+                  </div>
+                </>
+              )}
+              <span className={styles.sortLabel}>
+                Order: {IMPORTS_ORDER_LABEL[view]}
+              </span>
+            </>
+          }
+          controls={
+            <>
+              <span
+                id={statusId}
+                className={styles.resultStatus}
+                role="status"
+                aria-live="polite"
+              >
+                {resultStatus}
+              </span>
+              <Button variant="secondary" size="sm" onClick={resetView}>
+                Reset view
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => void refresh()}>
+                Refresh
+              </Button>
+            </>
+          }
+        />
+        <AppliedFilters
+          chips={chips.map((chip) => ({ id: chip.id, label: chip.label }))}
+          onRemove={(id) =>
+            onStateChange(withoutImportsFilter(state, id as ImportsFilterField))
+          }
+          onClearAll={() => onStateChange(withoutImportsFilters(state))}
+        />
+      </div>
+    ),
+    [
+      chips,
+      clearQuery,
+      commitQuery,
+      datesBound,
+      draft,
+      inputRef,
+      onStateChange,
+      refresh,
+      resetView,
+      resultStatus,
+      state,
+      statusId,
+      update,
+      view,
+    ],
+  );
+  const collection = useMemo(
+    () => ({ label: "Filter imports", content: collectionContent, focusInput }),
+    [collectionContent, focusInput],
+  );
+  const chrome = useMemo(
+    () =>
+      companionAction === null
+        ? { collection }
+        : { collection, companionAction },
+    [collection, companionAction],
+  );
+  usePanePrimaryChrome(chrome);
 
   const rows = (items: readonly ImportItem[]) =>
     items.map((item) => (
@@ -337,206 +665,6 @@ function ImportsWorkspaceView({
                 ))}
               </p>
             </div>
-          }
-          toolbar={
-            <>
-              <PaneToolbar
-                variant="Refinement"
-                search={
-                  // The pane's one refresh command keeps a fixed slot beside
-                  // the search box: a control the reader has to find after a
-                  // failed read must not migrate between toolbar rows as the
-                  // filter set changes width.
-                  <div className={styles.searchRow}>
-                    <form
-                      className={styles.search}
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        const value = draft.trim();
-                        update({ q: value === "" ? absent() : present(value) });
-                      }}
-                    >
-                      <Input
-                        type="search"
-                        aria-label="Search imports"
-                        placeholder="Search titles, files and sources"
-                        value={draft}
-                        onChange={(event) => setDraft(event.target.value)}
-                      />
-                      {/* Enter in the box submits the form; this names
-                          that command for a reader who cannot see the box it
-                          belongs to. It is clipped, so it is not a stop a
-                          sighted reader would ever see focus land on. */}
-                      <button type="submit" className="sr-only" tabIndex={-1}>
-                        Apply search
-                      </button>
-                    </form>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => void refresh()}
-                    >
-                      Refresh
-                    </Button>
-                  </div>
-                }
-                filters={
-                  <>
-                    <SelectField
-                      layout="Inline"
-                      label="Type"
-                      size="sm"
-                      value={text(state.mediaKind)}
-                      onChange={(event) =>
-                        update({
-                          mediaKind: chosen<MediaKind>(
-                            event.target.value,
-                            MEDIA_KINDS,
-                          ),
-                        })
-                      }
-                    >
-                      <option value="">Any type</option>
-                      {MEDIA_KINDS.map((kind) => (
-                        <option key={kind} value={kind}>
-                          {importKindLabel(kind)}
-                        </option>
-                      ))}
-                    </SelectField>
-                    <SelectField
-                      layout="Inline"
-                      label="Stage"
-                      size="sm"
-                      value={text(state.stage)}
-                      onChange={(event) =>
-                        update({
-                          stage: chosen<ImportStage>(
-                            event.target.value,
-                            IMPORT_STAGES,
-                          ),
-                        })
-                      }
-                    >
-                      <option value="">Any stage</option>
-                      {IMPORT_STAGES.map((stage) => (
-                        <option key={stage} value={stage}>
-                          {importStageLabel(stage)}
-                        </option>
-                      ))}
-                    </SelectField>
-                    {view === "InProgress" ? null : (
-                      <SelectField
-                        layout="Inline"
-                        label="Reason"
-                        size="sm"
-                        value={text(state.failureCode)}
-                        onChange={(event) =>
-                          update({
-                            failureCode: chosen<SafeFailureCode>(
-                              event.target.value,
-                              SAFE_FAILURE_CODES,
-                            ),
-                          })
-                        }
-                      >
-                        <option value="">Any reason</option>
-                        {REASON_OPTIONS.map((code) => (
-                          <option key={code} value={code}>
-                            {IMPORT_FAILURE_COPY[code].reason}
-                          </option>
-                        ))}
-                      </SelectField>
-                    )}
-                    {view !== "History" ? null : (
-                      <>
-                        <SelectField
-                          layout="Inline"
-                          label="State"
-                          size="sm"
-                          value={text(state.currentState)}
-                          onChange={(event) =>
-                            update({
-                              currentState: chosen<ImportStateKind>(
-                                event.target.value,
-                                IMPORT_STATE_KINDS,
-                              ),
-                            })
-                          }
-                        >
-                          <option value="">Any state</option>
-                          {IMPORT_STATE_KINDS.map((kind) => (
-                            <option key={kind} value={kind}>
-                              {IMPORT_STATE_KIND_LABEL[kind]}
-                            </option>
-                          ))}
-                        </SelectField>
-                        <Toggle
-                          size="sm"
-                          label="Had failures"
-                          checked={
-                            state.hadFailures.kind === "Present" &&
-                            state.hadFailures.value
-                          }
-                          onCheckedChange={(next) =>
-                            update({
-                              hadFailures: next ? present(true) : absent(),
-                            })
-                          }
-                        />
-                        <div
-                          role="group"
-                          aria-label={datesBound}
-                          className={styles.dateGroup}
-                        >
-                          <span aria-hidden="true" className={styles.dateGroupLabel}>
-                            {datesBound}
-                          </span>
-                          <label className={styles.dateField}>
-                            <span>From</span>
-                            <input
-                              type="date"
-                              value={text(state.from)}
-                              onChange={(event) =>
-                                update({
-                                  from:
-                                    event.target.value === ""
-                                      ? absent()
-                                      : present(event.target.value),
-                                })
-                              }
-                            />
-                          </label>
-                          <label className={styles.dateField}>
-                            <span>Before</span>
-                            <input
-                              type="date"
-                              value={text(state.before)}
-                              onChange={(event) =>
-                                update({
-                                  before:
-                                    event.target.value === ""
-                                      ? absent()
-                                      : present(event.target.value),
-                                })
-                              }
-                            />
-                          </label>
-                        </div>
-                      </>
-                    )}
-                  </>
-                }
-              />
-              <AppliedFilters
-                chips={chips.map((chip) => ({ id: chip.id, label: chip.label }))}
-                onRemove={(id) =>
-                  onStateChange(
-                    withoutImportsFilter(state, id as ImportsFilterField),
-                  )
-                }
-                onClearAll={() => onStateChange(withoutImportsFilters(state))}
-              />
-            </>
           }
           state={
             <>

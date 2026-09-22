@@ -32,6 +32,8 @@ import SelectField from "@/components/ui/SelectField";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
+import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
 import { presentLibrary } from "@/lib/collections/presenters/library";
 import {
   CANONICAL_LIBRARIES_INDEX_VIEW,
@@ -252,6 +254,7 @@ export default function LibrariesPaneBody() {
           retry: firstPage.retry,
         }
       : null;
+  const loadFailed = loadFailure !== null;
   const libraries = controller?.libraries ?? EMPTY_LIBRARIES;
   const viewerInvitesResource = useResource<ViewerLibraryInvitation[]>({
     cacheKey: `viewer-library-invites:${invitesRefreshVersion}`,
@@ -277,7 +280,6 @@ export default function LibrariesPaneBody() {
     );
     capturePaneScroll();
     committedViewInvalidatedRef.current = true;
-    committedSnapshotRef.current = null;
     clearAllVisitData();
     setChainEpoch((epoch) => epoch + 1);
     const version = librariesRefreshVersionRef.current + 1;
@@ -412,8 +414,9 @@ export default function LibrariesPaneBody() {
   // Continuation runs only while the committed view is the requested one, and
   // every page of a chain carries that same view.
   const exhaustion = useExhaustivePagination<Library>({
-    active: isPaneActive && controller !== null && !requestsFirstPage,
-    chainKey: `${committedViewKey ?? ""}:${chainEpoch}`,
+    active:
+      isPaneActive && !invalidView && view !== null && controller !== null && !requestsFirstPage,
+    chainKey: JSON.stringify([requestedViewKey, committedViewKey, invalidView, chainEpoch]),
     cursor: controller?.nextCursor ?? NO_CURSOR,
     collectionRevision: controller?.collectionRevision ?? ZERO_REVISION,
     itemCount: controller?.libraries.length ?? 0,
@@ -523,6 +526,22 @@ export default function LibrariesPaneBody() {
         matchesPaneFilterQuery(query, [libraryPresentation(library).name]),
       ).length;
       const unit = { singular: "library", plural: "libraries" };
+      if (controller !== null && requestsFirstPage) {
+        return {
+          kind: "Retained" as const,
+          visibleCount,
+          loadedCount: libraries.length,
+          unit,
+          cause: loadFailed ? "Failed" as const : "Updating" as const,
+        };
+      }
+      if (
+        (controller === null && loadFailed) ||
+        exhaustion.kind === "ResumeFailed" ||
+        exhaustion.kind === "RefreshRequired"
+      ) {
+        return { kind: "Failed" as const, visibleCount, loadedCount: libraries.length, unit };
+      }
       return collectionComplete
         ? {
             kind: "Complete" as const,
@@ -537,14 +556,22 @@ export default function LibrariesPaneBody() {
             unit,
           };
     },
-    [collectionComplete, libraries],
+    [collectionComplete, controller, exhaustion.kind, libraries, loadFailed, requestsFirstPage],
   );
-  const dismissFilterRowsRef = useRef<() => void>(() => undefined);
-  const clearDomainFilters = useCallback(() => {
-    dismissFilterRowsRef.current();
-    pendingCommitFocusRef.current = true;
+  const {
+    query: filterQuery,
+    onQueryChange,
+    clearQuery,
+    rowStatus,
+  } = usePaneFilterRows({
+    sourceKey: "Libraries.Index",
+    getRowStatus: getFilterStatus,
+  });
+  const { inputRef, focusInput } = usePaneCollectionInput();
+  const resetView = useCallback(() => {
+    clearQuery();
     setView(CANONICAL_LIBRARIES_INDEX_VIEW);
-  }, [setView]);
+  }, [clearQuery, setView]);
   const domainFilterControls = useMemo(
     () =>
       invalidView || view === null ? undefined : (
@@ -569,25 +596,53 @@ export default function LibrariesPaneBody() {
               </option>
             ))}
           </SelectField>
-          {view.kind === "Canonical" ? null : (
-            <Button variant="secondary" size="sm" onClick={clearDomainFilters}>
-              Clear filters
-            </Button>
-          )}
         </>
       ),
-    [clearDomainFilters, invalidView, setView, view],
+    [invalidView, setView, view],
   );
-  const { query: filterQuery, publication: search } = usePaneFilterRows({
-    sourceKey: "Libraries.Index",
-    inputLabel: "Filter libraries",
-    placeholder: "Filter libraries",
-    getRowStatus: getFilterStatus,
-    activeDomainControlCount:
-      view === null || invalidView || view.kind === "Canonical" ? 0 : 1,
-    filters: domainFilterControls,
-  });
-  dismissFilterRowsRef.current = search.onDismiss;
+  const collection = useMemo(
+    () =>
+      invalidView || view === null
+        ? undefined
+        : {
+            label: "Filter libraries",
+            content: (
+              <PaneCollectionBar
+                inputRef={inputRef}
+                inputLabel="Filter libraries"
+                placeholder="Filter libraries"
+                query={filterQuery}
+                onQueryChange={onQueryChange}
+                onClearQuery={clearQuery}
+                rowStatus={rowStatus}
+                filters={domainFilterControls}
+                controls={
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={resetView}
+                    disabled={view.kind === "Canonical" && !filterQuery.trim()}
+                  >
+                    Reset view
+                  </Button>
+                }
+              />
+            ),
+            focusInput,
+          },
+    [
+      resetView,
+      clearQuery,
+      domainFilterControls,
+      filterQuery,
+      focusInput,
+      inputRef,
+      invalidView,
+      onQueryChange,
+      rowStatus,
+      view,
+    ],
+  );
   const libraryRows = libraries.map((library) => presentLibrary(library));
   const filteredLibraryRows = libraryRows.filter((row) =>
     matchesPaneFilterQuery(filterQuery, [row.title.text]),
@@ -621,7 +676,7 @@ export default function LibrariesPaneBody() {
     [revalidateLibraries],
   );
   usePanePrimaryChrome({
-    search,
+    collection,
     refresh: {
       kind: "Refreshable",
       sourceKey: "Libraries.Index",
@@ -650,7 +705,7 @@ export default function LibrariesPaneBody() {
           {
             label: "Reset view",
             onClick: () => {
-              search.onDismiss();
+              clearQuery();
               setDecodedView({
                 kind: "Valid",
                 view: CANONICAL_LIBRARIES_INDEX_VIEW,

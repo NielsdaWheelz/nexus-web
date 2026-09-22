@@ -123,6 +123,13 @@ function decodeOrder(params: URLSearchParams): LibraryEntryOrder | null {
 
 /** Strict, total decode. Never normalizes or falls back on a recognized-but-bad value. */
 export function decodeLibraryView(params: URLSearchParams): DecodedLibraryView {
+  if (
+    ["sort", "direction", "projection", "completion"].some(
+      (key) => params.getAll(key).length > 1,
+    )
+  ) {
+    return { kind: "Invalid" };
+  }
   if (params.has("kind") || params.has("type") || params.has("types")) {
     return { kind: "Invalid" };
   }

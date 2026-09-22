@@ -250,11 +250,12 @@ def get_contributor_detail(
     )
 
 
-# A cursor minted under an earlier works view carries no plan, so none is decodable here.
-_WORKS_CURSOR_FAMILY = f"{CollectionFamily.AuthorWorks.value}:v2"
+# The date source changed even for cursors whose title-order plan hash did not.
+# A new family rejects every cursor minted under the previous semantics.
+_WORKS_CURSOR_FAMILY = f"{CollectionFamily.AuthorWorks.value}:v3"
 
 # The four advertised views and their total sort-key plans, keyed by the raw
-# ``(sort, direction)`` query pair; both absent is newest-first and ``published+desc``
+# ``(sort, direction)`` query pair; both absent is oldest-first and ``published+asc``
 # is rejected rather than normalized, so each view keeps exactly one URL.
 # ``date_missing`` is always ASC (undated works last in both directions) and ``href``
 # is the works relation's unique key, which makes every plan total. Each list is hashed
@@ -262,13 +263,13 @@ _WORKS_CURSOR_FAMILY = f"{CollectionFamily.AuthorWorks.value}:v2"
 _WORKS_PLANS: dict[tuple[str | None, str | None], list[SortKey]] = {
     (None, None): [
         SortKey("date_missing", "asc", KeysetValueKind.Int),
-        SortKey("date_key", "desc", KeysetValueKind.TextOrNull),
+        SortKey("date_key", "asc", KeysetValueKind.TextOrNull),
         SortKey("title", "asc", KeysetValueKind.Text),
         SortKey("href", "asc", KeysetValueKind.Text),
     ],
-    ("published", "asc"): [
+    ("published", "desc"): [
         SortKey("date_missing", "asc", KeysetValueKind.Int),
-        SortKey("date_key", "asc", KeysetValueKind.TextOrNull),
+        SortKey("date_key", "desc", KeysetValueKind.TextOrNull),
         SortKey("title", "asc", KeysetValueKind.Text),
         SortKey("href", "asc", KeysetValueKind.Text),
     ],

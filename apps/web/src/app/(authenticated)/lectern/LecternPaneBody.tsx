@@ -13,6 +13,8 @@ import Button from "@/components/ui/Button";
 import PaneSurface from "@/components/ui/PaneSurface";
 import SelectField from "@/components/ui/SelectField";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
+import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
 import {
   ApiError,
   isApiError,
@@ -52,7 +54,7 @@ import {
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
-import type { PaneFilterRowsStatus } from "@/lib/panes/paneSearch";
+import type { PaneFilterRowsStatus } from "@/lib/panes/paneFilterRows";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import { slateTargetId } from "@/lib/resonance/contract";
 import type { ReadingSlateAccept } from "@/lib/resonance/useReadingSlate";
@@ -205,8 +207,7 @@ export default function LecternPaneBody() {
     [items, view],
   );
   const sortSelectRef = useRef<HTMLSelectElement | null>(null);
-  // Clear filters and Reset view both remove themselves by installing the
-  // canonical view; the commit that removes them returns focus to Sort by.
+  // Invalid-view recovery removes its own button and returns focus to Sort by.
   const pendingCommitFocusRef = useRef(false);
   useEffect(() => {
     const select = sortSelectRef.current;
@@ -214,13 +215,6 @@ export default function LecternPaneBody() {
     pendingCommitFocusRef.current = false;
     select.focus();
   }, [view]);
-  const dismissFilterRowsRef = useRef<() => void>(() => undefined);
-  const resetToCanonicalView = useCallback(() => {
-    dismissFilterRowsRef.current();
-    pendingCommitFocusRef.current = true;
-    setDecodedView({ kind: "Valid", view: CANONICAL_LECTERN_VIEW });
-  }, [setDecodedView]);
-
   const presentFailure = useCallback(
     (error: unknown, operation: LecternErrorOperation) => {
       try {
@@ -355,24 +349,23 @@ export default function LecternPaneBody() {
               </option>
             ))}
           </SelectField>
-          {view.kind === "Custom" ? null : (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={resetToCanonicalView}
-            >
-              Clear filters
-            </Button>
-          )}
         </>
       ),
-    [resetToCanonicalView, setDecodedView, view],
+    [setDecodedView, view],
   );
   const getFilterStatus = useCallback(
     (query: string): PaneFilterRowsStatus => {
       const visibleCount = orderedItems.filter((item) =>
         matchesPaneFilterQuery(query, lecternFilterFields(item)),
       ).length;
+      if (queueStatus === "error") {
+        return {
+          kind: "Failed",
+          visibleCount,
+          loadedCount: orderedItems.length,
+          unit: LECTERN_FILTER_UNIT,
+        };
+      }
       return queueStatus === "ready"
         ? {
             kind: "Complete",
@@ -389,16 +382,62 @@ export default function LecternPaneBody() {
     },
     [orderedItems, queueStatus],
   );
-  const { query: filterQuery, publication: search } = usePaneFilterRows({
+  const {
+    query: filterQuery,
+    onQueryChange,
+    clearQuery,
+    rowStatus,
+  } = usePaneFilterRows({
     sourceKey: "Lectern.Items",
-    inputLabel: "Filter Lectern",
-    placeholder: "Filter items",
     getRowStatus: getFilterStatus,
-    activeDomainControlCount:
-      view === null || view.kind === "Custom" ? 0 : 1,
-    filters: domainFilterControls,
   });
-  dismissFilterRowsRef.current = search.onDismiss;
+  const resetToCanonicalView = useCallback(() => {
+    clearQuery();
+    setDecodedView({ kind: "Valid", view: CANONICAL_LECTERN_VIEW });
+  }, [clearQuery, setDecodedView]);
+  const { inputRef, focusInput } = usePaneCollectionInput();
+  const collection = useMemo(
+    () =>
+      view === null
+        ? undefined
+        : {
+            label: "Filter Lectern",
+            content: (
+              <PaneCollectionBar
+                inputRef={inputRef}
+                inputLabel="Filter Lectern"
+                placeholder="Filter items"
+                query={filterQuery}
+                onQueryChange={onQueryChange}
+                onClearQuery={clearQuery}
+                rowStatus={rowStatus}
+                filters={domainFilterControls}
+                controls={
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={resetToCanonicalView}
+                    disabled={view.kind === "Custom" && !filterQuery.trim()}
+                  >
+                    Reset view
+                  </Button>
+                }
+              />
+            ),
+            focusInput,
+          },
+    [
+      clearQuery,
+      domainFilterControls,
+      filterQuery,
+      focusInput,
+      inputRef,
+      onQueryChange,
+      resetToCanonicalView,
+      rowStatus,
+      view,
+    ],
+  );
   const effectiveQuery = filterQuery.trim();
   const visibleItems = useMemo(
     () =>
@@ -409,7 +448,7 @@ export default function LecternPaneBody() {
   );
 
   usePanePrimaryChrome({
-    search,
+    collection,
     header: {
       kind: "Section",
       // The metadata describes the exhaustive Lectern, never the local subset.
@@ -468,7 +507,10 @@ export default function LecternPaneBody() {
           <FeedbackNotice
             content={{ tone: "Danger", title: "Invalid Lectern view" }}
             announcement="Assertive"
-            actions={[{ label: "Reset view", onClick: resetToCanonicalView }]}
+            actions={[{ label: "Reset view", onClick: () => {
+              pendingCommitFocusRef.current = true;
+              resetToCanonicalView();
+            } }]}
           />
         ) : (
           <CollectionView

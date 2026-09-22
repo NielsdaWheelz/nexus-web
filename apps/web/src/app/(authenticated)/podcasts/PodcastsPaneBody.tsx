@@ -28,6 +28,8 @@ import SelectField from "@/components/ui/SelectField";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
+import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
 import {
   FeedbackNotice,
@@ -527,7 +529,7 @@ export default function PodcastsPaneBody() {
       controller !== null &&
       controller.queryIdentity === subscriptionQueryIdentity &&
       !allowInitialAdoptionRef.current,
-    chainKey: [subscriptionQueryIdentity, chainEpoch].join(":"),
+    chainKey: [subscriptionQueryIdentity, reloadNonce, chainEpoch].join(":"),
     cursor: controller?.nextCursor ?? { kind: "Absent" },
     collectionRevision:
       controller?.collectionRevision ?? (0 as CollectionRevision),
@@ -544,23 +546,13 @@ export default function PodcastsPaneBody() {
   const activeDomainControlCount =
     view === null ? 0 : activeSubscriptionControlCount(view);
   const sortSelectRef = useRef<HTMLSelectElement | null>(null);
-  const dismissFilterRowsRef = useRef<() => void>(() => undefined);
-  // Clear filters and Reset view both remove themselves by installing the
-  // canonical view; the commit that removes them returns focus to Sort by.
+  // Recovery actions that disappear after reset return focus to Sort by.
   const pendingCommitFocusRef = useRef(false);
   useEffect(() => {
     if (!pendingCommitFocusRef.current) return;
     pendingCommitFocusRef.current = false;
     sortSelectRef.current?.focus();
   }, [view]);
-  const resetToCanonicalView = useCallback(() => {
-    dismissFilterRowsRef.current();
-    pendingCommitFocusRef.current = true;
-    setDecodedView({
-      kind: "Valid",
-      view: CANONICAL_PODCAST_SUBSCRIPTION_VIEW,
-    });
-  }, [setDecodedView]);
   const subscriptionFilterNodes = useMemo(
     () =>
       view === null ? undefined : (
@@ -636,22 +628,11 @@ export default function PodcastsPaneBody() {
             ))}
           </SelectField>
 
-          {activeDomainControlCount > 0 ? (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={resetToCanonicalView}
-            >
-              Clear filters
-            </Button>
-          ) : null}
         </>
       ),
     [
-      activeDomainControlCount,
       libraries,
       librariesLoading,
-      resetToCanonicalView,
       setDecodedView,
       view,
     ],
@@ -667,6 +648,30 @@ export default function PodcastsPaneBody() {
           ]),
         ]),
       ).length;
+      if (
+        controller !== null &&
+        (loading || controller.queryIdentity !== subscriptionQueryIdentity)
+      ) {
+        return {
+          kind: "Retained" as const,
+          visibleCount,
+          loadedCount: rows.length,
+          unit: { singular: "show", plural: "shows" },
+          cause: error === null ? "Updating" as const : "Failed" as const,
+        };
+      }
+      if (
+        (controller === null && error !== null) ||
+        exhaustion.kind === "ResumeFailed" ||
+        exhaustion.kind === "RefreshRequired"
+      ) {
+        return {
+          kind: "Failed" as const,
+          visibleCount,
+          loadedCount: rows.length,
+          unit: { singular: "show", plural: "shows" },
+        };
+      }
       return exhaustion.kind === "Complete"
         ? {
             kind: "Complete" as const,
@@ -681,21 +686,72 @@ export default function PodcastsPaneBody() {
             unit: { singular: "show", plural: "shows" },
           };
     },
-    [exhaustion.kind, rows],
+    [controller, error, exhaustion.kind, loading, rows, subscriptionQueryIdentity],
   );
-  const subscriptionFilterRows = usePaneFilterRows({
+  const {
+    query: filterQuery,
+    onQueryChange,
+    clearQuery,
+    rowStatus,
+  } = usePaneFilterRows({
     sourceKey: "Podcasts.Subscriptions",
-    inputLabel: "Filter followed podcasts",
-    placeholder: "Filter shows",
     getRowStatus: getSubscriptionRowStatus,
-    activeDomainControlCount,
-    filters: subscriptionFilterNodes,
   });
-  dismissFilterRowsRef.current = subscriptionFilterRows.publication.onDismiss;
+  const resetToCanonicalView = useCallback(() => {
+    clearQuery();
+    setDecodedView({
+      kind: "Valid",
+      view: CANONICAL_PODCAST_SUBSCRIPTION_VIEW,
+    });
+  }, [clearQuery, setDecodedView]);
+  const { inputRef, focusInput } = usePaneCollectionInput();
+  const collection = useMemo(
+    () =>
+      view === null
+        ? undefined
+        : {
+            label: "Filter followed podcasts",
+            content: (
+              <PaneCollectionBar
+                inputRef={inputRef}
+                inputLabel="Filter followed podcasts"
+                placeholder="Filter shows"
+                query={filterQuery}
+                onQueryChange={onQueryChange}
+                onClearQuery={clearQuery}
+                rowStatus={rowStatus}
+                filters={subscriptionFilterNodes}
+                controls={
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={resetToCanonicalView}
+                    disabled={activeDomainControlCount === 0 && !filterQuery.trim()}
+                  >
+                    Reset view
+                  </Button>
+                }
+              />
+            ),
+            focusInput,
+          },
+    [
+      activeDomainControlCount,
+      clearQuery,
+      filterQuery,
+      focusInput,
+      inputRef,
+      onQueryChange,
+      resetToCanonicalView,
+      rowStatus,
+      subscriptionFilterNodes,
+      view,
+    ],
+  );
   const visibleRows = useMemo(
     () =>
       rows.filter((row) =>
-        matchesPaneFilterQuery(subscriptionFilterRows.query, [
+        matchesPaneFilterQuery(filterQuery, [
           row.title,
           ...row.contributors.flatMap((credit) => [
             credit.contributor_display_name ?? "",
@@ -703,11 +759,11 @@ export default function PodcastsPaneBody() {
           ]),
         ]),
       ),
-    [rows, subscriptionFilterRows.query],
+    [filterQuery, rows],
   );
   const initialFilterNoMatch =
     loading &&
-    subscriptionFilterRows.query.trim().length > 0 &&
+    filterQuery.trim().length > 0 &&
     visibleRows.length === 0;
 
   const executeRefresh = useCallback<PaneRefreshExecute>(
@@ -756,7 +812,7 @@ export default function PodcastsPaneBody() {
           : { kind: "Count", value: finalCount, unit: "show" },
     },
     menuActions: PODCASTS_ACTIONS,
-    search: subscriptionFilterRows.publication,
+    collection,
     refresh: {
       kind: "Refreshable",
       sourceKey: `Podcasts.Subscriptions:${subscriptionQueryIdentity}`,
@@ -771,7 +827,10 @@ export default function PodcastsPaneBody() {
       <FeedbackNotice
         content={{ tone: "Danger", title: "Invalid podcasts view" }}
         announcement="Assertive"
-        actions={[{ label: "Reset view", onClick: resetToCanonicalView }]}
+        actions={[{ label: "Reset view", onClick: () => {
+          pendingCommitFocusRef.current = true;
+          resetToCanonicalView();
+        } }]}
       />
     );
   }
@@ -796,7 +855,7 @@ export default function PodcastsPaneBody() {
           ariaLabel="Followed podcasts"
           rowChangePresentation={{
             kind: "ImmediateOnKeyChange",
-            key: subscriptionFilterRows.query.trim(),
+            key: filterQuery.trim(),
           }}
           notice={
             error ? (
@@ -809,7 +868,7 @@ export default function PodcastsPaneBody() {
             ) : undefined
           }
           empty={
-            subscriptionFilterRows.query.trim() ? (
+            filterQuery.trim() ? (
               <FeedbackNotice
                 content={{
                   tone: "Neutral",
@@ -832,7 +891,10 @@ export default function PodcastsPaneBody() {
                     variant="ghost"
                     size="sm"
                     className={styles.inlineButton}
-                    onClick={resetToCanonicalView}
+                    onClick={() => {
+                      pendingCommitFocusRef.current = true;
+                      resetToCanonicalView();
+                    }}
                   >
                     Clear filters
                   </Button>

@@ -68,6 +68,12 @@ export interface PaneInstrumentPublication {
   readonly content: ReactNode;
 }
 
+export interface PaneCollectionPublication {
+  readonly label: string;
+  readonly content: ReactNode;
+  readonly focusInput: () => boolean;
+}
+
 export type PaneCompanionAction = Extract<
   PaneHeaderAction,
   { readonly kind: "command" }
@@ -79,6 +85,7 @@ export interface PanePrimaryChromePublication {
   readonly header?: PaneHeaderPublication;
   readonly search?: PaneSearchPublication;
   readonly instrument?: PaneInstrumentPublication;
+  readonly collection?: PaneCollectionPublication;
   readonly companionAction?: PaneCompanionAction;
   /**
    * The pane's resource identity. PaneShell passes it to the contextual menu,
@@ -92,7 +99,18 @@ export interface PanePrimaryChromePublication {
 
 export interface PanePrimaryChromePublicationUpdate {
   readonly routeKey: string;
+  /** Visit-local source identity; in-place query refinements keep it. */
+  readonly sourceKey: string;
   readonly publication: PanePrimaryChromePublication | null;
+}
+
+export function panePrimaryChromeSourceKey(input: {
+  readonly paneId: string;
+  readonly visitId: string;
+  readonly routeId: string;
+  readonly pathname: string;
+}): string {
+  return `${input.paneId}:${input.visitId}:${input.routeId}:${input.pathname}`;
 }
 
 function areActionControlStatesEqual(
@@ -282,6 +300,19 @@ function arePaneInstrumentPublicationsEqual(
   return left.label === right.label && left.content === right.content;
 }
 
+function arePaneCollectionPublicationsEqual(
+  left: PaneCollectionPublication | undefined,
+  right: PaneCollectionPublication | undefined,
+): boolean {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return (
+    left.label === right.label &&
+    left.content === right.content &&
+    left.focusInput === right.focusInput
+  );
+}
+
 export function arePanePrimaryChromePublicationsEqual(
   left: PanePrimaryChromePublication | null,
   right: PanePrimaryChromePublication | null,
@@ -292,6 +323,7 @@ export function arePanePrimaryChromePublicationsEqual(
     arePaneHeaderPublicationsEqual(left.header, right.header) &&
     arePaneSearchPublicationsEqual(left.search, right.search) &&
     arePaneInstrumentPublicationsEqual(left.instrument, right.instrument) &&
+    arePaneCollectionPublicationsEqual(left.collection, right.collection) &&
     arePaneCompanionActionsEqual(
       left.companionAction,
       right.companionAction,

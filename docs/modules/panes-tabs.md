@@ -44,18 +44,15 @@ Mobile pane shells do not mount desktop resize handles, fixed primary chrome, or
 desktop-attached secondary columns. Secondary content is presented by the
 workspace mobile secondary sheet.
 
-Pane-local Search is visit-local chrome, not pane history or workspace state.
-Only the active capable `PaneShell` consumes Cmd/Ctrl+F; inactive panes retain
-their mounted query/result state, while route/source replacement retires it.
-Unsupported panes leave native browser Find untouched. Collection-shaped
-Lectern, Author, Conversations-index, Library, Libraries-index, Podcast, and
-Notes-index panes publish `FilterRows` over their loaded canonical rows; Page
-and Note publish it over their direct ordered surface items. Filtering is
-synchronous and local, never request or URL identity. Domain View/Filter/Sort
-controls live in the expanded row as `Filter text -> domain controls -> Clear
-filters`; collapsed Filter chrome marks any applied non-default domain state.
-Document-shaped panes, including an individual Conversation, publish
-`FindOccurrences` with transient Companion results.
+pane-local search is visit-local chrome, not pane history or workspace state.
+only the active capable `PaneShell` consumes Cmd/Ctrl+F; inactive panes retain
+their mounted query/result state, while source replacement retires it.
+unsupported panes leave native browser find untouched. collection panes publish
+one always-visible control band before their results, with local text first,
+domain controls next, then status and reset. `Pane.Search` focuses its input.
+page and note editors retain transient `FilterRows` over their direct ordered
+items. document panes, including individual conversations, retain transient
+`FindOccurrences` with companion results.
 
 Every domain view is pane-URL state decoded by one strict, total owner codec.
 An unknown, duplicate, partial, or redundantly-default owned key is `Invalid`:

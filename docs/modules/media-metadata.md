@@ -43,8 +43,12 @@ worker.
 lists, search, author chronology, and media recency use the original date without
 an edition fallback. the shared media response and reader's media info show both.
 provider scheduling timestamps, acquisition, and consumption keep their own
-contracts. see the [implementation contract](../cutovers/original-publication-dates-hard-cutover.md)
-for tool limits and acceptance.
+contracts. `services/metadata_enrichment.py` owns tool limits and acceptance.
+
+author works sort oldest first by default on `media.original_published_date`.
+podcasts and catalogue-only gutenberg works have unknown publication dates and
+sort last in either date direction. the gutenberg `issued` date remains a
+provider release fact; it never substitutes for the work's publication date.
 
 the forward-only `0229` migration requires maintenance, drained publication work,
 and stopped old api/workers. it drops the mixed old date without copying it and

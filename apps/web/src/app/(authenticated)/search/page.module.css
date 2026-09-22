@@ -1,11 +1,13 @@
-.searchForm {
+.searchInputRow {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
+  align-items: center;
+  min-width: 0;
+  gap: var(--space-2);
 }
 
 .searchInputField {
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 /* Refinement row: the + Format menu and the author picker. */

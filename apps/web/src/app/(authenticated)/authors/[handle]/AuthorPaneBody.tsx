@@ -20,6 +20,8 @@ import Dialog from "@/components/ui/Dialog";
 import PaneSurface from "@/components/ui/PaneSurface";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
+import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
 import {
   FeedbackNotice,
   FieldFeedback,
@@ -323,7 +325,6 @@ export default function AuthorPaneBody() {
   const setView = useCallback(
     (next: AuthorWorksView) => {
       capturePaneScroll();
-      committedSnapshotRef.current = null;
       setDecodedView({ kind: "Valid", view: next });
     },
     [capturePaneScroll, setDecodedView],
@@ -486,7 +487,6 @@ export default function AuthorPaneBody() {
     capturePaneScroll();
     allowSeedAdoptionRef.current = false;
     refreshPendingRef.current = true;
-    committedSnapshotRef.current = null;
     clearAllVisitData();
     setError(null);
     const version = firstPageVersionRef.current + 1;
@@ -544,8 +544,15 @@ export default function AuthorPaneBody() {
   // Continuation runs only while the committed view is the requested one, and
   // every page of a chain carries that same view.
   const exhaustion = useExhaustivePagination<ContributorWorkItem>({
-    active: isPaneActive && data !== null && !requestsFirstPage,
-    chainKey: `${committedViewKey ?? ""}:${chainEpoch}`,
+    active:
+      isPaneActive && !invalidView && view !== null && data !== null && !requestsFirstPage,
+    chainKey: JSON.stringify([
+      requestedViewKey,
+      committedViewKey,
+      invalidView,
+      firstPageVersion,
+      chainEpoch,
+    ]),
     cursor: data?.nextCursor ?? NO_CURSOR,
     collectionRevision: data?.collectionRevision ?? ZERO_REVISION,
     itemCount: data?.works.length ?? 0,
@@ -578,6 +585,22 @@ export default function AuthorPaneBody() {
           matchesPaneFilterQuery(query, [work.title]),
         ).length ?? 0;
       const unit = { singular: "work", plural: "works" };
+      if (data !== null && requestsFirstPage) {
+        return {
+          kind: "Retained" as const,
+          visibleCount,
+          loadedCount: workCount,
+          unit,
+          cause: error === null ? "Updating" as const : "Failed" as const,
+        };
+      }
+      if (
+        (data === null && error !== null) ||
+        exhaustion.kind === "ResumeFailed" ||
+        exhaustion.kind === "RefreshRequired"
+      ) {
+        return { kind: "Failed" as const, visibleCount, loadedCount: workCount, unit };
+      }
       return exhaustion.kind === "Complete"
         ? {
             kind: "Complete" as const,
@@ -592,14 +615,22 @@ export default function AuthorPaneBody() {
             unit,
           };
     },
-    [data?.works, exhaustion.kind, workCount],
+    [data, error, exhaustion.kind, requestsFirstPage, workCount],
   );
-  const dismissFilterRowsRef = useRef<() => void>(() => undefined);
-  const clearDomainFilters = useCallback(() => {
-    dismissFilterRowsRef.current();
-    pendingCommitFocusRef.current = true;
+  const {
+    query: filterQuery,
+    onQueryChange,
+    clearQuery,
+    rowStatus,
+  } = usePaneFilterRows({
+    sourceKey: `Author.Works:${handle}`,
+    getRowStatus: getFilterStatus,
+  });
+  const { inputRef, focusInput } = usePaneCollectionInput();
+  const resetView = useCallback(() => {
+    clearQuery();
     setView(CANONICAL_AUTHOR_WORKS_VIEW);
-  }, [setView]);
+  }, [clearQuery, setView]);
   const domainFilterControls = useMemo(
     () =>
       invalidView || view === null ? undefined : (
@@ -624,26 +655,53 @@ export default function AuthorPaneBody() {
               </option>
             ))}
           </SelectField>
-          {view.kind === "Canonical" ? null : (
-            <Button variant="secondary" size="sm" onClick={clearDomainFilters}>
-              Clear filters
-            </Button>
-          )}
         </>
       ),
-    [clearDomainFilters, invalidView, setView, view],
+    [invalidView, setView, view],
   );
-  const { query: filterQuery, publication: search } = usePaneFilterRows({
-    sourceKey: `Author.Works:${handle}`,
-    inputLabel: "Filter works",
-    placeholder: "Filter works",
-    getRowStatus: getFilterStatus,
-    // Truthful while the controls are published; an invalid view publishes none.
-    activeDomainControlCount:
-      invalidView || view === null || view.kind === "Canonical" ? 0 : 1,
-    filters: domainFilterControls,
-  });
-  dismissFilterRowsRef.current = search.onDismiss;
+  const collection = useMemo(
+    () =>
+      invalidView || view === null
+        ? undefined
+        : {
+            label: "Filter works",
+            content: (
+              <PaneCollectionBar
+                inputRef={inputRef}
+                inputLabel="Filter works"
+                placeholder="Filter works"
+                query={filterQuery}
+                onQueryChange={onQueryChange}
+                onClearQuery={clearQuery}
+                rowStatus={rowStatus}
+                filters={domainFilterControls}
+                controls={
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={resetView}
+                    disabled={view.kind === "Canonical" && !filterQuery.trim()}
+                  >
+                    Reset view
+                  </Button>
+                }
+              />
+            ),
+            focusInput,
+          },
+    [
+      resetView,
+      clearQuery,
+      domainFilterControls,
+      filterQuery,
+      focusInput,
+      inputRef,
+      invalidView,
+      onQueryChange,
+      rowStatus,
+      view,
+    ],
+  );
   const filteredWorkRows = useMemo(
     () =>
       workRows.filter((row) =>
@@ -713,7 +771,7 @@ export default function AuthorPaneBody() {
     [revalidateWorks],
   );
   usePanePrimaryChrome({
-    search,
+    collection,
     refresh: {
       kind: "Refreshable",
       sourceKey: `Author.Works:${handle}`,
@@ -755,7 +813,7 @@ export default function AuthorPaneBody() {
           {
             label: "Reset view",
             onClick: () => {
-              search.onDismiss();
+              clearQuery();
               setDecodedView({
                 kind: "Valid",
                 view: CANONICAL_AUTHOR_WORKS_VIEW,

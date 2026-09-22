@@ -69,6 +69,8 @@ import type {
 import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
 import LibraryMembersSurface from "@/components/libraries/LibraryMembersSurface";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
+import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import {
@@ -1498,6 +1500,8 @@ export default function LibraryPaneBody() {
       entryReconciliationRequest === null,
     chainKey: [
       id,
+      requestedViewKey ?? "invalid",
+      firstPageRequestKey ?? "settled",
       committedViewKey ?? "uncommitted",
       controller?.entries.collectionRevision ?? ZERO_REVISION,
       chainEpoch,
@@ -1620,12 +1624,6 @@ export default function LibraryPaneBody() {
     () => projectionOptionsFor(isDefaultLibrary),
     [isDefaultLibrary],
   );
-  const dismissFilterQueryRef = useRef<() => void>(() => undefined);
-  const clearDomainFilters = useCallback(() => {
-    dismissFilterQueryRef.current();
-    pendingCommitFocusRef.current = "View";
-    setView(CANONICAL_LIBRARY_VIEW);
-  }, [setView]);
   const domainFilterControls = useMemo(
     () =>
       invalidView || view === null ? undefined : (
@@ -1705,18 +1703,9 @@ export default function LibraryPaneBody() {
               label="Hide finished"
             />
           ) : null}
-          {entryTypeOptionOf(view) !== "all-types" ||
-          projectionOptionOf(view) !== "all-items" ||
-          view.order.kind !== "Canonical" ||
-          completionOf(view) === "unfinished" ? (
-            <Button variant="secondary" size="sm" onClick={clearDomainFilters}>
-              Clear filters
-            </Button>
-          ) : null}
         </>
       ),
     [
-      clearDomainFilters,
       hideFinishedInputId,
       invalidView,
       isDefaultLibrary,
@@ -1734,6 +1723,22 @@ export default function LibraryPaneBody() {
         matchesPaneFilterQuery(query, libraryEntryFilterFields(entry)),
       ).length;
       const unit = { singular: "entry", plural: "entries" };
+      if (controller !== null && !viewIsCommitted) {
+        return {
+          kind: "Retained" as const,
+          visibleCount,
+          loadedCount: visibleEntries.length,
+          unit,
+          cause: firstPageError === null ? "Updating" as const : "Failed" as const,
+        };
+      }
+      if (
+        (controller === null && firstPageError !== null) ||
+        entryExhaustion.kind === "ResumeFailed" ||
+        entryExhaustion.kind === "RefreshRequired"
+      ) {
+        return { kind: "Failed" as const, visibleCount, loadedCount: visibleEntries.length, unit };
+      }
       return entryCollectionComplete
         ? {
             kind: "Complete" as const,
@@ -1748,17 +1753,70 @@ export default function LibraryPaneBody() {
             unit,
           };
     },
-    [entryCollectionComplete, visibleEntries],
+    [controller, entryCollectionComplete, entryExhaustion.kind, firstPageError, viewIsCommitted, visibleEntries],
   );
-  const { query: filterQuery, publication: search } = usePaneFilterRows({
+  const {
+    query: filterQuery,
+    onQueryChange,
+    clearQuery,
+    rowStatus,
+  } = usePaneFilterRows({
     sourceKey: `Library.Entries:${id}`,
-    inputLabel: "Filter library entries",
-    placeholder: "Filter entries",
     getRowStatus: getFilterStatus,
-    activeDomainControlCount,
-    filters: domainFilterControls,
   });
-  dismissFilterQueryRef.current = search.onDismiss;
+  const { inputRef, focusInput } = usePaneCollectionInput();
+  const resetView = useCallback(() => {
+    clearQuery();
+    setView(CANONICAL_LIBRARY_VIEW);
+  }, [clearQuery, setView]);
+  const clearDomainFilters = useCallback(() => {
+    pendingCommitFocusRef.current = "View";
+    resetView();
+  }, [resetView]);
+  const collection = useMemo(
+    () =>
+      invalidView || view === null
+        ? undefined
+        : {
+            label: "Filter library entries",
+            content: (
+              <PaneCollectionBar
+                inputRef={inputRef}
+                inputLabel="Filter library entries"
+                placeholder="Filter entries"
+                query={filterQuery}
+                onQueryChange={onQueryChange}
+                onClearQuery={clearQuery}
+                rowStatus={rowStatus}
+                filters={domainFilterControls}
+                controls={
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={resetView}
+                    disabled={activeDomainControlCount === 0 && !filterQuery.trim()}
+                  >
+                    Reset view
+                  </Button>
+                }
+              />
+            ),
+            focusInput,
+          },
+    [
+      activeDomainControlCount,
+      resetView,
+      clearQuery,
+      domainFilterControls,
+      filterQuery,
+      focusInput,
+      inputRef,
+      invalidView,
+      onQueryChange,
+      rowStatus,
+      view,
+    ],
+  );
   filterQueryRef.current = filterQuery;
   const filteredEntries = useMemo(
     () =>
@@ -1889,7 +1947,7 @@ export default function LibraryPaneBody() {
     [id, revalidateLibraryEntries],
   );
   usePanePrimaryChrome({
-    search,
+    collection,
     refresh:
       currentLibrary && requestedViewKey && viewIsCommitted
         ? {
@@ -1955,7 +2013,7 @@ export default function LibraryPaneBody() {
             {
               label: "Reset view",
               onClick: () => {
-                search.onDismiss();
+                clearQuery();
                 setDecodedView({
                   kind: "Valid",
                   view: CANONICAL_LIBRARY_VIEW,
@@ -2243,7 +2301,7 @@ export default function LibraryPaneBody() {
         {
           label: "Reset view",
           onClick: () => {
-            search.onDismiss();
+            clearQuery();
             setDecodedView({ kind: "Valid", view: CANONICAL_LIBRARY_VIEW });
           },
         },
