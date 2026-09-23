@@ -16,7 +16,7 @@ This app owns:
 
 - Default: Browser -> Next.js (`/api/*`) -> FastAPI.
 - Streaming: Browser -> FastAPI stream endpoints with short-lived stream token minted via BFF.
-- Extension capture: Browser extension -> Next.js `/api/media/capture/*` -> FastAPI with scoped, revocable extension auth.
+- Extension capture: Firefox extension -> Next.js `/api/extension/*` -> FastAPI `/extension/*` and `/auth/extension-sessions/current` with scoped, revocable extension auth; capture bytes go directly to the signed storage capability.
 
 BFF routes are transport-only. Business logic lives in FastAPI services.
 

@@ -1144,9 +1144,10 @@ and `'embed'` are soft warnings that coexist with readable media.
 
 **Capture entry points** (`api/routes/media_ingest.py`): `POST /media/from_url`,
 `POST /media/uploads` plus session-scoped confirm/retry/transport-failure/delete,
-and
-`POST /media/capture/{article,file,url}`. Routes are transport adapters; they
-call exactly one service owner. (The media routers are split per capability:
+and, behind the extension bearer, `POST /extension/captures` with its
+session-scoped `GET`/`confirm`/`retry`/`transport-failure`/`DELETE` routes
+(`api/routes/extension_captures.py`, owned by the same upload-session service).
+Routes are transport adapters; they call exactly one service owner. (The media routers are split per capability:
 `media.py` catalog, `media_ingest.py` ingest, `media_assets.py` image/EPUB-asset
 serving, `reader.py` reader read-model, `listening_state.py`, and
 `podcast_transcripts.py` — each importing only the services it delegates to.)
@@ -2181,14 +2182,17 @@ acknowledgements. A main-frame redirect loop enters
 `/auth/session/recover` once; a second loop shows one native Retry surface and
 never clears WebView data or cookies. `onResume()` is lifecycle-only.
 
-**Browser extension** (`apps/extension`): a Manifest V3 capture tool. It connects
-via `launchWebAuthFlow` against `/extension/connect/start`, obtains a revocable
-`nx_ext_` bearer token, and POSTs captured content to `/api/media/capture/{article,
-url,file}` (articles via Mozilla Readability in a content script; PDFs/EPUBs
-downloaded in-browser and re-uploaded; YouTube as a URL). These go through a
-**separate** BFF proxy path (`proxyExtensionToFastAPI`) that forwards the extension
-bearer rather than the Supabase cookie. Captured items enter the normal ingest
-pipeline.
+**Browser extension** (`apps/extension`, Firefox manifest v2, built by
+`bun run build:extension` from `apps/web/src/extension/`): a persistent background
+page owns one capture at a time. It connects via `identity.launchWebAuthFlow`
+against `/extension/connect/start`, obtains a revocable `nx_ext_` bearer token,
+reads `GET /api/extension/session`, and saves through the upload-session
+lifecycle at `/api/extension/captures` (article packets extracted from the live
+DOM with Mozilla Readability, and PDF/EPUB bytes fetched in the browser); bytes
+go straight to the signed storage capability, never through the BFF. These
+routes use a **separate** BFF proxy path (`proxyExtensionToFastAPI`) that forwards
+the extension bearer rather than the Supabase cookie. Published captures enter
+the normal ingest pipeline. See `docs/modules/extension.md`.
 
 ---
 

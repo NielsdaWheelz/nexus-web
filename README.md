@@ -128,7 +128,7 @@ of the cutover; a backend deployment does not update the apk behind `/android`.
 
 - `apps/android/` -> Android shell app. Building it runs `bun run build:offline-reading` in `apps/web` to regenerate the git-ignored packaged offline reader shelf. Debug builds default to `http://10.0.2.2:3000`; native auth uses the environment-agnostic `nexus://auth/handoff` flow plus native Google bootstrap. Release APKs require explicit hosted and direct-API origins, version, release keystore, and release certificate fingerprint inputs. `NEXUS_ANDROID_RELEASE_API_ORIGIN` must exactly equal the backend `STREAM_BASE_URL` origin. App links require updating `apps/web/public/.well-known/assetlinks.json` with the release APK signing certificate fingerprint.
 - `apps/web/` -> frontend + BFF: see `apps/web/README.md`
-- `apps/extension/` -> browser extension for article, PDF/EPUB, and supported video capture
+- `apps/extension/` -> Firefox capture extension (manifest, icons; bundles built into the git-ignored `dist/` by `bun run build:extension` from `apps/web/src/extension/`): saves the current article or a linked PDF/EPUB into chosen libraries. See `docs/modules/extension.md`.
 - `python/` -> backend package: see `python/README.md`
 - `apps/worker/` -> worker entrypoint: see `apps/worker/README.md`
 - `docs/architecture.md` -> system architecture & orientation guide: start here to learn how everything fits together

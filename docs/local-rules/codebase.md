@@ -12,7 +12,7 @@ technology-ownership, import, and module-boundary model.
 - `apps/` — top-level runnable app surfaces.
 - `apps/android/` — Android shell app.
 - `apps/api/` — FastAPI ASGI entrypoint.
-- `apps/extension/` — browser extension.
+- `apps/extension/` — Firefox capture extension package (manifest and icons; sources live in `apps/web/src/extension/`).
 - `apps/web/` — Next.js frontend/BFF.
 - `apps/worker/` — worker entrypoint.
 - `python/` — backend package.
