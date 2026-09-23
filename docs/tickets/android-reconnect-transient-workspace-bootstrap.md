@@ -8,7 +8,8 @@ an intermediate signed `0.2.15-compatibility-probe` (code 18, deliberately
 using reader contract 1 against production contract 2) showed an unstyled
 “The workspace couldn’t load” behind the expected update dialog after
 downloaded reading → reconnect. cold-start → continue online worked.
-screenshot: `/tmp/nexus-android-repair.KsrP7P/probe-shelf.png`, 23:18 device time.
+screenshot retained locally at
+`.nexus-local/android-recovery-2026-09-22/probe-shelf.png`, 23:18 device time.
 
 a later probe containing the completed callback-ordering repair returned to
 the styled book on the first reconnect. temporary request-denial diagnostics
