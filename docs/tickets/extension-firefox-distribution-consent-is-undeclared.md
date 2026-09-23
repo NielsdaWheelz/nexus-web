@@ -1,19 +1,28 @@
-# firefox distribution data declaration is missing
+# firefox signed distribution is not yet produced
 
 status: deferred · origin: 2026-09-23 firefox v1 review · area: extension release
 
-`apps/extension/manifest.json:24-28` declares only the gecko id. capture transmits
-page urls and content to nexus. mozilla requires data-collection declarations
-for new extensions submitted from 2025-11-03; the existing manifest has none.
-no submission was attempted and existing add-on registration status is unknown.
+`apps/extension/manifest.json` now declares the gecko id `capture@nexus.local`,
+`strict_min_version` 153.0, `incognito: "not_allowed"` and
+`data_collection_permissions.required = ["websiteContent", "browsingActivity"]`
+(page content and page url leave the browser to the user's own nexus; the
+extension token is issued by nexus and returned to nexus, so no
+`authenticationInfo` category is declared). `bun run build:extension` produces
+the unsigned package in `apps/extension/dist`; installation today is temporary
+(about:debugging), which firefox discards on restart.
 
-evidence: [mozilla's distribution contract](https://extensionworkshop.com/documentation/develop/firefox-builtin-data-consent/).
+prerequisite: mozilla add-on developer credentials (AMO JWT issuer/secret) for
+the owner's account; the origin pins baked at build time must be the production
+nexus and storage origins (`NEXUS_EXTENSION_NEXUS_ORIGIN`,
+`NEXUS_EXTENSION_STORAGE_ORIGIN`).
 
-prerequisite: settle the minimum firefox version and signed distribution route
-before release; this is not a blocker to temporary local installation.
+fix: sign an unlisted build (`web-ext sign --channel unlisted` or the AMO api)
+from the production-origin package, keep the id stable so the identity redirect
+host `https://1ddcf81c2e8737ef7e045031d91fb2c3d6b899ae.extensions.allizom.org`
+stays allowlisted in `NEXUS_EXTENSION_REDIRECT_ORIGINS`, install the signed xpi
+persistently and complete one login and one capture with it. confirm the data
+declaration categories against the current mozilla list at signing time.
 
-fix: declare the actual required data categories, retain local packaged code,
-and use a stable signed extension id matching the auth redirect allowlist.
-
-acceptance: the chosen signed package installs on the supported firefox version,
-shows truthful permissions/data disclosure, and completes login with its real id.
+acceptance: the signed xpi installs on firefox ≥ 153 without temporary mode,
+about:addons shows the declared data categories, and a capture completes with
+the production origins.

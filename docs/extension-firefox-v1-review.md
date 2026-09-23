@@ -38,24 +38,18 @@ readable publication and indexing may follow asynchronously.
 | `docs/modules/sharing.md:56-73` makes all implicit and extra libraries additive | zero explicitly selected libraries is valid |
 | `LibraryChooser.tsx` is controlled presentation; `LibraryDestinationPicker.tsx` owns web transport and `LibraryChooserSurface.tsx` owns web modal/history behavior | share the chooser at the proper boundary |
 
-the current popup is setup/debug-oriented: base url, connect, capture, forget
-token. it has no destinations or link entry. the material gaps are recorded as
-separate tickets:
-
-- [login, destinations and link entry](tickets/extension-capture-destination-flow-is-unwired.md)
-- [popup owns authentication and transfer lifetime](tickets/extension-popup-owns-auth-and-upload-lifetime.md)
-- [firefox permission requests follow asynchronous work](tickets/extension-firefox-permissions-follow-async-work.md)
-- [request retries create new identities; replay fingerprints use sizes](tickets/extension-capture-retries-create-new-identities.md)
-- [receipt does not prove stored source bytes](tickets/browser-capture-receipt-does-not-prove-source-storage.md)
-- [article retry removes required source markup](tickets/browser-article-retry-drops-required-source-artifact.md)
-- [extraction and transport failures select the same fallback](tickets/extension-article-capture-conflates-failures.md)
-- [entire authenticated dom is transmitted](tickets/extension-capture-retains-entire-authenticated-dom.md)
-- [browser/server extraction policies diverge](tickets/extension-extraction-policy-diverges-from-server.md)
-- [capture bodies are buffered before bounds](tickets/extension-file-capture-buffers-before-bounding.md)
-- [document routing relies on suffixes and head](tickets/extension-document-routing-relies-on-head.md)
-- [failed revocation is hidden](tickets/extension-disconnect-discards-failed-revocation.md)
-- [extension sources lack static coverage](tickets/extension-javascript-is-outside-static-gate.md)
-- [distribution data declaration is absent](tickets/extension-firefox-distribution-consent-is-undeclared.md)
+the popup reviewed here was setup/debug-oriented: base url, connect, capture,
+forget token, with no destinations or link entry. the gaps that review recorded
+(login, destinations and link entry; popup-owned authentication and transfer
+lifetime; permission requests after asynchronous work; retries with new
+identities and size-only replay fingerprints; receipts that did not prove
+stored bytes; retries that dropped the source markup; conflated extraction and
+transport failures; the entire authenticated dom transmitted; browser/server
+extraction divergence; bodies buffered before bounds; suffix/head document
+routing; hidden revocation failures; extension sources outside the static gate)
+were resolved by the firefox capture v1 cutover on this branch. signed
+distribution remains deferred:
+[distribution data declaration and signing](tickets/extension-firefox-distribution-consent-is-undeclared.md).
 
 ## interaction
 
