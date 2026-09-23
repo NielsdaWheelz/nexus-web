@@ -198,8 +198,11 @@ browser_pdf_capture / browser_epub_capture / uploaded_*_file:
   (+ source_url for browser captures)
 ```
 
-`source_storage_path` no longer exists anywhere. `source_attempt_artifacts.py`
-keeps `source_attempt_storage_paths` (reads `storage_path` only) and loses
+no writer produces `source_storage_path` any more. `source_attempt_artifacts.py`
+keeps `source_attempt_storage_paths`, which reports `storage_path` plus the
+legacy source markup (`source_storage_path` until conversion, then the
+`retained_legacy_paths` the conversion records) so the orphan sweep and media
+deletion keep owning those blobs through the rollback window; it loses
 `clone_source_payload_for_new_attempt` (retry clones the payload unchanged:
 immutable input references are retained by construction; generated outputs are
 attempt-owned rows replaced at publication). `_verify_source_storage` heads
@@ -223,11 +226,14 @@ source html to bounded evidence (iframe `src`/`title`; `blockquote.twitter-tweet
 text and `a[href]`) ≤ 64 KiB; build the packet from the payload's url/title/
 byline/excerpt/site_name/published_time; write it to
 `media/{media_id}/source/{attempt_id}.json`; verify by re-reading and decoding;
-then in one transaction rewrite `source_payload` to the §5 shape (dropping
-`source_storage_path`) and set `media.browser_capture_sha256` to the packet
-digest. original blobs are left in place (rollback window; existing orphan sweep
-reclaims them later). idempotent: converted attempts are skipped. the command is
-removed after its verified production run (ticket).
+then in one transaction rewrite `source_payload` to the §5 shape, moving the
+original blob paths into `retained_legacy_paths`, and set
+`media.browser_capture_sha256` to the packet digest. original blobs stay owned
+through the rollback window; the ticket
+`remove-browser-capture-conversion-command` closes the window with one
+statement after which the existing orphan sweep reclaims them. idempotent:
+converted attempts are skipped. the command is removed after its verified
+production run.
 
 ## 7. bff (all through `proxyExtensionToFastAPI`; explicit route files)
 
