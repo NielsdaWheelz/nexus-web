@@ -17,18 +17,32 @@ const allowedFiles = new Set([
   "src/components/reader/textDocumentReader.module.css",
 ]);
 
-// The packaged APK shelf is its own CSS closure: it never loads a hosted
-// stylesheet at runtime, so every custom property its bundled CSS consumes
-// without an inline fallback must be declared inside that bundle (or installed
-// at runtime by an owner below). The bundle is a build output: `./scripts/test`
-// runs `bun run build:offline-reading` before this check so it is always the
-// current one.
-const offlineBundleCssDir = join(
-  webDir,
-  "../android/app/src/main/assets/nexus-offline/assets",
-);
-if (!existsSync(offlineBundleCssDir)) {
-  throw new Error("Run `bun run build:offline-reading` before checking CSS tokens.");
+// The packaged APK shelf and the Firefox extension popup are each their own
+// CSS closure: neither loads a hosted stylesheet at runtime, so every custom
+// property its bundled CSS consumes without an inline fallback must be declared
+// inside that bundle (or installed at runtime by an owner below). The bundles
+// are build outputs: `./scripts/test` builds both before this check so they
+// are always the current ones.
+const packagedBundles = [
+  {
+    name: "the packaged offline shelf",
+    label: "assets/nexus-offline/assets",
+    cssDir: join(webDir, "../android/app/src/main/assets/nexus-offline/assets"),
+    build: "bun run build:offline-reading",
+    owner: "src/offline-reading/offlineReading.module.css",
+  },
+  {
+    name: "the Firefox extension popup",
+    label: "apps/extension/dist/assets",
+    cssDir: join(webDir, "../extension/dist/assets"),
+    build: "bun run build:extension",
+    owner: "src/extension/popup.module.css",
+  },
+];
+for (const bundle of packagedBundles) {
+  if (!existsSync(bundle.cssDir)) {
+    throw new Error(`Run \`${bundle.build}\` before checking CSS tokens.`);
+  }
 }
 
 // pdfjs-dist/web/pdf_viewer.css consumes variables that pdf.js's full
@@ -419,36 +433,46 @@ for (const { path, source } of cssSources) {
   }
 }
 
-const offlineBundleViolations = [];
-for (const entry of readdirSync(offlineBundleCssDir)) {
-  if (!entry.endsWith(".css")) continue;
-  const path = `assets/nexus-offline/assets/${entry}`;
-  const source = stripCssComments(
-    readFileSync(join(offlineBundleCssDir, entry), "utf8"),
-  );
-  const bundleDeclared = new Set(
-    [...source.matchAll(/(?:^|[;{])\s*(--[A-Za-z0-9_-]+)\s*:/g)].map(
-      (declaration) => declaration[1],
-    ),
-  );
-  for (const reference of source.matchAll(/var\(\s*(--[A-Za-z0-9_-]+)/g)) {
-    const property = reference[1];
-    if (
-      bundleDeclared.has(property) ||
-      runtimeCustomPropertyOwners.has(property) ||
-      pdfJsViewerChromeProperties.has(property) ||
-      hasInlineFallback(source, reference.index)
-    ) {
-      continue;
+const bundleViolations = [];
+for (const bundle of packagedBundles) {
+  for (const entry of readdirSync(bundle.cssDir)) {
+    if (!entry.endsWith(".css")) continue;
+    const path = `${bundle.label}/${entry}`;
+    const source = stripCssComments(
+      readFileSync(join(bundle.cssDir, entry), "utf8"),
+    );
+    const bundleDeclared = new Set(
+      [...source.matchAll(/(?:^|[;{])\s*(--[A-Za-z0-9_-]+)\s*:/g)].map(
+        (declaration) => declaration[1],
+      ),
+    );
+    for (const reference of source.matchAll(/var\(\s*(--[A-Za-z0-9_-]+)/g)) {
+      const property = reference[1];
+      // next/font's layout never ships in a packaged bundle, so its font
+      // variables must come from the bundled font map, not a runtime owner.
+      const runtimeOwner = runtimeCustomPropertyOwners.get(property);
+      if (
+        bundleDeclared.has(property) ||
+        (runtimeOwner !== undefined && runtimeOwner !== "src/app/layout.tsx") ||
+        pdfJsViewerChromeProperties.has(property) ||
+        hasInlineFallback(source, reference.index)
+      ) {
+        continue;
+      }
+      if (
+        bundleViolations.some(
+          (violation) => violation.bundle === bundle && violation.token === property,
+        )
+      ) {
+        continue;
+      }
+      bundleViolations.push({
+        bundle,
+        path,
+        line: lineNumberAt(source, reference.index),
+        token: property,
+      });
     }
-    if (offlineBundleViolations.some((violation) => violation.token === property)) {
-      continue;
-    }
-    offlineBundleViolations.push({
-      path,
-      line: lineNumberAt(source, reference.index),
-      token: property,
-    });
   }
 }
 
@@ -513,16 +537,18 @@ if (tengwarViolations.length > 0) {
   );
 }
 
-if (offlineBundleViolations.length > 0) {
+for (const bundle of packagedBundles) {
+  const violations = bundleViolations.filter((violation) => violation.bundle === bundle);
+  if (violations.length === 0) continue;
   beginReport();
   console.error(
-    "CSS custom properties consumed by the packaged offline shelf but never declared inside its bundle:",
+    `CSS custom properties consumed by ${bundle.name} but never declared inside its bundle:`,
   );
-  for (const violation of offlineBundleViolations) {
+  for (const violation of violations) {
     console.error(`${violation.path}:${violation.line}: ${violation.token}`);
   }
   console.error(
-    "Declare them in src/offline-reading/offlineReading.module.css or give the consumer an inline fallback.",
+    `Declare them in ${bundle.owner} or give the consumer an inline fallback.`,
   );
 }
 
@@ -531,7 +557,7 @@ if (
   customPropertyViolations.length > 0 ||
   moonViolations.length > 0 ||
   tengwarViolations.length > 0 ||
-  offlineBundleViolations.length > 0
+  bundleViolations.length > 0
 ) {
   process.exit(1);
 }
