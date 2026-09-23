@@ -355,12 +355,24 @@ order, from one owner. `CommandResult.state` is informational; the popup applies
 only `page` and `failure` from replies, because firefox does not order a
 `sendMessage` reply against port messages.
 
-popup permission rule (c): on `login` and on `save`, synchronously (before any
-`await`) call `browser.permissions.request({ origins: state.requiredOrigins })`
-when the list is non-empty; on `false`, render a denied notice and keep the
-draft; on `true`, send the command. the background needs the nexus host
-permission for every api call after `identity.launchWebAuthFlow` (mv2 cross-origin
-fetch), which is why login is covered too.
+popup permission rule (c): in the `login` and `save` click handlers the popup
+first sends the command (`browser.runtime.sendMessage`, not awaited), then
+synchronously (before any `await`) calls
+`browser.permissions.request({ origins: state.requiredOrigins })` when the list
+is non-empty. the grant is observed by the BACKGROUND: when a command needs
+origins that `permissions.contains` does not yet report, it waits for
+`permissions.onAdded` to cover them and then continues; if the popup dies
+meanwhile (firefox may close the panel when the doorhanger takes focus; observed
+on 2026-09-23) the work still proceeds. a denial fires no event: the draft stays
+in its phase with `requiredOrigins` still listed, and the popup's `false` result
+renders the denied notice. no timers. the background needs the nexus host
+permission for every api call after `identity.launchWebAuthFlow` (mv2
+cross-origin fetch), which is why login is covered too.
+
+escape (fact, 2026-09-23, firefox 156): a native escape closes a browser-action
+popup at the chrome level before any key event reaches the popup document, so
+the popup owns no escape handling; closing the popup keeps the draft in the
+background and reopening restores it. the chooser closes through its trigger.
 
 ## 9. build and configuration (owner c)
 
