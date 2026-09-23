@@ -116,6 +116,14 @@ source during the Gradle build rather than committed. Verify App Links and
 login before manually creating the `android-v*` GitHub release and attaching
 stable and versioned asset names. There is no automated Android release gate.
 
+the release operator owns compatibility between the hosted app and the
+published apk. before changing the player protocol or offline reader contract,
+compare the latest published apk with the candidate server: player protocol
+version and hash, and offline reading protocol, package schema, reader contract,
+and reader bundle versions must agree. verify account binding and an offline
+shelf-to-online reconnect on the signed apk. publish the compatible apk as part
+of the cutover; a backend deployment does not update the apk behind `/android`.
+
 ## Repository Map
 
 - `apps/android/` -> Android shell app. Building it runs `bun run build:offline-reading` in `apps/web` to regenerate the git-ignored packaged offline reader shelf. Debug builds default to `http://10.0.2.2:3000`; native auth uses the environment-agnostic `nexus://auth/handoff` flow plus native Google bootstrap. Release APKs require explicit hosted and direct-API origins, version, release keystore, and release certificate fingerprint inputs. `NEXUS_ANDROID_RELEASE_API_ORIGIN` must exactly equal the backend `STREAM_BASE_URL` origin. App links require updating `apps/web/public/.well-known/assetlinks.json` with the release APK signing certificate fingerprint.
