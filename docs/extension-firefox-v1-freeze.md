@@ -337,6 +337,12 @@ content scripts speak only the internal acquisition protocol defined in
 the destination page crossing the popup boundary is the already-decoded
 `LibraryDestinationPage` (one shape, one decoder, in the background).
 
+the port is the popup's SOLE source of `CaptureViewState`: the background posts
+`{kind: "state"}` immediately on every connect and after every state change, in
+order, from one owner. `CommandResult.state` is informational; the popup applies
+only `page` and `failure` from replies, because firefox does not order a
+`sendMessage` reply against port messages.
+
 popup permission rule (c): on `save`, synchronously (before any `await`) call
 `browser.permissions.request({ origins: draft.requiredOrigins })`; on `false`,
 render a denied notice and keep the draft; on `true`, send `save`.
