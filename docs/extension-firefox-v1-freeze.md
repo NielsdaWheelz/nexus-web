@@ -305,9 +305,9 @@ export type CaptureConnection =
 
 export type CaptureViewState = {
   connection: CaptureConnection;
-  /** match patterns the popup must request synchronously in the "login" and "save"
-      click handlers: nexus and storage origins, plus the target origin in document
-      mode when a draft exists; already-granted origins are omitted */
+  /** match patterns the popup must request before "login" or "save" (nexus,
+      storage, and the target origin when the background downloads a document);
+      already-granted origins are omitted */
   requiredOrigins: readonly string[];
   view:
     | { kind: "empty" }                                   // no draft, nothing pinned
@@ -403,7 +403,8 @@ phase 0 (before a/b/c): c's extractions land first so b compiles against them:
 (the current private `uploadResponse` decoder, envelope included) and
 `UPLOAD_IDEMPOTENCY_OUTCOMES`; `lib/libraries/destinationContract.ts` exports
 `LibraryDestination`, `LibraryDestinationSelection`, `LibraryDestinationPage`,
-`decodeWritableLibraryDestinationPage`, `LibraryDestinationContractDefect` and
-imports only `@/lib/validation`; `isLibraryDestinationDefect` stays in
-`client.ts` (it references the web api client). `captureContract.ts` lands with
-§8 verbatim.
+`decodeWritableLibraryDestinationPage`, `decodeLibraryDestinationSelection`,
+`LibraryDestinationContractDefect` and imports only `@/lib/validation`;
+`isLibraryDestinationDefect` stays in `client.ts` (it references the web api
+client). `captureContract.ts` contains §8 verbatim; track b appends the runtime
+decoders and builders below it (the phase-0 test checks containment).
