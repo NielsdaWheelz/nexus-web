@@ -20,8 +20,8 @@ import type { Presence } from "@/lib/api/presence";
 import {
   createLibrary,
   searchWritableLibraryDestinations,
-  type LibraryDestinationSelection,
 } from "@/lib/libraries/client";
+import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
 import {
   definePaneVisitDataKey,
   usePaneVisitData,

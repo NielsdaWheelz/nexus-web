@@ -10,8 +10,8 @@ import { isAbortError } from "@/lib/errors";
 import {
   isLibraryDestinationDefect,
   searchWritableLibraryDestinations,
-  type LibraryDestinationSelection,
 } from "@/lib/libraries/client";
+import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
 import {
   isReservedLibraryName,
   RESERVED_LIBRARY_NAME_MESSAGE,

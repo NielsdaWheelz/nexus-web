@@ -1,6 +1,6 @@
 import type { ComponentType } from "react";
 import type { Presence } from "@/lib/api/presence";
-import type { LibraryDestinationSelection } from "@/lib/libraries/client";
+import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { CanonicalResourceRef, ShareTarget } from "@/lib/sharing/types";

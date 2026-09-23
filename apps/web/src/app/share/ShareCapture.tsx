@@ -13,10 +13,8 @@ import { useResource } from "@/lib/api/useResource";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { createRandomId } from "@/lib/createRandomId";
 import { extractUrls } from "@/lib/extractUrls";
-import {
-  createLibrary,
-  type LibraryDestinationSelection,
-} from "@/lib/libraries/client";
+import { createLibrary } from "@/lib/libraries/client";
+import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
 import {
   captureSourceUrl,
   isSourceUrlCaptureDefect,

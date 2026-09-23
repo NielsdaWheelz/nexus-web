@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import LibraryDestinationPicker from "@/components/libraries/LibraryDestinationPicker";
-import type { LibraryDestinationSelection } from "@/lib/libraries/client";
+import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
 import styles from "./LibraryDestinationField.module.css";
 
 export interface LibraryDestinationFieldProps {
