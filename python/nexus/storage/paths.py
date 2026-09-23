@@ -23,11 +23,6 @@ def get_file_extension(kind: str) -> str:
     return extensions[kind]
 
 
-def build_storage_path(media_id: UUID | str, ext: str) -> str:
-    """media/{media_id}/original.{ext}"""
-    return f"media/{media_id}/original.{_require_bare_storage_extension(ext)}"
-
-
 def build_source_artifact_storage_path(
     media_id: UUID | str, attempt_id: UUID | str, ext: str
 ) -> str:

@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import LibraryChooser, {
   type LibraryChooserItem,
 } from "@/components/libraries/LibraryChooser";
 import LibraryChooserSurface from "@/components/libraries/LibraryChooserSurface";
+import { useLibraryDestinationSearch } from "@/components/libraries/useLibraryDestinationSearch";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
 import {
@@ -18,7 +19,6 @@ import {
 } from "@/lib/libraries/presentation";
 import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
 
-const DESTINATION_QUERY_DELAY_MS = 180;
 const DESTINATION_PAGE_LIMIT = 25;
 
 export interface LibraryDestinationPickerProps {
@@ -52,11 +52,11 @@ function toItem(
 
 /**
  * The writable-destination adapter (docs/cutovers/library-chooser-interaction-
- * hard-cutover.md §4). It owns the server search state (one request generation +
- * abort owner over open/search/Load More), edits a parent-owned local selection,
- * and renders the shared chooser inside the responsive surface. It is always
- * mounted by LibraryDestinationField, so query and last-good results survive a
- * close and reopening re-issues the preserved query immediately.
+ * hard-cutover.md §4). It runs the shared destination search over the web
+ * transport, edits a parent-owned local selection, offers create, and renders
+ * the shared chooser inside the responsive surface. It is always mounted by
+ * LibraryDestinationField, so query and last-good results survive a close and
+ * reopening re-issues the preserved query immediately.
  */
 export default function LibraryDestinationPicker({
   open,
@@ -71,177 +71,69 @@ export default function LibraryDestinationPicker({
   onCreateDestination,
   panelId,
 }: LibraryDestinationPickerProps) {
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<LibraryDestinationSelection[]>([]);
-  const [resultsQuery, setResultsQuery] = useState("");
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [moreError, setMoreError] = useState<string | null>(null);
-  const [retryNonce, setRetryNonce] = useState(0);
-  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-
-  const genRef = useRef(0);
-  const abortRef = useRef<AbortController | null>(null);
-  const prevOpenRef = useRef(false);
-  const prevRetryRef = useRef(retryNonce);
-  const normalizedQuery = useMemo(() => query.trim().toLowerCase(), [query]);
-  const normalizedQueryRef = useRef(normalizedQuery);
-  normalizedQueryRef.current = normalizedQuery;
-
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [createDefect, setCreateDefect] = useState<{ error: unknown } | null>(
+    null,
+  );
   const enabled = interaction.kind !== "Disabled";
   const creating = interaction.kind === "Creating";
-
-  useEffect(() => () => abortRef.current?.abort(), []);
-
-  // One request-generation/abort owner over open, search, and Load More. Open,
-  // a retry, and an empty query fetch immediately (bypass debounce); a non-empty
-  // query change debounces. Closing aborts the read but keeps query + last-good
-  // results. Latest generation wins; a stale response cannot commit.
-  useEffect(() => {
-    const justOpened = open && !prevOpenRef.current;
-    prevOpenRef.current = open;
-    const forced = retryNonce !== prevRetryRef.current;
-    prevRetryRef.current = retryNonce;
-    const generation = ++genRef.current;
-    abortRef.current?.abort();
-    abortRef.current = null;
-    setLoadingMore(false);
-    if (!open || !enabled) return;
-    const requestedQuery = normalizedQuery;
-    const run = () => {
-      const controller = new AbortController();
-      abortRef.current = controller;
-      setLoading(true);
-      setError(null);
-      setMoreError(null);
-      // A new search supersedes any prior page: drop the stale Load More
-      // affordance until this response commits its own cursor.
-      setNextCursor(null);
-      void searchWritableLibraryDestinations({
-        q: requestedQuery,
+  const {
+    query,
+    setQuery,
+    normalizedQuery,
+    results,
+    resultsQuery,
+    nextCursor,
+    loading,
+    loadingMore,
+    failure,
+    retry,
+    loadMore,
+  } = useLibraryDestinationSearch<unknown>({
+    active: open && enabled,
+    search: ({ q, cursor, signal }) =>
+      searchWritableLibraryDestinations({
+        q,
+        cursor,
         limit: DESTINATION_PAGE_LIMIT,
-        signal: controller.signal,
-      })
-        .then((page) => {
-          if (generation !== genRef.current) return;
-          setResults(page.data);
-          setResultsQuery(requestedQuery);
-          setNextCursor(page.page.next_cursor);
-        })
-        .catch((caught) => {
-          if (controller.signal.aborted || generation !== genRef.current) return;
-          if (handleUnauthenticatedApiError(caught)) return;
-          if (isLibraryDestinationDefect(caught)) {
-            setDefect({ error: caught });
-            return;
-          }
-          setError(
-            caught instanceof Error
-              ? caught.message
-              : "Couldn’t load your libraries.",
-          );
-          setResults([]);
-          setNextCursor(null);
-        })
-        .finally(() => {
-          if (generation === genRef.current) setLoading(false);
-        });
-    };
-    if (justOpened || forced || requestedQuery === "") {
-      run();
-      return;
-    }
-    const timer = window.setTimeout(run, DESTINATION_QUERY_DELAY_MS);
-    return () => window.clearTimeout(timer);
-  }, [open, normalizedQuery, enabled, retryNonce]);
-
-  async function loadMore() {
-    if (loadingMore || nextCursor === null) return;
-    const generation = genRef.current;
-    const requestedQuery = resultsQuery;
-    const controller = new AbortController();
-    abortRef.current?.abort();
-    abortRef.current = controller;
-    setLoadingMore(true);
-    setMoreError(null);
-    try {
-      const page = await searchWritableLibraryDestinations({
-        q: requestedQuery,
-        cursor: nextCursor,
-        limit: DESTINATION_PAGE_LIMIT,
-        signal: controller.signal,
-      });
-      if (
-        controller.signal.aborted ||
-        generation !== genRef.current ||
-        requestedQuery !== normalizedQueryRef.current
-      ) {
-        return;
-      }
-      setResults((current) => {
-        const seen = new Set(current.map((d) => d.id));
-        return [...current, ...page.data.filter((d) => !seen.has(d.id))];
-      });
-      setNextCursor(page.page.next_cursor);
-    } catch (caught) {
-      if (controller.signal.aborted || generation !== genRef.current) return;
-      if (handleUnauthenticatedApiError(caught)) return;
-      if (isLibraryDestinationDefect(caught)) {
-        setDefect({ error: caught });
-        return;
-      }
-      setMoreError(
-        caught instanceof Error
-          ? caught.message
-          : "Couldn’t load more libraries.",
-      );
-    } finally {
-      if (!controller.signal.aborted && generation === genRef.current) {
-        setLoadingMore(false);
-      }
-    }
-  }
+        signal,
+      }).then(
+        (page) => ({ kind: "page" as const, page }),
+        (caught: unknown) =>
+          handleUnauthenticatedApiError(caught)
+            ? { kind: "handled" as const }
+            : { kind: "failure" as const, failure: caught },
+      ),
+  });
 
   const selectedIds = useMemo(
     () => new Set(selected.map((d) => d.id)),
     [selected],
   );
-  const byId = useMemo(() => {
-    const map = new Map<string, LibraryDestinationSelection>();
-    for (const d of selected) map.set(d.id, d);
-    for (const d of results) if (!map.has(d.id)) map.set(d.id, d);
-    return map;
-  }, [selected, results]);
 
   function toggle(id: string) {
     if (selectedIds.has(id)) {
       onChange(selected.filter((d) => d.id !== id));
       return;
     }
-    const destination = byId.get(id);
+    const destination = results.find((d) => d.id === id);
     if (destination) onChange([...selected, destination]);
   }
 
   async function runCreate(name: string) {
-    setError(null);
+    setCreateError(null);
     try {
       const destination = await onCreateDestination(name);
-      setResults((current) => [
-        destination,
-        ...current.filter((d) => d.id !== destination.id),
-      ]);
       if (!selectedIds.has(destination.id)) onChange([...selected, destination]);
       setQuery("");
     } catch (caught) {
       if (isAbortError(caught)) return;
       if (handleUnauthenticatedApiError(caught)) return;
       if (isLibraryDestinationDefect(caught)) {
-        setDefect({ error: caught });
+        setCreateDefect({ error: caught });
         return;
       }
-      setError(
+      setCreateError(
         caught instanceof Error ? caught.message : "Couldn’t create the library.",
       );
     }
@@ -262,7 +154,8 @@ export default function LibraryDestinationPicker({
     !createNameReserved &&
     !loading &&
     !loadingMore &&
-    !error &&
+    failure === null &&
+    createError === null &&
     nextCursor === null &&
     resultsQuery === normalizedCreateName &&
     !selected.some(
@@ -293,19 +186,30 @@ export default function LibraryDestinationPicker({
           : "No libraries match your search."
         : null;
 
-  const chooserError = error
-    ? {
-        content: { tone: "Danger" as const, title: error },
-        onRetry: () => setRetryNonce((n) => n + 1),
-      }
-    : moreError
+  const chooserError =
+    failure !== null
       ? {
-          content: { tone: "Danger" as const, title: moreError },
-          onRetry: () => void loadMore(),
+          content: {
+            tone: "Danger" as const,
+            title:
+              failure instanceof Error
+                ? failure.message
+                : "Couldn’t load your libraries.",
+          },
+          onRetry: retry,
         }
-      : null;
+      : createError !== null
+        ? {
+            content: { tone: "Danger" as const, title: createError },
+            onRetry: () => {
+              setCreateError(null);
+              retry();
+            },
+          }
+        : null;
 
-  if (defect) throw defect.error;
+  if (failure !== null && isLibraryDestinationDefect(failure)) throw failure;
+  if (createDefect) throw createDefect.error;
 
   return (
     <LibraryChooserSurface
@@ -341,7 +245,7 @@ export default function LibraryDestinationPicker({
         }
         loadMore={
           nextCursor !== null
-            ? { pending: loadingMore, onLoadMore: () => void loadMore() }
+            ? { pending: loadingMore, onLoadMore: loadMore }
             : null
         }
       />

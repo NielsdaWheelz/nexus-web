@@ -8,7 +8,9 @@ from uuid import UUID
 
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError
+from nexus.services.browser_capture_conversion import convert_browser_article_captures
 from nexus.services.vault import export_vault, sync_vault, watch_vault
+from nexus.storage.client import get_storage_client
 
 
 def main() -> None:
@@ -31,9 +33,17 @@ def main() -> None:
     watch_parser.add_argument("--user", required=True)
     watch_parser.add_argument("--interval", type=float, default=2.0)
 
+    subparsers.add_parser(
+        "convert-browser-article-captures",
+        help="one-shot: store pre-cutover browser article captures as verified packets",
+    )
+
     args = parser.parse_args()
     db = get_session_factory()()
     try:
+        if args.command == "convert-browser-article-captures":
+            convert_browser_article_captures(db, storage_client=get_storage_client())
+            return
         viewer_id = UUID(args.user)
         vault_dir = Path(args.path).expanduser().resolve()
         if args.vault_command == "export":

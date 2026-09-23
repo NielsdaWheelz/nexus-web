@@ -542,7 +542,7 @@ class Membership(Base):
 
 
 class MediaUploadSession(Base):
-    """Viewer-owned durable intent for one direct PDF/EPUB upload."""
+    """Viewer-owned durable intent for one upload: a local PDF/EPUB or a browser capture."""
 
     __tablename__ = "media_upload_sessions"
 
@@ -557,6 +557,7 @@ class MediaUploadSession(Base):
     filename: Mapped[str] = mapped_column(Text, nullable=False)
     content_type: Mapped[str] = mapped_column(Text, nullable=False)
     expected_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    input_origin: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
     request_id: Mapped[str] = mapped_column(Text, nullable=False)
     upload_generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -676,6 +677,8 @@ class Media(Base):
     # Provider identity fields
     provider: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Exact captured-bytes identity of a new browser capture, reused within the account.
+    browser_capture_sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Creator tracking
     created_by_user_id: Mapped[UUID | None] = mapped_column(

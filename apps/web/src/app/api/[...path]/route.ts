@@ -24,6 +24,7 @@ export const revalidate = 0;
 const DENIED_FIRST_SEGMENTS: ReadonlySet<string> = new Set([
   "auth",
   "docs",
+  "extension",
   "ingest",
   "internal",
   "livez",
@@ -36,7 +37,6 @@ const DENIED_FIRST_SEGMENTS: ReadonlySet<string> = new Set([
 ]);
 const DENIED_PREFIXES = [
   "billing/stripe/webhook",
-  "media/capture",
   "offline-reading/packages",
   "oracle/plates",
 ];

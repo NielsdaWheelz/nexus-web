@@ -6,10 +6,18 @@ import hashlib
 import secrets
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
+from nexus.config import get_settings
 from nexus.db.models import ExtensionSession
+from nexus.schemas.extension_capture import (
+    ARTICLE_PACKET_MAX_BYTES,
+    CaptureLimits,
+    ExtensionSessionOut,
+)
+from nexus.schemas.presence import presence_from_nullable
+from nexus.services.sealed_handles import seal_user
 
 _TOKEN_PREFIX = "nx_ext_"
 
@@ -43,6 +51,24 @@ def resolve_extension_session_user(db: Session, token: str) -> UUID | None:
     session.last_used_at = func.now()
     db.flush()
     return session.user_id
+
+
+def describe_extension_session(db: Session, user_id: UUID) -> ExtensionSessionOut:
+    """The account identity a bearer resolves to, and the capture byte limits."""
+    row = db.execute(
+        text("SELECT email, display_name FROM users WHERE id = :user_id"), {"user_id": user_id}
+    ).one()
+    settings = get_settings()
+    return ExtensionSessionOut(
+        user_handle=seal_user(user_id),
+        email=presence_from_nullable(row.email),
+        display_name=presence_from_nullable(row.display_name),
+        limits=CaptureLimits(
+            max_pdf_bytes=settings.max_pdf_bytes,
+            max_epub_bytes=settings.max_epub_bytes,
+            max_article_packet_bytes=ARTICLE_PACKET_MAX_BYTES,
+        ),
+    )
 
 
 def revoke_extension_session_token(db: Session, token: str) -> bool:

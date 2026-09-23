@@ -213,7 +213,15 @@ class StorageClient:
                 Key=destination_path,
                 CopySource={"Bucket": self._bucket, "Key": source_path},
             )
-        except (BotoCoreError, ClientError) as exc:
+        except ClientError as exc:
+            if _client_error_is_missing(exc):
+                raise StorageError(
+                    f"Object not found: {source_path}", code="E_STORAGE_MISSING"
+                ) from exc
+            raise StorageError(
+                f"Failed to copy object {source_path} to {destination_path}"
+            ) from exc
+        except BotoCoreError as exc:
             raise StorageError(
                 f"Failed to copy object {source_path} to {destination_path}"
             ) from exc

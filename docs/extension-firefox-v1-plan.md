@@ -1,6 +1,6 @@
 # firefox capture v1
 
-status: implementation plan; documentation only this turn · 2026-09-23
+status: implemented on branch `firefox-capture-v1` · 2026-09-23 (verification record in [docs/modules/extension.md](modules/extension.md))
 scope: approved [review](extension-firefox-v1-review.md), narrowed by the owner's
 hard-cutover instruction. this document owns the implementation contract.
 

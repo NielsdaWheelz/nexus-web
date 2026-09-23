@@ -8,7 +8,6 @@ every write through ``source_publication``'s exact queue-claim fence.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import posixpath
 from collections.abc import Callable
@@ -65,8 +64,7 @@ from nexus.schemas.media import (
     SourceRepairAdmission,
     SourceRetryAdmission,
 )
-from nexus.schemas.presence import Presence, absent, nullable_from_presence, present
-from nexus.schemas.publication_dates import normalize_source_publication_date
+from nexus.schemas.presence import Presence, absent, present
 from nexus.services import library_entries, library_governance
 from nexus.services import media_source_types as source_types
 from nexus.services.capabilities import (
@@ -80,10 +78,6 @@ from nexus.services.capabilities import (
 from nexus.services.contributor_taxonomy import ContributorObservationBatch, NotObserved
 from nexus.services.contributor_writes import MediaTarget
 from nexus.services.contributors import apply_observed_role_slices_in_current_transaction
-from nexus.services.file_ingest_validation import (
-    has_valid_file_signature,
-    validate_file_ingest_request,
-)
 from nexus.services.import_history import append_processing_event
 from nexus.services.media_author_observation_seam import (
     SourceAuthorObservation,
@@ -107,10 +101,7 @@ from nexus.services.resource_mutation_replay import (
     lookup_replay,
     record_replay,
 )
-from nexus.services.source_attempt_artifacts import (
-    clone_source_payload_for_new_attempt,
-    source_attempt_storage_paths,
-)
+from nexus.services.source_attempt_artifacts import source_attempt_storage_paths
 from nexus.services.source_attempt_failures import (
     SourceAttemptFailure,
     publish_source_attempt_failure,
@@ -130,15 +121,10 @@ from nexus.services.transcripts.request_reason import (
 )
 from nexus.services.transcripts.semantic import enqueue_transcript_semantic_job
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
-from nexus.services.web_article_structure import WEB_ARTICLE_HTML_MAX_BYTES
 from nexus.services.x_identity import classify_x_url, is_x_url
 from nexus.services.youtube_identity import classify_youtube_url, is_youtube_url
 from nexus.storage.client import StorageError, get_storage_client
-from nexus.storage.paths import (
-    build_source_artifact_storage_path,
-    build_storage_path,
-    get_file_extension,
-)
+from nexus.storage.paths import get_file_extension
 from nexus.tasks.storage_object_cleanup import (
     finalize_storage_object_write,
     reserve_storage_object_write,
@@ -641,7 +627,7 @@ def _clone_attempt(
         canonical_source_url=previous.canonical_source_url,
         provider=previous.provider,
         provider_target_ref=previous.provider_target_ref,
-        source_payload=clone_source_payload_for_new_attempt(previous.source_payload),
+        source_payload=dict(previous.source_payload or {}),
         request_id=request_id,
         idempotency_key=None,
         status=ACCEPTED,
@@ -975,240 +961,6 @@ def accept_embedded_source(
         source_attempt_status=attempt.status,
         processing_status=media.processing_status.value,
         needs_enqueue=True,
-    )
-
-
-def accept_browser_article_capture(
-    *,
-    db: Session,
-    viewer_id: UUID,
-    url: str,
-    content_html: str,
-    source_html: str,
-    library_ids: list[UUID],
-    title: str | None = None,
-    byline: str | None = None,
-    excerpt: str | None = None,
-    site_name: str | None = None,
-    published_time: str | None = None,
-    request_id: str | None = None,
-    idempotency_key: str | None = None,
-) -> FromUrlResponse:
-    """Accept a browser-rendered article capture, storing both HTML blobs as artifacts."""
-    library_governance.validate_writable_library_destinations(db, viewer_id, library_ids)
-    validate_requested_url(url)
-    html_bytes = content_html.encode("utf-8")
-    source_html_bytes = source_html.encode("utf-8")
-    if max(len(html_bytes), len(source_html_bytes)) > WEB_ARTICLE_HTML_MAX_BYTES:
-        raise InvalidRequestError(
-            ApiErrorCode.E_CAPTURE_TOO_LARGE, "Captured article HTML is too large"
-        )
-
-    intent_key = build_intent_key(
-        source_types.BROWSER_ARTICLE_CAPTURE,
-        url,
-        {"content_size_bytes": len(html_bytes), "source_size_bytes": len(source_html_bytes)},
-        library_ids=library_ids,
-    )
-    clean_key = _clean_idempotency_key(idempotency_key)
-    replay = _replay_or_none(
-        db, viewer_id=viewer_id, idempotency_key=clean_key, intent_key=intent_key
-    )
-    if replay is not None:
-        return replay
-
-    now = datetime.now(UTC)
-    media = Media(
-        kind=MediaKind.web_article.value,
-        title=(title or url).strip()[:255] or "Untitled",
-        requested_url=url,
-        canonical_source_url=normalize_url_for_display(url),
-        provider="browser_capture",
-        processing_status=ProcessingStatus.pending,
-        created_by_user_id=viewer_id,
-        created_at=now,
-        updated_at=now,
-        description=excerpt.strip()[:2000] if excerpt and excerpt.strip() else None,
-        publisher=site_name.strip()[:255] if site_name and site_name.strip() else None,
-        edition_published_date=nullable_from_presence(
-            normalize_source_publication_date(published_time)
-        ),
-    )
-    db.add(media)
-    db.flush()
-    attempt = create_attempt(
-        db,
-        media=media,
-        viewer_id=viewer_id,
-        source_type=source_types.BROWSER_ARTICLE_CAPTURE,
-        intent_key=intent_key,
-        requested_url=url,
-        canonical_source_url=media.canonical_source_url,
-        provider=media.provider,
-        provider_target_ref=None,
-        source_payload={
-            "url": url,
-            "title": title,
-            "byline": byline,
-            "excerpt": excerpt,
-            "site_name": site_name,
-            "published_time": published_time,
-            "library_ids": [str(library_id) for library_id in library_ids],
-        },
-        request_id=request_id,
-        idempotency_key=clean_key,
-        status=ACCEPTED,
-    )
-    storage_path = build_source_artifact_storage_path(media.id, attempt.id, "html")
-    source_storage_path = build_source_artifact_storage_path(media.id, attempt.id, "source-html")
-    attempt.source_payload = {
-        **dict(attempt.source_payload or {}),
-        "storage_path": storage_path,
-        "source_storage_path": source_storage_path,
-        "content_type": "text/html; charset=utf-8",
-        "size_bytes": len(html_bytes),
-        "source_size_bytes": len(source_html_bytes),
-    }
-    library_entries.assign_libraries_for_media_in_current_transaction(
-        db, viewer_id, media.id, library_ids
-    )
-    db.commit()
-
-    return _store_and_enqueue(
-        db,
-        media_id=media.id,
-        attempt_id=attempt.id,
-        viewer_id=viewer_id,
-        request_id=request_id,
-        writes=(
-            (storage_path, html_bytes, "text/html; charset=utf-8"),
-            (source_storage_path, source_html_bytes, "text/html; charset=utf-8"),
-        ),
-    )
-
-
-def accept_browser_file_capture(
-    *,
-    db: Session,
-    viewer_id: UUID,
-    payload: bytes,
-    filename: str,
-    content_type: str,
-    library_ids: list[UUID],
-    source_url: str | None = None,
-    request_id: str | None = None,
-    idempotency_key: str | None = None,
-) -> FromUrlResponse:
-    """Accept browser-fetched PDF/EPUB bytes through the shared source lifecycle."""
-    library_governance.validate_writable_library_destinations(db, viewer_id, library_ids)
-    clean_filename = (filename or "").strip().replace("\\", "/").rsplit("/", 1)[-1]
-    normalized_content_type = (content_type or "").split(";", 1)[0].strip().lower()
-    lower_filename = clean_filename.lower()
-    if normalized_content_type == "application/pdf" or lower_filename.endswith(".pdf"):
-        kind, normalized_content_type = MediaKind.pdf.value, "application/pdf"
-    elif normalized_content_type == "application/epub+zip" or lower_filename.endswith(".epub"):
-        kind, normalized_content_type = MediaKind.epub.value, "application/epub+zip"
-    else:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_CONTENT_TYPE, "Captured files must be PDF or EPUB."
-        )
-    if not payload:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Captured file is empty.")
-    validate_file_ingest_request(kind, normalized_content_type, len(payload))
-
-    clean_source_url = source_url.strip() if source_url and source_url.strip() else None
-    if clean_source_url is not None:
-        validate_requested_url(clean_source_url)
-
-    source_type = f"browser_{kind}_capture"
-    intent_key = build_intent_key(
-        source_type, clean_source_url or clean_filename, len(payload), library_ids=library_ids
-    )
-    clean_key = _clean_idempotency_key(idempotency_key)
-    replay = _replay_or_none(
-        db, viewer_id=viewer_id, idempotency_key=clean_key, intent_key=intent_key
-    )
-    if replay is not None:
-        return replay
-
-    title = clean_filename
-    if not title and clean_source_url is not None:
-        title = unquote(posixpath.basename(urlparse(clean_source_url).path)).strip()
-    now = datetime.now(UTC)
-    media = Media(
-        kind=kind,
-        title=(title or f"capture.{get_file_extension(kind)}")[:255],
-        requested_url=clean_source_url,
-        canonical_source_url=(
-            normalize_url_for_display(clean_source_url) if clean_source_url is not None else None
-        ),
-        provider="browser_capture",
-        processing_status=ProcessingStatus.pending,
-        created_by_user_id=viewer_id,
-        created_at=now,
-        updated_at=now,
-    )
-    db.add(media)
-    db.flush()
-    library_entries.assign_libraries_for_media_in_current_transaction(
-        db, viewer_id, media.id, library_ids
-    )
-    valid_signature = has_valid_file_signature(payload, kind)
-    storage_path = build_storage_path(media.id, get_file_extension(kind))
-    source_sha256 = hashlib.sha256(payload).hexdigest()
-    if valid_signature:
-        db.add(
-            MediaFile(
-                media_id=media.id,
-                storage_path=storage_path,
-                content_type=normalized_content_type,
-                size_bytes=len(payload),
-                source_sha256=source_sha256,
-            )
-        )
-    attempt = create_attempt(
-        db,
-        media=media,
-        viewer_id=viewer_id,
-        source_type=source_type,
-        intent_key=intent_key,
-        requested_url=clean_source_url,
-        canonical_source_url=media.canonical_source_url,
-        provider=media.provider,
-        provider_target_ref=None,
-        source_payload={
-            "filename": clean_filename,
-            "content_type": normalized_content_type,
-            "size_bytes": len(payload),
-            "source_url": clean_source_url,
-            "storage_path": storage_path if valid_signature else None,
-            "source_sha256": source_sha256,
-            "library_ids": [str(library_id) for library_id in library_ids],
-        },
-        request_id=request_id,
-        idempotency_key=clean_key,
-        status=ACCEPTED,
-    )
-    if not valid_signature:
-        # The user sees a failed import rather than a silently dropped capture.
-        return _fail_accepted_source(
-            db,
-            media_id=media.id,
-            attempt_id=attempt.id,
-            exc=InvalidRequestError(
-                ApiErrorCode.E_INVALID_FILE_TYPE, f"Captured file is not a valid {kind.upper()}."
-            ),
-            stage="upload",
-        )
-    db.commit()
-
-    return _store_and_enqueue(
-        db,
-        media_id=media.id,
-        attempt_id=attempt.id,
-        viewer_id=viewer_id,
-        request_id=request_id,
-        writes=((storage_path, payload, normalized_content_type),),
     )
 
 

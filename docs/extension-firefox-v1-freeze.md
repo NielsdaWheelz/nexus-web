@@ -85,7 +85,11 @@ gains the same string.
 
 provenance guard: extension capture operations load the session with
 `created_by_user_id == viewer` AND `input_origin.kind == "BrowserCapture"`; the
-web upload operations require `LocalFile`. a mismatch is `E_UPLOAD_SESSION_NOT_FOUND`.
+web upload mutations (status, transport failure, retry, confirm) require
+`LocalFile`. a mismatch is `E_UPLOAD_SESSION_NOT_FOUND`. removal is not a
+capture mutation: `DELETE /media/uploads/{handle}` removes the viewer's own
+unpublished session of either origin, and Imports offers Remove but no retry
+for a `BrowserCapture` session (the extension holds its bytes).
 
 `DELETE /extension/captures/{handle}` on a session that no longer exists answers
 `E_UPLOAD_SESSION_NOT_FOUND` (404); the client treats it as already gone.
@@ -265,7 +269,7 @@ import type {
 export type CaptureTargetView =
   | {
       kind: "article";
-      /** article title; never empty (falls back to the url) */
+      /** article title; never empty (falls back to the host) */
       title: string;
       /** hostname only; signed query parameters are never displayed */
       host: string;
@@ -291,7 +295,7 @@ export type CapturePhase =
   | { kind: "prepared" }
   | { kind: "transferring" }
   | { kind: "confirming" }
-  | { kind: "saved"; mediaId: string; openUrl: string; reused: boolean }
+  | { kind: "saved"; mediaId: string; openUrl: string }
   | { kind: "failed"; failure: CaptureFailure; retryable: boolean };
 
 export interface CaptureDraftView {

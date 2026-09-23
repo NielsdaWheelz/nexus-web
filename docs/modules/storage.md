@@ -7,9 +7,11 @@ does not authorize access and must not encode user identity.
 
 | Object family | DB owner | Key shape | Access lane |
 | --- | --- | --- | --- |
-| Original PDF/EPUB sources | `media_file` | `media/{media_id}/original.{pdf,epub}` or `media/{media_id}/candidates/{verification_token}/original.{pdf,epub}` | viewer-authenticated media/file services |
-| Direct-upload staging | `media_upload_sessions` | `uploads/sessions/{session_id}/{generation}/original.{pdf,epub}` | private upload lifecycle only |
+| Original PDF/EPUB sources | `media_file` | `media/{media_id}/original.{pdf,epub}` or `media/{media_id}/candidates/{token}/original.{pdf,epub}` | viewer-authenticated media/file services |
+| Browser article packets | `media_source_attempts.source_payload.storage_path` | `media/{media_id}/candidates/{token}/original.json` or `media/{media_id}/source/{attempt_id}.json` | private source lifecycle only; never a `media_file` row |
+| Upload staging | `media_upload_sessions` | `uploads/sessions/{session_id}/{generation}/original.{pdf,epub,json}` | private upload lifecycle only |
 | Media source artifacts | `media_source_attempts.source_payload` | `media/{media_id}/source/{attempt_id}.{html,tar}` | private source lifecycle only |
+| Pre-cutover browser-article blobs | `media_source_attempts.source_payload.retained_legacy_paths` (until the rollback window closes; `docs/tickets/remove-browser-capture-conversion-command.md`) | `media/{media_id}/source/{attempt_id}.{html,source-html}` | none; retained for rollback, swept once the key is dropped |
 | Extracted EPUB resources | `epub_resources` | `media/{media_id}/assets/{asset_key}` | viewer-authenticated EPUB asset route |
 | Oracle plates | `oracle_plates` | `oracle/plates/{slug}.{jpg,png,webp}` | public owned-asset route, internal-header protected |
 
@@ -79,16 +81,28 @@ Three durable task modules own all teardown/lifecycle storage deletion
   media + no-intent + committed path ownership) or, after both `retainUntil`
   and `writeMayLandUntil`, `DeleteRequired` -> `Deleted` (an exclusive queue-owned
   hold on the path; installed only when no other nonterminal writer targets it). Only
-  `Retained`/`Deleted` is prunable. Browser-direct writes are owned by a durable
-  `media_upload_sessions` row and generation-scoped staging path. Capability
-  expiry changes the session projection to `CapabilityExpired`; it never
-  deletes accepted intent. Confirmation verifies size, signature, and SHA-256,
-  copies to an immutable verification-token candidate, then persists that winning
-  path with the media, source attempt, final object owner, and exact queue job
-  atomically. Retry mints a new generation; explicit removal reserves cleanup. A
-  candidate's reservation is keyed to the lease token and its `retainUntil` trails
-  every lease renewal by the write window, so the sweep cannot reclaim bytes a live
-  verifier still owns. The reservation CAS reports one owner-agnostic
+  `Retained`/`Deleted` is prunable. Browser-direct writes (local PDF/EPUB uploads
+  and extension captures of PDF, EPUB or article packets) are owned by a durable
+  `media_upload_sessions` row whose immutable `input_origin` names the writer's
+  provenance, and by a generation-scoped staging path. Capability expiry changes
+  the session projection to `CapabilityExpired`; it never deletes accepted intent.
+  Each confirmation reserves a fresh candidate path, copies staging into it and
+  verifies that candidate's size, content type, SHA-256 and file signature or
+  strict article packet (a browser capture must also match its intent digest);
+  then one transaction reuses the account's oldest readable media holding exactly
+  those bytes or creates the media, revalidates and adds every placement, creates
+  the source attempt and exact queue job for new media only, and publishes the
+  receipt. Success and failure writes are fenced by the inspected generation and
+  the unpublished state, and one media may carry several receipts. Retry mints a
+  new generation; explicit removal reserves cleanup. Every capture mutation
+  (status, transport failure, retry, confirm) loads the session by viewer and
+  provenance: extension routes reach only `BrowserCapture` sessions, web upload
+  routes only `LocalFile`. Removal is not a capture mutation: the web route
+  removes the viewer's own unpublished session of either origin, since a browser
+  capture's bytes live in the extension, which alone can retry it, so Imports
+  offers Remove but no retry for such a session. A losing or failed candidate
+  is reclaimed by its own reservation, and a reused-media candidate has no owner
+  and is rejected at finalization. The reservation CAS reports one owner-agnostic
   in-flight-cleanup condition rather than constructing a domain error: `Media` maps
   it to `E_MEDIA_DELETING`, while removal reads an already-claimed sweep of a staged
   generation as the durable cleanup intent it needs and still returns `204`.

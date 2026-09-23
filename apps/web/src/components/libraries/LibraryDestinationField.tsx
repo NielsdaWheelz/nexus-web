@@ -1,8 +1,8 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { ChevronDown } from "lucide-react";
 import LibraryDestinationPicker from "@/components/libraries/LibraryDestinationPicker";
+import LibraryDestinationTrigger from "@/components/libraries/LibraryDestinationTrigger";
 import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
 import styles from "./LibraryDestinationField.module.css";
 
@@ -20,25 +20,11 @@ export interface LibraryDestinationFieldProps {
   layer: "modal" | "palette";
 }
 
-function sortedNames(
-  selected: readonly LibraryDestinationSelection[],
-): string[] {
-  return selected
-    .map((d) => d.name)
-    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-}
-
-function collapsedSummary(names: readonly string[]): string {
-  if (names.length === 1) return names[0]!;
-  if (names.length === 2) return `${names[0]}, ${names[1]}`;
-  return `${names[0]}, ${names[1]} +${names.length - 2}`;
-}
-
 /**
  * The compact destination field (docs/cutovers/library-chooser-interaction-hard-
- * cutover.md §4): a trigger + summary that stay in normal layout and never expand
- * in place. It owns `open` and always mounts the picker adapter (so query/results
- * survive close). An in-flight create is the only dismissal lock.
+ * cutover.md §4): the shared trigger + summary, which never expand in place, and
+ * the anchored picker. It owns `open` and always mounts the picker adapter (so
+ * query/results survive close). An in-flight create is the only dismissal lock.
  */
 export default function LibraryDestinationField({
   label,
@@ -52,29 +38,19 @@ export default function LibraryDestinationField({
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const creating = interaction.kind === "Creating";
-  const names = sortedNames(selected);
-  const summary = selected.length === 0 ? emptyLabel : collapsedSummary(names);
-  const accessibleName =
-    selected.length === 0
-      ? `${label}: ${emptyLabel}`
-      : `${label}: ${names.join(", ")}`;
 
   return (
     <div className={styles.root}>
-      <button
+      <LibraryDestinationTrigger
         ref={triggerRef}
-        type="button"
-        className={styles.trigger}
-        aria-expanded={open}
-        aria-haspopup="dialog"
-        aria-label={accessibleName}
+        label={label}
+        emptyLabel={emptyLabel}
+        selected={selected}
+        expanded={open}
         disabled={interaction.kind === "Disabled" && !open}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <span className={styles.label}>{label}</span>
-        <span className={styles.summary}>{summary}</span>
-        <ChevronDown size={15} aria-hidden="true" data-open={open || undefined} />
-      </button>
+        onToggle={() => setOpen((current) => !current)}
+        discloses={{ kind: "dialog" }}
+      />
       <LibraryDestinationPicker
         open={open}
         onClose={() => {

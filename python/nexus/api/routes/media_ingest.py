@@ -1,4 +1,4 @@
-"""Media ingestion transport: URL/capture/upload-session entry points and recovery.
+"""Media ingestion transport: URL and local-upload entry points and recovery.
 
 Validate input, call one service, return the envelope. Every static
 ``/media/<literal>`` path here is declared before this router's dynamic
@@ -11,16 +11,12 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.orm import Session
-from starlette.concurrency import run_in_threadpool
 
-from nexus.api.query_params import parse_comma_list
-from nexus.auth.extension import get_extension_viewer
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
-from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok, success_response
+from nexus.schemas.extension_capture import LocalFile
 from nexus.schemas.media import (
-    ArticleCaptureRequest,
     ConfirmUploadSessionRequest,
     CreateUploadSessionRequest,
     FromUrlRequest,
@@ -68,83 +64,6 @@ def create_from_url(
     )
 
 
-@router.post("/media/capture/article", status_code=202)
-def create_captured_article(
-    request_body: ArticleCaptureRequest,
-    viewer: Annotated[Viewer, Depends(get_extension_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    request: Request,
-) -> dict:
-    return ok(
-        media_source_ingest.accept_browser_article_capture(
-            db=db,
-            viewer_id=viewer.user_id,
-            url=request_body.url,
-            title=request_body.title,
-            byline=request_body.byline,
-            excerpt=request_body.excerpt,
-            site_name=request_body.site_name,
-            published_time=request_body.published_time,
-            content_html=request_body.content_html,
-            source_html=request_body.source_html,
-            library_ids=request_body.library_ids,
-            request_id=_request_id(request),
-            idempotency_key=request.headers.get("Idempotency-Key"),
-        )
-    )
-
-
-@router.post("/media/capture/file", status_code=202)
-async def create_captured_file(
-    request: Request,
-    viewer: Annotated[Viewer, Depends(get_extension_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    try:
-        library_ids = [
-            UUID(value)
-            for value in parse_comma_list(request.headers.get("x-nexus-library-ids", "")) or []
-        ]
-    except ValueError as exc:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST, "invalid x-nexus-library-ids header"
-        ) from exc
-    body = await request.body()
-    return ok(
-        await run_in_threadpool(
-            media_source_ingest.accept_browser_file_capture,
-            db=db,
-            viewer_id=viewer.user_id,
-            payload=body,
-            filename=request.headers.get("x-nexus-filename") or "",
-            content_type=request.headers.get("content-type") or "",
-            library_ids=library_ids,
-            source_url=request.headers.get("x-nexus-source-url"),
-            request_id=_request_id(request),
-            idempotency_key=request.headers.get("Idempotency-Key"),
-        )
-    )
-
-
-@router.post("/media/capture/url", status_code=202)
-def create_captured_url(
-    request_body: FromUrlRequest,
-    viewer: Annotated[Viewer, Depends(get_extension_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    request: Request,
-) -> dict:
-    return ok(
-        media_source_ingest.accept_url_source(
-            db=db,
-            viewer_id=viewer.user_id,
-            url=request_body.url,
-            library_ids=request_body.library_ids,
-            request_id=_request_id(request),
-            idempotency_key=request.headers.get("Idempotency-Key"),
-        )
-    )
-
-
 @router.post("/media/uploads")
 def create_upload_session(
     request_body: CreateUploadSessionRequest,
@@ -157,6 +76,7 @@ def create_upload_session(
             db=db,
             viewer_id=viewer.user_id,
             request=request_body,
+            input_origin=LocalFile(),
             request_id=_request_id(request),
             idempotency_key=request.headers.get("Idempotency-Key"),
         ),
@@ -172,7 +92,11 @@ def record_upload_transport_failure(
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     media_upload_sessions.record_transport_failure(
-        db=db, viewer_id=viewer.user_id, session_handle=session_handle, failure=request_body
+        db=db,
+        viewer_id=viewer.user_id,
+        origin_kind="LocalFile",
+        session_handle=session_handle,
+        failure=request_body,
     )
     return Response(status_code=204)
 
@@ -188,6 +112,7 @@ def retry_upload_session(
         media_upload_sessions.retry_upload_session(
             db=db,
             viewer_id=viewer.user_id,
+            origin_kind="LocalFile",
             session_handle=session_handle,
             request=request_body,
         ),
@@ -207,6 +132,7 @@ def confirm_upload_session(
         media_upload_sessions.confirm_upload_session(
             db=db,
             viewer_id=viewer.user_id,
+            origin_kind="LocalFile",
             session_handle=session_handle,
             generation=request_body.generation,
             request_id=_request_id(request),
@@ -221,8 +147,11 @@ def delete_upload_session(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
+    # The account credential removes its own unpublished session of either
+    # origin: a browser capture's bytes live in the extension, which alone can
+    # retry it, but discarding the session needs no extension credential.
     media_upload_sessions.delete_upload_session(
-        db=db, viewer_id=viewer.user_id, session_handle=session_handle
+        db=db, viewer_id=viewer.user_id, origin_kind=None, session_handle=session_handle
     )
     return Response(status_code=204)
 

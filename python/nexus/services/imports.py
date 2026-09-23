@@ -285,6 +285,8 @@ WITH visible_media AS (
         id AS session_id,
         kind AS upload_kind,
         filename,
+        input_origin->>'kind' AS origin_kind,
+        input_origin->>'source_url' AS capture_source_url,
         upload_generation,
         published_media_id,
         created_at AS session_created_at,
@@ -303,6 +305,8 @@ WITH visible_media AS (
         published_media_id AS media_id,
         upload_kind,
         filename,
+        origin_kind,
+        capture_source_url,
         upload_generation,
         derived_state,
         session_created_at,
@@ -317,6 +321,8 @@ WITH visible_media AS (
         'media',
         NULL,
         media_id,
+        NULL,
+        NULL,
         NULL,
         NULL,
         NULL,
@@ -343,11 +349,14 @@ WITH visible_media AS (
             ELSE 'upload:' || md5(r.session_id::text)
         END AS ref_key,
         r.derived_state,
+        r.origin_kind,
         r.upload_generation,
         COALESCE(r.filename, w.title) AS title,
         COALESCE(w.media_kind, r.upload_kind) AS media_kind,
         CASE
             WHEN r.ref_kind = 'media' THEN {_URL_HOST_SQL.format(url="w.requested_url")}
+            WHEN r.origin_kind = 'BrowserCapture'
+                THEN {_URL_HOST_SQL.format(url="r.capture_source_url")}
         END AS source_host,
         CASE
             WHEN r.derived_state IS NULL OR r.derived_state = 'Published' THEN w.classification
@@ -862,6 +871,9 @@ def _media_capabilities(row: RowMapping, media: MediaOut) -> Capabilities:
 
 
 def _upload_capabilities(row: RowMapping) -> Capabilities:
+    """The web can remove any unpublished session of the viewer's, but it can
+    retry only a local upload: a browser capture's bytes live in the extension,
+    which owns that retry."""
     if row["derived_state"] == "VerificationFailed":
         return Capabilities(
             can_open=False,
@@ -872,7 +884,11 @@ def _upload_capabilities(row: RowMapping) -> Capabilities:
     return Capabilities(
         can_open=False,
         can_remove=True,
-        recovery=present(RetryUploadOffer(expected_generation=int(row["upload_generation"]))),
+        recovery=(
+            absent()
+            if row["origin_kind"] == "BrowserCapture"
+            else present(RetryUploadOffer(expected_generation=int(row["upload_generation"])))
+        ),
         unavailable_reason=absent(),
     )
 

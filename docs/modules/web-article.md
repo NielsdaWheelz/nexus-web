@@ -4,9 +4,11 @@ Web article media is `media.kind = 'web_article'`, but source ownership is split
 by provenance.
 
 - `media_source_ingest.py`: durable accepted source attempts for generic web
-  URLs, X/Twitter URLs, and browser article captures. It creates the media row
-  and `media_source_attempts` row before provider fetch, browser-capture
-  sanitization, or retrieval work starts.
+  URLs and X/Twitter URLs. It creates the media row and `media_source_attempts`
+  row before provider fetch or retrieval work starts.
+- `media_upload_sessions.py`: browser article captures. The extension uploads
+  one immutable article packet through the upload-session lifecycle; the media,
+  placements, source attempt and job exist only after the packet is verified.
 - `x_identity.py`: X/Twitter URL classification and username normalization.
 - `x_client.py`: official X API calls, same-author full-archive search,
   provider timeout budgeting, and typed provider failures.
@@ -35,12 +37,19 @@ captured quote posts use `post:<post_id>`. Provider billing, auth, rate-limit,
 timeout, and post-unavailable failures surface as their mapped API error and a
 `x_provider_failure` warning log.
 
-Browser article capture persists the raw captured HTML as a private source
-artifact at acceptance time, then queues `ingest_media_source`. Sanitization,
-no-readable-text, and metadata failures update the accepted media row and latest
-source attempt instead of dropping the capture. Retrieval failure never rewrites
-successful source truth; its current durable job is pending, running, or visibly
-suspended.
+A browser article capture is one immutable packet (`schemas/extension_capture.py`:
+`url`, `base_url`, `title`, readable `content_html`, bounded embed-evidence
+`source_html`, and `Presence` metadata), uploaded and verified through the
+upload-session lifecycle and referenced only by the attempt's
+`source_payload.storage_path`. `media_source_adapters._run_browser_article_capture`
+decodes that packet with the same strict model, composes
+`prepare_web_article_fragment` with the packet's base url and evidence, and
+persists title, byline, excerpt, site name and published time from the packet at
+publication. Retries carry the payload unchanged, so the packet reference is
+never lost. Sanitization, no-readable-text, and metadata failures update the
+media row and latest source attempt instead of dropping the capture. Retrieval
+failure never rewrites successful source truth; its current durable job is
+pending, running, or visibly suspended.
 
 ## node acquisition contract
 
