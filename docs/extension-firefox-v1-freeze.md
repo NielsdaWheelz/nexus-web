@@ -373,6 +373,15 @@ fetch), which is why login is covered too.
 - `apps/web/package.json` scripts: `build:extension`. devDependencies:
   `@types/firefox-webext-browser`.
 - `tsconfig.json` `include` already covers `src/extension/**`; `lib` adds nothing.
+- browser api surface missing from `@types/firefox-webext-browser` (the 153 additions
+  such as `scripting` `documentIds`) is declared once in
+  `apps/web/src/extension/firefoxApi.d.ts` (owner b; a definition file, so the
+  eslint `no-namespace` rule is not relaxed); c adds the matching
+  `!apps/web/src/extension/firefoxApi.d.ts` exception to `.gitignore`. no
+  `declare global { namespace … }` augmentation inside `.ts` sources.
+- byte buffers handed to `Blob`/`fetch` are typed `ArrayBuffer` (allocate
+  `new Uint8Array(n)` over a fresh `ArrayBuffer`, or slice with an explicit
+  `ArrayBuffer` type), never `Uint8Array<ArrayBufferLike>`.
 
 ## 10. file ownership (exclusive; ask before crossing)
 
