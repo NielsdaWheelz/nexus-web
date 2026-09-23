@@ -289,9 +289,6 @@ export interface CaptureDraftView {
   phase: CapturePhase;
   /** selected additional libraries; empty is valid */
   destinations: readonly LibraryDestinationSelection[];
-  /** match patterns the popup must request before "save" (nexus, storage, and the
-      target origin in document mode); already-granted origins are omitted */
-  requiredOrigins: readonly string[];
   /** true after browser restart: the popup shows explicit "resume" before any network work */
   resumable: boolean;
 }
@@ -303,6 +300,10 @@ export type CaptureConnection =
 
 export type CaptureViewState = {
   connection: CaptureConnection;
+  /** match patterns the popup must request synchronously in the "login" and "save"
+      click handlers: nexus and storage origins, plus the target origin in document
+      mode when a draft exists; already-granted origins are omitted */
+  requiredOrigins: readonly string[];
   view:
     | { kind: "empty" }                                   // no draft, nothing pinned
     | { kind: "unsupported"; reason: string }             // internal scheme, no tab, …
@@ -343,9 +344,12 @@ order, from one owner. `CommandResult.state` is informational; the popup applies
 only `page` and `failure` from replies, because firefox does not order a
 `sendMessage` reply against port messages.
 
-popup permission rule (c): on `save`, synchronously (before any `await`) call
-`browser.permissions.request({ origins: draft.requiredOrigins })`; on `false`,
-render a denied notice and keep the draft; on `true`, send `save`.
+popup permission rule (c): on `login` and on `save`, synchronously (before any
+`await`) call `browser.permissions.request({ origins: state.requiredOrigins })`
+when the list is non-empty; on `false`, render a denied notice and keep the
+draft; on `true`, send the command. the background needs the nexus host
+permission for every api call after `identity.launchWebAuthFlow` (mv2 cross-origin
+fetch), which is why login is covered too.
 
 ## 9. build and configuration (owner c)
 

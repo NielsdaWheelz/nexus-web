@@ -44,9 +44,6 @@ export interface CaptureDraftView {
   phase: CapturePhase;
   /** selected additional libraries; empty is valid */
   destinations: readonly LibraryDestinationSelection[];
-  /** match patterns the popup must request before "save" (nexus, storage, and the
-      target origin in document mode); already-granted origins are omitted */
-  requiredOrigins: readonly string[];
   /** true after browser restart: the popup shows explicit "resume" before any network work */
   resumable: boolean;
 }
@@ -58,6 +55,10 @@ export type CaptureConnection =
 
 export type CaptureViewState = {
   connection: CaptureConnection;
+  /** match patterns the popup must request synchronously in the "login" and "save"
+      click handlers: nexus and storage origins, plus the target origin in document
+      mode when a draft exists; already-granted origins are omitted */
+  requiredOrigins: readonly string[];
   view:
     | { kind: "empty" }                                   // no draft, nothing pinned
     | { kind: "unsupported"; reason: string }             // internal scheme, no tab, …
