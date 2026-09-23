@@ -246,18 +246,29 @@ or `error`.
 ## 8. extension runtime contract (`apps/web/src/extension/captureContract.ts`, owner b; consumed by c)
 
 ```ts
-export type CaptureKind = "web_article" | "pdf" | "epub";
+import type {
+  LibraryDestinationPage,
+  LibraryDestinationSelection,
+} from "@/lib/libraries/destinationContract";
 
-export interface CaptureTargetView {
-  /** article title, link label, or filename; never empty */
-  title: string;
-  /** hostname only; signed query parameters are never displayed */
-  host: string;
-  /** what the form says it will save */
-  type: "article" | "document" | "pdf" | "epub";
-  /** bounded inert plain text (≤ 1200 chars) for the optional preview; articles only */
-  previewText: string | null;
-}
+export type CaptureTargetView =
+  | {
+      kind: "article";
+      /** article title; never empty (falls back to the url) */
+      title: string;
+      /** hostname only; signed query parameters are never displayed */
+      host: string;
+      /** bounded inert plain text (≤ 1200 chars) for the optional preview */
+      previewText: string;
+    }
+  | {
+      kind: "document";
+      /** link label or filename; never empty */
+      title: string;
+      host: string;
+      /** "unknown" until the bounded get classified the bytes */
+      documentKind: "unknown" | "pdf" | "epub";
+    };
 
 export interface CaptureAccount { userHandle: string; email: string | null; displayName: string | null }
 
@@ -277,7 +288,7 @@ export interface CaptureDraftView {
   target: CaptureTargetView;
   phase: CapturePhase;
   /** selected additional libraries; empty is valid */
-  destinations: readonly { id: string; name: string }[];
+  destinations: readonly LibraryDestinationSelection[];
   /** match patterns the popup must request before "save" (nexus, storage, and the
       target origin in document mode); already-granted origins are omitted */
   requiredOrigins: readonly string[];
@@ -302,7 +313,7 @@ export type CaptureViewState = {
 export type CaptureCommand =
   | { kind: "activate" }                       // popup opened by toolbar: pin active tab if no draft is active
   | { kind: "resume" }                         // explicit resume of a restart-recovered draft
-  | { kind: "set_destinations"; destinations: readonly { id: string; name: string }[] }
+  | { kind: "set_destinations"; destinations: readonly LibraryDestinationSelection[] }
   | { kind: "search_destinations"; q: string; cursor: string | null }
   | { kind: "login" }                          // hosted login; background refocuses window and reopens the popup
   | { kind: "save" }                           // popup has already requested `requiredOrigins`
@@ -311,11 +322,9 @@ export type CaptureCommand =
   | { kind: "disconnect" };                    // confirmed revocation only forgets the credential
 
 export type CommandResult =
-  | { ok: true; state: CaptureViewState }
-  | { ok: true; state: CaptureViewState; page: DestinationPage }   // search_destinations
-  | { ok: false; failure: CaptureFailure; state: CaptureViewState };
-
-export interface DestinationPage { data: readonly { id: string; name: string }[]; nextCursor: string | null }
+  | { kind: "state"; state: CaptureViewState }
+  | { kind: "page"; state: CaptureViewState; page: LibraryDestinationPage }   // search_destinations only
+  | { kind: "failure"; failure: CaptureFailure; state: CaptureViewState };
 
 /** background → popup push over `runtime.connect({ name: "nexus-capture-view" })` */
 export type CaptureViewMessage = { kind: "state"; state: CaptureViewState };
@@ -325,6 +334,8 @@ commands go through `browser.runtime.sendMessage(command)`; the background valid
 the sender is this extension's popup (`sender.id === browser.runtime.id`, no `tab`).
 content scripts speak only the internal acquisition protocol defined in
 `content.ts`/`background.ts` and never receive the credential or arbitrary fetch.
+the destination page crossing the popup boundary is the already-decoded
+`LibraryDestinationPage` (one shape, one decoder, in the background).
 
 popup permission rule (c): on `save`, synchronously (before any `await`) call
 `browser.permissions.request({ origins: draft.requiredOrigins })`; on `false`,
@@ -368,5 +379,7 @@ phase 0 (before a/b/c): c's extractions land first so b compiles against them:
 (the current private `uploadResponse` decoder, envelope included) and
 `UPLOAD_IDEMPOTENCY_OUTCOMES`; `lib/libraries/destinationContract.ts` exports
 `LibraryDestination`, `LibraryDestinationSelection`, `LibraryDestinationPage`,
-`decodeWritableLibraryDestinationPage`, `LibraryDestinationContractDefect`,
-`isLibraryDestinationDefect`. `captureContract.ts` lands with §8 verbatim.
+`decodeWritableLibraryDestinationPage`, `LibraryDestinationContractDefect` and
+imports only `@/lib/validation`; `isLibraryDestinationDefect` stays in
+`client.ts` (it references the web api client). `captureContract.ts` lands with
+§8 verbatim.
