@@ -30,6 +30,8 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
+- [open] upload publication · 2026-09-23 firefox plan review · concurrent confirmations can overwrite published bytes: [ticket](tickets/upload-confirmation-can-overwrite-published-bytes.md).
+- [open] upload publication · 2026-09-23 firefox plan review · old verification failures can reject newer generations: [ticket](tickets/upload-verification-failure-is-not-generation-fenced.md).
 - [open] android / workspace · 2026-09-22 device verification · an intermediate compatibility probe showed an unproven transient bootstrap failure on reconnect: [ticket](tickets/android-reconnect-transient-workspace-bootstrap.md).
 - [open] library consumption · 2026-09-21 implementation review · ordinary library rows can retain stale finished/unread state after status-only commands: [ticket](tickets/library-status-only-consumption-stays-stale.md).
 - [open] collection docs · 2026-09-21 council · library and lectern contracts still point to deleted cutovers: [ticket](tickets/collection-contract-docs-reference-deleted-cutovers.md).
@@ -237,6 +239,19 @@ unexpected timeouts. See
 - [open] 2026-09-21 cleanup audit · offline reading store retains unused construction modes: [ticket](tickets/cleanup-offline-reading-unused-construction-seams.md).
 - [open] highlight interaction · 2026-09-21 reader cleanup · hook keeps unused focus callbacks and hover metadata: [ticket](tickets/highlight-interaction-unused-api.md).
 - [open] 2026-09-21 extension review · article capture conflates extraction, transport and defects: [ticket](tickets/extension-article-capture-conflates-failures.md).
+- [open] 2026-09-23 firefox v1 · capture login and library selection are unwired: [ticket](tickets/extension-capture-destination-flow-is-unwired.md).
+- [open] 2026-09-23 firefox v1 · popup lifetime owns authentication and uploads: [ticket](tickets/extension-popup-owns-auth-and-upload-lifetime.md).
+- [open] 2026-09-23 firefox v1 · retries generate new capture identities: [ticket](tickets/extension-capture-retries-create-new-identities.md).
+- [open] 2026-09-23 firefox v1 · permission requests follow asynchronous work: [ticket](tickets/extension-firefox-permissions-follow-async-work.md).
+- [open] 2026-09-23 firefox v1 · article capture retains unrelated authenticated dom: [ticket](tickets/extension-capture-retains-entire-authenticated-dom.md).
+- [open] 2026-09-23 firefox v1 · browser extraction omits existing article selection rules: [ticket](tickets/extension-extraction-policy-diverges-from-server.md).
+- [open] 2026-09-23 firefox v1 · capture buffers source bodies before bounds: [ticket](tickets/extension-file-capture-buffers-before-bounding.md).
+- [open] 2026-09-23 firefox v1 · document routing relies on suffixes and head: [ticket](tickets/extension-document-routing-relies-on-head.md).
+- [open] 2026-09-23 firefox v1 · disconnect hides failed token revocation: [ticket](tickets/extension-disconnect-discards-failed-revocation.md).
+- [deferred] 2026-09-23 firefox v1 · signed distribution needs current data declarations: [ticket](tickets/extension-firefox-distribution-consent-is-undeclared.md).
+- [open] 2026-09-23 firefox v1 · extension javascript is outside the static gate: [ticket](tickets/extension-javascript-is-outside-static-gate.md).
+- [open] 2026-09-23 firefox v1 · capture receipt does not prove stored source bytes: [ticket](tickets/browser-capture-receipt-does-not-prove-source-storage.md).
+- [open] 2026-09-23 firefox v1 · browser article retry drops a required input artifact: [ticket](tickets/browser-article-retry-drops-required-source-artifact.md).
 - [open] 2026-09-21 auth audit · cookie settlement polls callbacks already awaited by the sdk: [ticket](tickets/auth-cookie-settlement-polls-an-awaited-sdk-callback.md).
 - [open] 2026-09-21 auth audit · one refresh can rotate the provider session twice: [ticket](tickets/auth-refresh-can-rotate-the-provider-session-twice.md).
 - [open] 2026-09-21 auth audit · response cookie ownership is split between route clients and refresh: [ticket](tickets/auth-response-cookie-ownership-is-split.md).
