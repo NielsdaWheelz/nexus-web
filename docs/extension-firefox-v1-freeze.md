@@ -87,6 +87,11 @@ provenance guard: extension capture operations load the session with
 `created_by_user_id == viewer` AND `input_origin.kind == "BrowserCapture"`; the
 web upload operations require `LocalFile`. a mismatch is `E_UPLOAD_SESSION_NOT_FOUND`.
 
+`DELETE /extension/captures/{handle}` on a session that no longer exists answers
+`E_UPLOAD_SESSION_NOT_FOUND` (404); the client treats it as already gone.
+`Idempotency-Key` is one uuid per save by client contract; the server keeps its
+existing rule (non-empty, ≤ 255) and does not re-validate the format.
+
 ### article packet (uploaded bytes; never sent through the bff)
 
 ```json
