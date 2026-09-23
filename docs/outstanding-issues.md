@@ -30,6 +30,8 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
+- [open] android / workspace · 2026-09-22 device verification · an intermediate compatibility probe showed an unproven transient bootstrap failure on reconnect: [ticket](tickets/android-reconnect-transient-workspace-bootstrap.md).
+- [open] android release · 2026-09-22 device investigation · the latest published apk uses reader contract 1 while production requires 2: [ticket](tickets/published-android-reader-contract-stale.md).
 - [open] library consumption · 2026-09-21 implementation review · ordinary library rows can retain stale finished/unread state after status-only commands: [ticket](tickets/library-status-only-consumption-stays-stale.md).
 - [open] collection docs · 2026-09-21 council · library and lectern contracts still point to deleted cutovers: [ticket](tickets/collection-contract-docs-reference-deleted-cutovers.md).
 

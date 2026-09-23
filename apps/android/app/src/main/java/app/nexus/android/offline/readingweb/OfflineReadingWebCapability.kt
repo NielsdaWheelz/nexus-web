@@ -31,6 +31,11 @@ internal enum class OfflineReadingDocument {
     Hosted,
 }
 
+internal enum class OfflineReadingHostedConnectFailure {
+    UpdateRequired,
+    Unavailable,
+}
+
 internal fun offlineReadingMessageDocument(
     sourceOrigin: Uri,
     shellOrigin: OwnedOrigin,
@@ -289,7 +294,7 @@ internal class OfflineReadingWebCapability(
      * offer the shelf, because package inventory never reaches an unattested
      * hosted renderer.
      */
-    private val onHostedConnectUnavailable: () -> Unit,
+    private val onHostedConnectUnavailable: (OfflineReadingHostedConnectFailure) -> Unit,
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val shellOrigin = OwnedOrigin("https://$OFFLINE_READING_ASSET_HOST")
@@ -302,7 +307,7 @@ internal class OfflineReadingWebCapability(
     )
     private var listener: AutoCloseable? = null
     private var replyProxy: JavaScriptReplyProxy? = null
-    @Volatile private var sessionState = OfflineReadingSessionState.Disconnected
+    private var sessionState = OfflineReadingSessionState.Disconnected
     private var activeDocument = OfflineReadingDocument.Hosted
     private var pendingLocalOpen: UUID? = null
     private var pendingLocalOpenUnavailable: (() -> Unit)? = null
@@ -416,19 +421,28 @@ internal class OfflineReadingWebCapability(
                     root.requireExactKeys("protocolVersion", "requestId", "kind")
                     if (offlineDocument) error("unsupported origin")
                     attestHostedAccount { attestation ->
-                        if (message.documentGeneration != bridge.currentDocumentGeneration()) return@attestHostedAccount
-                        attestation.fold(
-                            onSuccess = { accountId ->
-                                commandStep {
-                                    connectHostedAfterRecovery(message, requestId, accountId)
-                                }.onFailure {
-                                    failHostedConnect(message, requestId, "Failed")
-                                }
-                            },
-                            onFailure = {
-                                failHostedConnect(message, requestId, "AuthorizationRequired")
-                            },
-                        )
+                        postForDocument(message) {
+                            attestation.fold(
+                                onSuccess = { accountId ->
+                                    commandStep {
+                                        connectHostedAfterRecovery(message, requestId, accountId)
+                                    }.onFailure {
+                                        failHostedConnect(message, requestId, "Failed")
+                                    }
+                                },
+                                onFailure = { error ->
+                                    failHostedConnect(
+                                        message,
+                                        requestId,
+                                        if (error is OfflineReadingUpdateRequiredException) {
+                                            "Unsupported"
+                                        } else {
+                                            "AuthorizationRequired"
+                                        },
+                                    )
+                                },
+                            )
+                        }
                     }
                     return
                 }
@@ -466,25 +480,27 @@ internal class OfflineReadingWebCapability(
                 "OpenReading" -> {
                     root.requireExactKeys("protocolVersion", "requestId", "kind", "mediaId")
                     store.openAsync(root.requireCanonicalUuid("mediaId")) { result ->
-                        if (
-                            message.documentGeneration != bridge.currentDocumentGeneration() ||
-                            sessionState != OfflineReadingSessionState.Connected
-                        ) {
-                            result.getOrNull()?.let { store.closeLease(it.id) }
-                            return@openAsync
+                        mainHandler.post {
+                            if (
+                                message.documentGeneration != bridge.currentDocumentGeneration() ||
+                                sessionState != OfflineReadingSessionState.Connected
+                            ) {
+                                result.getOrNull()?.let { store.closeLease(it.id) }
+                                return@post
+                            }
+                            result.fold(
+                                onSuccess = { lease ->
+                                    reply(
+                                        message.replyProxy,
+                                        requestId,
+                                        opened(lease, leases.publish(lease)),
+                                    )
+                                },
+                                onFailure = {
+                                    reply(message.replyProxy, requestId, rejected("Failed"))
+                                },
+                            )
                         }
-                        result.fold(
-                            onSuccess = { lease ->
-                                reply(
-                                    message.replyProxy,
-                                    requestId,
-                                    opened(lease, leases.publish(lease)),
-                                )
-                            },
-                            onFailure = {
-                                reply(message.replyProxy, requestId, rejected("Failed"))
-                            },
-                        )
                     }
                     return
                 }
@@ -497,7 +513,7 @@ internal class OfflineReadingWebCapability(
                         return
                     }
                     reply(message.replyProxy, requestId, accepted())
-                    mainHandler.post(openOffline)
+                    openOffline()
                 }
                 "CloseReading" -> {
                     root.requireExactKeys("protocolVersion", "requestId", "kind", "leaseId")
@@ -535,15 +551,14 @@ internal class OfflineReadingWebCapability(
                         applyReading = { store.setNetworkPolicy(it) },
                         applyAudio = audioStore::setNetworkPolicy,
                     ) { result ->
-                        if (
-                            message.documentGeneration != bridge.currentDocumentGeneration() ||
-                            sessionState != OfflineReadingSessionState.Connected
-                        ) return@applyOfflineNetworkPolicy
-                        reply(
-                            message.replyProxy,
-                            requestId,
-                            if (result.isSuccess) accepted() else rejected("Failed"),
-                        )
+                        postForDocument(message) {
+                            if (sessionState != OfflineReadingSessionState.Connected) return@postForDocument
+                            reply(
+                                message.replyProxy,
+                                requestId,
+                                if (result.isSuccess) accepted() else rejected("Failed"),
+                            )
+                        }
                     }
                     return
                 }
@@ -559,20 +574,21 @@ internal class OfflineReadingWebCapability(
                     leases.clear()
                     audioStore.purgeAndDisconnect { audioResult ->
                         if (message.documentGeneration != bridge.currentDocumentGeneration()) return@purgeAndDisconnect
-                        if (audioResult.isFailure) {
-                            sessionState = OfflineReadingSessionState.LogoutRetry
-                            reply(message.replyProxy, requestId, rejected("Failed"))
-                            return@purgeAndDisconnect
+                        val completed = audioResult.fold(
+                            onSuccess = { commandStep { store.completeAccountTransition(null) } },
+                            onFailure = { Result.failure(it) },
+                        )
+                        postForDocument(message) {
+                            if (completed.isFailure) {
+                                sessionState = OfflineReadingSessionState.LogoutRetry
+                                reply(message.replyProxy, requestId, rejected("Failed"))
+                                return@postForDocument
+                            }
+                            sessionState = OfflineReadingSessionState.Disconnected
+                            replyProxy = null
+                            reply(message.replyProxy, requestId, accepted())
+                            onLogout()
                         }
-                        if (commandStep { store.completeAccountTransition(null) }.isFailure) {
-                            sessionState = OfflineReadingSessionState.LogoutRetry
-                            reply(message.replyProxy, requestId, rejected("Failed"))
-                            return@purgeAndDisconnect
-                        }
-                        sessionState = OfflineReadingSessionState.Disconnected
-                        replyProxy = null
-                        reply(message.replyProxy, requestId, accepted())
-                        mainHandler.post(onLogout)
                     }
                     return
                 }
@@ -584,9 +600,8 @@ internal class OfflineReadingWebCapability(
             if (!isOfflineReadingCommandFailure(error)) throw error
             when (kind) {
                 "ConnectHosted" -> {
-                    sessionState = OfflineReadingSessionState.Disconnected
-                    replyProxy = null
-                    mainHandler.post(onHostedConnectUnavailable)
+                    failHostedConnect(message, requestId, "Failed")
+                    return
                 }
                 "ConnectOffline" -> {
                     sessionState = OfflineReadingSessionState.Disconnected
@@ -611,18 +626,20 @@ internal class OfflineReadingWebCapability(
             OfflineReadingRecoveryStep.FinishLogout -> {
                 audioStore.purgeAndDisconnect { logoutResult ->
                     if (message.documentGeneration != bridge.currentDocumentGeneration()) return@purgeAndDisconnect
-                    if (logoutResult.isFailure) {
-                        failHostedConnect(message, requestId, "Failed")
-                        return@purgeAndDisconnect
+                    val completed = logoutResult.fold(
+                        onSuccess = { commandStep { store.completeAccountTransition(null) } },
+                        onFailure = { Result.failure(it) },
+                    )
+                    postForDocument(message) {
+                        if (completed.isFailure) {
+                            failHostedConnect(message, requestId, "Failed")
+                            return@postForDocument
+                        }
+                        sessionState = OfflineReadingSessionState.Disconnected
+                        replyProxy = null
+                        reply(message.replyProxy, requestId, rejected("AuthorizationRequired"))
+                        onLogout()
                     }
-                    if (commandStep { store.completeAccountTransition(null) }.isFailure) {
-                        failHostedConnect(message, requestId, "Failed")
-                        return@purgeAndDisconnect
-                    }
-                    sessionState = OfflineReadingSessionState.Disconnected
-                    replyProxy = null
-                    reply(message.replyProxy, requestId, rejected("AuthorizationRequired"))
-                    mainHandler.post(onLogout)
                 }
             }
             OfflineReadingRecoveryStep.RejectForeignTransition -> {
@@ -643,23 +660,26 @@ internal class OfflineReadingWebCapability(
         }
         audioStore.connect(accountId) { audioResult ->
             if (message.documentGeneration != bridge.currentDocumentGeneration()) return@connect
-            if (audioResult.isFailure) {
-                failHostedConnect(message, requestId, "Failed")
-                return@connect
-            }
-            commandStep { store.completeAccountTransition(accountId) }.getOrElse {
-                failHostedConnect(message, requestId, "Failed")
-                return@connect
-            }
-            store.reconcileAsync { snapshot ->
-                if (message.documentGeneration != bridge.currentDocumentGeneration()) return@reconcileAsync
-                if (!hostedReconciledSnapshotAccepted(snapshot, accountId)) {
+            val completed = audioResult.fold(
+                onSuccess = { commandStep { store.completeAccountTransition(accountId) } },
+                onFailure = { Result.failure(it) },
+            )
+            postForDocument(message) connected@{
+                if (completed.isFailure) {
                     failHostedConnect(message, requestId, "Failed")
-                    return@reconcileAsync
+                    return@connected
                 }
-                replyProxy = message.replyProxy
-                sessionState = OfflineReadingSessionState.Connected
-                reply(message.replyProxy, requestId, connected(snapshot))
+                store.reconcileAsync { snapshot ->
+                    postForDocument(message) reconciled@{
+                        if (!hostedReconciledSnapshotAccepted(snapshot, accountId)) {
+                            failHostedConnect(message, requestId, "Failed")
+                            return@reconciled
+                        }
+                        replyProxy = message.replyProxy
+                        sessionState = OfflineReadingSessionState.Connected
+                        reply(message.replyProxy, requestId, connected(snapshot))
+                    }
+                }
             }
         }
     }
@@ -672,45 +692,48 @@ internal class OfflineReadingWebCapability(
         when (val step = offlineRecoveryStep(store.pendingAccountTransition())) {
             OfflineReadingRecoveryStep.Reconcile -> {
                 store.reconcileAsync { snapshot ->
-                    if (message.documentGeneration != bridge.currentDocumentGeneration()) return@reconcileAsync
-                    finishOfflineConnect(message, requestId, snapshot)
+                    postForDocument(message) {
+                        finishOfflineConnect(message, requestId, snapshot)
+                    }
                 }
             }
             OfflineReadingRecoveryStep.FinishLogout -> {
                 audioStore.purgeAndDisconnect { audioResult ->
                     if (message.documentGeneration != bridge.currentDocumentGeneration()) return@purgeAndDisconnect
-                    if (audioResult.isFailure) {
-                        failConnect(message, requestId, "Failed")
-                        return@purgeAndDisconnect
+                    val completed = audioResult.fold(
+                        onSuccess = { commandStep { store.completeAccountTransition(null) } },
+                        onFailure = { Result.failure(it) },
+                    )
+                    postForDocument(message) {
+                        val snapshot = completed.getOrElse {
+                            failConnect(message, requestId, "Failed")
+                            return@postForDocument
+                        }
+                        sessionState = OfflineReadingSessionState.Disconnected
+                        replyProxy = null
+                        reply(message.replyProxy, requestId, connected(snapshot))
+                        onLogout()
                     }
-                    val snapshot = commandStep { store.completeAccountTransition(null) }.getOrElse {
-                        failConnect(message, requestId, "Failed")
-                        return@purgeAndDisconnect
-                    }
-                    sessionState = OfflineReadingSessionState.Disconnected
-                    replyProxy = null
-                    reply(message.replyProxy, requestId, connected(snapshot))
-                    mainHandler.post(onLogout)
                 }
             }
             is OfflineReadingRecoveryStep.ConnectTarget -> {
                 audioStore.connect(step.accountId) { audioResult ->
                     if (message.documentGeneration != bridge.currentDocumentGeneration()) return@connect
-                    if (audioResult.isFailure) {
-                        failConnect(message, requestId, "Failed")
-                        return@connect
-                    }
-                    val snapshot = commandStep {
-                        store.completeAccountTransition(step.accountId)
-                    }.getOrElse {
-                        failConnect(message, requestId, "Failed")
-                        return@connect
-                    }
-                    finishOfflineConnect(
-                        message,
-                        requestId,
-                        snapshot,
+                    val completed = audioResult.fold(
+                        onSuccess = { commandStep { store.completeAccountTransition(step.accountId) } },
+                        onFailure = { Result.failure(it) },
                     )
+                    postForDocument(message) {
+                        val snapshot = completed.getOrElse {
+                            failConnect(message, requestId, "Failed")
+                            return@postForDocument
+                        }
+                        finishOfflineConnect(
+                            message,
+                            requestId,
+                            snapshot,
+                        )
+                    }
                 }
             }
             OfflineReadingRecoveryStep.RejectForeignTransition ->
@@ -724,8 +747,8 @@ internal class OfflineReadingWebCapability(
         snapshot: ReadingStoreSnapshot,
     ) {
         val validated = validatedPendingLocalOpen(pendingLocalOpen, snapshot)
-        if (deferredLocalOpenUnavailable(pendingLocalOpen, validated)) {
-            pendingLocalOpenUnavailable?.let { unavailable -> mainHandler.post(unavailable) }
+        val unavailable = pendingLocalOpenUnavailable.takeIf {
+            deferredLocalOpenUnavailable(pendingLocalOpen, validated)
         }
         pendingLocalOpen = validated
         if (validated == null) pendingLocalOpenUnavailable = null
@@ -733,6 +756,7 @@ internal class OfflineReadingWebCapability(
         sessionState = OfflineReadingSessionState.Connected
         reply(message.replyProxy, requestId, connected(snapshot))
         publishPendingLocalOpen()
+        unavailable?.invoke()
     }
 
     private fun failConnect(
@@ -755,13 +779,32 @@ internal class OfflineReadingWebCapability(
         code: String,
     ) {
         failConnect(message, requestId, code)
-        mainHandler.post(onHostedConnectUnavailable)
+        onHostedConnectUnavailable(
+            if (code == "Unsupported") {
+                OfflineReadingHostedConnectFailure.UpdateRequired
+            } else {
+                OfflineReadingHostedConnectFailure.Unavailable
+            },
+        )
+    }
+
+    /**
+     * Navigation and document-state publication share the main thread. Durable
+     * account completion stays on the audio worker before its next queued step;
+     * once accepted, it may finish across navigation without publishing here.
+     */
+    private fun postForDocument(message: OwnedWebMessage, completion: () -> Unit) {
+        mainHandler.post {
+            if (message.documentGeneration != bridge.currentDocumentGeneration()) return@post
+            completion()
+        }
     }
 
     private fun snapshotChanged(snapshot: ReadingStoreSnapshot) {
-        val proxy = replyProxy ?: return
+        val generation = bridge.currentDocumentGeneration()
         mainHandler.post {
-            if (proxy !== replyProxy) return@post
+            if (generation != bridge.currentDocumentGeneration()) return@post
+            val proxy = replyProxy ?: return@post
             proxy.postMessage(
                 JSONObject()
                     .put("protocolVersion", 1)
@@ -777,32 +820,27 @@ internal class OfflineReadingWebCapability(
         val proxy = replyProxy ?: return
         pendingLocalOpen = null
         pendingLocalOpenUnavailable = null
-        mainHandler.post {
-            if (proxy !== replyProxy) return@post
-            proxy.postMessage(
-                JSONObject()
-                    .put("protocolVersion", 1)
-                    .put(
-                        "event",
-                        JSONObject()
-                            .put("kind", "OpenReadingRequested")
-                            .put("mediaId", mediaId.toString()),
-                    )
-                    .toString()
-            )
-        }
+        proxy.postMessage(
+            JSONObject()
+                .put("protocolVersion", 1)
+                .put(
+                    "event",
+                    JSONObject()
+                        .put("kind", "OpenReadingRequested")
+                        .put("mediaId", mediaId.toString()),
+                )
+                .toString()
+        )
     }
 
     private fun reply(proxy: JavaScriptReplyProxy, requestId: UUID, outcome: JSONObject) {
-        mainHandler.post {
-            proxy.postMessage(
-                JSONObject()
-                    .put("protocolVersion", 1)
-                    .put("requestId", requestId.toString())
-                    .put("outcome", outcome)
-                    .toString()
-            )
-        }
+        proxy.postMessage(
+            JSONObject()
+                .put("protocolVersion", 1)
+                .put("requestId", requestId.toString())
+                .put("outcome", outcome)
+                .toString()
+        )
     }
 
     private fun connected(snapshot: ReadingStoreSnapshot) = outcome("Connected", "snapshot" to snapshotJson(snapshot))

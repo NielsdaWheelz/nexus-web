@@ -1,5 +1,7 @@
 import groovy.json.JsonSlurper
 import java.net.URI
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.tasks.OutputDirectory
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -182,6 +184,12 @@ android {
         buildConfig = true
     }
 
+    // This root contains only the generated offline shelf. Register its
+    // producer below so every asset consumer, including lint, depends on it.
+    sourceSets.named("main") {
+        assets.setSrcDirs(emptyList<String>())
+    }
+
     signingConfigs {
         create("release") {
             storeFile = file(releaseStoreFileProperty ?: "release-keystore-required.jks")
@@ -225,11 +233,16 @@ android {
 }
 
 // The offline reader shelf is a build output, not source: gradle regenerates it
-// from apps/web before the assets are merged, so a clean checkout builds. The
+// from apps/web before any asset consumer runs, so a clean checkout builds. The
 // pdf.js copy is pinned by `apps/web/package.json` + `bun.lock` (asserted at run
 // time by copy-pdfjs.mjs), so node_modules is not declared as an input.
 val webDir = rootProject.projectDir.resolve("../web")
-val buildOfflineReadingAssets = tasks.register<Exec>("buildOfflineReadingAssets") {
+abstract class BuildOfflineReadingAssets : Exec() {
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+}
+
+val buildOfflineReadingAssets = tasks.register<BuildOfflineReadingAssets>("buildOfflineReadingAssets") {
     group = "build"
     description = "Builds the zero-network offline reader shelf from apps/web."
     workingDir = webDir
@@ -239,11 +252,14 @@ val buildOfflineReadingAssets = tasks.register<Exec>("buildOfflineReadingAssets"
     inputs.file(webDir.resolve("vite.offline-reading.config.ts"))
     inputs.file(webDir.resolve("package.json"))
     inputs.file(webDir.resolve("bun.lock"))
-    outputs.dir(layout.projectDirectory.dir("src/main/assets/nexus-offline"))
+    outputDirectory.set(layout.projectDirectory.dir("src/main/assets"))
 }
 
-tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
-    dependsOn(buildOfflineReadingAssets)
+androidComponents.onVariants { variant ->
+    variant.sources.assets?.addGeneratedSourceDirectory(
+        buildOfflineReadingAssets,
+        BuildOfflineReadingAssets::outputDirectory,
+    )
 }
 
 kotlin {
