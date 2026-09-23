@@ -21,7 +21,7 @@ import {
   expectString,
 } from "@/lib/validation";
 
-export const UPLOAD_IDEMPOTENCY_OUTCOMES = ["Created", "Reused"] as const;
+const UPLOAD_IDEMPOTENCY_OUTCOMES = ["Created", "Reused"] as const;
 
 export type UploadResponse =
   | {
