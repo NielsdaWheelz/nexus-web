@@ -296,33 +296,19 @@ export async function proxyResourceShareToFastAPI(
   return response;
 }
 
+// The extension lane: a bearer the extension minted, json request and response
+// bodies only. The transport reads the body itself, so nothing here buffers.
 export async function proxyExtensionToFastAPI(
   request: Request,
   path: string,
-  options: {
-    defaultAccept?: string;
-    defaultContentType?: string;
-    forwardHeaders?: readonly string[];
-  } = {},
 ): Promise<Response> {
   const id = requestId(request.headers.get("x-request-id"));
   const authorization = request.headers.get("authorization") ?? "";
   if (!authorization.toLowerCase().startsWith("bearer ")) {
     return proxyError(id, 401, "E_UNAUTHENTICATED", "Extension token required");
   }
-  const headers = pickHeaders(request.headers, [
-    "idempotency-key", ...(options.forwardHeaders ?? []),
-  ]);
+  const headers = pickHeaders(request.headers, ["content-type", "accept", "idempotency-key"]);
   headers.set("authorization", authorization);
   headers.set("accept-encoding", "identity");
-  const contentType = request.headers.get("content-type") ?? options.defaultContentType;
-  const accept = request.headers.get("accept") ?? options.defaultAccept;
-  if (contentType) headers.set("content-type", contentType);
-  if (accept) headers.set("accept", accept);
-  // Extension uploads finish arriving before the upstream deadline starts.
-  const body = request.method === "GET" || request.method === "HEAD"
-    ? undefined : await request.arrayBuffer();
-  return forward({
-    request, path, id, headers, body, responseHeaderNames: ["content-type"],
-  });
+  return forward({ request, path, id, headers, responseHeaderNames: ["content-type"] });
 }

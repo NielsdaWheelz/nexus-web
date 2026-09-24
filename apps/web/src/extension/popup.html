@@ -1,0 +1,17 @@
+<!doctype html>
+<!-- The popup pins the canonical dark room like the packaged offline shelf: it
+     imports the hosted design-token owner and never reads the account's room. -->
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="color-scheme" content="dark" />
+    <!-- The popup never fetches: every network call belongs to the background. The
+         token owner's canvas grain and ornaments are data: svg images. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'" />
+    <title>Nexus</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./popup.tsx"></script>
+  </body>
+</html>

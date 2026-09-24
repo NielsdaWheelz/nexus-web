@@ -7,21 +7,15 @@ from typing import Any
 
 
 def source_attempt_storage_paths(source_payload: Mapping[str, Any] | None) -> list[str]:
-    """Storage objects owned or referenced by one source-attempt payload."""
+    """Storage objects owned or referenced by one source-attempt payload: the
+    input artifact plus, on a legacy browser capture, its original source markup
+    (``source_storage_path`` until the one-shot conversion rewrites the payload,
+    ``retained_legacy_paths`` afterwards, through the rollback window)."""
     payload = source_payload or {}
-    candidates = [payload.get("storage_path"), payload.get("source_storage_path")]
-    paths: list[str] = []
-    for candidate in candidates:
-        path = candidate.strip() if isinstance(candidate, str) else ""
-        if path and path not in paths:
-            paths.append(path)
-    return paths
-
-
-def clone_source_payload_for_new_attempt(
-    source_payload: Mapping[str, Any] | None,
-) -> dict[str, Any]:
-    """Copy source identity for a retry, dropping the previous attempt's artifacts."""
-    payload = dict(source_payload or {})
-    payload.pop("source_storage_path", None)
-    return payload
+    retained = payload.get("retained_legacy_paths")
+    candidates = [
+        payload.get("storage_path"),
+        payload.get("source_storage_path"),
+        *(retained if isinstance(retained, list) else []),
+    ]
+    return [path.strip() for path in candidates if isinstance(path, str) and path.strip()]

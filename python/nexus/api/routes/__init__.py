@@ -19,6 +19,7 @@ from nexus.api.routes.conversation_branches import router as conversation_branch
 from nexus.api.routes.conversation_context import router as conversation_context_router
 from nexus.api.routes.conversations import router as conversations_router
 from nexus.api.routes.dossiers import router as dossiers_router
+from nexus.api.routes.extension_captures import router as extension_captures_router
 from nexus.api.routes.extension_sessions import router as extension_sessions_router
 from nexus.api.routes.highlights import router as highlights_router
 from nexus.api.routes.imports import router as imports_router
@@ -65,6 +66,7 @@ def create_api_router() -> APIRouter:
     api_router.include_router(me_router)
     api_router.include_router(telemetry_router)
     api_router.include_router(extension_sessions_router)
+    api_router.include_router(extension_captures_router)
     api_router.include_router(auth_handoff_codes_router)
     api_router.include_router(libraries_router)
     api_router.include_router(dossiers_router)

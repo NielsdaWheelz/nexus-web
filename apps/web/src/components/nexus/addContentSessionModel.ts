@@ -2,7 +2,7 @@ import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { mediaCaptureErrorMessage } from "@/lib/media/captureFeedback";
 import type { AddSeed } from "@/lib/nexus/model";
-import type { LibraryDestinationSelection } from "@/lib/libraries/client";
+import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
 import {
   UploadSessionError,
   type AcceptedIngestResult,

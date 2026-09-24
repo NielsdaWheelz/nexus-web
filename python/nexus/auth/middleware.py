@@ -44,12 +44,6 @@ PUBLIC_PATHS = {
     "/billing/stripe/webhook",
     "/ingest/email",
 }
-EXTENSION_AUTH_PATHS = {
-    "/auth/extension-sessions/current",
-    "/media/capture/article",
-    "/media/capture/file",
-    "/media/capture/url",
-}
 # Paths that require the X-Nexus-Internal trust signal but no Bearer token,
 # because the route authenticates the caller via a credential in the request
 # body (e.g. single-use handoff code + verifier). The user has no Supabase
@@ -146,7 +140,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
             if error_response_obj:
                 return error_response_obj
 
-        if request.url.path in EXTENSION_AUTH_PATHS:
+        # The extension bearer is verified at the route boundary
+        # (get_extension_viewer) for exactly its own session route and the
+        # capture routes; no other path accepts an extension token.
+        if request.url.path == "/auth/extension-sessions/current" or request.url.path.startswith(
+            "/extension/"
+        ):
             return await call_next(request)
 
         if request.url.path in INTERNAL_ONLY_PATHS:

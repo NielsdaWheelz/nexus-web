@@ -8,8 +8,9 @@
     "start": "next start",
     "lint:css-tokens": "node scripts/check-css-tokens.mjs",
     "lint": "eslint src/ androidPlayerProtocolContract.ts --max-warnings 0",
-    "typecheck": "rm -rf .next/types && next typegen && tsc --noEmit",
-    "build:offline-reading": "node scripts/build-offline-reading.mjs"
+    "typecheck": "rm -rf .next/types && next typegen && tsc --noEmit && tsc -p src/extension/tsconfig.json --noEmit",
+    "build:offline-reading": "node scripts/build-offline-reading.mjs",
+    "build:extension": "node scripts/build-extension.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -33,6 +34,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.6",
+    "@types/firefox-webext-browser": "^143.0.0",
     "@types/node": "^22.10.5",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

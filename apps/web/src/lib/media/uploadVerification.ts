@@ -16,6 +16,7 @@ export const UPLOAD_VERIFICATION_CODES = [
   "E_SOURCE_INTEGRITY",
   "E_INVALID_FILE_TYPE",
   "E_FILE_TOO_LARGE",
+  "E_CAPTURE_TOO_LARGE",
 ] as const;
 
 export type UploadVerificationCode = (typeof UPLOAD_VERIFICATION_CODES)[number];

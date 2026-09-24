@@ -45,9 +45,11 @@ shellcheck "${shell_files[@]}"
 
 (
   cd apps/web
-  # the packaged offline shelf is a build output; building it here both proves
-  # the android asset build and feeds the CSS-token closure check below.
+  # the packaged offline shelf and the firefox extension are build outputs;
+  # building them here proves both packages and feeds the CSS-token closure
+  # check below.
   bun run build:offline-reading
+  bun run build:extension
   bun run lint:css-tokens
   bun run lint
   bun run typecheck

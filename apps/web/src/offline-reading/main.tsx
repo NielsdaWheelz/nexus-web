@@ -1,12 +1,13 @@
-// The shelf reuses the hosted design-token owner, the pdf.js viewer stylesheet
-// and the reader apparatus/highlight sheets so the shared reader core renders
-// with the same geometry it has in the workspace. All four are bundled locally
-// by Vite; the packaged closure stays hermetic.
+// The shelf reuses the hosted design-token owner, the packaged font map, the
+// pdf.js viewer stylesheet and the reader apparatus/highlight sheets so the
+// shared reader core renders with the same geometry it has in the workspace.
+// All five are bundled locally by Vite; the packaged closure stays hermetic.
 //
 // Import order is load order: these come before every component module, so
 // `offlineReading.module.css` -- reached through `OfflineReadingShelf` below --
 // is emitted last and owns every shelf-specific override.
 import "@/app/globals.css";
+import "@/app/packagedFonts.css";
 import "pdfjs-dist/web/pdf_viewer.css";
 import "@/lib/highlights/highlights.css";
 import "@/lib/reader/apparatus.css";

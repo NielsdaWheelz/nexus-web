@@ -448,18 +448,6 @@ UploadSessionResponse = Annotated[
 ]
 
 
-class ArticleCaptureRequest(BaseModel):
-    url: str = Field(min_length=1, max_length=2048)
-    content_html: str = Field(min_length=1)
-    source_html: str = Field(min_length=1)
-    title: str | None = Field(default=None, max_length=1024)
-    byline: str | None = Field(default=None, max_length=1024)
-    excerpt: str | None = Field(default=None, max_length=4000)
-    site_name: str | None = Field(default=None, max_length=1024)
-    published_time: str | None = Field(default=None, max_length=128)
-    library_ids: list[UUID] = Field(default_factory=list)
-
-
 class RetrySourceRequest(_Strict):
     from_stage: Literal["source"]
     client_mutation_id: ClientMutationUuidText

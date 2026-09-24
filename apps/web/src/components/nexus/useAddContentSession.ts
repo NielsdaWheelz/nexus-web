@@ -10,10 +10,8 @@ import { assertNever } from "@/lib/assertNever";
 import { isAbortError } from "@/lib/errors";
 import { extractUrls } from "@/lib/extractUrls";
 import type { AddSeed } from "@/lib/nexus/model";
-import {
-  createLibrary,
-  type LibraryDestinationSelection,
-} from "@/lib/libraries/client";
+import { createLibrary } from "@/lib/libraries/client";
+import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
 import { libraryRequestErrorMessage } from "@/lib/libraries/libraryRequestErrorMessage";
 import {
   addMediaFromUrl,

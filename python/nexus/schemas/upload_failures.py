@@ -15,6 +15,7 @@ UploadVerificationFailureCode = Literal[
     "E_SOURCE_INTEGRITY",
     "E_INVALID_FILE_TYPE",
     "E_FILE_TOO_LARGE",
+    "E_CAPTURE_TOO_LARGE",
 ]
 """The closed set of deterministic upload rejections recorded on a session.
 

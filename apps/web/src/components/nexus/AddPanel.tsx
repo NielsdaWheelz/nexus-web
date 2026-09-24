@@ -9,10 +9,8 @@ import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Textarea from "@/components/ui/Textarea";
 import type { NexusTarget } from "@/lib/nexus/model";
-import {
-  isLibraryDestinationDefect,
-  type LibraryDestinationSelection,
-} from "@/lib/libraries/client";
+import { isLibraryDestinationDefect } from "@/lib/libraries/client";
+import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
 import {
   libraryPlacementDestinationKey,
   type LibraryPlacementDestinationKey,

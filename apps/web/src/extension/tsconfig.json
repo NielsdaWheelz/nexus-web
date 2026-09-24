@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "types": ["firefox-webext-browser", "vite/client"],
+    "incremental": false
+  },
+  "include": ["**/*.ts", "**/*.tsx"],
+  // reset the base exclude, which drops src/extension from the hosted program
+  "exclude": []
+}

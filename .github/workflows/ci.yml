@@ -38,6 +38,7 @@ jobs:
           test "$(bun --version)" = "$(cat .bun-version)"
           uv sync --extra dev --locked --directory python
           bun install --frozen-lockfile --cwd apps/web
+          bun install --frozen-lockfile --cwd node/ingest
 
       - name: check
         run: ./scripts/test

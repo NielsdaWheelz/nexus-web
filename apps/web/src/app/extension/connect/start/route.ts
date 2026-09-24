@@ -45,6 +45,18 @@ export async function GET(req: Request) {
     ));
   }
 
+  // The extension's per-flow correlation value, echoed untouched in the hash
+  // next to the outcome so the caller can bind the callback to its own flow.
+  const state = requestUrl.searchParams.get("state");
+  if (state !== null && !/^[A-Za-z0-9_-]{1,128}$/.test(state)) {
+    return preserve(NextResponse.json(
+      { error: { code: "E_INVALID_REQUEST", message: "state is invalid" } },
+      { status: 400 }
+    ));
+  }
+  const callbackHash = (outcome: Record<string, string>) =>
+    new URLSearchParams(state === null ? outcome : { ...outcome, state }).toString();
+
   const parsedAllowedOrigins = parseWebOriginList(
     process.env.NEXUS_EXTENSION_REDIRECT_ORIGINS
   );
@@ -109,10 +121,7 @@ export async function GET(req: Request) {
   const { fastApiBaseUrl } = getEnv().internalApi;
 
   const sessionFailedRedirect = () => {
-    redirectUrl.hash = new URLSearchParams({
-      error: "session_failed",
-      request_id: requestId,
-    }).toString();
+    redirectUrl.hash = callbackHash({ error: "session_failed", request_id: requestId });
     return preserve(NextResponse.redirect(redirectUrl));
   };
 
@@ -148,6 +157,6 @@ export async function GET(req: Request) {
     return sessionFailedRedirect();
   }
 
-  redirectUrl.hash = new URLSearchParams({ token }).toString();
+  redirectUrl.hash = callbackHash({ token });
   return preserve(NextResponse.redirect(redirectUrl));
 }

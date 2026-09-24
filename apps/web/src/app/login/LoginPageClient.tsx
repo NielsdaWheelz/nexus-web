@@ -24,6 +24,7 @@ import {
 import type { PasswordSignInOutcome } from "@/lib/auth/password-flow";
 import {
   buildAuthNativeGoogleDeepLink,
+  buildAuthReturnTargetUrl,
   buildAuthStartDeepLink,
   isDefaultAuthReturnTarget,
   type AuthReturnTarget,
@@ -283,11 +284,15 @@ export default function LoginPageClient({
     try {
       let response: Response;
       try {
+        // A successful sign-in answers 303 to the return target. The browser
+        // must navigate there itself: following the redirect inside fetch
+        // would run the target's own redirects (the extension's identity
+        // callback among them) as opaque cross-origin fetches and lose them.
         response = await fetch(event.currentTarget.action, {
           method: "POST",
           body,
           credentials: "same-origin",
-          redirect: "follow",
+          redirect: "manual",
           headers: { Accept: "application/json" },
         });
       } catch (error) {
@@ -309,8 +314,10 @@ export default function LoginPageClient({
         }
         throw error;
       }
-      if (response.redirected) {
-        window.location.assign(response.url);
+      if (response.type === "opaqueredirect") {
+        window.location.assign(
+          buildAuthReturnTargetUrl(window.location.origin, nextPath),
+        );
         navigationHandedOff = true;
         return;
       }

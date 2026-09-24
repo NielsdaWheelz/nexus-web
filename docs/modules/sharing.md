@@ -32,8 +32,10 @@ Resource access grants and anonymous public reading are separately owned by
   `library_governance.validate_writable_library_destinations` before work starts,
   then write default plus selected destinations through `library_entries`. Source
   owners attach destinations inside their creation transaction whenever they
-  create new media; upload confirm attaches confirm-time destinations only after
-  successful staged-file validation.
+  create new media; upload confirm (local uploads and extension captures alike)
+  revalidates its destinations at publication and attaches them in the same
+  transaction as the receipt, for new and reused media, only after the candidate
+  bytes verified.
 
 ## Android Share Flow
 

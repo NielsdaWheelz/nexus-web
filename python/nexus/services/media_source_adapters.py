@@ -28,7 +28,8 @@ from nexus.db.models import (
 )
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
-from nexus.schemas.presence import Present
+from nexus.schemas.extension_capture import ArticlePacket, decode_article_packet
+from nexus.schemas.presence import Present, nullable_from_presence
 from nexus.schemas.publication_dates import normalize_source_publication_date
 from nexus.services import media_source_types as source_types
 from nexus.services.contributor_taxonomy import (
@@ -549,16 +550,17 @@ def _run_browser_article_capture(
     request_id: str | None,
     fence: SourcePublicationFence,
 ) -> dict[str, object]:
-    payload = dict(attempt.source_payload or {})
-    source_storage_path = str(payload.get("source_storage_path") or "")
-    if not source_storage_path:
-        raise ApiError(ApiErrorCode.E_INTERNAL, "Missing browser article source markup artifact.")
-    fragment_id, observation = _run_stored_html(
+    """The immutable packet the capture published is the whole input: readable
+    html, bounded embed evidence, base url and metadata all come from it."""
+    packet = decode_article_packet(_read_stored_source(session_factory, media_id, attempt, fence))
+    fragment_id, observation = _publish_stored_html(
         session_factory,
         media_id,
         attempt,
-        source_storage_path=source_storage_path,
-        extract_embeds=True,
+        content_html=packet.content_html,
+        embed_source_html=packet.source_html or None,
+        base_url=packet.base_url,
+        packet=packet,
         request_id=request_id,
         fence=fence,
     )
@@ -585,12 +587,22 @@ def _run_email_message(
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST, "Email has no readable text content."
         )
-    fragment_id, _observation = _run_stored_html(
+    try:
+        content_html = _read_stored_source(session_factory, media_id, attempt, fence).decode(
+            "utf-8"
+        )
+    except UnicodeDecodeError as exc:
+        raise InvalidRequestError(
+            ApiErrorCode.E_SANITIZATION_FAILED, "Email source is not valid UTF-8."
+        ) from exc
+    fragment_id, _observation = _publish_stored_html(
         session_factory,
         media_id,
         attempt,
-        source_storage_path=None,
-        extract_embeds=False,
+        content_html=content_html,
+        embed_source_html=None,
+        base_url=str(attempt.requested_url or ""),
+        packet=None,
         request_id=request_id,
         fence=fence,
     )
@@ -602,21 +614,17 @@ def _run_email_message(
     }
 
 
-def _run_stored_html(
+def _read_stored_source(
     session_factory: sessionmaker[Session],
     media_id: UUID,
     attempt: MediaSourceAttempt,
-    *,
-    source_storage_path: str | None,
-    extract_embeds: bool,
-    request_id: str | None,
     fence: SourcePublicationFence,
-) -> tuple[UUID, ContributorObservationBatch]:
-    """Acquire the stored HTML, then publish its complete artifact set exactly once."""
-    payload = dict(attempt.source_payload or {})
-    storage_path = str(payload.get("storage_path") or "")
+) -> bytes:
+    """Mark the media extracting under the fence, then read the attempt's stored
+    source object whole: a browser capture's packet, an email's html."""
+    storage_path = str(dict(attempt.source_payload or {}).get("storage_path") or "")
     if not storage_path:
-        raise ApiError(ApiErrorCode.E_INTERNAL, "Missing article source artifact.")
+        raise ApiError(ApiErrorCode.E_INTERNAL, "Missing stored source artifact.")
     _begin_source_extraction(
         session_factory,
         media_id,
@@ -624,18 +632,37 @@ def _run_stored_html(
         expected_kinds=_WEB_ARTICLE,
         label="stored_html_extraction",
     )
-    storage_client = get_storage_client()
-    content_html = _read_stored_html(storage_client, storage_path, "Article source")
-    source_html = (
-        _read_stored_html(storage_client, source_storage_path, "Article source markup")
-        if source_storage_path
-        else None
-    )
+    try:
+        return b"".join(get_storage_client().stream_object(storage_path))
+    except StorageError as exc:
+        raise ApiError(
+            ApiErrorCode.E_STORAGE_ERROR, "Stored source is missing from storage."
+        ) from exc
+
+
+def _publish_stored_html(
+    session_factory: sessionmaker[Session],
+    media_id: UUID,
+    attempt: MediaSourceAttempt,
+    *,
+    content_html: str,
+    embed_source_html: str | None,
+    base_url: str,
+    packet: ArticlePacket | None,
+    request_id: str | None,
+    fence: SourcePublicationFence,
+) -> tuple[UUID, ContributorObservationBatch]:
+    """Prepare the acquired HTML, then publish its complete artifact set exactly once.
+
+    A browser packet carries embed evidence and capture metadata; email has
+    neither, so ``packet`` decides both embed extraction and metadata.
+    """
+    extract_embeds = packet is not None
     try:
         prepared = prepare_web_article_fragment(
             html=content_html,
-            embed_source_html=source_html,
-            base_url=str(attempt.requested_url or ""),
+            embed_source_html=embed_source_html,
+            base_url=base_url,
             fragment_idx=0,
             extract_embeds=extract_embeds,
         )
@@ -676,13 +703,10 @@ def _run_stored_html(
                 media=media,
                 locked_attempt=locked,
                 media_id=media_id,
-                storage_path=storage_path,
-                content_html=content_html,
                 prepared=prepared,
-                extract_embeds=extract_embeds,
+                packet=packet,
                 request_id=request_id,
                 locked_embed_media_ids=locked_embed_media_ids,
-                payload=payload,
             ),
         )
 
@@ -696,35 +720,21 @@ def _run_stored_html(
     )
 
 
-def _read_stored_html(storage_client: StorageClient, storage_path: str, label: str) -> str:
-    try:
-        return b"".join(storage_client.stream_object(storage_path)).decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise InvalidRequestError(
-            ApiErrorCode.E_SANITIZATION_FAILED, f"{label} is not valid UTF-8."
-        ) from exc
-    except StorageError as exc:
-        raise ApiError(ApiErrorCode.E_STORAGE_ERROR, f"{label} is missing from storage.") from exc
-
-
 def _replace_stored_html_projection(
     *,
     db: Session,
     media: Media,
     locked_attempt: MediaSourceAttempt,
     media_id: UUID,
-    storage_path: str,
-    content_html: str,
     prepared: WebArticlePreparedFragment,
-    extract_embeds: bool,
+    packet: ArticlePacket | None,
     request_id: str | None,
     locked_embed_media_ids: set[UUID],
-    payload: dict[str, object],
 ) -> tuple[UUID, ContributorObservationBatch]:
     owner_user_id = locked_attempt.created_by_user_id or media.created_by_user_id
     if owner_user_id is None:
         raise ApiError(ApiErrorCode.E_INTERNAL, "Stored HTML source attempt has no owner.")
-    if not extract_embeds:
+    if packet is None:
         delete_document_embed_artifacts(db, owner_user_id=owner_user_id, media_id=media_id)
     delete_web_article_artifacts(db, media_id=media_id, include_content_index=False)
     fragment = Fragment(
@@ -737,7 +747,7 @@ def _replace_stored_html_projection(
     db.add(fragment)
     db.flush()
     insert_fragment_blocks(db, fragment.id, prepared.fragment_blocks)
-    if extract_embeds:
+    if packet is not None:
         queued_children = replace_document_embed_artifact(
             db,
             owner_user_id=owner_user_id,
@@ -771,28 +781,26 @@ def _replace_stored_html_projection(
         ),
         edges=prepared.apparatus_edges,
     )
-    if not extract_embeds:
+    if packet is None:
         return fragment.id, NOT_OBSERVED
-    title = str(payload.get("title") or "").strip()
+    title = packet.title.strip()
     if title:
         media.title = title[:255]
-    return fragment.id, _persist_capture_metadata(db, media, payload)
+    return fragment.id, _persist_capture_metadata(db, media, packet)
 
 
 def _persist_capture_metadata(
-    db: Session, media: Media, payload: dict[str, object]
+    db: Session, media: Media, packet: ArticlePacket
 ) -> ContributorObservationBatch:
-    """Persist captured article metadata and build its ``author`` observation."""
-    excerpt = str(payload.get("excerpt") or "").strip()
-    site_name = str(payload.get("site_name") or "").strip()
-    byline = str(payload.get("byline") or "").strip()
+    """Persist the packet's article metadata and build its ``author`` observation."""
+    excerpt = (nullable_from_presence(packet.excerpt) or "").strip()
+    site_name = (nullable_from_presence(packet.site_name) or "").strip()
+    byline = (nullable_from_presence(packet.byline) or "").strip()
     if excerpt:
         media.description = excerpt[:2000]
     if site_name:
         media.publisher = site_name[:255]
-    edition_date = normalize_source_publication_date(
-        str(payload.get("published_time") or "").strip()
-    )
+    edition_date = normalize_source_publication_date(nullable_from_presence(packet.published_time))
     if isinstance(edition_date, Present):
         media.edition_published_date = edition_date.value
     bump_all_media_fact_collections(db)

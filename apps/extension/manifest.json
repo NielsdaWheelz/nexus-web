@@ -1,17 +1,17 @@
 {
-  "manifest_version": 3,
+  "manifest_version": 2,
   "name": "Nexus Capture",
-  "version": "0.1.0",
-  "description": "Save articles, PDF/EPUB files, and supported videos to Nexus.",
+  "version": "1.0.0",
+  "description": "Save the current article, or a linked PDF or EPUB, to your Nexus.",
   "icons": {
     "16": "icons/16.png",
     "32": "icons/32.png",
     "48": "icons/48.png",
     "128": "icons/128.png"
   },
-  "action": {
+  "browser_action": {
     "default_popup": "popup.html",
-    "default_title": "Nexus Capture",
+    "default_title": "Save to Nexus",
     "default_icon": {
       "16": "icons/16.png",
       "32": "icons/32.png",
@@ -19,11 +19,20 @@
       "128": "icons/128.png"
     }
   },
-  "permissions": ["activeTab", "identity", "scripting", "storage"],
-  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": true
+  },
+  "permissions": ["activeTab", "identity", "scripting", "storage", "menus"],
+  "optional_permissions": ["http://*/*", "https://*/*"],
+  "incognito": "not_allowed",
   "browser_specific_settings": {
     "gecko": {
-      "id": "capture@nexus.local"
+      "id": "capture@nexus.local",
+      "strict_min_version": "153.0",
+      "data_collection_permissions": {
+        "required": ["websiteContent", "browsingActivity"]
+      }
     }
   }
 }
