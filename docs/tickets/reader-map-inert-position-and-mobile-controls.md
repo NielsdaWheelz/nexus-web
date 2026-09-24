@@ -30,6 +30,16 @@ was removed. the matched durable-state snapshot was unchanged.
 prerequisite: the candidate reader and a downloaded publication running on the
 supported android/webview surface with touch and a screen reader available.
 
+2026-09-24 source review at `7dc68929b4d5ddfd77eb1a50228d477fa0148b5d` adds a
+specific disclosure check: `MediaPaneBody.tsx:6517-6519` opens map detail without
+passing its trigger as `returnFocusTo`, unlike `useResourceInspector.ts:305-309`.
+`WorkspaceHost.tsx:1185-1188` then clears the explicit opener and `:1200-1221`
+returns desktop focus to pane chrome. mobile `useReturnFocus.ts:79-88` captures
+ambient focus, so failure on all devices is not established. manually check
+pointer and keyboard open/dismiss paths; remove the redundant opener or pass
+its actual trigger through the existing focus contract. this is source evidence,
+not a new physical-device verdict.
+
 proposed fix: perform and record the operator review; correct any defects at
 the owning control. cover the live and downloaded readers, named map disclosure,
 outline and coincident-member selection, current position, return,
