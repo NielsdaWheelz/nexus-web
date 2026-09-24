@@ -14,6 +14,24 @@ record `media.browser_capture_sha256`. each rewritten payload keeps its original
 sweep spares them and media deletion removes them. that key IS the rollback
 window: a code-plus-data rollback restores payloads naming blobs that still exist.
 
+production prerequisite (2026-09-23 handoff review, pr #377 at `5087d9e5f`):
+quiesce upload/capture requests and affected source jobs/retries before migration;
+keep them stopped through conversion and its zero-work second run, then resume.
+the pr body's “deploy; migrate; convert” sequence omits this boundary, required
+by `docs/extension-firefox-v1-plan.md:252`. the conversion module's opening
+contract also requires conversion before enabling captures; the new adapter
+accepts packet inputs only. retain verified database/source backups and the
+legacy blobs through rollback. do not interpret deployment as permission to
+resume normal processing before conversion finishes.
+
+source-confirmed deployment gap: `deploy/hetzner/release.py:578-580` calls
+`migrate(candidate)` then `start(candidate)` with no conversion step. the
+ordinary `deploy.sh` cannot currently hold this boundary. before production,
+provide the one-shot conversion between those operations (or an explicit
+operator sequence preserving the same stopped-writer boundary); do not run the
+ordinary release and convert afterward. acceptance includes proving no affected
+service resumes until conversion succeeds and a second run has no work.
+
 fix, in order:
 
 1. after the production run prints its converted media and a second run converts
