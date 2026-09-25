@@ -19,6 +19,12 @@ digest `minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e296
 that cache permits an isolated manual rehearsal with `--pull never`, but does
 not prove that a fresh development environment can obtain the pinned image.
 
+2026-09-24 reader-inspector-controls isolated stack on the mac: the bucket
+init image `minio/mc:RELEASE.2025-08-13T08-35-41Z` (`docker/docker-compose.yml:36`)
+was also refused ("pull access denied for minio/mc"), so `make dev` fails on a
+host without a cached image. the stack created the bucket with the `mc` bundled
+in the minio server image instead.
+
 prerequisite and fix: establish the registry's supported distribution and access
 contract, then select a supported, pinned, accessible image for the ordinary
 local s3 development owner in a focused change. preserve local bucket setup and

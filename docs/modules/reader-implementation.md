@@ -26,8 +26,8 @@ contract.
   Cmd/Ctrl+Shift+F; auto-suspends during active selection
 - mobile-safe reader layout and controls; mobile Media panes render the shared
   Resource Inspector as a mobile sheet instead of the desktop attached pane
-- one shared, directly visible Companion action in the same resource-header
-  position on desktop and mobile
+- one shared inspector disclosure after More in the resource header:
+  `Inspector` with its label on desktop, icon-only on mobile
 - on mobile, the Resource Inspector sheet is the single secondary detail path;
   the interactive Document Map overview rail remains desktop-only, while
   readable Web, EPUB, and PDF render one passive position ribbon
@@ -98,7 +98,7 @@ contract.
 
 The shared Pane Search foundation defines `FindOccurrences`, exact
 revision-scoped result keys, one immutable **Go back to reading position**
-origin, and transient Companion results. Web articles and readable
+origin, and transient Inspector results. Web articles and readable
 video/podcast transcripts, EPUBs, and PDFs use that shared lifecycle.
 
 the controller owns session/query identity and checks captured requests against
@@ -188,8 +188,9 @@ in-flow endcap; navigation remains an explicit user action.
 ### Resource Inspector and Document Map surfaces
 
 The Media pane publishes one `resource-inspector` secondary group:
-**Contents** when available, **Evidence**, and **Dossier**. The shared Companion
-action opens that group. The reader's internal **Document Map** remains the
+**Contents** when available, **Evidence**, and **Dossier**. The shared inspector
+action opens and closes that whole group: open restores the remembered tab
+while it is published, else the publication's default. The reader's internal **Document Map** remains the
 owner of Contents, Evidence, and the desktop overview rail; it is not the
 generic secondary-pane disclosure contract.
 
@@ -204,13 +205,21 @@ generic secondary-pane disclosure contract.
   companion is `MarginRail`.
 - Mobile has no interactive Document Map overview rail. The same
   Contents/Evidence bodies render in the Resource Inspector's workspace mobile
-  sheet; readable web, epub, and pdf render a reader-relative position ribbon
-  with a named document-map disclosure. placement is defined by the
+  sheet; readable web, epub, and pdf render a passive, aria-hidden
+  reader-relative position ribbon whose only input is the semantic visible
+  range. placement is defined by the
   [mobile ribbon cutover](../cutovers/mobile-reader-position-ribbon-hard-cutover.md).
-- `useResourceInspector` owns generic companion disclosure. the map controls
-  select its existing contents surface; they introduce no second inspector.
+- `useResourceInspector` owns inspector visibility and remembered-tab
+  selection. the reader publishes no opener of its own: the rail and ribbon
+  carry no inspector control, and bare `g` dispatches the header action.
+- bare `g` fires after the 500ms chord delay, or at once when a non-chord key
+  follows, and invokes the published inspector action without a trigger, so it
+  agrees with the header in every state. `g e` selects Evidence; `g c` and
+  shift-`g` open chat. editable targets, modifier keys, and a topmost modal
+  other than the inspector suppress the chord. the chord reads the action when
+  it fires, so action or publication identity changes do not cancel it.
 - The open region id is scoped by primary pane and secondary group. Mobile
-  carries the Companion opener as ephemeral return-focus state, focuses the
+  carries the inspector opener as ephemeral return-focus state, focuses the
   active surface tab, and returns to that opener when the sheet closes.
 - Chat opens in the conversation pane; it is not a Document Map surface.
 
@@ -331,7 +340,7 @@ bare keys.
 The document table of contents (epub + web article) is the Resource Inspector
 **Contents** tab (`ReaderContentsNav`) and remains a Document Map feature.
 
-- it is on-demand through the shared Companion action. When contents exist,
+- it is on-demand through the shared inspector action. When contents exist,
   Media's capability default order selects it first.
 - it is available independent of highlights: it shows whenever the document
   has TOC nodes, including focus mode where highlights are hidden.
@@ -380,10 +389,9 @@ The projected range feeds the interactive desktop overview rail and the passive
 mobile Web/EPUB/PDF ribbon. The ribbon paints at the reader surface bottom
 (`bottom: 0`); it consumes no bottom clearance, never rises above Nexus,
 Player, or Android navigation, may be covered by a higher-priority surface, and
-is not workspace fixed chrome. the map control floats above the protected band
-through the element-local `--mobile-content-bottom-clearance`, so nexus and
-player chrome cannot steal its hit region. terminal reader content clears that
-band through the same pane-body publication. The
+is not workspace fixed chrome. terminal reader content clears the protected
+bottom band through the element-local `--mobile-content-bottom-clearance`
+pane-body publication. The
 [mobile ribbon cutover](../cutovers/mobile-reader-position-ribbon-hard-cutover.md)
 owns its semantic range contract and proof; the
 [bottom geometry cutover](../cutovers/mobile-reader-bottom-geometry-hard-cutover.md)
@@ -922,6 +930,10 @@ of its location-target writes uses.
   (apart from a genuine end-of-document witness); it never borrows a later glyph.
 - map preview, return, and restore do not save progress. one excursion origin
   survives successful subsequent jumps; failed navigation restores departure.
+  positioning waits for layout readiness, which certifies the mounted section
+  dom (after the hosted highlights gate) for the reader instance, fragment and
+  typography; a restore that finds no content dom settles instead of waiting,
+  so every restore session ends.
   epub section controls and internal source links use the same positioning owner
   and return origin; navigation does not renew reading activity.
   mobile map jumps keep detail open so return remains available; explicit

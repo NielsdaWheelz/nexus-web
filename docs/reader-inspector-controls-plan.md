@@ -1,6 +1,6 @@
 # reader inspector controls
 
-status: approved direction; implementation and live verification not started
+status: implemented at `810dcff8c`; hosted acceptance verified; android rerun on the final code pending (handset disconnected)
 origin: 2026-09-24 reader council; source `7dc68929b4d5ddfd77eb1a50228d477fa0148b5d`
 
 ## goal and scope
@@ -152,9 +152,65 @@ terminology; deleting tests relinquishes ongoing regression detection.
 
 done: a1–a5 and scoped manual review pass with recorded evidence, final static
 checks pass, retired paths/tests are absent, and owning docs describe the result.
-delete resolved [disclosure](tickets/reader-inspector-disclosure-competes-with-document-map.md)
-and [keyboard](tickets/reader-inspector-keyboard-toggle-disagrees-with-header.md)
+delete the resolved disclosure (`reader-inspector-disclosure-competes-with-document-map`)
+and keyboard (`reader-inspector-keyboard-toggle-disagrees-with-header`)
 tickets/register entries. update the existing
 [accessibility ticket](tickets/reader-map-inert-position-and-mobile-controls.md)
 only for checks actually completed; this change does not close its wider map
 interaction review. record deferred discoveries immediately, one ticket each.
+
+## completion record
+
+candidate: `810dcff8c` on `reader-inspector-controls` (code); docs and tickets
+follow in the closing commit. commits: `2326faa4f` packages a+b, `810dcff8c`
+find, epub-jump and reload repairs.
+
+runtime: macos arm64 host; one isolated stack (own compose project for
+postgres/minio, own supabase auth instance, fastapi, interactive worker, the
+background lane in a linux container at its 448 MiB production bound, `next
+dev` from the worktree); real password login through `/login`; two disposable
+users; fixtures through the upload, ingest, highlight, library and page
+endpoints: an epub with 5 anchored sections (contents), a 6-page pdf (no
+contents), highlights with a note, a library, a page, imports. browser:
+headless playwright chromium 1217. device: samsung SM-S906W, android 16,
+webview 151.0.7922.202, debug build `app.nexus.android.debug` against the same
+stack over `adb reverse`, with a real downloaded publication.
+
+commands: `./scripts/test`; temporary `run-hosted.mjs <run>` (a1–a5, one
+assertion per line, id set pinned to red) and `run-android.mjs <run>` (header
+H1–H10, offline O1–O10); forced-race probes for find, the epub anchor race and
+epub jumps (highlights read delayed 0/400/1500/2500ms); reload restore probes.
+
+red (unmodified `69d8840bc`): hosted 195 pass / 78 fail / 1 blocked; android
+9 / 13. genuine reds: old `Companion` name, icon and title; control before
+More; mobile open state indistinct; rail opener and mobile `map` control;
+bare `g` disagreeing with the header from Evidence and Dossier in both chord
+branches, on desktop and phone.
+
+green (`2326faa4f`): hosted 268 / 6 / 1 — every target red passed; the 6 were
+two pre-existing defects that block acceptance: find Results crashed every
+reader pane ("Maximum update depth": the host re-minted the pane runtime value
+each render while the reader republished per-render values) and epub find
+threw "anchor is not renderable" (a readiness flip rebuilt the cursor);
+cross-section epub jumps moved the counter without positioning when the
+highlights read lost a two-frame race. android 22 / 0.
+
+final (`810dcff8c`): hosted 274 pass / 0 fail / 1 blocked, id set equal to
+red, no pass→fail; a4 3 of 3; find loop, anchor race (10/10) and jump matrix
+(16/16) clean; reload keeps visibility and the remembered tab on desktop and
+mobile with no restore-caused save. `./scripts/test` passes.
+
+scope changes: the find and epub-jump repairs entered as concrete a2/a4
+contract failures. the owner approved fixing reload restore (a reload reopened
+the inspector on Evidence and lost a remembered Contents), which deletes the
+default-surface reconciliation this plan said to retain: restoring and
+publishing now never change visibility or the remembered tab.
+
+limits: the android rerun on `810dcff8c` is pending — its offline bundle is
+byte-identical to the one that passed 22/22, but the hosted phone rows have not
+run on the final code. physical touch and screen-reader checks were waived by
+the owner. 200% zoom is emulated (half viewport, device scale 2). the fork
+fixture is blocked (no generation catalog); `ForkNodeRow` renders `ActionBar`
+without `showLabels`. the pdf was not tested offline. design review was agent
+inspection of rendered screenshots, not a human designer. deferred findings are
+tickets.

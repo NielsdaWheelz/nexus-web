@@ -52,7 +52,7 @@ one always-visible control band before their results, with local text first,
 domain controls next, then status and reset. `Pane.Search` focuses its input.
 page and note editors retain transient `FilterRows` over their direct ordered
 items. document panes, including individual conversations, retain transient
-`FindOccurrences` with companion results.
+`FindOccurrences` with transient Inspector results.
 
 Every domain view is pane-URL state decoded by one strict, total owner codec.
 An unknown, duplicate, partial, or redundantly-default owned key is `Invalid`:
