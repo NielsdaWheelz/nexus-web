@@ -1,6 +1,6 @@
 # reader inspector controls
 
-status: implemented at `810dcff8c`; hosted acceptance verified; android rerun on the final code pending (handset disconnected)
+status: implemented at `810dcff8c`; hosted acceptance verified; android rerun on the final code waived by the owner
 origin: 2026-09-24 reader council; source `7dc68929b4d5ddfd77eb1a50228d477fa0148b5d`
 
 ## goal and scope
@@ -206,11 +206,16 @@ the inspector on Evidence and lost a remembered Contents), which deletes the
 default-surface reconciliation this plan said to retain: restoring and
 publishing now never change visibility or the remembered tab.
 
-limits: the android rerun on `810dcff8c` is pending — its offline bundle is
-byte-identical to the one that passed 22/22, but the hosted phone rows have not
-run on the final code. physical touch and screen-reader checks were waived by
+limits: the android rerun on `810dcff8c` was waived by the owner (handset
+disconnected) — its offline bundle is byte-identical to the one that passed
+22/22 at `2326faa4f`; the hosted phone rows did not run on the final code. physical touch and screen-reader checks were waived by
 the owner. 200% zoom is emulated (half viewport, device scale 2). the fork
 fixture is blocked (no generation catalog); `ForkNodeRow` renders `ActionBar`
 without `showLabels`. the pdf was not tested offline. design review was agent
 inspection of rendered screenshots, not a human designer. deferred findings are
 tickets.
+
+cleanup: the temporary live scripts, fixtures, credentials, isolated stack
+(containers, volumes, network, supabase project) and scratch builds were
+deleted after the final hosted run. the debug app `app.nexus.android.debug`
+remains on the disconnected handset for the owner to uninstall.
