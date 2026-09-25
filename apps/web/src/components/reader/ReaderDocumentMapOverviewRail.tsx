@@ -47,7 +47,6 @@ interface ReaderDocumentMapOverviewRailProps {
   scope: ReaderDocumentOverviewRange & { label: string };
   onActivateMarker: (marker: ReaderDocumentMapMarker) => void;
   onRevealCurrent: () => void;
-  onOpenDetail?: () => void;
 }
 
 type Destination =
@@ -86,7 +85,6 @@ export default function ReaderDocumentMapOverviewRail({
   scope,
   onActivateMarker,
   onRevealCurrent,
-  onOpenDetail,
 }: ReaderDocumentMapOverviewRailProps) {
   const popupId = `${useId()}-reader-map-popup`;
   const railRef = useRef<HTMLDivElement | null>(null);
@@ -416,19 +414,6 @@ export default function ReaderDocumentMapOverviewRail({
         }
       }}
     >
-      {onOpenDetail ? (
-        <button
-          type="button"
-          className={styles.openDetail}
-          onFocus={() => {
-            focusedDestinationIdRef.current = null;
-          }}
-          onClick={onOpenDetail}
-          aria-label="Open document map"
-        >
-          ≡
-        </button>
-      ) : null}
       <div ref={trackRef} className={styles.track} role="toolbar" aria-orientation="vertical" aria-label="Document Map destinations">
         {boundaries.map((position) => (
           <span key={position} className={styles.boundary} aria-hidden="true" style={{ top: `${((position - scope.start) / (scope.end - scope.start)) * 100}%` }} />

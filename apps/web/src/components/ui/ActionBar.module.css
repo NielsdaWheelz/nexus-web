@@ -5,13 +5,17 @@
 }
 
 /* Pane chrome uses the 32px control contract independently of Button's
-   general-purpose small (28px) size. The two-class selector deliberately wins
-   over Button.module.css's single size class without changing global buttons. */
+   general-purpose small (28px) size. The two-class selectors deliberately win
+   over Button.module.css's size classes without changing global buttons.
+   Icon-only actions are square; labelled actions keep their natural width. */
 .bar .chromeAction {
-  width: var(--size-md);
-  min-width: var(--size-md);
   height: var(--size-md);
   min-height: var(--size-md);
+}
+
+.bar .square {
+  width: var(--size-md);
+  min-width: var(--size-md);
 }
 
 .separator {
@@ -22,9 +26,21 @@
   background: var(--edge-subtle);
 }
 
-.pressed {
-  background: var(--surface-2);
+/* Pressed stays visible under the pointer: the descendant selector outranks
+   Button's .ghost:hover regardless of stylesheet order. */
+.bar .pressed,
+.bar .pressed:hover:not(:disabled) {
+  background: var(--surface-active);
   color: var(--ink);
+}
+
+@media (forced-colors: active) {
+  .bar .pressed,
+  .bar .pressed:hover:not(:disabled) {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
 }
 
 .popover {

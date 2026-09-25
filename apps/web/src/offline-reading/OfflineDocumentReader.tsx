@@ -756,7 +756,6 @@ function OfflineTextReader({ document, session, initialLocator, onSave }: {
           scope={{ label: "document", start: 0, end: 1 }}
           onActivateMarker={(marker) => jump(marker.item_id)}
           onRevealCurrent={revealCurrent}
-          onOpenDetail={() => setDetailOpen(true)}
         /> : null}
       </div>
     </>

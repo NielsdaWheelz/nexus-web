@@ -4578,11 +4578,6 @@ export default function MediaPaneBody() {
     secondaryPane.visibility === "visible"
       ? secondaryPane.activeSurfaceId
       : null;
-  const defaultInspectorSurface: "resource-contents" | "resource-evidence" =
-    contentsAvailable ? "resource-contents" : "resource-evidence";
-  const inspectorSurfaceActive =
-    activeReaderSecondarySurface === "resource-evidence" ||
-    (activeReaderSecondarySurface === "resource-contents" && contentsAvailable);
   const inspectorRegionId = paneSecondaryRegionId(
     paneRuntime.paneId,
     "resource-inspector",
@@ -5508,125 +5503,6 @@ export default function MediaPaneBody() {
     [activateForkTarget, activatePaneTarget],
   );
 
-  const toggleInspector = useCallback(
-    (detail: ActionSelectDetail) => {
-      if (inspectorSurfaceActive) {
-        closeSecondaryPane();
-        return;
-      }
-      requestSecondarySurface(defaultInspectorSurface, {
-        returnFocusTo: detail.triggerEl,
-      });
-    },
-    [
-      closeSecondaryPane,
-      defaultInspectorSurface,
-      inspectorSurfaceActive,
-      requestSecondarySurface,
-    ],
-  );
-
-  // G-chord keyboard verbs:
-  //   G (bare)  → toggle Companion (defaultInspectorSurface)
-  //   Shift+G   → chat (opens new pane)
-  //   G c       → chat (opens new pane)
-  //   G e       → Evidence surface
-  useEffect(() => {
-    if (!isPaneActive) return;
-
-    let chordPendingG = false;
-    let chordTimeoutId: number | null = null;
-
-    const clearChord = () => {
-      chordPendingG = false;
-      if (chordTimeoutId !== null) {
-        window.clearTimeout(chordTimeoutId);
-        chordTimeoutId = null;
-      }
-    };
-
-    const handleGChord = (event: KeyboardEvent) => {
-      const readerModalOwnsShortcut =
-        !hasActiveInteractionOwner() ||
-        (inspectorRegionId !== null &&
-          isTopmostInteractionOwner(inspectorRegionId));
-      if (!readerModalOwnsShortcut) {
-        if (chordPendingG) clearChord();
-        return;
-      }
-      if (
-        event.defaultPrevented ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.altKey
-      ) {
-        if (chordPendingG) clearChord();
-        return;
-      }
-      if (isEditableTarget(event.target)) {
-        if (chordPendingG) clearChord();
-        return;
-      }
-
-      // Shift+G → chat (reader navigation contract)
-      if (event.key.toLowerCase() === "g" && event.shiftKey) {
-        clearChord();
-        event.preventDefault();
-        void openChatForMedia();
-        return;
-      }
-
-      // Bare G → start chord; fire toggleInspector after timeout if no follow-up
-      if (event.key.toLowerCase() === "g" && !event.shiftKey) {
-        event.preventDefault();
-        clearChord();
-        chordPendingG = true;
-        chordTimeoutId = window.setTimeout(() => {
-          chordPendingG = false;
-          chordTimeoutId = null;
-          const readerModalStillOwnsShortcut =
-            !hasActiveInteractionOwner() ||
-            (inspectorRegionId !== null &&
-              isTopmostInteractionOwner(inspectorRegionId));
-          if (readerModalStillOwnsShortcut) {
-            toggleInspector({ triggerEl: null });
-          }
-        }, 500);
-        return;
-      }
-
-      // Chord follow-up keys (only when G is pending)
-      if (chordPendingG) {
-        if (event.key === "c") {
-          event.preventDefault();
-          clearChord();
-          void openChatForMedia();
-        } else if (event.key === "e") {
-          event.preventDefault();
-          clearChord();
-          requestSecondarySurface("resource-evidence");
-        } else {
-          // Non-chord key: execute bare-G default immediately and pass through
-          clearChord();
-          toggleInspector({ triggerEl: null });
-        }
-      }
-    };
-
-    document.addEventListener("keydown", handleGChord);
-    return () => {
-      clearChord();
-      document.removeEventListener("keydown", handleGChord);
-    };
-  }, [
-    documentMapAvailable,
-    inspectorRegionId,
-    openChatForMedia,
-    isPaneActive,
-    requestSecondarySurface,
-    toggleInspector,
-  ]);
-
   const releasePdfActionMenuLockRef = useRef<(() => void) | null>(null);
   const handlePdfActionMenuOpenChange = useCallback(
     (open: boolean) => {
@@ -6514,9 +6390,6 @@ export default function MediaPaneBody() {
       readerScrollPositioner],
   );
 
-  const openDocumentMap = useCallback(() => {
-    requestSecondarySurface(contentsAvailable ? "resource-contents" : "resource-evidence");
-  }, [contentsAvailable, requestSecondarySurface]);
   const contentsSurfaceBody = readerNavigation && documentStructure.kind === "Present" ? (
     <div className={styles.readerSecondaryBody}>
       <ReaderDocumentMapDetail
@@ -6673,11 +6546,14 @@ export default function MediaPaneBody() {
         : transcriptFindAvailable
           ? "Find in transcript"
           : "Find in article";
-  const searchCommandsRef =
+  const inspectorCommandsRef =
     useRef<
       Pick<
         ReturnType<typeof useResourceInspector>,
-        "openSearchResults" | "closeSearchResults" | "previewSearchResult"
+        | "openSearchResults"
+        | "closeSearchResults"
+        | "previewSearchResult"
+        | "companionAction"
       >
     >(null);
   const paneFindChromeReleaseRef = useRef<(() => void) | null>(null);
@@ -6699,7 +6575,7 @@ export default function MediaPaneBody() {
   const dismissFind = useCallback(() => {
     try {
       mediaPaneFind?.onDismiss();
-      searchCommandsRef.current?.closeSearchResults();
+      inspectorCommandsRef.current?.closeSearchResults();
     } finally {
       releasePaneFindChromeLock();
     }
@@ -6715,13 +6591,13 @@ export default function MediaPaneBody() {
     [releasePaneFindChromeLock],
   );
   const showFindResults = useCallback((trigger: HTMLButtonElement | null) => {
-    searchCommandsRef.current?.openSearchResults(trigger);
+    inspectorCommandsRef.current?.openSearchResults(trigger);
   }, []);
   const activateFindResult = useCallback(
     (key: Parameters<PaneFindOccurrencesPublication["onActivate"]>[0]) => {
       if (!mediaPaneFind) return;
       void mediaPaneFind.onActivate(key).then((previewed) => {
-        if (previewed) searchCommandsRef.current?.previewSearchResult();
+        if (previewed) inspectorCommandsRef.current?.previewSearchResult();
       });
     },
     [mediaPaneFind],
@@ -6781,7 +6657,113 @@ export default function MediaPaneBody() {
     },
     searchResults: searchResultsBody,
   });
-  searchCommandsRef.current = inspector;
+  inspectorCommandsRef.current = inspector;
+
+  // G-chord keyboard verbs:
+  //   G (bare)  → the inspector's header action (show/hide inspector)
+  //   Shift+G   → chat (opens new pane)
+  //   G c       → chat (opens new pane)
+  //   G e       → Evidence surface
+  // Bare G reads the action through inspectorCommandsRef at fire time, so a
+  // pending chord survives action/publication identity changes.
+  useEffect(() => {
+    if (!isPaneActive) return;
+
+    let chordPendingG = false;
+    let chordTimeoutId: number | null = null;
+
+    const clearChord = () => {
+      chordPendingG = false;
+      if (chordTimeoutId !== null) {
+        window.clearTimeout(chordTimeoutId);
+        chordTimeoutId = null;
+      }
+    };
+
+    const handleGChord = (event: KeyboardEvent) => {
+      const readerModalOwnsShortcut =
+        !hasActiveInteractionOwner() ||
+        (inspectorRegionId !== null &&
+          isTopmostInteractionOwner(inspectorRegionId));
+      if (!readerModalOwnsShortcut) {
+        if (chordPendingG) clearChord();
+        return;
+      }
+      if (
+        event.defaultPrevented ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey
+      ) {
+        if (chordPendingG) clearChord();
+        return;
+      }
+      if (isEditableTarget(event.target)) {
+        if (chordPendingG) clearChord();
+        return;
+      }
+
+      // Shift+G → chat (reader navigation contract)
+      if (event.key.toLowerCase() === "g" && event.shiftKey) {
+        clearChord();
+        event.preventDefault();
+        void openChatForMedia();
+        return;
+      }
+
+      // Bare G → start chord; select the inspector after timeout if no follow-up
+      if (event.key.toLowerCase() === "g" && !event.shiftKey) {
+        event.preventDefault();
+        clearChord();
+        chordPendingG = true;
+        chordTimeoutId = window.setTimeout(() => {
+          chordPendingG = false;
+          chordTimeoutId = null;
+          const readerModalStillOwnsShortcut =
+            !hasActiveInteractionOwner() ||
+            (inspectorRegionId !== null &&
+              isTopmostInteractionOwner(inspectorRegionId));
+          if (readerModalStillOwnsShortcut) {
+            inspectorCommandsRef.current?.companionAction?.onSelect({
+              triggerEl: null,
+            });
+          }
+        }, 500);
+        return;
+      }
+
+      // Chord follow-up keys (only when G is pending)
+      if (chordPendingG) {
+        if (event.key === "c") {
+          event.preventDefault();
+          clearChord();
+          void openChatForMedia();
+        } else if (event.key === "e") {
+          event.preventDefault();
+          clearChord();
+          requestSecondarySurface("resource-evidence");
+        } else {
+          // Non-chord key: execute bare-G default immediately and pass through
+          clearChord();
+          inspectorCommandsRef.current?.companionAction?.onSelect({
+            triggerEl: null,
+          });
+        }
+      }
+    };
+
+    document.addEventListener("keydown", handleGChord);
+    return () => {
+      clearChord();
+      document.removeEventListener("keydown", handleGChord);
+    };
+  }, [
+    inspectorRegionId,
+    openChatForMedia,
+    isPaneActive,
+    requestSecondarySurface,
+  ]);
+
   const mediaFindSourceKey =
     selectedMediaFindCapability.kind === "Available"
       ? selectedMediaFindCapability.adapter.sourceKey
@@ -6880,7 +6862,6 @@ export default function MediaPaneBody() {
                 scope={{ label: "document", start: 0, end: 1 }}
                 onActivateMarker={activateDocumentMapMarker}
                 onRevealCurrent={revealCurrentDocumentPosition}
-                onOpenDetail={openDocumentMap}
               />
             ),
           }
@@ -6891,7 +6872,6 @@ export default function MediaPaneBody() {
       documentMapDestinations,
       documentStructure,
       currentDocumentPosition,
-      openDocumentMap,
       revealCurrentDocumentPosition,
       readerDocumentVisibleRange,
       showDesktopDocumentMapRail,
@@ -7408,7 +7388,6 @@ export default function MediaPaneBody() {
           {showMobileReaderPositionRibbon ? (
             <MobileReaderPositionRibbon
               visibleRange={readerDocumentVisibleRange}
-              onOpenMap={openDocumentMap}
             />
           ) : null}
           {readerProgressOverlay}
