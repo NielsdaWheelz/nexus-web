@@ -35,11 +35,15 @@ Nexus is a reading and notes platform with a Next.js frontend, a first-party And
 make setup
 ```
 
+this installs locked dependencies. configure any local overrides in `.env`
+using `.env.example`; setup does not generate environment files.
+
 ### Run Locally
 
 ```bash
 # terminal 1
 make dev
+make migrate
 
 # terminal 2
 make api
@@ -80,7 +84,7 @@ make build-android
 ## Environment
 
 - `.env.example` is the source of truth for environment variables and defaults.
-- `make setup` generates local `.env` and `apps/web/.env.local`.
+- `make setup` installs locked dependencies; configure local environment overrides manually.
 - `make dev` writes the live Supabase Auth public URL and anon key to `.dev-ports`.
 - static checks are deterministic and unprivileged; they start no services and
   consume no ambient credentials.

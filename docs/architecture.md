@@ -2202,8 +2202,9 @@ The `Makefile` owns product setup, development, build, migration, and
 deployment helpers; `make help` is canonical for those operations. static
 verification has one separate entrypoint, `./scripts/test`.
 
-- **Setup / dev loop**: `make setup`, `make dev` (Docker Compose Postgres + MinIO +
-  Supabase-local Auth), then `make api`, `make web`,
+- **Setup / dev loop**: `make setup` installs locked dependencies; `make dev`
+  starts Docker Compose Postgres + MinIO + Supabase-local Auth. run
+  `make migrate`, then `make api`, `make web`,
   `make worker-interactive`, and `make worker-background` in separate
   terminals. Ports are written to `.dev-ports`.
 - **Formatting**: `make format`, `make format-back`, `make fix-front`.
@@ -2230,8 +2231,9 @@ stopped-writer verified R2 backup and a revision-ancestry proof, and before the
 services start on the new digests.
 
 **Environment**: `.env.example` is the source of truth for every variable
-([`rules/codebase.md`](rules/codebase.md)); `make setup` generates local
-`.env` + `apps/web/.env.local`. Major groups: app/env, database + pool, Supabase
+([`rules/codebase.md`](rules/codebase.md)); configure local `.env` overrides
+manually. `make dev` writes live local auth settings to `.dev-ports` for the
+make targets. Major groups: app/env, database + pool, Supabase
 Auth (issuer/JWKS/audiences), internal secret, encryption key, Codex host/MCP
 grant settings + generation rate limits, the narrow OpenAI embedding key,
 Brave Browse/chat search, streaming (token signing key + base URL + CORS),

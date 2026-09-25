@@ -54,7 +54,9 @@ Primary variables for this app:
 - `NEXUS_EXTENSION_REDIRECT_ORIGINS`
 - `NEXUS_INTERNAL_SECRET` (required outside local/test)
 
-`make setup` writes `apps/web/.env.local` for local development.
+`make web` loads the live local auth settings written by `make dev` to `.dev-ports`.
+when running `bun run dev` directly, supply those settings in the environment or
+`apps/web/.env.local`.
 Full variable definitions live in root `.env.example`.
 
 ## Directory Map

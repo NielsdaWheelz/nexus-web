@@ -573,7 +573,7 @@ class Settings(BaseSettings):
         if missing_auth:
             raise ValueError(
                 f"Missing required Supabase auth settings: {', '.join(missing_auth)}. "
-                "Run 'make setup' to configure Supabase local, or set these environment variables."
+                "Run 'make dev' before starting the app with make, or set these environment variables."
             )
 
     def _validate_database_origin(self) -> None:

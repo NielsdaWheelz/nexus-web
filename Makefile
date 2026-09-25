@@ -1,7 +1,7 @@
 # Nexus Development Makefile
 # Run `make help` for available commands.
 
-.PHONY: help setup dev down logs clean api web worker-interactive worker-background local-runtime-identity \
+.PHONY: help setup dev down logs api web worker-interactive worker-background local-runtime-identity \
 	migrate migrate-down format format-back fix-front build build-android \
 	build-android-release build-icons generate-resource-capabilities
 
@@ -33,7 +33,7 @@ help:
 	@echo "Nexus Development Commands"
 	@echo ""
 	@echo "Setup and run:"
-	@echo "  make setup              - Install deps, start local services, run migrations"
+	@echo "  make setup              - Install locked dependencies"
 	@echo "  make dev                - Start local Postgres, MinIO, and Supabase Auth"
 	@echo "  make down               - Stop local dev services"
 	@echo "  make api                - Start FastAPI on API_PORT (default 8000)"
@@ -62,10 +62,11 @@ help:
 	@echo ""
 	@echo "Maintenance:"
 	@echo "  make logs               - Show local compose service logs"
-	@echo "  make clean              - Clean generated files"
 
 setup:
-	./scripts/agency_setup.sh
+	uv sync --extra dev --locked --directory python
+	bun install --frozen-lockfile --cwd apps/web
+	bun install --frozen-lockfile --cwd node/ingest
 
 dev:
 	@echo "Starting local app data services..."
@@ -135,9 +136,6 @@ down:
 
 logs:
 	COMPOSE_PROJECT_NAME=$(LOCAL_COMPOSE_PROJECT) docker compose -f docker/docker-compose.yml logs -f
-
-clean:
-	./scripts/agency_archive.sh
 
 local-runtime-identity:
 	@mkdir -p $(dir $(LOCAL_RUNTIME_IDENTITY))

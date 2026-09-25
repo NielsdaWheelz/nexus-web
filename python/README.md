@@ -69,7 +69,8 @@ behavior according to [the verification contract](../docs/local-rules/testing-st
 ## Environment
 
 Environment variables and defaults are defined in root `.env.example`.
-Keep local `.env` in sync via `make setup`.
+keep local `.env` overrides in sync manually; `make dev` writes live local auth
+settings to `.dev-ports` for the make targets.
 
 ## Rule Owners
 

@@ -1,6 +1,3 @@
-# Agency
-.agency/
-
 # Python
 __pycache__/
 *.py[cod]
@@ -106,9 +103,6 @@ apps/android/**/*.keystore
 *.pem
 *.key
 secrets/
-
-# Agency
-.agency/state/
 
 # Lock files that shouldn't be edited manually
 # (uv.lock and bun.lock SHOULD be committed)
