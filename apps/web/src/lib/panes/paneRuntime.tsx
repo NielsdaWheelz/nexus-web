@@ -133,7 +133,6 @@ export interface PaneRuntimeContextValue {
     options?: PaneSecondarySurfaceRequestOptions,
   ) => void;
   closeSecondaryPane: () => void;
-  setSecondarySurface: (surfaceId: WorkspaceSecondarySurfaceId) => void;
   requestTransientSecondarySurface: (
     surfaceId: PaneTransientSecondarySurfaceId,
     options?: PaneSecondarySurfaceRequestOptions,
@@ -198,10 +197,6 @@ interface PaneRuntimeProviderProps {
     returnFocusTo?: HTMLElement | null,
   ) => void;
   onCloseSecondaryPane: (secondaryPaneId: string) => void;
-  onSetSecondarySurface: (
-    secondaryPaneId: string,
-    surfaceId: WorkspaceSecondarySurfaceId,
-  ) => void;
   onRequestTransientSecondarySurface: (
     paneId: string,
     routeKey: string,
@@ -311,7 +306,6 @@ export function PaneRuntimeProvider({
   onSetPaneLayout,
   onRequestSecondarySurface,
   onCloseSecondaryPane,
-  onSetSecondarySurface,
   onRequestTransientSecondarySurface,
   onCloseTransientSecondarySurface,
   onPreviewTransientSecondaryResult,
@@ -363,6 +357,41 @@ export function PaneRuntimeProvider({
     );
   }
   const effectiveResourceStatus = resourceStatus;
+  // The host re-mints its secondary and transient projections on renders that
+  // change neither (e.g. the inline `{ id, expanded }` literal). Key both by
+  // value so the runtime value below changes identity only when the pane's
+  // runtime facts change; every pane body consumes it, and a spurious change
+  // re-renders the pane's publishers into another host render.
+  const runtimeSecondaryPane = useMemo(
+    (): WorkspaceAttachedSecondaryPaneState | null =>
+      secondaryPane?.id === undefined
+        ? null
+        : {
+            id: secondaryPane.id,
+            parentPrimaryPaneId: secondaryPane.parentPrimaryPaneId,
+            groupId: secondaryPane.groupId,
+            activeSurfaceId: secondaryPane.activeSurfaceId,
+            widthPx: secondaryPane.widthPx,
+            visibility: secondaryPane.visibility,
+          },
+    [
+      secondaryPane?.id,
+      secondaryPane?.parentPrimaryPaneId,
+      secondaryPane?.groupId,
+      secondaryPane?.activeSurfaceId,
+      secondaryPane?.widthPx,
+      secondaryPane?.visibility,
+    ],
+  );
+  const transientSurfaceId = transientSecondarySurface?.id ?? null;
+  const transientSurfaceExpanded = transientSecondarySurface?.expanded ?? false;
+  const runtimeTransientSecondarySurface = useMemo(
+    () =>
+      transientSurfaceId === null
+        ? null
+        : { id: transientSurfaceId, expanded: transientSurfaceExpanded },
+    [transientSurfaceExpanded, transientSurfaceId],
+  );
   const secondaryPaneId = secondaryPane?.id ?? null;
   const commands = {
     paneId,
@@ -377,7 +406,6 @@ export function PaneRuntimeProvider({
     onSetPaneLayout,
     onRequestSecondarySurface,
     onCloseSecondaryPane,
-    onSetSecondarySurface,
     onRequestTransientSecondarySurface,
     onCloseTransientSecondarySurface,
     onPreviewTransientSecondaryResult,
@@ -501,15 +529,6 @@ export function PaneRuntimeProvider({
       current.onCloseSecondaryPane(current.secondaryPaneId);
     }
   }, []);
-  const setSecondarySurface = useCallback(
-    (surfaceId: WorkspaceSecondarySurfaceId) => {
-      const current = commandsRef.current;
-      if (current.secondaryPaneId) {
-        current.onSetSecondarySurface(current.secondaryPaneId, surfaceId);
-      }
-    },
-    [],
-  );
   const requestTransientSecondarySurface = useCallback(
     (
       surfaceId: PaneTransientSecondarySurfaceId,
@@ -579,10 +598,10 @@ export function PaneRuntimeProvider({
       resourceRef,
       resourceKey,
       resourceStatus: effectiveResourceStatus,
-      secondaryPane,
+      secondaryPane: runtimeSecondaryPane,
       secondaryActivation,
       paneEntryDelivery,
-      transientSecondarySurface,
+      transientSecondarySurface: runtimeTransientSecondarySurface,
       pathParams,
       searchParams: parsed.searchParams,
       hash: parsed.hash,
@@ -592,7 +611,6 @@ export function PaneRuntimeProvider({
       setPaneLayout,
       requestSecondarySurface,
       closeSecondaryPane,
-      setSecondarySurface,
       requestTransientSecondarySurface,
       closeTransientSecondarySurface,
       previewTransientSecondaryResult,
@@ -608,7 +626,6 @@ export function PaneRuntimeProvider({
       setPaneLayout,
       requestSecondarySurface,
       closeSecondaryPane,
-      setSecondarySurface,
       acknowledgeSecondaryActivation,
       acknowledgePaneEntryDelivery,
       setPaneAliases,
@@ -622,10 +639,10 @@ export function PaneRuntimeProvider({
       resourceRef,
       resourceKey,
       effectiveResourceStatus,
-      secondaryPane,
+      runtimeSecondaryPane,
       secondaryActivation,
       paneEntryDelivery,
-      transientSecondarySurface,
+      runtimeTransientSecondarySurface,
       routeKey,
       routeId,
       requestTransientSecondarySurface,

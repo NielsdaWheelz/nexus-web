@@ -5,9 +5,9 @@
 }
 
 /* Pane chrome uses the 32px control contract independently of Button's
-   general-purpose small (28px) size. The two-class selectors deliberately win
-   over Button.module.css's size classes without changing global buttons.
-   Icon-only actions are square; labelled actions keep their natural width. */
+   general-purpose small (28px) size, without changing global buttons. Height
+   wins over Button's .sm by specificity; width ties .iconOnly.sm, so min-width
+   holds icon-only actions square. Labelled actions keep their natural width. */
 .bar .chromeAction {
   height: var(--size-md);
   min-height: var(--size-md);
@@ -40,6 +40,10 @@
     background: Highlight;
     color: HighlightText;
     forced-color-adjust: none;
+  }
+
+  .bar .pressed:focus-visible {
+    outline-color: Highlight;
   }
 }
 

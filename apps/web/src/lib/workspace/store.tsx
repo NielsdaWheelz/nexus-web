@@ -422,7 +422,7 @@ function workspaceReducer(
     case "set_secondary_surface":
       return patchSecondaryPane(state, action.secondaryPaneId, (pane) =>
         getSecondaryGroupForSurface(action.surfaceId) === pane.groupId
-          ? { activeSurfaceId: action.surfaceId, visibility: "visible" }
+          ? { activeSurfaceId: action.surfaceId }
           : null,
       );
 

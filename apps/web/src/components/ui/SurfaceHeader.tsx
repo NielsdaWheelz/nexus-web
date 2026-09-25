@@ -124,7 +124,6 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(
               options={[companionAction]}
               label="Pane actions"
               showLabels
-              className={styles.actions}
             />
           ) : null}
         </div>
