@@ -161,8 +161,8 @@ A failed or lost response reports the command error and leaves the view for
 refresh; the browser neither retries the delete nor reads a commit witness.
 
 Desktop and mobile primary headers keep stable Back and Forward positions,
-render the optional typed Companion action, and expose exactly one **More**
-trigger when contextual commands exist. Search/Return, Refresh, route Share,
+expose exactly one **More** trigger when contextual commands exist, and render
+the optional typed companion action after it. Search/Return, Refresh, route Share,
 published view commands, and canonical resource actions appear in that order;
 empty groups disappear. Route Share is omitted for a resource pane because its
 canonical plan owns Share. A single marker on More represents hidden status.
@@ -171,7 +171,15 @@ Owner separation never creates a second trigger.
 Every primary identity projection uses one 60px track. The mobile safe area is
 additive.
 
-The sole promoted action is typed Companion and renders through `ActionBar`;
+The sole promoted action is the typed companion action. `companionAction` is
+the only source of its name (`Inspector`), `PanelRight` icon and disclosure
+state; desktop renders it through `ActionBar` with `showLabels` (icon and label
+at natural width; the identity yields width first), mobile as an icon-only
+48px bar button. Its open state is visually distinct and announced through
+`aria-expanded`; `aria-controls` names the mounted region while open, and the
+hover title is the projected `Show inspector`/`Hide inspector` command copy.
+Other `ActionBar` consumers stay icon-only.
+
 `ContextualActionMenu` projects every remaining command through the existing
 `ActionMenu` in desktop and mobile chrome. PDF and EPUB publish
 one labelled `instrument` containing control content only. `PaneShell` owns its
@@ -259,6 +267,15 @@ preview. Ending Find restores the prior durable presentation exactly. Selecting
 a durable tab explicitly ends the transient presentation and selects that tab.
 Transient-only publication is valid while active and renders without a durable
 tab strip.
+
+Restoring a workspace and publishing a secondary group never change durable
+visibility or the remembered tab. While the remembered tab is unpublished (for
+example, reader Contents before its navigation loads), the host shows the
+publication's default without rewriting the tab, so a later publication brings
+it back. `set_secondary_surface` changes only the active tab; only the
+disclosure command and explicit surface requests open or close the group. The
+pane runtime value changes identity only when the pane's runtime facts change,
+so republishing an unchanged publication cannot re-render its publisher.
 
 Standalone Artifact panes use that transient-only form directly. The active
 accepted Dossier revision owns its opaque-frame Find capability; the Artifact
@@ -453,8 +470,8 @@ for its semantic range, and the
 for its placement.
 
 The reader Document Map overview rail is fixed primary chrome and remains
-desktop-only. Its markers activate contextual targets; it contains no generic
-Document Map opener.
+desktop-only. Its markers activate contextual targets; it contains no inspector
+or Document Map opener.
 
 ## Pane History
 

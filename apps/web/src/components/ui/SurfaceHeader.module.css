@@ -186,12 +186,6 @@
   justify-content: flex-end;
 }
 
-.actions {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
 .menuStatusMarker {
   position: absolute;
   inset-block-start: 4px;
@@ -208,8 +202,7 @@
     padding-inline: var(--space-3);
   }
 
-  .trailing,
-  .actions {
+  .trailing {
     gap: var(--space-1);
   }
 }

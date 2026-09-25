@@ -10,20 +10,14 @@
 //  - publishes ONE memoized `PaneSecondaryPublication` whose Dossier body is
 //    reference-stable per subject (stream tokens mutate the store, not the
 //    publication — the primary pane never re-renders per token);
-//  - returns the ONE shared Companion disclosure action;
-//  - restores a still-valid workspace tab else the first published default;
-//  - reconciles an unsupported active surface to the default pre-paint on
-//    subject/capability change (no closed/stale-frame flash);
+//  - returns the ONE shared inspector disclosure action;
+//  - opens on the remembered tab while it is published, else the
+//    publication's default; it never rewrites the remembered tab (the host
+//    shows the default while that tab is unpublished, so a later publication
+//    brings it back);
 //  - resets revision selection to Current on the Inspector's hidden→visible
 //    transition (an observer — NOT a body mount effect).
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createElement, type ReactNode } from "react";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
@@ -335,34 +329,6 @@ export function useResourceInspector({
       onClose,
     ],
   );
-
-  // --- Render-time stale-surface reconciliation (pre-paint; no stale frame) --
-  const setSecondarySurface = paneRuntime?.setSecondarySurface;
-  const defaultSurfaceId = publication?.defaultSurfaceId ?? null;
-  useLayoutEffect(() => {
-    if (
-      !publication ||
-      !inspectorVisible ||
-      !storedActive ||
-      !setSecondarySurface
-    ) {
-      return;
-    }
-    if (
-      !secondaryPublicationIncludesSurface(publication, storedActive) &&
-      defaultSurfaceId
-    ) {
-      // The active tab is no longer published (subject/capability changed):
-      // correct to the default BEFORE paint so no closed/stale frame shows.
-      setSecondarySurface(defaultSurfaceId);
-    }
-  }, [
-    publication,
-    inspectorVisible,
-    storedActive,
-    defaultSurfaceId,
-    setSecondarySurface,
-  ]);
 
   // --- Reset revision selection on Inspector hidden→visible (observer) -------
   const wasVisibleRef = useRef(false);

@@ -114,7 +114,7 @@ conversation via `POST /conversations` and opens it as a `Conversation` pane.
 
 An existing Conversation publishes one Resource Inspector group with
 `Context | Forks | Dossier`; `/conversations/new` publishes none until the
-resource exists. One shared Companion action opens the group on desktop and
+resource exists. One shared inspector action opens the group on desktop and
 mobile. Context and Forks remain chat-owned bodies; Dossier uses the universal
 surface/controller and workspace-local revision selection.
 
@@ -198,7 +198,7 @@ exists.
 `useConversationPaneFind` keeps its snapshot and adapter stable while only a
 pending message streams. An effective selected-path projection change cancels
 old work and synchronously clears highlights, active-message presentation,
-the scroll preview lease, the one Return origin, and transient Companion
+the scroll preview lease, the one Return origin, and transient Inspector
 results; it preserves and reruns a nonempty query once. `useChatScroll` remains
 the sole viewport owner. Find preview pauses normal pin following without
 writing progress or navigation state; Close stays at the match, and **Go back

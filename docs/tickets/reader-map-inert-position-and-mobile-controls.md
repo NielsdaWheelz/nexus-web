@@ -30,6 +30,19 @@ was removed. the matched durable-state snapshot was unchanged.
 prerequisite: the candidate reader and a downloaded publication running on the
 supported android/webview surface with touch and a screen reader available.
 
+2026-09-24 reader-inspector-controls (`810dcff8c`) removed the rail `≡` and
+mobile ribbon `map` openers. the mobile path to Contents and Evidence is now the
+header `Inspector` control after More (48x48, `aria-expanded`, `aria-controls`
+on the open sheet), which passes its actual trigger; the source-review concern
+about the untriggered map opener no longer applies. observed in headless
+chromium (390x844, 320x640, 200% zoom emulated) and in the handset webview
+(samsung SM-S906W, android 16, webview 151, debug build at `2326faa4f`): pointer
+and keyboard open, sheet close and Escape return focus to the visible,
+interactive opener without moving the reading position; the ribbon is passive
+and aria-hidden; the downloaded reader keeps its `document map` toggle. the
+owner waived physical touch and screen-reader checks for that change, so this
+review stays open.
+
 proposed fix: perform and record the operator review; correct any defects at
 the owning control. cover the live and downloaded readers, named map disclosure,
 outline and coincident-member selection, current position, return,
@@ -38,7 +51,7 @@ focus/announcement order and dismissal.
 acceptance: pointer, keyboard, touch and assistive-technology users reach every
 available section/evidence destination and return to their exact origin without
 hover or precision gestures. at 390x844 and supported neighboring viewport
-sizes, hit testing the visible map opener returns that button throughout its
-painted bounds. navigation alone records no reading/completion. retain candidate
+sizes, hit testing the header inspector control returns that button throughout
+its painted bounds. navigation alone records no reading/completion. retain candidate
 sha, device/runtime, actions, observed announcements/focus and verdict.
 screenshots or accessibility-tree inspection alone are insufficient.

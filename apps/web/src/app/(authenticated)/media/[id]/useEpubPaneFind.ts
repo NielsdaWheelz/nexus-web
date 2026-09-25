@@ -50,7 +50,6 @@ import {
 
 const ENTIRE_BOOK_SCOPE_ID = "EntireBook";
 const CURRENT_SECTION_SCOPE_PREFIX = "CurrentSection:";
-const RENDER_ATTEMPT_LIMIT = 48;
 
 export interface EpubFindPreparedAnchor {
   readonly fragmentIdx: number;
@@ -295,7 +294,11 @@ async function waitForRenderedFragment({
     | EpubRenderedFragmentOverride
     | null;
 }): Promise<EpubFindRenderedState> {
-  for (let attempt = 0; attempt < RENDER_ATTEMPT_LIMIT; attempt += 1) {
+  // No deadline: the reader mounts the fragment after its highlights read
+  // settles and two layout frames, and a hidden page delivers no frames. The
+  // wait ends when the fragment renders, the request aborts, or its override is
+  // superseded (a dismiss replaces it; dispose clears it).
+  for (;;) {
     throwIfAborted(signal);
     if (getRenderedFragmentOverride() !== expectedOverride) {
       throw abortError("EPUB Find rendered override was superseded.");
@@ -311,7 +314,6 @@ async function waitForRenderedFragment({
       window.requestAnimationFrame(() => resolve()),
     );
   }
-  throw new Error("EPUB Find preview fragment did not render.");
 }
 
 function createEpubFindAdapter({
@@ -334,8 +336,26 @@ function createEpubFindAdapter({
   let origin: CapturedEpubFindOrigin | null = null;
   let previewGeneration = 0;
   let disposed = false;
+  // Positioning resolves against the reader's current rendered state of the
+  // fragment, which the reader may republish over an unchanged dom (a rebuilt
+  // cursor). A newer preview, or an absent or different fragment, supersedes
+  // the operation; only a failure in the current dom is a defect.
+  const currentRenderedState = (
+    fragmentId: string,
+    generation: number,
+  ): EpubFindRenderedState => {
+    if (generation !== previewGeneration) {
+      throw abortError("EPUB Find preview was superseded.");
+    }
+    const current = getRenderedState();
+    if (current?.fragment.fragment_id !== fragmentId) {
+      throw abortError("EPUB Find rendered fragment was superseded.");
+    }
+    assertRenderedState(snapshot, current);
+    return current;
+  };
   const positionExactAnchor = async (
-    rendered: EpubFindRenderedState,
+    fragmentId: string,
     anchorCp: number,
     signal: AbortSignal,
     generation: number,
@@ -344,21 +364,20 @@ function createEpubFindAdapter({
     await scrollPositioner.run((commands) => {
       assertCurrent(snapshot.sourceKey);
       throwIfAborted(signal);
-      if (generation !== previewGeneration || getRenderedState()?.cursor !== rendered.cursor) return;
+      const current = currentRenderedState(fragmentId, generation);
       positioned = scrollToExactCanonicalTextAnchor(
         commands,
-        rendered.viewport,
-        rendered.cursor,
+        current.viewport,
+        current.cursor,
         anchorCp,
       );
     });
     throwIfAborted(signal);
-    return generation === previewGeneration && positioned &&
-      getRenderedState()?.cursor === rendered.cursor &&
-      isCanonicalTextAnchorVisible(rendered.viewport, rendered.cursor, anchorCp);
+    const current = currentRenderedState(fragmentId, generation);
+    return positioned &&
+      isCanonicalTextAnchorVisible(current.viewport, current.cursor, anchorCp);
   };
   const restoreOriginPosition = async (
-    rendered: EpubFindRenderedState,
     captured: CapturedEpubFindOrigin,
     signal: AbortSignal,
     generation: number,
@@ -367,19 +386,19 @@ function createEpubFindAdapter({
     await scrollPositioner.run((commands) => {
       assertCurrent(snapshot.sourceKey);
       throwIfAborted(signal);
-      if (generation !== previewGeneration || getRenderedState()?.cursor !== rendered.cursor) return;
+      const current = currentRenderedState(captured.fragmentId, generation);
       restored = restoreCanonicalTextAnchorViewportPosition(
         commands,
-        rendered.viewport,
-        rendered.cursor,
+        current.viewport,
+        current.cursor,
         captured.anchorCp,
         captured.viewportTopDeltaPx,
         captured.scrollLeft,
       );
     });
     throwIfAborted(signal);
-    return generation === previewGeneration && restored &&
-      getRenderedState()?.cursor === rendered.cursor;
+    currentRenderedState(captured.fragmentId, generation);
+    return restored;
   };
 
   const assertCurrent = (sourceKey: PaneFindSourceKey) => {
@@ -420,7 +439,7 @@ function createEpubFindAdapter({
       fragment: captured.fragment,
     };
     setRenderedFragmentOverride(returnedOverride);
-    const rendered = await waitForRenderedFragment({
+    await waitForRenderedFragment({
       snapshot,
       fragment: captured.fragment,
       expectedOverride: returnedOverride,
@@ -428,7 +447,7 @@ function createEpubFindAdapter({
       getRenderedState,
       getRenderedFragmentOverride,
     });
-    if (!(await restoreOriginPosition(rendered, captured, signal, generation))) {
+    if (!(await restoreOriginPosition(captured, signal, generation))) {
       throw new Error("EPUB Find reading origin is no longer renderable.");
     }
   };
@@ -713,7 +732,7 @@ function createEpubFindAdapter({
           publishCurrentRanges(renderedBefore);
           if (
             !(await positionExactAnchor(
-              renderedBefore,
+              occurrence.fragmentId,
               occurrence.startCp,
               request.signal,
               operationGeneration,
@@ -821,7 +840,7 @@ function createEpubFindAdapter({
           );
           activeOccurrence = occurrence;
           publishCurrentRanges(rendered);
-          if (!(await positionExactAnchor(rendered, occurrence.startCp, request.signal, operationGeneration))) {
+          if (!(await positionExactAnchor(occurrence.fragmentId, occurrence.startCp, request.signal, operationGeneration))) {
             throw new Error(
               "EPUB Find occurrence anchor is not renderable.",
             );
@@ -835,11 +854,17 @@ function createEpubFindAdapter({
           publishedOverride !== null &&
           getRenderedFragmentOverride() === publishedOverride;
         if (overrideStillOwned) {
-          await restorePreviewOriginOrRetire({
-            captured: candidateOrigin,
-            generation: operationGeneration,
-            sourceKey: request.sourceKey,
-          });
+          try {
+            await restorePreviewOriginOrRetire({
+              captured: candidateOrigin,
+              generation: operationGeneration,
+              sourceKey: request.sourceKey,
+            });
+          } catch (restoreError) {
+            // The preview's failure is the root cause; the restore's failure
+            // surfaces only when the preview was merely superseded.
+            throw isAbortError(error) ? restoreError : error;
+          }
           if (originWasNew) {
             setRenderedFragmentOverride(null);
           }

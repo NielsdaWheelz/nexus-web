@@ -30,6 +30,20 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
+- [open] reader / find · 2026-09-24 reader-inspector-controls · epub find previews wait without a fragment-failure signal: [ticket](tickets/epub-find-preview-has-no-fragment-failure-signal.md).
+- [open] reader / find · 2026-09-24 reader-inspector-controls · a supersession abort retires the find preview lease: [ticket](tickets/find-supersession-abort-retires-the-preview-lease.md).
+- [open] reader / find · 2026-09-24 reader-inspector-controls · web and transcript find keep a render frame budget: [ticket](tickets/web-and-transcript-find-render-budget.md).
+- [open] reader / inspector · 2026-09-24 reader-inspector-controls · reload open on Contents briefly shows Evidence: [ticket](tickets/reader-contents-publishes-after-navigation.md).
+- [open] reader / navigation · 2026-09-24 reader-inspector-controls · document-map return drifts a line per round trip: [ticket](tickets/document-map-return-drifts-per-round-trip.md).
+- [open] reader / selection · 2026-09-24 reader-inspector-controls · retained selection geometry ignores a canonical reset: [ticket](tickets/retained-selection-geometry-ignores-canonical-reset.md).
+- [open] workspace / geometry · 2026-09-24 reader-inspector-controls · pdf inspector overflows the viewport at the pane minimum: [ticket](tickets/pdf-inspector-overflows-viewport-at-pane-minimum.md).
+- [open] workspace / rendering · 2026-09-24 reader-inspector-controls · PaneRuntimeFrame memo never bails out: [ticket](tickets/pane-runtime-frame-memo-never-bails-out.md).
+- [open] workspace / copy · 2026-09-24 reader-inspector-controls · secondary tab close label case differs from pane close: [ticket](tickets/secondary-tab-close-label-case.md).
+- [open] epub ingest · 2026-09-24 reader-inspector-controls · fragmentless nav hrefs duplicate contents: [ticket](tickets/epub-nav-without-fragments-duplicates-contents.md).
+- [open] chat api · 2026-09-24 reader-inspector-controls · conversation read returns 500 without a generation catalog: [ticket](tickets/conversation-read-500s-without-generation-catalog.md).
+- [open] worker / indexing · 2026-09-24 reader-inspector-controls · a missing indexing credential is classified as a child defect: [ticket](tickets/indexing-without-credential-is-a-child-defect.md).
+- [open] android offline reading · 2026-09-24 reader-inspector-controls · back from the downloaded reader shows Not found: [ticket](tickets/android-back-from-downloaded-reader-shows-not-found.md).
+- [open] local development · 2026-09-24 reader-inspector-controls · worker overlay memory bound fails the lane check: [ticket](tickets/local-worker-overlay-memory-bound-fails-lane-check.md).
 - [open] android / workspace · 2026-09-22 device verification · an intermediate compatibility probe showed an unproven transient bootstrap failure on reconnect: [ticket](tickets/android-reconnect-transient-workspace-bootstrap.md).
 - [open] library consumption · 2026-09-21 implementation review · ordinary library rows can retain stale finished/unread state after status-only commands: [ticket](tickets/library-status-only-consumption-stays-stale.md).
 - [open] collection docs · 2026-09-21 council · library and lectern contracts still point to deleted cutovers: [ticket](tickets/collection-contract-docs-reference-deleted-cutovers.md).

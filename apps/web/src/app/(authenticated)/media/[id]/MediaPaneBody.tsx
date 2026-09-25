@@ -590,7 +590,7 @@ export default function MediaPaneBody() {
     [mediaFindPreviewLease],
   );
   const textRestoreSettledRef = useRef(false);
-  const [readerLayoutReady, setReaderLayoutReady] = useState(false);
+  const [readyReaderLayout, setReadyReaderLayout] = useState<string | null>(null);
   const lectern = useLectern();
   const offerCompletionUndo = useResourceActionCompletionUndo();
   const lecternResource = lectern.resource;
@@ -1978,23 +1978,37 @@ export default function MediaPaneBody() {
   const primaryTextLocator = semanticViewport?.primaryLocator.kind !== "pdf"
     ? semanticViewport?.primaryLocator
     : undefined;
-  const currentDocumentOffset = documentStructure.kind === "Present" && primaryTextLocator && primaryTextLocator.locations.text_offset !== null
-    ? present(readerTextPointOffset(documentStructure.value, {
+  // The current-position presences feed published chrome, so each is keyed on
+  // its primitive value: a re-render at the same position republishes nothing.
+  const currentDocumentOffsetValue = documentStructure.kind === "Present" && primaryTextLocator && primaryTextLocator.locations.text_offset !== null
+    ? readerTextPointOffset(documentStructure.value, {
         fragment_id: primaryTextLocator.target.fragment_id,
         offset: primaryTextLocator.locations.text_offset,
-      }))
-    : absent<number>();
-  const currentDocumentSection = documentStructure.kind === "Present" && currentDocumentOffset.kind === "Present"
-    ? readerSectionAtPosition(documentStructure.value, currentDocumentOffset.value)
+      })
+    : null;
+  const currentDocumentOffset = useMemo(
+    () => currentDocumentOffsetValue === null ? absent<number>() : present(currentDocumentOffsetValue),
+    [currentDocumentOffsetValue],
+  );
+  const currentDocumentSection = documentStructure.kind === "Present" && currentDocumentOffsetValue !== null
+    ? readerSectionAtPosition(documentStructure.value, currentDocumentOffsetValue)
     : absent<ReaderPositionedSection>();
-  const currentSectionId = currentDocumentSection.kind === "Present"
-    ? present(currentDocumentSection.value.section.section_id)
-    : absent<string>();
-  const currentDocumentPosition = documentStructure.kind === "Present" && documentStructure.value.length > 0 && currentDocumentOffset.kind === "Present"
-    ? present(currentDocumentOffset.value / documentStructure.value.length)
+  const currentSectionIdValue = currentDocumentSection.kind === "Present"
+    ? currentDocumentSection.value.section.section_id
+    : null;
+  const currentSectionId = useMemo(
+    () => currentSectionIdValue === null ? absent<string>() : present(currentSectionIdValue),
+    [currentSectionIdValue],
+  );
+  const currentDocumentPositionValue = documentStructure.kind === "Present" && documentStructure.value.length > 0 && currentDocumentOffsetValue !== null
+    ? currentDocumentOffsetValue / documentStructure.value.length
     : semanticViewport && documentProjection?.kind === "Pdf"
-      ? present(projectReaderDocumentPoint(documentProjection, semanticViewport.visibleStart))
-      : absent<number>();
+      ? projectReaderDocumentPoint(documentProjection, semanticViewport.visibleStart)
+      : null;
+  const currentDocumentPosition = useMemo(
+    () => currentDocumentPositionValue === null ? absent<number>() : present(currentDocumentPositionValue),
+    [currentDocumentPositionValue],
+  );
 
   useEffect(() => {
     const retainedSelection = readRetainedSelection();
@@ -2353,40 +2367,35 @@ export default function MediaPaneBody() {
     resetTextProgressGeneration,
   ]);
 
-  const activeFragmentId = activeContent?.fragmentId ?? null;
+  // Layout readiness waits for the hosted highlights gate, which holds a
+  // fragment's dom back after the fragment arrives ("Loading highlights…");
+  // content states that are not ready never mount content dom. Readiness names
+  // the layout it certifies: the mounted reader instance (reset revision, as the
+  // reader's key), fragment and typography. It is false from the first render
+  // of another layout, not one effect later.
+  const layoutFragmentId = textHighlightInitialLoading ? null : activeContent?.fragmentId ?? null;
+  const readerLayout = isPdf || !layoutFragmentId
+    ? null
+    : `${id}:${canonicalResetRevision ?? "initial"}:${layoutFragmentId}:${readerLayoutKey}`;
+  const readerLayoutReady = readerLayout !== null && readyReaderLayout === readerLayout;
 
   useEffect(() => {
     resetTextProgressGeneration();
-    if (isPdf || !activeFragmentId) {
-      setReaderLayoutReady(false);
-      return;
-    }
-
-    setReaderLayoutReady(false);
-    let firstFrame = 0;
+    // Cleared on every change, so a return to an earlier layout (A -> B -> A)
+    // waits its own two frames.
+    setReadyReaderLayout(null);
+    if (readerLayout === null) return;
     let secondFrame = 0;
-
-    firstFrame = window.requestAnimationFrame(() => {
+    const firstFrame = window.requestAnimationFrame(() => {
       secondFrame = window.requestAnimationFrame(() => {
-        setReaderLayoutReady(true);
+        setReadyReaderLayout(readerLayout);
       });
     });
-
     return () => {
-      if (firstFrame) {
-        window.cancelAnimationFrame(firstFrame);
-      }
-      if (secondFrame) {
-        window.cancelAnimationFrame(secondFrame);
-      }
+      window.cancelAnimationFrame(firstFrame);
+      if (secondFrame) window.cancelAnimationFrame(secondFrame);
     };
-  }, [
-    activeFragmentId,
-    id,
-    isPdf,
-    readerLayoutKey,
-    resetTextProgressGeneration,
-  ]);
+  }, [readerLayout, resetTextProgressGeneration]);
 
   // Restore text locators for web, transcript, and EPUB content.
   useEffect(() => {
@@ -3081,10 +3090,16 @@ export default function MediaPaneBody() {
         restorePhase === "cancelled" || restorePhase === "settled") return;
     const root = contentRef.current;
     const container = textViewportRef.current;
-    if (!root || !container) return;
+    const sessionId = restoreSessionIdRef.current;
+    // Ready layout without content dom means the content state is not ready
+    // (error, empty, or navigation reloading): settle, so the failed navigation
+    // restores its departure.
+    if (!root || !container) {
+      void settleRestoreSession(sessionId);
+      return;
+    }
     const anchorId = epubRestoreRequest.target.anchorId;
     const target = findSourceAnchor(root, anchorId);
-    const sessionId = restoreSessionIdRef.current;
     if (!target) {
       setEpubError("The linked source anchor is unavailable.");
       void settleRestoreSession(sessionId);
@@ -3213,7 +3228,8 @@ export default function MediaPaneBody() {
   // Ordered post-commit canonical seam: after each renderedHtml/fragment commit,
   // rebuild the cursor and publish the active canonical format's rendered-state
   // ref from one local validity read, so the format rebind below repaints exact
-  // ranges against current DOM before paint (see canonicalFindRebind).
+  // ranges against current DOM before paint (see canonicalFindRebind). The ref
+  // stays null until layout is ready, so find positions only a settled layout.
   useLayoutEffect(() => {
     const content = contentRef.current;
     const viewport = textViewportRef.current;
@@ -3240,7 +3256,7 @@ export default function MediaPaneBody() {
       });
     }
     webFindRenderedStateRef.current =
-      isValid && viewport && media?.kind === "web_article"
+      isValid && viewport && readerLayoutReady && media?.kind === "web_article"
         ? {
             fragmentId: activeContent.fragmentId,
             canonicalText: activeContent.canonicalText,
@@ -3249,7 +3265,7 @@ export default function MediaPaneBody() {
           }
         : null;
     epubFindRenderedStateRef.current =
-      isValid && viewport && isEpub && renderedEpubFragment
+      isValid && viewport && readerLayoutReady && isEpub && renderedEpubFragment
         ? { fragment: renderedEpubFragment, cursor, viewport }
         : null;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: rebuild when rendered canonical content changes
@@ -3272,7 +3288,7 @@ export default function MediaPaneBody() {
     );
     if (!textTarget || targetStatus !== "pending" ||
         activeContent?.fragmentId !== textTarget.fragmentId ||
-        !readerLayoutReady || isMismatchDisabled || textHighlightInitialLoading) return;
+        !readerLayoutReady || isMismatchDisabled) return;
     const cursor = cursorRef.current;
     const viewport = textViewportRef.current;
     if (!cursor || !viewport) return;
@@ -3298,7 +3314,7 @@ export default function MediaPaneBody() {
     return () => { cancelled = true; };
   }, [activeContent, activeTranscriptFragment, beginRestoreSession, freshTextTarget, isMismatchDisabled,
     markActive, mediaFindPreviewLease, readerLayoutReady, readerScrollPositioner,
-    settleRestoreSession, target, targetStatus, textHighlightInitialLoading]);
+    settleRestoreSession, target, targetStatus]);
 
   useEffect(() => {
     mismatchLoggedFragmentRef.current = null;
@@ -4425,7 +4441,6 @@ export default function MediaPaneBody() {
   const nextSection = currentDocumentOffset.kind === "Present"
     ? sectionDestinations.find((section) => section.start > currentDocumentOffset.value)?.section ?? null
     : null;
-  const contentsAvailable = readerNavigation !== null;
 
   const epubTextDocumentContentState = (() => {
     if (readerNavigationResource.status === "error") {
@@ -4573,16 +4588,6 @@ export default function MediaPaneBody() {
       ? styles.readerThemeDark
       : styles.readerThemeLight;
   const readerSurfaceClassName = `${styles.readerContentRoot} ${readerThemeClassName}`;
-  const activeReaderSecondarySurface =
-    secondaryPane?.groupId === "resource-inspector" &&
-    secondaryPane.visibility === "visible"
-      ? secondaryPane.activeSurfaceId
-      : null;
-  const defaultInspectorSurface: "resource-contents" | "resource-evidence" =
-    contentsAvailable ? "resource-contents" : "resource-evidence";
-  const inspectorSurfaceActive =
-    activeReaderSecondarySurface === "resource-evidence" ||
-    (activeReaderSecondarySurface === "resource-contents" && contentsAvailable);
   const inspectorRegionId = paneSecondaryRegionId(
     paneRuntime.paneId,
     "resource-inspector",
@@ -5219,6 +5224,7 @@ export default function MediaPaneBody() {
     return () => observer.disconnect();
   }, [
     activeContent?.fragmentId,
+    canonicalResetRevision, // a reset remounts the viewport
     hyphenationForRoot,
     readerLayoutKey,
     renderedHtml,
@@ -5507,125 +5513,6 @@ export default function MediaPaneBody() {
     },
     [activateForkTarget, activatePaneTarget],
   );
-
-  const toggleInspector = useCallback(
-    (detail: ActionSelectDetail) => {
-      if (inspectorSurfaceActive) {
-        closeSecondaryPane();
-        return;
-      }
-      requestSecondarySurface(defaultInspectorSurface, {
-        returnFocusTo: detail.triggerEl,
-      });
-    },
-    [
-      closeSecondaryPane,
-      defaultInspectorSurface,
-      inspectorSurfaceActive,
-      requestSecondarySurface,
-    ],
-  );
-
-  // G-chord keyboard verbs:
-  //   G (bare)  → toggle Companion (defaultInspectorSurface)
-  //   Shift+G   → chat (opens new pane)
-  //   G c       → chat (opens new pane)
-  //   G e       → Evidence surface
-  useEffect(() => {
-    if (!isPaneActive) return;
-
-    let chordPendingG = false;
-    let chordTimeoutId: number | null = null;
-
-    const clearChord = () => {
-      chordPendingG = false;
-      if (chordTimeoutId !== null) {
-        window.clearTimeout(chordTimeoutId);
-        chordTimeoutId = null;
-      }
-    };
-
-    const handleGChord = (event: KeyboardEvent) => {
-      const readerModalOwnsShortcut =
-        !hasActiveInteractionOwner() ||
-        (inspectorRegionId !== null &&
-          isTopmostInteractionOwner(inspectorRegionId));
-      if (!readerModalOwnsShortcut) {
-        if (chordPendingG) clearChord();
-        return;
-      }
-      if (
-        event.defaultPrevented ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.altKey
-      ) {
-        if (chordPendingG) clearChord();
-        return;
-      }
-      if (isEditableTarget(event.target)) {
-        if (chordPendingG) clearChord();
-        return;
-      }
-
-      // Shift+G → chat (reader navigation contract)
-      if (event.key.toLowerCase() === "g" && event.shiftKey) {
-        clearChord();
-        event.preventDefault();
-        void openChatForMedia();
-        return;
-      }
-
-      // Bare G → start chord; fire toggleInspector after timeout if no follow-up
-      if (event.key.toLowerCase() === "g" && !event.shiftKey) {
-        event.preventDefault();
-        clearChord();
-        chordPendingG = true;
-        chordTimeoutId = window.setTimeout(() => {
-          chordPendingG = false;
-          chordTimeoutId = null;
-          const readerModalStillOwnsShortcut =
-            !hasActiveInteractionOwner() ||
-            (inspectorRegionId !== null &&
-              isTopmostInteractionOwner(inspectorRegionId));
-          if (readerModalStillOwnsShortcut) {
-            toggleInspector({ triggerEl: null });
-          }
-        }, 500);
-        return;
-      }
-
-      // Chord follow-up keys (only when G is pending)
-      if (chordPendingG) {
-        if (event.key === "c") {
-          event.preventDefault();
-          clearChord();
-          void openChatForMedia();
-        } else if (event.key === "e") {
-          event.preventDefault();
-          clearChord();
-          requestSecondarySurface("resource-evidence");
-        } else {
-          // Non-chord key: execute bare-G default immediately and pass through
-          clearChord();
-          toggleInspector({ triggerEl: null });
-        }
-      }
-    };
-
-    document.addEventListener("keydown", handleGChord);
-    return () => {
-      clearChord();
-      document.removeEventListener("keydown", handleGChord);
-    };
-  }, [
-    documentMapAvailable,
-    inspectorRegionId,
-    openChatForMedia,
-    isPaneActive,
-    requestSecondarySurface,
-    toggleInspector,
-  ]);
 
   const releasePdfActionMenuLockRef = useRef<(() => void) | null>(null);
   const handlePdfActionMenuOpenChange = useCallback(
@@ -6514,13 +6401,14 @@ export default function MediaPaneBody() {
       readerScrollPositioner],
   );
 
-  const openDocumentMap = useCallback(() => {
-    requestSecondarySurface(contentsAvailable ? "resource-contents" : "resource-evidence");
-  }, [contentsAvailable, requestSecondarySurface]);
-  const contentsSurfaceBody = readerNavigation && documentStructure.kind === "Present" ? (
+  const contentsSurfaceBody = useMemo(() => readerNavigation && documentStructure.kind === "Present" ? (
     <div className={styles.readerSecondaryBody}>
       <ReaderDocumentMapDetail
-        key={`${id}:${readerNavigation.generation}:${activeReaderSecondarySurface === "resource-contents"}`}
+        key={`${id}:${readerNavigation.generation}:${
+          secondaryPane?.groupId === "resource-inspector" &&
+          secondaryPane.visibility === "visible" &&
+          secondaryPane.activeSurfaceId === "resource-contents"
+        }`}
         navigation={readerNavigation}
         structure={documentStructure.value}
         currentOffset={currentDocumentOffset}
@@ -6536,7 +6424,10 @@ export default function MediaPaneBody() {
         onReturn={mapExcursionOrigin !== null ? present(returnFromDocumentMap) : absent()}
       />
     </div>
-  ) : null;
+  ) : null, [activateDocumentMapMarker, currentDocumentOffset, documentMapDestinations, documentStructure,
+    id, mapExcursionOrigin, positionAtDocumentMapSection, positionFromDocumentMap, readerDocumentVisibleRange,
+    readerNavigation, returnFromDocumentMap, revealCurrentDocumentPosition, secondaryPane?.activeSurfaceId,
+    secondaryPane?.groupId, secondaryPane?.visibility]);
   useEffect(() => {
     if (secondaryPane?.visibility !== "visible") setMapExcursionOrigin(null);
   }, [secondaryPane?.visibility]);
@@ -6673,11 +6564,14 @@ export default function MediaPaneBody() {
         : transcriptFindAvailable
           ? "Find in transcript"
           : "Find in article";
-  const searchCommandsRef =
+  const inspectorCommandsRef =
     useRef<
       Pick<
         ReturnType<typeof useResourceInspector>,
-        "openSearchResults" | "closeSearchResults" | "previewSearchResult"
+        | "openSearchResults"
+        | "closeSearchResults"
+        | "previewSearchResult"
+        | "companionAction"
       >
     >(null);
   const paneFindChromeReleaseRef = useRef<(() => void) | null>(null);
@@ -6699,7 +6593,7 @@ export default function MediaPaneBody() {
   const dismissFind = useCallback(() => {
     try {
       mediaPaneFind?.onDismiss();
-      searchCommandsRef.current?.closeSearchResults();
+      inspectorCommandsRef.current?.closeSearchResults();
     } finally {
       releasePaneFindChromeLock();
     }
@@ -6715,13 +6609,13 @@ export default function MediaPaneBody() {
     [releasePaneFindChromeLock],
   );
   const showFindResults = useCallback((trigger: HTMLButtonElement | null) => {
-    searchCommandsRef.current?.openSearchResults(trigger);
+    inspectorCommandsRef.current?.openSearchResults(trigger);
   }, []);
   const activateFindResult = useCallback(
     (key: Parameters<PaneFindOccurrencesPublication["onActivate"]>[0]) => {
       if (!mediaPaneFind) return;
       void mediaPaneFind.onActivate(key).then((previewed) => {
-        if (previewed) searchCommandsRef.current?.previewSearchResult();
+        if (previewed) inspectorCommandsRef.current?.previewSearchResult();
       });
     },
     [mediaPaneFind],
@@ -6776,12 +6670,118 @@ export default function MediaPaneBody() {
     scheme: "media",
     handle: id,
     bodies: {
-      contents: contentsAvailable ? contentsSurfaceBody : undefined,
+      contents: contentsSurfaceBody,
       linkedItems: evidenceSurfaceBody,
     },
     searchResults: searchResultsBody,
   });
-  searchCommandsRef.current = inspector;
+  inspectorCommandsRef.current = inspector;
+
+  // G-chord keyboard verbs:
+  //   G (bare)  → the inspector's header action (show/hide inspector)
+  //   Shift+G   → chat (opens new pane)
+  //   G c       → chat (opens new pane)
+  //   G e       → Evidence surface
+  // Bare G reads the action through inspectorCommandsRef at fire time, so a
+  // pending chord survives action/publication identity changes.
+  useEffect(() => {
+    if (!isPaneActive) return;
+
+    let chordPendingG = false;
+    let chordTimeoutId: number | null = null;
+
+    const clearChord = () => {
+      chordPendingG = false;
+      if (chordTimeoutId !== null) {
+        window.clearTimeout(chordTimeoutId);
+        chordTimeoutId = null;
+      }
+    };
+
+    const handleGChord = (event: KeyboardEvent) => {
+      const readerModalOwnsShortcut =
+        !hasActiveInteractionOwner() ||
+        (inspectorRegionId !== null &&
+          isTopmostInteractionOwner(inspectorRegionId));
+      if (!readerModalOwnsShortcut) {
+        if (chordPendingG) clearChord();
+        return;
+      }
+      if (
+        event.defaultPrevented ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey
+      ) {
+        if (chordPendingG) clearChord();
+        return;
+      }
+      if (isEditableTarget(event.target)) {
+        if (chordPendingG) clearChord();
+        return;
+      }
+
+      // Shift+G → chat (reader navigation contract)
+      if (event.key.toLowerCase() === "g" && event.shiftKey) {
+        clearChord();
+        event.preventDefault();
+        void openChatForMedia();
+        return;
+      }
+
+      // Bare G → start chord; select the inspector after timeout if no follow-up
+      if (event.key.toLowerCase() === "g" && !event.shiftKey) {
+        event.preventDefault();
+        clearChord();
+        chordPendingG = true;
+        chordTimeoutId = window.setTimeout(() => {
+          chordPendingG = false;
+          chordTimeoutId = null;
+          const readerModalStillOwnsShortcut =
+            !hasActiveInteractionOwner() ||
+            (inspectorRegionId !== null &&
+              isTopmostInteractionOwner(inspectorRegionId));
+          if (readerModalStillOwnsShortcut) {
+            inspectorCommandsRef.current?.companionAction?.onSelect({
+              triggerEl: null,
+            });
+          }
+        }, 500);
+        return;
+      }
+
+      // Chord follow-up keys (only when G is pending)
+      if (chordPendingG) {
+        if (event.key === "c") {
+          event.preventDefault();
+          clearChord();
+          void openChatForMedia();
+        } else if (event.key === "e") {
+          event.preventDefault();
+          clearChord();
+          requestSecondarySurface("resource-evidence");
+        } else {
+          // Non-chord key: execute bare-G default immediately and pass through
+          clearChord();
+          inspectorCommandsRef.current?.companionAction?.onSelect({
+            triggerEl: null,
+          });
+        }
+      }
+    };
+
+    document.addEventListener("keydown", handleGChord);
+    return () => {
+      clearChord();
+      document.removeEventListener("keydown", handleGChord);
+    };
+  }, [
+    inspectorRegionId,
+    openChatForMedia,
+    isPaneActive,
+    requestSecondarySurface,
+  ]);
+
   const mediaFindSourceKey =
     selectedMediaFindCapability.kind === "Available"
       ? selectedMediaFindCapability.adapter.sourceKey
@@ -6880,7 +6880,6 @@ export default function MediaPaneBody() {
                 scope={{ label: "document", start: 0, end: 1 }}
                 onActivateMarker={activateDocumentMapMarker}
                 onRevealCurrent={revealCurrentDocumentPosition}
-                onOpenDetail={openDocumentMap}
               />
             ),
           }
@@ -6891,7 +6890,6 @@ export default function MediaPaneBody() {
       documentMapDestinations,
       documentStructure,
       currentDocumentPosition,
-      openDocumentMap,
       revealCurrentDocumentPosition,
       readerDocumentVisibleRange,
       showDesktopDocumentMapRail,
@@ -7408,7 +7406,6 @@ export default function MediaPaneBody() {
           {showMobileReaderPositionRibbon ? (
             <MobileReaderPositionRibbon
               visibleRange={readerDocumentVisibleRange}
-              onOpenMap={openDocumentMap}
             />
           ) : null}
           {readerProgressOverlay}

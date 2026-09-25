@@ -227,7 +227,6 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   publishPaneFixedChrome,
   requestSecondarySurface,
   closeSecondaryPane,
-  setSecondarySurface,
   requestTransientSecondarySurface,
   closeTransientSecondarySurface,
   previewTransientSecondaryResult,
@@ -290,10 +289,6 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
     returnFocusTo?: HTMLElement | null,
   ) => void;
   closeSecondaryPane: (secondaryPaneId: string) => void;
-  setSecondarySurface: (
-    secondaryPaneId: string,
-    surfaceId: WorkspaceSecondarySurfaceId,
-  ) => void;
   requestTransientSecondarySurface: (
     paneId: string,
     routeKey: string,
@@ -364,7 +359,6 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
       onSetPaneLayout={publishPaneLayout}
       onRequestSecondarySurface={requestSecondarySurface}
       onCloseSecondaryPane={closeSecondaryPane}
-      onSetSecondarySurface={setSecondarySurface}
       onRequestTransientSecondarySurface={requestTransientSecondarySurface}
       onCloseTransientSecondarySurface={closeTransientSecondarySurface}
       onPreviewTransientSecondaryResult={previewTransientSecondaryResult}
@@ -1039,16 +1033,6 @@ function WorkspaceHost() {
       }
       if (secondaryPane.groupId !== publication.groupId) {
         dropSecondaryPane(secondaryPane.id);
-        continue;
-      }
-      if (
-        !secondaryPublicationIncludesSurface(
-          publication,
-          secondaryPane.activeSurfaceId,
-        ) &&
-        publication.defaultSurfaceId !== null
-      ) {
-        setSecondarySurface(secondaryPane.id, publication.defaultSurfaceId);
       }
     }
   }, [
@@ -1056,7 +1040,6 @@ function WorkspaceHost() {
     dropSecondaryPane,
     primaryPanes,
     secondaryPublicationByPaneId,
-    setSecondarySurface,
     state.secondaryPanesById,
   ]);
 
@@ -1536,7 +1519,6 @@ function WorkspaceHost() {
                   publishPaneFixedChrome={publishPaneFixedChrome}
                   requestSecondarySurface={handleRequestSecondarySurface}
                   closeSecondaryPane={handleCloseSecondaryPane}
-                  setSecondarySurface={handleSetSecondarySurface}
                   requestTransientSecondarySurface={
                     handleRequestTransientSecondarySurface
                   }

@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import PaneHeaderIdentity from "@/components/ui/PaneHeaderIdentity";
 import { projectActionControlState } from "@/lib/ui/actionDescriptor";
+import { cx } from "@/lib/ui/cx";
 import {
   useMobileChrome,
   useMobileChromeSurface,
@@ -95,22 +96,6 @@ export default function MobilePaneBar() {
       </div>
 
       <div className={styles.topBarControls}>
-        {companionAction && companionState ? (
-          <button
-            type="button"
-            className={styles.topBarButton}
-            aria-label={companionAction.label}
-            aria-pressed={companionState.barPressed}
-            aria-expanded={companionState.barExpanded}
-            aria-controls={companionState.barControls}
-            disabled={companionAction.disabled}
-            onClick={(event) =>
-              companionAction.onSelect({ triggerEl: event.currentTarget })
-            }
-          >
-            {companionAction.icon}
-          </button>
-        ) : null}
         {paneChrome && hasMoreContent ? (
           <ContextualActionMenu
             label="More"
@@ -137,6 +122,25 @@ export default function MobilePaneBar() {
               </button>
             )}
           />
+        ) : null}
+        {companionAction && companionState ? (
+          <button
+            type="button"
+            className={cx(
+              styles.topBarButton,
+              companionState.active && styles.topBarButtonActive,
+            )}
+            aria-label={companionAction.label}
+            aria-pressed={companionState.barPressed}
+            aria-expanded={companionState.barExpanded}
+            aria-controls={companionState.barControls}
+            disabled={companionAction.disabled}
+            onClick={(event) =>
+              companionAction.onSelect({ triggerEl: event.currentTarget })
+            }
+          >
+            {companionAction.icon}
+          </button>
         ) : null}
       </div>
     </header>

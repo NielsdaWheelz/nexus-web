@@ -30,9 +30,10 @@ interface SurfaceHeaderProps {
 }
 
 /**
- * The pane-runtime chrome bar projects stable navigation, the one promoted
- * Companion action, and one contextual More menu. Resource actions stay owned
- * by their canonical runtime and are appended by ContextualActionMenu.
+ * The pane-runtime chrome bar projects stable navigation, one contextual More
+ * menu, and then the one promoted inspector action, labelled so it never
+ * collapses; the identity yields width first. Resource actions stay owned by
+ * their canonical runtime and are appended by ContextualActionMenu.
  */
 const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(
   function SurfaceHeader(
@@ -92,14 +93,6 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(
         </div>
 
         <div className={styles.trailing}>
-          {companionAction ? (
-            <ActionBar
-              options={[companionAction]}
-              label="Pane actions"
-              className={styles.actions}
-            />
-          ) : null}
-
           {hasMoreContent ? (
             <ContextualActionMenu
               label="More"
@@ -123,6 +116,14 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(
                   ) : null}
                 </button>
               )}
+            />
+          ) : null}
+
+          {companionAction ? (
+            <ActionBar
+              options={[companionAction]}
+              label="Pane actions"
+              showLabels
             />
           ) : null}
         </div>

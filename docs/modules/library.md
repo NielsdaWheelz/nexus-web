@@ -60,7 +60,7 @@ a `resource_grants` row or anonymous public reader. Copying a library URL change
 no access; a non-member remains masked. Default and system libraries are
 copy-only and cannot accept membership changes.
 
-The Library pane's capability-gated **Members** Companion tab is the sole
+The Library pane's capability-gated **Members** Inspector tab is the sole
 non-default membership-governance UI, including invitation lifecycle, roles,
 removal, and ownership transfer. Library Share retains member-only link actions
 and exposes one authorized **Manage members** activation into that tab.
@@ -296,7 +296,7 @@ The pane URL owns the requested `LibraryEntryView` (order + projection + entry
 type); the Library controller owns one committed exact collection
 `{view, entries, collectionRevision, nextCursor, exhaustion}`.
 A same-visit query replacement is in-place: pane chrome, controls, focus, live
-ShellScroll position, Slate, and Companion stay mounted while the exact first
+ShellScroll position, Slate, and Inspector stay mounted while the exact first
 page loads. The full query remains runtime/history identity.
 `lib/libraries/libraryView.ts` is the sole owner of the closed view types, the
 strict URL codec, API query construction, projection/order option availability,
@@ -456,7 +456,7 @@ library-to-media write route and no scoped resource-delete query mode.
 ## Library Resource Inspector And Dossier
 
 The Library primary pane owns entries and the route-keyed membership controller.
-One shared Companion action opens the pane-local Resource Inspector with
+One shared inspector action opens the pane-local Resource Inspector with
 capability-gated `Members | Connections | Dossier`; Members is present only for
 mutable Libraries the viewer can administer, and Dossier remains default. The
 same publication drives desktop and mobile; no feature-specific column, modal,

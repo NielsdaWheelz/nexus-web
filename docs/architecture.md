@@ -1022,7 +1022,7 @@ resource activation plus an optional reader-internal focus target.
 `RESOURCE_ITEM_CAPABILITIES` is the backend authority for Inspector eligibility,
 linked-items policy, Forks, and default surface order; the committed TypeScript
 projection must agree with the backend. Every eligible resource implies Dossier.
-`useResourceInspector` composes one stable publication and Companion action per
+`useResourceInspector` composes one stable publication and inspector action per
 pane from route-owned Contents/Evidence/Context/Forks/Connections bodies plus
 the shared Dossier body. Selecting that action validates the requested surface
 against its route-owned publication and, when attached to the workspace host,
@@ -1050,7 +1050,7 @@ Idea subject id for its owning user; Idea subject routes remain unavailable.
 Failure facts contain a code and optional diagnostic detail. Build identifiers
 are UUIDs, with authorization checked separately on the owning Artifact.
 
-Resource bootstrap/Companion lookup uses
+Resource bootstrap/Inspector lookup uses
 `GET /artifacts/dossiers/{subject_scheme}/{subject_handle}`,
 `POST /artifacts/dossiers/{subject_scheme}/{subject_handle}/builds`; an
 existing head regenerates only through
@@ -1297,7 +1297,7 @@ surviving resource refs and their graph edges remain stable across refresh.
 annotation transforms, and applies the bounded media `h1`-to-`h2` projection
 beneath the resource heading. Inline
 highlight rendering remains separate for text selection. Media publishes one
-shared **Resource Inspector** companion whose tabs are `Contents` when
+shared **Resource Inspector** whose tabs are `Contents` when
 available, `Evidence`, and `Dossier`. Contents and Evidence retain their
 internal **Document Map** semantics:
 Evidence is a target-centered aggregate of highlights, source references,
@@ -1305,8 +1305,8 @@ generated citations, links, and Synapses, separated into passage and
 whole-document scopes with typed one-hop associations. `MarginRail` is the
 wide-reader spatial presenter for the same filtered passage facts. The desktop
 overview rail receives aggregate marker positions plus the semantic viewport
-range; it performs no scroll discovery or position math and has no generic
-opener. The shared Companion action opens the
+range; it performs no scroll discovery or position math and has no
+opener. The shared inspector action opens the
 same `resource-inspector` publication on desktop and in the workspace mobile
 sheet.
 The contract is
@@ -1598,7 +1598,7 @@ Inline `object_ref`/`object_embed` nodes remain part of note prose and sync
 `origin='note_body'` edges. Highlight notes remain ordinary notes linked by an
 `origin='highlight_note'` edge. Note bodies retain direct indexing through
 `note_indexing.enqueue_note_reindex`. Backlinks, citations, and inferred
-relations remain Companion concerns rather than editor rows.
+relations remain Inspector concerns rather than editor rows.
 
 Frontend composition is one `PagePaneBody`, one `ResourceSurfaceEditor`, and
 one `useResourceSurfaceSession` for ordinary Page refs and dated daily
@@ -2026,7 +2026,7 @@ they open over Resume and never become panes.
   (`Context | Forks | Dossier`), Library
   (`Members | Connections | Dossier` when the viewer can administer it, else
   `Connections | Dossier`), and Podcast/Author/Page/Note
-  (`Connections | Dossier`). One visible Companion action opens the same group
+  (`Connections | Dossier`). One visible inspector action opens the same group
   on desktop and mobile; open state, active tab, width, and viewed Dossier
   revision are workspace-local. The Imports pane publishes the one other
   secondary group, `imports-inspector` (`Import details`), the same way, because

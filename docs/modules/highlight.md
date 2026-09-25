@@ -17,7 +17,7 @@ Frontend owners are `apps/web/src/lib/highlights/*` and
 `apps/web/src/components/highlights/*`. Reader-specific highlight presentation
 lives in the reader module, and chat run assembly lives in the chat module.
 
-The highlight module does not own Resource Inspector/Companion chrome, Document
+The highlight module does not own Resource Inspector chrome, Document
 Map aggregation, reader projection state, chat citations, source-authored
 apparatus, or the resource graph table.
 
@@ -198,7 +198,7 @@ highlights. It remains a Document Map body: it renders the stored `exact` quote
 when available, shows an explicit placeholder for geometry-only PDF highlights,
 mounts the canonical resource menu, and shows linked note/chat summaries from
 the aggregate read model. Highlight does not publish the Inspector group or its
-Companion action.
+inspector action.
 
 The wide reader may also project highlight-linked marginalia through
 `MarginRail`. Neither Evidence nor the margin owns highlight persistence or

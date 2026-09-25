@@ -13,16 +13,19 @@ import styles from "./ActionBar.module.css";
 /**
  * Flat toolbar of icon buttons — the inline-row sibling of {@link ActionMenu},
  * sharing the semantic action descriptor projected by {@link ActionMenu}.
+ * `showLabels` adds each action's label beside its icon at natural width.
  * Toggle and disclosure states map to their button ARIA; custom actions open
  * an anchored surface owned by the descriptor renderer.
  */
 export default function ActionBar({
   options,
   label = "Actions",
+  showLabels = false,
   className,
 }: {
   options: readonly PaneHeaderAction[];
   label?: string;
+  showLabels?: boolean;
   className?: string;
 }) {
   if (options.length === 0) return null;
@@ -34,11 +37,11 @@ export default function ActionBar({
             <span className={styles.separator} aria-hidden="true" />
           ) : null}
           {option.kind === "custom" ? (
-            <PopoverAction option={option} />
+            <PopoverAction option={option} showLabels={showLabels} />
           ) : option.kind === "link" ? (
-            <LinkAction option={option} />
+            <LinkAction option={option} showLabels={showLabels} />
           ) : (
-            <ActionButton option={option} />
+            <ActionButton option={option} showLabels={showLabels} />
           )}
         </Fragment>
       ))}
@@ -46,39 +49,56 @@ export default function ActionBar({
   );
 }
 
-function ActionButton({ option }: { option: Extract<PaneHeaderAction, { kind: "command" }> }) {
+function ActionButton({
+  option,
+  showLabels,
+}: {
+  option: Extract<PaneHeaderAction, { kind: "command" }>;
+  showLabels: boolean;
+}) {
   const control = projectActionControlState(option.label, option.state);
   return (
     <Button
       variant={option.tone === "danger" ? "danger" : "ghost"}
       size="sm"
-      iconOnly
+      iconOnly={!showLabels}
+      leadingIcon={showLabels ? option.icon : undefined}
       disabled={option.disabled}
       aria-label={option.label}
-      title={option.label}
+      title={control.menuLabel}
       aria-pressed={control.barPressed}
       aria-expanded={control.barExpanded}
       aria-controls={control.barControls}
       data-action-id={option.id}
-      className={cx(styles.chromeAction, control.active && styles.pressed)}
+      className={cx(
+        styles.chromeAction,
+        !showLabels && styles.square,
+        control.active && styles.pressed,
+      )}
       onClick={(event) => {
         event.stopPropagation();
         option.onSelect({ triggerEl: event.currentTarget });
       }}
     >
-      {option.icon}
+      {showLabels ? option.label : option.icon}
     </Button>
   );
 }
 
-function LinkAction({ option }: { option: Extract<PaneHeaderAction, { kind: "link" }> }) {
+function LinkAction({
+  option,
+  showLabels,
+}: {
+  option: Extract<PaneHeaderAction, { kind: "link" }>;
+  showLabels: boolean;
+}) {
   return (
     <Button
       variant={option.tone === "danger" ? "danger" : "ghost"}
       size="sm"
-      iconOnly
+      iconOnly={!showLabels}
       asChild
-      className={styles.chromeAction}
+      className={cx(styles.chromeAction, !showLabels && styles.square)}
     >
       <a
         data-action-id={option.id}
@@ -97,12 +117,19 @@ function LinkAction({ option }: { option: Extract<PaneHeaderAction, { kind: "lin
         }}
       >
         {option.icon}
+        {showLabels ? option.label : null}
       </a>
     </Button>
   );
 }
 
-function PopoverAction({ option }: { option: Extract<PaneHeaderAction, { kind: "custom" }> }) {
+function PopoverAction({
+  option,
+  showLabels,
+}: {
+  option: Extract<PaneHeaderAction, { kind: "custom" }>;
+  showLabels: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
@@ -112,8 +139,9 @@ function PopoverAction({ option }: { option: Extract<PaneHeaderAction, { kind: "
         ref={triggerRef}
         variant="ghost"
         size="sm"
-        iconOnly
-        className={styles.chromeAction}
+        iconOnly={!showLabels}
+        leadingIcon={showLabels ? option.icon : undefined}
+        className={cx(styles.chromeAction, !showLabels && styles.square)}
         disabled={option.disabled}
         aria-label={option.label}
         title={option.label}
@@ -124,7 +152,7 @@ function PopoverAction({ option }: { option: Extract<PaneHeaderAction, { kind: "
           setOpen((current) => !current);
         }}
       >
-        {option.icon}
+        {showLabels ? option.label : option.icon}
       </Button>
       <FloatingActionSurface
         open={open}

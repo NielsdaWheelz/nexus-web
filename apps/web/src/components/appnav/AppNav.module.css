@@ -470,7 +470,7 @@
   right: 0;
   z-index: var(--z-overlay);
   display: grid;
-  /* Stable Back/Forward and the optional Companion/More cluster size to their
+  /* Stable Back/Forward and the optional More/inspector cluster size to their
      exact 48px controls; the identity owns only the remaining track. */
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -519,6 +519,14 @@
   color: var(--ink);
 }
 
+/* An open inspector keeps the desktop pane-chrome pressed treatment. Touch
+   browsers keep :hover on the tapped button, so this ties .topBarButton:hover
+   and wins by source order. */
+.topBarButton.topBarButtonActive {
+  background: var(--surface-active);
+  color: var(--ink);
+}
+
 .topBarButton:disabled {
   color: var(--ink-faint);
   opacity: 0.5;
@@ -555,6 +563,12 @@
 
   .topBarButton {
     color: ButtonText;
+  }
+
+  .topBarButton.topBarButtonActive {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
   }
 
   .topBarButton:disabled {
