@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Final
 
 PINNED_CODEX_VERSION: Final = "0.157.1"
-LIBRARY_CONTRACT_REVISION: Final = "provider-runtime.agent-model-catalog.v2"
+LIBRARY_CONTRACT_REVISION: Final = "provider-runtime.agent-model-catalog.v3"
 _HEALTH_IDENTITY_ITEMS: Final = (
     ("schema_version", "nexus-generation-health.v3"),
     ("status", "ready"),

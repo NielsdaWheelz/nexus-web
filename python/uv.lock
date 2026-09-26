@@ -662,7 +662,7 @@ wheels = [
 [[package]]
 name = "llm-agent-kernel"
 version = "0.1.0"
-source = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git?rev=3ba55f4ca8487ba99bc54908c36999db10c446dd#3ba55f4ca8487ba99bc54908c36999db10c446dd" }
+source = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git?rev=8df40c7940e404b0b401f3d8e7b5c3b5f1fe7656#8df40c7940e404b0b401f3d8e7b5c3b5f1fe7656" }
 dependencies = [
     { name = "llm-tools" },
     { name = "provider-runtime" },
@@ -924,13 +924,13 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "html5lib", specifier = "==1.1" },
     { name = "httpx", specifier = ">=0.28.0" },
-    { name = "llm-agent-kernel", git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git?rev=3ba55f4ca8487ba99bc54908c36999db10c446dd" },
+    { name = "llm-agent-kernel", git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git?rev=8df40c7940e404b0b401f3d8e7b5c3b5f1fe7656" },
     { name = "llm-tools", git = "https://github.com/NielsdaWheelz/llm-tools.git?rev=9e6d155f3b64f03495911435b7cae8b8d131f9a2" },
     { name = "lxml", specifier = ">=5.0.0" },
     { name = "mcp", specifier = "==2.1.0" },
     { name = "openai-codex-cli-bin", marker = "extra == 'codex-agent'", specifier = "==0.157.1" },
     { name = "pillow", specifier = ">=10.0.0" },
-    { name = "provider-runtime", git = "https://github.com/NielsdaWheelz/llm-calling.git?rev=43790f71e6f321051afaea6fac980d3018f43a5a" },
+    { name = "provider-runtime", git = "https://github.com/NielsdaWheelz/llm-calling.git?rev=aaf515dcea68efdf0bfeeb749007e939f1830d10" },
     { name = "psycopg-binary", specifier = ">=3.1.0" },
     { name = "pydantic-settings", specifier = ">=2.6.0" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.13.0" },
@@ -1077,7 +1077,7 @@ wheels = [
 [[package]]
 name = "provider-runtime"
 version = "0.1.0"
-source = { git = "https://github.com/NielsdaWheelz/llm-calling.git?rev=43790f71e6f321051afaea6fac980d3018f43a5a#43790f71e6f321051afaea6fac980d3018f43a5a" }
+source = { git = "https://github.com/NielsdaWheelz/llm-calling.git?rev=aaf515dcea68efdf0bfeeb749007e939f1830d10#aaf515dcea68efdf0bfeeb749007e939f1830d10" }
 dependencies = [
     { name = "anthropic" },
     { name = "google-genai" },

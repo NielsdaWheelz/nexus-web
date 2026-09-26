@@ -502,7 +502,7 @@ def _agent_sources(catalog: CodexModelCatalog) -> tuple[_SourceModel, ...]:
                 agent_definition_revision=catalog.definition_revision,
             ),
             capabilities=(
-                ("Text", "StrictStructured", "TextWithTools")
+                ("Text", "StrictStructured", "TextWithTools", "StructuredWithTools")
                 if catalog.supports_frozen_mcp_tools
                 else ("Text", "StrictStructured")
             ),

@@ -291,5 +291,7 @@ old schemas/codecs outright; 80 configuration cells plus boundary journeys
 cost money but qualify the declared contract;
 deleting temporary tests leaves future regression coverage limited to static
 checks and ordinary use; deleting unowned older drafts loses their text but
-prevents exposing it after an account switch. native app-server is vendor-experimental, so exact
+prevents exposing it after an account switch; bearer-backed codex turns defer
+answer text until the selected final item, trading incremental display for
+secret containment and an immutable text ledger. native app-server is vendor-experimental, so exact
 pins and real boundary qualification are required. no fallback hides failure.

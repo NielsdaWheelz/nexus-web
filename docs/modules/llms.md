@@ -109,8 +109,10 @@ provider-native Web search, alternate executor, or transport fallback.
 
 Codex Personal uses one private UDS command/NDJSON stream. The adapter binds the
 catalog-validated native model key before dispatch and supplies MCP only for a
-present frozen model-tool plan. Tool-bearing Codex remains ineligible until
-the pinned native server can exclude native patch effects before execution.
+present frozen model-tool plan. Tool-bearing Codex is admitted only when
+the library attests its frozen MCP capability. Empty native execution
+environments remove shell and patch before effects; the host rejects unexpected
+native events. Full Linux and browser-to-worker qualification remains open.
 The host has no database credential,
 application secret, generation API key, product data mount, or TCP listener. It
 owns one private per-generation root and native app-server process group, and

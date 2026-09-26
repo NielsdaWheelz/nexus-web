@@ -9,6 +9,8 @@ completed a text-only turn, and synced the credential file without changing
 the original digest. no actual token refresh or native rename/write event was
 witnessed. therefore the new host's writable-file boundary is unqualified for
 refresh; a successful text turn proves only current-token use.
+forcing refresh on a byte copy of the live profile could rotate the shared
+remote refresh token and strand the original, so that is not a safe fixture.
 
 ## prerequisite and acceptance
 

@@ -70,11 +70,8 @@ class CodexGenerationClient:
             catalog = CodexModelCatalog.model_validate_json(payload)
         except ValidationError as error:
             raise CodexGenerationProtocolDefect("Codex catalog response is invalid") from error
-        if (
-            catalog.backend_contract_revision != LIBRARY_CONTRACT_REVISION
-            or catalog.supports_frozen_mcp_tools
-        ):
-            raise CodexGenerationProtocolDefect("Codex catalog capability contract drifted")
+        if catalog.backend_contract_revision != LIBRARY_CONTRACT_REVISION:
+            raise CodexGenerationProtocolDefect("Codex catalog contract revision drifted")
         return catalog
 
     async def health(self) -> GenerationHealth:

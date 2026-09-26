@@ -226,8 +226,8 @@ services:
     image: ${WORKER_IMAGE:?set an immutable candidate digest}
     # The encrypted credential filesystem is unlocked manually after reboot.
     # Never let Docker restart this container against the protected underlay.
-    # Pinned Codex 0.144.4 updates only this exact file with truncate/write;
-    # every other Codex state and temporary path remains in one per-turn tree.
+    # Only the enrolled auth file is writable; exact refresh behavior for the
+    # pinned runtime remains a live qualification gate.
     restart: "no"
     mem_reservation: 256m
     mem_limit: 448m

@@ -6,19 +6,23 @@ status: open · origin: 2026-09-25 latest-model cutover · area: generation rele
 
 the final provider commit passed 61 of 65 api configuration cells; xai's four
 cells are owner-waived without a credential. five live three-turn continuation
-journeys passed. the codex account listed all three gpt-6 models and five
-allowed efforts; one gpt-6-sol/low text-only turn passed. the 15 codex
-browser/bff/api/db/worker cells, frozen mcp authority, linux isolation,
-resource fit, and full reopened-work proof have not passed. the native patch
-authority and bearer-header blockers have their own tickets. startup now rejects the configured
-structured-with-tools background operations while codex advertises no frozen
-mcp capability; the stack cannot be released in this state. `./scripts/test` is static only and
-cannot qualify these journeys.
+journeys passed. pinned 0.157.1 passed all 15 gpt-6 model/effort cells through
+the provider runtime with usage and exact requested text; ultra was rejected
+before dispatch. the nonsecret per-cell receipt is
+`/tmp/codex15_receipt_9350.jsonl` (sha256
+`12ea945866dc67dc8cd40b5556e0605fc4d9436acc309df93960cb463773dc1a`). pinned 0.157.1
+completed authenticated, model-originated https mcp calls in both text and
+strict-json modes, with missing/wrong bearer rejected. empty native execution
+environments and delegation disablement were verified in those turns. the
+15 codex browser/bff/api/db/worker journeys, linux
+isolation/resource fit, actual credential refresh, forbidden native-tool
+attempts, and full reopened-work proof have not passed. `./scripts/test` is
+static only and cannot qualify these journeys.
 
 ## prerequisite and acceptance
 
-resolve the native patch authority blocker, then run the exact 15 codex cells
-and browser-to-worker journeys through the pinned stack. prove frozen mcp auth,
+run the 15 codex configurations and browser-to-worker journeys end to end
+through the pinned nexus stack. prove frozen mcp auth,
 forbidden native/delegation attempts, cancellation/process death, linux
 isolation/resource fit, and replay without duplicate paid calls or effects.
 keep temporary live proofs until their required cases pass; report waived xai

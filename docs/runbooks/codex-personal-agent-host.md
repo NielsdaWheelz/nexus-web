@@ -105,14 +105,20 @@ as a policy violation. The target keeps Codex built-in tools and native web
 search disabled and routes all model tools, for Chat and background operations
 alike, through this same bearer-scoped MCP boundary.
 
-The 0.157.1 cutover does not admit tool-bearing Codex until a live proof shows
-that native shell, patch, delegation, and other built-ins are absent before
-effects while the frozen MCP tools work. The provider adapter currently rejects
-MCP when `builtin_tools=disabled`; do not remove that guard or interpret a
-post-event rejection as containment. This is a release blocker, not an
-alternate tool path. The authenticated catalog advertises
-`supports_frozen_mcp_tools=false`; text-only Codex remains available while
-tool-required work is refused before admission.
+For the exact 0.157.1 pin, the provider requests empty environments on new
+threads and every turn, and verifies the new-thread echo; this removes native shell and
+patch before effects. It disables delegation, native web/apps and sleep,
+keeps the code-mode host, excludes core helper namespaces from its isolated
+bridge, and approves only the frozen MCP tool names while global approval
+remains `never`. The per-generation bearer enters only the native MCP HTTP
+headers, never the child environment. Unexpected native tool or user-question
+events fail the turn before Nexus publishes them. Bearer-backed turns emit
+only the selected, redacted final text after completion: incremental Codex
+answer text is unavailable because earlier native items may be superseded.
+Local authenticated text and strict-JSON tool turns passed; Linux containment,
+the 15 browser-to-worker cells and credential-refresh proof remain release
+gates in the linked cutover tickets. Do not infer release readiness from the
+catalog capability alone.
 
 Despite the `Accept` advertisement, Nexus returns JSON for requests and a
 bodyless acknowledgement for notifications. It returns no session id and
@@ -127,16 +133,18 @@ The deployed host uses a fixed 1 GiB LUKS2 container, root-owned, at
 `/dev/mapper/nexus-codex-state` and mounted `rw,nosuid,nodev,noexec` at
 `/srv/nexus/codex-state`. Compose directly binds that mount; there is no
 Docker-managed credential-state volume or plaintext fallback. Enrollment is
-the only creator. Pinned Codex `0.157.1` is the only runtime writer and updates
-the refresh token in that exact file. The long-lived host binds exactly
+the only creator. Only pinned Codex `0.157.1` may write the enrolled auth file.
+The long-lived host binds exactly
 `/srv/nexus/codex-state/codex/codex-personal/auth.json` to
 `/run/nexus-codex-credential/auth.json` read-write; it never mounts the
 writable parent directory.
 
 This exception is version-qualified, not a general profile mount. Rust
 `v0.157.1` `FileAuthStorage::save` opens `$CODEX_HOME/auth.json` with
-truncate/write/create and then performs `write_all` plus `flush`, so the
-per-turn absolute link updates the mounted file in place. Any native runtime
+truncate/write/create and then performs `write_all` plus `flush`; a refresh
+using that path would update the mounted file in place. Actual native
+refresh on this mounted file has not yet been witnessed; the source-derived
+write contract remains a release qualification gate. Any native runtime
 upgrade that renames/replaces the file, changes its location or credential
 store, or changes refresh persistence requires a credential-boundary redesign
 and manual verification of the changed boundary first. Upstream does not use atomic replacement or
