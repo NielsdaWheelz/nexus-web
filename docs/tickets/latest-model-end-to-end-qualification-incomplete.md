@@ -14,16 +14,31 @@ before dispatch. the nonsecret per-cell receipt is
 completed authenticated, model-originated https mcp calls in both text and
 strict-json modes, with missing/wrong bearer rejected. empty native execution
 environments and delegation disablement were verified in those turns. the
-15 codex browser/bff/api/db/worker journeys, linux
-isolation/resource fit, actual credential refresh, forbidden native-tool
+15 codex browser/bff/api/db/worker journeys, complete linux isolation and
+busy-time resource fit,
+actual credential refresh, forbidden native-tool
 attempts, and full reopened-work proof have not passed. `./scripts/test` is
 static only and cannot qualify these journeys.
+
+an isolated ubuntu/aarch64 vm ran the exact committed nexus host source
+`00ba59483daeee1ababcc6272a1caad6a92d909b` under the named production apparmor,
+read-only, private-egress and 448 mib/no-extra-swap limits. authenticated uds
+catalog exposed the exact three gpt-6 models and five efforts each. one
+policy-owned `media_summary` gpt-6-luna/low strict-json turn passed admission,
+generation and terminal, then `docker stop --time 45` exited 0 with no socket
+or native process. receipt: `/tmp/nexus-codex-qual-00ba5948-receipt.md`
+(sha256 `ac68ae612c20aa72a053ab01ee0a38e69619f59d502c856ee14ff5ef60ce7a9e`).
+this proves configured confinement at host startup, one paid uds turn and
+graceful teardown; the limits were enforced but busy-time use was not sampled.
+the receipt does not cover all denied-target network checks, the browser path,
+worker mcp, refresh or replay.
 
 ## prerequisite and acceptance
 
 run the 15 codex configurations and browser-to-worker journeys end to end
 through the pinned nexus stack. prove frozen mcp auth,
-forbidden native/delegation attempts, cancellation/process death, linux
-isolation/resource fit, and replay without duplicate paid calls or effects.
+forbidden native/delegation attempts, cancellation/process death, complete
+linux isolation and busy-time resource fit, and replay without duplicate paid
+calls or effects.
 keep temporary live proofs until their required cases pass; report waived xai
 cells separately from passes.
