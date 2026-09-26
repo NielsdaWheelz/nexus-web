@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, type FocusEvent } from "react";
+import { useEffect, useId, useState, type FocusEvent } from "react";
 import {
   ChevronDown,
   ExternalLink,
@@ -20,6 +20,7 @@ import {
   type ApiError,
 } from "@/lib/api/client";
 import type { HighlightLinkedNoteBlock } from "@/lib/highlights/highlightContract";
+import { fetchResourceSurface } from "@/lib/resourceSurface/api";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
@@ -65,19 +66,8 @@ function evidenceActionErrorMessage(
 }
 
 export interface EvidenceHighlightActions {
-  onNoteSave: (
-    highlightId: string,
-    noteBlockId: string | null,
-    createBlockId: string,
-    bodyPmJson: Record<string, unknown>,
-    clientMutationId: string,
-  ) => Promise<HighlightLinkedNoteBlock>;
-  onNoteDelete: (
-    highlightId: string,
-    noteBlockId: string,
-    clientMutationId: string,
-    shouldApply: () => boolean,
-  ) => Promise<void>;
+  onNoteSaved: (highlightId: string, note: HighlightLinkedNoteBlock) => void;
+  onNoteDetached: (highlightId: string, noteBlockId: string) => void;
   onOpenNoteLink: (
     href: string,
     disposition: WorkspaceTargetDisposition,
@@ -87,20 +77,14 @@ export interface EvidenceHighlightActions {
 /**
  * Controls for the stable user-Link facts that survive from Universal Link
  * Authoring, re-expressed on main's Evidence model: a neutral (context) Link
- * carries a Remove control (→ `deleteLink`) and an add/replace/remove note
- * affordance (→ `putLinkNote`/`deleteLinkNote`). The Link's edge id is the
+ * carries a Remove control and a note affordance. The Link's edge id is the
  * mutation key, mirroring the Synapse-dismiss branch on evidence items.
  */
 export interface EvidenceLinkActions {
   editingLinkId: string | null;
   onRemoveUserEdge: (edge: ReaderEvidenceUserEdge) => Promise<void>;
   onEditLink: (linkId: string | null) => void;
-  onSaveLinkNote: (
-    linkId: string,
-    noteBlockId: string,
-    bodyPmJson: Record<string, unknown>,
-  ) => Promise<{ note_block_id: string }>;
-  onDeleteLinkNote: (linkId: string) => Promise<void>;
+  onLinkNoteChanged: () => void;
 }
 
 type ActivateEvidenceObject = (
@@ -155,6 +139,41 @@ export function EvidenceItemRow({
   const editingLinkNote =
     annotatableLink !== null &&
     linkActions.editingLinkId === annotatableLink.edge_id;
+  const linkedLinkNoteId = annotatableLink?.link_note?.note_block_id ?? null;
+  const linkedHighlightNoteId = item.kind === "Highlight"
+    ? highlightNoteAssociations(item)[0]?.object.note_block_id ?? null
+    : null;
+  const editingNoteId = editingLinkNote
+    ? linkedLinkNoteId
+    : editing && item.kind === "Highlight" ? linkedHighlightNoteId : null;
+  const [loadedNote, setLoadedNote] = useState<HighlightLinkedNoteBlock | null>(null);
+  const [noteLoadError, setNoteLoadError] = useState(false);
+  const [noteLoadSerial, setNoteLoadSerial] = useState(0);
+  useEffect(() => {
+    if (!editingNoteId) return;
+    let active = true;
+    const ref = `note_block:${editingNoteId}`;
+    void fetchResourceSurface(ref).then((surface) => {
+      if (!active) return;
+      if (surface.source.item.ref !== ref || surface.source.content.kind !== "note_body") {
+        throw new TypeError("Annotation note resolved to a different resource");
+      }
+      const version = surface.source.item.versionByLane;
+      if (!Number.isInteger(version.body) || version.body < 1) {
+        throw new TypeError("Annotation note has no body version");
+      }
+      setLoadedNote({
+        note_block_id: editingNoteId,
+        body_pm_json: surface.source.content.bodyPmJson,
+        body_text: surface.source.content.bodyText,
+        version_by_lane: { body: version.body, outgoing_edges: version.outgoing_edges },
+      });
+      setNoteLoadError(false);
+    }).catch(() => {
+      if (active) setNoteLoadError(true);
+    });
+    return () => { active = false; };
+  }, [editingNoteId, noteLoadSerial]);
   const relationshipCount =
     item.associations.length +
     (item.kind === "SourceReference" ? item.targets.length : 0);
@@ -257,27 +276,29 @@ export function EvidenceItemRow({
       </div>
       {editingLinkNote && annotatableLink ? (
         <div className={styles.noteEditor}>
+          {linkedLinkNoteId && loadedNote?.note_block_id !== linkedLinkNoteId ? (
+            noteLoadError ? (
+              <div role="alert">
+                <span>Link note couldn’t be loaded.</span>
+                <button type="button" onClick={() => setNoteLoadSerial((serial) => serial + 1)}>Retry</button>
+              </div>
+            ) : <p role="status">Loading note…</p>
+          ) : (
           <HighlightNoteEditor
-            highlightId={annotatableLink.edge_id}
-            note={null}
+            target={{ kind: "link", id: annotatableLink.edge_id, ownerKey: `link:${annotatableLink.edge_id}` }}
+            note={linkedLinkNoteId ? loadedNote : null}
             editable
-            onSave={async (linkId, noteBlockId, createBlockId, bodyPmJson) => {
-              const saved = await linkActions.onSaveLinkNote(
-                linkId,
-                noteBlockId ?? createBlockId,
-                bodyPmJson,
-              );
-              return {
-                note_block_id: saved.note_block_id,
-                body_pm_json: bodyPmJson,
-                body_text: "",
-              };
+            onSaved={(_linkId, saved) => {
+              setLoadedNote(saved);
+              linkActions.onLinkNoteChanged();
             }}
-            onDelete={async (linkId) => {
-              await linkActions.onDeleteLinkNote(linkId);
+            onDetached={() => {
+              setLoadedNote(null);
+              linkActions.onLinkNoteChanged();
             }}
             onOpenLink={highlightActions.onOpenNoteLink}
           />
+          )}
           <button
             type="button"
             className={styles.doneButton}
@@ -289,14 +310,29 @@ export function EvidenceItemRow({
       ) : null}
       {editing && item.kind === "Highlight" ? (
         <div className={styles.noteEditor}>
+          {linkedHighlightNoteId && loadedNote?.note_block_id !== linkedHighlightNoteId ? (
+            noteLoadError ? (
+              <div role="alert">
+                <span>Highlight note couldn’t be loaded.</span>
+                <button type="button" onClick={() => setNoteLoadSerial((serial) => serial + 1)}>Retry</button>
+              </div>
+            ) : <p role="status">Loading note…</p>
+          ) : (
           <HighlightNoteEditor
-            highlightId={item.highlight_id}
-            note={linkedNote}
+            target={{ kind: "highlight", id: item.highlight_id, ownerKey: `highlight:${item.highlight_id}` }}
+            note={linkedHighlightNoteId ? loadedNote : null}
             editable
-            onSave={highlightActions.onNoteSave}
-            onDelete={highlightActions.onNoteDelete}
+            onSaved={(highlightId, saved) => {
+              setLoadedNote(saved);
+              highlightActions.onNoteSaved(highlightId, saved);
+            }}
+            onDetached={(highlightId, noteBlockId) => {
+              setLoadedNote(null);
+              highlightActions.onNoteDetached(highlightId, noteBlockId);
+            }}
             onOpenLink={highlightActions.onOpenNoteLink}
           />
+          )}
           <button
             type="button"
             className={styles.doneButton}
@@ -627,12 +663,11 @@ function evidenceHighlightRow(
 
 function linkedHighlightNote(
   item: ReaderEvidenceHighlight,
-): HighlightLinkedNoteBlock | null {
+): { note_block_id: string; body_text: string } | null {
   const note = highlightNoteAssociations(item)[0]?.object;
   if (!note) return null;
   return {
     note_block_id: note.note_block_id,
-    body_pm_json: note.body_pm_json,
     body_text: note.excerpt.kind === "Present" ? note.excerpt.value : "",
   };
 }

@@ -33,7 +33,8 @@ from nexus.db.models import (
     Page,
 )
 from nexus.db.retries import retry_read_committed
-from nexus.errors import ApiError, ApiErrorCode, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
+from nexus.schemas.resource_items import AbsentExpectedBody
 from nexus.services import notes as notes_service
 from nexus.services.highlights import (
     delete_highlight_rows,
@@ -695,13 +696,7 @@ def _apply_page_body_from_vault(
     if len(flat_nodes) == 1:
         if text_body == current_body:
             return False, None, set()
-        upsert_note_body(
-            db,
-            viewer_id=viewer_id,
-            block_id=flat_nodes[0].block.id,
-            body_pm_json=_vault_body_pm_json(text_body),
-        )
-        return True, None, {flat_nodes[0].block.id}
+        return False, "Vault note edit needs an exported body version", set()
 
     fallback_blocks = [part.strip() for part in re.split(r"\n{2,}", text_body) if part.strip()]
     if len(fallback_blocks) != len(nodes):
@@ -711,20 +706,10 @@ def _apply_page_body_from_vault(
             set(),
         )
 
-    changed = False
-    changed_block_ids: set[UUID] = set()
     for node, block_body in zip(nodes, fallback_blocks, strict=True):
-        if block_body == _block_vault_body(node.block).strip():
-            continue
-        upsert_note_body(
-            db,
-            viewer_id=viewer_id,
-            block_id=node.block.id,
-            body_pm_json=_vault_body_pm_json(block_body),
-        )
-        changed = True
-        changed_block_ids.add(node.block.id)
-    return changed, None, changed_block_ids
+        if block_body != _block_vault_body(node.block).strip():
+            return False, "Vault note edit needs an exported body version", set()
+    return False, None, set()
 
 
 def _apply_marked_page_blocks(
@@ -752,21 +737,13 @@ def _apply_marked_page_blocks(
         ):
             return False, "Vault page contains a note block parent that is not on this page", set()
 
-    changed = False
-    changed_block_ids: set[UUID] = set()
     for parsed_block in parsed_blocks:
         block = blocks_by_id[parsed_block["id"]]
-        if _block_vault_body(block).strip() == parsed_block["body"]:
-            continue
-        upsert_note_body(
-            db,
-            viewer_id=viewer_id,
-            block_id=block.id,
-            body_pm_json=_vault_body_pm_json(parsed_block["body"]),
-        )
-        changed = True
-        changed_block_ids.add(block.id)
+        if _block_vault_body(block).strip() != parsed_block["body"]:
+            return False, "Vault note edit needs an exported body version", set()
 
+    changed = False
+    changed_block_ids: set[UUID] = set()
     current_by_parent = _children_by_parent_from_surface(surface)
     desired_by_parent: dict[ResourceRef, list[dict[str, Any]]] = {}
     collapsed_by_id = {node.block.id: node.collapsed for node in current_nodes}
@@ -1054,6 +1031,7 @@ def _sync_highlight_note_body_from_vault(
     highlight_id: UUID,
     body: str,
 ) -> None:
+    """Only additions are safe: exported vault files carry no note body base."""
     blocks = graph_highlight_notes.note_blocks_for_highlight(
         db, viewer_id=viewer_id, highlight_id=highlight_id
     )
@@ -1067,15 +1045,15 @@ def _sync_highlight_note_body_from_vault(
                 "Vault highlight contains duplicate note markers",
             )
         if set(parsed_ids) != set(blocks_by_id):
-            raise ApiError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "Vault highlight note markers must match linked notes",
+            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Vault note attachments changed")
+        if any(
+            note_body != _block_vault_body(blocks_by_id[note_id]).strip()
+            for note_id, note_body in parsed_notes
+        ):
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT,
+                "Vault note edit needs an exported body version",
             )
-        _patch_existing_note_block_bodies_from_vault(
-            db,
-            viewer_id,
-            {note_id: note_body for note_id, note_body in parsed_notes},
-        )
         return
 
     if len(blocks) > 1:
@@ -1084,22 +1062,17 @@ def _sync_highlight_note_body_from_vault(
             "Vault highlight sync needs exported note markers for this multi-note highlight",
         )
     existing = blocks[0] if blocks else None
-    if not body:
-        if existing is not None:
-            notes_service.delete_highlight_note_in_current_transaction(
-                db,
-                viewer_id,
-                highlight_id=highlight_id,
-                note_block_id=existing.id,
+    if existing is not None:
+        if body != _block_vault_body(existing).strip():
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT,
+                "Vault note edit needs an exported body version",
             )
         return
-    _save_highlight_note_body_from_vault(
-        db,
-        viewer_id,
-        highlight_id=highlight_id,
-        block_id=existing.id if existing is not None else uuid4(),
-        body=body,
-    )
+    if body:
+        _save_highlight_note_body_from_vault(
+            db, viewer_id, highlight_id=highlight_id, block_id=uuid4(), body=body
+        )
 
 
 def _save_highlight_note_body_from_vault(
@@ -1116,28 +1089,12 @@ def _save_highlight_note_body_from_vault(
         highlight_id=highlight_id,
         block_id=block_id,
         body_pm_json=_vault_body_pm_json(body),
+        expected_body=AbsentExpectedBody(kind="absent"),
         client_mutation_id=_vault_mutation_id(
             "highlight-note",
             {"highlight_id": highlight_id, "block_id": block_id, "body": body},
         ),
     )
-
-
-def _patch_existing_note_block_bodies_from_vault(
-    db: Session,
-    viewer_id: UUID,
-    body_by_block_id: Mapping[UUID, str],
-) -> None:
-    if not body_by_block_id:
-        return
-    for block_id, body in body_by_block_id.items():
-        upsert_note_body(
-            db,
-            viewer_id=viewer_id,
-            block_id=block_id,
-            body_pm_json=_vault_body_pm_json(body),
-        )
-        enqueue_note_reindex(db, note_block_id=block_id, reason="vault_highlight_note_sync")
 
 
 def _parse_marked_highlight_notes(body: str) -> list[tuple[UUID, str]]:

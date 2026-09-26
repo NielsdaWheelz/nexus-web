@@ -154,15 +154,10 @@ interface PdfReaderResources {
   requestSignedUrlRefresh: (targetPage: number) => void;
 }
 
-export type PdfReaderDecorationWrites = Pick<
-  PdfReaderDecorations,
-  "createHighlight" | "updateHighlight"
->;
-
 interface PdfReaderProps {
   mediaId: string;
   resources: PdfReaderResources;
-  decorations: PdfReaderDecorationWrites;
+  decorations: PdfReaderDecorations;
   isMobile: boolean;
   mobileChromeEnabled: boolean;
   additionalViewportRef?: Ref<HTMLDivElement>;
@@ -209,8 +204,11 @@ interface PdfReaderProps {
   onAddNote?: (session: {
     quote: string;
     anchorRect: DOMRect;
-    creation: Promise<{ id: string } | null>;
-  }) => void;
+    anchor: { pageNumber: number; quads: PdfHighlightQuad[]; exact: string };
+  } & (
+    | { existing: PdfHighlightOut; creation?: never }
+    | { existing?: never; creation: Promise<{ id: string } | null> }
+  )) => void;
   /**
    * Open a Link over a FRESH PDF selection using its true page-space quads. Unlike
    * highlight/note creation this performs no write — the Link service creates the
@@ -2285,9 +2283,12 @@ export default function PdfReader({
             ? [fallbackRect]
             : [];
 
-      return rects.map((rect) =>
-        rectToCanonicalQuad(rect, layerRect, pageScaleValue),
-      );
+      return rects
+        .map((rect) => rectToCanonicalQuad(rect, layerRect, pageScaleValue))
+        .sort((left, right) =>
+          left.y1 - right.y1 || left.x1 - right.x1 ||
+          left.y3 - right.y3 || left.x3 - right.x3,
+        );
     },
     [getTextLayerRootForPage, readPageScale],
   );
@@ -2465,6 +2466,40 @@ export default function PdfReader({
         return createdHighlight;
       } catch (err) {
         if (handleAuthenticationError(err)) return null;
+        if (!editingHighlightId) {
+          try {
+            const refreshed = await decorations.loadPageHighlights(activeSelection.pageNumber, new AbortController().signal);
+            const matches = refreshed.filter((candidate) =>
+              candidate.anchor.media_id === mediaId &&
+              candidate.anchor.page_number === activeSelection.pageNumber &&
+              candidate.exact === exact &&
+              candidate.anchor.quads.length === quads.length &&
+              candidate.anchor.quads.every((quad, index) => {
+                const selected = quads[index];
+                return quad.x1 === selected.x1 && quad.y1 === selected.y1 &&
+                  quad.x2 === selected.x2 && quad.y2 === selected.y2 &&
+                  quad.x3 === selected.x3 && quad.y3 === selected.y3 &&
+                  quad.x4 === selected.x4 && quad.y4 === selected.y4;
+              }),
+            );
+            if (matches.length === 1) {
+              const recovered = matches[0];
+              setPendingCommittedHighlights((current) => [...current.filter(
+                (candidate) => candidate.highlight.id !== recovered.id,
+              ), { highlight: recovered, externalRefreshTokenAtCommit: highlightRefreshToken }]);
+              onHighlightsMutated?.();
+              selectionRetiring = true;
+              clearSelection();
+              return recovered;
+            }
+            if (matches.length > 1) {
+              setSelectionError("Several highlights match this passage. Open the one you want to annotate.");
+              return null;
+            }
+          } catch (readError) {
+            if (handleAuthenticationError(readError)) return null;
+          }
+        }
         reportSelectionError(err);
         return null;
       } finally {
@@ -2498,12 +2533,50 @@ export default function PdfReader({
   const handleAddNote = useCallback(() => {
     const activeSelection = readRetainedSelection();
     if (!activeSelection || highlightCreationInFlightRef.current) return;
+    const quads = buildSelectionQuads(activeSelection.range, activeSelection.pageNumber);
+    if (quads.length === 0) {
+      setSelectionError("No selectable text geometry was found for this selection.");
+      clearSelection();
+      return;
+    }
+    const matches = pageHighlights.filter((highlight) =>
+      highlight.anchor.media_id === mediaId &&
+      highlight.anchor.page_number === activeSelection.pageNumber &&
+      highlight.exact === activeSelection.selectedText &&
+      highlight.anchor.quads.length === quads.length &&
+      highlight.anchor.quads.every((candidate, index) => {
+        const selected = quads[index];
+        return candidate.x1 === selected.x1 && candidate.y1 === selected.y1 &&
+          candidate.x2 === selected.x2 && candidate.y2 === selected.y2 &&
+          candidate.x3 === selected.x3 && candidate.y3 === selected.y3 &&
+          candidate.x4 === selected.x4 && candidate.y4 === selected.y4;
+      }),
+    );
+    if (matches.length > 1) {
+      setSelectionError("Several highlights match this passage. Open the one you want to annotate.");
+      return;
+    }
+    if (matches.length === 1) {
+      clearSelection();
+      onAddNote?.({
+        quote: activeSelection.selectedText,
+        anchorRect: activeSelection.rect,
+        anchor: { pageNumber: activeSelection.pageNumber, quads, exact: activeSelection.selectedText },
+        existing: matches[0],
+      });
+      return;
+    }
     onAddNote?.({
       quote: activeSelection.selectedText,
       anchorRect: activeSelection.rect,
+      anchor: {
+        pageNumber: activeSelection.pageNumber,
+        quads,
+        exact: activeSelection.selectedText,
+      },
       creation: handleCreateHighlight(DEFAULT_COLOR),
     });
-  }, [handleCreateHighlight, onAddNote, readRetainedSelection]);
+  }, [buildSelectionQuads, clearSelection, handleCreateHighlight, mediaId, onAddNote, pageHighlights, readRetainedSelection]);
 
   // Link verb over a fresh selection: compute the true page-space quads/quote
   // WITHOUT persisting a Highlight (invariant 6); the Link service materializes

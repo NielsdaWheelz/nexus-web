@@ -351,9 +351,26 @@ function decodeEvidenceItem(raw: unknown, index: number): ReaderEvidenceItem {
           "role",
           "origin",
           "object",
+          "link_note",
         ],
         name,
       );
+      const linkNote = item.link_note === null
+        ? null
+        : expectExactRecord(
+            item.link_note,
+            ["ref", "note_block_id", "preview"],
+            `${name}.link_note`,
+          );
+      const linkNoteId = linkNote
+        ? expectString(linkNote.note_block_id, `${name}.link_note.note_block_id`)
+        : null;
+      const linkNoteRef = linkNote
+        ? expectResourceRef(linkNote.ref, `${name}.link_note.ref`)
+        : null;
+      if (linkNoteId && linkNoteRef !== `note_block:${linkNoteId}`) {
+        defect(`${name}.link_note identity mismatch`);
+      }
       return {
         ...decodeItemBase(item, name),
         kind: "Link",
@@ -361,6 +378,13 @@ function decodeEvidenceItem(raw: unknown, index: number): ReaderEvidenceItem {
         role: expectOneOf(item.role, EDGE_KINDS, `${name}.role`),
         origin: expectOneOf(item.origin, EDGE_ORIGINS, `${name}.origin`),
         object: decodeEvidenceObject(item.object, `${name}.object`),
+        link_note: linkNote && linkNoteId && linkNoteRef
+          ? {
+              ref: linkNoteRef,
+              note_block_id: linkNoteId,
+              preview: expectNullableString(linkNote.preview, `${name}.link_note.preview`),
+            }
+          : null,
       };
     }
     case "Synapse": {

@@ -1,12 +1,12 @@
 "use client";
 
 import { useRef } from "react";
-import HighlightNoteEditor, {
-  HighlightNoteTargetUnavailableError,
-} from "@/components/notes/HighlightNoteEditor";
+import HighlightNoteEditor from "@/components/notes/HighlightNoteEditor";
+import Button from "@/components/ui/Button";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import MobileSheet from "@/components/ui/MobileSheet";
 import type { HighlightLinkedNoteBlock } from "@/lib/highlights/highlightContract";
+import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHandoff";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { useInitialFocus } from "@/lib/ui/useInitialFocus";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -18,6 +18,7 @@ export type QuickNoteSession =
   | {
       kind: "pending-create";
       sessionId: string; // stable opaque editor key for the session's whole life
+      ownerKey: string; // full selection anchor, stable across dismiss/reopen
       quote: string; // selection text at verb time
       anchorRect: DOMRect; // selection rect snapshot
       creation: Promise<{ id: string } | null>; // the in-flight highlight create
@@ -25,6 +26,7 @@ export type QuickNoteSession =
   | {
       kind: "existing";
       highlightId: string;
+      recoveryOwnerKey?: string; // exact anchor of a uniquely matched pending creation
       note: HighlightLinkedNoteBlock | null; // first linked note, or null
       quote: string; // highlight.exact
       anchorRect: DOMRect;
@@ -35,38 +37,25 @@ export type QuickNoteSession =
  * composer-hard-cutover.md): hosts the existing {@link HighlightNoteEditor} as
  * a selection-anchored popover on desktop and a quote-headed {@link MobileSheet}
  * on mobile. Owns skin choice, focus into the editor on open, and the
- * pending-create → real-id save bridging; persistence semantics (debounced
- * autosave, drafts, flush on blur/unmount) stay in the editor and the
- * onSaveNote/onDeleteNote handlers, so dismissal saves and never discards.
- *
- * The editor's `highlightId` prop is an opaque key: for pending-create
- * sessions it stays the sessionId even after the create resolves (re-keying
- * mid-session would cancel in-flight saves and orphan the draft); the wrapped
- * onSave substitutes the real highlight id.
+ * pending-create → real-id handoff. the editor's shared writing session owns
+ * the body and save queue even after this popover unmounts.
  */
 export default function HighlightQuickNoteComposer({
   session,
   onClose,
-  onSaveNote,
-  onDeleteNote,
+  onSavedNote,
+  onDetachedNote,
   onOpenLink,
+  onEditAccepted,
+  onMutationStarted,
 }: {
   session: QuickNoteSession | null; // null = closed (component stays mounted)
   onClose: () => void;
-  onSaveNote: (
-    highlightId: string,
-    noteBlockId: string | null,
-    createBlockId: string,
-    bodyPmJson: Record<string, unknown>,
-    clientMutationId: string
-  ) => Promise<HighlightLinkedNoteBlock>;
-  onDeleteNote: (
-    highlightId: string,
-    noteBlockId: string,
-    clientMutationId: string,
-    shouldApply: () => boolean
-  ) => Promise<void>;
+  onSavedNote: (highlightId: string, note: HighlightLinkedNoteBlock) => void;
+  onDetachedNote: (highlightId: string, noteBlockId: string) => void;
   onOpenLink: (href: string, disposition: WorkspaceTargetDisposition) => void;
+  onEditAccepted?: (noteRef: string, hasPending: () => boolean) => void;
+  onMutationStarted?: (noteRef: string) => MountedEditorMutationLease | null;
 }) {
   const isMobile = useIsMobileViewport();
   const desktopPanelRef = useRef<HTMLDivElement>(null);
@@ -92,35 +81,16 @@ export default function HighlightQuickNoteComposer({
     session === null ? null : (
       <HighlightNoteEditor
         key={editorHighlightId(session)}
-        highlightId={editorHighlightId(session)}
+        target={session.kind === "pending-create"
+          ? { kind: "highlight", id: null, ownerKey: session.ownerKey, creation: session.creation }
+          : { kind: "highlight", id: session.highlightId, ownerKey: `highlight:${session.highlightId}`, recoveryOwnerKey: session.recoveryOwnerKey }}
         note={session.kind === "existing" ? session.note : null}
         editable
-        onSubmitted={onClose}
-        onSave={
-          session.kind === "pending-create"
-            ? async (_sessionId, noteBlockId, createBlockId, bodyPmJson, clientMutationId) => {
-                const resolved = await session.creation; // memoizes its own resolution
-                if (!resolved) throw new HighlightNoteTargetUnavailableError();
-                return onSaveNote(
-                  resolved.id,
-                  noteBlockId,
-                  createBlockId,
-                  bodyPmJson,
-                  clientMutationId
-                );
-              }
-            : onSaveNote
-        }
-        onDelete={
-          session.kind === "pending-create"
-            ? async (_sessionId, noteBlockId, clientMutationId, shouldApply) => {
-                const resolved = await session.creation;
-                if (!resolved) throw new HighlightNoteTargetUnavailableError();
-                return onDeleteNote(resolved.id, noteBlockId, clientMutationId, shouldApply);
-              }
-            : onDeleteNote
-        }
+        onSaved={onSavedNote}
+        onDetached={onDetachedNote}
         onOpenLink={onOpenLink}
+        onEditAccepted={onEditAccepted}
+        onMutationStarted={onMutationStarted}
       />
     );
 
@@ -132,14 +102,17 @@ export default function HighlightQuickNoteComposer({
           anchor={session.anchorRect}
           placement="below"
           flip
-          scrollBehavior="dismiss"
+          scrollBehavior="reposition"
           role="dialog"
           label="Add note to highlight"
           onDismiss={onClose}
         >
           <div ref={desktopPanelRef} className={styles.panel}>
+            {session.quote ? <div className={styles.quote}>{session.quote}</div> : null}
             {editor}
-            <p className={styles.hint}>Enter to save · Shift+Enter for a new line</p>
+            <div className={styles.actions}>
+              <Button size="sm" variant="ghost" onClick={onClose}>Done</Button>
+            </div>
           </div>
         </FloatingActionSurface>
       )}
@@ -155,9 +128,11 @@ export default function HighlightQuickNoteComposer({
       >
         {session === null ? null : (
           <div className={styles.sheetContent}>
-            <div className={styles.quote}>{session.quote}</div>
+            {session.quote ? <div className={styles.quote}>{session.quote}</div> : null}
             {editor}
-            <p className={styles.hint}>Enter to save · Shift+Enter for a new line</p>
+            <div className={styles.actions}>
+              <Button size="sm" variant="ghost" onClick={onClose}>Done</Button>
+            </div>
           </div>
         )}
       </MobileSheet>

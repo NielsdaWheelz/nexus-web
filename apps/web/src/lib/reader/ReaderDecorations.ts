@@ -8,6 +8,7 @@
  */
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
+import type { HighlightLinkedNoteBlock } from "@/lib/highlights/highlightContract";
 
 export interface PdfHighlightOut {
   readonly id: string;
@@ -29,11 +30,7 @@ export interface PdfHighlightOut {
     readonly conversation_id: string;
     readonly title: string;
   }[];
-  readonly linked_note_blocks?: {
-    readonly note_block_id: string;
-    readonly body_pm_json?: Record<string, unknown>;
-    readonly body_text: string;
-  }[];
+  readonly linked_note_blocks: HighlightLinkedNoteBlock[];
 }
 
 export interface PdfHighlightWrite {

@@ -1,339 +1,106 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import type { NoteBodyEdit, NoteBodySelection } from "@/components/notes/NoteBodyEditor";
+import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHandoff";
 import type { NoteBodyValue } from "@/lib/notes/prosemirror/schema";
 import {
-  clearStoredNoteEditorDraft,
-  createNoteEditorClientMutationId,
-  storeNoteEditorDraft,
-  type StoredNoteEditorDraft,
-} from "@/lib/notes/noteEditorDraftStore";
+  getWritingSession,
+  type BodyAdapter,
+  type RecoveryCandidate,
+  type OperationCallbacks,
+  type PendingBodyIdentity,
+  type WritingSnapshot,
+  type WritingStatus,
+} from "@/lib/notes/writingSession";
 
-const NOTE_AUTOSAVE_IDLE_DELAY_MS = 1500;
-const NOTE_AUTOSAVE_MAX_WAIT_MS = 5000;
+export type NoteEditorSessionStatus = WritingStatus;
 
-export type NoteEditorSessionStatus =
-  | "clean"
-  | "dirty"
-  | "saving"
-  | "saved"
-  | "recovered"
-  | "failed";
-
-export interface NoteEditorSaveContext {
-  resourceKey: string;
-  sequence: number;
-  clientMutationId: string;
-}
-
-interface UseNoteEditorSessionOptions {
-  resourceKey: string;
-  save: (body: NoteBodyValue, context: NoteEditorSaveContext) => Promise<void>;
-  draftMetadata?: () => unknown;
+export interface UseNoteEditorSessionOptions {
+  accountId: string;
+  noteRef: string;
+  ownerKey: string;
+  initial: { body: NoteBodyValue; version: number | null };
+  adapter: BodyAdapter | null;
+  awaitExternalCreation?: boolean;
   onError?: (error: unknown) => void;
+  onMutationStarted?: () => MountedEditorMutationLease | null;
 }
 
-export interface NoteEditorSession {
-  status: NoteEditorSessionStatus;
-  hasRecoveredDraft: boolean;
-  scheduleSave(body: NoteBodyValue): void;
-  flush(body?: NoteBodyValue): void;
-  recoverDraft(draft: StoredNoteEditorDraft): void;
-  discardDraft(): void;
-  reset(): void;
+export interface NoteEditorSession extends WritingSnapshot {
+  edit(edit: NoteBodyEdit): boolean;
+  selection(selection: NoteBodySelection): void;
+  boundary(): void;
+  undo(): NoteBodySelection | null;
+  redo(): NoteBodySelection | null;
+  flush(): void;
+  retry(): void;
+  recoveryCandidates(): RecoveryCandidate[];
+  recover(candidate: RecoveryCandidate): boolean;
+  discard(): boolean;
+  exportRaw(key: string): string | null;
+  reapply(): boolean;
+  restoreSelection: { token: number; selection: NoteBodySelection } | null;
+  setAdapter(adapter: BodyAdapter): void;
+  pendingBodies(): PendingBodyIdentity[];
+  rebindOwner(ownerKey: string): boolean;
+  submitOperation(input: { key: string; intent: unknown } & OperationCallbacks): { id: string; retained: boolean };
+  recoverOperation(candidate: RecoveryCandidate, callbacks: OperationCallbacks): boolean;
+  retryOperation(id: string): void;
+  discardOperation(id: string): boolean;
 }
 
-export function useNoteEditorSession({
-  resourceKey,
-  save,
-  draftMetadata,
-  onError,
-}: UseNoteEditorSessionOptions): NoteEditorSession {
-  const [status, setStatus] = useState<NoteEditorSessionStatus>("clean");
-  const [hasRecoveredDraft, setHasRecoveredDraft] = useState(false);
-  const resourceKeyRef = useRef(resourceKey);
-  const saveRef = useRef(save);
-  const draftMetadataRef = useRef(draftMetadata);
-  const onErrorRef = useRef(onError);
-  const generationRef = useRef(0);
-  const localSequenceRef = useRef(0);
-  const pendingDocRef = useRef<NoteBodyValue | null>(null);
-  const pendingSequenceRef = useRef(0);
-  const pendingClientMutationIdRef = useRef<string | null>(null);
-  const queuedDocRef = useRef<NoteBodyValue | null>(null);
-  const queuedSequenceRef = useRef(0);
-  const queuedClientMutationIdRef = useRef<string | null>(null);
-  const saveInFlightRef = useRef(false);
-  const idleTimerRef = useRef<number | null>(null);
-  const maxWaitTimerRef = useRef<number | null>(null);
-  const startSaveRef = useRef<(
-    body: NoteBodyValue,
-    sequence: number,
-    clientMutationId: string
-  ) => void>(() => undefined);
-  const flushRef = useRef<(body?: NoteBodyValue) => void>(() => undefined);
-
-  useEffect(() => {
-    resourceKeyRef.current = resourceKey;
-  }, [resourceKey]);
-
-  useEffect(() => {
-    saveRef.current = save;
-    draftMetadataRef.current = draftMetadata;
-    onErrorRef.current = onError;
-  }, [draftMetadata, onError, save]);
-
-  const clearTimers = useCallback(() => {
-    if (idleTimerRef.current !== null) {
-      window.clearTimeout(idleTimerRef.current);
-      idleTimerRef.current = null;
-    }
-    if (maxWaitTimerRef.current !== null) {
-      window.clearTimeout(maxWaitTimerRef.current);
-      maxWaitTimerRef.current = null;
-    }
-  }, []);
-
-  const startSave = useCallback(
-    (
-      doc: NoteBodyValue,
-      sequence: number,
-      clientMutationId: string
-    ) => {
-      if (saveInFlightRef.current) {
-        queuedDocRef.current = doc;
-        queuedSequenceRef.current = sequence;
-        queuedClientMutationIdRef.current = clientMutationId;
-        return;
-      }
-
-      const saveResourceKey = resourceKeyRef.current;
-      const saveGeneration = generationRef.current;
-      const isStaleSave = () =>
-        generationRef.current !== saveGeneration ||
-        resourceKeyRef.current !== saveResourceKey;
-      saveInFlightRef.current = true;
-      setHasRecoveredDraft(false);
-      setStatus("saving");
-
-      void saveRef
-        .current(doc, {
-          resourceKey: saveResourceKey,
-          sequence,
-          clientMutationId,
-        })
-        .then(() => {
-          if (isStaleSave()) {
-            return;
-          }
-
-          const isLatestSequence = sequence === localSequenceRef.current;
-          const hasQueuedWork =
-            pendingDocRef.current !== null || queuedDocRef.current !== null;
-
-          if (isLatestSequence && !hasQueuedWork) {
-            clearStoredNoteEditorDraft(saveResourceKey);
-            setHasRecoveredDraft(false);
-            setStatus("saved");
-            return;
-          }
-
-          setStatus("dirty");
-        })
-        .catch((error: unknown) => {
-          if (isStaleSave()) {
-            return;
-          }
-
-          const isLatestSequence = sequence === localSequenceRef.current;
-          const hasQueuedWork =
-            pendingDocRef.current !== null || queuedDocRef.current !== null;
-          if (handleUnauthenticatedApiError(error)) {
-            return;
-          }
-          if (isLatestSequence && !hasQueuedWork) {
-            pendingDocRef.current = doc;
-            pendingSequenceRef.current = sequence;
-            pendingClientMutationIdRef.current = clientMutationId;
-            storeNoteEditorDraft(
-              saveResourceKey,
-              doc,
-              draftMetadataRef.current?.(),
-              sequence,
-              clientMutationId
-            );
-            setStatus("failed");
-            onErrorRef.current?.(error);
-            return;
-          }
-
-          setStatus("dirty");
-        })
-        .finally(() => {
-          if (isStaleSave()) {
-            return;
-          }
-
-          saveInFlightRef.current = false;
-          const queuedDoc = queuedDocRef.current;
-          const queuedSequence = queuedSequenceRef.current;
-          const queuedClientMutationId = queuedClientMutationIdRef.current;
-          queuedDocRef.current = null;
-          queuedSequenceRef.current = 0;
-          queuedClientMutationIdRef.current = null;
-          if (queuedDoc && queuedClientMutationId) {
-            startSaveRef.current(queuedDoc, queuedSequence, queuedClientMutationId);
-          }
-        });
-    },
-    []
+export function useNoteEditorSession(input: UseNoteEditorSessionOptions): NoteEditorSession {
+  const { accountId, noteRef, ownerKey } = input;
+  const store = useMemo(() => getWritingSession(accountId), [accountId]);
+  const viewId = useState(() => crypto.randomUUID())[0];
+  const restoreToken = useRef(0);
+  const [restoreSelection, setRestoreSelection] = useState<{ token: number; selection: NoteBodySelection } | null>(null);
+  const initialSnapshot = useMemo<WritingSnapshot>(() => ({
+    document: { body: input.initial.body, revision: 0 },
+    status: "clean", localRetained: true, hasRecoveredDraft: false, conflict: null,
+  }), [input.initial.body]);
+  const snapshot = useSyncExternalStore(
+    store.subscribe,
+    () => store.peekSnapshot(noteRef) ?? initialSnapshot,
+    () => initialSnapshot,
   );
-
   useEffect(() => {
-    startSaveRef.current = startSave;
-  }, [startSave]);
-
-  const flush = useCallback(
-    (doc?: NoteBodyValue) => {
-      if (doc && pendingDocRef.current) {
-        const clientMutationId =
-          pendingClientMutationIdRef.current ??
-          createNoteEditorClientMutationId(pendingSequenceRef.current);
-        pendingDocRef.current = doc;
-        pendingClientMutationIdRef.current = clientMutationId;
-        storeNoteEditorDraft(
-          resourceKeyRef.current,
-          doc,
-          draftMetadataRef.current?.(),
-          pendingSequenceRef.current,
-          clientMutationId
-        );
-      }
-      clearTimers();
-      const pendingDoc = pendingDocRef.current;
-      const pendingSequence = pendingSequenceRef.current;
-      const pendingClientMutationId = pendingClientMutationIdRef.current;
-      if (!pendingDoc || !pendingClientMutationId) {
-        return;
-      }
-      pendingDocRef.current = null;
-      pendingSequenceRef.current = 0;
-      pendingClientMutationIdRef.current = null;
-      startSave(pendingDoc, pendingSequence, pendingClientMutationId);
-    },
-    [clearTimers, startSave]
-  );
-
-  useEffect(() => {
-    flushRef.current = flush;
-  }, [flush]);
-
-  const scheduleSave = useCallback(
-    (doc: NoteBodyValue) => {
-      const nextSequence = localSequenceRef.current + 1;
-      const clientMutationId = createNoteEditorClientMutationId(nextSequence);
-      localSequenceRef.current = nextSequence;
-      pendingDocRef.current = doc;
-      pendingSequenceRef.current = nextSequence;
-      pendingClientMutationIdRef.current = clientMutationId;
-      storeNoteEditorDraft(
-        resourceKeyRef.current,
-        doc,
-        draftMetadataRef.current?.(),
-        nextSequence,
-        clientMutationId
-      );
-      setHasRecoveredDraft(false);
-      setStatus("dirty");
-
-      if (idleTimerRef.current !== null) {
-        window.clearTimeout(idleTimerRef.current);
-      }
-      idleTimerRef.current = window.setTimeout(() => {
-        flushRef.current();
-      }, NOTE_AUTOSAVE_IDLE_DELAY_MS);
-
-      if (maxWaitTimerRef.current === null) {
-        maxWaitTimerRef.current = window.setTimeout(() => {
-          flushRef.current();
-        }, NOTE_AUTOSAVE_MAX_WAIT_MS);
-      }
-    },
-    []
-  );
-
-  const recoverDraft = useCallback(
-    (draft: StoredNoteEditorDraft) => {
-      generationRef.current += 1;
-      clearTimers();
-      localSequenceRef.current = Math.max(localSequenceRef.current, draft.sequence);
-      pendingDocRef.current = draft.body;
-      pendingSequenceRef.current = draft.sequence;
-      pendingClientMutationIdRef.current = draft.clientMutationId;
-      queuedDocRef.current = null;
-      queuedSequenceRef.current = 0;
-      queuedClientMutationIdRef.current = null;
-      saveInFlightRef.current = false;
-      setHasRecoveredDraft(true);
-      setStatus("recovered");
-    },
-    [clearTimers]
-  );
-
-  const reset = useCallback(() => {
-    generationRef.current += 1;
-    localSequenceRef.current = 0;
-    pendingDocRef.current = null;
-    pendingSequenceRef.current = 0;
-    pendingClientMutationIdRef.current = null;
-    queuedDocRef.current = null;
-    queuedSequenceRef.current = 0;
-    queuedClientMutationIdRef.current = null;
-    saveInFlightRef.current = false;
-    clearTimers();
-    setHasRecoveredDraft(false);
-    setStatus("clean");
-  }, [clearTimers]);
-
-  const discardDraft = useCallback(() => {
-    reset();
-    clearStoredNoteEditorDraft(resourceKeyRef.current);
-  }, [reset]);
-
-  useEffect(() => {
-    reset();
-  }, [resourceKey, reset]);
-
-  useEffect(() => {
-    function flushForPageLifecycle() {
-      flushRef.current();
-    }
-
-    function flushForHiddenDocument() {
-      if (document.visibilityState === "hidden") {
-        flushRef.current();
-      }
-    }
-
-    window.addEventListener("pagehide", flushForPageLifecycle);
-    document.addEventListener("visibilitychange", flushForHiddenDocument);
-
-    return () => {
-      flushRef.current();
-      clearTimers();
-      window.removeEventListener("pagehide", flushForPageLifecycle);
-      document.removeEventListener("visibilitychange", flushForHiddenDocument);
-    };
-  }, [clearTimers]);
-
-  return {
-    status,
-    hasRecoveredDraft,
-    scheduleSave,
-    flush,
-    recoverDraft,
-    discardDraft,
-    reset,
-  };
+    store.openBody(input);
+    store.observeBodyAcknowledgement(noteRef, viewId, input.adapter?.onAcknowledge);
+  }, [store, noteRef, viewId, input]);
+  useEffect(() => () => store.closeView(noteRef, viewId), [store, noteRef, viewId]);
+  const edit = useCallback((value: NoteBodyEdit) => store.edit(noteRef, viewId, value), [store, noteRef, viewId]);
+  const selection = useCallback((value: NoteBodySelection) => store.selection(noteRef, viewId, value), [store, noteRef, viewId]);
+  const boundary = useCallback(() => store.boundary(noteRef, viewId), [store, noteRef, viewId]);
+  const undo = useCallback(() => {
+    const selection = store.undo(noteRef, viewId);
+    if (selection) setRestoreSelection({ token: ++restoreToken.current, selection });
+    return selection;
+  }, [store, noteRef, viewId]);
+  const redo = useCallback(() => {
+    const selection = store.redo(noteRef, viewId);
+    if (selection) setRestoreSelection({ token: ++restoreToken.current, selection });
+    return selection;
+  }, [store, noteRef, viewId]);
+  const flush = useCallback(() => store.flush(noteRef), [store, noteRef]);
+  const retry = useCallback(() => store.retry(noteRef), [store, noteRef]);
+  const recoveryCandidates = useCallback(() => store.listRecovery(ownerKey), [store, ownerKey]);
+  const recover = useCallback((candidate: RecoveryCandidate) => candidate.revision !== null && !candidate.corrupt && store.recover(noteRef, candidate.key, candidate.revision), [store, noteRef]);
+  const discard = useCallback(() => store.discard(noteRef), [store, noteRef]);
+  const exportRaw = useCallback((key: string) => store.exportRaw(key), [store]);
+  const reapply = useCallback(() => store.reapply(noteRef), [store, noteRef]);
+  const setAdapter = useCallback((adapter: BodyAdapter) => { store.setBodyAdapter(noteRef, adapter); store.observeBodyAcknowledgement(noteRef, viewId, adapter.onAcknowledge); }, [store, noteRef, viewId]);
+  const pendingBodies = useCallback(() => store.findPendingBodies(ownerKey), [store, ownerKey]);
+  const rebindOwner = useCallback((nextOwnerKey: string) => store.rebindOwner(noteRef, nextOwnerKey), [store, noteRef]);
+  const submitOperation = useCallback((operation: { key: string; intent: unknown } & OperationCallbacks) => store.enqueueOperation({ ownerKey, ...operation }), [store, ownerKey]);
+  const recoverOperation = useCallback((candidate: RecoveryCandidate, callbacks: OperationCallbacks) => {
+    if (candidate.corrupt || candidate.revision === null || candidate.operationId === null) return false;
+    if (!store.recoverOperation(candidate.key, candidate.revision, candidate.operationId)) return false;
+    store.attachOperation(candidate.operationId, callbacks);
+    return true;
+  }, [store]);
+  const retryOperation = useCallback((id: string) => store.retry(id), [store]);
+  const discardOperation = useCallback((id: string) => store.discardOperation(id), [store]);
+  return { ...snapshot, edit, selection, boundary, undo, redo, flush, retry, recoveryCandidates, recover, discard, exportRaw, reapply, restoreSelection, setAdapter, pendingBodies, rebindOwner, submitOperation, recoverOperation, retryOperation, discardOperation };
 }

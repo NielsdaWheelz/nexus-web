@@ -2,11 +2,13 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, Link2, Plus, Trash2 } from "lucide-react";
-import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import ActionMenu from "@/components/ui/ActionMenu";
+import { useResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime";
 import NoteBodyEditor, {
-  type NoteBodyChange,
+  type NoteBodyEdit,
+  type NoteBodyEditorDocument,
   type NoteBodyInputHandoff,
+  type NoteBodySelection,
   type NoteBodySplit,
 } from "@/components/notes/NoteBodyEditor";
 import ResourceTargetListbox, {
@@ -21,10 +23,12 @@ import type {
 } from "@/lib/resources/resourceItems";
 import { useResourceTargetSearch } from "@/lib/resources/useResourceTargetSearch";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
+import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
+import { useMobileChromeActionMenuLock } from "@/lib/workspace/useMobileChromeActionMenuLock";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { resourceSurfaceFilterFields } from "./resourceSurfaceFilterFields";
 import styles from "./ResourceSurfaceBodyEditor.module.css";
@@ -32,10 +36,6 @@ import styles from "./ResourceSurfaceBodyEditor.module.css";
 export interface ResourceSurfaceBodyFocusRequest {
   occurrenceId: string | null;
   serial: number;
-}
-
-export interface ResourceSurfaceBodyChange extends NoteBodyChange {
-  occurrenceId: string;
 }
 
 export interface ResourceSurfaceSplitRequest {
@@ -67,8 +67,14 @@ export interface ResourceSurfaceBodyEditorProps {
   onMoveOccurrence: (request: ResourceSurfaceMoveRequest) => void;
   onRemoveOccurrence: (occurrenceId: string) => void;
   onInsertResource: (request: ResourceSurfaceInsertResourceRequest) => void;
-  onBodyChange: (change: ResourceSurfaceBodyChange) => void;
-  onBodyBlur: (change: ResourceSurfaceBodyChange) => void;
+  bodyDocument: (occurrenceId: string) => NoteBodyEditorDocument;
+  restoreSelection: (occurrenceId: string) => { token: number; selection: NoteBodySelection } | undefined;
+  onBodyEdit: (input: { occurrenceId: string; edit: NoteBodyEdit }) => void;
+  onSelectionChange: (input: { occurrenceId: string; selection: NoteBodySelection }) => void;
+  onHistoryBoundary: (occurrenceId: string) => void;
+  onUndo: (occurrenceId: string) => void;
+  onRedo: (occurrenceId: string) => void;
+  onFlush: () => void;
   onActivate: (
     item: ResourceItem,
     disposition: WorkspaceTargetDisposition,
@@ -105,8 +111,14 @@ export default function ResourceSurfaceBodyEditor({
   onMoveOccurrence,
   onRemoveOccurrence,
   onInsertResource,
-  onBodyChange,
-  onBodyBlur,
+  bodyDocument,
+  restoreSelection,
+  onBodyEdit,
+  onSelectionChange,
+  onHistoryBoundary,
+  onUndo,
+  onRedo,
+  onFlush,
   onActivate,
   onOpenObject,
   onFeedback,
@@ -238,7 +250,7 @@ export default function ResourceSurfaceBodyEditor({
           if (content.kind === "note_body") {
             return (
               <li
-                key={item.ref}
+              key={occurrence.occurrenceId}
                 className={styles.noteRow}
                 data-occurrence-id={occurrence.occurrenceId}
                 data-collection-row-id={occurrence.occurrenceId}
@@ -246,24 +258,18 @@ export default function ResourceSurfaceBodyEditor({
               >
                 <div className={styles.noteEditor}>
                   <NoteBodyEditor
-                    resourceKey={`${editorSessionKey}:${item.ref}`}
-                    initialBodyPmJson={content.bodyPmJson}
-                    fallbackBodyText={content.bodyText}
+                    resourceKey={`${editorSessionKey}:${occurrence.occurrenceId}:${item.ref}`}
+                    document={bodyDocument(occurrence.occurrenceId)}
+                    restoreSelection={restoreSelection(occurrence.occurrenceId)}
                     editable={directEditingAvailable}
                     ariaLabel={`Edit note ${sourceIndex + 1}`}
                     focusRequest={focusForOccurrence(occurrence.occurrenceId)}
-                    onBodyChange={(body) =>
-                      onBodyChange({
-                        occurrenceId: occurrence.occurrenceId,
-                        ...body,
-                      })
-                    }
-                    onBlurFlush={(body) =>
-                      onBodyBlur({
-                        occurrenceId: occurrence.occurrenceId,
-                        ...body,
-                      })
-                    }
+                    onEdit={(edit) => onBodyEdit({ occurrenceId: occurrence.occurrenceId, edit })}
+                    onSelectionChange={(selection) => onSelectionChange({ occurrenceId: occurrence.occurrenceId, selection })}
+                    onHistoryBoundary={() => onHistoryBoundary(occurrence.occurrenceId)}
+                    onUndoRequest={() => onUndo(occurrence.occurrenceId)}
+                    onRedoRequest={() => onRedo(occurrence.occurrenceId)}
+                    onFlushRequest={onFlush}
                     onSplit={
                       structuralEditingAvailable
                         ? (split) =>
@@ -282,23 +288,6 @@ export default function ResourceSurfaceBodyEditor({
                           }
                         : undefined
                     }
-                    onMove={
-                      structuralEditingAvailable
-                        ? (direction) => {
-                            const position = positionForMove(
-                              orderedItems,
-                              sourceIndex,
-                              direction,
-                            );
-                            if (position) {
-                              onMoveOccurrence({
-                                occurrenceId: occurrence.occurrenceId,
-                                position,
-                              });
-                            }
-                          }
-                        : undefined
-                    }
                     onOpenObject={onOpenObject}
                     onFeedback={onFeedback}
                     onError={onError}
@@ -311,46 +300,22 @@ export default function ResourceSurfaceBodyEditor({
                   />
                 </div>
                 <div className={styles.rowActions}>
-                  <ResourceActionMenu
+                  <SurfaceRowActions
                     actionSubject={actionSubject}
-                    label={`More actions for ${label || `note ${sourceIndex + 1}`}`}
+                    label={label || `note ${sourceIndex + 1}`}
+                    structuralEditingAvailable={structuralEditingAvailable}
+                    canMoveUp={sourceIndex > 0}
+                    canMoveDown={sourceIndex < orderedItems.length - 1}
+                    onMoveUp={() => {
+                      const position = positionForMove(orderedItems, sourceIndex, "up");
+                      if (position) onMoveOccurrence({ occurrenceId: occurrence.occurrenceId, position });
+                    }}
+                    onMoveDown={() => {
+                      const position = positionForMove(orderedItems, sourceIndex, "down");
+                      if (position) onMoveOccurrence({ occurrenceId: occurrence.occurrenceId, position });
+                    }}
+                    onRemove={() => onRemoveOccurrence(occurrence.occurrenceId)}
                   />
-                  {structuralEditingAvailable ? (
-                    <SurfaceOccurrenceActions
-                      label={label || `note ${sourceIndex + 1}`}
-                      canMoveUp={sourceIndex > 0}
-                      canMoveDown={sourceIndex < orderedItems.length - 1}
-                      onMoveUp={() => {
-                        const position = positionForMove(
-                          orderedItems,
-                          sourceIndex,
-                          "up",
-                        );
-                        if (position) {
-                          onMoveOccurrence({
-                            occurrenceId: occurrence.occurrenceId,
-                            position,
-                          });
-                        }
-                      }}
-                      onMoveDown={() => {
-                        const position = positionForMove(
-                          orderedItems,
-                          sourceIndex,
-                          "down",
-                        );
-                        if (position) {
-                          onMoveOccurrence({
-                            occurrenceId: occurrence.occurrenceId,
-                            position,
-                          });
-                        }
-                      }}
-                      onRemove={() =>
-                        onRemoveOccurrence(occurrence.occurrenceId)
-                      }
-                    />
-                  ) : null}
                 </div>
               </li>
             );
@@ -358,7 +323,7 @@ export default function ResourceSurfaceBodyEditor({
 
           return (
             <li
-              key={item.ref}
+              key={occurrence.occurrenceId}
               className={styles.resourceRow}
               data-occurrence-id={occurrence.occurrenceId}
               data-collection-row-id={occurrence.occurrenceId}
@@ -380,44 +345,22 @@ export default function ResourceSurfaceBodyEditor({
                 ) : null}
               </button>
               <div className={styles.rowActions}>
-                <ResourceActionMenu
+                <SurfaceRowActions
                   actionSubject={actionSubject}
-                  label={`More actions for ${label}`}
+                  label={label}
+                  structuralEditingAvailable={structuralEditingAvailable}
+                  canMoveUp={sourceIndex > 0}
+                  canMoveDown={sourceIndex < orderedItems.length - 1}
+                  onMoveUp={() => {
+                    const position = positionForMove(orderedItems, sourceIndex, "up");
+                    if (position) onMoveOccurrence({ occurrenceId: occurrence.occurrenceId, position });
+                  }}
+                  onMoveDown={() => {
+                    const position = positionForMove(orderedItems, sourceIndex, "down");
+                    if (position) onMoveOccurrence({ occurrenceId: occurrence.occurrenceId, position });
+                  }}
+                  onRemove={() => onRemoveOccurrence(occurrence.occurrenceId)}
                 />
-                {structuralEditingAvailable ? (
-                  <SurfaceOccurrenceActions
-                    label={label}
-                    canMoveUp={sourceIndex > 0}
-                    canMoveDown={sourceIndex < orderedItems.length - 1}
-                    onMoveUp={() => {
-                      const position = positionForMove(
-                        orderedItems,
-                        sourceIndex,
-                        "up",
-                      );
-                      if (position) {
-                        onMoveOccurrence({
-                          occurrenceId: occurrence.occurrenceId,
-                          position,
-                        });
-                      }
-                    }}
-                    onMoveDown={() => {
-                      const position = positionForMove(
-                        orderedItems,
-                        sourceIndex,
-                        "down",
-                      );
-                      if (position) {
-                        onMoveOccurrence({
-                          occurrenceId: occurrence.occurrenceId,
-                          position,
-                        });
-                      }
-                    }}
-                    onRemove={() => onRemoveOccurrence(occurrence.occurrenceId)}
-                  />
-                ) : null}
               </div>
             </li>
           );
@@ -542,50 +485,82 @@ export default function ResourceSurfaceBodyEditor({
   );
 }
 
-function SurfaceOccurrenceActions({
+function SurfaceRowActions({
+  actionSubject,
   label,
+  structuralEditingAvailable,
   canMoveUp,
   canMoveDown,
   onMoveUp,
   onMoveDown,
   onRemove,
 }: {
+  actionSubject: ResourceActionSubject;
   label: string;
+  structuralEditingAvailable: boolean;
   canMoveUp: boolean;
   canMoveDown: boolean;
   onMoveUp: () => void;
   onMoveDown: () => void;
   onRemove: () => void;
 }) {
-  const options: readonly ActionDescriptor[] = [
-    {
+  const model = useResourceActionMenuModel(actionSubject);
+  const { onOpenChange } = useMobileChromeActionMenuLock();
+  const ordinary = model.descriptors.filter((action) => action.tone !== "danger");
+  const danger = model.descriptors.filter((action) => action.tone === "danger");
+  const options: ActionDescriptor[] = [...ordinary];
+  if (structuralEditingAvailable && model.status === "Loading") {
+    options.push({
       kind: "command",
-      id: "ResourceSurface.MoveEarlier",
-      label: `Move ${label} earlier`,
-      icon: <ChevronUp size={16} aria-hidden="true" />,
-      disabled: !canMoveUp,
-      onSelect: onMoveUp,
-    },
-    {
-      kind: "command",
-      id: "ResourceSurface.MoveLater",
-      label: `Move ${label} later`,
-      icon: <ChevronDown size={16} aria-hidden="true" />,
-      disabled: !canMoveDown,
-      onSelect: onMoveDown,
-    },
-    {
-      kind: "command",
-      id: "ResourceSurface.Remove",
-      label: `Remove ${label} from this surface`,
-      icon: <Trash2 size={16} aria-hidden="true" />,
-      tone: "danger",
-      separatorBefore: true,
-      onSelect: onRemove,
-    },
-  ];
+      id: "ResourceSurface.ResourceActionsLoading",
+      label: "Resource actions are loading",
+      disabled: true,
+      onSelect: () => undefined,
+    });
+  }
+  if (structuralEditingAvailable) {
+    options.push(
+      {
+        kind: "command",
+        id: "ResourceSurface.MoveEarlier",
+        label: `Move ${label} earlier`,
+        icon: <ChevronUp size={16} aria-hidden="true" />,
+        disabled: !canMoveUp,
+        separatorBefore: options.length > 0,
+        onSelect: onMoveUp,
+      },
+      {
+        kind: "command",
+        id: "ResourceSurface.MoveLater",
+        label: `Move ${label} later`,
+        icon: <ChevronDown size={16} aria-hidden="true" />,
+        disabled: !canMoveDown,
+        onSelect: onMoveDown,
+      },
+      {
+        kind: "command",
+        id: "ResourceSurface.Remove",
+        label: `Remove ${label} from this surface`,
+        icon: <Trash2 size={16} aria-hidden="true" />,
+        tone: "danger",
+        separatorBefore: true,
+        onSelect: onRemove,
+      },
+    );
+  }
+  options.push(...danger.map((action, index) =>
+    structuralEditingAvailable && index === 0
+      ? { ...action, separatorBefore: false }
+      : action,
+  ));
   return (
-    <ActionMenu label={`Surface placement for ${label}`} options={options} />
+    <ActionMenu
+      label={`More actions for ${label}`}
+      options={options}
+      triggerDisabled={options.length === 0 && model.triggerDisabled}
+      triggerDisabledReason={options.length === 0 ? model.triggerDisabledReason : undefined}
+      onOpenChange={onOpenChange}
+    />
   );
 }
 

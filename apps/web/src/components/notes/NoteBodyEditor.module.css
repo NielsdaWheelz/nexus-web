@@ -9,7 +9,100 @@
 
 .autocomplete {
   position: absolute;
-  z-index: 30;
+  z-index: 40;
+  width: min(22rem, calc(100vw - 2rem));
+}
+
+.formatToolbar {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--space-1));
+  z-index: 35;
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-canvas);
+  box-shadow: var(--shadow-3);
+}
+
+.formatButton {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.formatButton:hover,
+.formatButton[aria-pressed="true"] {
+  background: var(--surface-hover);
+}
+
+.formatButton[aria-pressed="true"] {
+  box-shadow: inset 0 -2px currentColor;
+}
+
+.formatButton:focus-visible,
+.linkInput:focus-visible,
+.linkAdd:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.linkPicker {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--surface-canvas);
+  box-shadow: var(--shadow-3);
+}
+
+.linkLabel {
+  color: var(--ink);
+  font-size: var(--text-sm);
+}
+
+.linkControls {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.linkInput {
+  min-width: 0;
+  flex: 1;
+  padding: var(--space-2);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-canvas);
+  color: var(--ink);
+  font: inherit;
+}
+
+.linkAdd {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.linkAdd:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.linkError {
+  color: var(--ink);
+  font-size: var(--text-sm);
 }
 
 .editorView {

@@ -1,4 +1,5 @@
 import { apiFetch } from "@/lib/api/client";
+import type { FrozenRequest } from "@/lib/notes/writingSession";
 import {
   decodeResourceItem,
   normalizeResourceSurface,
@@ -13,10 +14,6 @@ export interface ResourceLaneVersion {
   ref: string;
   lane: "title" | "body" | "outgoing_edges";
   version: number;
-}
-
-interface ApiEnvelope {
-  data: unknown;
 }
 
 function wirePosition(position: SurfacePosition) {
@@ -59,87 +56,58 @@ function wireCommand(command: ResourceSurfaceCommand): Record<string, unknown> {
   }
 }
 
-function wireVersions(baseVersions: readonly ResourceLaneVersion[]) {
-  return baseVersions.map(({ ref, lane, version }) => ({ ref, lane, version }));
-}
-
 export async function fetchResourceSurface(sourceRef: string): Promise<ResourceSurface> {
-  const response = await apiFetch<ApiEnvelope>(
+  const response = await apiFetch<{ data: unknown }>(
     `/api/resource-items/${encodeURIComponent(sourceRef)}/surface`,
     { cache: "no-store" },
   );
   return normalizeResourceSurface(response.data);
 }
 
-export async function commandResourceSurface(input: {
+export function prepareResourceSurfaceCommand(input: {
   sourceRef: string;
   clientMutationId: string;
   baseVersions: readonly ResourceLaneVersion[];
   command: ResourceSurfaceCommand;
-}): Promise<ResourceSurface> {
-  const response = await apiFetch<ApiEnvelope>(
-    `/api/resource-items/${encodeURIComponent(input.sourceRef)}/surface/commands`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        client_mutation_id: input.clientMutationId,
-        base_versions: wireVersions(input.baseVersions),
-        command: wireCommand(input.command),
-      }),
-    },
-  );
-  const data = expectRecord(response.data, "surface command response");
-  return normalizeResourceSurface(data.surface);
+}): FrozenRequest {
+  return {
+    path: `/api/resource-items/${encodeURIComponent(input.sourceRef)}/surface/commands`,
+    method: "POST",
+    body: JSON.stringify({
+      client_mutation_id: input.clientMutationId,
+      base_versions: input.baseVersions,
+      command: wireCommand(input.command),
+    }),
+  };
 }
 
-export async function updateResourceSurfaceTitle(input: {
+export function decodeResourceSurfaceCommand(data: unknown): ResourceSurface {
+  return normalizeResourceSurface(expectRecord(data, "surface command response").surface);
+}
+
+export function prepareResourceSurfaceTitle(input: {
   sourceRef: string;
   clientMutationId: string;
   baseVersion: number;
   title: string;
-}): Promise<ResourceItem> {
-  const response = await apiFetch<ApiEnvelope>(
-    `/api/resource-items/${encodeURIComponent(input.sourceRef)}/title`,
-    {
-      method: "PATCH",
-      body: JSON.stringify({
-        client_mutation_id: input.clientMutationId,
-        base_versions: [
-          { ref: input.sourceRef, lane: "title", version: input.baseVersion },
-        ],
-        title: input.title,
-      }),
-    },
-  );
-  return decodeResourceItem(
-    expectRecord(expectRecord(response.data, "title response").item, "title item"),
-  );
+}): FrozenRequest {
+  return {
+    path: `/api/resource-items/${encodeURIComponent(input.sourceRef)}/title`,
+    method: "PATCH",
+    body: JSON.stringify({
+      client_mutation_id: input.clientMutationId,
+      base_versions: [
+        { ref: input.sourceRef, lane: "title", version: input.baseVersion },
+      ],
+      title: input.title,
+    }),
+  };
 }
 
-export async function updateResourceSurfaceNoteBody(input: {
-  noteRef: string;
-  clientMutationId: string;
-  baseVersion: number;
-  bodyPmJson: Record<string, unknown>;
-}): Promise<{ item: ResourceItem; bodyText: string }> {
-  const response = await apiFetch<ApiEnvelope>(
-    `/api/resource-items/${encodeURIComponent(input.noteRef)}/body`,
-    {
-      method: "PATCH",
-      body: JSON.stringify({
-        client_mutation_id: input.clientMutationId,
-        base_versions: [
-          { ref: input.noteRef, lane: "body", version: input.baseVersion },
-        ],
-        body_pm_json: input.bodyPmJson,
-      }),
-    },
+export function decodeResourceSurfaceTitle(data: unknown): ResourceItem {
+  return decodeResourceItem(
+    expectRecord(expectRecord(data, "title response").item, "title item"),
   );
-  const data = expectRecord(response.data, "note body response");
-  return {
-    item: decodeResourceItem(expectRecord(data.item, "note body item")),
-    bodyText: String(data.bodyText ?? ""),
-  };
 }
 
 export function resourceSurfaceCommandId(): string {
