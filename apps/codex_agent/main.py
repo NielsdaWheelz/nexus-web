@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import errno
 import os
+import signal
 import socket
 import stat
 import sys
 from pathlib import Path
+from types import FrameType
 from typing import Never
 
 from apps.codex_agent import sandbox_health
@@ -106,6 +108,8 @@ async def _serve_after_authenticated_bootstrap() -> None:
     )
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     owned_identity: tuple[int, int] | None = None
+    prior_sigterm = signal.getsignal(signal.SIGTERM)
+    sigterm_held = False
     try:
         listener.bind(str(socket_path))
         os.chmod(socket_path, 0o660)
@@ -120,14 +124,27 @@ async def _serve_after_authenticated_bootstrap() -> None:
                 timeout_graceful_shutdown=int(CODEX_AGENT_HOST_REQUEST_DRAIN_SECONDS),
             )
         )
+
+        def hold_sigterm(_signum: int, _frame: FrameType | None) -> None:
+            server.should_exit = True
+
+        # Uvicorn re-raises SIGTERM after its own shutdown. Hold it until the
+        # socket and any native turn have been cleaned up by this host.
+        signal.signal(signal.SIGTERM, hold_sigterm)
+        sigterm_held = True
         await server.serve(sockets=[listener])
     finally:
-        listener.close()
-        _unlink_owned_socket(socket_path, owned_identity)
-        # The server has stopped listening and cancelled any in-flight request; the
-        # admitted turn it interrupted is still closing its runtime. Reap it here so the
-        # native process tree never outlives this container's graceful stop.
-        await turn_lifecycle(app).drain(CODEX_AGENT_HOST_TEARDOWN_DEADLINE_SECONDS)
+        try:
+            listener.close()
+            _unlink_owned_socket(socket_path, owned_identity)
+            # The server has stopped listening and cancelled any in-flight request; the
+            # admitted turn it interrupted is still closing its runtime. Reap it here so the
+            # native process tree never outlives this container's graceful stop.
+            if not await turn_lifecycle(app).drain(CODEX_AGENT_HOST_TEARDOWN_DEADLINE_SECONDS):
+                raise RuntimeError("Codex native turn teardown did not finish")
+        finally:
+            if sigterm_held:
+                signal.signal(signal.SIGTERM, prior_sigterm)
 
 
 def _runtime_configuration() -> tuple[Path, Path, Path, str, bool]:
