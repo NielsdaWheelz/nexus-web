@@ -18,7 +18,7 @@ from sqlalchemy import delete, func, select, text, tuple_
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
-from nexus.db.models import LLMCall, LLMModelTurn, LLMModelTurnContinuation
+from nexus.db.models import LLMCall, LLMModelTurn, LLMModelTurnContinuation, LLMToolPosition
 from nexus.schemas.presence import Absent, Presence, Present
 from nexus.services.generation_continuations import (
     GenerationContinuationCipher,
@@ -207,6 +207,19 @@ def complete_generation_in_current_transaction(
         raise ValueError("a failed generation terminal requires exactly one failure_code")
 
     call = _lock_owned_generation(db, owner=owner, generation_id=generation_id)
+    unfinished_tool = db.scalar(
+        select(LLMToolPosition.id)
+        .where(
+            LLMToolPosition.generation_id == generation_id,
+            LLMToolPosition.replay_status != "Completed",
+        )
+        .limit(1)
+    )
+    if unfinished_tool is not None:
+        raise RuntimeError(
+            f"generation {generation_id} cannot complete with unfinished tool position "
+            f"{unfinished_tool}"
+        )
     if call.terminal is not None:
         if call.terminal != document:
             _ledger_defect(call, "terminal replay differs from committed terminal")

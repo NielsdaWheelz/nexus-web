@@ -567,6 +567,14 @@ async def execute_generation(
             codex_bind_admission=request.bind_admission,
             provider_resume=resume,
         )
+        if isinstance(terminal, GenerationStopped):
+            return await _complete_stop(
+                session_factory,
+                request,
+                terminal=terminal,
+                encode_failure=encode_failure,
+                before_terminal=before_terminal,
+            )
     except Exception as error:
         from nexus.services.codex_generation_client import CodexGenerationCapacityUnavailable
 
@@ -577,14 +585,6 @@ async def execute_generation(
                 f"generation {request.generation_id} failed after durable dispatch"
             ) from error
         raise
-    if isinstance(terminal, GenerationStopped):
-        return await _complete_stop(
-            session_factory,
-            request,
-            terminal=terminal,
-            encode_failure=encode_failure,
-            before_terminal=before_terminal,
-        )
     if lifecycle.completed is None or lifecycle.completed.terminal is not terminal:
         raise AssertionError("backend returned a terminal not committed by its lifecycle")
     if lifecycle.encoded is None:
@@ -602,7 +602,7 @@ async def _complete_stop(
     encode_failure: EncodeFailure,
     before_terminal: BeforeTerminal | None,
 ) -> CompletedGeneration:
-    if before_terminal is not None:
+    if terminal.last_ordinal > 0 and before_terminal is not None:
         await before_terminal()
     detail = (
         "Generation cancelled before the next dispatch."
