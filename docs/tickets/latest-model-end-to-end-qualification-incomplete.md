@@ -4,41 +4,40 @@ status: open · origin: 2026-09-25 latest-model cutover · area: generation rele
 
 ## problem and evidence
 
-the final provider commit passed 61 of 65 api configuration cells; xai's four
-cells are owner-waived without a credential. five live three-turn continuation
-journeys passed. pinned 0.157.1 passed all 15 gpt-6 model/effort cells through
-the provider runtime with usage and exact requested text; ultra was rejected
-before dispatch. the nonsecret per-cell receipt is
-`/tmp/codex15_receipt_9350.jsonl` (sha256
-`12ea945866dc67dc8cd40b5556e0605fc4d9436acc309df93960cb463773dc1a`). pinned 0.157.1
-completed authenticated, model-originated https mcp calls in both text and
-strict-json modes, with missing/wrong bearer rejected. empty native execution
-environments and delegation disablement were verified in those turns. the
-15 codex browser/bff/api/db/worker journeys, complete linux isolation and
-busy-time resource fit,
-actual credential refresh, forbidden native-tool
-attempts, and full reopened-work proof have not passed. `./scripts/test` is
-static only and cannot qualify these journeys.
+the provider passed 61 of 65 api cells; four xai cells are owner-waived, not
+passes. five live three-turn api continuation journeys and all 15 codex
+model/effort cells passed through the provider runtime. pinned codex 0.157.1
+also completed model-originated https mcp calls in text and strict-json modes.
+provider receipt: `/tmp/codex15_receipt_9350.jsonl` (sha256
+`12ea945866dc67dc8cd40b5556e0605fc4d9436acc309df93960cb463773dc1a`).
 
-an isolated ubuntu/aarch64 vm ran the exact committed nexus host source
-`00ba59483daeee1ababcc6272a1caad6a92d909b` under the named production apparmor,
-read-only, private-egress and 448 mib/no-extra-swap limits. authenticated uds
-catalog exposed the exact three gpt-6 models and five efforts each. one
-policy-owned `media_summary` gpt-6-luna/low strict-json turn passed admission,
-generation and terminal, then `docker stop --time 45` exited 0 with no socket
-or native process. receipt: `/tmp/nexus-codex-qual-00ba5948-receipt.md`
-(sha256 `ac68ae612c20aa72a053ab01ee0a38e69619f59d502c856ee14ff5ef60ce7a9e`).
-this proves configured confinement at host startup, one paid uds turn and
-graceful teardown; the limits were enforced but busy-time use was not sampled.
-the receipt does not cover all denied-target network checks, the browser path,
-worker mcp, refresh or replay.
+all 15 codex browser/bff/api/db/interactive-worker journeys passed with a
+nonempty sse terminal, exact persisted selection/labels and native dispatch,
+one succeeded model turn, and usage. the matrix used api `00ba5948`, worker
+`2668185a` and host `00ba5948`; subsequent final `0c48d6f2` api/worker images
+passed no-key blocked and with-key selectable catalog checks. matrix receipt:
+`/tmp/nexus-codex-15-browser-receipt.md` (sha256
+`09eed8c597dd27a393caa92b7e2ccd70c677a3886c7e090969c4e49e008d19c1`).
+the linux host denied direct internet and app-db routes. across the matrix its
+cgroup peak was 200,302,592 / 469,762,048 bytes and 40 / 64 processes, with
+zero memory events or oom kills. the egress sidecar stayed below its limits.
+these are cumulative container peaks, not per-cell measurements.
+
+no successful model-originated nexus tool result is proved: one `web.search`
+call had invalid model arguments; a second reached Brave with an invalid
+subscription token and left a billed-once position `Uncertain` while chat
+incorrectly completed. see the separate web-search ticket. deterministic
+protocol injection rejected five forbidden native/delegation event types; it
+is not a live model attempt. actual codex credential refresh, cancellation,
+process death and durable reopened-work/no-duplicate-effect proof remain open.
+`./scripts/test` is static and cannot qualify them.
 
 ## prerequisite and acceptance
 
-run the 15 codex configurations and browser-to-worker journeys end to end
-through the pinned nexus stack. prove frozen mcp auth,
-forbidden native/delegation attempts, cancellation/process death, complete
-linux isolation and busy-time resource fit, and replay without duplicate paid
-calls or effects.
-keep temporary live proofs until their required cases pass; report waived xai
-cells separately from passes.
+run a fresh model-originated tool call with a valid protected search credential
+and prove its durable result and answer provenance. prevent a generation
+terminal over an unsettled tool position; qualify that guard with a red/green
+ledger proof. exercise cancellation, process death, auth refresh on an
+independent disposable credential, and replay without duplicate paid calls or
+effects. keep temporary live proofs until these cases pass and report xai's
+owner waiver separately.

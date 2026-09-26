@@ -224,7 +224,7 @@ unexpected timeouts. See
 - [open] chat undo · 2026-09-25 model cutover review · some target owners commit reversal before the durable completed-undo stamp: [ticket](tickets/chat-write-undo-can-commit-before-completion-stamp.md).
 - [waived] api model qualification · 2026-09-26 owner decision · 61 api cells pass; 4 xai cells lack a key and are not live-qualified: [ticket](tickets/latest-model-api-live-cells-unqualified.md).
 - [open] codex credential refresh · 2026-09-25 model cutover · actual 0.157.1 refresh/write semantics were not witnessed: [ticket](tickets/codex-auth-refresh-not-qualified.md).
-- [open] latest model end-to-end proof · 2026-09-25 model cutover · 15 codex browser-to-worker cells, complete isolation, busy-time fit and replay remain unqualified: [ticket](tickets/latest-model-end-to-end-qualification-incomplete.md).
+- [open] latest model end-to-end proof · 2026-09-25 model cutover · 15 codex browser cells pass; live tool result, refresh, cancellation, process death and replay remain: [ticket](tickets/latest-model-end-to-end-qualification-incomplete.md).
 - [open] oi-130 · synapse jobs · 2026-09-15 ecbe production observation · p2 · cancellation after lost admission claim requires an absent Prepared checkpoint: [ticket](tickets/synapse-cancellation-missing-prepared-checkpoint.md).
 - [open] oi-131 · background memory · 2026-09-15 ecbe observation · p2 · retained peak447.902/448 mib leaves100 kib margin, without observed oom: [ticket](tickets/background-worker-production-memory-margin.md).
 
@@ -266,3 +266,4 @@ unexpected timeouts. See
 - [open] 2026-09-21 auth audit · sdk operation deadlines end before response bodies: [ticket](tickets/supabase-operation-deadline-ends-at-response-headers.md).
 - [open] 2026-09-25 local qualification · credential values appeared in an internal tool transcript; rotate outside the transcript's trust boundary: [ticket](tickets/local-qualification-credential-transcript-exposure.md).
 - [open] 2026-09-26 latest-model tools · the available Brave subscription token returns 422, leaving live web.search unqualified: [ticket](tickets/latest-model-web-search-live-unqualified.md).
+- [open] 2026-09-26 Brave adapter · a conclusive invalid-token response remains a billed-once uncertain search; classify and settle it in llm-tools: [ticket](tickets/brave-invalid-token-leaves-billed-search-uncertain.md).
