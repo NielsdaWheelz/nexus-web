@@ -1271,6 +1271,7 @@ export default function MediaPaneBody() {
   const epubAdoptionCaptureSuppressionRef = useRef(false);
   const documentMapPositioningRef = useRef(false);
   const [mapExcursionOrigin, setMapExcursionOrigin] = useState<DocumentMapOrigin | null>(null);
+  const pendingMapExcursionRef = useRef<{ sessionId: number; origin: DocumentMapOrigin | null } | null>(null);
   const sourceAnchorRef = useRef<{ fragmentId: string; anchorId: Presence<string> } | null>(null);
   const cancelPendingMapPulseRef = useRef<() => void>(() => undefined);
   const pendingPdfMapArrivalRef = useRef<{ requestId: number; resolve: (result: ApplyCursorResult) => void } | null>(null);
@@ -1450,6 +1451,9 @@ export default function MediaPaneBody() {
   const readerNavigationResource = documentReader.navigation;
   const readerNavigation = readerNavigationResource.status === "ready"
     ? readerNavigationResource.data
+    : null;
+  const sectionNavigation = readerNavigation && readerNavigation.kind === media?.kind
+    ? readerNavigation.sections
     : null;
   const documentStructure = useMemo<Presence<ReaderDocumentStructure>>(() => readerNavigation
     ? present(buildReaderDocumentStructure(readerNavigation))
@@ -2888,14 +2892,22 @@ export default function MediaPaneBody() {
         scrollLeft: viewport.scrollLeft,
       };
     }
-    const origin = mapExcursionOrigin ?? departure;
+    const pending = pendingMapExcursionRef.current;
+    const inheritedOrigin = pending?.sessionId === restoreSessionIdRef.current ? pending.origin : null;
+    const origin = mapExcursionOrigin ?? inheritedOrigin ?? departure;
     beginDocumentMapPositioning();
     const arrival = position();
     const sessionId = restoreSessionIdRef.current;
+    const receipt = intent === "Jump" ? { sessionId, origin } : null;
+    pendingMapExcursionRef.current = receipt;
     return arrival.then(async (result) => {
       if (sessionId !== restoreSessionIdRef.current) return false;
+      if (intent === "Jump" && pendingMapExcursionRef.current !== receipt) return false;
+      if (intent === "Jump") pendingMapExcursionRef.current = null;
       if (result !== "applied") {
-        if (departure !== null) await restoreDocumentMapOrigin(departure);
+        const recovery = intent === "Jump" && mapExcursionOrigin === null
+          ? inheritedOrigin ?? departure : departure;
+        if (recovery !== null) await restoreDocumentMapOrigin(recovery);
         return false;
       }
       if (intent === "Return") setMapExcursionOrigin(null);
@@ -2913,6 +2925,7 @@ export default function MediaPaneBody() {
   }, [mapExcursionOrigin, positionFromDocumentMap, restoreDocumentMapOrigin]);
   useLayoutEffect(() => {
     setMapExcursionOrigin(null);
+    pendingMapExcursionRef.current = null;
     sourceAnchorRef.current = null;
     cancelPendingMapPulseRef.current();
     pendingPdfMapArrivalRef.current?.resolve("cancelled_by_user");
@@ -4378,7 +4391,7 @@ export default function MediaPaneBody() {
   }, [activatePaneTarget, id, publishMediaFailure]);
 
   // ==========================================================================
-  // EPUB Section Navigation
+  // Section navigation
   // ==========================================================================
 
   const navigateToEpubRequest = useCallback((request: EpubRestoreRequest) => {
@@ -4389,13 +4402,6 @@ export default function MediaPaneBody() {
     return applyEpubRestoreRequest(request);
   }, [activeEpubFragmentId, applyEpubRestoreRequest, beginOrdinaryEpubNavigation,
     clearTarget, mediaFindPreviewLease, setActiveEpubFragment]);
-  const navigateToEpubSection = useCallback((sectionId: string) => {
-    const section = epubSections?.find((candidate) => candidate.section_id === sectionId);
-    if (!section) return;
-    appliedRequestedReaderLocRef.current = sectionId;
-    replaceReaderLocation({ loc: sectionId });
-    void positionFromDocumentMap(() => navigateToEpubRequest(buildEpubSectionRestoreRequest(section)));
-  }, [epubSections, navigateToEpubRequest, positionFromDocumentMap, replaceReaderLocation]);
   const positionAtEpubDocumentMapPoint = useCallback((point: ReaderNavigationTextPoint) => {
     return navigateToEpubRequest(buildEpubPointRestoreRequest(point));
   }, [navigateToEpubRequest]);
@@ -4414,14 +4420,28 @@ export default function MediaPaneBody() {
       text: { quote: null, quote_prefix: null, quote_suffix: null },
     });
   }, [applyReaderLocator, clearFocus, clearRetainedSelection]);
+  const positionAtWebSection = useCallback((section: ReaderNavigationSection) =>
+    section.anchor_id.kind === "Present"
+      ? applySourceAnchor("web", { fragmentId: section.target.fragment_id, target: { kind: "Anchor", anchorId: section.anchor_id.value } })
+      : navigateToWebPoint(section.target), [applySourceAnchor, navigateToWebPoint]);
+  const navigateToSection = useCallback((sectionId: string) => {
+    const section = sectionNavigation?.find((candidate) => candidate.section_id === sectionId);
+    if (!section) return;
+    if (readerNavigation?.kind === "epub") {
+      appliedRequestedReaderLocRef.current = sectionId;
+      replaceReaderLocation({ loc: sectionId });
+      void positionFromDocumentMap(() => navigateToEpubRequest(buildEpubSectionRestoreRequest(section)));
+      return;
+    }
+    void positionFromDocumentMap(() => positionAtWebSection(section));
+  }, [navigateToEpubRequest, positionAtWebSection, positionFromDocumentMap,
+    readerNavigation?.kind, replaceReaderLocation, sectionNavigation]);
   const navigateToWebSection = useCallback((sectionId: string) => {
     const section = webSections?.find((candidate) => candidate.section_id === sectionId);
     if (!section) return;
     appliedRequestedReaderLocRef.current = sectionId;
-    return section.anchor_id.kind === "Present"
-      ? applySourceAnchor("web", { fragmentId: section.target.fragment_id, target: { kind: "Anchor", anchorId: section.anchor_id.value } })
-      : navigateToWebPoint(section.target);
-  }, [applySourceAnchor, navigateToWebPoint, webSections]);
+    return positionAtWebSection(section);
+  }, [positionAtWebSection, webSections]);
 
   useEffect(() => {
     if (media?.kind !== "web_article" || activeRequestedReaderLoc === null ||
@@ -4429,9 +4449,9 @@ export default function MediaPaneBody() {
     navigateToWebSection(activeRequestedReaderLoc);
   }, [activeRequestedReaderLoc, media?.kind, navigateToWebSection]);
 
-  const activeSectionPosition = currentSectionId.kind === "Present"
-    ? (epubSections?.findIndex((section) => section.section_id === currentSectionId.value) ?? -1)
-    : -1;
+  const activeSectionIndex = sectionNavigation && currentSectionId.kind === "Present"
+    ? sectionNavigation.findIndex((section) => section.section_id === currentSectionId.value)
+    : null;
   const sectionDestinations = documentStructure.kind === "Present"
     ? documentStructure.value.sections.filter((section, index, all) => index === 0 || section.start !== all[index - 1]!.start)
     : [];
@@ -4612,6 +4632,7 @@ export default function MediaPaneBody() {
   );
   const handleGenuineReaderInput = useCallback((): boolean => {
     setMapExcursionOrigin(null);
+    pendingMapExcursionRef.current = null;
     cancelRestoreSession();
     documentMapPositioningRef.current = false;
     mediaFindPreviewLease.consumeCaptureSuppression(true);
@@ -5605,9 +5626,9 @@ export default function MediaPaneBody() {
         ),
       };
     }
-    if (isEpub && canRead) {
+    if (canRead && sectionNavigation && sectionNavigation.length > 0) {
       return {
-        label: "EPUB controls",
+        label: "section navigation",
         content: (
           <PaneToolbar
             variant="Instrument"
@@ -5619,7 +5640,7 @@ export default function MediaPaneBody() {
                   iconOnly
                   onClick={() => {
                     if (prevSection) {
-                      navigateToEpubSection(
+                      navigateToSection(
                         prevSection.section_id,
                       );
                     }
@@ -5629,12 +5650,12 @@ export default function MediaPaneBody() {
                 >
                   <ChevronLeft size={16} aria-hidden="true" />
                 </Button>
-                {activeSectionPosition >= 0 && epubSections ? (
+                {activeSectionIndex !== null && activeSectionIndex >= 0 ? (
                   <span
                     className={`${styles.mediaInstrumentStatus} ${styles.mediaInstrumentSectionStatus}`}
-                    aria-label={`Section ${activeSectionPosition + 1} of ${epubSections.length}`}
+                    aria-label={`Section ${activeSectionIndex + 1} of ${sectionNavigation.length}`}
                   >
-                    {activeSectionPosition + 1} / {epubSections.length}
+                    {activeSectionIndex + 1} / {sectionNavigation.length}
                   </span>
                 ) : null}
                 <Button
@@ -5643,7 +5664,7 @@ export default function MediaPaneBody() {
                   iconOnly
                   onClick={() => {
                     if (nextSection) {
-                      navigateToEpubSection(
+                      navigateToSection(
                         nextSection.section_id,
                       );
                     }
@@ -5653,43 +5674,29 @@ export default function MediaPaneBody() {
                 >
                   <ChevronRight size={16} aria-hidden="true" />
                 </Button>
-                {epubSections ? (
-                  <Select
-                    className={styles.mediaInstrumentSectionSelect}
-                    size="sm"
-                    value={currentSectionId.kind === "Present" ? currentSectionId.value : ""}
-                    onChange={(event) => {
-                      if (event.target.value) {
-                        const section = epubSections.find(
-                          (candidate) =>
-                            candidate.section_id === event.target.value,
-                        );
-                        if (section) {
-                          navigateToEpubSection(
-                            section.section_id,
-                          );
-                        }
-                      }
-                    }}
-                    aria-label="Select section"
-                    title={
-                      epubSections.find(
-                        (section) =>
-                          currentSectionId.kind === "Present" && section.section_id === currentSectionId.value,
-                      )?.label
+                <Select
+                  className={styles.mediaInstrumentSectionSelect}
+                  size="sm"
+                  value={currentSectionId.kind === "Present" ? currentSectionId.value : ""}
+                  onChange={(event) => {
+                    if (event.target.value) {
+                      navigateToSection(event.target.value);
                     }
-                  >
-                    <option value="" disabled>between sections</option>
-                    {epubSections.map((section) => (
-                      <option
-                        key={section.section_id}
-                        value={section.section_id}
-                      >
-                        {section.label}
-                      </option>
-                    ))}
-                  </Select>
-                ) : null}
+                  }}
+                  aria-label="Select section"
+                  title={activeSectionIndex !== null && activeSectionIndex >= 0
+                    ? sectionNavigation[activeSectionIndex]?.label : undefined}
+                >
+                  <option value="" disabled>between sections</option>
+                  {sectionNavigation.map((section) => (
+                    <option
+                      key={section.section_id}
+                      value={section.section_id}
+                    >
+                      {section.label}
+                    </option>
+                  ))}
+                </Select>
               </>
             }
           />
@@ -5698,18 +5705,17 @@ export default function MediaPaneBody() {
     }
     return null;
   }, [
-    activeSectionPosition,
+    activeSectionIndex,
     canRead,
-    epubSections,
     handlePdfActionMenuOpenChange,
-    isEpub,
     isPdf,
-    navigateToEpubSection,
+    navigateToSection,
     nextSection,
     pdfControlsState,
     prevSection,
     currentSectionId,
     runPdfPageTurnFromGenuineInput,
+    sectionNavigation,
   ]);
   useEffect(() => {
     setVideoSeekTargetMs(null);
@@ -6429,7 +6435,10 @@ export default function MediaPaneBody() {
     readerNavigation, returnFromDocumentMap, revealCurrentDocumentPosition, secondaryPane?.activeSurfaceId,
     secondaryPane?.groupId, secondaryPane?.visibility]);
   useEffect(() => {
-    if (secondaryPane?.visibility !== "visible") setMapExcursionOrigin(null);
+    if (secondaryPane?.visibility !== "visible") {
+      setMapExcursionOrigin(null);
+      pendingMapExcursionRef.current = null;
+    }
   }, [secondaryPane?.visibility]);
 
   const documentMapEvidenceMeasureKey = useMemo(

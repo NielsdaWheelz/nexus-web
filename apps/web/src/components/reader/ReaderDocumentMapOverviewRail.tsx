@@ -112,6 +112,11 @@ export default function ReaderDocumentMapOverviewRail({
     const track = trackRef.current;
     if (!track) return;
     const measure = () => {
+      const height = track.getBoundingClientRect().height;
+      if (height === 0) {
+        setMeasurement(null);
+        return;
+      }
       const nominalHitHeight = Number.parseFloat(
         getComputedStyle(track).getPropertyValue("--reader-map-hit-height"),
       );
@@ -119,7 +124,7 @@ export default function ReaderDocumentMapOverviewRail({
         throw new Error("Reader map hit height must be a positive CSS length.");
       }
       const next = {
-        height: track.getBoundingClientRect().height,
+        height,
         nominalHitHeight,
       };
       setMeasurement((current) =>
