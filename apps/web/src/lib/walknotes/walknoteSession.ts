@@ -168,7 +168,8 @@ export function WalknoteSessionProvider({ children }: { children: ReactNode }) {
               null,
               createRandomId(),
               pmDocFromText(waypoint.voice_text),
-              createRandomId()
+              createRandomId(),
+              { kind: "absent" },
             );
           }
 

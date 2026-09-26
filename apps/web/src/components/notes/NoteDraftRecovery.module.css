@@ -22,3 +22,15 @@
   align-items: center;
   gap: var(--space-1);
 }
+
+.recovery details {
+  flex-basis: 100%;
+}
+
+.recovery pre {
+  max-height: 10rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+}

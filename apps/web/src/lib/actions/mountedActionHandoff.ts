@@ -121,7 +121,7 @@ export function createMountedEditorIntentController<
           try {
             await current.intent.onCommitted();
           } finally {
-            if (!current.ownerReleased) notifyReady(current.intent.ref);
+            notifyReady(current.intent.ref);
           }
         },
         failed() {
@@ -129,7 +129,7 @@ export function createMountedEditorIntentController<
           settled = true;
           if (slot !== current) return;
           if (current.ownerReleased) {
-            abort(current, false);
+            abort(current, true);
           } else {
             current.phase = "Editing";
           }

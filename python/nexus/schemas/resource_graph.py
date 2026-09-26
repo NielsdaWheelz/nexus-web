@@ -13,7 +13,11 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from nexus.schemas.highlights import HIGHLIGHT_COLORS, PdfQuadIn
-from nexus.schemas.resource_items import ResourceActivationOut, validate_note_body_pm_json
+from nexus.schemas.resource_items import (
+    ExpectedNoteBody,
+    ResourceActivationOut,
+    validate_note_body_pm_json,
+)
 from nexus.services.resource_graph.refs import ResourceScheme
 from nexus.services.resource_graph.schemas import Connection as Connection
 from nexus.services.resource_graph.schemas import ConnectionEndpoint as ConnectionEndpoint
@@ -175,6 +179,7 @@ class CreateLinkOut(ResourceGraphModel):
 class PutLinkNoteRequest(ResourceGraphModel):
     client_mutation_id: str = Field(..., min_length=1, max_length=120)
     note_block_id: UUID
+    expected_body: ExpectedNoteBody
     body_pm_json: dict[str, Any]
 
     @field_validator("body_pm_json")
@@ -188,6 +193,9 @@ class PutLinkNoteRequest(ResourceGraphModel):
 
 class LinkNoteOut(ResourceGraphModel):
     note_block_id: UUID
+    body_pm_json: dict[str, Any]
+    body_text: str
+    version_by_lane: dict[str, int]
     connection: ConnectionOut
 
 

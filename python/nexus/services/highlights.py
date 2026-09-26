@@ -24,6 +24,7 @@ from nexus.db.models import (
     HighlightPdfAnchor,
     HighlightPdfQuad,
     Media,
+    ResourceVersion,
 )
 from nexus.db.retries import retry_read_committed
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
@@ -341,14 +342,31 @@ def _project_anchored(
             db, viewer_id=viewer_id, targets=ids, target_scheme="highlight"
         ).items()
     }
+    attached = linked_note_blocks_for_highlights(db, viewer_id, ids)
+    note_ids = {block.id for blocks in attached.values() for block in blocks}
+    note_versions: dict[UUID, dict[str, int]] = {note_id: {} for note_id in note_ids}
+    if note_ids:
+        for note_id, lane, version in db.execute(
+            select(
+                ResourceVersion.resource_id, ResourceVersion.lane, ResourceVersion.version
+            ).where(
+                ResourceVersion.user_id == viewer_id,
+                ResourceVersion.resource_scheme == "note_block",
+                ResourceVersion.resource_id.in_(note_ids),
+            )
+        ):
+            note_versions[note_id][lane] = version
     notes = {
         highlight_id: [
             LinkedNoteBlockRef(
-                note_block_id=r.id, body_pm_json=r.body_pm_json, body_text=r.body_text
+                note_block_id=block.id,
+                body_pm_json=block.body_pm_json,
+                body_text=block.body_text,
+                version_by_lane=note_versions[block.id],
             )
-            for r in rows
+            for block in blocks
         ]
-        for highlight_id, rows in linked_note_blocks_for_highlights(db, viewer_id, ids).items()
+        for highlight_id, blocks in attached.items()
     }
     return [
         _highlight_out(

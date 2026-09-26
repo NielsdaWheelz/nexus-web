@@ -2,7 +2,7 @@ export function noteBodyHasContent(input: {
   bodyText: string;
   bodyPmJson: Record<string, unknown>;
 }): boolean {
-  if (input.bodyText.trim()) {
+  if (input.bodyText.length > 0) {
     return true;
   }
   return bodyPmJsonHasProjectedAtomContent(input.bodyPmJson);
@@ -35,7 +35,7 @@ function bodyPmJsonHasProjectedAtomContent(value: unknown): boolean {
         ? (node.attrs as Record<string, unknown>)
         : null;
     return Boolean(
-      attrs && typeof attrs.alt === "string" && attrs.alt.trim(),
+      attrs && typeof attrs.src === "string" && attrs.src.trim(),
     );
   }
   if (!Array.isArray(node.content)) {

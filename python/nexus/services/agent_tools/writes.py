@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 from nexus.db.models import Conversation, MessageToolCall
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.notes import DailyCaptureRequest
+from nexus.schemas.resource_items import AbsentExpectedBody
 from nexus.services import highlights, library_entries, note_bodies, notes, text_quote, users
 from nexus.services.chat_run_tools import decode_persisted_tool_record
 from nexus.services.consumption import _lectern_store
@@ -310,6 +311,7 @@ def create_highlight(
             highlight_id=highlight.id,
             block_id=_effect_uuid(effect_id, "nexus.highlight.create:note_block"),
             body_pm_json=note_bodies.pm_doc_from_markdown_projection(note),
+            expected_body=AbsentExpectedBody(kind="absent"),
             client_mutation_id=(
                 f"assistant:{_effect_uuid(effect_id, 'nexus.highlight.create:note_mutation')}"
             ),
