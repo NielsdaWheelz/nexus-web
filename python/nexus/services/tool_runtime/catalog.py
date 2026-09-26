@@ -23,17 +23,10 @@ from llm_tools import (
     ToolCatalog,
     ToolEffect,
     ToolFamily,
-    Unavailable,
     WebSearchProvider,
     bind_brave_web_search,
     bind_web_read,
     web_family,
-)
-from provider_runtime.agent_runtime import CredentialRef
-from provider_runtime.agent_runtime.tool_projection import (
-    McpToolPublication,
-    PublishedMcpTools,
-    lower_mcp_tools,
 )
 from provider_runtime.tool_adapter import PublishedTools, ToolPublication, lower_tools
 from pydantic import ValidationError
@@ -107,19 +100,10 @@ _WEB_SEARCH_POLICY_INPUTS: Final[Mapping[str, object]] = MappingProxyType(
 )
 
 
-def compose_tool_runtime(
-    web_search_provider: WebSearchProvider | None,
-    *,
-    dispatches: bool = True,
-) -> ComposedToolRuntime:
-    """Compose the one process-owned runtime.
+def compose_tool_runtime(web_search_provider: WebSearchProvider | None) -> ComposedToolRuntime:
+    """Compose the one process-owned runtime."""
 
-    ``dispatches`` is False in a process that only projects plan metadata (the
-    Codex host route); every binding revision, and therefore every frozen plan
-    revision, is identical either way.
-    """
-
-    from nexus.services.tool_runtime.bindings import compose_nexus_bindings, nexus_tool_bindings
+    from nexus.services.tool_runtime.bindings import nexus_tool_bindings
 
     portable = ToolCatalog.compose((web_family(),))
     search_source = (
@@ -127,9 +111,7 @@ def compose_tool_runtime(
         if web_search_provider is None
         else bind_brave_web_search(web_search_provider, max_results=WEB_SEARCH_MAX_RESULTS)
     )
-    read_source = (
-        bind_web_read(SafeWebReader()) if dispatches else portable.binding(WEB_READ_SPEC.id)
-    )
+    read_source = bind_web_read(SafeWebReader())
     # These four facts come from the pinned llm_tools revision and nothing else
     # in Nexus would notice a flip; invariant 3 depends on both replay policies.
     if search_source.spec is not WEB_SEARCH_SPEC or read_source.spec is not WEB_READ_SPEC:
@@ -147,16 +129,7 @@ def compose_tool_runtime(
         policy_epoch=search_source.policy_epoch,
         policy_inputs={**search_source.policy_inputs, **_WEB_SEARCH_POLICY_INPUTS},
     )
-    nexus_bindings = (
-        nexus_tool_bindings()
-        if dispatches
-        else compose_nexus_bindings(
-            {
-                entry.spec.id: Unavailable("Projection processes dispatch Nexus tools through MCP")
-                for entry in NEXUS_TOOL_DECLARATIONS
-            }
-        )
-    )
+    nexus_bindings = nexus_tool_bindings()
     catalog = ToolCatalog.compose(
         (
             web_family(search=web_search_binding, read=read_source),
@@ -247,34 +220,6 @@ def compose_provider_model_tools(operation: FrozenToolOperation) -> ProviderMode
     )
 
 
-def project_codex_model_tools(
-    operation: FrozenToolOperation | None,
-    *,
-    server_name: str | None = None,
-    url: str | None = None,
-    bearer: CredentialRef | None = None,
-) -> PublishedMcpTools | None:
-    """Lower one plan to authenticated Codex MCP configuration."""
-
-    endpoint_supplied = server_name is not None or url is not None or bearer is not None
-    if operation is None:
-        if endpoint_supplied:
-            raise ValueError("NoModelTools forbids MCP endpoint or bearer configuration")
-        return None
-    if not isinstance(operation.plan.exposure, Native):
-        raise ValueError("only Native model-tool plans can be MCP-published")
-    if server_name is None or url is None or bearer is None:
-        raise ValueError("model-tool MCP publication requires its complete endpoint authority")
-    return lower_mcp_tools(
-        McpToolPublication(
-            plan=operation.plan,
-            server_name=server_name,
-            url=url,
-            bearer=bearer,
-        )
-    )
-
-
 def freeze_tool_plan_snapshot(operation: FrozenToolOperation) -> FrozenToolPlanSnapshot:
     """Encode the exact immutable semantic authority used by one tool run."""
 
@@ -358,7 +303,6 @@ __all__ = [
     "encode_tool_plan_snapshot",
     "freeze_tool_plan_snapshot",
     "operation_presented_declarations",
-    "project_codex_model_tools",
     "project_provider_model_tools",
     "required_tool_operation",
     "unavailable_tool_ids",

@@ -85,7 +85,6 @@ if TYPE_CHECKING:
     )
 
 type BackendRoute = Literal["CodexPersonal", "ProviderApi"]
-type CodexAdmissionBinder = Callable[[GenerationAdmission], Awaitable[GenerationCommand]]
 type ProviderToolProjection = Callable[[GenerationSpec], ProviderModelTools | None]
 
 
@@ -128,7 +127,7 @@ class BackendToolProposed:
 
 @dataclass(frozen=True, slots=True)
 class BackendToolObserved:
-    """A Codex MCP call already executed through the shared ToolAuthority."""
+    """An unexpected Codex native tool event; the host treats it as a defect."""
 
     kind: Literal["ToolObserved"] = field(default="ToolObserved", init=False)
     route: Literal["CodexPersonal"] = field(default="CodexPersonal", init=False)
@@ -301,7 +300,6 @@ class GenerationBackend:
         tool_executor: BackendToolExecutor,
         observe: ObserveEvent,
         cancellation: CancelSignal,
-        codex_bind_admission: CodexAdmissionBinder | None,
         provider_resume: ProviderResumeState | None,
     ) -> BackendGenerationOutcome:
         model_tools: ProviderModelTools | None = None
@@ -311,21 +309,13 @@ class GenerationBackend:
                 raise GenerationBackendDefect(
                     "CodexPersonal execution received a ProviderApi resume state"
                 )
-            if isinstance(spec.model_tool_plan_snapshot, Present) != (
-                codex_bind_admission is not None
-            ):
-                raise GenerationBackendDefect(
-                    "Codex ModelTools must use exactly one post-admission MCP grant binder"
-                )
+            if isinstance(spec.model_tool_plan_snapshot, Present):
+                raise GenerationBackendDefect("Codex model tools are unavailable")
             start = GenerationTurn(
                 1, GenerationCommandDraft(request_id=generation_id, spec=spec, intent=intent)
             )
             max_turns = 1
         elif isinstance(spec.selection, ProviderApiSelection):
-            if codex_bind_admission is not None:
-                raise GenerationBackendDefect(
-                    "ProviderApi execution received a Codex MCP grant binder"
-                )
             if isinstance(spec.output_contract, StrictJsonOutputSnapshot) and isinstance(
                 spec.model_tool_plan_snapshot, Present
             ):
@@ -353,7 +343,6 @@ class GenerationBackend:
             lifecycle=lifecycle,
             tool_executor=tool_executor,
             observe_event=observe,
-            codex_bind_admission=codex_bind_admission,
             model_tools=model_tools,
         )
         try:
@@ -385,7 +374,6 @@ class _KernelAdapter:
     lifecycle: BackendChildLifecycle
     tool_executor: BackendToolExecutor
     observe_event: ObserveEvent = field(repr=False)
-    codex_bind_admission: CodexAdmissionBinder | None = field(repr=False)
     model_tools: ProviderModelTools | None = field(repr=False)
 
     async def stream(
@@ -446,17 +434,11 @@ class _KernelAdapter:
         KernelFrame[BackendEvent, BackendTerminal, ProviderContinuationMaterial, ToolCallResolution]
     ]:
         async def bind(admission: GenerationAdmission) -> GenerationCommand:
+            del admission
             await arm()
-            binder = self.codex_bind_admission
-            command = (
-                generation_command_from_draft(draft, tool_grant=None)
-                if binder is None
-                else await binder(admission)
-            )
+            command = generation_command_from_draft(draft)
             if generation_command_draft(command) != draft:
-                raise GenerationBackendDefect(
-                    "Codex admission binder changed frozen generation identity"
-                )
+                raise GenerationBackendDefect("Codex command changed frozen generation identity")
             return command
 
         # Race only the next transport read against cancellation: the native

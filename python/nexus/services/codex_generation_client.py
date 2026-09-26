@@ -367,16 +367,9 @@ def _parse_frame(raw: bytes) -> GenerationFrame:
 
 
 def _wire_command(command: GenerationCommand) -> bytes:
-    # ``None`` is a required semantic value inside frozen snapshots (a read-only
-    # plan's ``max_live_writes``), so exclude only the non-serializing grant and
-    # project its bearer explicitly.
-    payload = command.model_dump(mode="json", exclude={"tool_grant"})
-    if command.tool_grant is not None:
-        payload["tool_grant"] = {
-            "kind": "Bearer",
-            "token": command.tool_grant.token.get_secret_value(),
-        }
-    return json.dumps(payload, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode()
+    return json.dumps(
+        command.model_dump(mode="json"), ensure_ascii=True, allow_nan=False, separators=(",", ":")
+    ).encode()
 
 
 async def _is_capacity_rejection(response: httpx.Response) -> bool:

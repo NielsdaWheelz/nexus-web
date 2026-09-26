@@ -9,9 +9,9 @@ citation candidates only from completed durable tool receipts.
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Final, Literal, assert_never, cast
+from typing import Annotated, Final, Literal, assert_never, cast
 from uuid import UUID
 
 from llm_tools import ToolResult
@@ -37,11 +37,7 @@ from nexus.services.artifacts.coordination import DossierBuildRuntime
 from nexus.services.artifacts.document_html import DocumentHtmlError
 from nexus.services.artifacts.dossier_types import DossierBuildFailureCode
 from nexus.services.artifacts.manifests import IdeaInputManifestV1, LibraryInputManifestV1
-from nexus.services.generation_backend import (
-    BackendTerminal,
-    BackendToolExecutor,
-    CodexAdmissionBinder,
-)
+from nexus.services.generation_backend import BackendTerminal, BackendToolExecutor
 from nexus.services.generation_spec import (
     BackgroundOperationKey,
     FrozenHostToolPlanSnapshot,
@@ -85,9 +81,6 @@ from nexus.services.tool_authority import (
 )
 from nexus.services.tool_runtime.catalog import FrozenToolOperation, freeze_tool_plan_snapshot
 
-if TYPE_CHECKING:
-    from nexus.services.agent_tools_mcp import CodexGenerationToolBinding
-
 SYNTHESIS_STEP_PATH: Final = "synthesis"
 _MODEL_TOOL_OPERATIONS: Final = frozenset({"dossier_library", "dossier_idea"})
 
@@ -126,20 +119,6 @@ class GenerationUncertainOnReplay(RuntimeError):
     """A generation may have dispatched and requires operator repair."""
 
 
-@dataclass(slots=True)
-class SynthesisAdmission:
-    request: GenerationExecutionRequest
-    codex_tools: CodexGenerationToolBinding | None = None
-
-    @property
-    def before_terminal(self) -> Callable[[], Awaitable[None]] | None:
-        return None if self.codex_tools is None else self.codex_tools.wait_until_idle
-
-    async def close(self) -> None:
-        if self.codex_tools is not None:
-            await self.codex_tools.drain_and_close()
-
-
 @dataclass(frozen=True, slots=True)
 class SynthesisStep:
     """One build's exact generation position and its immutable domain prompt."""
@@ -176,7 +155,7 @@ class SynthesisStep:
         *,
         requester_user_id: UUID,
         lock_dispatch: Callable[[Session], JobRow | None],
-    ) -> SynthesisAdmission:
+    ) -> GenerationExecutionRequest:
         """Freeze the exact selection and compose the route's tool transport."""
         session_factory = get_session_factory()
         journal = JobGenerationJournal(
@@ -193,24 +172,6 @@ class SynthesisStep:
             if scope is not None
             else None
         )
-        binding: CodexGenerationToolBinding | None = None
-
-        def bind_codex(spec: GenerationSpec) -> CodexAdmissionBinder:
-            from nexus.services.agent_tools_mcp import CodexGenerationToolBinding
-
-            nonlocal binding
-            binding = CodexGenerationToolBinding(
-                session_factory=session_factory,
-                user_id=requester_user_id,
-                owner=self.owner,
-                generation_id=self.generation_id,
-                job_context=runtime.execution_context,
-                operation=_model_tool_operation(runtime, spec),
-                spec=spec,
-                intent=self.intent,
-                projection=projection,
-            )
-            return binding.bind_admission
 
         def provider_executor(spec: GenerationSpec) -> BackendToolExecutor:
             return DeferredGenerationToolExecutor(
@@ -237,10 +198,9 @@ class SynthesisStep:
             scope=scope,
             host_plan=host_plan,
             host_evidence_revision=host_evidence_revision,
-            bind_admission_factory=bind_codex if scope is not None else None,
             tool_executor_factory=provider_executor if scope is not None else None,
         )
-        return SynthesisAdmission(request=request, codex_tools=binding)
+        return request
 
     def encode_terminal(self, terminal: BackendTerminal) -> EncodedGenerationTerminal:
         """Validate and persist the final document at the ledger landing boundary."""

@@ -116,8 +116,6 @@ services:
       DATABASE_STATEMENT_TIMEOUT_MS: "300000"
       DATABASE_IDLE_IN_TX_TIMEOUT_MS: "0"
       NEXUS_CODEX_AGENT_SOCKET: /run/nexus-codex/agent.sock
-      NEXUS_AGENT_TOOLS_MCP_LISTEN: 0.0.0.0:8001
-      NEXUS_AGENT_TOOLS_MCP_ORIGIN: https://${CADDY_SITE:?set}/internal/agent-tools/mcp
     depends_on:
       postgres:
         condition: service_healthy
@@ -127,8 +125,6 @@ services:
       # must not prevent the interactive lane from serving unrelated jobs.
       nexus-codex-agent-host:
         condition: service_started
-    expose:
-      - "8001"
     volumes:
       - nexus_codex_run:/run/nexus-codex:ro
     healthcheck:
@@ -200,7 +196,6 @@ services:
     user: "10002:10002"
     environment:
       NEXUS_CODEX_EGRESS_PROXY_IP: 172.30.0.2
-      NEXUS_CODEX_EGRESS_MCP_HOST: ${CADDY_SITE:?set}
     read_only: true
     cap_drop:
       - ALL
@@ -240,8 +235,6 @@ services:
       NEXUS_CODEX_CREDENTIAL_FILE: /run/nexus-codex-credential/auth.json
       NEXUS_CODEX_WORKING_DIRECTORY_ROOT: /run/nexus-codex-turns
       NEXUS_CODEX_AGENT_SOCKET: /run/nexus-codex/agent.sock
-      NEXUS_CODEX_MCP_ORIGIN: https://${CADDY_SITE:?set}/internal/agent-tools/mcp
-      NEXUS_CODEX_MODEL_TOOL_NETWORK_ATTESTED: "true"
     depends_on:
       codex-egress-policy:
         condition: service_healthy

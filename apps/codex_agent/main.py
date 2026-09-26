@@ -41,17 +41,13 @@ from provider_runtime.agent_runtime import (
 _SOCKET_ENV = "NEXUS_CODEX_AGENT_SOCKET"
 _CREDENTIAL_FILE_ENV = "NEXUS_CODEX_CREDENTIAL_FILE"
 _WORKING_DIRECTORY_ROOT_ENV = "NEXUS_CODEX_WORKING_DIRECTORY_ROOT"
-_MCP_ORIGIN_ENV = "NEXUS_CODEX_MCP_ORIGIN"
-_MODEL_TOOL_NETWORK_ATTESTED_ENV = "NEXUS_CODEX_MODEL_TOOL_NETWORK_ATTESTED"
 _SERVE_AFTER_AUTH_ARGUMENT = "_serve-after-authenticated-bootstrap"
 
 
 async def _authenticated_bootstrap() -> None:
     """Authenticate once, sync the durable credential, and release probe state."""
 
-    socket_path, credential_file, working_directory_root, _mcp_origin, _attested = (
-        _runtime_configuration()
-    )
+    socket_path, credential_file, working_directory_root = _runtime_configuration()
     _prepare_runtime_boundary(socket_path, credential_file, working_directory_root)
     probe_paths = create_ephemeral_runtime_paths(working_directory_root, "startup-auth")
     credential_identity = enrolled_auth_identity(credential_file)
@@ -87,13 +83,7 @@ async def _serve_after_authenticated_bootstrap() -> None:
         turn_lifecycle,
     )
 
-    from nexus.services.codex_generation_operations import (
-        compose_codex_model_tool_plan_registry,
-    )
-
-    socket_path, credential_file, working_directory_root, mcp_origin, attested = (
-        _runtime_configuration()
-    )
+    socket_path, credential_file, working_directory_root = _runtime_configuration()
     _prepare_runtime_boundary(socket_path, credential_file, working_directory_root)
     versions = resolve_runtime_versions()
 
@@ -102,9 +92,6 @@ async def _serve_after_authenticated_bootstrap() -> None:
         working_directory_root=working_directory_root,
         credential_file=credential_file,
         versions=versions,
-        model_tool_registry=compose_codex_model_tool_plan_registry(),
-        mcp_origin=mcp_origin,
-        model_tool_network_attested=attested,
     )
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     owned_identity: tuple[int, int] | None = None
@@ -147,19 +134,11 @@ async def _serve_after_authenticated_bootstrap() -> None:
                 signal.signal(signal.SIGTERM, prior_sigterm)
 
 
-def _runtime_configuration() -> tuple[Path, Path, Path, str, bool]:
+def _runtime_configuration() -> tuple[Path, Path, Path]:
     socket_path = required_absolute_path(_SOCKET_ENV)
     credential_file = required_absolute_path(_CREDENTIAL_FILE_ENV)
     working_directory_root = required_absolute_path(_WORKING_DIRECTORY_ROOT_ENV)
-    mcp_origin = _required_environment(_MCP_ORIGIN_ENV)
-    model_tool_network_attested = _required_model_tool_network_attestation()
-    return (
-        socket_path,
-        credential_file,
-        working_directory_root,
-        mcp_origin,
-        model_tool_network_attested,
-    )
+    return socket_path, credential_file, working_directory_root
 
 
 def _prepare_runtime_boundary(
@@ -206,20 +185,6 @@ async def _probe_chatgpt_auth(
             finally:
                 if native.stopped:
                     native_exit_proven.set()
-
-
-def _required_environment(name: str) -> str:
-    value = os.environ.get(name)
-    if value is None or not value:
-        raise RuntimeError(f"{name} is required")
-    return value
-
-
-def _required_model_tool_network_attestation() -> bool:
-    value = _required_environment(_MODEL_TOOL_NETWORK_ATTESTED_ENV)
-    if value != "true":
-        raise RuntimeError(f"{_MODEL_TOOL_NETWORK_ATTESTED_ENV} must be exactly 'true'")
-    return True
 
 
 def _validate_directories(

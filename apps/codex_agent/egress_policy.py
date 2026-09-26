@@ -19,7 +19,6 @@ from dataclasses import dataclass
 from typing import Final
 
 _PROXY_IP_ENV: Final = "NEXUS_CODEX_EGRESS_PROXY_IP"
-_MCP_HOST_ENV: Final = "NEXUS_CODEX_EGRESS_MCP_HOST"
 _DNS_PORT: Final = 53
 _TLS_PORT: Final = 443
 _MAX_DNS_QUERY_BYTES: Final = 4_096
@@ -51,28 +50,19 @@ class _NeedMoreData(Exception):
 @dataclass(frozen=True, slots=True)
 class EgressPolicy:
     proxy_ip: ipaddress.IPv4Address
-    mcp_host: str
 
     @classmethod
     def from_environment(cls) -> EgressPolicy:
         try:
             proxy_ip = ipaddress.IPv4Address(os.environ[_PROXY_IP_ENV])
-            mcp_host = _canonical_host(os.environ[_MCP_HOST_ENV])
         except KeyError as error:
             raise RuntimeError(f"missing required environment variable {error.args[0]}") from error
         if not any(proxy_ip in network for network in _PRIVATE_PROXY_NETWORKS):
             raise RuntimeError(f"{_PROXY_IP_ENV} must be a private unicast IPv4 address")
-        if mcp_host == "chatgpt.com" or mcp_host.endswith(".chatgpt.com"):
-            raise RuntimeError(f"{_MCP_HOST_ENV} must name the distinct Nexus MCP origin")
-        return cls(proxy_ip=proxy_ip, mcp_host=mcp_host)
+        return cls(proxy_ip=proxy_ip)
 
     def admits(self, host: str) -> bool:
-        return (
-            host == "chatgpt.com"
-            or host.endswith(".chatgpt.com")
-            or host == "auth.openai.com"
-            or host == self.mcp_host
-        )
+        return host == "chatgpt.com" or host.endswith(".chatgpt.com") or host == "auth.openai.com"
 
 
 def _canonical_host(value: str) -> str:

@@ -6,7 +6,7 @@ One process per lane, each running two loops against `background_jobs`:
 - Scheduler loop: enqueue each due periodic slot once, cluster-wide.
 
 `WORKER_LANE=interactive` owns the five user-waiting kinds and keeps handlers
-in-process alongside the agent-tools MCP listener. `WORKER_LANE=background`
+in-process. `WORKER_LANE=background`
 owns the fifteen retrieval, repair, teardown and periodic kinds and runs every
 handler in a fresh cgroup-limited child. The lanes are disjoint and together
 cover the production-enabled job set (`python/nexus/job_topology.py`).

@@ -69,7 +69,7 @@ type ToolExecutionProjection = ChatToolExecutionProjection | DossierToolExecutio
 
 type ToolEffectMode = Literal["ReadOnly", "AdditiveWrites"]
 type ToolReplayStatus = Literal["Prepared", "Uncertain", "Completed"]
-type ToolTransportKind = Literal["CodexMcp", "ProviderApi"]
+type ToolTransportKind = Literal["ProviderApi"]
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _MAX_TRANSPORT_CALL_ID_BYTES = 1_024
@@ -758,7 +758,7 @@ class _ToolTelemetry:
 
 @dataclass(frozen=True, slots=True)
 class GenerationToolExecutor:
-    """Shared executor used by Provider API proposals and Codex MCP requests."""
+    """Execute admitted Provider API tool proposals."""
 
     authority: ToolAuthority
 
@@ -1060,7 +1060,7 @@ def _assert_position_identity(
 def _position_record(row: LLMToolPosition, *, generation_seq: int) -> ToolPositionRecord:
     if row.replay_status not in {"Prepared", "Uncertain", "Completed"}:
         raise AssertionError("persisted tool position has an unknown replay status")
-    if row.transport_kind not in {"CodexMcp", "ProviderApi"}:
+    if row.transport_kind != "ProviderApi":
         raise AssertionError("persisted tool position has an unknown transport")
     return ToolPositionRecord(
         id=row.id,

@@ -1,4 +1,4 @@
-"""Strict private v2/v3 wire contract for Codex generations over the UDS."""
+"""Strict private wire contract for Codex generations over the UDS."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import hashlib
 import json
 from datetime import datetime
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Annotated, Literal, Self, assert_never
+from typing import TYPE_CHECKING, Annotated, Literal, Self
 from uuid import UUID
 
 from provider_runtime import Absent as RuntimeAbsent
@@ -22,7 +22,6 @@ from pydantic import (
 
 from nexus.schemas.presence import Absent, Presence, Present
 from nexus.services.generation_spec import (
-    BearerToolGrant,
     CodexDispatchTargetSnapshot,
     CodexPersonalSelection,
     GenerationIntent,
@@ -32,35 +31,24 @@ from nexus.services.generation_spec import (
     TextOutput,
     TextOutputSnapshot,
     WireTaggedModel,
-    utf8_size,
     validate_intent_bounds,
 )
 
 if TYPE_CHECKING:
     from provider_runtime.agent_runtime import AgentModelCatalog, AgentModelFacts
 
-COMMAND_SCHEMA_VERSION = "nexus-generation-command.v3"
-COMMAND_DRAFT_SCHEMA_VERSION = "nexus-generation-command-draft.v1"
+COMMAND_SCHEMA_VERSION = "nexus-generation-command.v4"
+COMMAND_DRAFT_SCHEMA_VERSION = "nexus-generation-command-draft.v2"
 ADMISSION_SCHEMA_VERSION = "nexus-generation-admission.v2"
 EVENT_SCHEMA_VERSION = "nexus-generation-event.v3"
 HEALTH_SCHEMA_VERSION = "nexus-generation-health.v3"
 MODEL_CATALOG_SCHEMA_VERSION = "nexus-codex-model-catalog.v2"
 MAX_OUTPUT_SCHEMA_BYTES = 64 * 1024
-MAX_TOOL_GRANT_BYTES = 16 * 1024
-MAX_MODEL_TOOL_PLAN_BYTES = 64 * 1024
 MAX_MODEL_CATALOG_BODY_BYTES = 2 * 1024 * 1024
 MAX_ADMISSION_BODY_BYTES = 4 * 1024
 COMMAND_ENVELOPE_BYTES = 4 * 1024
 MAX_COMMAND_BODY_BYTES = (
-    6
-    * (
-        32 * 1024
-        + 1024 * 1024
-        + MAX_OUTPUT_SCHEMA_BYTES
-        + MAX_TOOL_GRANT_BYTES
-        + MAX_MODEL_TOOL_PLAN_BYTES
-    )
-    + COMMAND_ENVELOPE_BYTES
+    6 * (32 * 1024 + 1024 * 1024 + MAX_OUTPUT_SCHEMA_BYTES) + COMMAND_ENVELOPE_BYTES
 )
 
 CatalogKey = Annotated[str, StringConstraints(min_length=1, max_length=256)]
@@ -192,11 +180,7 @@ class _GenerationCommandFacts(WireTaggedModel):
         )
         plan = self.spec.model_tool_plan_snapshot
         if isinstance(plan, Present):
-            if plan.value.exposure.type != "Native":
-                raise ValueError("Codex ModelTools requires Native tool exposure")
-            plan_bytes = len(_canonical_json_bytes(plan.value.model_dump(mode="json")))
-            if plan_bytes > MAX_MODEL_TOOL_PLAN_BYTES:
-                raise ValueError(f"model tool plan bytes exceed {MAX_MODEL_TOOL_PLAN_BYTES} bytes")
+            raise ValueError("Codex model tools are unavailable")
         if isinstance(self.intent.output, JsonSchemaOutput):
             schema_bytes = len(_canonical_json_bytes(self.intent.output.schema_))
             if schema_bytes > MAX_OUTPUT_SCHEMA_BYTES:
@@ -219,40 +203,25 @@ class _GenerationCommandFacts(WireTaggedModel):
 class GenerationCommandDraft(_GenerationCommandFacts):
     """Grant-free command admitted before any durable child or native work."""
 
-    schema_version: Literal["nexus-generation-command-draft.v1"] = COMMAND_DRAFT_SCHEMA_VERSION
+    schema_version: Literal["nexus-generation-command-draft.v2"] = COMMAND_DRAFT_SCHEMA_VERSION
 
 
 class GenerationCommand(_GenerationCommandFacts):
     """The sole dispatchable command, created only after host admission."""
 
-    schema_version: Literal["nexus-generation-command.v3"] = COMMAND_SCHEMA_VERSION
-    tool_grant: BearerToolGrant | None = None
-
-    @model_validator(mode="after")
-    def _dispatch_authority_is_exact(self) -> Self:
-        plan = self.spec.model_tool_plan_snapshot
-        if isinstance(plan, Present) and self.tool_grant is None:
-            raise ValueError("ModelTools generation requires a bearer grant")
-        if isinstance(plan, Absent) and self.tool_grant is not None:
-            raise ValueError("NoModelTools generation forbids a bearer grant")
-        if self.tool_grant is not None:
-            grant_bytes = utf8_size(self.tool_grant.token.get_secret_value())
-            if grant_bytes > MAX_TOOL_GRANT_BYTES:
-                raise ValueError(f"grant bytes exceed {MAX_TOOL_GRANT_BYTES} bytes")
-        return self
+    schema_version: Literal["nexus-generation-command.v4"] = COMMAND_SCHEMA_VERSION
 
 
 class GenerationAdmissionRequest(WireTaggedModel):
     """Grant-free immutable identity used to reserve the sole host slot."""
 
-    schema_version: Literal["nexus-generation-admission-request.v2"] = (
-        "nexus-generation-admission-request.v2"
+    schema_version: Literal["nexus-generation-admission-request.v3"] = (
+        "nexus-generation-admission-request.v3"
     )
     request_id: UUID
     generation_spec_fingerprint: Sha256Hex
     request_fingerprint: Sha256Hex
     turn_timeout_seconds: int = Field(gt=0)
-    model_tool_plan_fingerprint: Sha256Hex
 
 
 class GenerationAdmission(WireTaggedModel):
@@ -412,7 +381,7 @@ class GenerationHealth(WireTaggedModel):
     backend: Literal["codex"] = "codex"
     transport: Literal["app_server"] = "app_server"
     auth_profile: Literal["codex-personal"] = "codex-personal"
-    command_schema_version: Literal["nexus-generation-command.v3"] = COMMAND_SCHEMA_VERSION
+    command_schema_version: Literal["nexus-generation-command.v4"] = COMMAND_SCHEMA_VERSION
     native_version: Annotated[str, StringConstraints(min_length=1, max_length=128)]
     library_contract_revision: Annotated[str, StringConstraints(min_length=1, max_length=128)]
 
@@ -506,32 +475,20 @@ def generation_command_draft(command: GenerationCommand) -> GenerationCommandDra
     )
 
 
-def generation_command_from_draft(
-    draft: GenerationCommandDraft, *, tool_grant: BearerToolGrant | None
-) -> GenerationCommand:
+def generation_command_from_draft(draft: GenerationCommandDraft) -> GenerationCommand:
     """Create the only dispatchable command after successful host admission."""
 
-    return GenerationCommand(
-        request_id=draft.request_id, spec=draft.spec, intent=draft.intent, tool_grant=tool_grant
-    )
+    return GenerationCommand(request_id=draft.request_id, spec=draft.spec, intent=draft.intent)
 
 
 def generation_admission_request(draft: GenerationCommandDraft) -> GenerationAdmissionRequest:
     """Project a grant-free draft onto its replay-stable admission identity."""
 
-    plan = draft.spec.model_tool_plan_snapshot
-    if isinstance(plan, Present):
-        plan_fingerprint = _digest(plan.value.model_dump(mode="json"))
-    elif isinstance(plan, Absent):
-        plan_fingerprint = _digest(plan.model_dump(mode="json"))
-    else:
-        assert_never(plan)
     return GenerationAdmissionRequest(
         request_id=draft.request_id,
         generation_spec_fingerprint=draft.spec.fingerprint,
         request_fingerprint=generation_draft_fingerprint(draft),
         turn_timeout_seconds=draft.spec.bounds.turn_timeout_seconds,
-        model_tool_plan_fingerprint=plan_fingerprint,
     )
 
 

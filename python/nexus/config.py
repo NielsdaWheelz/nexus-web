@@ -42,68 +42,6 @@ DIRECT_UPLOAD_PUT_TIMEOUT_SECONDS = 240
 BACKGROUND_WORKER_MEMORY_LIMIT_BYTES = 448 * 1024 * 1024
 
 
-def parse_agent_tools_mcp_listen(value: str) -> tuple[str, int]:
-    """Parse the dedicated worker MCP listener as one strict host:port pair."""
-    if not isinstance(value, str) or value.count(":") != 1:
-        raise ValueError("NEXUS_AGENT_TOOLS_MCP_LISTEN must be host:port")
-    host, port_text = value.rsplit(":", 1)
-    if not host or "/" in host or any(char.isspace() for char in host):
-        raise ValueError("NEXUS_AGENT_TOOLS_MCP_LISTEN has an invalid host")
-    try:
-        port = int(port_text)
-    except ValueError as exc:
-        raise ValueError("NEXUS_AGENT_TOOLS_MCP_LISTEN has an invalid port") from exc
-    if not 1 <= port <= 65_535:
-        raise ValueError("NEXUS_AGENT_TOOLS_MCP_LISTEN port must be 1..65535")
-    return host, port
-
-
-def parse_agent_tools_mcp_origin(value: str) -> tuple[str, str]:
-    """Return the exact Host and Origin admitted by the MCP transport."""
-
-    parsed = urlparse(value)
-    try:
-        port = parsed.port
-    except ValueError as exc:
-        raise ValueError("NEXUS_AGENT_TOOLS_MCP_ORIGIN has an invalid port") from exc
-    if (
-        parsed.scheme not in {"http", "https"}
-        or not parsed.hostname
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.path != "/internal/agent-tools/mcp"
-        or parsed.params
-        or parsed.query
-        or parsed.fragment
-    ):
-        raise ValueError("NEXUS_AGENT_TOOLS_MCP_ORIGIN must be one exact MCP endpoint")
-    default_port = 80 if parsed.scheme == "http" else 443
-    authority = parsed.hostname if port in {None, default_port} else f"{parsed.hostname}:{port}"
-    if parsed.netloc != authority:
-        raise ValueError("NEXUS_AGENT_TOOLS_MCP_ORIGIN must use a canonical authority")
-    return authority, f"{parsed.scheme}://{authority}"
-
-
-def validate_agent_tools_mcp_runtime_origin(
-    value: str,
-    *,
-    nexus_env: "Environment",
-    worker_lane: Literal["interactive", "background", "maintenance"] | None,
-) -> tuple[str, str]:
-    """Validate the MCP origin only for the lane that owns that transport."""
-
-    authority, origin = parse_agent_tools_mcp_origin(value)
-    if (
-        worker_lane == "interactive"
-        and nexus_env in {Environment.STAGING, Environment.PROD}
-        and not origin.startswith("https://")
-    ):
-        raise ValueError(
-            "NEXUS_AGENT_TOOLS_MCP_ORIGIN must use HTTPS for a deployed interactive worker"
-        )
-    return authority, origin
-
-
 def _database_url_looks_like_supabase(database_url: str) -> bool:
     parsed = urlparse(database_url)
     hostname = (parsed.hostname or "").lower()
@@ -484,14 +422,6 @@ class Settings(BaseSettings):
         default=Path("/run/nexus-codex/agent.sock"),
         alias="NEXUS_CODEX_AGENT_SOCKET",
     )
-    agent_tools_mcp_listen: str = Field(
-        default="0.0.0.0:8001",
-        alias="NEXUS_AGENT_TOOLS_MCP_LISTEN",
-    )
-    agent_tools_mcp_origin: str = Field(
-        default="http://127.0.0.1:8001/internal/agent-tools/mcp",
-        alias="NEXUS_AGENT_TOOLS_MCP_ORIGIN",
-    )
 
     # Synapse resonance engine: SYNAPSE_ENABLED=false turns every scan trigger
     # into a no-op (synapse spec G6).
@@ -569,12 +499,6 @@ class Settings(BaseSettings):
             raise ValueError(
                 "DATABASE_URL must point at standalone Postgres, not Supabase Database."
             )
-        parse_agent_tools_mcp_listen(self.agent_tools_mcp_listen)
-        validate_agent_tools_mcp_runtime_origin(
-            self.agent_tools_mcp_origin,
-            nexus_env=self.nexus_env,
-            worker_lane=self.worker_lane,
-        )
 
     def _validate_deployed_ingest_reconcile(self) -> None:
         if (

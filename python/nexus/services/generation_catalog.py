@@ -339,6 +339,8 @@ def compose_generation_catalog(
 
     from nexus.services.tool_runtime.catalog import required_tool_operation, unavailable_tool_ids
 
+    if agent_catalog.supports_frozen_mcp_tools:
+        raise GenerationConfigurationDefect("Codex catalog offers unsupported model tools")
     configured = _configured_providers(configured_api_providers)
     by_route: dict[str, tuple[_SourceModel, ...]] = {"CodexPersonal": _agent_sources(agent_catalog)}
     for provider in configured:
@@ -543,11 +545,7 @@ def _agent_sources(catalog: CodexModelCatalog) -> tuple[_SourceModel, ...]:
                 dispatch_model=row.dispatch_model,
                 agent_definition_revision=catalog.definition_revision,
             ),
-            capabilities=(
-                ("Text", "StrictStructured", "TextWithTools", "StructuredWithTools")
-                if catalog.supports_frozen_mcp_tools
-                else ("Text", "StrictStructured")
-            ),
+            capabilities=("Text", "StrictStructured"),
         )
         for row in catalog.models
     )

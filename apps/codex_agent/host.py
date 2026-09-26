@@ -1,17 +1,14 @@
-"""Strict v3 Codex generation host over a private Unix-domain socket."""
+"""Strict Codex generation host over a private Unix-domain socket."""
 
 from __future__ import annotations
 
 import asyncio
 import importlib.metadata
-import ipaddress
-import re
 from collections.abc import AsyncIterator, Callable, Coroutine
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Protocol, assert_never
-from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 from apps.codex_agent.capacity import (
@@ -63,8 +60,6 @@ from provider_runtime.agent_runtime import (
     ExecutableUnavailable,
     InvalidAgentRequest,
     JsonSchemaAgentOutput,
-    McpConfigurationError,
-    McpUnavailable,
     SdkUnavailable,
     SessionMismatch,
     SessionUnavailable,
@@ -74,15 +69,10 @@ from provider_runtime.agent_runtime import (
     ref_to_json,
     thaw_json_value,
 )
-from provider_runtime.agent_runtime.tool_projection import (
-    CanonicalMcpToolObservation,
-    RejectedMcpToolObservation,
-)
 from provider_runtime.types import CancelSignal
 from pydantic import ValidationError
 from starlette.types import Receive, Scope, Send
 
-from nexus.schemas.presence import Present as NexusPresent
 from nexus.services.codex_generation_contract import (
     MAX_ADMISSION_BODY_BYTES,
     MAX_COMMAND_BODY_BYTES,
@@ -114,7 +104,6 @@ from nexus.services.codex_generation_health_contract import (
     expected_health_identity,
 )
 from nexus.services.codex_generation_operations import (
-    CodexModelToolPlanRegistry,
     ResolvedCodexGeneration,
     resolve_codex_generation,
 )
@@ -378,13 +367,8 @@ def create_codex_agent_app(
     working_directory_root: Path,
     credential_file: Path,
     versions: RuntimeVersions,
-    model_tool_registry: CodexModelToolPlanRegistry,
-    mcp_origin: str | None = None,
-    model_tool_network_attested: bool = False,
     capacity_paths: CapacityPaths = PRODUCTION_CAPACITY_PATHS,
 ) -> FastAPI:
-    if not isinstance(model_tool_registry, CodexModelToolPlanRegistry):
-        raise TypeError("model_tool_registry must be CodexModelToolPlanRegistry")
     if versions != RuntimeVersions(
         native=PINNED_CODEX_VERSION,
         library_contract_revision=LIBRARY_CONTRACT_REVISION,
@@ -393,8 +377,6 @@ def create_codex_agent_app(
     _validate_host_configuration(
         working_directory_root=working_directory_root,
         credential_file=credential_file,
-        mcp_origin=mcp_origin,
-        model_tool_network_attested=model_tool_network_attested,
     )
     validate_enrolled_auth_file(credential_file)
     health_identity = GenerationHealth(
@@ -478,7 +460,6 @@ def create_codex_agent_app(
         if request.headers.get("accept", "").strip().lower() != "application/x-ndjson":
             raise HTTPException(status_code=406, detail="accept must be application/x-ndjson")
         command = await _read_command(request)
-        has_model_tools = isinstance(command.spec.model_tool_plan_snapshot, NexusPresent)
         if not lifecycle.ready:
             raise HTTPException(status_code=503, detail="Codex generation host is not ready")
         admission_header = request.headers.get("nexus-generation-admission")
@@ -494,9 +475,6 @@ def create_codex_agent_app(
                 status_code=409,
                 detail="generation admission does not match",
             ) from error
-        if has_model_tools and not model_tool_network_attested:
-            slot.release()
-            raise HTTPException(status_code=422, detail="ModelTools network is not attested")
 
         try:
             runtime_paths = create_ephemeral_runtime_paths(
@@ -527,8 +505,6 @@ def create_codex_agent_app(
             runtime_paths=runtime_paths,
             working_directory_root=working_directory_root,
             credential_file=credential_file,
-            model_tool_registry=model_tool_registry,
-            mcp_origin=mcp_origin,
             versions=versions,
         )
         try:
@@ -669,53 +645,11 @@ def _validate_host_configuration(
     *,
     working_directory_root: Path,
     credential_file: Path,
-    mcp_origin: str | None,
-    model_tool_network_attested: bool,
 ) -> None:
     if not working_directory_root.is_absolute():
         raise ValueError("Codex generation working-directory root must be absolute")
     if not credential_file.is_absolute():
         raise ValueError("Codex generation credential file must be absolute")
-    if type(model_tool_network_attested) is not bool:
-        raise ValueError("model_tool_network_attested must be bool")
-    if not model_tool_network_attested:
-        return
-    parsed = urlsplit(mcp_origin) if isinstance(mcp_origin, str) else None
-    if (
-        parsed is None
-        or parsed.scheme != "https"
-        or not parsed.hostname
-        or parsed.netloc != parsed.hostname
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.path != "/internal/agent-tools/mcp"
-        or bool(parsed.query)
-        or bool(parsed.fragment)
-        or not _is_public_dns_hostname(parsed.hostname)
-    ):
-        raise ValueError("attested ModelTools requires the canonical public HTTPS MCP endpoint")
-
-
-def _is_public_dns_hostname(hostname: str) -> bool:
-    if hostname != hostname.lower() or len(hostname) > 253:
-        return False
-    try:
-        ipaddress.ip_address(hostname)
-    except ValueError:
-        pass
-    else:
-        return False
-    if (
-        "." not in hostname
-        or hostname.endswith(".")
-        or hostname == "localhost"
-        or hostname.endswith((".localhost", ".local", ".internal"))
-    ):
-        return False
-    return all(
-        re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) is not None
-        for label in hostname.split(".")
-    )
 
 
 async def _own_admitted_turn(
@@ -734,8 +668,6 @@ async def _own_admitted_turn(
     runtime_paths: EphemeralRuntimePaths,
     working_directory_root: Path,
     credential_file: Path,
-    model_tool_registry: CodexModelToolPlanRegistry,
-    mcp_origin: str | None,
     versions: RuntimeVersions,
 ) -> None:
     credential_identity: CredentialFileIdentity | None = None
@@ -756,8 +688,6 @@ async def _own_admitted_turn(
             credential_file=credential_file,
             credential_identity=credential_identity,
             runtime_close_unproven=runtime_close_unproven,
-            model_tool_registry=model_tool_registry,
-            mcp_origin=mcp_origin,
             versions=versions,
         ):
             await relay.put(line)
@@ -979,8 +909,6 @@ async def _run_turn(
     credential_file: Path,
     credential_identity: CredentialFileIdentity,
     runtime_close_unproven: asyncio.Event,
-    model_tool_registry: CodexModelToolPlanRegistry,
-    mcp_origin: str | None,
     versions: RuntimeVersions,
 ) -> AsyncIterator[bytes]:
     bounds = command.spec.bounds
@@ -997,23 +925,6 @@ async def _run_turn(
     failure_stage = "credential_link"
     synthesis_text: list[str] = []
     synthesis_text_bytes = 0
-    secret_table: dict[str, str] = {}
-
-    credential: CredentialRef | None = None
-    if command.tool_grant is not None:
-        reference_name = f"generation-{command.request_id.hex}-{uuid4().hex}"
-        credential = CredentialRef(
-            kind="secret_reference",
-            profile_key="codex-personal",
-            name=reference_name,
-        )
-        secret_table[reference_name] = f"Bearer {command.tool_grant.token.get_secret_value()}"
-
-    async def resolve_secret(name: str) -> str:
-        try:
-            return secret_table[name]
-        except KeyError as error:
-            raise CredentialUnavailable("generation tool grant is unavailable") from error
 
     def serialize(event: GenerationEvent) -> bytes:
         return (
@@ -1056,9 +967,6 @@ async def _run_turn(
         operation = resolve_codex_generation(
             command,
             working_directory=runtime_paths.working_directory,
-            model_tool_registry=model_tool_registry,
-            mcp_origin=mcp_origin,
-            tool_credential=credential,
         )
         failure_stage = "native_start"
         native_server = await start_native_codex_server(runtime_paths)
@@ -1068,7 +976,6 @@ async def _run_turn(
                 state_root_base=runtime_paths.state_root_base,
                 codex_endpoints={"codex-personal": native_server.socket_target},
                 max_turn_seconds=float(bounds.turn_timeout_seconds),
-                secret_resolver=resolve_secret if credential is not None else None,
             )
         )
         try:
@@ -1106,40 +1013,26 @@ async def _run_turn(
                     )
                     continue
                 if isinstance(event, AgentText):
-                    if isinstance(operation.model_tool_plan_snapshot, NexusPresent):
-                        # ModelTools text is never held: each provider event is relayed now and
-                        # split at the named byte run. Immediate event-granular relay is a
-                        # strict implementation of the policy's maximum flush interval.
-                        flush_bytes = bounds.stream.text_flush_bytes
-                        maximum = (
-                            flush_bytes.value
-                            if isinstance(flush_bytes, NexusPresent)
-                            else _SYNTHESIS_TEXT_RUN_BYTES
-                        )
-                        for piece in _split_utf8(event.text, maximum):
-                            for line in relay([GenerationText(text=piece)]):
+                    for piece in _split_utf8(event.text, _SYNTHESIS_TEXT_RUN_BYTES):
+                        piece_bytes = len(piece.encode())
+                        if (
+                            synthesis_text
+                            and synthesis_text_bytes + piece_bytes > _SYNTHESIS_TEXT_RUN_BYTES
+                        ):
+                            for line in relay(flush_synthesis_text()):
                                 yield line
-                    else:
-                        for piece in _split_utf8(event.text, _SYNTHESIS_TEXT_RUN_BYTES):
-                            piece_bytes = len(piece.encode())
-                            if (
-                                synthesis_text
-                                and synthesis_text_bytes + piece_bytes > _SYNTHESIS_TEXT_RUN_BYTES
-                            ):
-                                for line in relay(flush_synthesis_text()):
-                                    yield line
-                            synthesis_text.append(piece)
-                            synthesis_text_bytes += piece_bytes
-                            if synthesis_text_bytes == _SYNTHESIS_TEXT_RUN_BYTES:
-                                for line in relay(flush_synthesis_text()):
-                                    yield line
+                        synthesis_text.append(piece)
+                        synthesis_text_bytes += piece_bytes
+                        if synthesis_text_bytes == _SYNTHESIS_TEXT_RUN_BYTES:
+                            for line in relay(flush_synthesis_text()):
+                                yield line
                     if terminal is not None:
                         break
                     continue
 
                 for line in relay(flush_synthesis_text()):
                     yield line
-                wire, forbidden = _event_to_wire(event, operation)
+                wire, forbidden = _event_to_wire(event)
                 for line in relay([wire]):
                     yield line
                 if forbidden:
@@ -1208,9 +1101,6 @@ async def _run_turn(
             versions=versions,
         )
     finally:
-        # A completed/interrupted turn has no authority to resolve another MCP
-        # request while its process tree is being reaped.
-        secret_table.clear()
         if failure_stage == "native_start" and native_server is None:
             runtime_close_unproven.set()
         try:
@@ -1333,42 +1223,17 @@ async def close_runtime_before_release(
 
 def _event_to_wire(
     event: AgentEvent,
-    operation: ResolvedCodexGeneration,
 ) -> tuple[GenerationEvent, bool]:
     if isinstance(event, AgentToolUse):
-        published = operation.published_model_tools
-        if published is None:
-            return (
-                GenerationToolUse(
-                    tool_call_id=event.tool_call_id,
-                    name=event.name[:256],
-                    phase=event.phase,
-                    succeeded=event.succeeded,
-                ),
-                True,
-            )
-        observation = published.observe(event)
-        if isinstance(observation, CanonicalMcpToolObservation):
-            return (
-                GenerationToolUse(
-                    tool_call_id=observation.tool_call_id,
-                    name=str(observation.tool_id),
-                    phase=observation.phase,
-                    succeeded=observation.succeeded,
-                ),
-                False,
-            )
-        if isinstance(observation, RejectedMcpToolObservation):
-            return (
-                GenerationToolUse(
-                    tool_call_id=observation.tool_call_id,
-                    name=observation.raw_name,
-                    phase=event.phase,
-                    succeeded=event.succeeded,
-                ),
-                True,
-            )
-        raise AssertionError("MCP observation union was not exhaustive")
+        return (
+            GenerationToolUse(
+                tool_call_id=event.tool_call_id,
+                name=event.name[:256],
+                phase=event.phase,
+                succeeded=event.succeeded,
+            ),
+            True,
+        )
     if isinstance(event, AgentUsage):
         return GenerationUsageEvent(usage=_usage(event.usage)), False
     if isinstance(event, AgentPermissionRequest):
@@ -1511,11 +1376,11 @@ def _runtime_error_kind(error: AgentRuntimeError) -> FailureKind:
         return "executable_unavailable"
     if isinstance(error, SdkUnavailable):
         return "transport_unavailable"
-    if isinstance(error, SessionUnavailable | SessionMismatch | McpUnavailable):
+    if isinstance(error, SessionUnavailable | SessionMismatch):
         return "session_unavailable"
     if isinstance(
         error,
-        InvalidAgentRequest | UnsupportedCapability | McpConfigurationError | ConcurrentTurn,
+        InvalidAgentRequest | UnsupportedCapability | ConcurrentTurn,
     ):
         return "invalid_request"
     raise AssertionError("unmapped AgentRuntimeError")

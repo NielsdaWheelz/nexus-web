@@ -4,8 +4,8 @@ include <tunables/global>
 # Docker applies this named profile only to the private Codex host. The host is
 # otherwise non-root, capability-free, read-only, and release-gated on Codex's
 # stricter nested bwrap+seccomp sandbox. The container has only an internal
-# network whose DNS/TLS-SNI peer admits ChatGPT auth/runtime and the exact MCP
-# origin; this profile grants no application-service path or listener.
+# network whose DNS/TLS-SNI peer admits ChatGPT auth/runtime; this profile
+# grants no application-service path or listener.
 profile nexus-codex-agent-host flags=(unconfined) {
   userns,
 }

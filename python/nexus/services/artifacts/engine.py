@@ -707,13 +707,12 @@ async def _run_synthesis(
     )
     try:
         execution_result = await execute_generation(
-            admission.request,
+            admission,
             session_factory=get_session_factory(),
             runtime=runtime.llm_runtime,
             encode_terminal=step.encode_terminal,
             encode_failure=step.encode_failure,
             cancel_signal=cast("CancellationSignal", cancel_signal),
-            before_terminal=admission.before_terminal,
         )
     except GenerationDispatchAborted:
         _terminal_failure(
@@ -728,7 +727,6 @@ async def _run_synthesis(
     except GenerationUncertain as error:
         raise _UncertainReplayDefect(str(error)) from error
     finally:
-        await admission.close()
         watcher.cancel()
         await asyncio.gather(watcher, return_exceptions=True)
 

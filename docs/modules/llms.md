@@ -33,8 +33,8 @@ Primary owners:
 - `codex_generation_*`: private Codex transport adapter;
 - `provider_generation_*`: ProviderRuntime adapter and continuation loop;
 - `llm_execution.py` and `llm_ledger.py`: parent/child/tool lifecycle and replay;
-- `tool_authority.py`, `tool_runtime/`, and `agent_tools_mcp.py`: one canonical
-  tool executor with API-function and Codex-MCP adapters;
+- `tool_authority.py` and `tool_runtime/`: the canonical Provider API tool
+  executor and frozen authority;
 - `apps/codex_agent/`: isolated subscription-backed Codex host.
 
 queue ownership is documented in [jobs.md](jobs.md).
@@ -91,15 +91,14 @@ only the five Nexus reads over their exact frozen evidence scope. metadata
 enrichment publishes `web.search`, `web.read`, `nexus.document.search`, and
 `nexus.resource.read` through `MetadataRead`. no background plan grants a
 write. the remaining background operations publish no model-tool
-schema or MCP configuration. Idea host research remains a separate bounded,
+schema. Idea host research remains a separate bounded,
 durable three-search preparation plan.
 
-Codex MCP observations and Provider API function proposals reach the same
-canonical `GenerationToolExecutor`, authority checks, receipts, evidence,
-citations, trust, and Undo. The sole tool-position grammar is
+Provider API function proposals reach the canonical `GenerationToolExecutor`,
+authority checks, receipts, evidence, citations, trust, and Undo. The sole tool-position grammar is
 `generation/{generation_seq}/tool/{n}`, with a one-based ordinal monotonic
 across the parent generation. An API model/tool/model loop never restarts it at
-a child call; Codex uses the same grammar inside its native child.
+a child call. Codex admits no model tools.
 
 Untrusted tool arguments or output cannot widen the frozen plan, principal,
 scope, limits, or effect authority. There is no tool-shaped text parser,
@@ -108,9 +107,8 @@ provider-native Web search, alternate executor, or transport fallback.
 ## Backend composition
 
 Codex Personal uses one private UDS command/NDJSON stream. The adapter binds the
-catalog-validated native model key before dispatch and supplies MCP only for a
-present frozen model-tool plan. Tool-bearing Codex is admitted only when
-the library attests its frozen MCP capability. Empty native execution
+catalog-validated native model key before dispatch and supplies no model tools.
+Frozen tool-bearing Codex specs fail before host slot admission. Empty native execution
 environments remove shell and patch before effects; the host rejects unexpected
 native events. Full Linux and browser-to-worker qualification remains open.
 The host has no database credential,
@@ -120,12 +118,13 @@ deletes them only after the pinned runtime exits. It launches the exact
 `openai-codex-cli-bin==0.157.1` executable over a private Unix socket and
 checks the running version before admission.
 
-The private authenticated MCP mount is exactly
-`/internal/agent-tools/mcp`, `mcp==2.1.0`, protocol `2025-06-18`. It is
-stateless and JSON-response only. Every Codex tool-bearing generation receives
-a short-lived bearer bound to its generation, attempt, worker lease, frozen
-plan, scope, budgets, and effect mode. The mount publishes only that plan and
-creates no public MCP principal or general client surface.
+The Codex catalog records the library's frozen-MCP capability as a source fact,
+but Nexus does not project it into tool-bearing route capabilities. Pinned
+Codex exposes additional resource helpers whenever MCP is present, so the
+current host cannot enforce the exact frozen model-visible tool set. The
+tool-bearing Codex Chat seed and three background policies remain ineligible;
+startup fails for the background policies until their owner selects an
+approved route. See the frozen-MCP authority ticket.
 
 Provider API execution uses `ProviderRuntime` with the selected configured
 credential. Each independently accepted provider call is a child model turn.
@@ -146,7 +145,7 @@ state.
 One parent generation row records the frozen spec and terminal truth. One child
 row records each independently accepted model call: normally one for Codex and
 one per ProviderRuntime call in an API tool loop. Tool positions and their
-effect receipts are separate durable children. Credentials, MCP bearers, raw
+effect receipts are separate durable children. Credentials, raw
 prompts, and decrypted continuation bytes never enter catalog, history,
 evidence, or logs.
 

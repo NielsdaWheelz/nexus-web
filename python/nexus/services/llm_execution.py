@@ -76,7 +76,6 @@ from nexus.services.generation_backend import (
     BackendToolExecutionRequest,
     BackendToolExecutionResult,
     BackendToolExecutor,
-    CodexAdmissionBinder,
     CodexTerminalEvidence,
     ProviderContinuationIdentity,
     ProviderResumeState,
@@ -126,10 +125,7 @@ type EncodeTerminal = Callable[[BackendTerminal], "EncodedGenerationTerminal"]
 type GenerationFailureCode = NormalizedFailureCode | Literal["cancelled", "turn_limit"]
 type EncodeFailure = Callable[[GenerationFailureCode, str], str]
 type ObserveEvent = Callable[[BackendEvent], Awaitable[None]]
-type BeforeTerminal = Callable[[], Awaitable[None]]
 type ResolveTerminal = Callable[[Session, BackendTerminal], "EncodedGenerationTerminal"]
-type BindAdmission = CodexAdmissionBinder
-type BindAdmissionFactory = Callable[[GenerationSpec], BindAdmission]
 type ToolExecutorFactory = Callable[[GenerationSpec], BackendToolExecutor]
 
 _MODEL_TURN_COMPONENT = "nexus-generation-model-turn.v1"
@@ -377,7 +373,6 @@ class GenerationExecutionRequest:
     spec: GenerationSpec
     intent: GenerationIntent = field(repr=False)
     journal: GenerationAdmissionJournal
-    bind_admission: BindAdmission | None = field(default=None, repr=False)
     tool_executor: BackendToolExecutor | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
@@ -389,8 +384,8 @@ class GenerationExecutionRequest:
             raise ValueError("generation intent input differs from frozen spec")
         has_tools = isinstance(self.spec.model_tool_plan_snapshot, Present)
         is_codex = self.spec.selection.route == "CodexPersonal"
-        if (self.bind_admission is not None) != (has_tools and is_codex):
-            raise ValueError("only tool-bearing Codex accepts an admission binder")
+        if has_tools and is_codex:
+            raise ValueError("Codex model tools are unavailable")
         if (self.tool_executor is not None) != (has_tools and not is_codex):
             raise ValueError("only tool-bearing ProviderApi accepts a direct tool executor")
 
@@ -468,7 +463,6 @@ async def admit_job_generation(
     scope: FrozenToolScope | None = None,
     host_plan: FrozenHostToolPlanSnapshot | None = None,
     host_evidence_revision: str | None = None,
-    bind_admission_factory: BindAdmissionFactory | None = None,
     tool_executor_factory: ToolExecutorFactory | None = None,
 ) -> GenerationExecutionRequest:
     """Freeze and persist one background admission before any backend I/O.
@@ -512,11 +506,6 @@ async def admit_job_generation(
         spec=spec,
         intent=frozen_intent,
         journal=journal,
-        bind_admission=(
-            bind_admission_factory(spec)
-            if has_tools and is_codex and bind_admission_factory is not None
-            else None
-        ),
         tool_executor=(
             tool_executor_factory(spec)
             if has_tools and not is_codex and tool_executor_factory is not None
@@ -534,7 +523,6 @@ async def execute_generation(
     encode_failure: EncodeFailure,
     observe_event: ObserveEvent | None = None,
     cancel_signal: CancellationSignal | None = None,
-    before_terminal: BeforeTerminal | None = None,
     resolve_terminal: ResolveTerminal | None = None,
 ) -> GenerationExecutionResult:
     """Execute or exactly replay one generation without hidden redispatch."""
@@ -552,7 +540,6 @@ async def execute_generation(
         session_factory=session_factory,
         cipher=runtime.continuation_cipher,
         encode_terminal=encode_terminal,
-        before_terminal=before_terminal,
         resolve_terminal=resolve_terminal,
     )
     try:
@@ -564,7 +551,6 @@ async def execute_generation(
             tool_executor=request.tool_executor or _ForbiddenToolExecutor(),
             observe=observe_event or _ignore_event,
             cancellation=cancel_signal or _NeverCancelled(),
-            codex_bind_admission=request.bind_admission,
             provider_resume=resume,
         )
         if isinstance(terminal, GenerationStopped):
@@ -573,7 +559,6 @@ async def execute_generation(
                 request,
                 terminal=terminal,
                 encode_failure=encode_failure,
-                before_terminal=before_terminal,
             )
     except Exception as error:
         from nexus.services.codex_generation_client import CodexGenerationCapacityUnavailable
@@ -600,10 +585,7 @@ async def _complete_stop(
     *,
     terminal: GenerationStopped[BackendTerminal],
     encode_failure: EncodeFailure,
-    before_terminal: BeforeTerminal | None,
 ) -> CompletedGeneration:
-    if terminal.last_ordinal > 0 and before_terminal is not None:
-        await before_terminal()
     detail = (
         "Generation cancelled before the next dispatch."
         if terminal.reason == "cancelled"
@@ -653,14 +635,12 @@ class _LedgerChildLifecycle:
         session_factory: sessionmaker[Session],
         cipher: GenerationContinuationCipher,
         encode_terminal: EncodeTerminal,
-        before_terminal: BeforeTerminal | None,
         resolve_terminal: ResolveTerminal | None,
     ) -> None:
         self._request = request
         self._session_factory = session_factory
         self._cipher = cipher
         self._encode_terminal = encode_terminal
-        self._before_terminal = before_terminal
         self._resolve_terminal = resolve_terminal
         self.completed: BackendChildCompletion | None = None
         self.encoded: EncodedGenerationTerminal | None = None
@@ -725,8 +705,6 @@ class _LedgerChildLifecycle:
         request = self._request
         _assert_child_identity(completion.child, request)
         is_final = isinstance(completion.successor, Absent)
-        if is_final and self._before_terminal is not None:
-            await self._before_terminal()
         with self._session_factory() as db:
             lock_generation_owner_in_current_transaction(db, request.owner)
             state = _require_journal_state(db, request)
