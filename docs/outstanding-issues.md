@@ -264,3 +264,4 @@ unexpected timeouts. See
 - [open] 2026-09-21 auth audit · default android debug origin disagrees with bff csrf configuration: [ticket](tickets/android-debug-origin-disagrees-with-bff-csrf-origin.md).
 - [open] 2026-09-21 auth audit · browser auth redirects have two owners with different handled results: [ticket](tickets/unauthenticated-api-redirect-has-two-owners.md).
 - [open] 2026-09-21 auth audit · sdk operation deadlines end before response bodies: [ticket](tickets/supabase-operation-deadline-ends-at-response-headers.md).
+- [open] 2026-09-25 local qualification · credential values appeared in an internal tool transcript; rotate outside the transcript's trust boundary: [ticket](tickets/local-qualification-credential-transcript-exposure.md).
