@@ -9,7 +9,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from provider_runtime.registry import api_model_catalog
 from provider_runtime.types import Absent as RuntimeAbsent
@@ -45,6 +45,7 @@ from nexus.services.codex_generation_client import (
     CodexGenerationProtocolDefect,
 )
 from nexus.services.codex_generation_contract import CodexModelCatalog
+from nexus.services.generation_admission import GenerationConfigurationDefect
 from nexus.services.generation_policy import (
     GENERATION_POLICY,
     ExactModelTools,
@@ -59,6 +60,9 @@ from nexus.services.generation_spec import (
     selection_fingerprint,
 )
 from nexus.services.llm_credentials import provider_generation_credentials
+
+if TYPE_CHECKING:
+    from nexus.services.tool_runtime.catalog import ComposedToolRuntime
 
 type GenerationSelection = CodexPersonalSelection | ProviderApiSelection
 type TransportCapability = Literal[
@@ -176,10 +180,16 @@ class _SourceModel:
 class GenerationCatalogService:
     """The sole process cache and freshness owner for generation composition."""
 
-    def __init__(self, settings: Settings, codex_client: CodexGenerationClient) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        codex_client: CodexGenerationClient,
+        tool_runtime: ComposedToolRuntime,
+    ) -> None:
         self._providers = _configured_providers(settings.generation_api_provider_list)
         self._credentials = provider_generation_credentials(settings)
         self._codex_client = codex_client
+        self._tool_runtime = tool_runtime
         self._definitions: tuple[CodexModelCatalog, ApiModelCatalog, datetime] | None = None
         self._readiness: CatalogReadinessSnapshot | None = None
         self._lock = Lock()
@@ -253,12 +263,17 @@ class GenerationCatalogService:
                 configured_api_providers=self._providers,
                 readiness=_stale(self._readiness) if refresh_failed else self._readiness,
                 policy=GENERATION_POLICY,
+                tool_runtime=self._tool_runtime,
                 now=now,
             )
 
 
-def build_generation_catalog_service(settings: Settings) -> GenerationCatalogService:
-    return GenerationCatalogService(settings, CodexGenerationClient(settings.codex_agent_socket))
+def build_generation_catalog_service(
+    settings: Settings, *, tool_runtime: ComposedToolRuntime
+) -> GenerationCatalogService:
+    return GenerationCatalogService(
+        settings, CodexGenerationClient(settings.codex_agent_socket), tool_runtime
+    )
 
 
 async def production_catalog_readiness(
@@ -317,15 +332,40 @@ def compose_generation_catalog(
     configured_api_providers: Sequence[GenerationApiProvider],
     readiness: CatalogReadinessSnapshot,
     policy: GenerationPolicy,
+    tool_runtime: ComposedToolRuntime,
     now: datetime,
 ) -> GenerationCatalogSnapshot:
     """Compose one strict immutable snapshot; never synthesize a fallback row."""
+
+    from nexus.services.tool_runtime.catalog import required_tool_operation, unavailable_tool_ids
 
     configured = _configured_providers(configured_api_providers)
     by_route: dict[str, tuple[_SourceModel, ...]] = {"CodexPersonal": _agent_sources(agent_catalog)}
     for provider in configured:
         by_route[f"ProviderApi:{provider}"] = _api_sources(api_catalog, provider)
     chat_workflow = policy.chat.workflow
+    chat_tools = chat_workflow.model_tool_policy
+    if not isinstance(chat_tools, ExactModelTools):
+        raise AssertionError("Chat workflow lacks its exact model-tool plan")
+    try:
+        chat_operation = required_tool_operation(
+            tool_runtime,
+            plan_id=chat_tools.plan_id,
+            authority_revision=chat_tools.authority_revision,
+        )
+    except ValueError as error:
+        raise GenerationConfigurationDefect(str(error)) from error
+    unavailable = unavailable_tool_ids(chat_operation)
+    tool_readiness = (
+        OperatorActionRequired(
+            code="required_tool_unavailable",
+            explanation=f"Chat requires unavailable tools: {', '.join(unavailable)}.",
+            action="Configure the required tool dependencies and restart Nexus.",
+            last_checked=now,
+        )
+        if unavailable
+        else None
+    )
 
     pairs: dict[str, ResolvedCatalogPair] = {}
     routes: list[GenerationCatalogRoute] = []
@@ -334,7 +374,7 @@ def compose_generation_catalog(
         model_rows: list[GenerationModelRow] = []
         for source in sources:
             route_readiness = readiness.route(route_key)
-            state = _selection_state(source, route_readiness)
+            state = _selection_state(source, route_readiness, tool_readiness)
             context_budget, output_budget = _effective_budget(source, chat_workflow)
             reasoning_rows: list[GenerationReasoningRow] = []
             for reasoning in source.reasoning:
@@ -465,15 +505,17 @@ def workflow_transport_capability(workflow: OperationWorkflowSpec) -> TransportC
     return "StructuredWithTools" if has_tools else "StrictStructured"
 
 
-def _selection_state(source: _SourceModel, readiness: Readiness) -> SelectionState:
+def _selection_state(
+    source: _SourceModel, readiness: Readiness, tool_readiness: OperatorActionRequired | None
+) -> SelectionState:
     if _CHAT_CAPABILITY not in source.capabilities:
         return Ineligible(
             code="unsupported_capability",
             explanation="This model does not support streaming text with tool continuation.",
         )
-    if isinstance(readiness, Ready):
-        return Selectable()
-    return readiness
+    if not isinstance(readiness, Ready):
+        return readiness
+    return tool_readiness if tool_readiness is not None else Selectable()
 
 
 def _agent_sources(catalog: CodexModelCatalog) -> tuple[_SourceModel, ...]:

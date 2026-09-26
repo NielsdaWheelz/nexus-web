@@ -38,8 +38,8 @@ import type { ReaderSelectionInput } from "@/lib/api/sse/requests";
 import { buildChatRunBody } from "@/lib/conversations/chatRunBody";
 import type { ChatDraftKey } from "@/lib/conversations/chatDraftKey";
 import {
+  findGenerationCandidate,
   hasSelectableCandidate,
-  readinessAction,
   type RunSelectionOut,
 } from "@/lib/conversations/generationCatalog";
 import {
@@ -308,11 +308,18 @@ export default function ChatComposer({
     catalog !== null && selectableGenerationCandidate(catalog, selection) !== null;
   const noSelectablePair =
     catalog !== null && !hasSelectableCandidate(catalog);
+  const blockedState = catalog === null
+    ? null
+    : effectiveSelection === null
+      ? catalog.chat_seed.state
+      : findGenerationCandidate(catalog, effectiveSelection)?.reasoning.chat_state ?? null;
   const operatorRecovery =
-    catalog?.routes
-      .map((route) => readinessAction(route.readiness))
-      .find((action) => action !== null) ??
-    "Retry after generation availability has been restored.";
+    blockedState?.kind === "Ineligible"
+      ? blockedState.explanation
+      : blockedState?.kind === "OperatorActionRequired" ||
+          blockedState?.kind === "TemporarilyUnavailable"
+        ? `${blockedState.explanation} ${blockedState.action}`
+        : "Retry after generation availability has been restored.";
 
   useEffect(() => {
     if (

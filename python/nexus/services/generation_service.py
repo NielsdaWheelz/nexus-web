@@ -6,8 +6,6 @@ import hashlib
 from dataclasses import dataclass
 from typing import Literal
 
-from llm_tools import Available
-
 from nexus.schemas.llm import Ready
 from nexus.schemas.presence import Absent, Presence, Present
 from nexus.services.generation_admission import (
@@ -49,6 +47,8 @@ from nexus.services.tool_runtime.catalog import (
     ComposedToolRuntime,
     FrozenToolOperation,
     freeze_tool_plan_snapshot,
+    required_tool_operation,
+    unavailable_tool_ids,
 )
 
 
@@ -247,21 +247,17 @@ class GenerationService:
         self, *, plan_id: str, authority_revision: str, owner: str
     ) -> FrozenToolOperation:
         try:
-            operation = self._tools.operations[plan_id]
-        except KeyError as error:
-            raise GenerationConfigurationDefect(f"unknown model-tool plan {plan_id!r}") from error
-        if operation.definition.authority_revision != authority_revision:
-            raise GenerationConfigurationDefect(f"model-tool plan {plan_id!r} authority drifted")
+            operation = required_tool_operation(
+                self._tools, plan_id=plan_id, authority_revision=authority_revision
+            )
+        except ValueError as error:
+            raise GenerationConfigurationDefect(str(error)) from error
         _require_available_bindings(operation, owner=owner)
         return operation
 
 
 def _require_available_bindings(operation: FrozenToolOperation, *, owner: str) -> None:
-    unavailable = tuple(
-        str(grant.id)
-        for grant in operation.profile.ordered_grants
-        if not isinstance(operation.plan.catalog_view.binding(grant.id).execute, Available)
-    )
+    unavailable = unavailable_tool_ids(operation)
     if unavailable:
         raise GenerationOperationUnavailable(owner, {"unavailable_tools": unavailable})
 

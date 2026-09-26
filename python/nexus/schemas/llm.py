@@ -31,7 +31,10 @@ def _aware(value: datetime) -> datetime:
 
 
 ReadinessCode = Literal[
-    "catalog_refresh_failed", "codex_host_unavailable", "credential_unavailable"
+    "catalog_refresh_failed",
+    "codex_host_unavailable",
+    "credential_unavailable",
+    "required_tool_unavailable",
 ]
 
 

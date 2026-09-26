@@ -55,7 +55,8 @@ export type GenerationReadiness =
 export type GenerationReadinessCode =
   | "catalog_refresh_failed"
   | "codex_host_unavailable"
-  | "credential_unavailable";
+  | "credential_unavailable"
+  | "required_tool_unavailable";
 
 export type GenerationSelectionState =
   | { readonly kind: "Selectable" }
@@ -169,6 +170,7 @@ const READINESS_CODES = [
   "catalog_refresh_failed",
   "codex_host_unavailable",
   "credential_unavailable",
+  "required_tool_unavailable",
 ] as const;
 const INELIGIBLE_CODES = [
   "unsupported_capability",

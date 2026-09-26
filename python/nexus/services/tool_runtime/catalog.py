@@ -11,6 +11,7 @@ import httpx
 from llm_tools import (
     WEB_READ_SPEC,
     WEB_SEARCH_SPEC,
+    Available,
     BraveSearchProvider,
     FrozenCapabilityProfile,
     FrozenToolPlan,
@@ -67,6 +68,29 @@ class FrozenToolOperation:
 class ComposedToolRuntime:
     catalog: ToolCatalog
     operations: Mapping[str, FrozenToolOperation]
+
+
+def required_tool_operation(
+    runtime: ComposedToolRuntime, *, plan_id: str, authority_revision: str
+) -> FrozenToolOperation:
+    """Resolve the reviewed plan shared by catalog and admission."""
+
+    operation = runtime.operations.get(plan_id)
+    if operation is None:
+        raise ValueError(f"unknown model-tool plan {plan_id!r}")
+    if operation.definition.authority_revision != authority_revision:
+        raise ValueError(f"model-tool plan {plan_id!r} authority drifted")
+    return operation
+
+
+def unavailable_tool_ids(operation: FrozenToolOperation) -> tuple[str, ...]:
+    """Report required grants whose composed binding cannot execute."""
+
+    return tuple(
+        str(grant.id)
+        for grant in operation.profile.ordered_grants
+        if not isinstance(operation.plan.catalog_view.binding(grant.id).execute, Available)
+    )
 
 
 WEB_SEARCH_MAX_RESULTS: Final[int] = 6
@@ -336,6 +360,8 @@ __all__ = [
     "operation_presented_declarations",
     "project_codex_model_tools",
     "project_provider_model_tools",
+    "required_tool_operation",
+    "unavailable_tool_ids",
     "validate_tool_plan_snapshot",
     "write_tool_ids",
 ]
