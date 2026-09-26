@@ -155,8 +155,9 @@ export const MessageRow = memo(function MessageRow({
   useMessageActionIntentOwner(actionRef, acceptActionIntent);
 
   const rerunFromFailureCard = useCallback(() => {
-    if (message.role !== "assistant" || !message.can_rerun) return;
-    void onRerunAssistantResponse(message.id);
+    if (message.role !== "assistant" || !message.can_rerun)
+      return Promise.resolve("Failed" as const);
+    return onRerunAssistantResponse(message.id);
   }, [
     message.can_rerun,
     message.id,

@@ -33,8 +33,8 @@ Primary owners:
 - `codex_generation_*`: private Codex transport adapter;
 - `provider_generation_*`: ProviderRuntime adapter and continuation loop;
 - `llm_execution.py` and `llm_ledger.py`: parent/child/tool lifecycle and replay;
-- `tool_authority.py`, `tool_runtime/`, and `agent_tools_mcp.py`: one canonical
-  tool executor with API-function and Codex-MCP adapters;
+- `tool_authority.py`, `tool_runtime/`, and `agent_tools_mcp.py`: canonical
+  tool authority and the API-function executor;
 - `apps/codex_agent/`: isolated subscription-backed Codex host.
 
 queue ownership is documented in [jobs.md](jobs.md).
@@ -94,12 +94,13 @@ write. the remaining background operations publish no model-tool
 schema or MCP configuration. Idea host research remains a separate bounded,
 durable three-search preparation plan.
 
-Codex MCP observations and Provider API function proposals reach the same
-canonical `GenerationToolExecutor`, authority checks, receipts, evidence,
-citations, trust, and Undo. The sole tool-position grammar is
+Provider API function proposals reach the canonical `GenerationToolExecutor`,
+authority checks, receipts, evidence, citations, trust, and Undo. The sole
+tool-position grammar is
 `generation/{generation_seq}/tool/{n}`, with a one-based ordinal monotonic
 across the parent generation. An API model/tool/model loop never restarts it at
-a child call; Codex uses the same grammar inside its native child.
+a child call. Codex model-tool plans remain ineligible until the pinned native
+runtime can prove their containment; model selection cannot weaken that gate.
 
 Untrusted tool arguments or output cannot widen the frozen plan, principal,
 scope, limits, or effect authority. There is no tool-shaped text parser,
@@ -108,25 +109,22 @@ provider-native Web search, alternate executor, or transport fallback.
 ## Backend composition
 
 Codex Personal uses one private UDS command/NDJSON stream. The adapter binds the
-catalog-validated native model key before dispatch and supplies MCP only for a
-present frozen model-tool plan. The host has no database credential,
+catalog-validated native model key before dispatch. This pinned host admits
+only generations without model tools. The host has no database credential,
 application secret, generation API key, product data mount, or TCP listener. It
 owns one private per-turn root and deletes it after the pinned runtime closes.
 
-The private authenticated MCP mount is exactly
-`/internal/agent-tools/mcp`, `mcp==2.1.0`, protocol `2025-06-18`. It is
-stateless and JSON-response only. Every Codex tool-bearing generation receives
-a short-lived bearer bound to its generation, attempt, worker lease, frozen
-plan, scope, budgets, and effect mode. The mount publishes only that plan and
-creates no public MCP principal or general client surface.
+The private authenticated MCP service at `/internal/agent-tools/mcp` remains a
+separate tool boundary; the pinned Codex host does not publish or connect to
+it. Restoring a tool-bearing Codex route requires a native control and effect
+proof for the exact runtime, configuration, and output/tool combination.
 
 Provider API execution uses `ProviderRuntime` with the selected configured
 credential. Each independently accepted provider call is a child model turn.
 Tool proposals are executed only after durable admission; the sealed,
 target-bound continuation advances only after the child terminal and tool
 result are persisted. Unsupported strict-output-plus-tool combinations are
-ineligible at catalog qualification rather than silently losing strictness or
-tools.
+rejected before dispatch rather than silently losing strictness or tools.
 
 Both lanes project into the route-neutral `GenerationEvent` family without
 importing one another. No cross-lane dispatcher shares credentials or protocol

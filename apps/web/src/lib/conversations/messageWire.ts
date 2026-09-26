@@ -16,8 +16,8 @@
  */
 
 import {
-  decodeDurableExecution,
-  type DurableExecution,
+  decodeChatRunExecution,
+  type ChatRunExecution,
 } from "@/lib/api/executionAdvisory";
 import { decodePresence, type Presence } from "@/lib/api/presence";
 import {
@@ -89,7 +89,6 @@ const CHAT_RUN_KEYS = [
   "publication_warning",
   "failure",
   "execution",
-  "cancel_requested_at",
   "started_at",
   "completed_at",
   "error_code",
@@ -227,10 +226,6 @@ function decodeChatRun(raw: unknown): ChatRun {
     ),
     failure: decodeNullableExpectedChatFailure(run.failure),
     execution: decodeExecutionPresence(run.execution),
-    cancel_requested_at: expectNullableString(
-      run.cancel_requested_at,
-      "chat run.cancel_requested_at",
-    ),
     started_at: expectNullableString(run.started_at, "chat run.started_at"),
     completed_at: expectNullableString(
       run.completed_at,
@@ -317,8 +312,8 @@ function decodeTrustTrail(raw: unknown): AssistantTrustTrail | null {
   };
 }
 
-function decodeExecutionPresence(raw: unknown): Presence<DurableExecution> {
-  return decodePresence(raw, (value) => decodeDurableExecution(value));
+function decodeExecutionPresence(raw: unknown): Presence<ChatRunExecution> {
+  return decodePresence(raw, (value) => decodeChatRunExecution(value));
 }
 
 /** Decode one wire message, preserving already-owned scalar fields. */

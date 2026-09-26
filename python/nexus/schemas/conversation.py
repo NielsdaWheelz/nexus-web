@@ -23,7 +23,7 @@ from pydantic import (
 from nexus.schemas.chat_reader_selection import ReaderSelectionInput, ReaderSelectionOut
 from nexus.schemas.citation import CitationOut, CitationRole, CitationTargetRef
 from nexus.schemas.collection_page import CollectionRevision
-from nexus.schemas.execution import DurableExecutionOut
+from nexus.schemas.execution import ChatRunExecutionOut
 from nexus.schemas.llm import ExpectedChatFailure, RunSelectionOut
 from nexus.schemas.machine_authorship import MachineAuthorshipOut
 from nexus.schemas.presence import Absent, Presence, Present, absent, present
@@ -507,7 +507,7 @@ class TrustRunOut(BaseModel):
     support_id: Presence[str]
     publication_warning: Presence[ChatPublicationWarning]
     failure: ExpectedChatFailure | None = None
-    execution: Presence[DurableExecutionOut]
+    execution: Presence[ChatRunExecutionOut]
     final_chars: int | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
@@ -890,8 +890,7 @@ class ChatRunOut(BaseModel):
     support_id: Presence[str]
     publication_warning: Presence[ChatPublicationWarning]
     failure: ExpectedChatFailure | None = None
-    execution: Presence[DurableExecutionOut]
-    cancel_requested_at: datetime | None = None
+    execution: Presence[ChatRunExecutionOut]
     started_at: datetime | None = None
     completed_at: datetime | None = None
     error_code: str | None = None

@@ -33,14 +33,13 @@ from nexus.schemas.conversation import (
     chat_publication_warning_from_nullable,
     tool_projection_from_persisted_record,
 )
-from nexus.schemas.llm import RunSelectionOut, Selectable
+from nexus.schemas.llm import RunSelectionOut
 from nexus.schemas.presence import presence_from_nullable
 from nexus.services.assistant_write_authorship import machine_authorships_for_tool_calls
 from nexus.services.chat_failure import chat_failure_projection
 from nexus.services.chat_run_execution import project_chat_run_executions
 from nexus.services.chat_run_selection import run_selections_out
 from nexus.services.chat_run_tools import decode_persisted_tool_record
-from nexus.services.generation_catalog import GenerationCatalogSnapshot
 from nexus.services.resource_graph.citations import build_citation_outs_for_sources
 from nexus.services.resource_graph.refs import ResourceRef
 
@@ -50,14 +49,12 @@ def build_assistant_trust_trail(
     *,
     viewer_id: UUID,
     assistant_message_id: UUID,
-    catalog_snapshot: GenerationCatalogSnapshot | None = None,
     run_selections: Mapping[UUID, RunSelectionOut] | None = None,
 ) -> AssistantTrustTrailOut:
     trail = build_assistant_trust_trails(
         db,
         viewer_id=viewer_id,
         assistant_message_ids=[assistant_message_id],
-        catalog_snapshot=catalog_snapshot,
         run_selections=run_selections,
     ).get(assistant_message_id)
     if trail is None:
@@ -70,15 +67,10 @@ def build_assistant_trust_trails(
     *,
     viewer_id: UUID,
     assistant_message_ids: Sequence[UUID],
-    catalog_snapshot: GenerationCatalogSnapshot | None = None,
     run_selections: Mapping[UUID, RunSelectionOut] | None = None,
 ) -> dict[UUID, AssistantTrustTrailOut]:
     """Read every visible assistant message's run, prompt, tools and citations."""
 
-    if (catalog_snapshot is None) == (run_selections is None):
-        raise ValueError(
-            "assistant trust projection requires exactly one catalog observation source"
-        )
     if not assistant_message_ids:
         return {}
 
@@ -117,13 +109,12 @@ def build_assistant_trust_trails(
     }
     runs = list(runs_by_message.values())
     run_ids = [run.id for run in runs]
-    if catalog_snapshot is not None:
-        run_selections = run_selections_out(runs, catalog_snapshot=catalog_snapshot)
-    assert run_selections is not None
+    if run_selections is None:
+        run_selections = run_selections_out(runs)
     missing_run_selections = {run.id for run in runs} - set(run_selections)
     if missing_run_selections:
         raise AssertionError(
-            "assistant trust projection lacks current selection observations for "
+            "assistant trust projection lacks dispatch selections for "
             f"{sorted(str(run_id) for run_id in missing_run_selections)}"
         )
     execution_by_run = project_chat_run_executions(db, runs)
@@ -297,12 +288,7 @@ def build_assistant_trust_trails(
                     publication_warning=chat_publication_warning_from_nullable(
                         run.publication_warning_code
                     ),
-                    failure=chat_failure_projection(
-                        run,
-                        selection_selectable=isinstance(
-                            run_selections[run.id].current_state, Selectable
-                        ),
-                    ),
+                    failure=chat_failure_projection(run),
                     execution=execution_by_run[run.id],
                     final_chars=cast(int | None, done_payload.get("final_chars")),
                     started_at=run.started_at,

@@ -751,19 +751,16 @@ its streaming transport explicit. The existing PostgreSQL queue, leases, and
 publication owners remain unchanged.
 See [modules/llms.md](modules/llms.md).
 
-Eligible Chat and background runs use one canonical tool authority. Codex
-observes its frozen plan over one exact MCP wire: Codex SDK/CLI `0.144.4` speaks
-Streamable HTTP revision `2025-06-18` to the official `mcp==2.1.0` stateless JSON server.
-The initialize body pins that revision; later POSTs require
-`MCP-Protocol-Version: 2025-06-18`. Every POST carries the generation grant in
-`Authorization`, `Content-Type: application/json`, and Codex's
-`Accept: application/json, text/event-stream`; Nexus nevertheless returns JSON
-and emits no `Mcp-Session-Id`. There is no stateful session, event stream,
-resumption, alternate revision, downgrade, OAuth, or transport fallback.
-Provider API tool proposals adapt the same frozen plan to the same executor.
-Both routes use `generation/{generation_seq}/tool/{n}` with one monotonic
-parent-generation ordinal, the same receipts, evidence, citations, trust, and
-Undo.
+Eligible Chat and background runs use one canonical tool authority. Provider
+API tool proposals adapt the frozen plan to the canonical executor, using
+`generation/{generation_seq}/tool/{n}` with one monotonic parent-generation
+ordinal, durable receipts, evidence, citations, trust, and Undo. The pinned
+Codex host currently admits only no-tool generations: its native control has
+not proved containment of an authorized MCP plan while forbidden native
+effects stay disabled. Tool-bearing Codex policies remain ineligible until
+that exact runtime/configuration combination passes an independent effect
+proof. The independent authenticated MCP service does not make a Codex model
+tool route ready by itself.
 
 The worker installs the process-global request-rate limiter at startup so the
 first job of any kind has a working limiter. Local execution capacity belongs
@@ -1000,7 +997,7 @@ Library and Idea Dossier model turns receive only the five Nexus reads over
 their exact admitted evidence scope. Idea host research separately freezes its
 bounded three-search preparation plan. Other background operations retain their
 direct evidence algorithms and publish `NoModelTools`; none inherit Chat
-authority. Codex MCP and Provider API functions adapt eligible plans to the same
+authority. Provider API functions adapt eligible plans to the canonical
 executor. Tool declarations, grants, limits, replay policy, and durable
 execution are owned by `services/tool_runtime/` and `tool_authority.py`;
 `services/agent_tools/` remains the domain-adapter layer, not a second tool

@@ -18,6 +18,14 @@ owned release mcp proof only establishes network/auth rejection; earlier
 three-turn generation qualification did not exercise tools. neither proves
 this product path. no successful tool use or leave/reopen recovery is claimed.
 
+2026-09-25 local follow-up: the pinned native runtime requires offline,
+read-only, no-mcp execution when built-ins are disabled. the proposed host cut
+rejects a tool-bearing codex admission before reservation and reports that
+capability unavailable in the catalog. this prevents the known invalid request
+from becoming another uncertain dispatch; it does not restore tool-bearing
+chat or settle the existing incident. see
+[the native-containment blocker](codex-frozen-model-tools-unqualified.md).
+
 ## follow-up and acceptance
 
 inspect the retained host terminal and original generation request to identify

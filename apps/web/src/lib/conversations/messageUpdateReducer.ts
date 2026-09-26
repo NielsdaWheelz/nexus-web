@@ -24,7 +24,7 @@ import {
   type SearchCitationEventData,
   type WebCitationEventData,
 } from "@/lib/api/sse/citations";
-import type { DurableExecution } from "@/lib/api/executionAdvisory";
+import type { ChatRunExecution } from "@/lib/api/executionAdvisory";
 import { absent, present } from "@/lib/api/presence";
 import type {
   SSECitationIndexEvent,
@@ -100,7 +100,7 @@ export type MessageUpdateAction =
   | {
       type: "apply_execution_advisory";
       assistantId: string;
-      execution: DurableExecution;
+      execution: ChatRunExecution;
     }
   | {
       type: "finalize_done";
@@ -435,11 +435,12 @@ function finalizeDone(
 function applyExecutionAdvisory(
   state: ConversationMessage[],
   assistantId: string,
-  execution: DurableExecution,
+  execution: ChatRunExecution,
 ): ConversationMessage[] {
   return state.map((message) => {
     if (
       message.id !== assistantId ||
+      message.status !== "pending" ||
       message.trust_trail === null ||
       message.trust_trail.run === null
     ) {

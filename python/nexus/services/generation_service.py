@@ -8,13 +8,18 @@ from typing import Literal
 
 from llm_tools import Available
 
-from nexus.schemas.llm import Ready
+from nexus.schemas.llm import Ready, Selectable
 from nexus.schemas.presence import Absent, Presence, Present
 from nexus.services.generation_admission import (
     GenerationConfigurationDefect,
     GenerationOperationUnavailable,
 )
-from nexus.services.generation_catalog import GenerationCatalogService, ResolvedCatalogPair
+from nexus.services.generation_catalog import (
+    GenerationCatalogService,
+    ResolvedCatalogPair,
+    supports_generation_combination,
+    validate_background_policy,
+)
 from nexus.services.generation_policy import (
     EffectMode,
     ExactHostToolPlan,
@@ -122,6 +127,7 @@ class GenerationService:
         host_evidence_revision: str | None = None,
     ) -> GenerationSpec:
         snapshot = await self._catalog.read_for_admission()
+        validate_background_policy(snapshot, policy=self._policy)
         entry = self._policy.background_operations[operation]
         pair = snapshot.pair(entry.selection)
         if pair is None:
@@ -150,6 +156,8 @@ class GenerationService:
         """Recheck the exact frozen target and volatile readiness before dispatch."""
 
         snapshot = await self._catalog.read_for_admission()
+        if spec.operation != "chat":
+            validate_background_policy(snapshot, policy=self._policy)
         pair = snapshot.pair(spec.selection)
         if pair is None:
             raise GenerationConfigurationDefect(
@@ -175,8 +183,19 @@ class GenerationService:
             raise GenerationConfigurationDefect(
                 f"frozen {spec.operation!r} dispatch identity changed before dispatch"
             )
+        if not supports_generation_combination(
+            pair.selection,
+            pair.capabilities,
+            output=spec.output_contract.kind,
+            model_tools=isinstance(spec.model_tool_plan_snapshot, Present),
+        ):
+            raise GenerationConfigurationDefect(
+                f"frozen {spec.operation!r} selection lacks its required capabilities"
+            )
         if not isinstance(pair.readiness, Ready):
             raise GenerationOperationUnavailable(spec.operation, pair.readiness)
+        if spec.operation == "chat" and not isinstance(pair.state, Selectable):
+            raise GenerationConfigurationDefect("frozen chat selection is no longer admitted")
         operation = self.model_tool_operation(spec)
         if operation is not None:
             _require_available_bindings(operation, owner=spec.operation)

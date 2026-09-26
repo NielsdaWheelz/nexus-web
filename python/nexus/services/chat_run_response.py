@@ -19,7 +19,7 @@ from nexus.schemas.conversation import (
     ChatRunStreamToolCallOut,
     chat_publication_warning_from_nullable,
 )
-from nexus.schemas.llm import RunSelectionOut, Selectable
+from nexus.schemas.llm import RunSelectionOut
 from nexus.schemas.presence import presence_from_nullable
 from nexus.services.chat_failure import chat_failure_projection
 from nexus.services.chat_run_selection import run_selection_out
@@ -29,7 +29,6 @@ from nexus.services.conversations import (
     message_to_out,
     rerunnable_assistant_message_ids,
 )
-from nexus.services.generation_catalog import GenerationCatalogSnapshot
 from nexus.services.message_trust_trails import build_assistant_trust_trail
 
 _PROJECTION_KEYS = (
@@ -48,8 +47,6 @@ def read_chat_run_response(
     db: Session,
     viewer_id: UUID,
     run_id: UUID,
-    *,
-    catalog_snapshot: GenerationCatalogSnapshot,
 ) -> ChatRunResponse:
     """Read a committed command from one fresh bounded database snapshot."""
 
@@ -63,7 +60,7 @@ def read_chat_run_response(
             db,
             viewer_id,
             run,
-            run_selection=run_selection_out(run, catalog_snapshot=catalog_snapshot),
+            run_selection=run_selection_out(run),
         )
     finally:
         db.rollback()
@@ -107,12 +104,8 @@ def build_chat_run_response(
             publication_warning=chat_publication_warning_from_nullable(
                 run.publication_warning_code
             ),
-            failure=chat_failure_projection(
-                run,
-                selection_selectable=isinstance(run_selection.current_state, Selectable),
-            ),
+            failure=chat_failure_projection(run),
             execution=trust_trail.run.execution,
-            cancel_requested_at=run.cancel_requested_at,
             started_at=run.started_at,
             completed_at=run.completed_at,
             error_code=run.error_code,

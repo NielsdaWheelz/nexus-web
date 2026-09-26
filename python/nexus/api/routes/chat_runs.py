@@ -11,7 +11,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, Query, Request
 from starlette.concurrency import run_in_threadpool
 
-from nexus.api.deps import get_generation_catalog_service, require_tool_projection_revision
+from nexus.api.deps import (
+    get_generation_catalog_service,
+    require_chat_contract_revision,
+    require_tool_projection_revision,
+)
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_repeatable_read_db, get_session_factory
 from nexus.responses import ok
@@ -28,7 +32,10 @@ from nexus.services.tool_runtime.catalog import ComposedToolRuntime
 
 router = APIRouter(
     tags=["chat-runs"],
-    dependencies=[Depends(require_tool_projection_revision)],
+    dependencies=[
+        Depends(require_tool_projection_revision),
+        Depends(require_chat_contract_revision),
+    ],
 )
 
 
@@ -66,12 +73,9 @@ async def create_chat_run(
 @router.get("/chat-runs")
 async def list_chat_runs(
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    catalog: Annotated[GenerationCatalogService, Depends(get_generation_catalog_service)],
     conversation_id: Annotated[UUID, Query()],
     status: Annotated[CHAT_RUN_STATUS_FILTER, Query()] = "active",
 ) -> dict:
-    snapshot = await catalog.read_chat()
-
     def read() -> list[ChatRunResponse]:
         with get_session_factory()() as db:
             get_repeatable_read_db(db)
@@ -80,7 +84,6 @@ async def list_chat_runs(
                 viewer_id=viewer.user_id,
                 conversation_id=conversation_id,
                 status=status,
-                catalog_snapshot=snapshot,
             )
 
     return ok(await run_in_threadpool(read))
@@ -90,10 +93,7 @@ async def list_chat_runs(
 async def get_chat_run(
     run_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    catalog: Annotated[GenerationCatalogService, Depends(get_generation_catalog_service)],
 ) -> dict:
-    snapshot = await catalog.read_chat()
-
     def read() -> ChatRunResponse:
         with get_session_factory()() as db:
             get_repeatable_read_db(db)
@@ -101,7 +101,6 @@ async def get_chat_run(
                 db=db,
                 viewer_id=viewer.user_id,
                 run_id=run_id,
-                catalog_snapshot=snapshot,
             )
 
     return ok(await run_in_threadpool(read))
@@ -111,17 +110,13 @@ async def get_chat_run(
 async def cancel_chat_run(
     run_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    catalog: Annotated[GenerationCatalogService, Depends(get_generation_catalog_service)],
 ) -> dict:
-    snapshot = await catalog.read_chat()
-
     def cancel() -> ChatRunResponse:
         with get_session_factory()() as db:
             return chat_runs_service.cancel_chat_run(
                 db=db,
                 viewer_id=viewer.user_id,
                 run_id=run_id,
-                catalog_snapshot=snapshot,
             )
 
     return ok(await run_in_threadpool(cancel))

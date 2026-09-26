@@ -25,6 +25,7 @@ from nexus.db.models import (
     ChatRunTurnContext,
     Conversation,
     ConversationActivePath,
+    LLMCall,
     Message,
 )
 from nexus.db.session import get_session_factory
@@ -59,7 +60,7 @@ from nexus.schemas.llm import (
     InvalidGenerationSelection,
     RunSelectionOut,
 )
-from nexus.schemas.presence import Present
+from nexus.schemas.presence import Present, present
 from nexus.services import generation_policy
 from nexus.services.chat_failure import rerun_eligibility
 from nexus.services.chat_reader_selection import (
@@ -75,7 +76,8 @@ from nexus.services.chat_run_event_store import (
     lock_chat_run_for_update,
 )
 from nexus.services.chat_run_response import build_chat_run_response, read_chat_run_response
-from nexus.services.chat_run_selection import run_selection_out
+from nexus.services.chat_run_selection import chat_generation_spec, run_selection_out
+from nexus.services.chat_run_worker import GenerationStepResultEnvelope
 from nexus.services.collection_revisions import (
     CollectionFamily,
     bump_all_collection_revisions,
@@ -98,12 +100,18 @@ from nexus.services.conversations import (
     derive_conversation_title,
     message_document,
 )
+from nexus.services.durable_step_journal import (
+    Completed,
+    Prepared,
+    decode_step_result,
+    read_step_states,
+    stable_generation_id,
+)
 from nexus.services.generation_admission import GenerationOperationUnavailable
 from nexus.services.generation_catalog import (
     CatalogDefinitionStaleError,
     GenerationCatalogRefreshError,
     GenerationCatalogService,
-    GenerationCatalogSnapshot,
     GenerationSelectionUnavailableError,
     InvalidGenerationSelectionError,
     ResolvedCatalogPair,
@@ -282,11 +290,10 @@ async def repeat_assistant_response(
     if not isinstance(receipt.outcome, AcceptedChatAdmission):
         raise AssertionError("candidate admission has a rejected receipt")
     run_id = receipt.outcome.run_id
-    snapshot = await catalog.read_chat()
 
     def read() -> ChatRunResponse:
         with get_session_factory()() as db:
-            return read_chat_run_response(db, viewer_id, run_id, catalog_snapshot=snapshot)
+            return read_chat_run_response(db, viewer_id, run_id)
 
     return await run_in_threadpool(read)
 
@@ -745,7 +752,6 @@ def _assert_repeat_eligible(
     if error_code is not None and rerun_eligibility(
         error_code=error_code,
         run_status=source_run.status,
-        selection_selectable=True,
     ):
         return
     raise ApiError(ApiErrorCode.E_RETRY_NOT_ALLOWED, "This assistant outcome cannot be rerun")
@@ -940,7 +946,7 @@ def _freeze_admission(
         db.add(turn_context)
     persist_prompt_assembly(db, run=run, assembly=assembly)
     persist_attached_citations(db, run, assembly.attached_citations)
-    return spec, run_selection_out(run, pair=pair, observed_at=datetime.now(UTC))
+    return spec, run_selection_out(run)
 
 
 # =============================================================================
@@ -964,14 +970,13 @@ def get_chat_run(
     *,
     viewer_id: UUID,
     run_id: UUID,
-    catalog_snapshot: GenerationCatalogSnapshot,
 ) -> ChatRunResponse:
     run = get_run_for_owner(db, viewer_id, run_id)
     return build_chat_run_response(
         db,
         viewer_id,
         run,
-        run_selection=run_selection_out(run, catalog_snapshot=catalog_snapshot),
+        run_selection=run_selection_out(run),
     )
 
 
@@ -981,7 +986,6 @@ def list_chat_runs_for_conversation(
     viewer_id: UUID,
     conversation_id: UUID,
     status: CHAT_RUN_STATUS_FILTER,
-    catalog_snapshot: GenerationCatalogSnapshot,
 ) -> list[ChatRunResponse]:
     conversation = db.get(Conversation, conversation_id)
     if conversation is None or conversation.owner_user_id != viewer_id:
@@ -1006,7 +1010,7 @@ def list_chat_runs_for_conversation(
             db,
             viewer_id,
             run,
-            run_selection=run_selection_out(run, catalog_snapshot=catalog_snapshot),
+            run_selection=run_selection_out(run),
         )
         for run in runs
     ]
@@ -1017,9 +1021,8 @@ def cancel_chat_run(
     *,
     viewer_id: UUID,
     run_id: UUID,
-    catalog_snapshot: GenerationCatalogSnapshot,
 ) -> ChatRunResponse:
-    """Stamp the cancellation and wake a suspended job so the worker folds it."""
+    """Record stop intent; wake a dead job only for proven settlement paths."""
 
     owned = get_run_for_owner(db, viewer_id, run_id)
     lock_chat_generation_admission_in_current_transaction(db)
@@ -1028,8 +1031,9 @@ def cancel_chat_run(
         raise AssertionError("owned chat run disappeared before cancellation")
     if run.status in TERMINAL_RUN_STATUSES:
         db.rollback()
-        return read_chat_run_response(db, viewer_id, run_id, catalog_snapshot=catalog_snapshot)
-    if run.cancel_requested_at is None:
+        return read_chat_run_response(db, viewer_id, run_id)
+    first_request = run.cancel_requested_at is None
+    if first_request:
         run.cancel_requested_at = datetime.now(UTC)
         run.updated_at = datetime.now(UTC)
     dead_job = current_dead_job_for_payload(
@@ -1037,7 +1041,46 @@ def cancel_chat_run(
         kind="chat_run",
         expected_payload_match={"run_id": str(run.id)},
     )
-    if dead_job is not None and not requeue_dead_job(db, job_id=dead_job.id):
-        raise AssertionError("suspended chat job changed while locked")
+    if dead_job is not None and first_request:
+        frozen = chat_generation_spec(run)
+        if dead_job.payload.get("generation_spec_fingerprint") != frozen.fingerprint:
+            raise AssertionError("dead chat job no longer matches its frozen generation")
+        states = read_step_states(dead_job)
+        step = states.get("generation/1")
+        generation_id = stable_generation_id(run.id, "generation/1")
+        generation_armed = (
+            db.scalar(
+                select(LLMCall.id).where(
+                    LLMCall.id == generation_id,
+                    LLMCall.owner_kind == "chat_run",
+                    LLMCall.owner_id == run.id,
+                )
+            )
+            is not None
+        )
+        if step is None:
+            if states:
+                raise AssertionError("chat job has later steps without generation evidence")
+            if generation_armed:
+                raise AssertionError("chat job has generation evidence without a journal step")
+            safe_to_wake = True
+        else:
+            if step.generation_id != generation_id:
+                raise AssertionError("chat generation journal identity changed")
+            if step.request_fingerprint != present(frozen.fingerprint):
+                raise AssertionError("chat generation journal fingerprint changed")
+            if step.dispatch_phase is Prepared:
+                if generation_armed:
+                    raise AssertionError("prepared chat generation has armed child evidence")
+                safe_to_wake = True
+            elif step.dispatch_phase is Completed:
+                if not isinstance(step.terminal_result, Present):
+                    raise AssertionError("completed chat generation lacks a terminal memo")
+                decode_step_result(step.terminal_result.value, GenerationStepResultEnvelope)
+                safe_to_wake = True
+            else:
+                safe_to_wake = False
+        if safe_to_wake and not requeue_dead_job(db, job_id=dead_job.id):
+            raise AssertionError("suspended chat job changed while locked")
     db.commit()
-    return read_chat_run_response(db, viewer_id, run_id, catalog_snapshot=catalog_snapshot)
+    return read_chat_run_response(db, viewer_id, run_id)

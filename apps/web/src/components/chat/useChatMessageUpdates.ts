@@ -8,7 +8,7 @@ import type {
   SSEToolCallDoneEvent,
   SSEToolResultEvent,
 } from "@/lib/api/sse/events";
-import type { DurableExecution } from "@/lib/api/executionAdvisory";
+import type { ChatRunExecution } from "@/lib/api/executionAdvisory";
 import type {
   MessageUpdateAction,
   RenderToolCallData,
@@ -139,7 +139,7 @@ export function useChatMessageUpdates({
   );
 
   const handleExecutionAdvisory = useCallback(
-    (assistantId: string, execution: DurableExecution) => {
+    (assistantId: string, execution: ChatRunExecution) => {
       flushDeltas();
       dispatch({
         type: "apply_execution_advisory",

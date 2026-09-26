@@ -711,9 +711,9 @@ export default function Conversation() {
                 parentMessageId={activeReplyParentMessageId}
                 inheritedRunSelection={convo.inheritedRunSelection}
                 sendCapability={convo.sendCapability}
-                projectionReloadRequestId={convo.projectionReloadRequestId}
-                activeRunId={convo.activeRunId}
-                onCancelRun={convo.cancelActiveRun}
+                reloadRequired={convo.reloadRequired}
+                pendingRun={convo.pendingRun}
+                onCancelRun={convo.cancelPendingRun}
                 onAdmitted={handleAdmitted}
                 viewIdentity={`${paneRuntime.visitId}:${paneRuntime.href}`}
                 isPaneActive={isPaneActive}

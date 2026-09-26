@@ -104,9 +104,14 @@ from nexus.services.llm_execution import (
     ExecutionRuntime,
     GenerationExecutionRequest,
     JobGenerationJournal,
+    cancel_prepared_generation_without_dispatch_in_current_transaction,
     execute_generation,
 )
-from nexus.services.llm_ledger import LlmCallOwner, read_model_turns
+from nexus.services.llm_ledger import (
+    LlmCallOwner,
+    lock_generation_for_authority_in_current_transaction,
+    read_model_turns,
+)
 from nexus.services.tool_authority import DeferredGenerationToolExecutor
 from nexus.services.tool_runtime.catalog import FrozenToolOperation
 
@@ -296,9 +301,22 @@ async def _execute(
         steps.clear()
         return None
     spec, intent = _frozen_admission(db, run=run, job=steps.job)
-    operation = steps.llm_runtime.admission.model_tool_operation(spec)
-    if operation is None:
-        raise AssertionError("Chat GenerationSpec is missing its model-tool plan")
+    generation_state = steps.read(_GENERATION_STEP)
+    if generation_state is not None and generation_state.request_fingerprint != present(
+        spec.fingerprint
+    ):
+        raise AssertionError("chat generation fingerprint differs from frozen admission")
+    if generation_state is None or generation_state.dispatch_phase is Prepared:
+        if is_cancel_requested(db, run.id) and _cancel_undispatched_run(
+            db, run=run, steps=steps, state=generation_state
+        ):
+            return None
+
+    operation: FrozenToolOperation | None = None
+    if generation_state is None or generation_state.dispatch_phase is not Completed:
+        operation = steps.llm_runtime.admission.model_tool_operation(spec)
+        if operation is None:
+            raise AssertionError("Chat GenerationSpec is missing its model-tool plan")
 
     mark_running(db, run.id)
     run = db.get(ChatRun, run_id)
@@ -308,29 +326,34 @@ async def _execute(
         steps.clear()
         return None
 
-    generation_state = steps.read(_GENERATION_STEP)
-    if generation_state is None and is_cancel_requested(db, run.id):
-        _finalize_cancelled(db, run=run, steps=steps)
-        return None
     if generation_state is None:
         generation_state = steps.prepare(_GENERATION_STEP, spec.fingerprint)
     elif generation_state.dispatch_phase not in {Prepared, Uncertain, Completed}:
         raise AssertionError("chat generation step is not dispatchable")
 
     emitter = ChatRunEventEmitter(db, run, lease_fence=steps.lock_active_attempt)
-    result = await _dispatch_generation(
-        db,
-        run=run,
-        steps=steps,
-        generation_id=generation_state.generation_id,
-        spec=spec,
-        intent=intent,
-        operation=operation,
-        session_factory=session_factory,
-        emitter=emitter,
-    )
-    if isinstance(result, RescheduleRequested):
-        return result
+    if generation_state.dispatch_phase is Completed:
+        if not isinstance(generation_state.terminal_result, Present):
+            raise AssertionError("completed chat generation lacks a terminal memo")
+        result = decode_step_result(
+            generation_state.terminal_result.value, GenerationStepResultEnvelope
+        ).root
+    else:
+        if operation is None:
+            raise AssertionError("dispatchable chat generation lacks a tool operation")
+        result = await _dispatch_generation(
+            db,
+            run=run,
+            steps=steps,
+            generation_id=generation_state.generation_id,
+            spec=spec,
+            intent=intent,
+            operation=operation,
+            session_factory=session_factory,
+            emitter=emitter,
+        )
+        if isinstance(result, RescheduleRequested):
+            return result
 
     usage = _value(result.usage)
     last_provider_event_seq = _value(result.last_provider_event_seq)
@@ -393,6 +416,49 @@ async def _execute(
         last_provider_event_seq=last_provider_event_seq,
     )
     return None
+
+
+def _cancel_undispatched_run(
+    db: Session,
+    *,
+    run: ChatRun,
+    steps: ChatStepRuntime,
+    state: StepReplayState | None,
+) -> bool:
+    locked_run = lock_chat_run_for_update(db, run.id)
+    if locked_run is None:
+        raise AssertionError("chat run disappeared before undispatched cancellation")
+    if locked_run.cancel_requested_at is None:
+        db.commit()
+        return False
+    owner = LlmCallOwner(kind="chat_run", id=run.id)
+    generation_id = stable_generation_id(run.id, _GENERATION_STEP)
+    if state is None:
+        if (
+            lock_generation_for_authority_in_current_transaction(
+                db, owner=owner, generation_id=generation_id
+            )
+            is not None
+        ):
+            raise AssertionError("chat run has generation evidence without a journal step")
+        steps.lock_active_attempt()
+    else:
+        terminal_result = _encode_failure(
+            "cancelled", generation_id=generation_id, observed_text="", usage=None, last_sequence=0
+        )
+        completed = cancel_prepared_generation_without_dispatch_in_current_transaction(
+            db, owner=owner, state=state, terminal_result=terminal_result
+        )
+        journal = JobGenerationJournal(
+            context=steps.execution_context,
+            step_path=_GENERATION_STEP,
+            lock_dispatch=steps.lock_dispatch,
+        )
+        if not journal.complete(db, expected=state, next_state=completed):
+            raise LostChatJobLease(f"chat job {steps.job.id} lost its lease while cancelling")
+    db.commit()
+    _finalize_cancelled(db, run=locked_run, steps=steps)
+    return True
 
 
 def _frozen_admission(

@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.logging import get_logger
 from nexus.responses import success_response
+from nexus.schemas.presence import Present
 from nexus.schemas.telemetry import ClientDefectRequest, WebVitalRequest
 
 router = APIRouter(tags=["telemetry"])
@@ -47,6 +48,7 @@ def post_client_defect(
     logger.error(
         "rum.client_defect",
         viewer_id=str(viewer.user_id),
-        **body.model_dump(mode="json"),
+        origin_request_id=(body.request_id.value if isinstance(body.request_id, Present) else None),
+        **body.model_dump(mode="json", exclude={"request_id"}),
     )
     return success_response({})

@@ -27,27 +27,22 @@ or host-home mount.
   survive into the long-lived server. Docker readiness uses one bounded
   standard-library HTTP-over-UDS exchange and validates the complete exact
   health identity; it never imports a second FastAPI, Pydantic, Nexus, or
-  provider-runtime graph into the measured cgroup. The serving process builds
-  frozen MCP publication plans from the same canonical binding metadata as the
-  application, but imports no executable Nexus/DB dispatch owner; the MCP
-  service remains the sole tool executor. Nexus passes
-  the public typed `CodexSandboxControls` contract to every `AgentRuntime` path;
-  it sets `TMPDIR` to that turn's `tmp/` and fixes
-  Codex workspace-write policy to exclude bare `/tmp` while retaining only
-  `TMPDIR`. Pinned Codex OAuth refresh writes are immediately durable; session,
+  provider-runtime graph into the measured cgroup. The serving process admits
+  only generations without model tools. Nexus passes
+  the public typed `CodexSandboxControls` contract to every `AgentRuntime` path
+  and sets `TMPDIR` to that turn's `tmp/`. Pinned Codex OAuth refresh writes are
+  immediately durable; session,
   cache, launcher, temporary files, and every sibling write remain disposable.
   The complete per-turn root is removed after close.
 - The host and `codex-egress-policy` are the only members of the internal
   `nexus_codex_private` network. The host has no public-network attachment;
   the policy sidecar is the sole member of `nexus_codex_proxy_egress` and the
   host's only network peer. It exposes private DNS plus a TLS-SNI tunnel for
-  ChatGPT, `auth.openai.com`, and the exact production MCP hostname. TLS stays
-  end-to-end; the sidecar receives no plaintext, grant, or credential. Neither
+  ChatGPT and `auth.openai.com`. TLS stays end-to-end; the sidecar receives no
+  plaintext or credential. Neither
   container can reach PostgreSQL, API, Caddy, or either worker directly.
   Because the HTTP request is encrypted, the sidecar owns hostname/SNI
-  confinement only. The host's exact `NEXUS_CODEX_MCP_ORIGIN`, release
-  attestation, and Caddy's exact MCP mount jointly own the required
-  `/internal/agent-tools/mcp` path.
+  confinement only. It does not admit the public Nexus MCP hostname.
 - The egress policy runs behind Docker's init process so `SIGTERM` reaches a
   non-PID-1 Python process and child transports are reaped. Expected peer-reset
   errors during TLS close are absorbed at the transport owner; they never
@@ -61,49 +56,27 @@ or host-home mount.
 - Docker Engine 28 or newer is required. Release admission checks the server
   version before mutation because `gateway_mode_ipv4=isolated` is part of the
   private bridge's security contract.
-- The host receives exactly the public HTTPS MCP origin and
-  `NEXUS_CODEX_MODEL_TOOL_NETWORK_ATTESTED=true` from Compose. The origin must use a
-  lowercase public DNS hostname and the exact path, with no userinfo, query, or
-  fragment.
+- The host has no MCP origin, model-tool network attestation, grant resolver,
+  or tool publication configuration. It rejects any model-tool plan before
+  reserving a generation slot. Codex built-in tools and native web search are
+  disabled; no-tool turns use a read-only workspace and disabled network.
 - Never set `CODEX_HOME` or any `*_API_KEY` on the running host. Startup rejects
-  even a blank inherited API-key variable. The host receives only
+  even a blank inherited API-key variable. The credential path is
   `NEXUS_CODEX_CREDENTIAL_FILE=/run/nexus-codex-credential/auth.json`;
   `CODEX_HOME` is legal only for the one enrollment command.
 
-## MCP wire pin
+## Model-tool boundary
 
-Production model-tool interoperation is one fixed contract:
+The Codex host currently has no qualified model-tool transport. A tool-bearing
+admission returns a definitive capability refusal before slot reservation or
+native dispatch. If an old or malformed command reaches the host, the host
+refuses it before opening a native session. Do not advertise Codex chat or any
+other tool-bearing Codex route until a supported provider-runtime/Codex pin
+enforces the frozen tool authority at the native boundary and passes the
+required production qualification.
 
-- client: `openai-codex==0.144.4` and
-  `openai-codex-cli-bin==0.144.4`;
-- server: official `mcp==2.1.0`, configured with `stateless_http=True` and
-  `json_response=True`;
-- wire revision: MCP `2025-06-18` only;
-- endpoint: HTTPS POST to exactly `/internal/agent-tools/mcp`.
-
-Every request carries the ephemeral
-`Authorization: Bearer <generation grant>`, `Content-Type: application/json`,
-and `Accept: application/json, text/event-stream`. The initialize body declares
-`protocolVersion: 2025-06-18`; Codex omits `MCP-Protocol-Version` on that first
-request, and the mount accepts only an omitted or identical header there.
-Every subsequent POST requires `MCP-Protocol-Version: 2025-06-18`. Any other
-revision, a missing later header, or any client `Mcp-Session-Id` is a protocol
-rejection.
-
-Each tool-bearing command carries the exact frozen model-tool plan admitted by
-the generation owner. The host publishes only that plan through llm-calling's
-MCP lowering: canonical dotted ids use a mechanical dot-to-double-underscore
-wire alias (for example, `web.search` becomes `web__search`), and observed tool
-events must reverse to an admitted canonical id. Unknown aliases fail the turn
-as a policy violation. Codex built-in tools and native web search remain
-disabled; all model tools, for Chat and background operations alike, use this
-same bearer-scoped MCP boundary.
-
-Despite the `Accept` advertisement, Nexus returns JSON for requests and a
-bodyless acknowledgement for notifications. It returns no session id and
-configures no GET/SSE stream, DELETE-session lifecycle, event store, resume,
-OAuth, protocol downgrade, or dual/fallback server. Do not “upgrade” the wire
-revision independently of the pinned codex client and its runtime contract.
+The independent Nexus MCP service remains on the interactive worker and its
+public Caddy mount. Its wire contract does not establish Codex host support.
 
 ## Encrypted credential state
 
@@ -353,5 +326,5 @@ health, policy, sandbox, environment, or resource-limit checks.
   codes are never diagnostic or certification artifacts.
 - The host is not a public generation endpoint. Never expose the UDS through
   TCP, a reverse proxy, WebSocket/App Server, or arbitrary container exec.
-- MCP is the only public tool route and is bearer-, lease-, run-, generation-,
-  declaration-, and resource-scoped on every call.
+- The independent MCP route remains bearer-, lease-, run-, generation-,
+  declaration-, and resource-scoped. It is not reachable from this Codex host.

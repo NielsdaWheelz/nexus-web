@@ -153,8 +153,6 @@ async def lifespan(app: FastAPI):
     validate_policy()
 
     app.state.generation_catalog_service = build_generation_catalog_service(settings)
-    if settings.nexus_env in (Environment.STAGING, Environment.PROD):
-        await app.state.generation_catalog_service.startup()
 
     # Create shared HTTP client for outbound calls (web search).
     app.state.httpx_client = httpx.AsyncClient(

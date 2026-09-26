@@ -2,10 +2,6 @@
 
 import { AlertTriangle, Search, Wrench } from "lucide-react";
 import { toReaderCitationData } from "@/lib/resourceGraph/citations";
-import {
-  selectionStateExplanation,
-  type GenerationSelectionState,
-} from "@/lib/conversations/generationCatalog";
 import { formatDisplayNumber } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type {
@@ -16,17 +12,6 @@ import type {
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import styles from "./MessageRow.module.css";
-
-function selectionRecovery(state: GenerationSelectionState): string {
-  switch (state.kind) {
-    case "Selectable":
-    case "Ineligible":
-      return "No operator action reported";
-    case "OperatorActionRequired":
-    case "TemporarilyUnavailable":
-      return state.action;
-  }
-}
 
 export default function AssistantDetails({
   trustTrail,
@@ -124,22 +109,6 @@ export default function AssistantDetails({
               <div>
                 <dt>Write authority</dt>
                 <dd>{trustTrail.run.run_selection.tool_authority === "AdditiveWrites" ? "Additive writes" : "Read-only"}</dd>
-              </div>
-              <div>
-                <dt>Current readiness</dt>
-                <dd>{selectionStateExplanation(trustTrail.run.run_selection.current_state)}</dd>
-              </div>
-              <div>
-                <dt>Readiness checked</dt>
-                <dd>{trustTrail.run.run_selection.current_state_observed_at}</dd>
-              </div>
-              <div>
-                <dt>Recovery</dt>
-                <dd>{selectionRecovery(trustTrail.run.run_selection.current_state)}</dd>
-              </div>
-              <div>
-                <dt>Rerun</dt>
-                <dd>{trustTrail.run.run_selection.rerun_eligibility ? "Eligible" : "Unavailable"}</dd>
               </div>
               {trustTrail.run.publication_warning.kind === "Present" ? (
                 <div>

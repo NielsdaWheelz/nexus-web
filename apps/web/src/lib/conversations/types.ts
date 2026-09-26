@@ -10,7 +10,7 @@ import type { ReaderSelectionOut } from "@/lib/conversations/readerSelection";
 import type { RunSelectionOut } from "@/lib/conversations/generationCatalog";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { Presence } from "@/lib/api/presence";
-import type { DurableExecution } from "@/lib/api/executionAdvisory";
+import type { ChatRunExecution } from "@/lib/api/executionAdvisory";
 import type {
   ToolEffect,
   ToolErrorType,
@@ -37,8 +37,13 @@ export type ChatSendCapability =
   | { readonly kind: "Available" }
   | { readonly kind: "HistoryLoading" }
   | { readonly kind: "HistoryUnavailable" }
-  | { readonly kind: "AssistantRunning" }
+  | { readonly kind: "AssistantPending" }
   | { readonly kind: "ReplyTargetUnavailable" };
+
+export interface PendingChatRun {
+  readonly id: string;
+  readonly execution: ChatRunExecution | null;
+}
 
 // =============================================================================
 // ExpectedChatFailure — mirrors python/nexus/schemas/llm.py EXACTLY.
@@ -218,7 +223,7 @@ export interface AssistantTrustTrail {
     usage: Record<string, unknown> | null;
     error_code: string | null;
     failure: ExpectedChatFailure | null;
-    execution: Presence<DurableExecution>;
+    execution: Presence<ChatRunExecution>;
     support_id: Presence<string>;
     publication_warning: Presence<ChatPublicationWarning>;
     final_chars: number | null;
@@ -435,7 +440,7 @@ export interface ChatRun {
   conversation_id: string;
   user_message_id: string;
   assistant_message_id: string;
-  /** Immutable dispatch projection plus separately refreshed current state. */
+  /** Immutable dispatch projection. */
   run_selection: RunSelectionOut;
   support_id: Presence<string>;
   publication_warning: Presence<ChatPublicationWarning>;
@@ -443,8 +448,7 @@ export interface ChatRun {
    * card-bearing failure (still running, or a defect with no stored closed
    * code — render the generic defect card via chatFailureMessage(null)). */
   failure: ExpectedChatFailure | null;
-  execution: Presence<DurableExecution>;
-  cancel_requested_at: string | null;
+  execution: Presence<ChatRunExecution>;
   started_at: string | null;
   completed_at: string | null;
   error_code: string | null;

@@ -24,7 +24,11 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
-from nexus.api.deps import get_stream_viewer, require_tool_projection_revision
+from nexus.api.deps import (
+    get_stream_viewer,
+    require_chat_contract_revision,
+    require_tool_projection_revision,
+)
 from nexus.api.routes._sse import (
     open_sse_listener,
     tail_cursor_stream,
@@ -35,6 +39,7 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.schemas.execution import (
     EXECUTION_ADVISORY_EVENT_TYPE,
+    ChatRunExecutionOut,
     DurableExecutionOut,
 )
 from nexus.services import chat_runs as chat_runs_service
@@ -42,8 +47,7 @@ from nexus.services import media as media_service
 from nexus.services import oracle as oracle_service
 from nexus.services import run_kit
 from nexus.services.artifacts import engine as artifact_engine
-from nexus.services.chat_run_execution import chat_run_execution_phase
-from nexus.services.durable_step_journal import DurableExecutionPhase
+from nexus.services.chat_run_execution import chat_run_execution
 from nexus.services.podcasts import subscriptions as podcast_subscription_service
 
 router = APIRouter(tags=["streaming"])
@@ -66,7 +70,9 @@ class CursorStreamKind:
     run_kind: run_kit.RunStreamKind
     assert_viewer: Callable[[Session, UUID, UUID], None]
     read_after: Callable[[Session, UUID, UUID, int], tuple[Sequence[Any], bool]]
-    read_advisory: Callable[[Session, UUID, UUID], DurableExecutionPhase | None] | None = None
+    read_advisory: (
+        Callable[[Session, UUID, UUID], ChatRunExecutionOut | DurableExecutionOut | None] | None
+    ) = None
 
 
 _CHAT_RUN_KIND = CursorStreamKind(
@@ -77,7 +83,7 @@ _CHAT_RUN_KIND = CursorStreamKind(
     read_after=lambda db, viewer_id, run_id, after: run_kit.get_run_events(
         db, run_kit.RunStreamKind.ChatRun, run_id, after
     ),
-    read_advisory=lambda db, viewer_id, run_id: chat_run_execution_phase(db, run_id=run_id),
+    read_advisory=lambda db, viewer_id, run_id: chat_run_execution(db, run_id=run_id),
 )
 
 _ORACLE_READING_KIND = CursorStreamKind(
@@ -90,6 +96,12 @@ _ORACLE_READING_KIND = CursorStreamKind(
     ),
 )
 
+
+def _artifact_advisory(db: Session, viewer_id: UUID, build_id: UUID) -> DurableExecutionOut | None:
+    phase = artifact_engine.build_execution_phase(db, build_id=build_id, viewer_id=viewer_id)
+    return DurableExecutionOut(phase=phase) if phase is not None else None
+
+
 _ARTIFACT_BUILD_KIND = CursorStreamKind(
     run_kind=run_kit.RunStreamKind.ArtifactBuild,
     assert_viewer=lambda db, viewer_id, build_id: artifact_engine.assert_build_viewer(
@@ -98,9 +110,7 @@ _ARTIFACT_BUILD_KIND = CursorStreamKind(
     read_after=lambda db, viewer_id, build_id, after: run_kit.get_run_events(
         db, run_kit.RunStreamKind.ArtifactBuild, build_id, after
     ),
-    read_advisory=lambda db, viewer_id, build_id: artifact_engine.build_execution_phase(
-        db, build_id=build_id, viewer_id=viewer_id
-    ),
+    read_advisory=_artifact_advisory,
 )
 
 
@@ -125,10 +135,10 @@ async def make_cursor_stream_response(
         with get_session_factory()() as db:
             get_repeatable_read_db(db)
             kind.assert_viewer(db, viewer_id, entity_id)
-            phase = kind.read_advisory(db, viewer_id, entity_id)
-            if phase is None:
+            advisory = kind.read_advisory(db, viewer_id, entity_id)
+            if advisory is None:
                 return None
-            payload = DurableExecutionOut(phase=phase).model_dump(mode="json")
+            payload = advisory.model_dump(mode="json")
             return EXECUTION_ADVISORY_EVENT_TYPE, payload
 
     await run_in_threadpool(assert_viewer)
@@ -148,7 +158,11 @@ async def make_cursor_stream_response(
 
 @router.get(
     "/stream/chat-runs/{run_id}/events",
-    dependencies=[Depends(require_tool_projection_revision)],
+    dependencies=[
+        Depends(get_stream_viewer),
+        Depends(require_tool_projection_revision),
+        Depends(require_chat_contract_revision),
+    ],
 )
 async def stream_chat_run_events(
     request: Request,

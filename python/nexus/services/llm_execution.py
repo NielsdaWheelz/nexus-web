@@ -541,6 +541,12 @@ async def execute_generation(
     replay, resume = _read_replay(session_factory, request, runtime.continuation_cipher)
     if replay is not None:
         return replay
+    if resume is None and cancel_signal is not None and cancel_signal.is_set():
+        return _complete_prepared_cancellation(
+            session_factory,
+            request,
+            terminal_result=encode_failure("cancelled", "Generation cancelled before dispatch."),
+        )
     if cancel_signal is None or not cancel_signal.is_set():
         await runtime.admission.require_dispatch_ready(request.spec)
     with session_factory() as db:
@@ -601,7 +607,7 @@ async def _complete_stop(
     encode_failure: EncodeFailure,
     before_terminal: BeforeTerminal | None,
 ) -> CompletedGeneration:
-    if before_terminal is not None:
+    if terminal.last_ordinal > 0 and before_terminal is not None:
         await before_terminal()
     detail = (
         "Generation cancelled before the next dispatch."
@@ -609,22 +615,24 @@ async def _complete_stop(
         else "Generation reached its frozen model-turn limit."
     )
     terminal_result = encode_failure(terminal.reason, detail)
+    if terminal.last_ordinal == 0:
+        if terminal.reason != "cancelled":
+            raise AssertionError("undispatched generation stopped without cancellation")
+        return _complete_prepared_cancellation(
+            session_factory, request, terminal_result=terminal_result
+        )
     with session_factory() as db:
         lock_generation_owner_in_current_transaction(db, request.owner)
         state = _require_journal_state(db, request)
-        if terminal.last_ordinal == 0:
-            if state.dispatch_phase is not Prepared:
-                raise AssertionError("undispatched cancellation has an armed owner")
-        else:
-            if state.dispatch_phase is not Uncertain:
-                raise AssertionError("generation stop requires its armed owner")
-            stop_generation_in_current_transaction(
-                db,
-                owner=request.owner,
-                generation_id=request.generation_id,
-                source_turn_seq=terminal.last_ordinal,
-                reason=terminal.reason,
-            )
+        if state.dispatch_phase is not Uncertain:
+            raise AssertionError("generation stop requires its armed owner")
+        stop_generation_in_current_transaction(
+            db,
+            owner=request.owner,
+            generation_id=request.generation_id,
+            source_turn_seq=terminal.last_ordinal,
+            reason=terminal.reason,
+        )
         if not request.journal.complete(
             db,
             expected=state,
@@ -637,6 +645,27 @@ async def _complete_stop(
         ):
             raise GenerationUncertain(
                 f"generation {request.generation_id} lost its claim while stopping"
+            )
+        db.commit()
+    return CompletedGeneration(terminal_result=terminal_result, terminal=None, replayed=False)
+
+
+def _complete_prepared_cancellation(
+    session_factory: sessionmaker[Session],
+    request: GenerationExecutionRequest,
+    *,
+    terminal_result: str,
+) -> CompletedGeneration:
+    with session_factory() as db:
+        lock_generation_owner_in_current_transaction(db, request.owner)
+        state = _require_journal_state(db, request)
+        completed = cancel_prepared_generation_without_dispatch_in_current_transaction(
+            db, owner=request.owner, state=state, terminal_result=terminal_result
+        )
+        request.journal.clear_capacity_pause(db)
+        if not request.journal.complete(db, expected=state, next_state=completed):
+            raise GenerationDispatchAborted(
+                f"generation {request.generation_id} lost its claim while cancelling"
             )
         db.commit()
     return CompletedGeneration(terminal_result=terminal_result, terminal=None, replayed=False)

@@ -53,8 +53,8 @@ build-backend = "hatchling.build"
 packages = ["nexus"]
 
 [tool.uv.sources]
-provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling.git", rev = "97fbac7fece4f1ea54651b7d6344df9fac3b2791" }
-llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "0c400beeae075ee47e7a8563d00f9117e920380e" }
+provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling.git", rev = "7008b669a5bbee545a0b93c90a1786a0ce07c9c5" }
+llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "112fae14727acec52141dcdebc323f87dfae6d47" }
 llm-tools = { git = "https://github.com/NielsdaWheelz/llm-tools.git", rev = "9e6d155f3b64f03495911435b7cae8b8d131f9a2" }
 
 [tool.ruff]

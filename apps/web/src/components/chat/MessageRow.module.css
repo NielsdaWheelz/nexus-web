@@ -155,6 +155,12 @@
   color: var(--ink-faint);
 }
 
+.executionStatus {
+  margin: 0 0 var(--space-2);
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+}
+
 .toolActivity svg {
   flex: 0 0 auto;
 }

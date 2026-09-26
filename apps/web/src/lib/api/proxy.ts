@@ -15,7 +15,7 @@ import { PUBLIC_API_CONTENT_SECURITY_POLICY } from "@/lib/security/csp";
 
 const REQUEST_HEADERS = [
   "content-type", "accept", "range", "if-none-match", "if-modified-since",
-  "idempotency-key", "x-nexus-tool-projection",
+  "idempotency-key", "x-nexus-tool-projection", "x-nexus-chat-contract",
 ];
 const RESPONSE_HEADERS = [
   "content-type", "cache-control", "etag", "vary", "content-disposition",

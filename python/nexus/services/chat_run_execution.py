@@ -15,12 +15,9 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.schemas.execution import DurableExecutionOut
+from nexus.schemas.execution import ChatRunExecutionOut
 from nexus.schemas.presence import Presence, absent, present
-from nexus.services.durable_step_journal import (
-    DurableExecutionPhase,
-    project_execution_phase,
-)
+from nexus.services.durable_step_journal import project_execution_phase
 
 _TERMINAL_RUN_STATUSES = frozenset({"complete", "error", "cancelled"})
 
@@ -28,7 +25,7 @@ _TERMINAL_RUN_STATUSES = frozenset({"complete", "error", "cancelled"})
 def project_chat_run_executions(
     db: Session,
     runs: Sequence[ChatRun],
-) -> dict[UUID, Presence[DurableExecutionOut]]:
+) -> dict[UUID, Presence[ChatRunExecutionOut]]:
     """Project many run/job pairs with one queue query.
 
     Terminal runs never require a retained queue row; every nonterminal run owns
@@ -36,7 +33,7 @@ def project_chat_run_executions(
     defect.
     """
 
-    out: dict[UUID, Presence[DurableExecutionOut]] = {}
+    out: dict[UUID, Presence[ChatRunExecutionOut]] = {}
     live_by_key: dict[str, ChatRun] = {}
     for run in runs:
         if run.status in _TERMINAL_RUN_STATUSES:
@@ -61,22 +58,23 @@ def project_chat_run_executions(
         if job is None:
             raise AssertionError(f"Nonterminal chat run has no queue job: {run.id}")
         out[run.id] = present(
-            DurableExecutionOut(
+            ChatRunExecutionOut(
                 phase=project_execution_phase(
                     job_status=str(job["status"]),
                     attempts=int(job["attempts"]),
                     error_code=(str(job["error_code"]) if job["error_code"] is not None else None),
-                )
+                ),
+                cancel_requested=run.cancel_requested_at is not None,
             )
         )
     return out
 
 
-def chat_run_execution_phase(db: Session, *, run_id: UUID) -> DurableExecutionPhase | None:
-    """Read the fresh advisory phase for an already-authorized SSE run."""
+def chat_run_execution(db: Session, *, run_id: UUID) -> ChatRunExecutionOut | None:
+    """Read the fresh advisory for an already-authorized SSE run."""
 
     run = db.get(ChatRun, run_id)
     if run is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Chat run not found")
     execution = project_chat_run_executions(db, [run])[run.id]
-    return execution.value.phase if execution.kind == "Present" else None
+    return execution.value if execution.kind == "Present" else None

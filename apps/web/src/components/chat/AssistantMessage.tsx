@@ -15,6 +15,7 @@ import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { ChatConnectionRecovery } from "@/lib/conversations/chatConnectionRecovery";
 import type { GenerationSelectionSpec } from "@/lib/conversations/generationCatalog";
+import type { MessageActionMutationOutcome } from "@/lib/chat/messageActionIntent";
 import { toReaderCitationData } from "@/lib/resourceGraph/citations";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import AssistantSelectionPopover from "./AssistantSelectionPopover";
@@ -59,7 +60,7 @@ export default function AssistantMessage({
   ) => void;
   connectionRecovery?: ChatConnectionRecovery;
   onReconnectAssistant: (assistantMessageId: string) => void;
-  onRerun?: () => void;
+  onRerun?: () => Promise<MessageActionMutationOutcome>;
   onRerunWithSelection: (
     selection: GenerationSelectionSpec,
     catalogDefinitionRevision: string,
@@ -85,8 +86,7 @@ export default function AssistantMessage({
   const trustRun = message.trust_trail?.run;
   const failure = trustRun?.failure ?? null;
   const supportId = trustRun?.support_id ?? absent();
-  const [replacementOpenRequestVersion, setReplacementOpenRequestVersion] =
-    useState(0);
+  const [pickerOpenRequestVersion, requestPickerOpen] = useState(0);
   const isTerminalFailure =
     message.status === "error" || message.status === "cancelled";
   const showFailureCard = isTerminalFailure;
@@ -98,9 +98,20 @@ export default function AssistantMessage({
     trustRun?.execution.kind === "Present"
       ? trustRun.execution.value.phase
       : null;
+  const cancelRequested =
+    trustRun?.execution.kind === "Present" &&
+    trustRun.execution.value.cancel_requested;
   const showSuspendedCard = !isTerminal && executionPhase === "Suspended";
+  const showStopRequestedCard = !isTerminal && cancelRequested && !showSuspendedCard;
   const showReconnectCard =
     connectionRecovery !== undefined && !isTerminal && !showSuspendedCard;
+  const progressLabel = !isTerminal && !showReconnectCard && !showStopRequestedCard
+    ? executionPhase === "Queued"
+      ? "Response queued"
+      : executionPhase === "Recovering"
+        ? "Recovering response"
+        : null
+    : null;
 
   const {
     answerRef,
@@ -118,15 +129,6 @@ export default function AssistantMessage({
     scheme: "message",
     id: message.id,
   });
-  const rerunNeedsReplacement =
-    isTerminalFailure &&
-    message.can_rerun &&
-    trustRun?.run_selection !== undefined &&
-    !trustRun.run_selection.rerun_eligibility;
-  const rerunFromFailureCard = rerunNeedsReplacement
-    ? () =>
-        setReplacementOpenRequestVersion((currentVersion) => currentVersion + 1)
-    : onRerun;
 
   return (
     <div
@@ -140,10 +142,14 @@ export default function AssistantMessage({
     >
       {message.status === "pending" &&
       !showReconnectCard &&
-      !showSuspendedCard ? (
+      !showSuspendedCard &&
+      !showStopRequestedCard ? (
         <StreamingGutterCue />
       ) : null}
-      {showSuspendedCard ? null : <ToolActivity toolCalls={toolCalls} />}
+      {showSuspendedCard || showStopRequestedCard ? null : <ToolActivity toolCalls={toolCalls} />}
+      {progressLabel ? (
+        <p className={styles.executionStatus} role="status">{progressLabel}</p>
+      ) : null}
       {renderAssistantBody ? (
         <AssistantAnswer
           message={message}
@@ -187,12 +193,22 @@ export default function AssistantMessage({
           failure={failure}
           supportId={supportId}
           canRerun={message.can_rerun}
-          onRerun={rerunFromFailureCard}
+          onRerun={onRerun
+            ? () => {
+                void onRerun().then((outcome) => {
+                  if (outcome === "SelectionRequired")
+                    requestPickerOpen((version) => version + 1);
+                });
+              }
+            : undefined}
           rerunning={rerunning}
         />
       ) : showSuspendedCard ? (
-        <ChatFailureCard mode="suspended" />
-      ) : showReconnectCard && connectionRecovery ? (
+        <ChatFailureCard mode="suspended" cancelRequested={Boolean(cancelRequested)} />
+      ) : showStopRequestedCard ? (
+        <ChatFailureCard mode="stop_requested" />
+      ) : null}
+      {showReconnectCard && connectionRecovery ? (
         <ChatFailureCard
           mode="reconnect"
           recovery={connectionRecovery}
@@ -208,7 +224,7 @@ export default function AssistantMessage({
               operation={isTerminalFailure ? "Rerun" : "Regenerate"}
               runSelection={trustRun.run_selection}
               disabled={rerunning}
-              openRequestVersion={replacementOpenRequestVersion}
+              openRequestVersion={pickerOpenRequestVersion}
               onConfirm={(selection, catalogDefinitionRevision) => {
                 if (isTerminalFailure) {
                   return onRerunWithSelection(

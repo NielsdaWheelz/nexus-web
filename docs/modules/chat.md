@@ -46,12 +46,12 @@ authority. owner scope, eight-live-write limit, receipts, and undo remain
 enforced. historical read-only runs retain their frozen facts.
 canonical ids are the only executable identities.
 
-Codex observes the frozen plan through the authenticated MCP mount; API models
-receive the same plan as provider functions. Both adapters call the same
+API models receive the frozen plan as provider functions. Proposals reach the
 `GenerationToolExecutor`, authorization, position ledger, evidence, citations,
 trust, and Undo. The sole position path is
 `generation/{generation_seq}/tool/{n}`; the one-based ordinal never restarts at
-an API child turn.
+an API child turn. The current Codex host rejects chat's tool-bearing plan
+before dispatch until its native containment is qualified.
 
 Completed child calls and tool positions are replay input, never cache hints.
 An accepted ambiguous model call, external read, or write is never blindly
@@ -60,12 +60,16 @@ run; neither creates a compatibility run. Code defects emit no `done`.
 Conversation deletion deletes every owned Chat job and post-cutover generation
 row.
 
-`ChatRunOut.execution` and trust-run `execution` are required `Presence` values.
+`ChatRunOut.execution` and trust-run `execution` are required `Presence` values
+with `phase` and `cancel_requested`. The latter projects the run's one stored
+stop-intent timestamp; it does not assert that external work stopped.
 Nonterminal runs project `Queued | Running | Recovering | Suspended`; terminal
 runs project `Absent`. SSE sends the same value as an unsequenced
 `ExecutionAdvisory`, so it never advances the committed event cursor. Suspended
-UI retains partial text and provenance and renders `Response paused`; it offers
-neither product rerun nor network reconnect.
+UI retains partial text and provenance and renders `Response paused` or a
+stop-requested unresolved state. It offers neither product rerun nor network
+reconnect. Historical selection reads use only the frozen dispatch facts;
+current availability is checked by new-generation admission.
 
 ## Engine, View, Adapter Split
 

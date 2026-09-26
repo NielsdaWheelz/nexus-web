@@ -14,7 +14,7 @@ import {
   decodeApiPayload,
   isApiError,
   isSameSystemApiDefect,
-  isToolProjectionReloadRequired,
+  isChatReloadRequired,
   type ApiError,
 } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -124,7 +124,7 @@ export function useChatRunTail({
   dispatch,
   setForkOptionsByParentId,
   onContextRefAdded,
-  onProjectionReloadRequired,
+  onReloadRequired,
   onDefect,
   shouldStartRun,
   shouldApplyRun,
@@ -134,12 +134,11 @@ export function useChatRunTail({
     SetStateAction<Record<string, ForkOption[]>>
   >;
   onContextRefAdded?: (data: SSEContextRefAddedEvent["data"]) => void;
-  onProjectionReloadRequired?: (error: ApiError) => void;
+  onReloadRequired?: (error: ApiError) => void;
   onDefect?: (error: unknown) => void;
   shouldStartRun?: (ctx: RunVisibilityContext) => boolean;
   shouldApplyRun?: (ctx: RunVisibilityContext) => boolean;
 }) {
-  const [activeRunId, setActiveRunId] = useState<string | null>(null);
   // Client-only recovery state, keyed by assistant message id. It remains
   // addressable through reconnect attempts until a tail has actually claimed
   // the run or durable terminal state replaces the pending message.
@@ -154,13 +153,13 @@ export function useChatRunTail({
   // component's lifetime (unlike `useMemo`, which may be discarded).
   const [streamCtx] = useState(() => new PerRunStreamContext());
 
-  const reportProjectionReload = useCallback(
+  const reportReloadRequired = useCallback(
     (error: unknown): boolean => {
-      if (!isToolProjectionReloadRequired(error)) return false;
-      onProjectionReloadRequired?.(error);
+      if (!isChatReloadRequired(error)) return false;
+      onReloadRequired?.(error);
       return true;
     },
-    [onProjectionReloadRequired],
+    [onReloadRequired],
   );
 
   const {
@@ -248,7 +247,6 @@ export function useChatRunTail({
 
   const abortAll = useCallback(() => {
     streamCtx.abortAll();
-    setActiveRunId(null);
     setConnectionRecoveries({});
   }, [streamCtx]);
 
@@ -262,8 +260,7 @@ export function useChatRunTail({
   }, []);
 
   const cancelRun = useCallback(
-    async (runId: string | null = activeRunId) => {
-      if (!runId) return;
+    async (runId: string) => {
       try {
         const raw = await apiFetch<unknown>(`/api/chat-runs/${runId}/cancel`, {
           method: "POST",
@@ -284,11 +281,11 @@ export function useChatRunTail({
           mergeRunMessages(runData);
         }
       } catch (err) {
-        reportProjectionReload(err);
+        reportReloadRequired(err);
         throw err;
       }
     },
-    [activeRunId, mergeRunMessages, reportProjectionReload, visibility],
+    [mergeRunMessages, reportReloadRequired, visibility],
   );
 
   useEffect(() => {
@@ -385,7 +382,6 @@ export function useChatRunTail({
         finished = true;
         streamAbort.abort();
         streamCtx.endStream(runId);
-        setActiveRunId((current) => (current === runId ? null : current));
       };
 
       if (isTerminalRunStatus(runData.run.status)) {
@@ -396,7 +392,6 @@ export function useChatRunTail({
         return true;
       }
 
-      setActiveRunId(runId);
       streamCtx.beginStream(runId, streamAbort);
 
       const reconcile = async () => {
@@ -432,7 +427,7 @@ export function useChatRunTail({
           }
           return persisted;
         } catch (err) {
-          if (reportProjectionReload(err)) {
+          if (reportReloadRequired(err)) {
             finishRun();
             return null;
           }
@@ -539,7 +534,7 @@ export function useChatRunTail({
                 finishRun();
                 return;
               }
-              if (reportProjectionReload(err)) {
+              if (reportReloadRequired(err)) {
                 finishRun();
                 return;
               }
@@ -586,7 +581,7 @@ export function useChatRunTail({
           // First-token mint failed. 401 hands off to the auth boundary; anything
           // else mirrors onError — the run may already be terminal in the DB, so
           // reconcile once and only surface the interruption if it did not finish.
-          if (reportProjectionReload(err)) {
+          if (reportReloadRequired(err)) {
             finishRun();
             return;
           }
@@ -632,7 +627,7 @@ export function useChatRunTail({
       shouldFoldEvent,
       mergeRunMessages,
       onDefect,
-      reportProjectionReload,
+      reportReloadRequired,
     ],
   );
 
@@ -702,8 +697,8 @@ export function useChatRunTail({
           });
         }
       } catch (err) {
-        if (isToolProjectionReloadRequired(err)) {
-          reportProjectionReload(err);
+        if (isChatReloadRequired(err)) {
+          reportReloadRequired(err);
           restoreOrFail({
             message:
               "Nexus was updated while this response was open. Reload the page to reconnect safely.",
@@ -732,11 +727,10 @@ export function useChatRunTail({
         reconnectFlightsRef.current.delete(assistantMessageId);
       }
     },
-    [connectionRecoveries, onDefect, reportProjectionReload, tailChatRun],
+    [connectionRecoveries, onDefect, reportReloadRequired, tailChatRun],
   );
 
   return {
-    activeRunId,
     abortAll,
     cancelRun,
     tailChatRun,

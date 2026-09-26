@@ -23,7 +23,6 @@ logger = get_logger(__name__)
 
 # Deterministic or operator-owned outcomes never expose a rerun affordance.
 _NEVER_RERUNNABLE_CODES = frozenset({"context_too_large", "invalid_output", "operator_defect"})
-# Rerun is offered only while the exact selection remains selectable.
 _CONDITIONALLY_RERUNNABLE_CODES = frozenset({"incomplete", "cancelled", "assistant_unavailable"})
 
 _CODE_MAP = {
@@ -49,11 +48,7 @@ _UNCONDITIONAL_FAILURES = {
 }
 
 
-def chat_failure_projection(
-    run: ChatRun,
-    *,
-    selection_selectable: bool,
-) -> ExpectedChatFailure | None:
+def chat_failure_projection(run: ChatRun) -> ExpectedChatFailure | None:
     """Project a terminal run onto the closed failure union, or ``None``.
 
     A stored terminal this projection cannot represent degrades to ``None`` (the
@@ -81,7 +76,6 @@ def chat_failure_projection(
         can_rerun=rerun_eligibility(
             error_code=code,
             run_status=run.status,
-            selection_selectable=selection_selectable,
         )
     )
 
@@ -90,7 +84,6 @@ def rerun_eligibility(
     *,
     error_code: str,
     run_status: str,
-    selection_selectable: bool,
 ) -> bool:
     """The one rerun-eligibility policy, re-evaluated inside the rerun transaction.
 
@@ -105,5 +98,5 @@ def rerun_eligibility(
     if code in _NEVER_RERUNNABLE_CODES:
         return False
     if code in _CONDITIONALLY_RERUNNABLE_CODES:
-        return selection_selectable
+        return True
     raise AssertionError(f"rerun_eligibility: unrecognized error_code {error_code!r}")

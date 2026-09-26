@@ -25,8 +25,9 @@ import { ArrowUp, RotateCcw, Square } from "lucide-react";
 import {
   isApiError,
   isSameSystemApiDefect,
-  isToolProjectionReloadRequired,
+  isChatReloadRequired,
   type ApiError,
+  type ChatReloadRequired,
 } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -55,13 +56,14 @@ import BranchComposerHeader from "@/components/chat/BranchComposerHeader";
 import GenerationSelectionPicker from "@/components/chat/GenerationSelectionPicker";
 import { useGenerationCatalog } from "@/components/chat/useGenerationCatalog";
 import QuotedPassageCard from "@/components/chat/QuotedPassageCard";
-import ToolProjectionReloadNotice from "@/components/chat/ToolProjectionReloadNotice";
+import ChatReloadNotice from "@/components/chat/ChatReloadNotice";
 import { useChatDraft } from "@/components/chat/useChatDraft";
 import Button from "@/components/ui/Button";
 import Textarea from "@/components/ui/Textarea";
 import type {
   BranchDraft,
   ChatSendCapability,
+  PendingChatRun,
 } from "@/lib/conversations/types";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { withClientDefectContext } from "@/lib/telemetry/clientDefects";
@@ -116,15 +118,18 @@ interface ChatComposerProps {
   onActivateSource?: (selection: ReaderSelectionOut) => void;
   /** Caller-owned availability for the current conversation history. */
   sendCapability: ChatSendCapability;
-  /** Active run that can be semantically cancelled without closing the SSE tail. */
-  activeRunId?: string | null;
-  /** Backend cancel action for the active run. */
-  onCancelRun?: () => Promise<void> | void;
+  /** The selected pending assistant's canonical run, independent of its SSE tail. */
+  pendingRun: PendingChatRun | null;
+  /** Backend cancel action for that run. */
+  onCancelRun: (runId: string) => Promise<void> | void;
   /** Conversation-owned stale contract state from reads, tails, or mutations. */
-  projectionReloadRequestId?: string | null;
+  reloadRequired: ChatReloadRequired | null;
 }
 
-function sendCapabilityMessage(capability: ChatSendCapability): string {
+function sendCapabilityMessage(
+  capability: ChatSendCapability,
+  execution: PendingChatRun["execution"],
+): string {
   switch (capability.kind) {
     case "Available":
       return "";
@@ -132,8 +137,23 @@ function sendCapabilityMessage(capability: ChatSendCapability): string {
       return "Conversation history is loading.";
     case "HistoryUnavailable":
       return "Conversation history could not be loaded.";
-    case "AssistantRunning":
+    case "AssistantPending": {
+      if (execution?.phase === "Suspended") {
+        return execution.cancel_requested
+          ? "Stop requested. The outcome is unconfirmed and the saved response needs repair. Your draft is still editable."
+          : "Response paused. The saved response needs repair. Your draft is still editable.";
+      }
+      if (execution?.cancel_requested) {
+        return "Stop requested. Your draft is still editable.";
+      }
+      if (execution?.phase === "Queued") {
+        return "Response queued. Your draft is still editable.";
+      }
+      if (execution?.phase === "Recovering") {
+        return "Recovering response. Your draft is still editable.";
+      }
       return "Assistant response in progress. Your draft is still editable.";
+    }
     case "ReplyTargetUnavailable":
       return "Choose a complete assistant response before sending.";
     default:
@@ -203,9 +223,9 @@ export default function ChatComposer({
   onConversationRefresh,
   onActivateSource,
   sendCapability,
-  activeRunId = null,
+  pendingRun,
   onCancelRun,
-  projectionReloadRequestId: inheritedProjectionReloadRequestId = null,
+  reloadRequired: inheritedReloadRequired,
 }: ChatComposerProps) {
   if (!viewIdentity.trim())
     throw new TypeError("Chat view identity must not be empty");
@@ -214,8 +234,8 @@ export default function ChatComposer({
   const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(
     null,
   );
-  const [localProjectionReloadRequestId, setLocalProjectionReloadRequestId] =
-    useState<string | null>(null);
+  const [localReloadRequired, setLocalReloadRequired] =
+    useState<ChatReloadRequired | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
   const restoreFocusAfterSendRef = useRef(false);
@@ -353,11 +373,10 @@ export default function ChatComposer({
     pending?.kind === "ReaderHighlight" ? pending.preview : null;
   const pendingBlocksSend =
     pending !== null && pending.kind !== "ReaderHighlight";
-  const projectionReloadRequestId =
-    localProjectionReloadRequestId ?? inheritedProjectionReloadRequestId;
-  const projectionReloadRequired = projectionReloadRequestId !== null;
+  const reloadRequired = localReloadRequired ?? inheritedReloadRequired;
+  const mustReload = reloadRequired !== null;
   const composerDisabled =
-    operation.kind !== "Absent" || projectionReloadRequired || !restored;
+    operation.kind !== "Absent" || mustReload || !restored;
   const sendDisabled =
     composerDisabled ||
     recoveryConflict ||
@@ -410,8 +429,8 @@ export default function ChatComposer({
       } catch (err) {
         if (!isCurrent()) return;
         if (handleUnauthenticatedApiError(err)) return;
-        if (isToolProjectionReloadRequired(err)) {
-          setLocalProjectionReloadRequestId(err.requestId ?? "");
+        if (isChatReloadRequired(err)) {
+          setLocalReloadRequired(err);
           return;
         }
         if (
@@ -491,8 +510,8 @@ export default function ChatComposer({
       } catch (err) {
         if (!isCurrent()) return;
         if (handleUnauthenticatedApiError(err)) return;
-        if (isToolProjectionReloadRequired(err)) {
-          setLocalProjectionReloadRequestId(err.requestId ?? "");
+        if (isChatReloadRequired(err)) {
+          setLocalReloadRequired(err);
           return;
         }
         if (
@@ -619,15 +638,15 @@ export default function ChatComposer({
   }, [operation, postCommand, retrySubmit, viewToken, recoveryConflict]);
 
   const handleCancelRun = useCallback(async () => {
-    if (!activeRunId || !onCancelRun || cancelling) return;
+    if (!pendingRun || pendingRun.execution?.cancel_requested || cancelling || mustReload) return;
     setCancelling(true);
     setError(null);
     try {
-      await onCancelRun();
+      await onCancelRun(pendingRun.id);
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
-      if (isToolProjectionReloadRequired(err)) {
-        setLocalProjectionReloadRequestId(err.requestId ?? "");
+      if (isChatReloadRequired(err)) {
+        setLocalReloadRequired(err);
         return;
       }
       if (!isApiError(err) || isSameSystemApiDefect(err)) {
@@ -646,7 +665,7 @@ export default function ChatComposer({
     } finally {
       setCancelling(false);
     }
-  }, [activeRunId, cancelling, onCancelRun]);
+  }, [pendingRun, cancelling, mustReload, onCancelRun]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key !== "Enter") return;
@@ -689,7 +708,7 @@ export default function ChatComposer({
     <div className={styles.composer}>
       <div className={styles.composerShell}>
         <span className="sr-only" aria-live="polite">
-          {sendCapabilityMessage(sendCapability)}
+          {sendCapabilityMessage(sendCapability, pendingRun?.execution ?? null)}
         </span>
         {error ? (
           <div className={styles.composerError}>
@@ -703,21 +722,19 @@ export default function ChatComposer({
             <code>E_CHAT_RECOVERY_CONFLICT</code>
           </div>
         ) : null}
-        {projectionReloadRequired ? (
+        {mustReload ? (
           <div className={styles.composerError}>
-            <ToolProjectionReloadNotice
-              requestId={projectionReloadRequestId || undefined}
-            />
+            <ChatReloadNotice error={reloadRequired} />
           </div>
         ) : null}
-        {reconciling && !recoveryConflict && !projectionReloadRequired && (
+        {reconciling && !recoveryConflict && !mustReload && (
           <div className={styles.composerError} role="alert">
             Send status unknown. The original exact selection and catalog
             revision are locked for retry.
           </div>
         )}
 
-        {acknowledged && !recoveryConflict && !projectionReloadRequired ? (
+        {acknowledged && !recoveryConflict && !mustReload ? (
           <div className={styles.composerError} role="status">
             {currentRead === "Removed" ? (
               <>
@@ -833,7 +850,7 @@ export default function ChatComposer({
             </div>
           ) : null}
 
-          {reconciling && !recoveryConflict && !projectionReloadRequired ? (
+          {reconciling && !recoveryConflict && !mustReload ? (
             <Button
               variant="ghost"
               size="md"
@@ -845,15 +862,22 @@ export default function ChatComposer({
             >
               <RotateCcw size={16} aria-hidden="true" />
             </Button>
-          ) : activeRunId && onCancelRun ? (
+          ) : pendingRun ? (
             <Button
               variant="ghost"
               size="md"
               className={styles.sendButton}
               iconOnly
               loading={cancelling}
+              disabled={mustReload || pendingRun.execution?.cancel_requested === true}
               onClick={handleCancelRun}
-              aria-label={cancelling ? "Stopping response" : "Stop response"}
+              aria-label={
+                pendingRun.execution?.cancel_requested
+                  ? "Stop requested"
+                  : cancelling
+                    ? "Requesting stop"
+                    : "Stop response"
+              }
             >
               <Square size={16} aria-hidden="true" />
             </Button>

@@ -28,7 +28,8 @@ export type MessageActionIntent =
       readonly settleDeletedConversation: SettleDeletedMessageConversation;
     });
 
-export type MessageActionMutationOutcome = "Committed" | "Failed";
+/** SelectionRequired creates no command; a local caller may open model choice. */
+export type MessageActionMutationOutcome = "Committed" | "Failed" | "SelectionRequired";
 
 export type ExecuteDeleteMessageMutation = <T>(
   command: () => Promise<T>,
@@ -67,7 +68,7 @@ export async function settleMessageActionMutation(
     intent.onAborted();
     throw error;
   }
-  if (outcome === "Failed") {
+  if (outcome !== "Committed") {
     intent.onAborted();
     return;
   }

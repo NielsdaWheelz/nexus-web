@@ -11,7 +11,10 @@ from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import Literal, cast
 
-from provider_runtime.registry import api_model_catalog
+from provider_runtime.registry import (
+    api_generation_combination_source_status,
+    api_model_catalog,
+)
 from provider_runtime.types import Absent as RuntimeAbsent
 from provider_runtime.types import ApiModelCatalog, ApiModelFacts, ApiRoutingFacts
 from provider_runtime.types import Present as RuntimePresent
@@ -75,12 +78,12 @@ _PROVIDER_ORDER: tuple[GenerationApiProvider, ...] = (
     "deepseek",
     "xai",
 )
-_CHAT_CAPABILITIES: tuple[TransportCapability, ...] = ("Text", "ToolsContinuation")
 _ALL_CAPABILITIES: tuple[TransportCapability, ...] = (
     "Text",
     "StrictStructured",
     "ToolsContinuation",
 )
+_CONTAINED_CODEX_CAPABILITIES: tuple[TransportCapability, ...] = ("Text", "StrictStructured")
 _DEFINITION_TTL_SECONDS = 300
 _READINESS_TTL_SECONDS = 60
 
@@ -216,18 +219,11 @@ class GenerationCatalogService:
         self._readiness: CatalogReadinessSnapshot | None = None
         self._lock = Lock()
 
-    async def startup(self) -> GenerationCatalogSnapshot:
-        snapshot = await self._read(require_fresh=True, force_definition=True, force_readiness=True)
-        validate_background_policy(snapshot, policy=GENERATION_POLICY)
-        return snapshot
-
     async def read_chat(self) -> GenerationCatalogSnapshot:
         return await self._read(require_fresh=False)
 
     async def read_for_admission(self) -> GenerationCatalogSnapshot:
-        snapshot = await self._read(require_fresh=True)
-        validate_background_policy(snapshot, policy=GENERATION_POLICY)
-        return snapshot
+        return await self._read(require_fresh=True)
 
     async def final_chat_selection_check(
         self, *, catalog_definition_revision: str, selection: GenerationSelection
@@ -238,12 +234,12 @@ class GenerationCatalogService:
         )
 
     async def _read(
-        self, *, require_fresh: bool, force_definition: bool = False, force_readiness: bool = False
+        self, *, require_fresh: bool, force_readiness: bool = False
     ) -> GenerationCatalogSnapshot:
         async with self._lock:
             now = datetime.now(UTC)
             refresh_failed = False
-            if force_definition or _due(
+            if _due(
                 None if self._definitions is None else self._definitions[2],
                 now,
                 _DEFINITION_TTL_SECONDS,
@@ -366,10 +362,11 @@ def compose_generation_catalog(
         model_rows: list[GenerationModelRow] = []
         for source in sources:
             route_readiness = readiness.route(route_key)
-            state = _selection_state(source, route_readiness)
             context_budget, output_budget = _effective_budget(source, chat_workflow)
             reasoning_rows: list[GenerationReasoningRow] = []
             for reasoning in source.reasoning:
+                selection = source.selection(reasoning.key)
+                state = _selection_state(source, selection, route_readiness)
                 reasoning_rows.append(
                     GenerationReasoningRow(
                         key=reasoning.key,
@@ -378,7 +375,6 @@ def compose_generation_catalog(
                         chat_state=state,
                     )
                 )
-                selection = source.selection(reasoning.key)
                 fingerprint = selection_fingerprint(selection)
                 if fingerprint in pairs:
                     raise AssertionError("generation catalog exact selection is duplicated")
@@ -477,7 +473,7 @@ def resolve_chat_selection(
 def validate_background_policy(
     snapshot: GenerationCatalogSnapshot, *, policy: GenerationPolicy
 ) -> None:
-    """Fail startup on semantic defects; leave volatile unavailability for admission."""
+    """Reject unsupported fixed operations before their dispatch."""
 
     if snapshot.pair(policy.chat.seed) is None:
         raise AssertionError("Chat seed is absent from the generation catalog")
@@ -487,22 +483,50 @@ def validate_background_policy(
             raise AssertionError(f"{operation} selection is absent from the catalog")
         if pair.target_key not in ADMITTED_TARGET_KEYS:
             raise AssertionError(f"{operation} selects a target outside the admitted set")
-        required: set[TransportCapability] = {
-            "Text" if entry.workflow.output_contract == "Text" else "StrictStructured"
-        }
-        if isinstance(entry.workflow.model_tool_policy, ExactModelTools):
-            required.add("ToolsContinuation")
-        if not required.issubset(pair.capabilities):
+        if not supports_generation_combination(
+            pair.selection,
+            pair.capabilities,
+            output=entry.workflow.output_contract,
+            model_tools=isinstance(entry.workflow.model_tool_policy, ExactModelTools),
+        ):
             raise AssertionError(f"{operation} target does not support its workflow")
 
 
-def _selection_state(source: _SourceModel, readiness: Readiness) -> SelectionState:
+def supports_generation_combination(
+    selection: GenerationSelection,
+    capabilities: tuple[TransportCapability, ...],
+    *,
+    output: Literal["Text", "StrictJson"],
+    model_tools: bool,
+) -> bool:
+    required: set[TransportCapability] = {"Text" if output == "Text" else "StrictStructured"}
+    if model_tools:
+        required.add("ToolsContinuation")
+    if not required.issubset(capabilities):
+        return False
+    if isinstance(selection, ProviderApiSelection):
+        source_status = api_generation_combination_source_status(
+            model_ref=selection.model_ref,
+            reasoning=selection.reasoning,
+            output="text" if output == "Text" else "strict_json",
+            model_tools=model_tools,
+        )
+        # Source compatibility alone cannot authorize model-initiated effects.
+        return source_status == "unqualified" and not model_tools
+    return True
+
+
+def _selection_state(
+    source: _SourceModel, selection: GenerationSelection, readiness: Readiness
+) -> SelectionState:
     if source.target_key not in ADMITTED_TARGET_KEYS:
         return Ineligible(
             code="selection_not_configured",
             explanation="This model is not configured for Nexus generation.",
         )
-    if not set(_CHAT_CAPABILITIES).issubset(source.capabilities):
+    if not supports_generation_combination(
+        selection, source.capabilities, output="Text", model_tools=True
+    ):
         return Ineligible(
             code="unsupported_capability",
             explanation="This model does not support streaming text with tool continuation.",
@@ -537,7 +561,11 @@ def _agent_sources(catalog: CodexModelCatalog) -> tuple[_SourceModel, ...]:
                 dispatch_model=row.dispatch_model,
                 agent_definition_revision=catalog.definition_revision,
             ),
-            capabilities=_ALL_CAPABILITIES,
+            capabilities=(
+                _ALL_CAPABILITIES
+                if catalog.supports_frozen_mcp_tools
+                else _CONTAINED_CODEX_CAPABILITIES
+            ),
         )
         for row in catalog.models
     )

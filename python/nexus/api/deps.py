@@ -8,11 +8,23 @@ from fastapi import Header, Request
 from nexus.auth.bearer import parse_bearer_token
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import set_stream_jti
+from nexus.schemas.chat_contract import CHAT_CONTRACT_REVISION
 from nexus.services import stream_tokens
 from nexus.services.generation_catalog import GenerationCatalogService
 from nexus.services.tool_runtime.declarations import BROWSER_TOOL_PROJECTION_REVISION
 
 TOOL_PROJECTION_HEADER = "X-Nexus-Tool-Projection"
+CHAT_CONTRACT_HEADER = "X-Nexus-Chat-Contract"
+
+
+def require_chat_contract_revision(
+    revision: Annotated[str | None, Header(alias=CHAT_CONTRACT_HEADER)] = None,
+) -> None:
+    if revision != CHAT_CONTRACT_REVISION:
+        raise ApiError(
+            ApiErrorCode.E_CHAT_CONTRACT_RELOAD_REQUIRED,
+            "Reload Nexus to continue",
+        )
 
 
 def require_tool_projection_revision(

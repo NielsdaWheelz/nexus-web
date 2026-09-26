@@ -44,7 +44,7 @@ COMMAND_DRAFT_SCHEMA_VERSION = "nexus-generation-command-draft.v1"
 ADMISSION_SCHEMA_VERSION = "nexus-generation-admission.v2"
 EVENT_SCHEMA_VERSION = "nexus-generation-event.v2"
 HEALTH_SCHEMA_VERSION = "nexus-generation-health.v2"
-MODEL_CATALOG_SCHEMA_VERSION = "nexus-codex-model-catalog.v1"
+MODEL_CATALOG_SCHEMA_VERSION = "nexus-codex-model-catalog.v2"
 MAX_OUTPUT_SCHEMA_BYTES = 64 * 1024
 MAX_TOOL_GRANT_BYTES = 16 * 1024
 MAX_MODEL_TOOL_PLAN_BYTES = 64 * 1024
@@ -109,10 +109,11 @@ class CodexCatalogModel(WireTaggedModel):
 class CodexModelCatalog(WireTaggedModel):
     """Secret-free authenticated AgentRuntime catalog crossing the private UDS."""
 
-    schema_version: Literal["nexus-codex-model-catalog.v1"] = MODEL_CATALOG_SCHEMA_VERSION
+    schema_version: Literal["nexus-codex-model-catalog.v2"] = MODEL_CATALOG_SCHEMA_VERSION
     backend_contract_revision: CatalogRevision
     definition_revision: Sha256Hex
     native_revision: Presence[CatalogRevision]
+    supports_frozen_mcp_tools: Literal[False]
     observed_at: datetime
     models: tuple[CodexCatalogModel, ...] = Field(max_length=512)
 
@@ -138,6 +139,7 @@ def codex_model_catalog_to_wire(catalog: AgentModelCatalog) -> CodexModelCatalog
         backend_contract_revision=catalog.backend_contract_revision,
         definition_revision=catalog.definition_revision,
         native_revision=_to_wire(catalog.native_revision),
+        supports_frozen_mcp_tools=False,
         observed_at=catalog.observed_at,
         models=tuple(_codex_model_to_wire(model) for model in catalog.models),
     )
@@ -419,6 +421,12 @@ def capacity_rejection_bytes() -> bytes:
     return b'{"schema_version":"nexus-generation-rejection.v2","kind":"capacity_unavailable"}'
 
 
+def capability_rejection_bytes() -> bytes:
+    """The exact host refusal before a Codex tool-bearing admission."""
+
+    return b'{"schema_version":"nexus-generation-rejection.v2","kind":"capability_unavailable"}'
+
+
 NormalizedFailureCode = Literal[
     "auth",
     "quota",
@@ -559,3 +567,6 @@ def _canonical_json_bytes(value: object) -> bytes:
 
 def _text_digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+NO_MODEL_TOOL_PLAN_FINGERPRINT = _digest(Absent().model_dump(mode="json"))

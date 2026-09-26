@@ -29,9 +29,10 @@ import {
   decodeApiPayload,
   isApiError,
   isSameSystemApiDefect,
-  isToolProjectionReloadRequired,
+  isChatReloadRequired,
   type ApiError,
   type ApiPath,
+  type ChatReloadRequired,
 } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -65,6 +66,7 @@ import type {
   BranchDraft,
   BranchGraph,
   ChatSendCapability,
+  PendingChatRun,
   ChatRunListResponse,
   ChatRunResponse,
   ConversationMessage,
@@ -210,8 +212,8 @@ interface UseConversation {
   messages: ConversationMessage[];
   loading: boolean;
   error: FeedbackContent | null;
-  /** Fail-closed browser/server tool-contract mismatch; cleared only by reload. */
-  projectionReloadRequestId: string | null;
+  /** Fail-closed browser/server contract mismatch; cleared only by reload. */
+  reloadRequired: ChatReloadRequired | null;
   /** Complete assistant leaf — the default reply/continuation parent. */
   replyParentMessageId: string | null;
   /** Immutable run selection inherited from the causal assistant parent. */
@@ -230,8 +232,8 @@ interface UseConversation {
     receipt: Parameters<typeof readAdmittedChatRun>[0],
     isCurrent: () => boolean,
   ) => Promise<boolean>;
-  activeRunId: string | null;
-  cancelActiveRun: () => Promise<void>;
+  pendingRun: PendingChatRun | null;
+  cancelPendingRun: (runId: string) => Promise<void>;
 
   // rerun (a new sibling candidate from an eligible failed/cancelled turn)
   rerunAssistantResponse: (
@@ -292,18 +294,16 @@ export function useConversation(
   );
   const loading = historyState === "Loading";
   const [error, setError] = useState<FeedbackContent | null>(null);
-  const [projectionReloadRequestId, setProjectionReloadRequestId] = useState<
-    string | null
-  >(null);
+  const [reloadRequired, setReloadRequired] = useState<ChatReloadRequired | null>(null);
   const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(
     null,
   );
   const reportAsyncDefect = useCallback((error: unknown) => {
     setAsyncDefect({ error });
   }, []);
-  const reportProjectionReload = useCallback((operationError: unknown) => {
-    if (!isToolProjectionReloadRequired(operationError)) return false;
-    setProjectionReloadRequestId(operationError.requestId ?? "");
+  const reportReloadRequired = useCallback((operationError: unknown) => {
+    if (!isChatReloadRequired(operationError)) return false;
+    setReloadRequired(operationError);
     return true;
   }, []);
   const reportOperationError = useCallback(
@@ -317,14 +317,14 @@ export function useConversation(
         | "Delete"
         | "SwitchFork",
     ) => {
-      if (reportProjectionReload(operationError)) return;
+      if (reportReloadRequired(operationError)) return;
       try {
         setError(conversationOperationErrorMessage(operationError, operation));
       } catch (defect) {
         reportAsyncDefect(defect);
       }
     },
-    [reportAsyncDefect, reportProjectionReload],
+    [reportAsyncDefect, reportReloadRequired],
   );
   const conversationIdRef = useRef(conversationId);
   conversationIdRef.current = conversationId;
@@ -408,7 +408,6 @@ export function useConversation(
   );
 
   const {
-    activeRunId,
     tailChatRun,
     abortAll,
     cancelRun,
@@ -418,7 +417,7 @@ export function useConversation(
     dispatch: dispatchMessages,
     setForkOptionsByParentId,
     onContextRefAdded,
-    onProjectionReloadRequired: reportProjectionReload,
+    onReloadRequired: reportReloadRequired,
     onDefect: reportAsyncDefect,
     shouldStartRun: shouldStartRunForCurrentConversation,
     shouldApplyRun: shouldApplyRunToSelectedPath,
@@ -429,9 +428,9 @@ export function useConversation(
     tailChatRunRef.current = tailChatRun;
   }, [tailChatRun]);
 
-  const cancelActiveRun = useCallback(async () => {
-    await cancelRun(activeRunId);
-  }, [activeRunId, cancelRun]);
+  const cancelPendingRun = useCallback(async (runId: string) => {
+    await cancelRun(runId);
+  }, [cancelRun]);
 
   // --------------------------------------------------------------------------
   // Branching: active-runs resumption + tree application
@@ -492,7 +491,7 @@ export function useConversation(
           void tailChatRunRef.current(runData);
         }
       } catch (err) {
-        if (reportProjectionReload(err)) return;
+        if (reportReloadRequired(err)) return;
         if (handleUnauthenticatedApiError(err)) return;
         if (!isApiError(err) || isSameSystemApiDefect(err)) {
           reportAsyncDefect(err);
@@ -505,7 +504,7 @@ export function useConversation(
       conversationId,
       loadVisibleActiveRuns,
       reportAsyncDefect,
-      reportProjectionReload,
+      reportReloadRequired,
     ],
   );
 
@@ -560,7 +559,7 @@ export function useConversation(
         setError(null);
         return true;
       } catch (err) {
-        if (reportProjectionReload(err)) return false;
+        if (reportReloadRequired(err)) return false;
         if (handleUnauthenticatedApiError(err)) return false;
         if (!isApiError(err) || isSameSystemApiDefect(err)) {
           reportAsyncDefect(err);
@@ -579,7 +578,7 @@ export function useConversation(
       loadConversationTree,
       reportAsyncDefect,
       reportOperationError,
-      reportProjectionReload,
+      reportReloadRequired,
     ],
   );
 
@@ -599,7 +598,7 @@ export function useConversation(
         activeRuns = await loadVisibleActiveRuns(id, visibleMessageIds, signal);
       } catch (err) {
         if (isAbortError(err) || signal.aborted) throw err;
-        if (isToolProjectionReloadRequired(err)) throw err;
+        if (isChatReloadRequired(err)) throw err;
         if (handleUnauthenticatedApiError(err)) throw err;
         if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
         console.error("Failed to load active chat runs:", err);
@@ -928,7 +927,6 @@ export function useConversation(
               sourceSelection.selection,
             );
             if (
-              !sourceSelection.rerun_eligibility ||
               candidate?.reasoning.chat_state.kind !== "Selectable"
             ) {
               setError({
@@ -936,7 +934,7 @@ export function useConversation(
                 title: "The original model selection is unavailable.",
                 message: "Choose a different model for this new run; nothing was substituted.",
               });
-              return "Failed";
+              return "SelectionRequired";
             }
             selected = {
               selection: sourceSelection.selection,
@@ -1365,18 +1363,37 @@ export function useConversation(
     return run.run_selection;
   }, [branchDraft, messages]);
 
+  const selectedPathReady =
+    routeConversationIdRef.current === initialConversationId &&
+    conversationId !== null &&
+    historyState === "Ready";
+  const pendingAssistant = selectedPathReady
+    ? messages.find(
+        (message) =>
+          message.role === "assistant" &&
+          message.status === "pending" &&
+          message.trust_trail?.conversation_id === conversationId,
+      )
+    : undefined;
+  const pendingTrustRun = pendingAssistant?.trust_trail?.run;
+  const pendingRun: PendingChatRun | null = pendingTrustRun
+    ? {
+        id: pendingTrustRun.run_id,
+        execution: pendingTrustRun.execution.kind === "Present"
+          ? pendingTrustRun.execution.value
+          : null,
+      }
+    : null;
+
   const sendCapability = useMemo<ChatSendCapability>(() => {
+    if (routeConversationIdRef.current !== initialConversationId)
+      return { kind: "HistoryLoading" };
     if (!conversationId) return { kind: "Available" };
     if (loading) return { kind: "HistoryLoading" };
     if (historyState === "Unavailable") return { kind: "HistoryUnavailable" };
     if (messages.length === 0) return { kind: "Available" };
-    if (
-      messages.some(
-        (message) =>
-          message.role === "assistant" && message.status === "pending",
-      )
-    ) {
-      return { kind: "AssistantRunning" };
+    if (pendingAssistant) {
+      return { kind: "AssistantPending" };
     }
     if (branchDraft) {
       return messages.some(
@@ -1392,7 +1409,7 @@ export function useConversation(
       return { kind: "ReplyTargetUnavailable" };
     }
     return { kind: "Available" };
-  }, [branchDraft, conversationId, historyState, loading, messages, replyParentMessageId]);
+  }, [branchDraft, conversationId, historyState, initialConversationId, loading, messages, pendingAssistant, replyParentMessageId]);
 
   if (asyncDefect !== null) throw asyncDefect.error;
 
@@ -1400,15 +1417,15 @@ export function useConversation(
     messages,
     loading,
     error,
-    projectionReloadRequestId,
+    reloadRequired,
     replyParentMessageId,
     inheritedRunSelection,
     sendCapability,
     conversationId,
     title,
     adoptAdmittedRun,
-    activeRunId,
-    cancelActiveRun,
+    pendingRun,
+    cancelPendingRun,
     rerunAssistantResponse,
     rerunAssistantResponseWithSelection,
     rerunningAssistantMessageIds: rerunningAssistantMessageIds.ids,

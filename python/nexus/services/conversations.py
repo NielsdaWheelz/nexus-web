@@ -221,7 +221,6 @@ def rerunnable_assistant_message_ids(
         if error_code is not None and rerun_eligibility(
             error_code=error_code,
             run_status=run.status,
-            selection_selectable=True,
         ):
             rerunnable.add(run.assistant_message_id)
     return rerunnable
@@ -700,7 +699,6 @@ def message_action_facts(
             rerun_applicable = error_code is not None and rerun_eligibility(
                 error_code=error_code,
                 run_status=run.status,
-                selection_selectable=True,
             )
         facts[message_id] = MessageActionFacts(
             is_owner=UUID(str(row["owner_user_id"])) == viewer_id,

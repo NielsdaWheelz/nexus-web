@@ -4,17 +4,14 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ChatRun
 from nexus.db.session import get_session_factory
 from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
     RescheduleRequested,
     get_job,
-    requeue_dead_job,
 )
 from nexus.logging import get_logger
 from nexus.services.chat_run_worker import execute_chat_run
@@ -51,24 +48,14 @@ def chat_run(run_id: str, *, context: JobExecutionContext) -> RescheduleRequeste
 
 
 def record_dead_lettered_chat_run(db: Session, job: JobRow) -> None:
-    """Suspend the run, or requeue the same job to fold a prior cancellation."""
+    """Leave exhausted work suspended for explicit evidence-backed recovery."""
 
     raw_run_id = job.payload.get("run_id")
     if raw_run_id is None:
         raise ValueError("chat_run dead-letter payload is missing run_id")
     run_id = UUID(str(raw_run_id))
-    run = db.execute(
-        select(ChatRun.status, ChatRun.cancel_requested_at).where(ChatRun.id == run_id)
-    ).one_or_none()
-    requeued_for_cancellation = bool(
-        run is not None
-        and run.status in {"queued", "running"}
-        and run.cancel_requested_at is not None
-    )
-    if requeued_for_cancellation and not requeue_dead_job(db, job_id=job.id):
-        raise AssertionError("cancelled chat job changed during dead-letter handling")
     logger.warning(
-        "chat_run_cancel_requeued" if requeued_for_cancellation else "chat_run_suspended",
+        "chat_run_suspended",
         run_id=str(run_id),
         job_id=str(job.id),
         attempts=job.attempts,

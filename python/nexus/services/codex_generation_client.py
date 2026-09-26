@@ -25,6 +25,7 @@ from nexus.services.codex_generation_contract import (
     GenerationPermissionRequest,
     GenerationTerminal,
     GenerationToolUse,
+    capability_rejection_bytes,
     capacity_rejection_bytes,
     generation_admission_request,
     generation_command_draft,
@@ -46,6 +47,10 @@ class CodexGenerationClientError(RuntimeError):
 
 class CodexGenerationCapacityUnavailable(CodexGenerationClientError):
     """The host safely refused a generation before acceptance for capacity."""
+
+
+class CodexGenerationCapabilityUnavailable(CodexGenerationClientError):
+    """The exact host refused unsupported tools before reserving a native slot."""
 
 
 class CodexGenerationProtocolDefect(AssertionError):
@@ -194,6 +199,15 @@ class CodexGenerationClient:
                 if await _is_capacity_rejection(response):
                     raise CodexGenerationCapacityUnavailable(
                         "Codex generation capacity is unavailable before acceptance"
+                    )
+                if (
+                    response.status_code == 422
+                    and _content_type(response) == "application/json"
+                    and await _read_bounded(response, _MAX_REJECTION_BYTES)
+                    == capability_rejection_bytes()
+                ):
+                    raise CodexGenerationCapabilityUnavailable(
+                        "Codex ModelTools are unavailable before acceptance"
                     )
                 raise CodexGenerationClientError(
                     f"Codex generation admission returned HTTP {response.status_code}"

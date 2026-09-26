@@ -30,6 +30,15 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
+- [deferred] provider api qualification · 2026-09-25 adversarial review · text-plus-tools is source-unqualified and strict-json-plus-tools is unsupported; tool-bearing api chat remains ineligible: [ticket](tickets/api-tool-combinations-unqualified.md).
+- [open] chat incident · 2026-09-25 user report · original pane crash has no retained browser exception and is no longer reproducible: [ticket](tickets/production-chat-pane-crash-and-stalled-response.md).
+- [open] codex diagnostics · 2026-09-25 chat reliability · safe first-failure logging is implemented locally; live host correlation remains unverified: [ticket](tickets/codex-host-discards-original-runtime-failure.md).
+- [open] chat telemetry · 2026-09-25 chat reliability · dual request ids pass a local log proof; browser-to-api correlation remains unverified: [ticket](tickets/client-defect-origin-request-id-is-overwritten.md).
+- [open] chat cancellation · 2026-09-25 chat reliability · prepared cancellation passes disposable postgres; native no-effect proof remains unverified: [ticket](tickets/prepared-chat-cancel-requires-unbound-mcp-authority.md).
+- [open] chat cancellation · 2026-09-25 chat reliability · uncertain cancellation passes disposable postgres; live worker/provider behavior remains unverified: [ticket](tickets/chat-cancel-uncertain-codex-requeues-without-settlement.md).
+- [open] chat presentation · 2026-09-25 chat reliability · paused composer wording passes temporary browser tests; authenticated browser observation remains unverified: [ticket](tickets/chat-suspended-response-announces-in-progress.md).
+- [open] chat recovery · 2026-09-25 chat reliability · operator-defect copy passes temporary browser tests; authenticated browser observation remains unverified: [ticket](tickets/chat-operator-defect-copy-invites-new-command.md).
+- [deferred] codex provider boundary · 2026-09-25 chat reliability · frozen model tools lack native containment; tool-bearing chat and fixed tool-requiring background policies block release: [ticket](tickets/codex-frozen-model-tools-unqualified.md).
 - [open] reader / find · 2026-09-24 reader-inspector-controls · epub find previews wait without a fragment-failure signal: [ticket](tickets/epub-find-preview-has-no-fragment-failure-signal.md).
 - [open] reader / find · 2026-09-24 reader-inspector-controls · a supersession abort retires the find preview lease: [ticket](tickets/find-supersession-abort-retires-the-preview-lease.md).
 - [open] reader / find · 2026-09-24 reader-inspector-controls · web and transcript find keep a render frame budget: [ticket](tickets/web-and-transcript-find-render-budget.md).

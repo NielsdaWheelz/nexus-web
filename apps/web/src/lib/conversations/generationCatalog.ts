@@ -1,7 +1,6 @@
 import { decodePresence, type Presence } from "@/lib/api/presence";
 import {
   expectArray,
-  expectBoolean,
   expectExactRecord,
   expectIsoInstant,
   expectNonemptyString,
@@ -150,9 +149,6 @@ export interface RunSelectionOut {
   readonly source_catalog_definition_revision: string;
   readonly display_at_dispatch: SelectionPresentation;
   readonly tool_authority: "ReadOnly" | "AdditiveWrites";
-  readonly current_state: GenerationSelectionState;
-  readonly current_state_observed_at: string;
-  readonly rerun_eligibility: boolean;
 }
 
 export interface GenerationCandidate {
@@ -571,9 +567,6 @@ export function decodeRunSelectionOut(raw: unknown, name: string): RunSelectionO
       "source_catalog_definition_revision",
       "display_at_dispatch",
       "tool_authority",
-      "current_state",
-      "current_state_observed_at",
-      "rerun_eligibility",
     ],
     name,
   );
@@ -595,18 +588,6 @@ export function decodeRunSelectionOut(raw: unknown, name: string): RunSelectionO
       value.tool_authority,
       ["ReadOnly", "AdditiveWrites"] as const,
       `${name}.tool_authority`,
-    ),
-    current_state: decodeSelectionState(
-      value.current_state,
-      `${name}.current_state`,
-    ),
-    current_state_observed_at: expectIsoInstant(
-      value.current_state_observed_at,
-      `${name}.current_state_observed_at`,
-    ),
-    rerun_eligibility: expectBoolean(
-      value.rerun_eligibility,
-      `${name}.rerun_eligibility`,
     ),
   };
 }
@@ -670,17 +651,6 @@ export function hasSelectableCandidate(catalog: GenerationCatalog): boolean {
       model.reasoning.some((reasoning) => reasoning.chat_state.kind === "Selectable"),
     ),
   );
-}
-
-export function selectionStateExplanation(state: GenerationSelectionState): string {
-  switch (state.kind) {
-    case "Selectable":
-      return "Ready to use.";
-    case "Ineligible":
-    case "OperatorActionRequired":
-    case "TemporarilyUnavailable":
-      return state.explanation;
-  }
 }
 
 export function readinessAction(readiness: GenerationReadiness): string | null {

@@ -171,11 +171,6 @@ class RunSelectionOut(_StrictGenerationModel):
     source_catalog_definition_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
     display_at_dispatch: SelectionPresentation
     tool_authority: Literal["ReadOnly", "AdditiveWrites"]
-    current_state: SelectionState
-    current_state_observed_at: datetime
-    rerun_eligibility: bool
-
-    _state_observed_at_is_aware = field_validator("current_state_observed_at")(_aware)
 
 
 class GenerationCatalog(_StrictGenerationModel):

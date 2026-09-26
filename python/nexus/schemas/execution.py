@@ -15,4 +15,13 @@ class DurableExecutionOut(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class ChatRunExecutionOut(BaseModel):
+    """Chat liveness and the separately persisted request to stop it."""
+
+    phase: DurableExecutionPhase
+    cancel_requested: bool
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
 EXECUTION_ADVISORY_EVENT_TYPE = "ExecutionAdvisory"
