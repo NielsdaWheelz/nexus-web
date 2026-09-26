@@ -6,6 +6,12 @@ merge, paid generation or release was performed. the dependency commits below
 were published as isolated feature branches; no dependency or nexus pull
 request was merged.
 
+both dependency branches descend from the repository's already pinned but
+unmerged embedding-memory maintenance commits. a pull request against each
+repository's `main` would include that unrelated maintenance history, so no
+pull requests were opened. the nexus branch is one unrelated collection-pane
+commit behind `main`; integration should reconcile that independently.
+
 | boundary | result and limit |
 | --- | --- |
 | exact pins | nexus locks provider-runtime `7008b669a5bbee545a0b93c90a1786a0ce07c9c5` and llm-agent-kernel `112fae14727acec52141dcdebc323f87dfae6d47`; codex sdk/cli remains `0.144.4`. the provider commit is a direct child of the prior `97fbac7` pin; the kernel commit changes its matching dependency pin. `uv lock --check --offline` passed using the local commits. |
