@@ -116,11 +116,15 @@ def set_highlight_note(
         highlight_id=highlight_id,
         block_id=request.note_block_id,
         body_pm_json=request.body_pm_json,
+        expected_body=request.expected_body,
         client_mutation_id=request.client_mutation_id,
     )
     return ok(
         LinkedNoteBlockRef(
-            note_block_id=block.id, body_pm_json=block.body_pm_json, body_text=block.body_text
+            note_block_id=block.id,
+            body_pm_json=block.body_pm_json,
+            body_text=block.body_text,
+            version_by_lane=block.version_by_lane,
         )
     )
 
@@ -131,9 +135,9 @@ def delete_highlight_note(
     viewer: ViewerDep,
     db: DbDep,
     client_mutation_id: Annotated[str, Query(min_length=1, max_length=120)],
-    note_block_id: Annotated[UUID | None, Query()] = None,
+    note_block_id: Annotated[UUID, Query()],
 ) -> Response:
-    notes_service.delete_highlight_note(
+    notes_service.detach_highlight_note(
         db,
         viewer.user_id,
         highlight_id=highlight_id,

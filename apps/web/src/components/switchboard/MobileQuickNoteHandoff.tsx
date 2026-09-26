@@ -18,7 +18,7 @@ import type {
 } from "@/lib/nexus/dispatch";
 import {
   DAILY_DRAFT_HANDOFF_CLAIM_EVENT,
-  clearDailyDraft,
+  DailyDraftStorageError,
   readDailyDraft,
   writeDailyDraft,
   type DailyDraft,
@@ -71,7 +71,7 @@ interface ActiveHandoff {
   noteId: string;
   clientMutationId: string;
   appendBase: DailyDraft;
-  previousDraft: DailyDraft | null;
+  selectionOffset: number;
 }
 
 interface OpenOnlyHandoff {
@@ -98,14 +98,32 @@ const MobileQuickNoteHandoff = forwardRef<
   const openOnlyRef = useRef<OpenOnlyHandoff | null>(null);
   const composingRef = useRef(false);
   const [activeHandoffId, setActiveHandoffId] = useState<string | null>(null);
+  const [storageFailedText, setStorageFailedText] = useState<string | null>(null);
   const { accountId } = useAuthenticatedAccount();
   const { cancelledPaneEntryActivationIds } = useWorkspaceStore();
 
   const checkpoint = useCallback((composition: "Composing" | "Complete") => {
     const active = activeRef.current;
     const input = inputRef.current;
-    if (!active || !input) return;
-    const current = readDailyDraft(active.accountId, active.localDate);
+    if (!active || !input) return false;
+    let current: DailyDraft | null;
+    try { current = readDailyDraft(active.accountId, active.localDate); }
+    catch (error) {
+      if (!(error instanceof DailyDraftStorageError)) throw error;
+      setStorageFailedText(input.value);
+      return false;
+    }
+    if (
+      current?.noteId === active.noteId &&
+      current.clientMutationId === active.clientMutationId &&
+      current.handoff.kind === "None"
+    ) {
+      activeRef.current = null;
+      setActiveHandoffId(null);
+      setStorageFailedText(null);
+      if (document.activeElement === input) input.blur();
+      return true;
+    }
     if (
       !current ||
       current.noteId !== active.noteId ||
@@ -115,24 +133,28 @@ const MobileQuickNoteHandoff = forwardRef<
     ) {
       activeRef.current = null;
       setActiveHandoffId(null);
+      setStorageFailedText(input.value);
       if (document.activeElement === input) input.blur();
-      return;
+      return false;
     }
-    const next = appendOrDefect(active.appendBase, input.value);
-    const selectionOffset = active.appendBase.bodyText.length;
-    writeDailyDraft({
+    const next = current.seedBody
+      ? appendOrDefect(active.appendBase, input.value)
+      : current;
+    const retained = writeDailyDraft({
       ...next,
       handoff: {
         kind: "Buffered",
         handoffId: active.handoffId,
-        text: next.bodyText,
+        text: next.seedBody?.bodyText ?? input.value,
         selectionStart:
-          selectionOffset + (input.selectionStart ?? input.value.length),
+          active.selectionOffset + (input.selectionStart ?? input.value.length),
         selectionEnd:
-          selectionOffset + (input.selectionEnd ?? input.value.length),
+          active.selectionOffset + (input.selectionEnd ?? input.value.length),
         composition,
       },
     });
+    setStorageFailedText(retained ? null : input.value);
+    return retained;
   }, []);
 
   const retireActiveHandoff = useCallback(
@@ -141,15 +163,6 @@ const MobileQuickNoteHandoff = forwardRef<
       const input = inputRef.current;
       if (!active || !input) return;
       checkpoint(composingRef.current ? "Composing" : "Complete");
-      const current = readDailyDraft(active.accountId, active.localDate);
-      if (
-        current?.noteId === active.noteId &&
-        current.clientMutationId === active.clientMutationId &&
-        current.handoff.kind === "Buffered" &&
-        current.handoff.handoffId === active.handoffId
-      ) {
-        writeDailyDraft({ ...current, handoff: { kind: "None" } });
-      }
       if (activeRef.current?.handoffId === active.handoffId) {
         activeRef.current = null;
         setActiveHandoffId(null);
@@ -165,14 +178,13 @@ const MobileQuickNoteHandoff = forwardRef<
       throw new Error("Mobile daily text handoff input is not mounted");
     }
 
-    // This is deliberately the first gesture-time side effect. iOS transfers
-    // keyboard authority only while the activating event still owns focus.
+    // Focus before routing so the Android WebView keeps the active keyboard.
     input.focus({ preventScroll: true });
-    retireActiveHandoff(false);
+    if (activeRef.current) return;
     openOnlyRef.current = null;
     input.value = "";
     composingRef.current = false;
-  }, [retireActiveHandoff]);
+  }, []);
 
   const prepare = useCallback(
     (target: MaterializedDailyTextHandoffTarget) => {
@@ -184,7 +196,30 @@ const MobileQuickNoteHandoff = forwardRef<
         throw new Error("Materialized daily text handoff date is not frozen");
       }
       const localDate = target.date.value;
-      const existing = readDailyDraft(accountId, localDate);
+      const active = activeRef.current;
+      if (active) {
+        if (
+          active.localDate !== localDate ||
+          active.noteId !== target.entry.noteId ||
+          active.clientMutationId !== target.entry.clientMutationId
+        ) {
+          throw new Error("An earlier daily text buffer still needs recovery");
+        }
+        if (!checkpoint(composingRef.current ? "Composing" : "Complete")) {
+          throw new Error("Daily text was not retained on this device");
+        }
+        if (activeRef.current) return;
+      }
+      let existing: DailyDraft | null;
+      try { existing = readDailyDraft(accountId, localDate); }
+      catch (error) {
+        if (!(error instanceof DailyDraftStorageError)) throw error;
+        setStorageFailedText(input.value);
+        throw error;
+      }
+      if (existing?.handoff.kind === "Buffered") {
+        throw new Error("An earlier daily text buffer still needs recovery");
+      }
       if (
         existing &&
         (existing.noteId !== target.entry.noteId ||
@@ -204,7 +239,7 @@ const MobileQuickNoteHandoff = forwardRef<
       input.value = target.entry.initialText;
       input.setSelectionRange(input.value.length, input.value.length);
 
-      if (!dailyDraftAcceptsText(appendBase)) {
+      if (appendBase.seedBody && !dailyDraftAcceptsText(appendBase)) {
         if (input.value.length > 0) {
           throw new Error(
             "A nonempty mobile daily text seed reached an atomic draft",
@@ -219,8 +254,10 @@ const MobileQuickNoteHandoff = forwardRef<
       }
 
       const handoffId = crypto.randomUUID();
-      const next = appendOrDefect(appendBase, input.value);
-      const selectionOffset = appendBase.bodyText.length;
+      const next = appendBase.seedBody
+        ? appendOrDefect(appendBase, input.value)
+        : appendBase;
+      const selectionOffset = appendBase.seedBody?.bodyText.length ?? 0;
       activeRef.current = {
         accountId,
         localDate,
@@ -229,22 +266,24 @@ const MobileQuickNoteHandoff = forwardRef<
         noteId: target.entry.noteId,
         clientMutationId: target.entry.clientMutationId,
         appendBase,
-        previousDraft: existing,
+        selectionOffset,
       };
       setActiveHandoffId(handoffId);
-      writeDailyDraft({
+      const retained = writeDailyDraft({
         ...next,
         handoff: {
           kind: "Buffered",
           handoffId,
-          text: next.bodyText,
+          text: next.seedBody?.bodyText ?? input.value,
           selectionStart: selectionOffset + input.selectionStart,
           selectionEnd: selectionOffset + input.selectionEnd,
           composition: "Complete",
         },
       });
+      setStorageFailedText(retained ? null : input.value);
+      if (!retained) throw new Error("Daily text was not retained on this device");
     },
-    [accountId],
+    [accountId, checkpoint],
   );
 
   const accept = useCallback(
@@ -291,24 +330,9 @@ const MobileQuickNoteHandoff = forwardRef<
   const cancel = useCallback(
     (returnFocus: HTMLElement | null) => {
       const active = activeRef.current;
-      if (active?.activationId === null) {
-        const current = readDailyDraft(active.accountId, active.localDate);
-        if (
-          current?.noteId === active.noteId &&
-          current.clientMutationId === active.clientMutationId &&
-          current.handoff.kind === "Buffered" &&
-          current.handoff.handoffId === active.handoffId
-        ) {
-          if (active.previousDraft) {
-            writeDailyDraft(active.previousDraft);
-          } else {
-            clearDailyDraft(active.accountId, active.localDate);
-          }
-        }
-        activeRef.current = null;
-        setActiveHandoffId(null);
-      } else {
-        retireActiveHandoff(true);
+      if (active) {
+        checkpoint(composingRef.current ? "Composing" : "Complete");
+        active.activationId = null;
       }
       openOnlyRef.current = null;
       const input = inputRef.current;
@@ -317,7 +341,7 @@ const MobileQuickNoteHandoff = forwardRef<
         returnFocus.focus({ preventScroll: true });
       }
     },
-    [retireActiveHandoff],
+    [checkpoint],
   );
 
   useImperativeHandle(
@@ -385,20 +409,28 @@ const MobileQuickNoteHandoff = forwardRef<
   };
 
   return (
-    <textarea
-      ref={inputRef}
-      className={styles.quickNoteHandoffInput}
-      tabIndex={-1}
-      aria-label="Daily note input handoff"
-      data-handoff-id={activeHandoffId ?? undefined}
-      autoCapitalize="sentences"
-      autoCorrect="on"
-      enterKeyHint="enter"
-      onInput={checkpointFromInput}
-      onSelect={checkpointFromInput}
-      onCompositionStart={handleCompositionStart}
-      onCompositionEnd={handleCompositionEnd}
-    />
+    <>
+      {storageFailedText !== null ? (
+        <div role="alert">
+          Daily text was not saved on this device. Keep this page open and copy it before leaving.
+          <textarea aria-label="Unsaved daily text" readOnly value={storageFailedText} />
+        </div>
+      ) : null}
+      <textarea
+        ref={inputRef}
+        className={styles.quickNoteHandoffInput}
+        tabIndex={-1}
+        aria-label="Daily note input handoff"
+        data-handoff-id={activeHandoffId ?? undefined}
+        autoCapitalize="sentences"
+        autoCorrect="on"
+        enterKeyHint="enter"
+        onInput={checkpointFromInput}
+        onSelect={checkpointFromInput}
+        onCompositionStart={handleCompositionStart}
+        onCompositionEnd={handleCompositionEnd}
+      />
+    </>
   );
 });
 

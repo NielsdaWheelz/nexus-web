@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import DailyPageBinding, NoteBlock, Page
+from nexus.db.models import DailyPageBinding, NoteBlock, Page, ResourceEdge
 from nexus.db.retries import retry_read_committed, retry_serializable
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
@@ -29,16 +29,18 @@ from nexus.schemas.notes import (
     UpdatePageRequest,
 )
 from nexus.schemas.presence import presence_from_nullable
+from nexus.schemas.resource_items import ExpectedNoteBody
 from nexus.services import note_bodies, passage_anchors
 from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.highlights import get_highlight_for_visible_read_or_404
 from nexus.services.note_indexing import enqueue_note_reindex
 from nexus.services.resource_graph import highlight_notes as graph_highlight_notes
 from nexus.services.resource_graph.cleanup import (
+    clear_edge_view_state,
     delete_edges_for_deleted_resource,
     delete_resource_protocol_state,
 )
-from nexus.services.resource_graph.edges import create_edge
+from nexus.services.resource_graph.edges import create_edge, delete_edge
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.schemas import EdgeCreate
 from nexus.services.resource_items import surfaces as resource_surfaces
@@ -391,6 +393,7 @@ def set_highlight_note_body_pm_json(
     highlight_id: UUID,
     block_id: UUID,
     body_pm_json: dict[str, Any],
+    expected_body: ExpectedNoteBody,
     client_mutation_id: str,
 ) -> NoteBlockOut:
     def op() -> NoteBlockOut:
@@ -400,6 +403,7 @@ def set_highlight_note_body_pm_json(
             highlight_id=highlight_id,
             block_id=block_id,
             body_pm_json=body_pm_json,
+            expected_body=expected_body,
             client_mutation_id=client_mutation_id,
         )
         db.commit()
@@ -415,12 +419,19 @@ def set_highlight_note_body_pm_json_in_current_transaction(
     highlight_id: UUID,
     block_id: UUID,
     body_pm_json: dict[str, Any],
+    expected_body: ExpectedNoteBody,
     client_mutation_id: str,
 ) -> NoteBlockOut:
-    """Attach or rewrite the viewer's note on a highlight, replayed on its mutation id."""
+    """Create or update exactly one attached note with a canonical body base."""
     scope = f"highlight_note:{highlight_id}"
-    request_bytes = canonical_json_bytes({"blockId": str(block_id), "bodyPmJson": body_pm_json})
-    # Visibility (404) before the replay lookup, on every attempt.
+    request_bytes = canonical_json_bytes(
+        {
+            "operation": "put",
+            "blockId": str(block_id),
+            "bodyPmJson": body_pm_json,
+            "expectedBody": expected_body.model_dump(mode="json"),
+        }
+    )
     get_highlight_for_visible_read_or_404(db, viewer_id, highlight_id)
     replay = lookup_replay(
         db,
@@ -432,15 +443,20 @@ def set_highlight_note_body_pm_json_in_current_transaction(
     if replay is not None:
         return NoteBlockOut.model_validate(replay)
 
-    existing = graph_highlight_notes.first_note_block_for_highlight(db, viewer_id, highlight_id)
-    if existing is not None and existing.id != block_id:
-        raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Highlight note block id mismatch")
-
+    attached = graph_highlight_notes.note_blocks_for_highlight(db, viewer_id, highlight_id)
+    if expected_body.kind == "absent":
+        if attached:
+            raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Highlight already has a note")
+    elif not any(block.id == block_id for block in attached):
+        raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note is no longer attached")
+    note_bodies.require_expected_body(
+        db, viewer_id=viewer_id, block_id=block_id, expected_body=expected_body
+    )
     block = note_bodies.upsert_note_body(
         db, viewer_id=viewer_id, block_id=block_id, body_pm_json=body_pm_json
     )
     enqueue_note_reindex(db, note_block_id=block.id, reason="highlight_note")
-    if existing is None:
+    if expected_body.kind == "absent":
         create_edge(
             db,
             viewer_id=viewer_id,
@@ -464,35 +480,74 @@ def set_highlight_note_body_pm_json_in_current_transaction(
     return response
 
 
-def delete_highlight_note(
+def detach_highlight_note(
     db: Session,
     viewer_id: UUID,
     *,
     highlight_id: UUID,
-    note_block_id: UUID | None,
+    note_block_id: UUID,
     client_mutation_id: str,
 ) -> None:
-    def attempt() -> None:
-        if delete_highlight_note_in_current_transaction(
-            db, viewer_id, highlight_id=highlight_id, note_block_id=note_block_id
-        ):
-            db.commit()
+    def op() -> None:
+        detach_highlight_note_in_current_transaction(
+            db,
+            viewer_id,
+            highlight_id=highlight_id,
+            note_block_id=note_block_id,
+            client_mutation_id=client_mutation_id,
+        )
+        db.commit()
 
-    retry_read_committed(db, "delete_highlight_note", attempt)
+    retry_serializable(db, "detach_highlight_note", op)
 
 
-def delete_highlight_note_in_current_transaction(
-    db: Session, viewer_id: UUID, *, highlight_id: UUID, note_block_id: UUID | None
-) -> bool:
-    """Detach and delete the viewer's note on a highlight; no note is a no-op."""
+def detach_highlight_note_in_current_transaction(
+    db: Session,
+    viewer_id: UUID,
+    *,
+    highlight_id: UUID,
+    note_block_id: UUID,
+    client_mutation_id: str,
+) -> None:
+    """Detach the exact annotation; its canonical note and other links survive."""
+    scope = f"highlight_note:{highlight_id}"
+    request_bytes = canonical_json_bytes({"operation": "detach", "noteBlockId": str(note_block_id)})
     get_highlight_for_visible_read_or_404(db, viewer_id, highlight_id)
-    existing = graph_highlight_notes.first_note_block_for_highlight(db, viewer_id, highlight_id)
-    if existing is None:
-        return False
-    if note_block_id is not None and existing.id != note_block_id:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note block not found")
-    _delete_note_block(db, viewer_id, existing)
-    return True
+    replay = lookup_replay(
+        db,
+        viewer_id=viewer_id,
+        scope=scope,
+        client_mutation_id=client_mutation_id,
+        request_bytes=request_bytes,
+    )
+    if replay is not None:
+        return
+    edge_ids = list(
+        db.scalars(
+            select(ResourceEdge.id).where(
+                ResourceEdge.user_id == viewer_id,
+                ResourceEdge.origin == "highlight_note",
+                ResourceEdge.source_scheme == "highlight",
+                ResourceEdge.source_id == highlight_id,
+                ResourceEdge.target_scheme == "note_block",
+                ResourceEdge.target_id == note_block_id,
+            )
+        )
+    )
+    if not edge_ids:
+        raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note is no longer attached")
+    for edge_id in edge_ids:
+        clear_edge_view_state(db, edge_id=edge_id)
+        delete_edge(db, viewer_id=viewer_id, edge_id=edge_id)
+    record_replay(
+        db,
+        viewer_id=viewer_id,
+        scope=scope,
+        client_mutation_id=client_mutation_id,
+        request_bytes=request_bytes,
+        response_json={},
+    )
+    db.flush()
 
 
 def _delete_note_block(db: Session, viewer_id: UUID, block: NoteBlock) -> None:

@@ -117,7 +117,12 @@ import {
   useHighlightActionIntentOwners,
   type HighlightActionIntent,
 } from "@/lib/highlights/actionIntent";
-import { executeCommittingMountedMutation } from "@/lib/actions/mountedActionHandoff";
+import {
+  createMountedEditorIntentController,
+  executeCommittingMountedMutation,
+  type MountedEditorIntentController,
+  type MountedEditorMutationLease,
+} from "@/lib/actions/mountedActionHandoff";
 import { createRandomId } from "@/lib/createRandomId";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 import { useMediaReaderViewTransition } from "@/lib/ui/viewTransitions";
@@ -310,13 +315,11 @@ import {
   createHighlight,
   updateHighlight,
   deleteHighlight,
-  saveHighlightNote,
-  deleteHighlightNote,
   patchHighlightLinkedNoteBlock,
   removeHighlightLinkedNoteBlock,
   upsertHighlightSorted,
 } from "@/lib/highlights/api";
-import type { Highlight } from "@/lib/highlights/highlightContract";
+import type { Highlight, HighlightLinkedNoteBlock } from "@/lib/highlights/highlightContract";
 import { useHostedTextHighlights } from "./useHostedTextHighlights";
 import MediaInfoOverlay from "@/components/media/MediaInfoOverlay";
 import ResourceThumb from "@/components/ui/ResourceThumb";
@@ -1202,11 +1205,24 @@ export default function MediaPaneBody() {
     HighlightActionIntent,
     { kind: "EditHighlight" }
   > | null>(null);
-  const highlightNoteIntentRef = useRef<Extract<
+  type HighlightNoteIntent = Extract<
     HighlightActionIntent,
     { kind: "AddHighlightNote" | "EditHighlightNote" }
-  > | null>(null);
-  const highlightNoteMutationInFlightRef = useRef(false);
+  >;
+  const highlightNoteIntentControllerRef = useRef<
+    MountedEditorIntentController<HighlightNoteIntent> | null
+  >(null);
+  if (highlightNoteIntentControllerRef.current === null) {
+    highlightNoteIntentControllerRef.current = createMountedEditorIntentController(
+      notifyHighlightActionIntentOwnerReady,
+    );
+  }
+  const highlightNoteIntentController = highlightNoteIntentControllerRef.current;
+  const highlightNoteEditRef = useRef<{
+    noteRef: string;
+    hasPending: () => boolean;
+    lease: MountedEditorMutationLease | null;
+  } | null>(null);
   const highlightLinkIntentRef = useRef<Extract<
     HighlightActionIntent,
     { kind: "LinkHighlight" }
@@ -3905,28 +3921,27 @@ export default function MediaPaneBody() {
         if (handleUnauthenticatedApiError(err)) {
           return null;
         }
-        if (isApiError(err) && err.code === "E_HIGHLIGHT_CONFLICT") {
-          const newHighlights = await reconcileTextHighlightMutation(
-            mutationSession,
-          );
-          if (newHighlights === null) return null;
-
-          const existing = newHighlights.find(
-            (h) =>
-              h.anchor.start_offset === activeSelection.startOffset &&
-              h.anchor.end_offset === activeSelection.endOffset,
-          );
-          if (existing) {
-            focusHighlight(existing.id);
-          }
-
+        const newHighlights = await reconcileTextHighlightMutation(mutationSession);
+        const matches = newHighlights?.filter((candidate) =>
+          candidate.anchor.media_id === id &&
+          candidate.anchor.fragment_id === activeSelection.fragmentId &&
+          candidate.anchor.start_offset === activeSelection.startOffset &&
+          candidate.anchor.end_offset === activeSelection.endOffset &&
+          candidate.exact === activeSelection.selectedText,
+        ) ?? [];
+        if (matches.length === 1) {
+          focusHighlight(matches[0].id);
           selectionRetiring = true;
           clearReaderSelection();
-          return existing ?? null;
-        } else {
-          publishMediaFailure(err, "Highlight", `highlight-create:${id}`);
-          return null;
+          return matches[0];
         }
+        if (matches.length > 1) feedback.publish({ kind: "Hud", content: {
+          tone: "Warning",
+          title: "Several highlights match this passage",
+          message: "Open the highlight you want to annotate.",
+        } });
+        else publishMediaFailure(err, "Highlight", `highlight-create:${id}`);
+        return null;
       } finally {
         if (!selectionRetiring) {
           selectionActionInFlightRef.current = false;
@@ -3964,14 +3979,55 @@ export default function MediaPaneBody() {
   const handleAddNoteToSelection = useCallback(() => {
     const activeSelection = readRetainedSelection();
     if (!activeSelection || selectionActionInFlightRef.current) return;
+    const matches = highlights.filter((highlight) =>
+      highlight.anchor.media_id === id &&
+      highlight.anchor.fragment_id === activeSelection.fragmentId &&
+      highlight.anchor.start_offset === activeSelection.startOffset &&
+      highlight.anchor.end_offset === activeSelection.endOffset &&
+      highlight.exact === activeSelection.selectedText,
+    );
+    if (matches.length > 1) {
+      feedback.publish({ kind: "Hud", content: {
+        tone: "Warning",
+        title: "Several highlights match this passage",
+        message: "Open the highlight you want to annotate.",
+      } });
+      return;
+    }
+    if (matches.length === 1) {
+      const highlight = matches[0];
+      setQuickNote({
+        kind: "existing",
+        highlightId: highlight.id,
+        note: highlight.linked_note_blocks[0] ?? null,
+        quote: highlight.exact,
+        anchorRect: activeSelection.rect,
+        recoveryOwnerKey: `highlight-selection:${JSON.stringify({
+          mediaId: id,
+          fragmentId: activeSelection.fragmentId,
+          startOffset: activeSelection.startOffset,
+          endOffset: activeSelection.endOffset,
+          exact: activeSelection.selectedText,
+        })}`,
+      });
+      clearReaderSelection();
+      return;
+    }
     setQuickNote({
       kind: "pending-create",
       sessionId: createRandomId(),
+      ownerKey: `highlight-selection:${JSON.stringify({
+        mediaId: id,
+        fragmentId: activeSelection.fragmentId,
+        startOffset: activeSelection.startOffset,
+        endOffset: activeSelection.endOffset,
+        exact: activeSelection.selectedText,
+      })}`,
       quote: activeSelection.selectedText,
       anchorRect: activeSelection.rect,
       creation: handleCreateHighlight(DEFAULT_COLOR),
     });
-  }, [handleCreateHighlight, readRetainedSelection]);
+  }, [clearReaderSelection, feedback, handleCreateHighlight, highlights, id, readRetainedSelection]);
 
   useReaderKeyChord({
     enabled: !isPdf && selection !== null && !focusState.editingBounds,
@@ -4269,22 +4325,63 @@ export default function MediaPaneBody() {
     ],
   );
 
-  const handleNoteSave = useCallback(
-    async (
-      highlightId: string,
-      noteBlockId: string | null,
-      createBlockId: string,
-      bodyPmJson: Record<string, unknown>,
-      clientMutationId: string,
-    ) => {
+  const handleNoteEditAccepted = useCallback((noteRef: string, hasPending: () => boolean) => {
+    if (!highlightNoteIntentController.occupied()) return;
+    if (highlightNoteEditRef.current?.noteRef === noteRef) {
+      highlightNoteEditRef.current.hasPending = hasPending;
+      return;
+    }
+    const lease = highlightNoteIntentController.beginMutation();
+    if (!lease) return;
+    const editing: {
+      noteRef: string;
+      hasPending: () => boolean;
+      lease: MountedEditorMutationLease | null;
+    } = {
+      noteRef,
+      hasPending,
+      lease: {
+        committed: async () => {
+          try {
+            await lease.committed();
+          } catch (error) {
+            if (!handleUnauthenticatedApiError(error)) {
+              publishMediaFailure(error, "Highlight", `highlight-note-action:${noteRef}`);
+            }
+          } finally {
+            if (highlightNoteEditRef.current === editing) highlightNoteEditRef.current = null;
+          }
+        },
+        failed: () => {
+          lease.failed();
+          if (highlightNoteEditRef.current === editing) highlightNoteEditRef.current = null;
+        },
+      },
+    };
+    highlightNoteEditRef.current = editing;
+  }, [highlightNoteIntentController, publishMediaFailure]);
+
+  const handleNoteMutationStarted = useCallback((noteRef: string): MountedEditorMutationLease | null => {
+    const editing = highlightNoteEditRef.current;
+    if (!editing || editing.noteRef !== noteRef) return null;
+    return editing.lease;
+  }, []);
+
+  const closeQuickNote = useCallback(() => {
+    setQuickNote(null);
+    const editing = highlightNoteEditRef.current;
+    if (!editing || !editing.hasPending()) {
+      editing?.lease?.failed();
+      highlightNoteEditRef.current = null;
+      highlightNoteIntentController.abortEditing();
+    } else {
+      highlightNoteIntentController.releaseOwner();
+    }
+  }, [highlightNoteIntentController]);
+
+  const handleNoteSaved = useCallback(
+    (highlightId: string, linkedNoteBlock: HighlightLinkedNoteBlock) => {
       const mutationSession = isPdf ? null : beginTextHighlightMutation();
-      const linkedNoteBlock = await saveHighlightNote(
-        highlightId,
-        noteBlockId,
-        createBlockId,
-        bodyPmJson,
-        clientMutationId,
-      );
       if (isPdf) {
         setPdfDocumentHighlights((current) =>
           patchHighlightLinkedNoteBlock(
@@ -4293,6 +4390,7 @@ export default function MediaPaneBody() {
             linkedNoteBlock,
           ),
         );
+        setPdfRefreshToken((version) => version + 1);
       } else if (mutationSession !== null) {
         projectTextHighlightMutation(mutationSession, (current) =>
           patchHighlightLinkedNoteBlock(
@@ -4303,16 +4401,6 @@ export default function MediaPaneBody() {
         );
       }
       refreshMediaHighlights();
-      const pending = highlightNoteIntentRef.current;
-      const matchesPending =
-        pending?.ref === `highlight:${highlightId}` &&
-        (pending.kind === "AddHighlightNote" ||
-          pending.noteBlockId === noteBlockId);
-      if (pending && matchesPending) {
-        highlightNoteIntentRef.current = null;
-        await pending.onCommitted();
-      }
-      return linkedNoteBlock;
     },
     [
       beginTextHighlightMutation,
@@ -4322,36 +4410,20 @@ export default function MediaPaneBody() {
     ],
   );
 
-  const handleNoteDelete = useCallback(
-    async (
-      highlightId: string,
-      noteBlockId: string,
-      clientMutationId: string,
-      shouldApply: () => boolean,
-    ) => {
+  const handleNoteDetached = useCallback(
+    (highlightId: string, noteBlockId: string) => {
       const mutationSession = isPdf ? null : beginTextHighlightMutation();
-      await deleteHighlightNote(highlightId, noteBlockId, clientMutationId);
-      if (shouldApply()) {
-        if (isPdf) {
-          setPdfDocumentHighlights((current) =>
-            removeHighlightLinkedNoteBlock(current, noteBlockId),
-          );
-        } else if (mutationSession !== null) {
-          projectTextHighlightMutation(mutationSession, (current) =>
-            removeHighlightLinkedNoteBlock(current, noteBlockId),
-          );
-        }
+      if (isPdf) {
+        setPdfDocumentHighlights((current) =>
+          removeHighlightLinkedNoteBlock(current, highlightId, noteBlockId),
+        );
+        setPdfRefreshToken((version) => version + 1);
+      } else if (mutationSession !== null) {
+        projectTextHighlightMutation(mutationSession, (current) =>
+          removeHighlightLinkedNoteBlock(current, highlightId, noteBlockId),
+        );
       }
       refreshMediaHighlights();
-      const pending = highlightNoteIntentRef.current;
-      if (
-        pending?.ref === `highlight:${highlightId}` &&
-        pending.kind === "EditHighlightNote" &&
-        pending.noteBlockId === noteBlockId
-      ) {
-        highlightNoteIntentRef.current = null;
-        await pending.onCommitted();
-      }
     },
     [
       beginTextHighlightMutation,
@@ -5404,23 +5476,7 @@ export default function MediaPaneBody() {
     [],
   );
 
-  const handleSaveReaderLinkNote = useCallback(
-    async (
-      linkId: string,
-      noteBlockId: string,
-      bodyPmJson: Record<string, unknown>,
-    ) => {
-      const { putLinkNote } = await import("@/lib/resourceGraph/links");
-      const result = await putLinkNote(linkId, { noteBlockId, bodyPmJson });
-      setDocumentMapVersion((v) => v + 1);
-      return { note_block_id: result.note_block_id };
-    },
-    [],
-  );
-
-  const handleDeleteReaderLinkNote = useCallback(async (linkId: string) => {
-    const { deleteLinkNote } = await import("@/lib/resourceGraph/links");
-    await deleteLinkNote(linkId);
+  const handleReaderLinkNoteChanged = useCallback(() => {
     setDocumentMapVersion((v) => v + 1);
   }, []);
 
@@ -5908,7 +5964,7 @@ export default function MediaPaneBody() {
     (intent: HighlightActionIntent) => {
       if (
         highlightColorIntentRef.current !== null ||
-        highlightNoteIntentRef.current !== null ||
+        highlightNoteIntentController.occupied() ||
         highlightLinkIntentRef.current !== null ||
         highlightBoundsIntentRef.current !== null ||
         highlightDeleteIntentRef.current !== null ||
@@ -5941,22 +5997,48 @@ export default function MediaPaneBody() {
           return true;
         case "AddHighlightNote":
         case "EditHighlightNote": {
+          const canonicalHighlights = isPdf ? pdfDocumentHighlights : highlights;
+          const canonicalHighlight = canonicalHighlights.find((candidate) => candidate.id === highlight.id);
           const note =
             intent.kind === "EditHighlightNote"
-              ? (highlight.linked_note_blocks?.find(
+              ? (canonicalHighlight?.linked_note_blocks.find(
                   (candidate) => candidate.note_block_id === intent.noteBlockId,
                 ) ?? null)
               : null;
           if (intent.kind === "EditHighlightNote" && note === null) {
             return false;
           }
-          highlightNoteIntentRef.current = intent;
+          if (!highlightNoteIntentController.accept(intent)) return false;
+          const uniqueAnchor = canonicalHighlight && canonicalHighlights.filter((candidate) =>
+            candidate.exact === canonicalHighlight.exact &&
+            JSON.stringify(candidate.anchor) === JSON.stringify(canonicalHighlight.anchor),
+          ).length === 1;
+          const recoveryOwnerKey = uniqueAnchor && canonicalHighlight.anchor.type === "pdf_page_geometry"
+            ? `highlight-selection:${JSON.stringify({
+                mediaId: id,
+                pageNumber: canonicalHighlight.anchor.page_number,
+                quads: canonicalHighlight.anchor.quads,
+                exact: canonicalHighlight.exact,
+              })}`
+            : uniqueAnchor && canonicalHighlight.anchor.type === "fragment_offsets" &&
+                canonicalHighlight.anchor.fragment_id !== null &&
+                canonicalHighlight.anchor.start_offset !== null &&
+                canonicalHighlight.anchor.end_offset !== null
+              ? `highlight-selection:${JSON.stringify({
+                  mediaId: id,
+                  fragmentId: canonicalHighlight.anchor.fragment_id,
+                  startOffset: canonicalHighlight.anchor.start_offset,
+                  endOffset: canonicalHighlight.anchor.end_offset,
+                  exact: canonicalHighlight.exact,
+                })}`
+              : undefined;
           setQuickNote({
             kind: "existing",
             highlightId: highlight.id,
             note,
             quote: highlight.exact,
             anchorRect,
+            recoveryOwnerKey,
           });
           setHighlightActionAnchor(null);
           return true;
@@ -6028,7 +6110,11 @@ export default function MediaPaneBody() {
       focusHighlight,
       focusState.editingBounds,
       handleLink,
+      highlightNoteIntentController,
+      id,
       isPdf,
+      pdfDocumentHighlights,
+      highlights,
       linkComposer.open,
       paneRuntime.paneId,
       projectDeletedHighlight,
@@ -6053,17 +6139,16 @@ export default function MediaPaneBody() {
     () => () => {
       const pending = [
         highlightColorIntentRef.current,
-        highlightNoteIntentRef.current,
         highlightLinkIntentRef.current,
         highlightBoundsIntentRef.current,
       ];
       highlightColorIntentRef.current = null;
-      highlightNoteIntentRef.current = null;
+      highlightNoteIntentController.releaseOwner();
       highlightLinkIntentRef.current = null;
       highlightBoundsIntentRef.current = null;
       for (const intent of pending) intent?.onAborted();
     },
-    [],
+    [highlightNoteIntentController],
   );
 
   const abortHighlightColorEdit = useCallback(() => {
@@ -6530,8 +6615,8 @@ export default function MediaPaneBody() {
           followGeneration={evidenceFollowGeneration}
           hoveredItemId={hoveredEvidenceItemId}
           highlightActions={{
-            onNoteSave: handleNoteSave,
-            onNoteDelete: handleNoteDelete,
+            onNoteSaved: handleNoteSaved,
+            onNoteDetached: handleNoteDetached,
             onOpenNoteLink: handleOpenNoteLink,
           }}
           onActivatePassage={activateEvidencePassage}
@@ -6540,8 +6625,7 @@ export default function MediaPaneBody() {
           onHoverItem={handleHoverEvidenceItem}
           onDismissSynapse={handleDismissSynapse}
           onRemoveUserEdge={handleRemoveReaderUserEdge}
-          onSaveLinkNote={handleSaveReaderLinkNote}
-          onDeleteLinkNote={handleDeleteReaderLinkNote}
+          onLinkNoteChanged={handleReaderLinkNoteChanged}
         />
       </div>
     ),
@@ -6555,10 +6639,9 @@ export default function MediaPaneBody() {
       handleActivateEvidenceSourceTarget,
       handleDismissSynapse,
       handleRemoveReaderUserEdge,
-      handleSaveReaderLinkNote,
-      handleDeleteReaderLinkNote,
-      handleNoteDelete,
-      handleNoteSave,
+      handleReaderLinkNoteChanged,
+      handleNoteDetached,
+      handleNoteSaved,
       handleHoverEvidenceItem,
       handleOpenNoteLink,
       hoveredEvidenceItemId,
@@ -7291,14 +7374,25 @@ export default function MediaPaneBody() {
                       : undefined
                   }
                   onLearn={(highlightId) => learnFromHighlight(highlightId)}
-                  onAddNote={({ quote, anchorRect, creation }) =>
-                    setQuickNote({
-                      kind: "pending-create",
-                      sessionId: createRandomId(),
-                      quote,
-                      anchorRect,
-                      creation,
-                    })
+                  onAddNote={({ quote, anchorRect, anchor, creation, existing }) =>
+                    setQuickNote(existing
+                      ? {
+                          kind: "existing",
+                          highlightId: existing.id,
+                          note: (pdfDocumentHighlights.find((highlight) => highlight.id === existing.id) ?? existing)
+                            .linked_note_blocks[0] ?? null,
+                          quote,
+                          anchorRect,
+                          recoveryOwnerKey: `highlight-selection:${JSON.stringify({ mediaId: id, ...anchor })}`,
+                        }
+                      : {
+                          kind: "pending-create",
+                          sessionId: createRandomId(),
+                          ownerKey: `highlight-selection:${JSON.stringify({ mediaId: id, ...anchor })}`,
+                          quote,
+                          anchorRect,
+                          creation,
+                        })
                   }
                   onLink={({ pageNumber, quads, exact }) =>
                     linkComposer.openLink({
@@ -7548,44 +7642,12 @@ export default function MediaPaneBody() {
       {/* Mount contract: always rendered, driven by `session`. */}
       <HighlightQuickNoteComposer
         session={quickNote}
-        onClose={() => {
-          setQuickNote(null);
-          queueMicrotask(() => {
-            const pending = highlightNoteIntentRef.current;
-            if (pending === null || highlightNoteMutationInFlightRef.current) {
-              return;
-            }
-            highlightNoteIntentRef.current = null;
-            pending.onAborted();
-          });
-        }}
-        onSaveNote={async (...args) => {
-          highlightNoteMutationInFlightRef.current = true;
-          try {
-            return await handleNoteSave(...args);
-          } catch (error) {
-            const pending = highlightNoteIntentRef.current;
-            highlightNoteIntentRef.current = null;
-            pending?.onAborted();
-            throw error;
-          } finally {
-            highlightNoteMutationInFlightRef.current = false;
-          }
-        }}
-        onDeleteNote={async (...args) => {
-          highlightNoteMutationInFlightRef.current = true;
-          try {
-            await handleNoteDelete(...args);
-          } catch (error) {
-            const pending = highlightNoteIntentRef.current;
-            highlightNoteIntentRef.current = null;
-            pending?.onAborted();
-            throw error;
-          } finally {
-            highlightNoteMutationInFlightRef.current = false;
-          }
-        }}
+        onClose={closeQuickNote}
+        onSavedNote={handleNoteSaved}
+        onDetachedNote={handleNoteDetached}
         onOpenLink={handleOpenNoteLink}
+        onEditAccepted={handleNoteEditAccepted}
+        onMutationStarted={handleNoteMutationStarted}
       />
     </>
   );

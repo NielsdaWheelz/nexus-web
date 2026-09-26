@@ -1,9 +1,5 @@
 import { Fragment } from "prosemirror-model";
-import {
-  captureDailyPageNote,
-  readDailyPage,
-  type DailyCaptureResult,
-} from "@/lib/notes/api";
+import { readDailyPage } from "@/lib/notes/api";
 import type { DailyDraft } from "@/lib/notes/dailyDraftStore";
 import type {
   ResourceSurface,
@@ -14,6 +10,7 @@ import {
   createNoteBodyDoc,
   noteBodySchema,
   noteBodyValueFromDoc,
+  type NoteBodyValue,
 } from "@/lib/notes/prosemirror/schema";
 import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHandoff";
 
@@ -31,6 +28,7 @@ export interface DailySurfaceSessionOptions {
   };
   delivery?: PaneEntryDelivery | null;
   draftSnapshot?: DailyDraft | null;
+  storageUnavailable?: boolean;
   onDeliveryClaimed?: (
     delivery: PaneEntryDelivery,
     claimedNoteId: string,
@@ -66,17 +64,6 @@ export async function loadDailySurface(
       };
 }
 
-export async function captureDailySurface(
-  owner: DailySurfaceOwner,
-  draft: DailyDraft,
-): Promise<DailyCaptureResult> {
-  return captureDailyPageNote(owner.localDate, {
-    clientMutationId: draft.clientMutationId,
-    noteId: draft.noteId,
-    bodyPmJson: draft.bodyPmJson,
-  });
-}
-
 export function draftNoteRef(noteId: string): string {
   return `note_block:${noteId}`;
 }
@@ -88,12 +75,11 @@ export function createDailyDraft(
   bodyPmJson: Record<string, unknown> = { type: "paragraph" },
 ): DailyDraft {
   return {
-    version: 1,
+    version: 2,
     ...owner,
     noteId,
     clientMutationId,
-    bodyPmJson,
-    bodyText: "",
+    seedBody: noteBodyValueFromDoc(createNoteBodyDoc({ bodyPmJson })),
     handoff: { kind: "None" },
   };
 }
@@ -103,11 +89,34 @@ export type DailyDraftTextAppend =
   | { readonly kind: "Unavailable" };
 
 export function dailyDraftAcceptsText(draft: DailyDraft): boolean {
+  if (!draft.seedBody) return false;
   return Boolean(
     createNoteBodyDoc({
-      bodyPmJson: draft.bodyPmJson,
-      fallbackBodyText: draft.bodyText,
+      bodyPmJson: draft.seedBody.bodyPmJson,
     }).firstChild?.inlineContent,
+  );
+}
+
+export function appendDailyBodyText(
+  value: NoteBodyValue,
+  text: string,
+): NoteBodyValue | null {
+  if (text.length === 0) return value;
+  const doc = createNoteBodyDoc({ bodyPmJson: value.bodyPmJson });
+  const body = doc.firstChild;
+  if (!body?.inlineContent) return null;
+  const additions = body.type.name === "code_block"
+    ? [noteBodySchema.text(text)]
+    : text.split("\n").flatMap((part, index) => [
+        ...(index === 0 ? [] : [noteBodySchema.nodes.hard_break!.create()]),
+        ...(part ? [noteBodySchema.text(part)] : []),
+      ]);
+  const content = body.content.append(Fragment.fromArray(additions));
+  return noteBodyValueFromDoc(
+    noteBodySchema.nodes.note_body_doc!.create(
+      null,
+      body.type.create(body.attrs, content, body.marks),
+    ),
   );
 }
 
@@ -115,55 +124,11 @@ export function appendDailyDraftText(
   draft: DailyDraft,
   text: string,
 ): DailyDraftTextAppend {
-  if (text.length === 0) return { kind: "Appended", draft };
-  const doc = createNoteBodyDoc({
-    bodyPmJson: draft.bodyPmJson,
-    fallbackBodyText: draft.bodyText,
-  });
-  const body = doc.firstChild;
-  if (!body?.inlineContent) return { kind: "Unavailable" };
-  const content = body.content.append(Fragment.from(noteBodySchema.text(text)));
-  const value = noteBodyValueFromDoc(
-    noteBodySchema.nodes.note_body_doc!.create(
-      null,
-      body.type.create(body.attrs, content, body.marks),
-    ),
-  );
-  return { kind: "Appended", draft: { ...draft, ...value } };
-}
-
-export function dailyDraftBodyChanged(
-  previous: DailyDraft | null,
-  next: DailyDraft,
-): boolean {
-  return (
-    !previous ||
-    previous.bodyText !== next.bodyText ||
-    JSON.stringify(previous.bodyPmJson) !== JSON.stringify(next.bodyPmJson)
-  );
-}
-
-export function pendingDailyBody(
-  draft: DailyDraft,
-  clientMutationId: string,
-) {
-  return {
-    bodyPmJson: draft.bodyPmJson,
-    bodyText: draft.bodyText,
-    clientMutationId,
-  };
-}
-
-export function surfaceContainsDailyDraft(
-  surface: ResourceSurface,
-  draft: DailyDraft | null,
-): boolean {
-  return Boolean(
-    draft &&
-      surface.orderedItems.some(
-        (item) => item.target.item.ref === draftNoteRef(draft.noteId),
-      ),
-  );
+  if (!draft.seedBody) return { kind: "Unavailable" };
+  const seedBody = appendDailyBodyText(draft.seedBody, text);
+  return seedBody === null
+    ? { kind: "Unavailable" }
+    : { kind: "Appended", draft: { ...draft, seedBody } };
 }
 
 export function provisionalDailyOccurrence(input: {

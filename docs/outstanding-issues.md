@@ -271,3 +271,10 @@ unexpected timeouts. See
 - [open] 2026-09-21 auth audit · default android debug origin disagrees with bff csrf configuration: [ticket](tickets/android-debug-origin-disagrees-with-bff-csrf-origin.md).
 - [open] 2026-09-21 auth audit · browser auth redirects have two owners with different handled results: [ticket](tickets/unauthenticated-api-redirect-has-two-owners.md).
 - [open] 2026-09-21 auth audit · sdk operation deadlines end before response bodies: [ticket](tickets/supabase-operation-deadline-ends-at-response-headers.md).
+- [open] 2026-09-25 notes writing release preflight · census unsafe stored link hrefs on target data: [ticket](tickets/notes-writing-target-unsafe-links-census.md).
+- [open] 2026-09-25 notes writing release preflight · census missing canonical body versions on target data: [ticket](tickets/notes-writing-target-missing-body-versions.md).
+- [open] 2026-09-25 notes writing live proof · vault existing page prose edits need a versioned, lossless round trip: [ticket](tickets/vault-existing-page-prose-edits-need-versioned-roundtrip.md).
+- [open] 2026-09-25 notes writing adversarial review · stale vault page structure can revert newer links: [ticket](tickets/vault-stale-page-structure-import-can-revert-newer-links.md).
+- [open] 2026-09-25 notes writing release preflight · checkpoint old browser drafts before removing readers: [ticket](tickets/notes-writing-legacy-draft-checkpoint.md).
+- [blocked] 2026-09-25 notes writing acceptance · physical android w2 and w6 need the device after the other session releases it: [ticket](tickets/notes-writing-android-acceptance-blocked.md).
+- [open] 2026-09-25 notes writing live action probe · overlapping pdf highlight overlays block pointer access to a covered highlight: [ticket](tickets/pdf-overlapping-highlights-block-pointer-action.md).

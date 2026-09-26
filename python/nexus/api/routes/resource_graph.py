@@ -3,7 +3,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
@@ -95,8 +95,20 @@ def put_link_note(link_id: UUID, body: PutLinkNoteRequest, viewer: ViewerDep, db
 
 
 @router.delete("/links/{link_id}/note", status_code=204)
-def delete_link_note(link_id: UUID, viewer: ViewerDep, db: DbDep) -> Response:
-    user_relations_service.delete_link_note(db, viewer_id=viewer.user_id, link_id=link_id)
+def delete_link_note(
+    link_id: UUID,
+    viewer: ViewerDep,
+    db: DbDep,
+    note_block_id: Annotated[UUID, Query()],
+    client_mutation_id: Annotated[str, Query(min_length=1, max_length=120)],
+) -> Response:
+    user_relations_service.detach_link_note(
+        db,
+        viewer_id=viewer.user_id,
+        link_id=link_id,
+        note_block_id=note_block_id,
+        client_mutation_id=client_mutation_id,
+    )
     return Response(status_code=204)
 
 

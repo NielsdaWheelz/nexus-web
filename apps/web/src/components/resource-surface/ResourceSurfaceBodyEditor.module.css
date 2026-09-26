@@ -38,7 +38,7 @@
 }
 
 .noteEditor {
-  padding-inline-end: 88px;
+  padding-inline-end: calc(var(--size-xl) + var(--space-1));
 }
 
 .resourceRow {
@@ -58,7 +58,7 @@
   flex-direction: column;
   min-height: 44px;
   min-width: 0;
-  padding: var(--space-2) 88px var(--space-2) var(--space-3);
+  padding: var(--space-2) calc(var(--size-xl) + var(--space-1)) var(--space-2) var(--space-3);
   text-align: start;
 }
 
