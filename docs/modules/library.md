@@ -345,10 +345,15 @@ pane-local text filtering is a visit-local view over the committed rows. it matc
 presented entry title and contributor display/credited names after the
 server-owned projection and before the existing order. it never enters
 `LibraryEntryView`, request, cursor, snapshot, or published pane-header
-metadata. `Type`, `View`, `Sort by`, and applicable `Hide finished` render in
-the always-visible collection band. pane search focuses its input. a query-key row
-change bypasses the collection View Transition, while domain commits and
-mutations retain the existing transition and requested/committed lifecycle.
+metadata. the local input and readable `Sort entries` select remain in the compact
+collection row. `Type`, `View`, and applicable `Hide finished` live in its
+filters editor; applied type/projection/completion chips remain visible outside
+it. `Clear filters` removes only those structured constraints, preserving
+local text and order; `Reset view` restores canonical order and clears local
+text. chip removal preserves the other fields and moves focus before the
+focused chip disappears. pane search focuses its input. a query-key row change
+bypasses the collection View Transition, while domain commits and mutations
+retain the existing transition and requested/committed lifecycle.
 
 See
 [library-entry-view-continuity-hard-cutover.md](../cutovers/library-entry-view-continuity-hard-cutover.md).

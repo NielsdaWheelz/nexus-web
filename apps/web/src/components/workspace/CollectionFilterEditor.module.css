@@ -1,0 +1,53 @@
+.trigger {
+  flex: 0 0 auto;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: 1.25rem;
+  block-size: 1.25rem;
+  padding-inline: 0.25rem;
+  border-radius: var(--radius-full);
+  background: var(--accent-muted);
+  color: var(--ink);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  inline-size: min(20rem, 100%);
+  min-inline-size: min(16rem, 100%);
+  max-block-size: 100%;
+  overflow: auto;
+  padding: var(--space-3);
+}
+
+.fields {
+  display: grid;
+  gap: var(--space-3);
+  min-inline-size: 0;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  border-block-start: var(--stroke-hairline) solid var(--edge-subtle);
+  padding-block-start: var(--space-2);
+}
+
+@media (pointer: coarse) {
+  .editor {
+    inline-size: 100%;
+  }
+
+  .editor :where(button, input, select) {
+    min-block-size: var(--size-xl);
+  }
+}

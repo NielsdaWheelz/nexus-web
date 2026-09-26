@@ -38,7 +38,6 @@ import {
   CANONICAL_PODCAST_EPISODE_VIEW,
   EPISODE_SORTS,
   EPISODE_STATE_FILTERS,
-  activeEpisodeControlCount,
   decodePodcastEpisodeView,
   encodePodcastEpisodeView,
   episodeSortLabel,
@@ -46,6 +45,7 @@ import {
   podcastEpisodeViewQuery,
   type DecodedPodcastEpisodeView,
   type EpisodeSort,
+  type EpisodeStateFilter,
 } from "@/lib/podcasts/episodeView";
 import { useBillingAccount } from "@/lib/billing/useBillingAccount";
 import { formatPlaybackRate } from "@/lib/player/playbackRate";
@@ -61,9 +61,11 @@ import {
 } from "@/components/feedback/Feedback";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import Button from "@/components/ui/Button";
+import AppliedFilters from "@/components/ui/AppliedFilters";
 import SelectField from "@/components/ui/SelectField";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
+import CollectionFilterEditor from "@/components/workspace/CollectionFilterEditor";
 import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
@@ -926,52 +928,26 @@ export default function PodcastDetailPaneBody() {
     commitPage: commitEpisodePage,
     refresh: reload,
   });
-  const activeDomainControlCount =
-    view === null ? 0 : activeEpisodeControlCount(view);
   const sortSelectRef = useRef<HTMLSelectElement | null>(null);
-  // Invalid-view recovery removes its own button and returns focus to Sort by.
-  const pendingCommitFocusRef = useRef(false);
-  useEffect(() => {
-    if (!pendingCommitFocusRef.current) return;
-    pendingCommitFocusRef.current = false;
-    sortSelectRef.current?.focus();
-  }, [view]);
+  const filtersTriggerRef = useRef<HTMLButtonElement | null>(null);
   const episodeFilterNodes = useMemo(
     () =>
       view === null ? undefined : (
         <>
-          <div className={styles.episodeFilterPills}>
-            {EPISODE_STATE_FILTERS.map((state) => (
-              <Button
-                key={state}
-                variant="pill"
-                size="sm"
-                className={styles.episodeFilterPill}
-                aria-pressed={view.state === state}
-                onClick={() =>
-                  setDecodedView({ kind: "Valid", view: { ...view, state } })
-                }
-              >
-                {episodeStateFilterLabel(state)}
-              </Button>
-            ))}
-          </div>
           <SelectField
             layout="Stacked"
-            label="Sort by"
-            size="sm"
-            ref={sortSelectRef}
-            value={view.sort}
+            label="Playback"
+            value={view.state}
             onChange={(event) =>
               setDecodedView({
                 kind: "Valid",
-                view: { ...view, sort: event.target.value as EpisodeSort },
+                view: { ...view, state: event.target.value as EpisodeStateFilter },
               })
             }
           >
-            {EPISODE_SORTS.map((sort) => (
-              <option key={sort} value={sort}>
-                {episodeSortLabel(sort)}
+            {EPISODE_STATE_FILTERS.map((state) => (
+              <option key={state} value={state}>
+                {episodeStateFilterLabel(state)}
               </option>
             ))}
           </SelectField>
@@ -1043,6 +1019,10 @@ export default function PodcastDetailPaneBody() {
     clearQuery();
     setDecodedView({ kind: "Valid", view: CANONICAL_PODCAST_EPISODE_VIEW });
   }, [clearQuery, setDecodedView]);
+  const clearDomainFilters = useCallback(() => {
+    if (view === null) return;
+    setDecodedView({ kind: "Valid", view: { ...view, state: "all" } });
+  }, [setDecodedView, view]);
   const { inputRef, focusInput } = usePaneCollectionInput();
   const collection = useMemo(
     () =>
@@ -1059,23 +1039,48 @@ export default function PodcastDetailPaneBody() {
                 onQueryChange={onQueryChange}
                 onClearQuery={clearQuery}
                 rowStatus={rowStatus}
-                filters={episodeFilterNodes}
-                controls={
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={resetToCanonicalView}
-                    disabled={activeDomainControlCount === 0 && !filterQuery.trim()}
-                  >
-                    Reset view
-                  </Button>
+                filters={
+                  <>
+                    <SelectField
+                      layout="Inline"
+                      label="Sort episodes"
+                      size="sm"
+                      ref={sortSelectRef}
+                      value={view.sort}
+                      onChange={(event) =>
+                        setDecodedView({
+                          kind: "Valid",
+                          view: { ...view, sort: event.target.value as EpisodeSort },
+                        })
+                      }
+                    >
+                      {EPISODE_SORTS.map((sort) => (
+                        <option key={sort} value={sort}>{episodeSortLabel(sort)}</option>
+                      ))}
+                    </SelectField>
+                    <CollectionFilterEditor
+                      activeCount={view.state === "all" ? 0 : 1}
+                      triggerRef={filtersTriggerRef}
+                      onClearFilters={clearDomainFilters}
+                      onResetView={view.state !== "all" || view.sort !== "newest" || filterQuery.trim() ? resetToCanonicalView : undefined}
+                    >
+                      {episodeFilterNodes}
+                    </CollectionFilterEditor>
+                  </>
+                }
+                appliedFilters={
+                  <AppliedFilters
+                    chips={view.state === "all" ? [] : [{ id: "state", label: episodeStateFilterLabel(view.state) }]}
+                    returnFocusTo={filtersTriggerRef}
+                    onRemove={clearDomainFilters}
+                  />
                 }
               />
             ),
             focusInput,
           },
     [
-      activeDomainControlCount,
+      clearDomainFilters,
       clearQuery,
       episodeFilterNodes,
       filterQuery,
@@ -1084,6 +1089,7 @@ export default function PodcastDetailPaneBody() {
       onQueryChange,
       resetToCanonicalView,
       rowStatus,
+      setDecodedView,
       view,
     ],
   );
@@ -1411,8 +1417,8 @@ export default function PodcastDetailPaneBody() {
         content={{ tone: "Danger", title: "Invalid episodes view" }}
         announcement="Assertive"
         actions={[{ label: "Reset view", onClick: () => {
-          pendingCommitFocusRef.current = true;
           resetToCanonicalView();
+          requestAnimationFrame(() => sortSelectRef.current?.focus({ preventScroll: true }));
         } }]}
       />
     ) : (

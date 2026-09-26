@@ -56,6 +56,7 @@ import {
   type PodcastSubscriptionSettingsResponse,
 } from "@/lib/podcasts/subscriptionSettings";
 import Button from "@/components/ui/Button";
+import AppliedFilters, { type AppliedFilterChip } from "@/components/ui/AppliedFilters";
 import SelectField from "@/components/ui/SelectField";
 import Toggle from "@/components/ui/Toggle";
 import PaneSurface from "@/components/ui/PaneSurface";
@@ -70,6 +71,7 @@ import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
 import LibraryMembersSurface from "@/components/libraries/LibraryMembersSurface";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
+import CollectionFilterEditor from "@/components/workspace/CollectionFilterEditor";
 import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
@@ -96,7 +98,6 @@ import usePaneScrollRetention from "@/lib/panes/usePaneScrollRetention";
 import {
   CANONICAL_LIBRARY_VIEW,
   LIBRARY_ENTRY_TYPE_OPTION_IDS,
-  activeLibraryDomainControlCount,
   completionOf,
   decodeLibraryView,
   encodeLibraryView,
@@ -539,36 +540,8 @@ export default function LibraryPaneBody() {
       }),
     [handlePodcastSettingsSaved],
   );
-  const typeSelectRef = useRef<HTMLSelectElement | null>(null);
-  const viewSelectRef = useRef<HTMLSelectElement | null>(null);
-  const sortSelectRef = useRef<HTMLSelectElement | null>(null);
+  const filtersTriggerRef = useRef<HTMLButtonElement | null>(null);
   const hideFinishedInputId = `library-hide-finished-${id}`;
-  // A control to focus once the view/reconciliation it initiated commits. A
-  // recovery action (Show all items, Clear filters, Show finished, Retry,
-  // Refresh list) sets it; the matching commit applies and clears it.
-  const pendingCommitFocusRef = useRef<
-    "Type" | "View" | "Sort" | "HideFinished" | null
-  >(null);
-  const focusPendingControl = useCallback(() => {
-    const target = pendingCommitFocusRef.current;
-    if (target === null) return;
-    pendingCommitFocusRef.current = null;
-    const element = (() => {
-      switch (target) {
-        case "Type":
-          return typeSelectRef.current;
-        case "View":
-          return viewSelectRef.current;
-        case "Sort":
-          return sortSelectRef.current;
-        case "HideFinished":
-          return document.getElementById(hideFinishedInputId);
-      }
-    })();
-    if (element instanceof HTMLElement) {
-      requestAnimationFrame(() => element.focus());
-    }
-  }, [hideFinishedInputId]);
   const filterQueryRef = useRef("");
 
   const libraryResource = useResource<LibraryPaneResource, { id: string }>({
@@ -1072,7 +1045,6 @@ export default function LibraryPaneBody() {
       completedLibraryRevalidationSerialRef.current = request.serial;
     }
     setEntryReconciliationRequest(null);
-    focusPendingControl();
   }, [
     revalidation,
     cancelEntryLoadMore,
@@ -1080,7 +1052,6 @@ export default function LibraryPaneBody() {
     committedViewKey,
     entryReconciliationFetch.data,
     entryReconciliationRequest,
-    focusPendingControl,
     id,
     requestedViewKey,
     rejectPendingLibraryRevalidation,
@@ -1257,14 +1228,12 @@ export default function LibraryPaneBody() {
       },
     });
     setViewInvalid(false);
-    focusPendingControl();
   }, [
     cancelEntryLoadMore,
     clearRemovedEntryIds,
     controller?.library,
     firstPageRequestKey,
     firstPageResource,
-    focusPendingControl,
     libraryResource,
     requestedViewKey,
     revisionsAreStale,
@@ -1430,7 +1399,6 @@ export default function LibraryPaneBody() {
   // preserving its rendered rows until the replacement commits.
   const handleRefreshList = useCallback(() => {
     if (committedView === null) return;
-    pendingCommitFocusRef.current = "View";
     requestEntryReconciliation(
       committedView,
       {
@@ -1631,10 +1599,8 @@ export default function LibraryPaneBody() {
           <SelectField
             layout="Stacked"
             label="Type"
-            ref={typeSelectRef}
             value={entryTypeOptionOf(view)}
             onChange={(event) => {
-              pendingCommitFocusRef.current = "Type";
               setView(
                 withEntryTypeOption(
                   view,
@@ -1652,10 +1618,8 @@ export default function LibraryPaneBody() {
           <SelectField
             layout="Stacked"
             label="View"
-            ref={viewSelectRef}
             value={projectionOptionOf(view)}
             onChange={(event) => {
-              pendingCommitFocusRef.current = "View";
               setView(
                 withProjectionOption(
                   view,
@@ -1670,34 +1634,11 @@ export default function LibraryPaneBody() {
               </option>
             ))}
           </SelectField>
-          <SelectField
-            layout="Stacked"
-            label="Sort by"
-            ref={sortSelectRef}
-            value={orderToPresetId(view.order)}
-            onChange={(event) => {
-              pendingCommitFocusRef.current = "Sort";
-              setView({
-                order: presetIdToOrder(
-                  event.target.value as LibraryOrderPresetId,
-                ),
-                projection: view.projection,
-                entryType: view.entryType,
-              });
-            }}
-          >
-            {orderPresetIds.map((presetId) => (
-              <option key={presetId} value={presetId}>
-                {presetLabel(presetId, isDefaultLibrary)}
-              </option>
-            ))}
-          </SelectField>
           {projectionSupportsCompletion(view) ? (
             <Toggle
               id={hideFinishedInputId}
               checked={completionOf(view) === "unfinished"}
               onCheckedChange={(checked) => {
-                pendingCommitFocusRef.current = "HideFinished";
                 setView(withCompletion(view, checked ? "unfinished" : "all"));
               }}
               label="Hide finished"
@@ -1708,15 +1649,11 @@ export default function LibraryPaneBody() {
     [
       hideFinishedInputId,
       invalidView,
-      isDefaultLibrary,
-      orderPresetIds,
       projectionOptions,
       setView,
       view,
     ],
   );
-  const activeDomainControlCount =
-    view === null ? 0 : activeLibraryDomainControlCount(view);
   const getFilterStatus = useCallback(
     (query: string) => {
       const visibleCount = visibleEntries.filter((entry) =>
@@ -1770,9 +1707,24 @@ export default function LibraryPaneBody() {
     setView(CANONICAL_LIBRARY_VIEW);
   }, [clearQuery, setView]);
   const clearDomainFilters = useCallback(() => {
-    pendingCommitFocusRef.current = "View";
-    resetView();
-  }, [resetView]);
+    if (view === null) return;
+    setView({
+      order: view.order,
+      projection: { kind: "AllItems", completion: "all" },
+      entryType: { kind: "AllTypes" },
+    });
+  }, [setView, view]);
+  const appliedFilters = useMemo<AppliedFilterChip[]>(() => view === null ? [] : [
+    ...(view.entryType.kind === "AllTypes"
+      ? []
+      : [{ id: "type", label: `Type: ${entryTypeOptionLabel(view.entryType.value)}` }]),
+    ...(view.projection.kind === "AllItems"
+      ? []
+      : [{ id: "projection", label: `View: ${projectionOptionLabel(projectionOptionOf(view))}` }]),
+    ...(completionOf(view) === "all"
+      ? []
+      : [{ id: "completion", label: "Hide finished" }]),
+  ], [view]);
   const collection = useMemo(
     () =>
       invalidView || view === null
@@ -1788,23 +1740,59 @@ export default function LibraryPaneBody() {
                 onQueryChange={onQueryChange}
                 onClearQuery={clearQuery}
                 rowStatus={rowStatus}
-                filters={domainFilterControls}
-                controls={
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={resetView}
-                    disabled={activeDomainControlCount === 0 && !filterQuery.trim()}
-                  >
-                    Reset view
-                  </Button>
+                filters={
+                  <>
+                    <SelectField
+                      layout="Inline"
+                      label="Sort entries"
+                      size="sm"
+                      value={orderToPresetId(view.order)}
+                      onChange={(event) =>
+                        setView({
+                          order: presetIdToOrder(event.target.value as LibraryOrderPresetId),
+                          projection: view.projection,
+                          entryType: view.entryType,
+                        })
+                      }
+                    >
+                      {orderPresetIds.map((presetId) => (
+                        <option key={presetId} value={presetId}>
+                          {presetLabel(presetId, isDefaultLibrary)}
+                        </option>
+                      ))}
+                    </SelectField>
+                    <CollectionFilterEditor
+                      activeCount={appliedFilters.length}
+                      triggerRef={filtersTriggerRef}
+                      onClearFilters={clearDomainFilters}
+                      onResetView={!isInitialLibraryView(view) || filterQuery.trim() ? resetView : undefined}
+                    >
+                      {domainFilterControls}
+                    </CollectionFilterEditor>
+                  </>
+                }
+                appliedFilters={
+                  <AppliedFilters
+                    chips={appliedFilters}
+                    returnFocusTo={filtersTriggerRef}
+                    onRemove={(chipId) => {
+                      if (chipId === "type") {
+                        setView(withEntryTypeOption(view, "all-types"));
+                      } else if (chipId === "projection") {
+                        setView(withProjectionOption(view, "all-items"));
+                      } else if (chipId === "completion") {
+                        setView(withCompletion(view, "all"));
+                      }
+                    }}
+                  />
                 }
               />
             ),
             focusInput,
           },
     [
-      activeDomainControlCount,
+      appliedFilters,
+      clearDomainFilters,
       resetView,
       clearQuery,
       domainFilterControls,
@@ -1813,7 +1801,10 @@ export default function LibraryPaneBody() {
       inputRef,
       invalidView,
       onQueryChange,
+      isDefaultLibrary,
+      orderPresetIds,
       rowStatus,
+      setView,
       view,
     ],
   );
@@ -2139,7 +2130,7 @@ export default function LibraryPaneBody() {
             variant="ghost"
             size="sm"
             onClick={() => {
-              pendingCommitFocusRef.current = "View";
+              filtersTriggerRef.current?.focus({ preventScroll: true });
               failedFirstPage.retry();
             }}
           >
@@ -2159,7 +2150,7 @@ export default function LibraryPaneBody() {
             variant="ghost"
             size="sm"
             onClick={() => {
-              pendingCommitFocusRef.current = "View";
+              filtersTriggerRef.current?.focus({ preventScroll: true });
               failedFirstPage.retry();
             }}
           >
@@ -2216,7 +2207,7 @@ export default function LibraryPaneBody() {
   // completion-only "Show finished" recovery focuses the Hide-finished checkbox.
   const recoverToAllItems = () => {
     if (committedView === null) return;
-    pendingCommitFocusRef.current = "View";
+    filtersTriggerRef.current?.focus({ preventScroll: true });
     setView({
       order: committedView.order,
       projection: { kind: "AllItems", completion: "all" },
@@ -2225,7 +2216,7 @@ export default function LibraryPaneBody() {
   };
   const recoverShowFinished = () => {
     if (committedView === null) return;
-    pendingCommitFocusRef.current = "HideFinished";
+    filtersTriggerRef.current?.focus({ preventScroll: true });
     setView(withCompletion(committedView, "all"));
   };
   // Closed-union empty-state precedence (never inferred from counts).
@@ -2244,7 +2235,10 @@ export default function LibraryPaneBody() {
             title: `No matches for “${entryTypeOptionLabel(exactEntryType)}” in this view.`,
           }}
           announcement="Polite"
-          actions={[{ label: "Clear filters", onClick: clearDomainFilters }]}
+          actions={[{ label: "Clear filters", onClick: () => {
+            filtersTriggerRef.current?.focus({ preventScroll: true });
+            clearDomainFilters();
+          } }]}
         />
       );
     }
@@ -2271,7 +2265,10 @@ export default function LibraryPaneBody() {
             title: "No unfinished unfiled items.",
           }}
           announcement="Polite"
-          actions={[{ label: "Clear filters", onClick: clearDomainFilters }]}
+          actions={[{ label: "Clear filters", onClick: () => {
+            filtersTriggerRef.current?.focus({ preventScroll: true });
+            clearDomainFilters();
+          } }]}
         />
       );
     }

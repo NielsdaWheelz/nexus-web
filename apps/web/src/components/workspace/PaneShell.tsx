@@ -455,20 +455,6 @@ export default function PaneShell({
     ? paneSecondaryRegionId(paneId, secondaryPresentation.publication.groupId)
     : null;
   const actionsWithSearch = useMemo<readonly ActionDescriptor[]>(() => {
-    if (acceptedCollection) {
-      return [
-        {
-          kind: "command",
-          id: "Pane.Search",
-          label: "Search this pane",
-          icon: <Search size={16} aria-hidden="true" />,
-          restoreFocusOnClose: false,
-          onSelect: () => {
-            openSearch();
-          },
-        },
-      ];
-    }
     if (!acceptedSearch) return EMPTY_ACTIONS;
     const resolving = acceptedSearch.kind === "Resolving";
     // A resolving pane names the control it will become, so the entry never
@@ -532,7 +518,6 @@ export default function PaneShell({
     }
     return actions;
   }, [
-    acceptedCollection,
     acceptedSearch,
     closeSearch,
     openSearch,

@@ -180,16 +180,6 @@ export default function LibrariesPaneBody() {
   // requested/committed key comparison alone cannot see that.
   const committedViewInvalidatedRef = useRef(false);
   const sortSelectRef = useRef<HTMLSelectElement | null>(null);
-  // Set before a view replacement the user initiated from the sort control, so
-  // the commit that answers it returns focus there.
-  const pendingCommitFocusRef = useRef(false);
-  const focusPendingSortControl = useCallback(() => {
-    if (!pendingCommitFocusRef.current) return;
-    pendingCommitFocusRef.current = false;
-    const element = sortSelectRef.current;
-    if (element === null) return;
-    requestAnimationFrame(() => element.focus());
-  }, []);
   // A view replacement only writes the URL: the committed rows stay rendered,
   // and the requested/committed key mismatch that the new URL creates is what
   // requests the exact first page. Invalidating the commit here instead would
@@ -334,7 +324,6 @@ export default function LibrariesPaneBody() {
       committedSnapshotRef.current = next;
       setController(next);
       setChainEpoch((epoch) => epoch + 1);
-      focusPendingSortControl();
 
       if (revalidation.isPending(librariesRefreshVersion)) {
         completedLibrariesRevalidationVersionRef.current = librariesRefreshVersion;
@@ -351,7 +340,6 @@ export default function LibrariesPaneBody() {
   }, [
     revalidation,
     firstPage,
-    focusPendingSortControl,
     librariesRefreshVersion,
     rejectPendingLibrariesRevalidation,
     view,
@@ -577,12 +565,12 @@ export default function LibrariesPaneBody() {
       invalidView || view === null ? undefined : (
         <>
           <SelectField
-            layout="Stacked"
-            label="Sort by"
+            layout="Inline"
+            label="Sort libraries"
+            size="sm"
             ref={sortSelectRef}
             value={librariesSortOptionOf(view)}
             onChange={(event) => {
-              pendingCommitFocusRef.current = true;
               setView(
                 librariesViewForSortOption(
                   event.target.value as LibrariesSortOptionId,
@@ -616,16 +604,18 @@ export default function LibrariesPaneBody() {
                 onClearQuery={clearQuery}
                 rowStatus={rowStatus}
                 filters={domainFilterControls}
-                controls={
+                controls={view.kind !== "Canonical" ? (
                   <Button
-                    variant="secondary"
+                    variant="ghost"
                     size="sm"
-                    onClick={resetView}
-                    disabled={view.kind === "Canonical" && !filterQuery.trim()}
+                    onClick={() => {
+                      sortSelectRef.current?.focus({ preventScroll: true });
+                      resetView();
+                    }}
                   >
                     Reset view
                   </Button>
-                }
+                ) : undefined}
               />
             ),
             focusInput,
@@ -710,6 +700,7 @@ export default function LibrariesPaneBody() {
                 kind: "Valid",
                 view: CANONICAL_LIBRARIES_INDEX_VIEW,
               });
+              requestAnimationFrame(() => sortSelectRef.current?.focus({ preventScroll: true }));
             },
           },
         ]}
