@@ -139,6 +139,7 @@ export function selectionUnavailabilityMessage(
   if (choice === undefined) {
     return "this thinking setting is no longer available. choose another.";
   }
+  if (choice.chat_state.kind === "Ineligible") return choice.chat_state.explanation;
   if (choice.chat_state.kind !== "Selectable") {
     return "this selection is currently unavailable. choose another.";
   }

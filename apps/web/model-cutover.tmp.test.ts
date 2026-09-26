@@ -4,6 +4,7 @@ import { act, createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "../../node/ingest/node_modules/jsdom/lib/api.js";
 import GenerationSelectionPicker from "./src/components/chat/GenerationSelectionPicker";
+import CandidateGenerationPicker from "./src/components/chat/CandidateGenerationPicker";
 import { useChatDraft } from "./src/components/chat/useChatDraft";
 import {
   decodeGenerationCatalogResponse,
@@ -172,6 +173,51 @@ test("stale model and thinking keys have distinct copy", () => {
   expect(selectionUnavailabilityMessage(current, {
     route: "ProviderApi", model_ref: "openai:gpt-6-sol", reasoning: "retired",
   })).toBe("this thinking setting is no longer available. choose another.");
+});
+
+test("a selected ineligible route shows its exact explanation without retry", async () => {
+  const dom = new JSDOM("<html><body><div id='root'></div></body></html>", {
+    url: "https://nexus.test/",
+  });
+  Object.assign(globalThis, {
+    window: dom.window,
+    document: dom.window.document,
+    HTMLElement: dom.window.HTMLElement,
+    HTMLSelectElement: dom.window.HTMLSelectElement,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  });
+  const current = catalog("Present");
+  current.routes[0].models[0].reasoning[1].chat_state = {
+    kind: "Ineligible",
+    code: "unsupported_capability",
+    explanation: "this route cannot run chat with its required tools.",
+  };
+  current.chat_seed.state = current.routes[0].models[0].reasoning[1].chat_state;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ data: current }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+  const { createRoot } = await import("react-dom/client");
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    await act(async () => root.render(createElement(CandidateGenerationPicker, {
+      operation: "Rerun",
+      runSelection: { selection: current.chat_seed.selection },
+      onConfirm: async () => false,
+    })));
+    await act(async () => {
+      (dom.window.document.querySelector("button") as HTMLButtonElement).click();
+    });
+    expect(dom.window.document.querySelector('[role="status"]')?.textContent)
+      .toBe("this route cannot run chat with its required tools.");
+    expect([...dom.window.document.querySelectorAll("button")]
+      .some((button) => button.textContent === "Retry")).toBe(false);
+  } finally {
+    await act(async () => root.unmount());
+    globalThis.fetch = originalFetch;
+    dom.window.close();
+  }
 });
 
 test("old send commands are discarded without disclosing another account's draft", () => {

@@ -511,7 +511,7 @@ def _selection_state(
     if _CHAT_CAPABILITY not in source.capabilities:
         return Ineligible(
             code="unsupported_capability",
-            explanation="This model does not support streaming text with tool continuation.",
+            explanation="this route cannot run chat with its required tools.",
         )
     if not isinstance(readiness, Ready):
         return readiness
