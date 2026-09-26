@@ -267,4 +267,3 @@ unexpected timeouts. See
 - [open] 2026-09-21 auth audit · sdk operation deadlines end before response bodies: [ticket](tickets/supabase-operation-deadline-ends-at-response-headers.md).
 - [open] 2026-09-25 local qualification · credential values appeared in an internal tool transcript; rotate outside the transcript's trust boundary: [ticket](tickets/local-qualification-credential-transcript-exposure.md).
 - [open] 2026-09-26 latest-model tools · the available Brave subscription token returns 422, leaving live web.search unqualified: [ticket](tickets/latest-model-web-search-live-unqualified.md).
-- [open] 2026-09-26 Brave adapter · a conclusive invalid-token response remains a billed-once uncertain search; classify and settle it in llm-tools: [ticket](tickets/brave-invalid-token-leaves-billed-search-uncertain.md).

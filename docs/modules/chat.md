@@ -16,7 +16,7 @@ one immutable `GenerationSpec` through `GenerationService`, folds route-neutral
 events, and finalizes the answer. The cohesive services it composes each have one owner:
 `chat_run_citations` (candidate numbering, attached/read evidence, final
 canonical publication, `citation_index`), `chat_run_tools` (`message_tool_calls`
-lifecycle + numbered tool-output rendering + Codex tool-event binding), and the
+lifecycle + numbered Provider API tool-output rendering), and the
 `ChatRunEventEmitter` in `chat_run_event_store` — the single durable run-event
 append owner (typed streaming methods commit inline for SSE visibility; batch
 tool-result/citation/context events defer to the executor's transaction). The

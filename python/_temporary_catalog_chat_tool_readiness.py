@@ -8,7 +8,7 @@ import httpx
 from llm_tools import BraveSearchProvider
 from provider_runtime.registry import api_model_catalog
 
-from nexus.schemas.llm import OperatorActionRequired, Ready, Selectable
+from nexus.schemas.llm import Ineligible, Ready
 from nexus.schemas.presence import Absent
 from nexus.services.codex_generation_contract import (
     CodexCatalogModel,
@@ -47,7 +47,7 @@ def main() -> None:
         definition_revision="a" * 64,
         native_revision=Absent(),
         observed_at=checked_at,
-        supports_frozen_mcp_tools=True,
+        supports_frozen_mcp_tools=False,
         models=tuple(
             CodexCatalogModel(
                 key=model,
@@ -106,18 +106,18 @@ def main() -> None:
             ),
         )
     except GenerationOperationUnavailable as error:
-        assert error.reason == {"unavailable_tools": ("web.search",)}
+        assert error.reason == "text with frozen model tools is unavailable"
     else:
-        raise AssertionError("expected admission to reject missing web.search")
+        raise AssertionError("expected admission to reject unsupported Codex model tools")
 
     assert isinstance(snapshot.catalog.routes[0].readiness, Ready)
     for model in snapshot.catalog.routes[0].models:
         for row in model.reasoning:
-            assert isinstance(row.chat_state, OperatorActionRequired), (
-                "catalog offered a selectable pair whose required chat tool is unavailable: "
+            assert isinstance(row.chat_state, Ineligible), (
+                "catalog offered a selectable Codex pair without frozen tool authority: "
                 f"{model.key}/{row.key}"
             )
-            assert row.chat_state.code == "required_tool_unavailable"
+            assert row.chat_state.code == "unsupported_capability"
             assert isinstance(row.readiness, Ready)
     try:
         resolve_chat_selection(
@@ -126,11 +126,11 @@ def main() -> None:
             selection=selection,
         )
     except GenerationSelectionUnavailableError as error:
-        assert isinstance(error.pair.state, OperatorActionRequired)
+        assert isinstance(error.pair.state, Ineligible)
     else:
-        raise AssertionError("admission resolver accepted unavailable chat tool plan")
+        raise AssertionError("admission resolver accepted unsupported Codex tool plan")
 
-    # A configured dependency restores all 15 pairs without changing source facts.
+    # A configured dependency does not restore Codex's absent tool authority.
     client = httpx.AsyncClient()
     configured_runtime = compose_tool_runtime(BraveSearchProvider(client, api_key="test-key"))
     configured_snapshot = catalog_for(configured_runtime)
@@ -138,31 +138,43 @@ def main() -> None:
     assert isinstance(configured_snapshot.catalog.routes[0].readiness, Ready)
     for model in configured_snapshot.catalog.routes[0].models:
         for row in model.reasoning:
-            assert isinstance(row.chat_state, Selectable), f"{model.key}/{row.key}"
+            assert isinstance(row.chat_state, Ineligible), f"{model.key}/{row.key}"
             assert isinstance(row.readiness, Ready)
-    configured_pair = resolve_chat_selection(
-        configured_snapshot,
-        catalog_definition_revision=configured_snapshot.catalog.definition_revision,
-        selection=selection,
-    )
+    try:
+        resolve_chat_selection(
+            configured_snapshot,
+            catalog_definition_revision=configured_snapshot.catalog.definition_revision,
+            selection=selection,
+        )
+    except GenerationSelectionUnavailableError as error:
+        assert isinstance(error.pair.state, Ineligible)
+    else:
+        raise AssertionError("configured tool dependency made Codex selectable")
     configured_service = GenerationService(
         catalog=cast(GenerationCatalogService, None),
         policy=GENERATION_POLICY,
         tools=configured_runtime,
     )
-    configured_service.freeze_chat_from_pair(
-        catalog_definition_revision=configured_snapshot.catalog.definition_revision,
-        pair=configured_pair,
-        scope=FrozenToolScope(admitted_refs=(), predicates=()),
-        intent=intent,
-        prompt_template_revision="test",
-        prompt_payload_ref=ImmutablePromptPayloadRef(
-            owner_kind="test",
-            owner_id="test",
-            revision="test",
-            payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
-        ),
-    )
+    configured_pair = configured_snapshot.pair(selection)
+    assert configured_pair is not None
+    try:
+        configured_service.freeze_chat_from_pair(
+            catalog_definition_revision=configured_snapshot.catalog.definition_revision,
+            pair=configured_pair,
+            scope=FrozenToolScope(admitted_refs=(), predicates=()),
+            intent=intent,
+            prompt_template_revision="test",
+            prompt_payload_ref=ImmutablePromptPayloadRef(
+                owner_kind="test",
+                owner_id="test",
+                revision="test",
+                payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
+            ),
+        )
+    except GenerationOperationUnavailable as error:
+        assert error.reason == "text with frozen model tools is unavailable"
+    else:
+        raise AssertionError("direct freeze accepted Codex tool plan")
     asyncio.run(client.aclose())
 
 
