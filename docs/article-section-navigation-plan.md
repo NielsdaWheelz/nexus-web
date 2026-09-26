@@ -1,6 +1,6 @@
 # shared article and epub section controls
 
-status: implementation verified on source branch; current-main integration pending
+status: implemented and verified on `feature/article-section-navigation`
 origin: 2026-09-25 article-contents council and owner approval
 source: `cfa27d6ce615bb4775e7784954f19dcdd8c8ebb1`
 
@@ -159,10 +159,11 @@ explicitly waives it. merge and deployment have not occurred.
 
 ## implementation evidence
 
-candidate: branch `feature/article-section-navigation` in isolated worktree
-`/Users/nnandal/Documents/code/nexus-web-article-section-navigation`, based on
-`cfa27d6ce615bb4775e7784954f19dcdd8c8ebb1`. final candidate sha to be
-recorded after commit. the main checkout's unrelated work was untouched.
+candidate: `c128792460ee07672721227781b13981cb823581` on branch
+`feature/article-section-navigation` in isolated worktree
+`/Users/nnandal/Documents/code/nexus-web-article-section-navigation`, rebased
+onto verified remote main `2561bbf7f607845bbe89ec632a0ceaaffcb60c10`.
+the main checkout's unrelated work was untouched.
 
 the temporary live suite ran against the normal import and reader paths on an
 isolated app/api/auth/storage/database stack. before the change, the w3c headings
@@ -192,16 +193,39 @@ desktop pointer/typeahead kept native select focus and its visible ring; an
 800 px viewport kept the revealed instrument within the viewport. on an actual
 android 16 chrome 151 phone, the native picker showed the full long label,
 selection visibly reached section 4/6, and find dismissal restored it. the
-downloaded article opened in the physical android app's offline reader with six
-headings and the document map. with airplane mode on, wi-fi off and no active
-network, its overview rail moved from the final heading to `heading ranks`,
-updated progress from 100% to 11%, and exposed `return to reading position`;
-no hit-height error appeared. a screen reader was not run; native control
+physical offline run: a downloaded article opened with six headings and the
+document map; without an active network, its rail moved from the final heading
+to `heading ranks`, updated progress from 100% to 11%, and exposed
+`return to reading position`. the installed candidate apk sha256 was
+`6e6d25f7337d8e11f5d1a8ce5051770e22df5cd227ab0567cef6e3b26b35f2e3`;
+its packaged offline javascript contains the zero-height rail guard. the prior
+apk sha256 `31fb7d29c083ca96d995850fff9135704573f8807c84d8ceafc6cf02f70f2496`
+was reinstalled afterward and matched the pulled installed apk byte-for-byte.
+the original foreground app, wi-fi, mobile data, airplane state, and preexisting
+adb mappings were restored; task mappings were removed. the pretest account
+identity was not captured, so final login/binding equivalence is
+[unverified](tickets/android-device-auth-baseline-not-captured.md).
+a screen reader was not run; native control
 semantics and keyboard behavior were checked without claiming assistive-technology
 acceptance. `./scripts/test` passed on the current product diff; it is static
 evidence only. the map rail's transient zero-geometry failure was reproduced
 on 4/8 loads, repaired at its measurement owner, then absent on 8/8 repeated
-hosted loads and the physical offline run.
+hosted loads.
+
+after rebasing, `npm run build` passed with an unrelated chat alignment warning
+tracked in [its ticket](tickets/chat-generation-picker-flex-end-build-warning.md).
+the isolated standalone browser replay at `c1287924` passed article selection,
+epub movement and duplicate-position semantics, empty/single availability, pdf
+page controls, and four clean seven-rail loads. `./scripts/test` passed again on
+that integrated tree with exit 0. the physical offline result above used the
+candidate apk from before the rebase; the remote-main commit changed no offline
+reader, rail, or offline build owner. the current offline bundle contains the
+same guarded rail measurement code.
+
+after acceptance, the temporary red/green browser scripts, disposable auth and
+imports, isolated frontend/api/auth/storage/database stack, and task containers,
+volumes, networks and worker image were removed. no task port remains open;
+preexisting adb mappings were preserved. no persistent test suite was added.
 
 the retained epub `loc` after return is a [separate routing issue](tickets/epub-map-return-keeps-jump-loc.md):
 the semantic reading position was restored, but the coarse url remained on the
