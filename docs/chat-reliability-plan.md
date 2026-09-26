@@ -1,6 +1,6 @@
 # chat reliability: specification and implementation plan
 
-status: implementation in `feature/chat-reliability`; release qualification pending
+status: partial implementation in `feature/chat-reliability`; tool-bearing chat restoration blocked on provider qualification
 origin: 2026-09-25 chat investigation and owner request
 
 ## 1. outcome, evidence and scope
