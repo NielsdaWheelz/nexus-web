@@ -77,7 +77,7 @@ MAX_AGENT_TOOL_GRANT_TTL_SECONDS: Final[int] = (
 )
 _MCP_SERVER_NAME: Final[str] = "nexus"
 _MCP_JSON_CONTENT_TYPE: Final[bytes] = b"application/json"
-_MCP_STREAMABLE_HTTP_ACCEPT: Final[bytes] = b"application/json, text/event-stream"
+_MCP_STREAMABLE_HTTP_ACCEPT: Final[bytes] = b"text/event-stream, application/json"
 _MAX_MCP_SOURCE_WINDOWS: Final[int] = 4_096
 _MAX_JSON_RPC_INTEGER: Final[int] = 2**63 - 1
 _MAX_JSON_RPC_STRING: Final[int] = 256

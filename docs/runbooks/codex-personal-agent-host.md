@@ -89,7 +89,7 @@ Production model-tool interoperation is one fixed contract:
 
 Every request carries the ephemeral
 `Authorization: Bearer <generation grant>`, `Content-Type: application/json`,
-and `Accept: application/json, text/event-stream`. The initialize body declares
+and `Accept: text/event-stream, application/json`. The initialize body declares
 `protocolVersion: 2025-06-18`; Codex omits `MCP-Protocol-Version` on that first
 request, and the mount accepts only an omitted or identical header there.
 Every subsequent POST requires `MCP-Protocol-Version: 2025-06-18`. Any other
