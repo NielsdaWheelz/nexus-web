@@ -352,6 +352,14 @@ The document table of contents (epub + web article) is the Resource Inspector
   owner. the reader prose keeps a single scroll owner (`.documentViewport`);
   the TOC is not rendered inline.
 
+Hosted EPUB and web articles with at least one ready navigation section publish
+the same pane-bar instrument. Its native picker uses ordered section identities
+and labels; previous/next use distinct source positions. The count follows the
+semantic viewport. Before the first heading, the picker has no selection or
+count. Zero sections publish no instrument. User jumps use Document Map
+positioning and its return origin without renewing reading activity; PDF page
+controls remain separate.
+
 ### workspace pane sizing
 
 The authenticated workspace owns one reader text floor for every non-PDF

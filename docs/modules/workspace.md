@@ -188,10 +188,12 @@ hover title is the projected `Show inspector`/`Hide inspector` command copy.
 Other `ActionBar` consumers stay icon-only.
 
 `ContextualActionMenu` projects every remaining command through the existing
-`ActionMenu` in desktop and mobile chrome. PDF and EPUB publish
-one labelled `instrument` containing control content only. `PaneShell` owns its
-40px desktop or 48px mobile contextual frame and renders it as an accessible
-group. Expanded Search takes exclusive occupancy of that same track.
+`ActionMenu` in desktop and mobile chrome. PDF publishes page controls; EPUB and
+web articles publish section controls when navigation has at least one section.
+Each publishes one labelled `instrument` containing control content only.
+`PaneShell` owns its 40px desktop or 48px mobile contextual frame and renders it
+as an accessible group. Expanded Search takes exclusive occupancy of that same
+track.
 
 `PaneHeaderIdentity` owns the single route-level `h1` for every pane kind. Body
 outlines start at `h2`, and imported reader headings are projected beneath the
