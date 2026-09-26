@@ -49,6 +49,26 @@ and a consumed sealed continuation (receipt
 `61341c8253164dd8b92608ea71d0fd2651fa9f5e1eb802e6daffe2b68c909222`).
 the empty corpus proves transport and continuation, not factual grounding.
 
+on exact nexus `a80087ffb`, a fresh paid openai chat proved the worker crash
+window. a separate database read saw the parent, child, usage and
+`generation/1=Completed` committed while publication's `UPDATE messages` waited
+on an owned row lock. the interactive worker was hard-stopped, the lock was
+released, and the restarted worker reclaimed the job only after its 1200-second
+lease expired. attempt 2 published the stored answer with one parent, one child
+dispatch, unchanged terminal and usage, zero tool effects and one `done`. two
+fresh authenticated bff gets matched the persisted answer; two sse reads
+replayed the same 323 events with one terminal each. the original runner's
+post-settlement browser read failed while task web was down, so its nonzero
+exit is retained; the independent read-only session supplied that missing
+boundary. receipt: `/tmp/nexus-latest-models-browser/worker-crash-replay-a800-receipt.md`
+(sha256 `19bdd3ea05cba3a3c43f4f8592fb5b8fa49b590c6f2a666670acf6bd6bec293a`).
+the crash probe first exposed a stale chat job payload that regressed the
+completed generation journal to `Prepared` during publication. the fix in
+`a80087ffb` passed a disposable migrated-postgres red/green and `./scripts/test`.
+this no-tool run proves paid-generation and chat-publication replay, not a tool
+effect through the crash window. the later provider pin is not covered by this
+exact a800 stack proof.
+
 no successful model-originated `web.search` result is proved: one call had
 invalid model arguments; a second reached Brave with an invalid
 subscription token and left a billed-once position `Uncertain` while chat
@@ -58,11 +78,12 @@ guard passed nine migrated-postgres cases and is committed in `75b60bf`.
 neither changes the already-completed test run. see the separate web-search
 ticket. deterministic protocol injection rejected five forbidden native/
 delegation event types; it is not a live model attempt. the 20 anthropic nexus
-cells, actual codex credential refresh, durable worker crash-window replay,
-and `web.search` result grounding remain open. completed sse events replayed
-identically without model dispatch, but this is not worker generation replay.
-the 41-cell native check used persisted library encoder metadata and accepted
-response evidence, not a tls packet capture.
+cells, actual codex credential refresh, frozen codex mcp-only authority, and
+`web.search` result grounding remain open. the a800 worker replay must be
+assessed against the final provider pin; repeat the crash-window journey if that
+pin changes the journal, worker replay,
+or publication contract. the 41-cell native check used persisted library encoder
+metadata and accepted response evidence, not a tls packet capture.
 `./scripts/test` is static and cannot qualify them.
 
 ## prerequisite and acceptance
@@ -71,6 +92,8 @@ run a fresh model-originated tool call with a valid protected search credential
 and prove its durable result and answer provenance. obtain explicit owner
 acknowledgement for anthropic's standard retention before setting the required
 timestamp and running its 20 browser/native cells. exercise actual codex auth
-refresh on an independent disposable credential and durable worker replay
-without duplicate paid calls or effects. keep temporary live proofs
-until these cases pass and report xai's owner waiver separately.
+refresh on an independent disposable credential. compare the final provider
+pin with the a800 replay contract, then run a representative final-stack turn;
+repeat the crash-window proof if the replay contract changed. establish frozen
+codex tool authority before qualifying tool-bearing codex cells. keep temporary
+live proofs until these cases pass and report xai's owner waiver separately.
