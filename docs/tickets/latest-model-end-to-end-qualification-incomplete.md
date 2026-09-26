@@ -10,7 +10,7 @@ journeys passed. the codex account listed all three gpt-6 models and five
 allowed efforts; one gpt-6-sol/low text-only turn passed. the 15 codex
 browser/bff/api/db/worker cells, frozen mcp authority, linux isolation,
 resource fit, and full reopened-work proof have not passed. the native patch
-authority blocker has its own ticket. startup now rejects the configured
+authority and bearer-header blockers have their own tickets. startup now rejects the configured
 structured-with-tools background operations while codex advertises no frozen
 mcp capability; the stack cannot be released in this state. `./scripts/test` is static only and
 cannot qualify these journeys.

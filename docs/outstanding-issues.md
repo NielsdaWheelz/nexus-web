@@ -221,7 +221,8 @@ unexpected timeouts. See
 - [open] oi-126 · backend publication · 2026-09-15 restoration release · p2 · disk exhaustion aborts the runner before bundle upload and cleanup: [ticket](tickets/backend-publication-can-exhaust-devbox-disk.md).
 - [open] oi-127 · devbox operations · 2026-09-15 memory diagnosis · p2 · runner stopped and user/docker services restarted during diagnosis; cause remains unresolved: [ticket](tickets/devbox-services-interrupted-memory-diagnosis.md).
 - [open] oi-128 · generation · 2026-09-15 ecbe manual check · p2 · chat and metadata fail after codex dispatch with invalid_request; user defers chat repair: [ticket](tickets/restored-chat-codex-dispatch-fails.md).
-- [open] codex authority · 2026-09-25 model cutover · native patch cannot yet be excluded before external mcp tools execute: [ticket](tickets/codex-native-patch-blocks-mcp-only-tools.md).
+- [open] codex authority · 2026-09-25 model cutover · no proven model-callable mcp path with native tools excluded: [ticket](tickets/codex-native-patch-blocks-mcp-only-tools.md).
+- [open] codex mcp authorization · 2026-09-25 model cutover · per-generation bearer header references are not mapped to native mcp: [ticket](tickets/codex-mcp-bearer-headers-unmapped.md).
 - [open] chat undo · 2026-09-25 model cutover review · some target owners commit reversal before the durable completed-undo stamp: [ticket](tickets/chat-write-undo-can-commit-before-completion-stamp.md).
 - [waived] api model qualification · 2026-09-26 owner decision · 61 api cells pass; 4 xai cells lack a key and are not live-qualified: [ticket](tickets/latest-model-api-live-cells-unqualified.md).
 - [open] codex credential refresh · 2026-09-25 model cutover · actual 0.157.1 refresh/write semantics were not witnessed: [ticket](tickets/codex-auth-refresh-not-qualified.md).
