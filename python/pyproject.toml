@@ -29,7 +29,6 @@ dependencies = [
     "llm-tools==0.1.0",
     "boto3>=1.43.7",
     "uuid6>=2025.0.1",
-    "mcp==2.1.0",
 ]
 
 [project.optional-dependencies]
@@ -53,8 +52,8 @@ build-backend = "hatchling.build"
 packages = ["nexus"]
 
 [tool.uv.sources]
-provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling.git", rev = "aaf515dcea68efdf0bfeeb749007e939f1830d10" }
-llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "ac5d5d8235dc18c93cb0dda504ce759ef0bcc5e5" }
+provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling.git", rev = "d245315fd8137912f47b7fe04798d81525cb2304" }
+llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "738c73c41d4313b9c7dd45e666982cd8860045d3" }
 llm-tools = { git = "https://github.com/NielsdaWheelz/llm-tools.git", rev = "8d5f48884098ecb0cd95ddc590076a74d04b2bd7" }
 
 [tool.ruff]

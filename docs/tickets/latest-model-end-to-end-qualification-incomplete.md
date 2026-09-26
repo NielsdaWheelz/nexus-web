@@ -4,6 +4,17 @@ status: open · origin: 2026-09-25 latest-model cutover · area: generation rele
 
 ## problem and evidence
 
+current gate (2026-09-26): provider catalog v4 reports that pinned Codex
+0.157.1 cannot enforce the frozen MCP-only tool set. Nexus now admits Codex
+for text-only library calls but marks all 15 Codex chat pairs ineligible;
+three tool-backed background jobs and the approved new-chat seed still point
+at that route. The historical Codex tool-call receipts below prove transport,
+not authority, and do not qualify the final release. The owner is deciding
+whether those workloads may move to ProviderApi. Nexus cannot start with an
+ineligible background policy; do not weaken that validation for qualification.
+The final v4 stack has not been rebuilt or exercised. Temporary proof scripts
+remain until the full acceptance contract is met.
+
 the provider passed 61 of 65 api cells; four xai cells are owner-waived, not
 passes. five live three-turn api continuation journeys and all 15 codex
 model/effort cells passed through the provider runtime. pinned codex 0.157.1
@@ -75,11 +86,14 @@ subscription token and left a billed-once position `Uncertain` while chat
 incorrectly completed. the new parent-terminal guard passed 19 real postgres
 cases and is committed in `5e4a15f`; a separate cancelled-run dead-letter
 guard passed nine migrated-postgres cases and is committed in `75b60bf`.
-neither changes the already-completed test run. see the separate web-search
-ticket. deterministic protocol injection rejected five forbidden native/
-delegation event types; it is not a live model attempt. the 20 anthropic nexus
-cells, actual codex credential refresh, frozen codex mcp-only authority, and
-`web.search` result grounding remain open. the a800 worker replay must be
+neither changes the already-completed test run. llm-tools `8d5f488` now
+classifies the bounded Brave 422 `SUBSCRIPTION_TOKEN_INVALID` response as
+`CredentialRejected`; its final browser/ledger journey remains unrun. see the
+separate valid-key web-search ticket. deterministic protocol injection rejected
+five forbidden native/delegation event types; it is not a live model attempt.
+the 20 anthropic nexus cells, actual codex credential refresh, frozen codex
+mcp-only authority, and `web.search` result grounding remain open. the a800
+worker replay must be
 assessed against the final provider pin; repeat the crash-window journey if that
 pin changes the journal, worker replay,
 or publication contract. the 41-cell native check used persisted library encoder
@@ -88,7 +102,10 @@ metadata and accepted response evidence, not a tls packet capture.
 
 ## prerequisite and acceptance
 
-run a fresh model-originated tool call with a valid protected search credential
+settle the owner route decision and prove any newly required provider capability
+before changing background policies or the new-chat seed. rebuild the exact
+final pinned stack and exercise its catalog, browser, api, worker, ledger and
+failure states. run a fresh model-originated tool call with a valid protected search credential
 and prove its durable result and answer provenance. obtain explicit owner
 acknowledgement for anthropic's standard retention before setting the required
 timestamp and running its 20 browser/native cells. exercise actual codex auth
