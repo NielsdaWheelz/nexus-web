@@ -2,7 +2,7 @@ status: open
 origin: 2026-09-25 pane-controls implementation
 area: collection controls / live verification
 
-an isolated loopback browser → bff → api → database stack runs with ordinary
+an isolated loopback browser → bff → api → database stack ran with ordinary
 password auth, two author works and 105 disposable library entries. the
 pre-change proof ran 20 cases: 11 passed, six genuine product assertions
 failed (idle reset, sort-reset focus, duplicate menu search, restored-count
@@ -32,6 +32,8 @@ is distinct evidence.
 
 prerequisites: provide working isolated search and Podcast Index credentials;
 subscribe a disposable show through the ordinary api; exercise the remaining
-device/accessibility and edge cases. rerun the live proof and `./scripts/test`
-on the final tree. delete the task proof and this ticket only after all
-required acceptance passes; blocked and NOT_RUN never count as passes.
+device/accessibility and edge cases. the owner explicitly authorized removing
+the temporary proof and merging with these checks blocked on 2026-09-25.
+repeat the affected live journeys with a fresh disposable stack and run
+`./scripts/test` when validating. close this ticket only after those journeys
+pass; blocked and NOT_RUN never count as passes.

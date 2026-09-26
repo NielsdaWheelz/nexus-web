@@ -1,6 +1,6 @@
 # compact collection controls
 
-status: implementation in progress; live proof partly blocked
+status: implemented; owner waived incomplete live verification for merge on 2026-09-25
 origin: 2026-09-25 user approval of [the review](pane-controls-review.md)
 authority: replaces the presentation, content and verification proposals in
 that review and `collection-controls-plan.md`; retain the earlier domain/data
@@ -170,9 +170,8 @@ label browser transport delay/abort as fault injection; do not fabricate respons
 
 isolated loopback stack: web `64860`, bff to api `64861`, app postgres
 `64840`, separate supabase auth `64850`; ordinary password sign-in and
-throwaway author/library data. run `source /private/tmp/nexus-pane-controls-fixture.env
-&& node .pane-controls-live-proof.mjs` from the linked checkout. the env file
-is mode 600. `node --check` passes. temporary proof sha256:
+throwaway author/library data. the temporary proof ran from the linked checkout
+with a mode-600 fixture env file. its sha256 was:
 `5e3e9e87189cfe5167e296a3bff9c8b4127e08b9837dfbefbec9bdcd3aa77cc1`.
 
 pre-change: 11/20 pass, six genuine reds (idle reset, sort-reset focus,
@@ -189,10 +188,8 @@ continuation, the visible count names failure, offers one retry, and the retry
 returns a real 200. browser transport delay/abort also exercised partial
 loading and retained-sort status; no responses were fabricated. two-pane
 Pane.Search dispatch, lectern alternate sort, last-chip focus, and imports
-History reset with selection retention passed. screenshots:
-`/private/tmp/nexus-pane-controls-wide.png`,
-`/private/tmp/nexus-pane-controls-phone.png`, and
-`/private/tmp/nexus-pane-controls-phone-200pct.png`. the 320px coarse viewport
+History reset with selection retention passed. temporary screenshots were
+inspected and then discarded. the 320px coarse viewport
 and css root 200% text simulation fit, but actual physical touch, screen reader,
 and browser/os text enlargement are NOT_RUN. added library, pagination, focus,
 and geometry checks were authored after cutover began; their passes are not
@@ -227,3 +224,15 @@ tickets `collection-controls-reserve-too-much-pane-space`,
 `library-clear-filters-resets-text-and-order`, and
 `remote-query-draft-clear-hides-applied-text`, plus their register entries.
 record any other unfixed discovery immediately as its own ticket.
+
+## owner-authorized closeout deviation (2026-09-25)
+
+the owner explicitly requested test cleanup, commit, pr, merge, and cleanup
+with the known search block. the temporary proof and isolated fixtures were
+removed despite step 4 above. the four provider/fixture cases were blocked,
+not passed; actual screen reader, physical touch, browser/os text enlargement,
+unsupported-pane native find, and other unexercised edge states remain not run.
+this is a verification waiver for this merge, not completion of a1–a6. the
+[open ticket](tickets/pane-controls-live-proof-blocked.md) retains what must be
+checked when the prerequisites exist. deletion also removes repeatable
+regression coverage for the tested journeys.
