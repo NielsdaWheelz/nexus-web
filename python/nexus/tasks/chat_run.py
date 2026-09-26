@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ChatRun
+from nexus.db.models import ChatRun, LLMModelTurnContinuation, LLMToolPosition
 from nexus.db.session import get_session_factory
 from nexus.jobs.queue import (
     JobExecutionContext,
@@ -18,6 +18,7 @@ from nexus.jobs.queue import (
 )
 from nexus.logging import get_logger
 from nexus.services.chat_run_worker import execute_chat_run
+from nexus.services.durable_step_journal import Uncertain, read_step_states, stable_generation_id
 from nexus.services.llm_execution import ExecutionRuntime
 from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
@@ -58,13 +59,39 @@ def record_dead_lettered_chat_run(db: Session, job: JobRow) -> None:
         raise ValueError("chat_run dead-letter payload is missing run_id")
     run_id = UUID(str(raw_run_id))
     run = db.execute(
-        select(ChatRun.status, ChatRun.cancel_requested_at).where(ChatRun.id == run_id)
+        select(ChatRun.status, ChatRun.cancel_requested_at, ChatRun.generation_spec).where(
+            ChatRun.id == run_id
+        )
     ).one_or_none()
     requeued_for_cancellation = bool(
         run is not None
         and run.status in {"queued", "running"}
         and run.cancel_requested_at is not None
     )
+    if requeued_for_cancellation and run is not None:
+        step_path = "generation/1"
+        state = read_step_states(job).get(step_path)
+        if state is not None and state.generation_id != stable_generation_id(run_id, step_path):
+            requeued_for_cancellation = False
+        elif state is not None and state.dispatch_phase is Uncertain:
+            selection = run.generation_spec.get("selection")
+            if not isinstance(selection, dict) or selection.get("route") != "ProviderApi":
+                requeued_for_cancellation = False
+            else:
+                pending = db.scalar(
+                    select(func.count())
+                    .select_from(LLMModelTurnContinuation)
+                    .where(LLMModelTurnContinuation.generation_id == state.generation_id)
+                )
+                unfinished_tool = db.scalar(
+                    select(LLMToolPosition.id)
+                    .where(
+                        LLMToolPosition.generation_id == state.generation_id,
+                        LLMToolPosition.replay_status != "Completed",
+                    )
+                    .limit(1)
+                )
+                requeued_for_cancellation = pending == 1 and unfinished_tool is None
     if requeued_for_cancellation and not requeue_dead_job(db, job_id=job.id):
         raise AssertionError("cancelled chat job changed during dead-letter handling")
     logger.warning(
