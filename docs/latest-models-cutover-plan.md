@@ -181,7 +181,9 @@ replace that narrow mechanism if native rename/write behavior changed.
 do not assume the 0.144.4 contract survived. health reports actual native
 version and library/protocol identity. preserve current resource limits until
 measurements justify a change. kernel needs dependency/contract alignment,
-not model tables or provider branches; llm-tools needs no new primitive.
+not model tables or provider branches. llm-tools owns declared tool failures:
+an exact bounded brave invalid-token rejection settles once as
+`CredentialRejected`; unknown responses remain uncertain. no new execution primitive.
 
 ## interaction and content design
 
@@ -240,8 +242,9 @@ others request changes through that owner. publish interfaces before dependents.
 | c — consumer/backend + reset designer | nexus `python/nexus/services/{generation_catalog,generation_policy,generation_spec,generation_service,provider_generation_backend,provider_generation_contract,generation_continuations}.py`, affected ledger/history projections, `python/nexus/schemas/{llm,conversation}.py`, config/credentials, env contracts and `migrations/alembic/versions/` reset migration. consume library facts; exact selection and scoped reset. b owns codex wire files. |
 | d — picker/content designer | nexus `apps/web/src/lib/conversations/{generationCatalog,generationSelection}.ts`, affected draft/request/history consumers, `apps/web/src/components/chat/{GenerationSelectionPicker,CandidateGenerationPicker}.tsx`, related css and privacy copy. no backend/catalog rules. |
 | e — integration/reviewer | all package manifests/locks; kernel definitions/provider pins/spec/adr alignment; final composition, cutover and docs/tickets. assign no overlapping implementation files. |
+| f — tool failure/reviewer | llm-tools `src/llm_tools/web/` and its contract evidence. classify only a conclusive credential rejection; e owns nexus pin, frozen plan revision and browser projection. |
 
-a/b publish contracts, then c/d integrate; e serializes shared pin changes.
+a/b/f publish contracts, then c/d integrate; e serializes shared pin changes.
 an independent reviewer challenges each contract, red, implementation, green,
 refactor and cleanup. review authority, replay, exact selection, content and
 deleted residue; resolve findings before the next dependent stage. no large

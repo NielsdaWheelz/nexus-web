@@ -662,7 +662,7 @@ wheels = [
 [[package]]
 name = "llm-agent-kernel"
 version = "0.1.0"
-source = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git?rev=8df40c7940e404b0b401f3d8e7b5c3b5f1fe7656#8df40c7940e404b0b401f3d8e7b5c3b5f1fe7656" }
+source = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git?rev=ac5d5d8235dc18c93cb0dda504ce759ef0bcc5e5#ac5d5d8235dc18c93cb0dda504ce759ef0bcc5e5" }
 dependencies = [
     { name = "llm-tools" },
     { name = "provider-runtime" },
@@ -672,7 +672,7 @@ dependencies = [
 [[package]]
 name = "llm-tools"
 version = "0.1.0"
-source = { git = "https://github.com/NielsdaWheelz/llm-tools.git?rev=9e6d155f3b64f03495911435b7cae8b8d131f9a2#9e6d155f3b64f03495911435b7cae8b8d131f9a2" }
+source = { git = "https://github.com/NielsdaWheelz/llm-tools.git?rev=8d5f48884098ecb0cd95ddc590076a74d04b2bd7#8d5f48884098ecb0cd95ddc590076a74d04b2bd7" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
@@ -924,8 +924,8 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "html5lib", specifier = "==1.1" },
     { name = "httpx", specifier = ">=0.28.0" },
-    { name = "llm-agent-kernel", git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git?rev=8df40c7940e404b0b401f3d8e7b5c3b5f1fe7656" },
-    { name = "llm-tools", git = "https://github.com/NielsdaWheelz/llm-tools.git?rev=9e6d155f3b64f03495911435b7cae8b8d131f9a2" },
+    { name = "llm-agent-kernel", git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git?rev=ac5d5d8235dc18c93cb0dda504ce759ef0bcc5e5" },
+    { name = "llm-tools", git = "https://github.com/NielsdaWheelz/llm-tools.git?rev=8d5f48884098ecb0cd95ddc590076a74d04b2bd7" },
     { name = "lxml", specifier = ">=5.0.0" },
     { name = "mcp", specifier = "==2.1.0" },
     { name = "openai-codex-cli-bin", marker = "extra == 'codex-agent'", specifier = "==0.157.1" },

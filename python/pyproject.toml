@@ -54,8 +54,8 @@ packages = ["nexus"]
 
 [tool.uv.sources]
 provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling.git", rev = "aaf515dcea68efdf0bfeeb749007e939f1830d10" }
-llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "8df40c7940e404b0b401f3d8e7b5c3b5f1fe7656" }
-llm-tools = { git = "https://github.com/NielsdaWheelz/llm-tools.git", rev = "9e6d155f3b64f03495911435b7cae8b8d131f9a2" }
+llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "ac5d5d8235dc18c93cb0dda504ce759ef0bcc5e5" }
+llm-tools = { git = "https://github.com/NielsdaWheelz/llm-tools.git", rev = "8d5f48884098ecb0cd95ddc590076a74d04b2bd7" }
 
 [tool.ruff]
 target-version = "py312"
