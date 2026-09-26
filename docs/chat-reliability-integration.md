@@ -3,8 +3,8 @@
 2026-09-25, local branch `feature/chat-reliability`, based on
 `cfa27d6ce615bb4775e7784954f19dcdd8c8ebb1`. no production mutation,
 merge, paid generation or release was performed. the dependency commits below
-exist in isolated local worktrees and have not been published; a remote build
-cannot resolve this candidate until those exact commits are published.
+were published as isolated feature branches; no dependency or nexus pull
+request was merged.
 
 | boundary | result and limit |
 | --- | --- |
@@ -30,8 +30,7 @@ already-open old client may still show its old pane boundary during cutover.
 the existing incident run was not reset or requeued.
 
 release remains blocked by codex and api authority proofs, fixed background-policy
-qualification, real chat/browser and memory observations, and publication of
-the two exact dependency commits. the original crash remains a separate open
+qualification, and real chat/browser and memory observations. the original crash remains a separate open
 incident pending a reproducible exception. see
 [the implementation plan](chat-reliability-plan.md) and
 [tracked issues](outstanding-issues.md).
