@@ -194,9 +194,10 @@ globally while leaving eligible Light work claimable. Domain handlers never
 touch capacity state.
 
 Metadata enrichment runs in the interactive worker alongside Chat and Dossier.
-Its remote generation and scoped reads do not occupy the parser capacity slot
-once an eligible route is approved. It shares the interactive process's
-memory boundary and serial job execution: an admitted metadata run can delay
+Its Provider API generation and scoped reads do not occupy the parser capacity
+slot when the configured credential and catalog capability admit that route.
+It shares the interactive process's memory boundary and serial job execution:
+an admitted metadata run can delay
 Chat for its 300-second generation budget plus bounded setup and drain.
 
 Normal workers require `WORKER_LANE=interactive|background`; they never accept

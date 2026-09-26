@@ -48,8 +48,9 @@ canonical ids are the only executable identities.
 
 API models receive the frozen plan as provider functions and call the
 `GenerationToolExecutor` with its authorization, position ledger, evidence,
-citations, trust, and Undo. Codex admits no model tools, so its Chat seed is
-ineligible until an approved route or native-authority change. The sole position path is
+citations, trust, and Undo. Codex admits no model tools. The new chat seed uses
+Provider API / GPT-6 Sol / standard medium; this sends admitted prompts and
+tool results to metered OpenAI API. The sole position path is
 `generation/{generation_seq}/tool/{n}`; the one-based ordinal never restarts at
 an API child turn.
 

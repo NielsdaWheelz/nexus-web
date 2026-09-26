@@ -8,12 +8,13 @@ Every Nexus text or structured-output generation runs through one Nexus
 - Codex Personal through `AgentRuntime` and the isolated Codex host;
 - configured metered APIs through `ProviderRuntime`.
 
-The shipped developer policy selects Codex Personal for every background
-operation. Chat alone lets the user choose an exact route, model, and reasoning
-value for each run from the complete configured `llm-calling` catalog. There is
-no generation profile, Fast/Balanced/Deep preset, user default, AI Settings
-surface, fallback, or compatibility route. Embeddings and transcription remain
-separate non-generation capabilities.
+The developer policy selects metered OpenAI API models for metadata enrichment,
+Library and Idea Dossier synthesis, and the new chat seed. Other background
+operations select Codex Personal. Chat lets the user choose an exact route,
+model, and reasoning value for each run from the complete configured
+`llm-calling` catalog. There is no generation profile, Fast/Balanced/Deep
+preset, user default, AI Settings surface, fallback, or compatibility route.
+Embeddings and transcription remain separate non-generation capabilities.
 
 The product owns intent, exact selection, operation policy, tool authority,
 durable coordination, and publication. `llm-calling` owns source catalog facts,
@@ -59,13 +60,17 @@ CodexPersonalSelection(model_key, reasoning_key)
 The tag prevents same-named models on different routes from aliasing. The
 browser submits the exact selection plus the catalog-definition revision and
 never submits dispatch strings, credentials, capabilities, defaults, or
-fallback order. The developer-owned Codex Personal / GPT-6 Sol / medium
+fallback order. The developer-owned Provider API / GPT-6 Sol / standard medium
 seed initializes a new composer only; it is not a saved user preference and
 does not override a causal or explicit per-run selection.
 
-Background operations resolve their exact Codex selection only from the total
-source-controlled policy. Users can inspect the effective selection but cannot
-edit background generation policy.
+Background operations resolve their exact route, model, and reasoning only
+from the total source-controlled policy. Users can inspect the effective
+selection but cannot edit background generation policy. API-selected turns
+incur metered provider charges and send admitted prompts and tool results to
+OpenAI under its API data-handling and retention terms; Codex turns use the
+separate enrolled subscription. A configured API credential and qualified
+capability are required.
 
 ## Operation and tool policy
 
@@ -122,9 +127,10 @@ The Codex catalog records the library's frozen-MCP capability as a source fact,
 but Nexus does not project it into tool-bearing route capabilities. Pinned
 Codex exposes additional resource helpers whenever MCP is present, so the
 current host cannot enforce the exact frozen model-visible tool set. The
-tool-bearing Codex Chat seed and three background policies remain ineligible;
-startup fails for the background policies until their owner selects an
-approved route. See the frozen-MCP authority ticket.
+tool-bearing Codex route remains ineligible. The three tool-backed background
+policies and new chat seed instead select qualified Provider API rows; absent
+credentials or strict-with-tools capability block admission and startup as
+appropriate. See the frozen-MCP authority ticket.
 
 Provider API execution uses `ProviderRuntime` with the selected configured
 credential. Each independently accepted provider call is a child model turn.
@@ -132,9 +138,10 @@ Tool proposals are executed only after durable admission; the sealed,
 target-bound continuation advances only after the child terminal and tool
 result are persisted. Nexus stores the library's complete opaque native
 continuation rather than reconstructing assistant text or provider history.
-Unsupported strict-output-plus-tool combinations are
-ineligible at catalog qualification rather than silently losing strictness or
-tools.
+Only source-attested strict-output-plus-tool combinations are eligible at
+catalog qualification; all others remain ineligible. A final structured
+payload, refusal, usage, and failure are projected without relaxing the
+frozen tool authority.
 
 Both lanes project into the route-neutral `GenerationEvent` family without
 importing one another. No cross-lane dispatcher shares credentials or protocol

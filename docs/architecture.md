@@ -105,8 +105,9 @@ scaffolding.
                            └──────────────┘
 
    Identity: Supabase Auth (JWT/JWKS) only — no Supabase DB or Storage.
-   External: ChatGPT via the isolated Codex personal host (all background and
-             a Chat option); configured generation APIs (Chat options);
+   External: ChatGPT via the isolated Codex personal host (text-only background
+             and a Chat option); configured generation APIs (Chat, metadata,
+             Library and Idea Dossier synthesis);
              OpenAI API (embeddings); Deepgram (transcription),
              Brave (Browse + agent research), Podcast Index, YouTube Data API
              plus YouTube transcript/caption egress,
@@ -734,10 +735,15 @@ rather than proposed and reconciled after the fact.
 synapse, dossiers, media summaries, and metadata enrichment — runs through
 `GenerationService` and `services/llm_execution.py`. Admission freezes the
 exact selection, budgets, output contract, prompt reference, and operation-owned
-tool plan in one `GenerationSpec`; workers never reread mutable policy. All
-background policy rows select Codex Personal. Chat may instead select any ready,
-qualified route/model/reasoning pair in the complete configured `llm-calling`
-catalog. There are no user defaults, profiles, presets, or fallback routes.
+tool plan in one `GenerationSpec`; workers never reread mutable policy. The
+background policy selects metered OpenAI API for metadata enrichment, Library
+Dossier synthesis, and Idea Dossier synthesis; other rows select Codex
+Personal. New chat seeds Provider API / GPT-6 Sol / standard medium; each run
+may select any ready, qualified route/model/reasoning pair in the configured
+`llm-calling` catalog. There are no user defaults, profiles, presets, or
+fallback routes. API turns send admitted prompts and tool results to OpenAI
+under its API data-handling and retention terms and incur metered charges;
+Codex uses the separate enrolled subscription.
 
 One parent `llm_calls` row owns generation truth. Codex normally creates one
 accepted child model turn through the private UDS host; a ProviderRuntime API
@@ -755,9 +761,9 @@ Eligible Chat and background runs use one canonical tool authority. Provider
 API tool proposals adapt frozen plans to the executor and use
 `generation/{generation_seq}/tool/{n}` with one monotonic parent-generation
 ordinal, receipts, evidence, citations, trust, and Undo. Codex Personal admits
-only text and strict structured output without model tools; its tool-bearing
-Chat seed and three background policies remain ineligible until an approved
-route change or a proven native-authority boundary.
+only text and strict structured output without model tools. The tool-backed
+background policies and new chat seed use source-attested Provider API
+capabilities; missing credentials or capability keep them ineligible.
 
 The worker installs the process-global request-rate limiter at startup so the
 first job of any kind has a working limiter. Local execution capacity belongs
@@ -806,9 +812,10 @@ Other identity surfaces:
 ### 7.5 Generation credentials, billing & entitlements
 
 - **Generation credential**: only the isolated Codex host can read the exact
-  enrolled `codex-personal` ChatGPT `auth.json`, mounted read-write solely for
-  pinned `0.144.4` in-place OAuth refresh persistence. All other mutable SDK
-  state is per-turn tmpfs and deleted after close. The Codex host receives no
+  enrolled `codex-personal` ChatGPT `auth.json`, mounted read-write for the
+  pinned `0.157.1` refresh boundary; live refresh qualification remains open.
+  All other mutable SDK state is per-turn tmpfs and deleted after close. The
+  Codex host receives no
   generation API key. API/worker processes receive only the provider keys named
   by `GENERATION_API_PROVIDERS`; `services/llm_credentials.py` projects that
   exact configured set into ProviderRuntime and keeps the OpenAI embedding key
