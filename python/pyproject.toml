@@ -34,7 +34,7 @@ dependencies = [
 
 [project.optional-dependencies]
 codex-agent = [
-    "provider-runtime[codex-sdk]",
+    "openai-codex-cli-bin==0.157.1",
 ]
 dev = [
     "cryptography>=45.0.0",
@@ -53,8 +53,8 @@ build-backend = "hatchling.build"
 packages = ["nexus"]
 
 [tool.uv.sources]
-provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling.git", rev = "97fbac7fece4f1ea54651b7d6344df9fac3b2791" }
-llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "0c400beeae075ee47e7a8563d00f9117e920380e" }
+provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling.git", rev = "43790f71e6f321051afaea6fac980d3018f43a5a" }
+llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "3ba55f4ca8487ba99bc54908c36999db10c446dd" }
 llm-tools = { git = "https://github.com/NielsdaWheelz/llm-tools.git", rev = "9e6d155f3b64f03495911435b7cae8b8d131f9a2" }
 
 [tool.ruff]

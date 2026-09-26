@@ -42,9 +42,9 @@ if TYPE_CHECKING:
 COMMAND_SCHEMA_VERSION = "nexus-generation-command.v3"
 COMMAND_DRAFT_SCHEMA_VERSION = "nexus-generation-command-draft.v1"
 ADMISSION_SCHEMA_VERSION = "nexus-generation-admission.v2"
-EVENT_SCHEMA_VERSION = "nexus-generation-event.v2"
-HEALTH_SCHEMA_VERSION = "nexus-generation-health.v2"
-MODEL_CATALOG_SCHEMA_VERSION = "nexus-codex-model-catalog.v1"
+EVENT_SCHEMA_VERSION = "nexus-generation-event.v3"
+HEALTH_SCHEMA_VERSION = "nexus-generation-health.v3"
+MODEL_CATALOG_SCHEMA_VERSION = "nexus-codex-model-catalog.v2"
 MAX_OUTPUT_SCHEMA_BYTES = 64 * 1024
 MAX_TOOL_GRANT_BYTES = 16 * 1024
 MAX_MODEL_TOOL_PLAN_BYTES = 64 * 1024
@@ -109,12 +109,13 @@ class CodexCatalogModel(WireTaggedModel):
 class CodexModelCatalog(WireTaggedModel):
     """Secret-free authenticated AgentRuntime catalog crossing the private UDS."""
 
-    schema_version: Literal["nexus-codex-model-catalog.v1"] = MODEL_CATALOG_SCHEMA_VERSION
+    schema_version: Literal["nexus-codex-model-catalog.v2"] = MODEL_CATALOG_SCHEMA_VERSION
     backend_contract_revision: CatalogRevision
     definition_revision: Sha256Hex
     native_revision: Presence[CatalogRevision]
     observed_at: datetime
     models: tuple[CodexCatalogModel, ...] = Field(max_length=512)
+    supports_frozen_mcp_tools: bool
 
     @field_validator("observed_at")
     @classmethod
@@ -140,6 +141,7 @@ def codex_model_catalog_to_wire(catalog: AgentModelCatalog) -> CodexModelCatalog
         native_revision=_to_wire(catalog.native_revision),
         observed_at=catalog.observed_at,
         models=tuple(_codex_model_to_wire(model) for model in catalog.models),
+        supports_frozen_mcp_tools=catalog.supports_frozen_mcp_tools,
     )
 
 
@@ -215,7 +217,7 @@ class _GenerationCommandFacts(WireTaggedModel):
 
 
 class GenerationCommandDraft(_GenerationCommandFacts):
-    """Grant-free command admitted before any durable child or SDK work."""
+    """Grant-free command admitted before any durable child or native work."""
 
     schema_version: Literal["nexus-generation-command-draft.v1"] = COMMAND_DRAFT_SCHEMA_VERSION
 
@@ -279,7 +281,7 @@ FailureKind = Literal[
     "credential_unavailable",
     "credential_rejected",
     "executable_unavailable",
-    "sdk_unavailable",
+    "transport_unavailable",
     "session_unavailable",
     "invalid_request",
     "runtime_defect",
@@ -288,6 +290,8 @@ FailureKind = Literal[
 
 class GenerationFailure(WireTaggedModel):
     kind: FailureKind
+    stage: Annotated[str, StringConstraints(min_length=1, max_length=64)] | None = None
+    cause_code: Annotated[str, StringConstraints(min_length=1, max_length=128)] | None = None
 
 
 class GenerationUsage(WireTaggedModel):
@@ -300,9 +304,9 @@ class GenerationUsage(WireTaggedModel):
 
 
 class GenerationSessionRef(WireTaggedModel):
-    schema_version: Literal["agent-session-ref.v1"]
+    schema_version: Literal["agent-session-ref.v2"]
     backend: Literal["codex"]
-    transport: Literal["sdk"]
+    transport: Literal["app_server"]
     native_session_id: Annotated[str, StringConstraints(min_length=1, max_length=256)]
     profile_key: Literal["codex-personal"]
     state_root_fingerprint: Sha256Hex
@@ -361,8 +365,8 @@ class GenerationTerminal(WireTaggedModel):
     session_ref: GenerationSessionRef | None
     usage: GenerationUsage | None
     accepted_at: AcceptedAt
-    sdk_version: Annotated[str, StringConstraints(min_length=1, max_length=128)]
-    runtime_version: Annotated[str, StringConstraints(min_length=1, max_length=128)]
+    native_version: Annotated[str, StringConstraints(min_length=1, max_length=128)]
+    library_contract_revision: Annotated[str, StringConstraints(min_length=1, max_length=128)]
 
     @field_validator("accepted_at")
     @classmethod
@@ -396,21 +400,21 @@ GenerationEvent = Annotated[
 
 
 class GenerationFrame(WireTaggedModel):
-    schema_version: Literal["nexus-generation-event.v2"] = EVENT_SCHEMA_VERSION
+    schema_version: Literal["nexus-generation-event.v3"] = EVENT_SCHEMA_VERSION
     request_id: UUID
     sequence: int = Field(ge=0)
     event: GenerationEvent
 
 
 class GenerationHealth(WireTaggedModel):
-    schema_version: Literal["nexus-generation-health.v2"] = HEALTH_SCHEMA_VERSION
+    schema_version: Literal["nexus-generation-health.v3"] = HEALTH_SCHEMA_VERSION
     status: Literal["ready"] = "ready"
     backend: Literal["codex"] = "codex"
-    transport: Literal["sdk"] = "sdk"
+    transport: Literal["app_server"] = "app_server"
     auth_profile: Literal["codex-personal"] = "codex-personal"
     command_schema_version: Literal["nexus-generation-command.v3"] = COMMAND_SCHEMA_VERSION
-    sdk_version: Annotated[str, StringConstraints(min_length=1, max_length=128)]
-    runtime_version: Annotated[str, StringConstraints(min_length=1, max_length=128)]
+    native_version: Annotated[str, StringConstraints(min_length=1, max_length=128)]
+    library_contract_revision: Annotated[str, StringConstraints(min_length=1, max_length=128)]
 
 
 def capacity_rejection_bytes() -> bytes:
@@ -447,7 +451,7 @@ FAILURE_KIND_TO_NORMALIZED: MappingProxyType[str, NormalizedFailureCode] = Mappi
         "policy_violation": "policy_violation",
         "approval_unanswered": "policy_violation",
         "executable_unavailable": "runtime_unavailable",
-        "sdk_unavailable": "runtime_unavailable",
+        "transport_unavailable": "runtime_unavailable",
         "session_unavailable": "runtime_unavailable",
         "backend_failed": "runtime_unavailable",
         "capacity_unavailable": "capacity_unavailable",
@@ -475,7 +479,12 @@ def retained_terminal_error_detail(terminal: GenerationTerminal) -> str | None:
     if terminal.failure is None:
         raise AssertionError("failed generation terminal has no failure kind")
     normalized_failure(terminal.failure.kind)
-    return f"codex generation failed: {terminal.failure.kind}"
+    detail = f"codex generation failed: {terminal.failure.kind}"
+    if terminal.failure.stage is not None:
+        detail += f"; stage={terminal.failure.stage}"
+    if terminal.failure.cause_code is not None:
+        detail += f"; cause={terminal.failure.cause_code}"
+    return detail
 
 
 def generation_draft_fingerprint(draft: GenerationCommandDraft) -> str:

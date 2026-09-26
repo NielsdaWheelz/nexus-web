@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import importlib.metadata
 import json
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from pathlib import Path
@@ -29,6 +28,10 @@ from nexus.services.codex_generation_contract import (
     generation_admission_request,
     generation_command_draft,
 )
+from nexus.services.codex_generation_health_contract import (
+    LIBRARY_CONTRACT_REVISION,
+    PINNED_CODEX_VERSION,
+)
 
 _HOST_AUTHORITY = "http://nexus-codex"
 _MAX_HEALTH_BYTES = 4 * 1024
@@ -36,8 +39,6 @@ _MAX_REJECTION_BYTES = 256
 _HEALTH_DEADLINE_SECONDS = 5.0
 _CONTROL_DEADLINE_SECONDS = 5.0
 _CATALOG_DEADLINE_SECONDS = 120.0
-_SDK_VERSION = importlib.metadata.version("openai-codex")
-_RUNTIME_VERSION = importlib.metadata.version("openai-codex-cli-bin")
 
 
 class CodexGenerationClientError(RuntimeError):
@@ -66,9 +67,15 @@ class CodexGenerationClient:
             label="Codex catalog",
         )
         try:
-            return CodexModelCatalog.model_validate_json(payload)
+            catalog = CodexModelCatalog.model_validate_json(payload)
         except ValidationError as error:
             raise CodexGenerationProtocolDefect("Codex catalog response is invalid") from error
+        if (
+            catalog.backend_contract_revision != LIBRARY_CONTRACT_REVISION
+            or catalog.supports_frozen_mcp_tools
+        ):
+            raise CodexGenerationProtocolDefect("Codex catalog capability contract drifted")
+        return catalog
 
     async def health(self) -> GenerationHealth:
         payload = await self._read_json(
@@ -83,7 +90,10 @@ class CodexGenerationClient:
             raise CodexGenerationProtocolDefect(
                 "Codex generation health identity is invalid"
             ) from error
-        if observed != GenerationHealth(sdk_version=_SDK_VERSION, runtime_version=_RUNTIME_VERSION):
+        if observed != GenerationHealth(
+            native_version=PINNED_CODEX_VERSION,
+            library_contract_revision=LIBRARY_CONTRACT_REVISION,
+        ):
             raise CodexGenerationProtocolDefect("Codex generation health runtime identity drifted")
         return observed
 
@@ -103,7 +113,7 @@ class CodexGenerationClient:
                     # The reservation POST is not idempotently observable if its
                     # response is lost; only its exact capacity rejection proves
                     # the host accepted nothing. Every admission is bound durably
-                    # before SDK dispatch.
+                    # before native dispatch.
                     admission = await self._admit(client, draft)
                     try:
                         command = await bind_admission(admission)
@@ -333,7 +343,10 @@ class _FrameStreamValidator:
         return self._terminal
 
     def _validate_terminal(self, terminal: GenerationTerminal) -> None:
-        if terminal.sdk_version != _SDK_VERSION or terminal.runtime_version != _RUNTIME_VERSION:
+        if (
+            terminal.native_version != PINNED_CODEX_VERSION
+            or terminal.library_contract_revision != LIBRARY_CONTRACT_REVISION
+        ):
             raise CodexGenerationProtocolDefect(
                 "Codex generation terminal runtime identity drifted"
             )

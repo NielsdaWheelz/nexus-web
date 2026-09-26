@@ -1,7 +1,7 @@
 # Codex Personal Generation Host Operations
 
 This runbook owns the credential-safe deployment boundary for
-`nexus-codex-agent-host`. The host serves the private v2 generation protocol,
+`nexus-codex-agent-host`. The host serves the private v3 event and health protocol,
 including command v3 and the authenticated account model catalog, on
 `/run/nexus-codex/agent.sock`; it has no TCP listener, Nexus application
 configuration, database credential, generation API key, application data mount,
@@ -9,22 +9,24 @@ or host-home mount.
 
 ## Runtime boundary
 
-- The immutable worker image contains the pinned Codex SDK/runtime and the
-  repository-owned bwrap/seccomp launcher. API and migration images do not.
+- The immutable worker image contains the pinned `openai-codex-cli-bin==0.157.1`
+  executable. The host launches its absolute bundled path directly; Codex owns
+  its native sandbox, while the container owns the outer AppArmor/seccomp
+  boundary. API and migration images do not launch Codex.
 - The host runs as `10001:10001`, read-only, capability-free, with
   `no-new-privileges`, the named AppArmor profile, a 448 MiB cgroup, and one
   exact encrypted `auth.json` bind mounted writable. Each turn creates private
   `state/`, empty `workspace/`, and `tmp/` directories under one random root in
   the bounded, mode-`0700` `/run/nexus-codex-turns` tmpfs and links only the
-  profile's `auth.json` to that exact bind. The pinned SDK publishes its
-  content-addressed process supervisor beside the profile state, so this exact
-  tmpfs is executable; general `/tmp` remains a separate `noexec` tmpfs. Host
-  startup rejects any other mount shape and then exercises the real SDK
-  launcher during the authenticated model-catalog startup probe. After the
-  probe closes its runtime, validates the credential inode, power-syncs any
-  refresh, and removes its whole turn root, the entrypoint `exec`s a fresh
-  Python serving phase. Bootstrap SDK/catalog allocations therefore cannot
-  survive into the long-lived server. Docker readiness uses one bounded
+  profile's `auth.json` to that exact bind. The private tmpfs is executable for
+  native sandbox work; general `/tmp` remains a separate `noexec` tmpfs. Host
+  startup rejects any other mount shape, then starts a pinned app-server over
+  WebSocket/UDS and verifies its `initialize` version during the authenticated
+  catalog probe. Each catalog read and generation owns its own foreground
+  native process group. After the probe closes the client, stops and awaits
+  that group, validates the credential inode, power-syncs any refresh, and
+  removes its whole root, the entrypoint `exec`s a fresh Python serving phase.
+  Docker readiness uses one bounded
   standard-library HTTP-over-UDS exchange and validates the complete exact
   health identity; it never imports a second FastAPI, Pydantic, Nexus, or
   provider-runtime graph into the measured cgroup. The serving process builds
@@ -34,9 +36,13 @@ or host-home mount.
   the public typed `CodexSandboxControls` contract to every `AgentRuntime` path;
   it sets `TMPDIR` to that turn's `tmp/` and fixes
   Codex workspace-write policy to exclude bare `/tmp` while retaining only
-  `TMPDIR`. Pinned Codex OAuth refresh writes are immediately durable; session,
-  cache, launcher, temporary files, and every sibling write remain disposable.
-  The complete per-turn root is removed after close.
+  `TMPDIR`. The native socket may be an alias into the private
+  `/tmp/codex-daemon-<uid>` directory; the host proves the target identity and
+  removes its owned alias and socket after process-group exit, including a
+  forced stop. Pinned Codex OAuth refresh writes reach the enrolled file;
+  after process exit the host validates and syncs that inode. Session, cache,
+  socket, temporary files, and sibling writes remain disposable. The host
+  removes the per-turn root only after teardown is proven.
 - The host and `codex-egress-policy` are the only members of the internal
   `nexus_codex_private` network. The host has no public-network attachment;
   the policy sidecar is the sole member of `nexus_codex_proxy_egress` and the
@@ -74,8 +80,8 @@ or host-home mount.
 
 Production model-tool interoperation is one fixed contract:
 
-- client: `openai-codex==0.144.4` and
-  `openai-codex-cli-bin==0.144.4`;
+- client: `openai-codex-cli-bin==0.157.1` through the provider-runtime
+  WebSocket/UDS app-server adapter;
 - server: official `mcp==2.1.0`, configured with `stateless_http=True` and
   `json_response=True`;
 - wire revision: MCP `2025-06-18` only;
@@ -95,9 +101,18 @@ the generation owner. The host publishes only that plan through llm-calling's
 MCP lowering: canonical dotted ids use a mechanical dot-to-double-underscore
 wire alias (for example, `web.search` becomes `web__search`), and observed tool
 events must reverse to an admitted canonical id. Unknown aliases fail the turn
-as a policy violation. Codex built-in tools and native web search remain
-disabled; all model tools, for Chat and background operations alike, use this
-same bearer-scoped MCP boundary.
+as a policy violation. The target keeps Codex built-in tools and native web
+search disabled and routes all model tools, for Chat and background operations
+alike, through this same bearer-scoped MCP boundary.
+
+The 0.157.1 cutover does not admit tool-bearing Codex until a live proof shows
+that native shell, patch, delegation, and other built-ins are absent before
+effects while the frozen MCP tools work. The provider adapter currently rejects
+MCP when `builtin_tools=disabled`; do not remove that guard or interpret a
+post-event rejection as containment. This is a release blocker, not an
+alternate tool path. The authenticated catalog advertises
+`supports_frozen_mcp_tools=false`; text-only Codex remains available while
+tool-required work is refused before admission.
 
 Despite the `Accept` advertisement, Nexus returns JSON for requests and a
 bodyless acknowledgement for notifications. It returns no session id and
@@ -112,16 +127,16 @@ The deployed host uses a fixed 1 GiB LUKS2 container, root-owned, at
 `/dev/mapper/nexus-codex-state` and mounted `rw,nosuid,nodev,noexec` at
 `/srv/nexus/codex-state`. Compose directly binds that mount; there is no
 Docker-managed credential-state volume or plaintext fallback. Enrollment is
-the only creator. Pinned Codex `0.144.4` is the only runtime writer and updates
+the only creator. Pinned Codex `0.157.1` is the only runtime writer and updates
 the refresh token in that exact file. The long-lived host binds exactly
 `/srv/nexus/codex-state/codex/codex-personal/auth.json` to
 `/run/nexus-codex-credential/auth.json` read-write; it never mounts the
 writable parent directory.
 
 This exception is version-qualified, not a general profile mount. Rust
-`v0.144.4` `FileAuthStorage::save` opens `$CODEX_HOME/auth.json` with
+`v0.157.1` `FileAuthStorage::save` opens `$CODEX_HOME/auth.json` with
 truncate/write/create and then performs `write_all` plus `flush`, so the
-per-turn absolute link updates the mounted file in place. Any SDK/runtime
+per-turn absolute link updates the mounted file in place. Any native runtime
 upgrade that renames/replaces the file, changes its location or credential
 store, or changes refresh persistence requires a credential-boundary redesign
 and manual verification of the changed boundary first. Upstream does not use atomic replacement or
@@ -144,6 +159,11 @@ Automated admission proves only that `/dev/mapper/nexus-codex-state` is mounted
 `rw,nosuid,nodev,noexec` at `/srv/nexus/codex-state`; it never inventories
 profile files. The absent key file and crypttab entry above are provisioning
 facts, not release-time declarations, and no release checks them.
+
+For the approved model-history reset, first stop admission and every native
+process group. Inventory the generation-owned private roots, socket aliases,
+socket targets, and continuation files; remove only those owned artifacts
+after process exit. Preserve this credential mount and its enrolled auth file.
 
 On a new host, Docker must remain stopped until the mapping is unlocked and
 the initial container has been provisioned:
@@ -271,7 +291,7 @@ and the Codex host stopped. Unlocking the volume and running a release is the
 only supported way to start it again. Demonstrate that release preflight refuses
 before unlock; then unlock, mount, release, and prove the exact host isolation
 again with `release.py --check`. Store only the bounded receipt and system-service status; never archive
-credential paths or SDK frames.
+credential paths or native protocol frames.
 
 ### Disposable-VM locked-reboot acceptance (live evidence pending)
 
@@ -349,7 +369,7 @@ health, policy, sandbox, environment, or resource-limit checks.
   refresh the exact durable artifact during that probe.
 - A pre-accept capacity refusal is known. A post-accept disconnect is uncertain
   and never capacity or redispatch authority.
-- Grant values, `auth.json`, raw SDK frames, model output, prompts, and device
+- Grant values, `auth.json`, raw app-server frames, model output, prompts, and device
   codes are never diagnostic or certification artifacts.
 - The host is not a public generation endpoint. Never expose the UDS through
   TCP, a reverse proxy, WebSocket/App Server, or arbitrary container exec.

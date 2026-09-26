@@ -13,8 +13,6 @@ export type GenerationApiProvider =
   | "openai"
   | "anthropic"
   | "gemini"
-  | "moonshot"
-  | "openrouter"
   | "deepseek"
   | "xai";
 
@@ -27,14 +25,7 @@ export type GenerationSelectionSpec =
   | {
       readonly route: "ProviderApi";
       readonly model_ref: string;
-      readonly reasoning:
-        | "none"
-        | "minimal"
-        | "low"
-        | "medium"
-        | "high"
-        | "xhigh"
-        | "max";
+      readonly reasoning: string;
     };
 
 export type GenerationRoute =
@@ -162,23 +153,17 @@ export interface GenerationCandidate {
   readonly selection: GenerationSelectionSpec;
 }
 
+export interface GenerationModelCandidate {
+  readonly route: GenerationCatalogRoute;
+  readonly model: GenerationModelRow;
+}
+
 const PROVIDERS = [
   "openai",
   "anthropic",
   "gemini",
-  "moonshot",
-  "openrouter",
   "deepseek",
   "xai",
-] as const;
-const REASONING_LEVELS = [
-  "none",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
 ] as const;
 const READINESS_CODES = [
   "catalog_refresh_failed",
@@ -191,12 +176,11 @@ const INELIGIBLE_CODES = [
 ] as const;
 const SHA256_RE = /^[0-9a-f]{64}$/;
 const CODEX_MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-const CODEX_REASONING_RE = /^[a-z][a-z0-9_-]{0,63}$/;
 const MODEL_REF_RE = /^[a-z0-9][a-z0-9._:/-]{0,255}$/;
 
 function expectSha256(raw: unknown, name: string): string {
   const value = expectString(raw, name);
-  if (!SHA256_RE.test(value)) {
+  if (value.length !== 64 || !SHA256_RE.test(value)) {
     throw new TypeError(`${name} must be a lowercase SHA-256 digest`);
   }
   return value;
@@ -211,7 +195,18 @@ function expectPositiveInteger(raw: unknown, name: string): number {
 
 function expectPattern(raw: unknown, name: string, pattern: RegExp): string {
   const value = expectString(raw, name);
-  if (!pattern.test(value)) throw new TypeError(`${name} has an invalid format`);
+  const match = pattern.exec(value);
+  if (match === null || match.index !== 0 || match[0].length !== value.length) {
+    throw new TypeError(`${name} has an invalid format`);
+  }
+  return value;
+}
+
+function expectReasoningKey(raw: unknown, name: string): string {
+  const value = expectString(raw, name);
+  if (value.length === 0 || value.length > 64 || /[^!-~]/.test(value)) {
+    throw new TypeError(`${name} must be 1–64 printable non-space ascii characters`);
+  }
   return value;
 }
 
@@ -230,11 +225,7 @@ export function decodeGenerationSelectionSpec(
     return {
       route: "CodexPersonal",
       model: expectPattern(base.model, `${name}.model`, CODEX_MODEL_RE),
-      reasoning: expectPattern(
-        base.reasoning,
-        `${name}.reasoning`,
-        CODEX_REASONING_RE,
-      ),
+      reasoning: expectReasoningKey(base.reasoning, `${name}.reasoning`),
     };
   }
   if (base.route !== "ProviderApi") {
@@ -243,11 +234,7 @@ export function decodeGenerationSelectionSpec(
   return {
     route: "ProviderApi",
     model_ref: expectPattern(base.model_ref, `${name}.model_ref`, MODEL_REF_RE),
-    reasoning: expectOneOf(
-      base.reasoning,
-      REASONING_LEVELS,
-      `${name}.reasoning`,
-    ),
+    reasoning: expectReasoningKey(base.reasoning, `${name}.reasoning`),
   };
 }
 
@@ -386,7 +373,7 @@ function decodeReasoning(
     name,
   );
   return {
-    key: expectNonemptyString(value.key, `${name}.key`),
+    key: expectReasoningKey(value.key, `${name}.key`),
     label: expectNonemptyString(value.label, `${name}.label`),
     readiness: decodeReadiness(value.readiness, `${name}.readiness`),
     chat_state: decodeSelectionState(value.chat_state, `${name}.chat_state`),
@@ -419,6 +406,20 @@ function decodeModel(raw: unknown, name: string): GenerationModelRow {
   if (reasoning.length === 0) {
     throw new TypeError(`${name}.reasoning must not be empty`);
   }
+  if (new Set(reasoning.map((option) => option.key)).size !== reasoning.length) {
+    throw new TypeError(`${name}.reasoning contains duplicate keys`);
+  }
+  const sourceDefaultReasoning = decodePresence(
+    value.source_default_reasoning,
+    (reasoningKey) =>
+      expectReasoningKey(reasoningKey, `${name}.source_default_reasoning.value`),
+  );
+  if (
+    sourceDefaultReasoning.kind === "Present" &&
+    !reasoning.some((option) => option.key === sourceDefaultReasoning.value)
+  ) {
+    throw new TypeError(`${name}.source_default_reasoning is absent from reasoning`);
+  }
   return {
     key: expectNonemptyString(value.key, `${name}.key`),
     label: expectNonemptyString(value.label, `${name}.label`),
@@ -450,14 +451,7 @@ function decodeModel(raw: unknown, name: string): GenerationModelRow {
         ),
       `${name}.input_modalities`,
     ),
-    source_default_reasoning: decodePresence(
-      value.source_default_reasoning,
-      (reasoningKey) =>
-        expectNonemptyString(
-          reasoningKey,
-          `${name}.source_default_reasoning.value`,
-        ),
-    ),
+    source_default_reasoning: sourceDefaultReasoning,
     reasoning,
   };
 }
@@ -526,7 +520,17 @@ function decodeGenerationCatalog(raw: unknown): GenerationCatalog {
   if (routes.length === 0) {
     throw new TypeError("generation catalog.routes must not be empty");
   }
-  return {
+  const modelRefs = new Set<string>();
+  for (const route of routes) {
+    for (const model of route.models) {
+      const identity = `${route.route.kind}\u0000${model.key}`;
+      if (modelRefs.has(identity)) {
+        throw new TypeError(`generation catalog contains duplicate model ${model.key}`);
+      }
+      modelRefs.add(identity);
+    }
+  }
+  const catalog: GenerationCatalog = {
     definition_revision: expectSha256(
       value.definition_revision,
       "generation catalog.definition_revision",
@@ -555,6 +559,10 @@ function decodeGenerationCatalog(raw: unknown): GenerationCatalog {
     },
     routes,
   };
+  if (findGenerationCandidate(catalog, catalog.chat_seed.selection) === null) {
+    throw new TypeError("generation catalog.chat_seed is absent from routes");
+  }
+  return catalog;
 }
 
 export function decodeGenerationCatalogResponse(raw: unknown): GenerationCatalog {
@@ -634,34 +642,30 @@ export function selectionFor(
     : {
         route: "ProviderApi",
         model_ref: model.key,
-        reasoning: expectOneOf(
-          reasoning.key,
-          REASONING_LEVELS,
-          "provider reasoning key",
-        ),
+        reasoning: reasoning.key,
       };
+}
+
+export function findGenerationModel(
+  catalog: GenerationCatalog,
+  selection: GenerationSelectionSpec,
+): GenerationModelCandidate | null {
+  const modelKey = selection.route === "CodexPersonal" ? selection.model : selection.model_ref;
+  for (const route of catalog.routes) {
+    if (route.route.kind !== selection.route) continue;
+    const model = route.models.find((row) => row.key === modelKey);
+    if (model) return { route, model };
+  }
+  return null;
 }
 
 export function findGenerationCandidate(
   catalog: GenerationCatalog,
   selection: GenerationSelectionSpec,
 ): GenerationCandidate | null {
-  for (const route of catalog.routes) {
-    const routeMatches =
-      selection.route === "CodexPersonal"
-        ? route.route.kind === "CodexPersonal"
-        : route.route.kind === "ProviderApi" &&
-          selection.model_ref.startsWith(`${route.route.provider}:`);
-    if (!routeMatches) continue;
-    const modelKey =
-      selection.route === "CodexPersonal" ? selection.model : selection.model_ref;
-    const model = route.models.find((row) => row.key === modelKey);
-    const reasoning = model?.reasoning.find((row) => row.key === selection.reasoning);
-    if (model && reasoning) {
-      return { route, model, reasoning, selection };
-    }
-  }
-  return null;
+  const candidate = findGenerationModel(catalog, selection);
+  const reasoning = candidate?.model.reasoning.find((row) => row.key === selection.reasoning);
+  return candidate && reasoning ? { ...candidate, reasoning, selection } : null;
 }
 
 export function hasSelectableCandidate(catalog: GenerationCatalog): boolean {

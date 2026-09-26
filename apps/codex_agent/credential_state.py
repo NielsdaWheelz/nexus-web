@@ -156,7 +156,7 @@ def require_private_executable_runtime_mount(
     *,
     mountinfo_path: Path = Path("/proc/self/mountinfo"),
 ) -> None:
-    """Require the private exec tmpfs needed by the pinned SDK launcher."""
+    """Require the private executable tmpfs used by the native sandbox."""
 
     try:
         metadata = path.lstat()

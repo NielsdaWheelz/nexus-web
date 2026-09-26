@@ -130,7 +130,7 @@ export function chatAdmissionErrorMessage(
     case "E_CATALOG_DEFINITION_STALE":
       return "Model availability changed. Review your selection, then send again.";
     case "E_GENERATION_SELECTION_UNAVAILABLE":
-      return "That exact model and effort are unavailable.";
+      return "That model or thinking setting is unavailable.";
     case "E_INVALID_GENERATION_SELECTION":
       return "That model selection is invalid.";
     case "E_INVALID_REQUEST":

@@ -54,12 +54,10 @@ OPENAI_API_KEY=<openai-api-key>
 
 # Provider generation is backend-only. The configured provider list is closed
 # and every listed provider must have exactly its dedicated credential.
-GENERATION_API_PROVIDERS=openai,anthropic,gemini,moonshot,openrouter,deepseek,xai
+GENERATION_API_PROVIDERS=openai,anthropic,gemini,deepseek,xai
 OPENAI_GENERATION_API_KEY=<openai-generation-api-key>
 ANTHROPIC_GENERATION_API_KEY=<anthropic-generation-api-key>
 GEMINI_GENERATION_API_KEY=<gemini-generation-api-key>
-MOONSHOT_GENERATION_API_KEY=<moonshot-generation-api-key>
-OPENROUTER_GENERATION_API_KEY=<openrouter-generation-api-key>
 DEEPSEEK_GENERATION_API_KEY=<deepseek-generation-api-key>
 XAI_GENERATION_API_KEY=<xai-generation-api-key>
 # Generate with the same command as STREAM_TOKEN_SIGNING_KEY, using a distinct key.

@@ -27,10 +27,10 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid5
 
 from llm_tools import ToolEffect
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.orm import Session
 
-from nexus.db.models import Conversation, MessageToolCall
+from nexus.db.models import AssistantWriteAuthorship, Conversation, MessageToolCall
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.notes import DailyCaptureRequest
 from nexus.services import highlights, library_entries, note_bodies, notes, text_quote, users
@@ -448,6 +448,12 @@ def undo_tool_call(
     reverted_at = datetime.now(UTC)
     row.reverted_at = reverted_at
     row.updated_at = reverted_at
+    if row.tool_position_id is not None:
+        db.execute(
+            update(AssistantWriteAuthorship)
+            .where(AssistantWriteAuthorship.tool_position_id == row.tool_position_id)
+            .values(reverted_at=reverted_at)
+        )
     db.commit()
     return assistant_message_id
 
@@ -457,7 +463,6 @@ def _revert_ref(db: Session, *, viewer_id: UUID, ref: dict[str, Any]) -> None:
     try:
         if kind == "edge":
             delete_edge(db, viewer_id=viewer_id, edge_id=UUID(ref["id"]))
-            db.commit()
         elif kind == "entry":
             target_scheme = ref["target_scheme"]
             if target_scheme == "media":

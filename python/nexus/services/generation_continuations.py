@@ -11,7 +11,7 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 MAX_GENERATION_CONTINUATION_BYTES = 16 * 1024 * 1024
-GENERATION_CONTINUATION_ENVELOPE_VERSION = "GenerationContinuation.Aes256Gcm.V1"
+GENERATION_CONTINUATION_ENVELOPE_VERSION = "GenerationContinuation.Aes256Gcm.V2"
 _NONCE_BYTES = 12
 _GCM_TAG_BYTES = 16
 

@@ -4,16 +4,17 @@ from __future__ import annotations
 
 from typing import Final
 
-PINNED_CODEX_VERSION: Final = "0.144.4"
+PINNED_CODEX_VERSION: Final = "0.157.1"
+LIBRARY_CONTRACT_REVISION: Final = "provider-runtime.agent-model-catalog.v2"
 _HEALTH_IDENTITY_ITEMS: Final = (
-    ("schema_version", "nexus-generation-health.v2"),
+    ("schema_version", "nexus-generation-health.v3"),
     ("status", "ready"),
     ("backend", "codex"),
-    ("transport", "sdk"),
+    ("transport", "app_server"),
     ("auth_profile", "codex-personal"),
     ("command_schema_version", "nexus-generation-command.v3"),
-    ("sdk_version", PINNED_CODEX_VERSION),
-    ("runtime_version", PINNED_CODEX_VERSION),
+    ("native_version", PINNED_CODEX_VERSION),
+    ("library_contract_revision", LIBRARY_CONTRACT_REVISION),
 )
 
 
@@ -23,4 +24,8 @@ def expected_health_identity() -> dict[str, str]:
     return dict(_HEALTH_IDENTITY_ITEMS)
 
 
-__all__ = ["PINNED_CODEX_VERSION", "expected_health_identity"]
+__all__ = [
+    "PINNED_CODEX_VERSION",
+    "LIBRARY_CONTRACT_REVISION",
+    "expected_health_identity",
+]

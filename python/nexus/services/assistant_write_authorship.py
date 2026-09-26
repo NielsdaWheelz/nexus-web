@@ -16,13 +16,7 @@ from uuid import UUID, uuid5
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import (
-    AssistantWriteAuthorship,
-    LLMCall,
-    LLMToolPosition,
-    MessageToolCall,
-    ResourceEdge,
-)
+from nexus.db.models import AssistantWriteAuthorship, MessageToolCall, ResourceEdge
 from nexus.schemas.machine_authorship import (
     MachineAuthorshipOut,
     MachineAuthorshipTargetKind,
@@ -92,22 +86,25 @@ def persist_assistant_write_authorships(
             existing = AssistantWriteAuthorship(
                 id=authorship_id,
                 tool_position_id=position.id,
+                generation_id=position.generation_id,
+                generation_seq=position.generation_seq,
+                tool_position=position.position,
+                canonical_tool_id=position.canonical_tool_id,
                 target_kind=target_kind,
                 target_id=target_id,
             )
             db.add(existing)
             db.flush()
-        elif existing.id != authorship_id or existing.tool_position_id != position.id:
+        elif (
+            existing.id != authorship_id
+            or existing.tool_position_id != position.id
+            or existing.generation_id != position.generation_id
+            or existing.generation_seq != position.generation_seq
+            or existing.tool_position != position.position
+            or existing.canonical_tool_id != position.canonical_tool_id
+        ):
             raise AssertionError("created target already has a different machine author")
-        projected.append(
-            _machine_authorship_out(
-                existing,
-                position_id=position.id,
-                generation_id=position.generation_id,
-                generation_seq=position.generation_seq,
-                tool_position=position.position,
-            )
-        )
+        projected.append(_machine_authorship_out(existing))
     return tuple(projected)
 
 
@@ -133,13 +130,8 @@ def machine_authorships_for_tool_calls(
         raise AssertionError("successful Chat writes share one canonical generation position")
     if not position_to_tool:
         return {}
-    rows = db.execute(
-        select(AssistantWriteAuthorship, LLMToolPosition, LLMCall.generation_seq)
-        .join(
-            LLMToolPosition,
-            LLMToolPosition.id == AssistantWriteAuthorship.tool_position_id,
-        )
-        .join(LLMCall, LLMCall.id == LLMToolPosition.generation_id)
+    rows = db.scalars(
+        select(AssistantWriteAuthorship)
         .where(AssistantWriteAuthorship.tool_position_id.in_(position_to_tool))
         .order_by(
             AssistantWriteAuthorship.tool_position_id,
@@ -148,22 +140,14 @@ def machine_authorships_for_tool_calls(
         )
     ).all()
     result: dict[UUID, list[MachineAuthorshipOut]] = {}
-    for authorship, position, generation_seq in rows:
-        tool = position_to_tool[position.id]
+    for authorship in rows:
+        tool = position_to_tool[authorship.tool_position_id]
         if (
-            tool.canonical_tool_id != position.canonical_tool_id
-            or tool.tool_call_index != position.position
+            tool.canonical_tool_id != authorship.canonical_tool_id
+            or tool.tool_call_index != authorship.tool_position
         ):
             raise AssertionError("Chat write projection changed its generation position")
-        result.setdefault(tool.id, []).append(
-            _machine_authorship_out(
-                authorship,
-                position_id=position.id,
-                generation_id=position.generation_id,
-                generation_seq=generation_seq,
-                tool_position=position.position,
-            )
-        )
+        result.setdefault(tool.id, []).append(_machine_authorship_out(authorship))
     for tool in successful_writes:
         if tool.canonical_tool_id is None:
             raise AssertionError("successful Chat write lacks its canonical tool id")
@@ -231,46 +215,28 @@ def _machine_authorship_for_target(
     target_kind: MachineAuthorshipTargetKind,
     target_id: UUID,
 ) -> MachineAuthorshipOut | None:
-    row = db.execute(
-        select(AssistantWriteAuthorship, LLMToolPosition, LLMCall.generation_seq)
-        .join(
-            LLMToolPosition,
-            LLMToolPosition.id == AssistantWriteAuthorship.tool_position_id,
-        )
-        .join(LLMCall, LLMCall.id == LLMToolPosition.generation_id)
-        .where(
+    authorship = db.scalar(
+        select(AssistantWriteAuthorship).where(
             AssistantWriteAuthorship.target_kind == target_kind,
             AssistantWriteAuthorship.target_id == target_id,
         )
-    ).one_or_none()
-    if row is None:
-        return None
-    authorship, position, generation_seq = row
-    return _machine_authorship_out(
-        authorship,
-        position_id=position.id,
-        generation_id=position.generation_id,
-        generation_seq=generation_seq,
-        tool_position=position.position,
     )
+    if authorship is None:
+        return None
+    return _machine_authorship_out(authorship)
 
 
 def _machine_authorship_out(
     authorship: AssistantWriteAuthorship,
-    *,
-    position_id: UUID,
-    generation_id: UUID,
-    generation_seq: int,
-    tool_position: int,
 ) -> MachineAuthorshipOut:
     return MachineAuthorshipOut(
         target_kind=cast(MachineAuthorshipTargetKind, authorship.target_kind),
         target_id=authorship.target_id,
-        generation_id=generation_id,
-        generation_seq=generation_seq,
-        tool_position=tool_position,
-        position_path=f"generation/{generation_seq}/tool/{tool_position}",
-        effect_id=position_id,
+        generation_id=authorship.generation_id,
+        generation_seq=authorship.generation_seq,
+        tool_position=authorship.tool_position,
+        position_path=f"generation/{authorship.generation_seq}/tool/{authorship.tool_position}",
+        effect_id=authorship.tool_position_id,
     )
 
 

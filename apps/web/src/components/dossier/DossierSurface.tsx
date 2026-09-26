@@ -355,7 +355,7 @@ function GenerationDetail({
   const facts = [
     displayAtDispatch.route_label,
     displayAtDispatch.model_label,
-    `${displayAtDispatch.reasoning_label} reasoning`,
+    `thinking: ${displayAtDispatch.reasoning_label}`,
     displayAtDispatch.billing.label,
     toolPlanFact(toolPlan, toolPositions),
   ];

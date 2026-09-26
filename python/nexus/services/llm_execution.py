@@ -23,6 +23,7 @@ from llm_agent_kernel.generation import GenerationStopped
 from provider_runtime.types import Absent as RuntimeAbsent
 from provider_runtime.types import Cancelled as ProviderCancelled
 from provider_runtime.types import (
+    ContinuationTooLarge,
     ExpectedModelFailure,
     InvalidStructuredOutput,
     InvalidToolArguments,
@@ -1075,6 +1076,8 @@ def _parent_terminal_document(
 def _provider_failure_code(failure: ExpectedModelFailure) -> ProviderFailureCode:
     if isinstance(failure, ProviderContextTooLarge):
         return "context_too_large"
+    if isinstance(failure, ContinuationTooLarge):
+        return "continuation_too_large"
     if isinstance(failure, InvalidToolArguments):
         return "invalid_tool_arguments"
     if isinstance(failure, InvalidStructuredOutput):

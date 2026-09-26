@@ -509,7 +509,6 @@ class _KernelAdapter:
         turn = self.provider.prepare_successor_turn(
             generation_id=self.generation_id,
             spec=self.spec,
-            intent=self.intent,
             source_turn_seq=continuation.source_ordinal,
             canonical_continuation=continuation.payload.canonical_bytes,
             tool_results=tuple(
@@ -697,8 +696,6 @@ def _resume_continuation(
         raise GenerationBackendDefect("ProviderApi resume requires frozen model tools")
     decoded = decode_provider_turn_continuation(
         resume.canonical_bytes,
-        spec=spec,
-        expected_source_turn_seq=identity.source_child_seq,
         target=ProviderTarget(provider=dispatch.provider, model=dispatch.model_id),
         codec_id=dispatch.continuation_codec,
     )

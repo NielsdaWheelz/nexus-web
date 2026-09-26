@@ -1,6 +1,7 @@
 import { expectExactRecord, expectNonemptyString, expectRecord } from "@/lib/validation";
 import {
   decodeGenerationRoute,
+  findGenerationModel,
   decodeGenerationSelectionSpec,
   findGenerationCandidate,
   selectionFor,
@@ -16,7 +17,7 @@ export type SelectionDraft =
   | { readonly kind: "Uninitialized" }
   | { readonly kind: "ModelRequired"; readonly route: GenerationRoute }
   | {
-      readonly kind: "EffortRequired";
+      readonly kind: "ThinkingRequired";
       readonly route: GenerationRoute;
       readonly modelKey: string;
     }
@@ -37,10 +38,10 @@ export function decodeSelectionDraft(
         kind: "ModelRequired",
         route: decodeGenerationRoute(value.route, `${name}.route`),
       };
-    case "EffortRequired":
+    case "ThinkingRequired":
       expectExactRecord(value, ["kind", "route", "modelKey"], name);
       return {
-        kind: "EffortRequired",
+        kind: "ThinkingRequired",
         route: decodeGenerationRoute(value.route, `${name}.route`),
         modelKey: expectNonemptyString(value.modelKey, `${name}.modelKey`),
       };
@@ -55,12 +56,11 @@ export function decodeSelectionDraft(
   }
 }
 
-export function routeForSelection(selection: GenerationSelectionSpec): GenerationRoute {
-  if (selection.route === "CodexPersonal") return { kind: "CodexPersonal" };
-  return decodeGenerationRoute(
-    { kind: "ProviderApi", provider: selection.model_ref.split(":", 1)[0] },
-    "selection route",
-  );
+export function routeForSelection(
+  catalog: GenerationCatalog,
+  selection: GenerationSelectionSpec,
+): GenerationRoute | null {
+  return findGenerationModel(catalog, selection)?.route.route ?? null;
 }
 
 function sameRoute(left: GenerationRoute, right: GenerationRoute): boolean {
@@ -100,33 +100,49 @@ export function changeGenerationModel(
   const row = selectedRoute(catalog, route);
   const model = selectableModels(row).find((candidate) => candidate.key === modelKey);
   if (model === undefined) throw new TypeError("selected model is not selectable");
-  const efforts = model.reasoning.filter((reasoning) => reasoning.chat_state.kind === "Selectable");
+  const choices = model.reasoning.filter((reasoning) => reasoning.chat_state.kind === "Selectable");
   const defaultReasoning = model.source_default_reasoning;
   const sourceDefault =
     defaultReasoning.kind === "Present"
-      ? efforts.find((effort) => effort.key === defaultReasoning.value)
+      ? choices.find((choice) => choice.key === defaultReasoning.value)
       : undefined;
-  const effort = sourceDefault ?? (efforts.length === 1 ? efforts[0] : undefined);
-  return effort === undefined
-    ? { kind: "EffortRequired", route, modelKey }
-    : { kind: "Selected", selection: selectionFor(row, model, effort) };
+  const choice = sourceDefault ?? (choices.length === 1 ? choices[0] : undefined);
+  return choice === undefined
+    ? { kind: "ThinkingRequired", route, modelKey }
+    : { kind: "Selected", selection: selectionFor(row, model, choice) };
 }
 
-export function changeGenerationEffort(
+export function changeGenerationThinking(
   catalog: GenerationCatalog,
   route: GenerationRoute,
   modelKey: string,
-  effortKey: string,
+  reasoningKey: string,
 ): SelectionDraft {
   const row = selectedRoute(catalog, route);
   const model = selectableModels(row).find((candidate) => candidate.key === modelKey);
-  const effort = model?.reasoning.find(
-    (candidate) => candidate.key === effortKey && candidate.chat_state.kind === "Selectable",
+  const choice = model?.reasoning.find(
+    (candidate) => candidate.key === reasoningKey && candidate.chat_state.kind === "Selectable",
   );
-  if (model === undefined || effort === undefined) {
-    throw new TypeError("selected effort is not selectable");
+  if (model === undefined || choice === undefined) {
+    throw new TypeError("selected thinking option is not selectable");
   }
-  return { kind: "Selected", selection: selectionFor(row, model, effort) };
+  return { kind: "Selected", selection: selectionFor(row, model, choice) };
+}
+
+export function selectionUnavailabilityMessage(
+  catalog: GenerationCatalog,
+  selection: GenerationSelectionSpec,
+): string | null {
+  const candidate = findGenerationModel(catalog, selection);
+  if (candidate === null) return "this model is no longer available. choose a current model.";
+  const choice = candidate.model.reasoning.find((row) => row.key === selection.reasoning);
+  if (choice === undefined) {
+    return "this thinking setting is no longer available. choose another.";
+  }
+  if (choice.chat_state.kind !== "Selectable") {
+    return "this selection is currently unavailable. choose another.";
+  }
+  return null;
 }
 
 export function selectableGenerationCandidate(

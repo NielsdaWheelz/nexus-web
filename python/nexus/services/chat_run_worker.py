@@ -24,18 +24,19 @@ from provider_runtime.types import (
     Cancelled as ProviderCancelled,
 )
 from provider_runtime.types import (
-    Failed as ProviderFailed,
-)
-from provider_runtime.types import (
-    Incomplete as ProviderIncomplete,
-)
-from provider_runtime.types import (
+    ContinuationTooLarge,
     InvalidStructuredOutput,
     InvalidToolArguments,
     ProviderContextTooLarge,
     TextContent,
     TokenUsage,
     TransientExhausted,
+)
+from provider_runtime.types import (
+    Failed as ProviderFailed,
+)
+from provider_runtime.types import (
+    Incomplete as ProviderIncomplete,
 )
 from provider_runtime.types import (
     Present as RuntimePresent,
@@ -862,6 +863,8 @@ def _provider_failure_code(outcome: ProviderIncomplete | ProviderFailed) -> str:
     failure = outcome.failure
     if isinstance(failure, ProviderContextTooLarge):
         return "context_too_large"
+    if isinstance(failure, ContinuationTooLarge):
+        return "output_limit"
     if isinstance(failure, InvalidStructuredOutput | InvalidToolArguments):
         return "invalid_output"
     if isinstance(failure, TransientExhausted):

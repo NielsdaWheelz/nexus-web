@@ -89,7 +89,7 @@ export default function AssistantDetails({
                 <dd>{trustTrail.run.run_selection.display_at_dispatch.model_label}</dd>
               </div>
               <div>
-                <dt>Reasoning</dt>
+                <dt>Thinking</dt>
                 <dd>{trustTrail.run.run_selection.display_at_dispatch.reasoning_label}</dd>
               </div>
               <div>

@@ -31,10 +31,7 @@ from nexus.services.tool_runtime.snapshots import FrozenToolPlanSnapshot
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 BoundedText = Annotated[str, StringConstraints(min_length=1, max_length=512)]
 ModelKey = Annotated[str, StringConstraints(min_length=1, max_length=256, pattern=r"^[^\s]+$")]
-AgentReasoningKey = Annotated[
-    str, StringConstraints(min_length=1, max_length=64, pattern=r"^[^\s]+$")
-]
-ProviderReasoningLevel = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+ReasoningKey = Annotated[str, StringConstraints(pattern=r"^[!-~]{1,64}$")]
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 type BackgroundOperationKey = Literal[
     "metadata_enrichment",
@@ -104,13 +101,13 @@ class WireTaggedModel(BaseModel):
 class CodexPersonalSelection(_FrozenModel):
     route: Literal["CodexPersonal"]
     model: ModelKey
-    reasoning: AgentReasoningKey
+    reasoning: ReasoningKey
 
 
 class ProviderApiSelection(_FrozenModel):
     route: Literal["ProviderApi"]
     model_ref: ModelKey
-    reasoning: ProviderReasoningLevel
+    reasoning: ReasoningKey
 
 
 GenerationSelectionSpec = Annotated[
@@ -122,7 +119,7 @@ def selection_fingerprint(selection: CodexPersonalSelection | ProviderApiSelecti
     """Return the domain-separated identity of one exact selection."""
 
     payload = _canonical_json(selection.model_dump(mode="json"))
-    return hashlib.sha256(b"nexus.generation-selection.v1\0" + payload).hexdigest()
+    return hashlib.sha256(b"nexus.generation-selection.v2\0" + payload).hexdigest()
 
 
 class TextOutput(WireTaggedModel):
@@ -236,7 +233,6 @@ class ProviderDispatchTargetSnapshot(_FrozenModel):
     engine: BoundedText
     base_url: Presence[Annotated[str, StringConstraints(min_length=1, max_length=2_048)]]
     correlation: Literal["header", "in_band", "none"]
-    routing: Presence[dict[str, JsonValue]]
     continuation_codec: BoundedText
     registry_revision: BoundedText
 
@@ -319,7 +315,7 @@ def tool_scope_digest(scope: FrozenToolScope) -> str:
 
 
 class GenerationSpecFacts(_FrozenModel):
-    schema_version: Literal["nexus-generation-spec.v1"] = "nexus-generation-spec.v1"
+    schema_version: Literal["nexus-generation-spec.v2"] = "nexus-generation-spec.v2"
     operation: GenerationOperation
     selection: GenerationSelectionSpec
     selection_source: Literal["ChatRun", "BackgroundPolicy"]

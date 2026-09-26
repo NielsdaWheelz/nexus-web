@@ -5,6 +5,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   useSyncExternalStore,
 } from "react";
 import {
@@ -16,6 +17,7 @@ import {
   chatDraftStorageKeyForView,
   CHAT_DRAFT_STORAGE_PREFIX,
   EMPTY_DRAFT_RECORD,
+  recoverPreviousChatDrafts,
   subscribeChatDraftStores,
   type ChatCommandView,
 } from "@/lib/conversations/chatDraftStore";
@@ -32,8 +34,13 @@ export function useChatDraft({
   conversationId: string | null;
   initialContent?: string;
 }) {
+  const [cutoverReady, setCutoverReady] = useState(false);
+  useEffect(() => {
+    recoverPreviousChatDrafts(view.accountId);
+    setCutoverReady(true);
+  }, [view.accountId]);
   const editableDraftKey =
-    CHAT_DRAFT_STORAGE_PREFIX + serializeChatDraftKey(draftKey);
+    `${CHAT_DRAFT_STORAGE_PREFIX}${view.accountId}:${serializeChatDraftKey(draftKey)}`;
   const { identity, accountId } = view;
   const getStorageKey = useCallback(
     () =>
@@ -87,7 +94,7 @@ export function useChatDraft({
     setContent: store.setContent,
     selection: record.selection,
     setSelection: store.setSelection,
-    restored,
+    restored: restored && cutoverReady,
     activeDraftKey,
     editableDraftKey,
     recoveryConflict,

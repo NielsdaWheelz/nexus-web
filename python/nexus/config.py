@@ -136,8 +136,6 @@ type GenerationApiProvider = Literal[
     "openai",
     "anthropic",
     "gemini",
-    "moonshot",
-    "openrouter",
     "deepseek",
     "xai",
 ]
@@ -427,16 +425,6 @@ class Settings(BaseSettings):
         alias="GEMINI_GENERATION_API_KEY",
         repr=False,
     )
-    moonshot_generation_api_key: SecretStr | None = Field(
-        default=None,
-        alias="MOONSHOT_GENERATION_API_KEY",
-        repr=False,
-    )
-    openrouter_generation_api_key: SecretStr | None = Field(
-        default=None,
-        alias="OPENROUTER_GENERATION_API_KEY",
-        repr=False,
-    )
     deepseek_generation_api_key: SecretStr | None = Field(
         default=None,
         alias="DEEPSEEK_GENERATION_API_KEY",
@@ -724,14 +712,6 @@ class Settings(BaseSettings):
                 self.anthropic_generation_api_key,
             ),
             "gemini": ("GEMINI_GENERATION_API_KEY", self.gemini_generation_api_key),
-            "moonshot": (
-                "MOONSHOT_GENERATION_API_KEY",
-                self.moonshot_generation_api_key,
-            ),
-            "openrouter": (
-                "OPENROUTER_GENERATION_API_KEY",
-                self.openrouter_generation_api_key,
-            ),
             "deepseek": (
                 "DEEPSEEK_GENERATION_API_KEY",
                 self.deepseek_generation_api_key,
@@ -920,15 +900,7 @@ class Settings(BaseSettings):
         for raw_provider in self.generation_api_providers_raw.split(","):
             provider = raw_provider.strip()
             match provider:
-                case (
-                    "openai"
-                    | "anthropic"
-                    | "gemini"
-                    | "moonshot"
-                    | "openrouter"
-                    | "deepseek"
-                    | "xai"
-                ):
+                case "openai" | "anthropic" | "gemini" | "deepseek" | "xai":
                     providers.append(provider)
                 case "":
                     raise ValueError("GENERATION_API_PROVIDERS contains an empty provider")

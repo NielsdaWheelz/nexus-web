@@ -49,6 +49,34 @@
   border-radius: var(--radius-md);
 }
 
+.recoveredDrafts {
+  padding: var(--space-2) var(--space-3);
+  color: var(--ink);
+  background: var(--surface-2);
+  border: var(--stroke-hairline) solid var(--edge);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+}
+
+.recoveredDrafts summary {
+  cursor: pointer;
+  font-weight: var(--weight-semibold);
+}
+
+.recoveredDrafts ol {
+  display: grid;
+  gap: var(--space-2);
+  padding-inline-start: var(--space-4);
+}
+
+.recoveredDrafts li {
+  min-width: 0;
+}
+
+.recoveredDrafts textarea {
+  width: 100%;
+}
+
 .composerInput {
   min-width: 0;
   min-height: 3em;

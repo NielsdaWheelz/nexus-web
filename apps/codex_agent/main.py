@@ -18,6 +18,7 @@ from apps.codex_agent.auth_environment import (
 )
 from apps.codex_agent.confined_runtime import create_confined_runtime
 from apps.codex_agent.credential_state import (
+    EphemeralRuntimePaths,
     create_ephemeral_runtime_paths,
     enrolled_auth_identity,
     link_runtime_auth,
@@ -27,6 +28,7 @@ from apps.codex_agent.credential_state import (
     sync_enrolled_auth_file,
     validate_runtime_auth_link,
 )
+from apps.codex_agent.native_server import start_native_codex_server
 from apps.codex_agent.path_environment import required_absolute_path
 from provider_runtime.agent_runtime import (
     AgentRuntime,
@@ -52,19 +54,21 @@ async def _authenticated_bootstrap() -> None:
     probe_paths = create_ephemeral_runtime_paths(working_directory_root, "startup-auth")
     credential_identity = enrolled_auth_identity(credential_file)
     probe_auth_link: Path | None = None
+    native_exit_proven = asyncio.Event()
     try:
         probe_auth_link = link_runtime_auth(credential_file, probe_paths)
-        await _probe_chatgpt_auth(probe_paths.state_root_base)
+        await _probe_chatgpt_auth(probe_paths, native_exit_proven=native_exit_proven)
     finally:
-        try:
-            if probe_auth_link is not None:
-                validate_runtime_auth_link(probe_auth_link, credential_file)
-                sync_enrolled_auth_file(
-                    credential_file,
-                    expected_identity=credential_identity,
-                )
-        finally:
-            remove_ephemeral_runtime_paths(probe_paths, root=working_directory_root)
+        if probe_auth_link is None or native_exit_proven.is_set():
+            try:
+                if probe_auth_link is not None:
+                    validate_runtime_auth_link(probe_auth_link, credential_file)
+                    sync_enrolled_auth_file(
+                        credential_file,
+                        expected_identity=credential_identity,
+                    )
+            finally:
+                remove_ephemeral_runtime_paths(probe_paths, root=working_directory_root)
     _validate_directories(socket_path, working_directory_root)
     require_writable_credential_mount(credential_file)
 
@@ -160,16 +164,31 @@ def runtime_factory(config: AgentRuntimeConfig) -> AgentRuntime:
     return create_confined_runtime(config)
 
 
-async def _probe_chatgpt_auth(state_root: Path) -> None:
-    runtime = create_confined_runtime(AgentRuntimeConfig(state_root_base=state_root))
+async def _probe_chatgpt_auth(
+    paths: EphemeralRuntimePaths, *, native_exit_proven: asyncio.Event
+) -> None:
+    native = await start_native_codex_server(paths)
+    runtime = create_confined_runtime(
+        AgentRuntimeConfig(
+            state_root_base=paths.state_root_base,
+            codex_endpoints={"codex-personal": native.socket_target},
+        )
+    )
     try:
         await runtime.model_catalog(
             "codex",
             CredentialRef(kind="local_account", profile_key="codex-personal"),
-            transport="sdk",
+            transport="app_server",
         )
     finally:
-        await runtime.close()
+        try:
+            await runtime.close()
+        finally:
+            try:
+                await native.stop()
+            finally:
+                if native.stopped:
+                    native_exit_proven.set()
 
 
 def _required_environment(name: str) -> str:

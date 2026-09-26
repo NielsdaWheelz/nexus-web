@@ -6,6 +6,7 @@ import GenerationSelectionPicker from "@/components/chat/GenerationSelectionPick
 import { useGenerationCatalog } from "@/components/chat/useGenerationCatalog";
 import {
   selectableGenerationCandidate,
+  selectionUnavailabilityMessage,
   type SelectionDraft,
 } from "@/lib/conversations/generationSelection";
 import {
@@ -112,11 +113,11 @@ export default function CandidateGenerationPicker({
           </div>
           {noSelectablePair ? (
             <p className={styles.status} role="status">
-              No model and effort pair is currently available. <Button variant="ghost" size="sm" onClick={retry}>Retry</Button>
+              No model and thinking setting is currently available. <Button variant="ghost" size="sm" onClick={retry}>Retry</Button>
             </p>
           ) : draft.kind === "Selected" && candidate === null ? (
             <p className={styles.status} role="status">
-              This selection is unavailable. Choose a replacement.
+              {selectionUnavailabilityMessage(catalog, draft.selection)}
             </p>
           ) : null}
           {error !== null ? (

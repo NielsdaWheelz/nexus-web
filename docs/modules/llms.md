@@ -59,7 +59,7 @@ CodexPersonalSelection(model_key, reasoning_key)
 The tag prevents same-named models on different routes from aliasing. The
 browser submits the exact selection plus the catalog-definition revision and
 never submits dispatch strings, credentials, capabilities, defaults, or
-fallback order. The developer-owned Codex Personal / GPT-5.6 Terra / medium
+fallback order. The developer-owned Codex Personal / GPT-6 Sol / medium
 seed initializes a new composer only; it is not a saved user preference and
 does not override a causal or explicit per-run selection.
 
@@ -109,9 +109,14 @@ provider-native Web search, alternate executor, or transport fallback.
 
 Codex Personal uses one private UDS command/NDJSON stream. The adapter binds the
 catalog-validated native model key before dispatch and supplies MCP only for a
-present frozen model-tool plan. The host has no database credential,
+present frozen model-tool plan. Tool-bearing Codex remains ineligible until
+the pinned native server can exclude native patch effects before execution.
+The host has no database credential,
 application secret, generation API key, product data mount, or TCP listener. It
-owns one private per-turn root and deletes it after the pinned runtime closes.
+owns one private per-generation root and native app-server process group, and
+deletes them only after the pinned runtime exits. It launches the exact
+`openai-codex-cli-bin==0.157.1` executable over a private Unix socket and
+checks the running version before admission.
 
 The private authenticated MCP mount is exactly
 `/internal/agent-tools/mcp`, `mcp==2.1.0`, protocol `2025-06-18`. It is
@@ -124,7 +129,9 @@ Provider API execution uses `ProviderRuntime` with the selected configured
 credential. Each independently accepted provider call is a child model turn.
 Tool proposals are executed only after durable admission; the sealed,
 target-bound continuation advances only after the child terminal and tool
-result are persisted. Unsupported strict-output-plus-tool combinations are
+result are persisted. Nexus stores the library's complete opaque native
+continuation rather than reconstructing assistant text or provider history.
+Unsupported strict-output-plus-tool combinations are
 ineligible at catalog qualification rather than silently losing strictness or
 tools.
 

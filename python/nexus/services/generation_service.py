@@ -14,7 +14,11 @@ from nexus.services.generation_admission import (
     GenerationConfigurationDefect,
     GenerationOperationUnavailable,
 )
-from nexus.services.generation_catalog import GenerationCatalogService, ResolvedCatalogPair
+from nexus.services.generation_catalog import (
+    GenerationCatalogService,
+    ResolvedCatalogPair,
+    workflow_transport_capability,
+)
 from nexus.services.generation_policy import (
     EffectMode,
     ExactHostToolPlan,
@@ -87,6 +91,10 @@ class GenerationService:
         policy = workflow.model_tool_policy
         if not isinstance(policy, ExactModelTools):
             raise GenerationConfigurationDefect("Chat workflow lacks its exact model-tool plan")
+        if "TextWithTools" not in pair.capabilities:
+            raise GenerationOperationUnavailable(
+                "chat", "text with frozen model tools is unavailable"
+            )
         return _freeze_spec(
             operation="chat",
             selection_source="ChatRun",
@@ -130,6 +138,10 @@ class GenerationService:
             )
         if not isinstance(pair.readiness, Ready):
             raise GenerationOperationUnavailable(operation, pair.readiness)
+        if workflow_transport_capability(entry.workflow) not in pair.capabilities:
+            raise GenerationOperationUnavailable(
+                operation, "required model output mode is unavailable"
+            )
         _validate_host_policy(entry.workflow, host_plan, host_evidence_revision)
         return _freeze_spec(
             operation=operation,
@@ -177,6 +189,20 @@ class GenerationService:
             )
         if not isinstance(pair.readiness, Ready):
             raise GenerationOperationUnavailable(spec.operation, pair.readiness)
+        has_tools = isinstance(spec.model_tool_plan_snapshot, Present)
+        required_mode = (
+            "StructuredWithTools"
+            if isinstance(spec.output_contract, StrictJsonOutputSnapshot) and has_tools
+            else "StrictStructured"
+            if isinstance(spec.output_contract, StrictJsonOutputSnapshot)
+            else "TextWithTools"
+            if has_tools
+            else "Text"
+        )
+        if required_mode not in pair.capabilities:
+            raise GenerationOperationUnavailable(
+                spec.operation, "required model output mode is unavailable"
+            )
         operation = self.model_tool_operation(spec)
         if operation is not None:
             _require_available_bindings(operation, owner=spec.operation)

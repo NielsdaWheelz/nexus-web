@@ -53,7 +53,6 @@ def _controls_for_state_root(state_root_base: Path) -> CodexSandboxControls:
     _require_private_directory(state_root_base, label="state root")
     _require_private_directory(temporary_directory, label="temporary directory")
     return CodexSandboxControls(
-        child_tmpdir=str(temporary_directory),
         exclude_slash_tmp=_EXCLUDE_SLASH_TMP,
         exclude_tmpdir_env_var=_EXCLUDE_TMPDIR_ENV_VAR,
     )
