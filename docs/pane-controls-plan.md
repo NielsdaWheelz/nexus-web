@@ -196,8 +196,10 @@ History reset with selection retention passed. screenshots:
 and css root 200% text simulation fit, but actual physical touch, screen reader,
 and browser/os text enlargement are NOT_RUN. added library, pagination, focus,
 and geometry checks were authored after cutover began; their passes are not
-pre-change reds. root reports `./scripts/test` passing on the then-current
-tree; rerun after final edits. see
+pre-change reds. implementation commit `72b6bbd42`; on the final linked tree,
+`./scripts/test`, `node --check .pane-controls-live-proof.mjs`, and
+`git diff --check` passed. the authenticated real-stack proof again reported
+26/30 pass and exit 2 solely for the four named blocks. see
 [ticket](tickets/pane-controls-live-proof-blocked.md).
 
 ## hard cutover, costs, completion
