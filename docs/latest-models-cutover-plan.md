@@ -160,21 +160,21 @@ the library owns handshake/catalog/session/turn/events/interruption. close
 clients, stop and await the process group, verify/sync auth, then release the
 terminal/root/slot. a disconnected client is NOT proof of process exit.
 unproven teardown closes readiness and retains uncertainty. keep the external
-nexus `agent.sock` protocol, host isolation and private mcp mount.
+nexus `agent.sock` protocol and host isolation.
 
-repair codex mcp admission
-in the library: disabled native tools are independent of external mcp and
-sandbox permissions. allow exactly the host-frozen mcp publication and its
-scoped credentials; enforce native-tool/delegation unavailability BEFORE
-effects. removing the guard or rejecting later events is insufficient.
-first establish whether external mcp works with read-only/offline native
-permissions; retain the narrowest proven permissions. if 0.157.1 cannot enforce
-the frozen mcp-only contract, tool-bearing codex stays ineligible and the
-cutover is blocked.
-keep the kernel's stricter read-only/offline/no-mcp policy at its own boundary.
-map per-session mcp credentials explicitly into the native protocol; client
-environment is not the external process environment. retain sanitized cause,
-stage and generation identity through host failures.
+implementation finding (2026-09-26): pinned 0.157.1 has no app-server thread
+tool policy and offers generic MCP resource methods whenever an MCP server is
+mounted. native-tool and sandbox restrictions do not remove those methods.
+the required frozen MCP-only authority therefore cannot be proved. provider
+catalog v4 rejects nonempty Codex MCP publications before effects; Nexus
+removes the private mount and credential path, admits only text-only Codex,
+and marks every tool-bearing Codex workload ineligible. this is a blocker,
+not a qualified substitute for the originally required Codex chat/tool turns.
+do not restore MCP until a pinned native protocol can enforce the exact frozen
+tool set before effects and pass live authority proof. keep the kernel's
+read-only/offline/no-MCP policy. retain sanitized cause, stage and generation
+identity through host failures. an API route for affected workloads requires
+an explicit owner decision and independently qualified capability facts.
 
 qualify 0.157.1 auth refresh against the existing writable-file boundary;
 replace that narrow mechanism if native rename/write behavior changed.
