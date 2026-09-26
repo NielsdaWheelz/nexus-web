@@ -17,7 +17,6 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
-    SecretStr,
     StringConstraints,
     ValidationInfo,
     model_validator,
@@ -144,19 +143,6 @@ class JsonSchemaOutput(WireTaggedModel):
 
 
 GenerationOutput = Annotated[TextOutput | JsonSchemaOutput, Field(discriminator="kind")]
-
-
-class BearerToolGrant(WireTaggedModel):
-    """Sensitive, run-scoped material; its value is never serialized."""
-
-    kind: Literal["Bearer"] = "Bearer"
-    token: SecretStr = Field(exclude=True, repr=False)
-
-    @model_validator(mode="after")
-    def _token_is_not_blank(self) -> Self:
-        if not self.token.get_secret_value().strip():
-            raise ValueError("bearer token must not be blank")
-        return self
 
 
 class GenerationIntent(WireTaggedModel):

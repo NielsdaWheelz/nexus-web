@@ -113,9 +113,8 @@ The generation kinds use these exact renewable registry leases:
 `dossier_build`, 900s; and `chat_run`, 1,200s. The worker
 renews its exact running claim before dispatch and throughout execution;
 publication requires a live claim. These leases are not attempt deadlines.
-A Codex MCP bearer expires at the earliest of the lease expiry observed when
-it was issued, the admitted transport deadline, and the maximum grant lifetime.
-Later queue heartbeats do not extend that bearer ([llms.md](llms.md)).
+Provider API tool positions remain bound to the running generation claim;
+queue heartbeats do not widen their frozen authority ([llms.md](llms.md)).
 
 ### Dead-lettering
 
@@ -194,9 +193,9 @@ capacity admission permits one Heavy running attempt
 globally while leaving eligible Light work claimable. Domain handlers never
 touch capacity state.
 
-Metadata enrichment uses the interactive worker's live MCP registry and
-listener, alongside Chat and Dossier. Its remote generation and scoped reads
-do not occupy the parser capacity slot. It shares the interactive process's
+Metadata enrichment runs in the interactive worker alongside Chat and Dossier.
+Its remote generation and scoped reads do not occupy the parser capacity slot
+once an eligible route is approved. It shares the interactive process's
 memory boundary and serial job execution: an admitted metadata run can delay
 Chat for its 300-second generation budget plus bounded setup and drain.
 
@@ -288,7 +287,7 @@ see [media metadata](media-metadata.md) for date ownership and maintenance.
 Contributor, Page, Note, and internal Idea subjects. Its immutable registration
 selects one binding-table entry for collection, prompt, operation, freshness,
 identity, and authorization. The Idea binding receives one frozen HostTable
-operation whose sole grant is `web.search`; it never inherits Chat's MCP
+operation whose sole grant is `web.search`; it never inherits Chat's model-tool
 catalog. Research tools remain domain-owned journal steps and never become
 Codex built-ins; synthesis uses the fixed `Synthesis` capability. Stored
 binding metadata owns its `BilledOnce` replay policy, so an uncertain
@@ -315,7 +314,7 @@ duplicating compilation branches. `services/artifacts/subjects.py` is the sole
 eight-scheme composition owner: one literal binding table, with no mutable
 policy mirror, package re-export, or lazy fallback lookup.
 
-`chat_run` uses that kernel for preparation, every generation/MCP tool turn,
+`chat_run` uses that kernel for preparation, every generation and API tool turn,
 and final publication. Dead chat jobs are retained because their payload is the in-flight
 recovery record. Code defects retry without terminalizing `ChatRun`; exhausted
 attempts project `Suspended`. Operator repair requeues the same row with a fresh

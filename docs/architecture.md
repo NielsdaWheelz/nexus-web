@@ -751,19 +751,13 @@ its streaming transport explicit. The existing PostgreSQL queue, leases, and
 publication owners remain unchanged.
 See [modules/llms.md](modules/llms.md).
 
-Eligible Chat and background runs use one canonical tool authority. Codex
-observes its frozen plan over one exact MCP wire: Codex SDK/CLI `0.144.4` speaks
-Streamable HTTP revision `2025-06-18` to the official `mcp==2.1.0` stateless JSON server.
-The initialize body pins that revision; later POSTs require
-`MCP-Protocol-Version: 2025-06-18`. Every POST carries the generation grant in
-`Authorization`, `Content-Type: application/json`, and Codex's
-`Accept: application/json, text/event-stream`; Nexus nevertheless returns JSON
-and emits no `Mcp-Session-Id`. There is no stateful session, event stream,
-resumption, alternate revision, downgrade, OAuth, or transport fallback.
-Provider API tool proposals adapt the same frozen plan to the same executor.
-Both routes use `generation/{generation_seq}/tool/{n}` with one monotonic
-parent-generation ordinal, the same receipts, evidence, citations, trust, and
-Undo.
+Eligible Chat and background runs use one canonical tool authority. Provider
+API tool proposals adapt frozen plans to the executor and use
+`generation/{generation_seq}/tool/{n}` with one monotonic parent-generation
+ordinal, receipts, evidence, citations, trust, and Undo. Codex Personal admits
+only text and strict structured output without model tools; its tool-bearing
+Chat seed and three background policies remain ineligible until an approved
+route change or a proven native-authority boundary.
 
 The worker installs the process-global request-rate limiter at startup so the
 first job of any kind has a working limiter. Local execution capacity belongs
@@ -1000,8 +994,8 @@ Library and Idea Dossier model turns receive only the five Nexus reads over
 their exact admitted evidence scope. Idea host research separately freezes its
 bounded three-search preparation plan. Other background operations retain their
 direct evidence algorithms and publish `NoModelTools`; none inherit Chat
-authority. Codex MCP and Provider API functions adapt eligible plans to the same
-executor. Tool declarations, grants, limits, replay policy, and durable
+authority. Provider API functions adapt eligible plans to the executor. Tool
+declarations, grants, limits, replay policy, and durable
 execution are owned by `services/tool_runtime/` and `tool_authority.py`;
 `services/agent_tools/` remains the domain-adapter layer, not a second tool
 contract.
@@ -2234,8 +2228,8 @@ services start on the new digests.
 ([`rules/codebase.md`](rules/codebase.md)); configure local `.env` overrides
 manually. `make dev` writes live local auth settings to `.dev-ports` for the
 make targets. Major groups: app/env, database + pool, Supabase
-Auth (issuer/JWKS/audiences), internal secret, encryption key, Codex host/MCP
-grant settings + generation rate limits, the narrow OpenAI embedding key,
+Auth (issuer/JWKS/audiences), internal secret, encryption key, Codex host
+settings + generation rate limits, the narrow OpenAI embedding key,
 Brave Browse/chat search, streaming (token signing key + base URL + CORS),
 podcasts, browse providers, worker schedules, and Stripe. Worker lanes are
 Compose-owned rather than stored in the merged production env.

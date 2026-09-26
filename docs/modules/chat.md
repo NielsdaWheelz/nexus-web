@@ -46,10 +46,10 @@ authority. owner scope, eight-live-write limit, receipts, and undo remain
 enforced. historical read-only runs retain their frozen facts.
 canonical ids are the only executable identities.
 
-Codex observes the frozen plan through the authenticated MCP mount; API models
-receive the same plan as provider functions. Both adapters call the same
-`GenerationToolExecutor`, authorization, position ledger, evidence, citations,
-trust, and Undo. The sole position path is
+API models receive the frozen plan as provider functions and call the
+`GenerationToolExecutor` with its authorization, position ledger, evidence,
+citations, trust, and Undo. Codex admits no model tools, so its Chat seed is
+ineligible until an approved route or native-authority change. The sole position path is
 `generation/{generation_seq}/tool/{n}`; the one-based ordinal never restarts at
 an API child turn.
 

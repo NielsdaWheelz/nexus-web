@@ -547,13 +547,6 @@ def create_codex_agent_app(
         lifecycle.interrupt(request_id, "cancelled")
         return Response(status_code=204)
 
-    @app.post("/v2/generations/{request_id}/policy-violation")
-    async def policy_violation(request_id: UUID, request: Request) -> Response:
-        await _require_empty_body(request)
-        admissions.cancel(request_id)
-        lifecycle.interrupt(request_id, "policy_violation")
-        return Response(status_code=204)
-
     return app
 
 

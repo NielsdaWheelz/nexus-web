@@ -11,7 +11,6 @@ from uuid import UUID
 import httpx
 from pydantic import ValidationError
 
-from nexus.schemas.presence import Present
 from nexus.services.codex_generation_contract import (
     MAX_ADMISSION_BODY_BYTES,
     MAX_MODEL_CATALOG_BODY_BYTES,
@@ -158,9 +157,6 @@ class CodexGenerationClient:
     async def cancel(self, request_id: UUID) -> None:
         await self._control(request_id, "cancel")
 
-    async def policy_violation(self, request_id: UUID) -> None:
-        await self._control(request_id, "policy-violation")
-
     async def _read_json(self, path: str, *, deadline: float, maximum: int, label: str) -> bytes:
         transport = httpx.AsyncHTTPTransport(uds=str(self._socket_path))
         try:
@@ -271,10 +267,6 @@ class _FrameStreamValidator:
         self._buffer = bytearray()
         self._terminal: GenerationFrame | None = None
         self._forbidden_tool_event_seen = False
-        plan = command.spec.model_tool_plan_snapshot
-        self._allowed_model_tools = (
-            {grant.id for grant in plan.value.grants} if isinstance(plan, Present) else set[str]()
-        )
 
     def feed(self, chunk: bytes) -> tuple[GenerationFrame, ...]:
         self._total_bytes += len(chunk)
@@ -316,10 +308,7 @@ class _FrameStreamValidator:
                 self._validate_terminal(event)
                 self._terminal = frame
                 continue
-            if isinstance(event, GenerationToolUse):
-                if event.name not in self._allowed_model_tools:
-                    self._forbidden_tool_event_seen = True
-            elif isinstance(event, GenerationPermissionRequest):
+            if isinstance(event, GenerationToolUse | GenerationPermissionRequest):
                 self._forbidden_tool_event_seen = True
             observed.append(frame)
         return tuple(observed)

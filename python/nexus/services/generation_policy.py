@@ -299,14 +299,6 @@ GENERATION_POLICY = GenerationPolicy(
 # A durable capacity pause rechecks at this low-frequency fallback only when the
 # provider supplies no reset instant. It is not an ordinary generation retry.
 BACKGROUND_CAPACITY_PROBE_SECONDS = 15 * 60
-MODEL_TOOL_ADMISSION_RUNTIME_SECONDS = max(
-    workflow.bounds.turn_timeout_seconds
-    for workflow in (
-        GENERATION_POLICY.chat.workflow,
-        *(entry.workflow for entry in GENERATION_POLICY.background_operations.values()),
-    )
-    if not isinstance(workflow.model_tool_policy, NoModelTools)
-)
 
 
 def background_operation_policy(operation: str) -> BackgroundOperationPolicy:
