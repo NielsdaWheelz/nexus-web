@@ -217,7 +217,14 @@ class ChatStepRuntime:
             request_fingerprint=present(fingerprint),
             terminal_result=absent(),
         )
-        self._write(payload_with_step_state(self.job.payload, step_path=path, state=state))
+        job = self.lock_dispatch(self.db)
+        if job is None:
+            self.db.rollback()
+            raise LostChatJobLease(f"chat job {self.job.id} lost its lease")
+        if path in read_step_states(job):
+            self.db.rollback()
+            raise AssertionError(f"chat step {path!r} was already prepared")
+        self._write(payload_with_step_state(job.payload, step_path=path, state=state))
         return state
 
     def clear(self) -> None:
