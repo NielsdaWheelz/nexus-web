@@ -61,7 +61,6 @@ from nexus.services.generation_spec import (
     GenerationSpec,
     ProviderApiSelection,
     ProviderDispatchTargetSnapshot,
-    StrictJsonOutputSnapshot,
 )
 from nexus.services.provider_generation_contract import (
     ProviderGenerationEvent,
@@ -90,10 +89,6 @@ type ProviderToolProjection = Callable[[GenerationSpec], ProviderModelTools | No
 
 class GenerationBackendDefect(AssertionError):
     """A frozen same-system fact or injected backend contract was inconsistent."""
-
-
-class GenerationBackendCompositionRefused(ValueError):
-    """The requested output/tool composition is intentionally unsupported."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,13 +311,6 @@ class GenerationBackend:
             )
             max_turns = 1
         elif isinstance(spec.selection, ProviderApiSelection):
-            if isinstance(spec.output_contract, StrictJsonOutputSnapshot) and isinstance(
-                spec.model_tool_plan_snapshot, Present
-            ):
-                raise GenerationBackendCompositionRefused(
-                    "ProviderApi strict structured output and model tools cannot share "
-                    "one generation"
-                )
             model_tools = self._provider_tools(spec)
             max_turns = model_tools.snapshot.run_limits.max_calls + 1 if model_tools else 1
             if provider_resume is None:

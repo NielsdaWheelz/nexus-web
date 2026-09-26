@@ -35,11 +35,6 @@ from nexus.jobs.queue import (
 from nexus.logging import get_logger
 from nexus.schemas.presence import Present, present
 from nexus.services import durable_step_journal as step_journal
-from nexus.services.codex_generation_contract import (
-    GenerationTerminal,
-    normalized_failure,
-    retained_terminal_error_detail,
-)
 from nexus.services.collection_revisions import (
     ENTRY_VISIBILITY_FAMILIES,
     bump_all_collection_families,
@@ -47,7 +42,7 @@ from nexus.services.collection_revisions import (
 from nexus.services.contributor_writes import MediaTarget
 from nexus.services.contributors import apply_observed_role_slices_in_current_transaction
 from nexus.services.durable_step_journal import Completed, Prepared, StepReplayState, Uncertain
-from nexus.services.generation_backend import BackendToolExecutor
+from nexus.services.generation_backend import BackendTerminal, BackendToolExecutor
 from nexus.services.generation_spec import (
     FrozenToolScope,
     GenerationIntent,
@@ -67,9 +62,13 @@ from nexus.services.llm_execution import (
     GenerationFailureCode,
     GenerationUncertain,
     JobGenerationJournal,
+    StructuredTerminalCancelled,
+    StructuredTerminalFailure,
+    StructuredTerminalOutcome,
+    StructuredTerminalSuccess,
     admit_job_generation,
-    codex_terminal_evidence,
     execute_generation,
+    structured_terminal_outcome,
 )
 from nexus.services.llm_ledger import LlmCallOwner, lock_generation_owner_in_current_transaction
 from nexus.services.media_processing_state import is_metadata_enrichment_eligible
@@ -260,7 +259,7 @@ def enrich_metadata(
             request,
             session_factory=factory,
             runtime=runtime,
-            encode_terminal=lambda terminal: _encode_terminal(codex_terminal_evidence(terminal)),
+            encode_terminal=_encode_terminal,
             encode_failure=_encode_failure,
         )
 
@@ -426,13 +425,14 @@ def _terminalize_prepared(
         return published
 
 
-def _encode_terminal(terminal: GenerationTerminal) -> EncodedGenerationTerminal:
-    memo = _normalize_terminal(terminal)
+def _encode_terminal(terminal: BackendTerminal) -> EncodedGenerationTerminal:
+    outcome = structured_terminal_outcome(terminal)
+    memo = _normalize_terminal(outcome)
     return EncodedGenerationTerminal(
         terminal_result=step_journal.encode_step_result(memo),
         accepted_failure=(
             AcceptedGenerationFailure(code="invalid_output", detail=memo.error_detail)
-            if terminal.status == "succeeded" and memo.kind == "failed"
+            if isinstance(outcome, StructuredTerminalSuccess) and memo.kind == "failed"
             else None
         ),
     )
@@ -442,19 +442,16 @@ def _encode_failure(code: GenerationFailureCode, detail: str) -> str:
     return step_journal.encode_step_result(_failed_memo(_failure_code(code), detail))
 
 
-def _normalize_terminal(terminal: GenerationTerminal) -> _Memo:
-    if terminal.status == "cancelled":
+def _normalize_terminal(outcome: StructuredTerminalOutcome) -> _Memo:
+    if isinstance(outcome, StructuredTerminalCancelled):
         return _failed_memo(
             ApiErrorCode.E_GENERATION_CANCELLED, "metadata generation was cancelled"
         )
-    if terminal.status == "failed":
-        if terminal.failure is None:
-            raise AssertionError("failed generation terminal has no typed failure")
-        detail = retained_terminal_error_detail(terminal)
-        if detail is None:
-            raise AssertionError("failed generation terminal has no retained detail")
-        return _failed_memo(_failure_code(normalized_failure(terminal.failure.kind)), detail)
-    validated = validate_structured_enrichment(terminal.structured_output)
+    if isinstance(outcome, StructuredTerminalFailure):
+        return _failed_memo(_failure_code(outcome.code), outcome.detail)
+    if not isinstance(outcome, StructuredTerminalSuccess):
+        assert_never(outcome)
+    validated = validate_structured_enrichment(outcome.payload)
     if validated is None:
         return _failed_memo(
             ApiErrorCode.E_GENERATION_INVALID_OUTPUT,

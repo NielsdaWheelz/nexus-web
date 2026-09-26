@@ -23,6 +23,7 @@ from nexus.services.generation_spec import (
     GenerationBounds,
     GenerationSelectionSpec,
     GenerationStreamBounds,
+    ProviderApiSelection,
 )
 from nexus.services.tool_runtime.plan_revisions import (
     TOOL_PLAN_AUTHORITY_REVISIONS,
@@ -128,6 +129,10 @@ def _codex(model: str, reasoning: str) -> CodexPersonalSelection:
     return CodexPersonalSelection(route="CodexPersonal", model=model, reasoning=reasoning)
 
 
+def _api(model_ref: str, reasoning: str) -> ProviderApiSelection:
+    return ProviderApiSelection(route="ProviderApi", model_ref=model_ref, reasoning=reasoning)
+
+
 def _tool_authority_revision(plan_id: str) -> str:
     try:
         return tool_plan_authority_revision(plan_id)
@@ -225,28 +230,101 @@ _IDEA_HOST_PLAN = ExactHostToolPlan(
     "idea_dossier_research", _tool_authority_revision("idea_dossier_research")
 )
 
-# operation, model, reasoning, turn timeout s, input KiB, context tokens,
+# operation, exact selection, turn timeout s, input KiB, context tokens,
 # output tokens, host-tool plan, model-tool policy. Every background operation
-# is strict JSON over Codex Personal.
+# requires strict JSON; tool-bearing operations use the proved API combination.
 _BACKGROUND_ROWS: tuple[
-    tuple[BackgroundOperationKey, str, str, int, int, int, int, HostToolPlan, ModelToolPolicy], ...
+    tuple[
+        BackgroundOperationKey,
+        GenerationSelectionSpec,
+        int,
+        int,
+        int,
+        int,
+        HostToolPlan,
+        ModelToolPolicy,
+    ],
+    ...,
 ] = (
-    ("metadata_enrichment", "luna", "low", 300, 32, 64_000, 8_000, _NO_HOST, _METADATA_TOOLS),
-    ("media_summary", "luna", "low", 120, 256, 128_000, 16_000, _NO_HOST, _NO_TOOLS),
-    ("synapse", "luna", "low", 120, 256, 128_000, 16_000, _NO_HOST, _NO_TOOLS),
-    ("oracle", "sol", "medium", 180, 256, 128_000, 16_000, _NO_HOST, _NO_TOOLS),
-    ("dossier_page", "luna", "low", 120, 1024, 400_000, 32_000, _NO_HOST, _NO_TOOLS),
-    ("dossier_note", "luna", "low", 120, 1024, 400_000, 32_000, _NO_HOST, _NO_TOOLS),
-    ("dossier_media", "sol", "medium", 180, 1024, 400_000, 32_000, _NO_HOST, _NO_TOOLS),
-    ("dossier_conversation", "sol", "medium", 180, 1024, 400_000, 32_000, _NO_HOST, _NO_TOOLS),
-    ("dossier_library", "sol", "high", 300, 1024, 400_000, 32_000, _NO_HOST, _LIBRARY_TOOLS),
-    ("dossier_podcast", "sol", "high", 300, 1024, 400_000, 32_000, _NO_HOST, _NO_TOOLS),
-    ("dossier_contributor", "sol", "high", 300, 1024, 400_000, 32_000, _NO_HOST, _NO_TOOLS),
-    ("dossier_idea", "sol", "high", 300, 1024, 400_000, 32_000, _IDEA_HOST_PLAN, _IDEA_TOOLS),
+    (
+        "metadata_enrichment",
+        _api("openai:gpt-6-luna", "standard/low"),
+        300,
+        32,
+        64_000,
+        8_000,
+        _NO_HOST,
+        _METADATA_TOOLS,
+    ),
+    ("media_summary", _codex("gpt-6-luna", "low"), 120, 256, 128_000, 16_000, _NO_HOST, _NO_TOOLS),
+    ("synapse", _codex("gpt-6-luna", "low"), 120, 256, 128_000, 16_000, _NO_HOST, _NO_TOOLS),
+    ("oracle", _codex("gpt-6-sol", "medium"), 180, 256, 128_000, 16_000, _NO_HOST, _NO_TOOLS),
+    ("dossier_page", _codex("gpt-6-luna", "low"), 120, 1024, 400_000, 32_000, _NO_HOST, _NO_TOOLS),
+    ("dossier_note", _codex("gpt-6-luna", "low"), 120, 1024, 400_000, 32_000, _NO_HOST, _NO_TOOLS),
+    (
+        "dossier_media",
+        _codex("gpt-6-sol", "medium"),
+        180,
+        1024,
+        400_000,
+        32_000,
+        _NO_HOST,
+        _NO_TOOLS,
+    ),
+    (
+        "dossier_conversation",
+        _codex("gpt-6-sol", "medium"),
+        180,
+        1024,
+        400_000,
+        32_000,
+        _NO_HOST,
+        _NO_TOOLS,
+    ),
+    (
+        "dossier_library",
+        _api("openai:gpt-6-sol", "standard/high"),
+        300,
+        1024,
+        400_000,
+        32_000,
+        _NO_HOST,
+        _LIBRARY_TOOLS,
+    ),
+    (
+        "dossier_podcast",
+        _codex("gpt-6-sol", "high"),
+        300,
+        1024,
+        400_000,
+        32_000,
+        _NO_HOST,
+        _NO_TOOLS,
+    ),
+    (
+        "dossier_contributor",
+        _codex("gpt-6-sol", "high"),
+        300,
+        1024,
+        400_000,
+        32_000,
+        _NO_HOST,
+        _NO_TOOLS,
+    ),
+    (
+        "dossier_idea",
+        _api("openai:gpt-6-sol", "standard/high"),
+        300,
+        1024,
+        400_000,
+        32_000,
+        _IDEA_HOST_PLAN,
+        _IDEA_TOOLS,
+    ),
 )
 _BACKGROUND_OPERATIONS: dict[BackgroundOperationKey, BackgroundOperationPolicy] = {
     operation: BackgroundOperationPolicy(
-        selection=_codex(f"gpt-6-{model}", reasoning),
+        selection=selection,
         workflow=_workflow(
             operation,
             bounds=_bounds(input_max_bytes=input_kib * 1024, turn_timeout_seconds=timeout),
@@ -260,8 +338,7 @@ _BACKGROUND_OPERATIONS: dict[BackgroundOperationKey, BackgroundOperationPolicy] 
     )
     for (
         operation,
-        model,
-        reasoning,
+        selection,
         timeout,
         input_kib,
         context_tokens,
@@ -272,7 +349,7 @@ _BACKGROUND_OPERATIONS: dict[BackgroundOperationKey, BackgroundOperationPolicy] 
 }
 
 _CHAT = ChatPolicy(
-    seed=_codex("gpt-6-sol", "medium"),
+    seed=_api("openai:gpt-6-sol", "standard/medium"),
     workflow=_workflow(
         "chat",
         bounds=_bounds(input_max_bytes=512 * 1024, turn_timeout_seconds=900, stream=_CHAT_STREAM),

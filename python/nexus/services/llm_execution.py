@@ -32,6 +32,7 @@ from provider_runtime.types import (
     ProviderRateLimit,
     ProviderStreamInterrupted,
     ProviderTimeout,
+    StructuredContent,
     TransientExhausted,
     TransportUnavailable,
 )
@@ -58,6 +59,7 @@ from nexus.services.codex_generation_contract import (
     GenerationTerminal,
     NormalizedFailureCode,
     normalized_failure,
+    retained_terminal_error_detail,
 )
 from nexus.services.durable_step_journal import (
     Completed,
@@ -943,6 +945,102 @@ def codex_terminal_evidence(terminal: BackendTerminal) -> GenerationTerminal:
     if not isinstance(terminal.evidence, CodexTerminalEvidence):
         raise AssertionError("Codex-only operation received a ProviderApi terminal")
     return terminal.evidence.native
+
+
+@dataclass(frozen=True, slots=True)
+class StructuredTerminalSuccess:
+    payload: Mapping[str, object] | None
+
+
+@dataclass(frozen=True, slots=True)
+class StructuredTerminalFailure:
+    code: GenerationFailureCode
+    detail: str
+
+
+@dataclass(frozen=True, slots=True)
+class StructuredTerminalCancelled:
+    pass
+
+
+type StructuredTerminalOutcome = (
+    StructuredTerminalSuccess | StructuredTerminalFailure | StructuredTerminalCancelled
+)
+
+
+def structured_terminal_outcome(terminal: BackendTerminal) -> StructuredTerminalOutcome:
+    """Project either backend's final strict output onto domain terminal facts."""
+
+    evidence = terminal.evidence
+    if isinstance(evidence, CodexTerminalEvidence):
+        native = evidence.native
+        if native.status == "succeeded":
+            return StructuredTerminalSuccess(payload=native.structured_output)
+        if native.status == "cancelled":
+            return StructuredTerminalCancelled()
+        if native.failure is None:
+            raise AssertionError("failed Codex terminal omitted its failure")
+        detail = retained_terminal_error_detail(native)
+        if detail is None:
+            raise AssertionError("failed Codex terminal omitted its detail")
+        return StructuredTerminalFailure(
+            code=normalized_failure(native.failure.kind), detail=detail
+        )
+    if not isinstance(evidence, ProviderTerminalEvidence):
+        assert_never(evidence)
+    outcome = evidence.outcome
+    if isinstance(outcome, ProviderSucceeded):
+        content = outcome.response.content
+        if not isinstance(content, StructuredContent):
+            raise AssertionError("final strict ProviderApi terminal omitted structured output")
+        return StructuredTerminalSuccess(payload=content.payload)
+    if isinstance(outcome, ProviderCancelled):
+        return StructuredTerminalCancelled()
+    if isinstance(outcome, ProviderIncomplete):
+        if outcome.status == "refused":
+            return StructuredTerminalFailure(
+                code="invalid_output",
+                detail=_provider_safe_detail(
+                    "provider refused structured output", outcome.safe_detail
+                ),
+            )
+        if outcome.reason == "max_output_tokens":
+            return StructuredTerminalFailure(
+                code="output_limit", detail="provider structured generation reached output limit"
+            )
+        return StructuredTerminalFailure(
+            code="invalid_output",
+            detail=_provider_safe_detail(
+                "provider returned incomplete structured output", outcome.safe_detail
+            ),
+        )
+    if isinstance(outcome, ProviderFailed):
+        code = _provider_failure_code(outcome.failure)
+        normalized: GenerationFailureCode
+        if code == "context_too_large":
+            normalized = "context_too_large"
+        elif code == "timeout":
+            normalized = "timeout"
+        elif code in {
+            "invalid_tool_arguments",
+            "invalid_structured_output",
+        }:
+            normalized = "invalid_output"
+        elif code == "continuation_too_large":
+            normalized = "output_limit"
+        else:
+            normalized = "runtime_unavailable"
+        detail = f"provider structured generation failed: {code}"
+        if isinstance(outcome.failure, InvalidToolArguments | InvalidStructuredOutput):
+            detail = _provider_safe_detail(detail, RuntimePresent(outcome.failure.safe_detail))
+        return StructuredTerminalFailure(code=normalized, detail=detail)
+    assert_never(outcome)
+
+
+def _provider_safe_detail(prefix: str, safe_detail: RuntimePresent[str] | RuntimeAbsent) -> str:
+    if isinstance(safe_detail, RuntimePresent) and safe_detail.value:
+        return f"{prefix}: {safe_detail.value}"[:1000]
+    return prefix
 
 
 def _child_terminal_documents(

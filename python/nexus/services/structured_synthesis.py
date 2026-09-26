@@ -7,7 +7,7 @@ repair round: a decode or validate failure raises once.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Literal
 
 from pydantic import BaseModel, ValidationError
@@ -100,10 +100,21 @@ def decode_structured_synthesis[T: BaseModel](
         raise AssertionError(
             "structured synthesis received a non-succeeded terminal; caller must classify it"
         )
-    if terminal.structured_output is None:
+    return decode_structured_payload(terminal.structured_output, schema=schema, validate=validate)
+
+
+def decode_structured_payload[T: BaseModel](
+    payload: Mapping[str, object] | None,
+    *,
+    schema: type[T],
+    validate: Callable[[T], str | None] | None = None,
+) -> T:
+    """Validate a strict backend payload into the domain's output schema."""
+
+    if payload is None:
         raise StructuredSynthesisError("succeeded terminal has no structured output")
     try:
-        value = schema.model_validate(terminal.structured_output)
+        value = schema.model_validate(payload)
     except ValidationError:
         # Pydantic renders rejected input values; the adapter memo is durable.
         raise StructuredSynthesisError("response JSON does not match the schema") from None

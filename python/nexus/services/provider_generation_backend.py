@@ -326,11 +326,6 @@ def _frozen_request(
         raise ProviderGenerationDefect(
             origin="plan", message="provider backend received a non-ProviderApi generation"
         )
-    if isinstance(spec.output_contract, StrictJsonOutputSnapshot) and model_tools is not None:
-        raise ProviderGenerationDefect(
-            origin="plan",
-            message="ProviderRuntime does not support strict output and tools in one call",
-        )
     return dispatch, spec.selection
 
 
@@ -441,6 +436,10 @@ def _successor(
         return Absent()
     if not isinstance(content, TextContent):
         assert_never(content)
+    if isinstance(turn.spec.output_contract, StrictJsonOutputSnapshot) and not content.tool_calls:
+        raise ProviderGenerationDefect(
+            origin="provider_stream", message="strict provider terminal lacked structured output"
+        )
     if tuple(content.tool_calls) != completed_calls:
         raise ProviderGenerationDefect(
             origin="provider_stream",

@@ -55,8 +55,11 @@ from nexus.services.llm_execution import (
     GenerationExecutionRequest,
     GenerationFailureCode,
     JobGenerationJournal,
+    StructuredTerminalCancelled,
+    StructuredTerminalFailure,
+    StructuredTerminalSuccess,
     admit_job_generation,
-    codex_terminal_evidence,
+    structured_terminal_outcome,
 )
 from nexus.services.llm_ledger import LlmCallOwner
 from nexus.services.resource_graph.refs import (
@@ -68,8 +71,7 @@ from nexus.services.resource_graph.schemas import CitationSnapshot
 from nexus.services.structured_synthesis import (
     StructuredSynthesisError,
     build_synthesis_intent,
-    decode_structured_synthesis,
-    outcome_failure_facts,
+    decode_structured_payload,
 )
 from nexus.services.tool_authority import (
     DeferredGenerationToolExecutor,
@@ -204,12 +206,12 @@ class SynthesisStep:
 
     def encode_terminal(self, terminal: BackendTerminal) -> EncodedGenerationTerminal:
         """Validate and persist the final document at the ledger landing boundary."""
-        native = codex_terminal_evidence(terminal)
+        outcome = structured_terminal_outcome(terminal)
         accepted_failure: AcceptedGenerationFailure | None = None
         result: GenerationResult
-        if native.status == "succeeded":
+        if isinstance(outcome, StructuredTerminalSuccess):
             try:
-                decoded = decode_structured_synthesis(native, schema=StandardSynthesis)
+                decoded = decode_structured_payload(outcome.payload, schema=StandardSynthesis)
                 result = self._materialize(decoded)
             except CitationValidationError as error:
                 result = GenerationFailure(
@@ -225,13 +227,12 @@ class SynthesisStep:
                 accepted_failure = AcceptedGenerationFailure(
                     code="invalid_output", detail=str(error)
                 )
-        elif native.status == "cancelled":
+        elif isinstance(outcome, StructuredTerminalCancelled):
             result = GenerationCancelled()
         else:
-            code, detail = outcome_failure_facts(native)
-            result = GenerationFailure(
-                code=_failure_code(cast("GenerationFailureCode", code)), detail=detail
-            )
+            if not isinstance(outcome, StructuredTerminalFailure):
+                assert_never(outcome)
+            result = GenerationFailure(code=_failure_code(outcome.code), detail=outcome.detail)
         return EncodedGenerationTerminal(
             terminal_result=result.model_dump_json(),
             accepted_failure=accepted_failure,

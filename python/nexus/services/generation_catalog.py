@@ -571,6 +571,17 @@ def _api_source(
         capabilities.append("StrictStructured")
     if row.streaming and row.tools and row.continuation_codec:
         capabilities.append("TextWithTools")
+    if row.structured_with_tools:
+        if not (
+            row.streaming
+            and row.tools
+            and row.continuation_codec
+            and isinstance(row.structured, NativeStructuredOutput)
+        ):
+            raise GenerationConfigurationDefect(
+                f"provider model {row.model_ref!r} claimed inconsistent structured tool support"
+            )
+        capabilities.append("StructuredWithTools")
     return _SourceModel(
         route_key=f"ProviderApi:{provider}",
         target_key=f"ProviderApi:{row.model_ref}",
