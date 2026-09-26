@@ -48,8 +48,11 @@ pane-local search is visit-local chrome, not pane history or workspace state.
 only the active capable `PaneShell` consumes Cmd/Ctrl+F; inactive panes retain
 their mounted query/result state, while source replacement retires it.
 unsupported panes leave native browser find untouched. collection panes publish
-one always-visible control band before their results, with local text first,
-domain controls next, then status and reset. `Pane.Search` focuses its input.
+one compact row in the body scrollport: their input and order stay visible;
+applicable facets open a labelled editor, while applied chips and an honest
+result status sit at the list boundary. reset appears only for changed state.
+`Pane.Search` reveals, focuses and selects the active pane input; collection
+menus have no duplicate search command.
 page and note editors retain transient `FilterRows` over their direct ordered
 items. document panes, including individual conversations, retain transient
 `FindOccurrences` with transient Inspector results.

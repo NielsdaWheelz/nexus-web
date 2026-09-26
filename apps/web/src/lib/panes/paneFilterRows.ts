@@ -76,3 +76,31 @@ export function paneFilterRowsStatusMessage(
         : `${status.visibleCount}${matching} ${unit} among ${status.loadedCount} loaded; loading failed.`;
   }
 }
+
+/** A terse visual status for persistent collection controls. */
+export function paneCollectionRowsStatusMessage(
+  status: PaneFilterRowsStatus,
+  query: string,
+): string {
+  const unit =
+    status.visibleCount === 1 ? status.unit.singular : status.unit.plural;
+  switch (status.kind) {
+    case "Partial":
+      return query.trim()
+        ? `${status.visibleCount} matches in ${status.loadedCount} loaded; loading more`
+        : `${status.visibleCount} ${unit} in ${status.loadedCount} loaded; loading more`;
+    case "Complete":
+      if (status.visibleCount === status.totalCount) {
+        return `${status.visibleCount}${query.trim() ? " matching" : ""} ${unit}`;
+      }
+      return `${status.visibleCount} of ${status.totalCount} ${status.unit.plural}`;
+    case "Retained":
+      return status.cause === "Updating"
+        ? "updating; showing previous results"
+        : "update failed; showing previous results";
+    case "Failed":
+      return status.loadedCount === 0
+        ? "results unavailable"
+        : `${status.loadedCount} loaded; loading failed`;
+  }
+}

@@ -103,13 +103,13 @@ export function updatedTitleSortOptionLabel(
 ): string {
   switch (id) {
     case "updated-newest":
-      return "Updated — newest";
+      return "Newest update";
     case "updated-oldest":
-      return "Updated — oldest";
+      return "Oldest update";
     case "title-asc":
-      return "Title — A–Z";
+      return "Title A–Z";
     case "title-desc":
-      return "Title — Z–A";
+      return "Title Z–A";
     default:
       return assertNever(id);
   }

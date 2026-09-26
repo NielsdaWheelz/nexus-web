@@ -312,16 +312,6 @@ export default function AuthorPaneBody() {
   // no flag — the requested and committed identities differ on their own.
   const refreshPendingRef = useRef(false);
   const sortSelectRef = useRef<HTMLSelectElement | null>(null);
-  // Set before a view replacement the user initiated from the sort control, so
-  // the commit that answers it returns focus there.
-  const pendingCommitFocusRef = useRef(false);
-  const focusPendingSortControl = useCallback(() => {
-    if (!pendingCommitFocusRef.current) return;
-    pendingCommitFocusRef.current = false;
-    const element = sortSelectRef.current;
-    if (element === null) return;
-    requestAnimationFrame(() => element.focus());
-  }, []);
   const setView = useCallback(
     (next: AuthorWorksView) => {
       capturePaneScroll();
@@ -396,7 +386,6 @@ export default function AuthorPaneBody() {
       setData(committed);
       setChainEpoch((epoch) => epoch + 1);
       setError(null);
-      focusPendingSortControl();
 
       if (revalidation.isPending(firstPageVersion)) {
         completedAuthorRevalidationVersionRef.current = firstPageVersion;
@@ -424,7 +413,6 @@ export default function AuthorPaneBody() {
     data?.detail,
     firstPage,
     firstPageVersion,
-    focusPendingSortControl,
     seedDetail,
     view,
   ]);
@@ -636,12 +624,12 @@ export default function AuthorPaneBody() {
       invalidView || view === null ? undefined : (
         <>
           <SelectField
-            layout="Stacked"
-            label="Sort by"
+            layout="Inline"
+            label="Sort works"
+            size="sm"
             ref={sortSelectRef}
             value={authorWorksSortOptionOf(view)}
             onChange={(event) => {
-              pendingCommitFocusRef.current = true;
               setView(
                 authorWorksViewForSortOption(
                   event.target.value as AuthorWorksSortOptionId,
@@ -675,16 +663,18 @@ export default function AuthorPaneBody() {
                 onClearQuery={clearQuery}
                 rowStatus={rowStatus}
                 filters={domainFilterControls}
-                controls={
+                controls={view.kind !== "Canonical" ? (
                   <Button
-                    variant="secondary"
+                    variant="ghost"
                     size="sm"
-                    onClick={resetView}
-                    disabled={view.kind === "Canonical" && !filterQuery.trim()}
+                    onClick={() => {
+                      sortSelectRef.current?.focus({ preventScroll: true });
+                      resetView();
+                    }}
                   >
                     Reset view
                   </Button>
-                }
+                ) : undefined}
               />
             ),
             focusInput,
@@ -818,6 +808,7 @@ export default function AuthorPaneBody() {
                 kind: "Valid",
                 view: CANONICAL_AUTHOR_WORKS_VIEW,
               });
+              requestAnimationFrame(() => sortSelectRef.current?.focus({ preventScroll: true }));
             },
           },
         ]}

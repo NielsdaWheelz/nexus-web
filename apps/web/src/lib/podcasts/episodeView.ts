@@ -106,19 +106,14 @@ export function podcastEpisodeViewQuery(
   return new URLSearchParams({ state: view.state, sort: view.sort });
 }
 
-/** How many domain controls sit off their default; 0 means canonical. */
-export function activeEpisodeControlCount(view: PodcastEpisodeView): number {
-  return Number(view.state !== "all") + Number(view.sort !== "newest");
-}
-
 export function episodeStateFilterLabel(state: EpisodeStateFilter): string {
   switch (state) {
     case "all":
-      return "All";
+      return "All episodes";
     case "unplayed":
       return "Unplayed";
     case "in_progress":
-      return "In Progress";
+      return "In progress";
     case "played":
       return "Played";
     default:
@@ -129,13 +124,13 @@ export function episodeStateFilterLabel(state: EpisodeStateFilter): string {
 export function episodeSortLabel(sort: EpisodeSort): string {
   switch (sort) {
     case "newest":
-      return "Newest";
+      return "Newest released";
     case "oldest":
-      return "Oldest";
+      return "Oldest released";
     case "duration_asc":
-      return "Shortest";
+      return "Shortest duration";
     case "duration_desc":
-      return "Longest";
+      return "Longest duration";
     default:
       return assertNever(sort);
   }

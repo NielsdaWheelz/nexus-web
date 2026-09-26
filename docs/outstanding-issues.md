@@ -30,6 +30,7 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
+- [open] collection controls / live verification · 2026-09-25 pane-controls implementation · 26/30 live checks pass; search/podcast prerequisites and device/accessibility cases remain blocked or not run: [ticket](tickets/pane-controls-live-proof-blocked.md).
 - [open] reader / find · 2026-09-24 reader-inspector-controls · epub find previews wait without a fragment-failure signal: [ticket](tickets/epub-find-preview-has-no-fragment-failure-signal.md).
 - [open] reader / find · 2026-09-24 reader-inspector-controls · a supersession abort retires the find preview lease: [ticket](tickets/find-supersession-abort-retires-the-preview-lease.md).
 - [open] reader / find · 2026-09-24 reader-inspector-controls · web and transcript find keep a render frame budget: [ticket](tickets/web-and-transcript-find-render-budget.md).

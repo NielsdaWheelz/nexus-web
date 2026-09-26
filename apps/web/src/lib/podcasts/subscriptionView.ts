@@ -130,25 +130,14 @@ export function podcastSubscriptionViewQuery(
   return query;
 }
 
-/** How many domain controls sit off their default; 0 means canonical. */
-export function activeSubscriptionControlCount(
-  view: PodcastSubscriptionView,
-): number {
-  return (
-    Number(view.filter !== "all") +
-    Number(view.sort !== "recent_episode") +
-    Number(view.library.kind === "ExactLibrary")
-  );
-}
-
 export function subscriptionFilterLabel(filter: SubscriptionFilter): string {
   switch (filter) {
     case "all":
-      return "All";
+      return "All shows";
     case "has_new":
-      return "Has New";
+      return "Has new episodes";
     case "not_in_library":
-      return "Not In Library";
+      return "Not in a library";
     default:
       return assertNever(filter);
   }
@@ -157,11 +146,11 @@ export function subscriptionFilterLabel(filter: SubscriptionFilter): string {
 export function subscriptionSortLabel(sort: SubscriptionSort): string {
   switch (sort) {
     case "recent_episode":
-      return "Recent Episode";
+      return "Newest episode";
     case "unplayed_count":
-      return "Most Unplayed";
+      return "Most unplayed";
     case "alpha":
-      return "Title — A–Z";
+      return "Title A–Z";
     default:
       return assertNever(sort);
   }

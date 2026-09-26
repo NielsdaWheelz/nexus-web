@@ -1,7 +1,7 @@
 "use client";
 
 import { Play } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useId, useMemo, useRef, useState } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import QuickReadsSection from "@/components/collections/QuickReadsSection";
 import ReadingSlateSection from "@/components/collections/ReadingSlateSection";
@@ -207,14 +207,6 @@ export default function LecternPaneBody() {
     [items, view],
   );
   const sortSelectRef = useRef<HTMLSelectElement | null>(null);
-  // Invalid-view recovery removes its own button and returns focus to Sort by.
-  const pendingCommitFocusRef = useRef(false);
-  useEffect(() => {
-    const select = sortSelectRef.current;
-    if (!pendingCommitFocusRef.current || select === null) return;
-    pendingCommitFocusRef.current = false;
-    select.focus();
-  }, [view]);
   const presentFailure = useCallback(
     (error: unknown, operation: LecternErrorOperation) => {
       try {
@@ -330,8 +322,9 @@ export default function LecternPaneBody() {
       view === null ? undefined : (
         <>
           <SelectField
-            layout="Stacked"
-            label="Sort by"
+            layout="Inline"
+            label="Sort Lectern items"
+            size="sm"
             ref={sortSelectRef}
             value={lecternSortOptionOf(view)}
             onChange={(event) =>
@@ -412,16 +405,18 @@ export default function LecternPaneBody() {
                 onClearQuery={clearQuery}
                 rowStatus={rowStatus}
                 filters={domainFilterControls}
-                controls={
+                controls={view.kind !== "Custom" ? (
                   <Button
-                    variant="secondary"
+                    variant="ghost"
                     size="sm"
-                    onClick={resetToCanonicalView}
-                    disabled={view.kind === "Custom" && !filterQuery.trim()}
+                    onClick={() => {
+                      sortSelectRef.current?.focus({ preventScroll: true });
+                      resetToCanonicalView();
+                    }}
                   >
                     Reset view
                   </Button>
-                }
+                ) : undefined}
               />
             ),
             focusInput,
@@ -508,8 +503,8 @@ export default function LecternPaneBody() {
             content={{ tone: "Danger", title: "Invalid Lectern view" }}
             announcement="Assertive"
             actions={[{ label: "Reset view", onClick: () => {
-              pendingCommitFocusRef.current = true;
               resetToCanonicalView();
+              requestAnimationFrame(() => sortSelectRef.current?.focus({ preventScroll: true }));
             } }]}
           />
         ) : (

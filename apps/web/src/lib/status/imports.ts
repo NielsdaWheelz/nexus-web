@@ -1156,6 +1156,13 @@ export function importsLoadErrorMessage(error: unknown): FeedbackContent {
         message: "Wait a moment, then refresh.",
         requestId: error.requestId,
       };
+    case "E_INVALID_CURSOR":
+      return {
+        tone: "Danger",
+        title: "More imports couldn’t be loaded",
+        message: "Refresh this view to start loading again.",
+        requestId: error.requestId,
+      };
     default:
       throw error;
   }
@@ -1170,12 +1177,24 @@ export interface ImportsEmptyCopy {
 
 export function importsEmptyCopy(
   view: "NeedsAttention" | "InProgress" | "History",
-  filtered: boolean,
+  { hasSearch, hasFilters }: { hasSearch: boolean; hasFilters: boolean },
 ): ImportsEmptyCopy {
-  if (filtered) {
+  if (hasSearch && hasFilters) {
+    return {
+      title: "No imports match this search and filters",
+      body: "Change the search or clear filters to broaden the results.",
+    };
+  }
+  if (hasSearch) {
+    return {
+      title: "No imports match this search",
+      body: "Try another search or clear it.",
+    };
+  }
+  if (hasFilters) {
     return {
       title: "No imports match these filters",
-      body: "Clear the filters to see this view again.",
+      body: "Change or clear filters to broaden the results.",
     };
   }
   switch (view) {
@@ -1190,8 +1209,7 @@ export function importsEmptyCopy(
         body: "An import being uploaded, extracted or indexed appears here.",
       };
     case "History":
-      // Any applied bound routes to the filtered copy above, so this branch is
-      // reached only where no date range exists to name.
+      // A bounded window uses the filtered copy above.
       return {
         title: "No imports have recorded history",
         body: "History shows every import with recorded evidence, including the ones that finished.",

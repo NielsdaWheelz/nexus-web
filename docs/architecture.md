@@ -1179,7 +1179,10 @@ policies the catalog does — `media_source_ingest.source_recovery` for source
 retry/repair and `content_indexing` for search repair — so counts, membership,
 and offered recovery cannot disagree. A published upload keeps its
 `upload:<handle>` identity for life, so one import is one row from acceptance to
-History. See `docs/cutovers/imports-workspace-hard-cutover.md`.
+History. its compact collection row keeps the committed query and applied
+constraints visible; a failed later page retains loaded rows, marks the loaded
+count as failed, and offers one retry of that cursor. See
+`docs/cutovers/imports-workspace-hard-cutover.md`.
 
 **Recovery/deletion:** `reconcile_stale_ingest_media` requeues/fails stale
 `extracting` rows and repairs content/semantic indexes. Upload-session expiry is
@@ -1899,34 +1902,38 @@ publish no Pane Search/Find capability.
 
 ### 8.11 Collection refinement
 
-Every primary collection pane is an instance of one refinement grammar —
-`Filter text -> domain controls -> Clear filters` — rendered in the Pane Search
-row. The shell owns the grammar; each domain owns a closed view type, its URL
-codec, its option inventory and labels, its request identity, its server query,
-its total order, its cursor, and its local match fields. This is a capability
-expansion, not a query engine: there is no row-metadata schema, runtime
+Every primary collection pane composes the same visible grammar: input,
+readable order, conditional filters disclosure, applied chips, and an honest
+result status. the controls live in the ordinary body scrollport; the filters
+editor owns disclosure and focus, while domains own clear/reset semantics and
+request policy. the shell hosts the labelled collection publication and its
+`Pane.Search` focus command, without a duplicate menu search action. each
+domain owns a closed view type, URL codec, option inventory and labels, request
+identity, server query, total order, cursor, and local match fields. this is
+presentation composition, not a query engine: no row-metadata schema, runtime
 registry, generic controller, Boolean AST, or client sorting of pageable rows.
 
 | Surface | Local match fields | Canonical view | `Sort by` options | Execution |
 | --- | --- | --- | --- | --- |
-| Lectern | title; presented subtitle | Custom order | Custom order; Added — newest/oldest; Title — A–Z/Z–A | client over the complete snapshot |
-| Author works | work title | Published — newest | Published — newest/oldest; Title — A–Z/Z–A | owner SQL before keyset |
-| Chats | chat title | Updated — newest | Updated — newest/oldest; Title — A–Z/Z–A | owner SQL before keyset |
-| Libraries | presented Library name | Created — oldest | Created — oldest/newest; Name — A–Z/Z–A | owner SQL before keyset |
-| Notes index | Page title | Updated — newest | Updated — newest/oldest; Title — A–Z/Z–A | owner SQL over the complete result |
-| Library entries | row title; contributor names | Recently added / Custom order | Title/Creator/Published/Added/Remaining | owner SQL before keyset |
-| Podcast subscriptions | title; contributor names | Recent Episode | Recent Episode; Most Unplayed; Title — A–Z | owner SQL |
-| Podcast episodes | title; contributor names | Newest | Newest; Oldest; Shortest; Longest | owner SQL |
+| Lectern | title; presented subtitle | Custom order | Custom order; newest/oldest added; title A–Z/Z–A | client over the complete snapshot |
+| Author works | work title | Newest published | Newest/oldest published; title A–Z/Z–A | owner SQL before keyset |
+| Chats | chat title | Newest update | Newest/oldest update; title A–Z/Z–A | owner SQL before keyset |
+| Libraries | presented Library name | Oldest created | Oldest/newest created; name A–Z/Z–A | owner SQL before keyset |
+| Notes index | Page title | Newest update | Newest/oldest update; title A–Z/Z–A | owner SQL over the complete result |
+| Library entries | row title; contributor names | Recently added / Custom order | title/creator A–Z/Z–A; newest/oldest published or added; least/most time left | owner SQL before keyset |
+| Podcast subscriptions | title; contributor names | Newest episode | Newest episode; most unplayed; title A–Z | owner SQL |
+| Podcast episodes | title; contributor names | Newest released | Newest/oldest released; shortest/longest duration | owner SQL |
 | Page/Note direct items | direct item text | Authored order | none | local inspection Filter |
 
-Exempt by design: Browse, Search and Preview are retrieval surfaces with
-body-owned query, facets, ranking and provider continuation; Page/Note direct
-items preserve authored order; and chat messages, TOCs, chapters, transcripts,
-sources, citations, trust trails, fork trees, navigation, menus, settings
-choices, destination pickers, and ranked slate/quick-read lists retain semantic
-owner order. Connections, Downloads, Library members/invites, choosers,
-overlays, Preview episodes and Stats tables are secondary lists and out of
-scope.
+Browse and Search use the same compact collection presentation but keep
+their body-owned remote query, facets, ranking, and provider continuation;
+Preview publishes no collection controls. Page/Note direct items use transient
+editor filtering in authored order. chat messages, TOCs, chapters,
+transcripts, sources, citations, trust trails, fork trees, navigation, menus,
+settings choices, destination pickers, and ranked slate/quick-read lists retain
+semantic owner order. Connections, Downloads, Library members/invites,
+choosers, overlays, Preview episodes and Stats tables are secondary lists and
+out of scope.
 
 The chain is:
 

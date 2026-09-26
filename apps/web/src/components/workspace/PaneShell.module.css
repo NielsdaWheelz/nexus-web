@@ -86,11 +86,10 @@
 }
 
 .collectionRow {
-  flex: 0 0 auto;
   min-inline-size: 0;
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-2) var(--space-4);
   border-block-end: var(--stroke-hairline) solid var(--edge-subtle);
-  background: var(--surface-2);
+  background: var(--surface-canvas);
 }
 
 .refreshIndicator {

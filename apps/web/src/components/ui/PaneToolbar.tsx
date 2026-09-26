@@ -4,11 +4,12 @@ import type { ReactNode } from "react";
 import { cx } from "@/lib/ui/cx";
 import styles from "./PaneToolbar.module.css";
 
-type PaneToolbarVariant = "Refinement" | "Instrument";
+type PaneToolbarVariant = "Refinement" | "Instrument" | "Collection";
 
 const variantClass: Record<PaneToolbarVariant, string> = {
   Refinement: styles.refinement,
   Instrument: styles.instrument,
+  Collection: styles.collection,
 };
 
 export default function PaneToolbar({
@@ -16,6 +17,7 @@ export default function PaneToolbar({
   search,
   filters,
   controls,
+  summary,
   className,
 }: {
   variant: PaneToolbarVariant;
@@ -25,8 +27,9 @@ export default function PaneToolbar({
    * between rows as the wrapping filter set changes width.
    */
   search?: ReactNode;
-  filters?: ReactNode; // filter chips/selects the pane owns
-  controls?: ReactNode; // right-aligned contextual toolbar controls
+  filters?: ReactNode; // pane-owned options, order and filter controls
+  controls?: ReactNode; // contextual actions
+  summary?: ReactNode; // applied constraints and result state for collections
   className?: string;
 }) {
   return (
@@ -34,6 +37,7 @@ export default function PaneToolbar({
       {search ? <div className={styles.search}>{search}</div> : null}
       {filters ? <div className={styles.filters}>{filters}</div> : null}
       {controls ? <div className={styles.controls}>{controls}</div> : null}
+      {summary ? <div className={styles.summary}>{summary}</div> : null}
     </div>
   );
 }

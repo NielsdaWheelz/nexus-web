@@ -482,17 +482,6 @@ export function isInitialLibraryView(view: LibraryEntryView): boolean {
   );
 }
 
-export function activeLibraryDomainControlCount(
-  view: LibraryEntryView,
-): number {
-  return (
-    Number(projectionOptionOf(view) !== "all-items") +
-    Number(view.order.kind !== "Canonical") +
-    Number(completionOf(view) === "unfinished") +
-    Number(view.entryType.kind !== "AllTypes")
-  );
-}
-
 export type LibraryOrderPresetId =
   | "canonical"
   | "title-asc"
@@ -562,25 +551,25 @@ export function presetLabel(
     case "canonical":
       return isDefaultLibrary ? "Recently added" : "Custom order";
     case "title-asc":
-      return "Title — A–Z";
+      return "Title A–Z";
     case "title-desc":
-      return "Title — Z–A";
+      return "Title Z–A";
     case "creator-asc":
-      return "Creator — A–Z";
+      return "Creator A–Z";
     case "creator-desc":
-      return "Creator — Z–A";
+      return "Creator Z–A";
     case "published-newest":
-      return "Published — newest";
+      return "Newest published";
     case "published-oldest":
-      return "Published — oldest";
+      return "Oldest published";
     case "added-newest":
-      return "Added — newest";
+      return "Newest added";
     case "added-oldest":
-      return "Added — oldest";
+      return "Oldest added";
     case "remaining-shortest":
-      return "Remaining time — shortest first";
+      return "Least time left";
     case "remaining-longest":
-      return "Remaining time — longest first";
+      return "Most time left";
     default:
       return assertNever(id);
   }

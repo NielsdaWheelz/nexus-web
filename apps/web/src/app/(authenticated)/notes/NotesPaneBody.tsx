@@ -196,16 +196,6 @@ export default function NotesPaneBody() {
   const listRegionRef = useRef<HTMLDivElement | null>(null);
   const capturePaneScroll = usePaneScrollRetention(listRegionRef, committed);
   const sortSelectRef = useRef<HTMLSelectElement | null>(null);
-  // Set before a view replacement the user initiated from the sort control, so
-  // the commit that answers it returns focus there.
-  const pendingCommitFocusRef = useRef(false);
-  const focusPendingSortControl = useCallback(() => {
-    if (!pendingCommitFocusRef.current) return;
-    pendingCommitFocusRef.current = false;
-    const element = sortSelectRef.current;
-    if (element === null) return;
-    requestAnimationFrame(() => element.focus());
-  }, []);
   // A view replacement only writes the URL: the committed rows stay rendered
   // until the requested/committed mismatch it creates is answered.
   const setView = useCallback(
@@ -244,7 +234,6 @@ export default function NotesPaneBody() {
   useEffect(() => {
     if (pagesResource.status === "ready" && view !== null) {
       setCommitted({ view, pages: pagesResource.data });
-      focusPendingSortControl();
       return;
     }
     if (
@@ -253,7 +242,7 @@ export default function NotesPaneBody() {
     ) {
       setViewInvalid(true);
     }
-  }, [focusPendingSortControl, pagesResource, view]);
+  }, [pagesResource, view]);
   // A newly requested view retires the previous view's rejection.
   useEffect(() => setViewInvalid(false), [requestedViewKey]);
   usePaneReturnReady(
@@ -314,12 +303,12 @@ export default function NotesPaneBody() {
       invalidView || view === null ? undefined : (
         <>
           <SelectField
-            layout="Stacked"
-            label="Sort by"
+            layout="Inline"
+            label="Sort pages"
+            size="sm"
             ref={sortSelectRef}
             value={updatedTitleSortOptionOf(view)}
             onChange={(event) => {
-              pendingCommitFocusRef.current = true;
               setView(
                 updatedTitleViewForSortOption(
                   event.target.value as UpdatedTitleSortOptionId,
@@ -353,16 +342,18 @@ export default function NotesPaneBody() {
                 onClearQuery={clearQuery}
                 rowStatus={rowStatus}
                 filters={domainFilterControls}
-                controls={
+                controls={view.kind !== "Canonical" ? (
                   <Button
-                    variant="secondary"
+                    variant="ghost"
                     size="sm"
-                    onClick={resetView}
-                    disabled={view.kind === "Canonical" && !filterQuery.trim()}
+                    onClick={() => {
+                      sortSelectRef.current?.focus({ preventScroll: true });
+                      resetView();
+                    }}
                   >
                     Reset view
                   </Button>
-                }
+                ) : undefined}
               />
             ),
             focusInput,
@@ -503,6 +494,7 @@ export default function NotesPaneBody() {
                 kind: "Valid",
                 view: CANONICAL_UPDATED_TITLE_INDEX_VIEW,
               });
+              requestAnimationFrame(() => sortSelectRef.current?.focus({ preventScroll: true }));
             },
           },
         ]}
