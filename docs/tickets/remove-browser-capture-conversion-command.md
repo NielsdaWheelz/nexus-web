@@ -35,6 +35,8 @@ nonzero pending count or any second-pass work. a read-only production count at
 revision 0241 found zero `browser_article_capture` attempts. the live stopped-
 writer conversion and zero-work second pass still need release proof; remove
 this temporary slot with the command after that proof.
+on the restored 0244 clone, two ordinary CLI conversion passes both returned
+success with empty output and zero pending attempts.
 
 fix, in order:
 
