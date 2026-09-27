@@ -304,6 +304,12 @@ import TranscriptContentPanel, {
   type TranscriptFindPresentation,
 } from "./TranscriptContentPanel";
 import {
+  captureTranscriptPlacement,
+  positionTranscriptMatch,
+  restoreTranscriptPlacement,
+  type TranscriptPlacement,
+} from "./transcriptNavigation";
+import {
   createTranscriptFindAdapter,
   createTranscriptFindSnapshot,
 } from "./transcriptPaneFind";
@@ -473,7 +479,12 @@ type HostedNavigationTarget = (TextReaderNavigationTarget & { focus: "Destinatio
 
 type HostedNavigationPlacement =
   | { kind: "Text"; value: TextReaderPlacement }
-  | { kind: "Pdf"; value: PdfReaderNavigationPlacement };
+  | { kind: "Pdf"; value: PdfReaderNavigationPlacement }
+  | {
+      kind: "Transcript";
+      value: TranscriptPlacement;
+      selectedLocator: Extract<ReaderResumeState, { kind: "transcript" }>;
+    };
 
 export default function MediaPaneBody() {
   const activitySnapshot = useActivityRuntimeSnapshot();
@@ -1851,12 +1862,46 @@ export default function MediaPaneBody() {
     semanticViewportPublication,
   ]);
 
+  const transcriptFindSnapshotCandidate = useMemo(
+    () =>
+      isTranscriptMedia &&
+      canRead &&
+      fragments.length > 0 &&
+      (transcriptState === "ready" || transcriptState === "partial")
+        ? createTranscriptFindSnapshot({
+            mediaId: id,
+            transcriptState,
+            transcriptCoverage,
+            fragments,
+            chapters: media?.chapters ?? [],
+          })
+        : null,
+    [
+      canRead,
+      fragments,
+      id,
+      isTranscriptMedia,
+      media?.chapters,
+      transcriptCoverage,
+      transcriptState,
+    ],
+  );
+  const transcriptFindSnapshotRef = useRef(transcriptFindSnapshotCandidate);
+  if (
+    transcriptFindSnapshotRef.current?.sourceKey !==
+    transcriptFindSnapshotCandidate?.sourceKey
+  ) {
+    transcriptFindSnapshotRef.current = transcriptFindSnapshotCandidate;
+  }
+  const transcriptFindSnapshot = transcriptFindSnapshotRef.current;
   const navigationSource = isPdf
     ? pdfNavigationSource
-    : readerNavigation
-      ? `${id}:${readerNavigation.generation}`
-      : isTranscriptMedia && activeContent
-        ? `${id}:transcript`
+    : isTranscriptMedia
+      ? activeContent && transcriptFindSnapshot
+        ? `${id}:transcript:${transcriptFindSnapshot.sourceKey}`
+        : null
+      : readerNavigation
+        ? `${id}:${readerNavigation.generation}`
         : null;
   const readerNavigationOwner = useReaderNavigation<HostedNavigationTarget, HostedNavigationPlacement>({
     visitKey: `${paneRuntime.visitId}:${id}`,
@@ -1866,6 +1911,47 @@ export default function MediaPaneBody() {
         if (isPdf) {
           const checkpoint = pdfNavigationAdapterRef.current?.capture();
           return checkpoint ? { ...checkpoint, placement: { kind: "Pdf" as const, value: checkpoint.placement } } : null;
+        }
+        if (isTranscriptMedia) {
+          const viewport = transcriptViewportRef.current;
+          const list = transcriptSegmentListRef.current;
+          const placement = viewport && list ? captureTranscriptPlacement(viewport, list) : null;
+          const selectedLocator = buildTextLocatorAtOffset(0);
+          if (!viewport || !placement || selectedLocator?.kind !== "transcript" ||
+              !navigationSource || isMismatchDisabled) return null;
+          let locator = selectedLocator;
+          if (placement.listVisible) {
+            let documentStartOffset = 0;
+            const fragment = transcriptFindSnapshot?.fragments.find((candidate) => {
+              if (candidate.id === placement.fragmentId) return true;
+              documentStartOffset += canonicalCpLength(candidate.canonicalText);
+              return false;
+            });
+            if (!fragment || fragment.canonicalText !== placement.canonicalText) return null;
+            const visibleLocator = buildTextReaderLocatorAtOffset({
+              anchorOffset: placement.text.anchorCp,
+              canonicalText: fragment.canonicalText,
+              fragmentId: fragment.id,
+              format: "transcript",
+              documentStartOffset,
+              documentLength: totalTextLength,
+              isFinalUnit: false,
+              epubFragment: null,
+              epubAnchorId: null,
+              positionBucketCodePoints: READER_POSITION_BUCKET_CP,
+            });
+            if (visibleLocator?.kind !== "transcript") return null;
+            locator = visibleLocator;
+          }
+          const focus = document.activeElement;
+          return {
+            kind: "Captured",
+            source: navigationSource,
+            locator,
+            placement: { kind: "Transcript", value: placement, selectedLocator },
+            occurrence: absent(),
+            focus: focus instanceof HTMLElement && viewport.contains(focus) ? present(focus) : absent(),
+          };
         }
         const viewport = textViewportRef.current;
         const cursor = cursorRef.current;
@@ -2401,6 +2487,25 @@ export default function MediaPaneBody() {
       return;
     }
 
+    if (isTranscriptMedia) {
+      const viewport = transcriptViewportRef.current;
+      const list = transcriptSegmentListRef.current;
+      if (!viewport || !list) return;
+      const controller = new AbortController();
+      void positionTranscriptMatch(
+        viewport, list, activeContent.fragmentId, activeContent.canonicalText,
+        resumeOffset, resumeOffset, () => true, controller.signal, readerScrollPositioner,
+      ).then((outcome) => {
+        if (controller.signal.aborted || sessionId !== restoreSessionIdRef.current) return;
+        if (outcome.kind === "Arrived" || outcome.kind === "Unchanged") {
+          scrollRestoreAppliedRef.current = true;
+          lastSavedTextAnchorOffsetRef.current = resumeOffset;
+        }
+        void settleRestoreSession(sessionId);
+      });
+      return () => controller.abort();
+    }
+
     const container = textViewportRef.current;
     if (!container) {
       return;
@@ -2754,6 +2859,42 @@ export default function MediaPaneBody() {
           : { kind: "Unavailable", reason: "TargetUnavailable", displaced: false };
     }
     if (request.kind === "Canonical") return canonicalPositionRef.current(request.snapshot, signal);
+    if (request.kind === "Checkpoint" && request.checkpoint.kind === "Captured" &&
+        request.checkpoint.placement.kind === "Transcript") {
+      const checkpoint = request.checkpoint;
+      const transcriptPlacement = checkpoint.placement;
+      if (transcriptPlacement.kind !== "Transcript") {
+        throw new Error("Transcript checkpoint has another format's placement.");
+      }
+      if (!isTranscriptMedia || checkpoint.locator.kind !== "transcript") {
+        return { kind: "Unavailable", reason: "TargetUnavailable", displaced: false };
+      }
+      const selectedLocator = transcriptPlacement.selectedLocator;
+      if (activeContentRef.current?.fragmentId !== selectedLocator.target.fragment_id) {
+        const result = await positionTextLocator(selectedLocator, signal);
+        if (signal.aborted) return { kind: "Cancelled", displaced: result === "applied" };
+        if (result !== "applied") {
+          return { kind: "Unavailable", reason: "PositioningFailed", displaced: true };
+        }
+      }
+      const viewport = transcriptViewportRef.current;
+      const list = transcriptSegmentListRef.current;
+      if (!viewport || !list) {
+        return { kind: "Unavailable", reason: "TargetUnavailable", displaced: false };
+      }
+      const outcome = await restoreTranscriptPlacement(
+        viewport, list, transcriptPlacement.value, signal, readerScrollPositioner,
+      );
+      if (outcome.kind !== "Arrived") return outcome;
+      const focus = checkpoint.focus;
+      if (focus.kind === "Present" && focus.value.isConnected && viewport.contains(focus.value)) {
+        focus.value.focus({ preventScroll: true });
+        if (document.activeElement !== focus.value) {
+          return { kind: "Unavailable", reason: "PositioningFailed", displaced: true };
+        }
+      }
+      return outcome;
+    }
     const locator = request.kind === "Checkpoint" ? request.checkpoint.locator
       : null;
     const result = await positionTextLocator(locator, signal);
@@ -2925,14 +3066,16 @@ export default function MediaPaneBody() {
     ) {
       return;
     }
-    const container = textViewportRef.current;
-    if (!container) {
+    const container = isTranscriptMedia ? transcriptViewportRef.current : textViewportRef.current;
+    const transcriptList = isTranscriptMedia ? transcriptSegmentListRef.current : null;
+    if (!container || (isTranscriptMedia && !transcriptList)) {
       return;
     }
     let cancelled = false;
     void readerScrollPositioner
       .run(({ setTop }) => {
         setTop(container, 0);
+        if (transcriptList) setTop(transcriptList, 0);
       })
       .then(() => {
         if (cancelled || pendingCanonicalResetRef.current !== pending) {
@@ -2952,6 +3095,7 @@ export default function MediaPaneBody() {
     canonicalResetRevision,
     epubRestoreRequest,
     isEpub,
+    isTranscriptMedia,
     isPdf,
     readerScrollPositioner,
     readerLayoutReady,
@@ -3206,38 +3350,6 @@ export default function MediaPaneBody() {
     mismatchLoggedFragmentRef.current = null;
   }, [activeContent?.fragmentId]);
 
-  const transcriptFindSnapshotCandidate = useMemo(
-    () =>
-      isTranscriptMedia &&
-      canRead &&
-      fragments.length > 0 &&
-      (transcriptState === "ready" || transcriptState === "partial")
-        ? createTranscriptFindSnapshot({
-            mediaId: id,
-            transcriptState,
-            transcriptCoverage,
-            fragments,
-            chapters: media?.chapters ?? [],
-          })
-        : null,
-    [
-      canRead,
-      fragments,
-      id,
-      isTranscriptMedia,
-      media?.chapters,
-      transcriptCoverage,
-      transcriptState,
-    ],
-  );
-  const transcriptFindSnapshotRef = useRef(transcriptFindSnapshotCandidate);
-  if (
-    transcriptFindSnapshotRef.current?.sourceKey !==
-    transcriptFindSnapshotCandidate?.sourceKey
-  ) {
-    transcriptFindSnapshotRef.current = transcriptFindSnapshotCandidate;
-  }
-  const transcriptFindSnapshot = transcriptFindSnapshotRef.current;
   const transcriptFindSourceKeyRef = useRef<PaneFindSourceKey | null>(null);
   const transcriptFindActiveFragmentIdRef = useRef<string | null>(null);
   useLayoutEffect(() => {
@@ -4173,9 +4285,7 @@ export default function MediaPaneBody() {
     });
   }, [applyReaderLocator, clearFocus, clearRetainedSelection]);
   textNavigationPositionRef.current = async (target, signal) => {
-    const viewport = textViewportRef.current;
     if (signal.aborted) return { kind: "Cancelled", displaced: false };
-    if (!viewport) return { kind: "Unavailable", reason: "TargetUnavailable", displaced: false };
     const focusDestination = (element: HTMLElement | null): boolean => {
       if (target.focus === "Preserve") return true;
       if (!element) return false;
@@ -4186,6 +4296,24 @@ export default function MediaPaneBody() {
       element.focus({ preventScroll: true });
       return element.ownerDocument.activeElement === element;
     };
+    if (isTranscriptMedia) {
+      if (target.kind !== "Text") {
+        return { kind: "Unavailable", reason: "TargetUnavailable", displaced: false };
+      }
+      const viewport = transcriptViewportRef.current;
+      const list = transcriptSegmentListRef.current;
+      const fragment = fragments.find((candidate) => candidate.id === target.fragmentId);
+      if (!viewport || !list || !fragment) {
+        return { kind: "Unavailable", reason: "TargetUnavailable", displaced: false };
+      }
+      return positionTranscriptMatch(
+        viewport, list, fragment.id, fragment.canonical_text,
+        target.startOffset, target.endOffset, (element) => focusDestination(element),
+        signal, readerScrollPositioner,
+      );
+    }
+    const viewport = textViewportRef.current;
+    if (!viewport) return { kind: "Unavailable", reason: "TargetUnavailable", displaced: false };
     if (target.kind === "Boundary") {
       const top = target.edge === "Start" ? 0 : viewport.scrollHeight - viewport.clientHeight;
       if (Math.abs(viewport.scrollTop - top) <= 1) return { kind: "Unchanged" };
@@ -4236,11 +4364,6 @@ export default function MediaPaneBody() {
         fragmentId: target.fragmentId,
         target: { kind: "Anchor", anchorId: target.anchorId },
       });
-    } else if (isTranscriptMedia) {
-      const fragment = fragments.find((item) => item.id === target.fragmentId);
-      if (!fragment) return { kind: "Unavailable", reason: "TargetUnavailable", displaced: false };
-      handleTranscriptSegmentSelect(fragment);
-      move = Promise.resolve("applied");
     } else {
       const point = { fragment_id: target.fragmentId, offset: target.startOffset };
       move = isEpub ? positionAtEpubDocumentMapPoint(point) : navigateToWebPoint(point);

@@ -344,6 +344,7 @@ export default function TranscriptContentPanel({
                   } ${hasEvidence ? "hl-blue hl-evidence" : ""}`}
                   aria-current={isActive ? "true" : undefined}
                   aria-label={segmentLabel}
+                  data-transcript-fragment-id={entry.fragment.id}
                   data-active-highlight-ids={
                     hasEvidence ? (evidenceHighlightId ?? undefined) : undefined
                   }
@@ -364,7 +365,10 @@ export default function TranscriptContentPanel({
                       <span>{entry.fragment.speaker_label}</span>
                     ) : null}
                   </span>
-                  <span className={styles.segmentText}>
+                  <span
+                    className={styles.segmentText}
+                    data-transcript-fragment-text=""
+                  >
                     {textRuns.map((run, runIndex) => {
                       switch (run.kind) {
                         case "Text":
