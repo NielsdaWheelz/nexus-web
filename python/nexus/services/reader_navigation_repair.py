@@ -331,7 +331,7 @@ def _prepare(snapshot: _Snapshot, storage_client: StorageClient) -> _Prepared:
             raise ValueError("Stored article HTML disagrees with canonical text")
         prepare_apparatus_bodies(
             extracted_items,
-            sanitize=lambda body: sanitize_html(body, "", document_url=None),
+            sanitize=lambda body: sanitize_html(body, "", document_url=""),
             media_kind="web_article",
         )
         items.extend(
