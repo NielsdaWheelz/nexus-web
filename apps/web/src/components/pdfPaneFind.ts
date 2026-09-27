@@ -16,26 +16,6 @@ import type {
 
 const PDF_FIND_MATCH_THRESHOLD = 2_000;
 export const PDF_FIND_STALL_TIMEOUT_MS = 30_000;
-const PDF_FIND_SOURCE_ACCESS_REFRESH_ABORT_MESSAGE =
-  "PDF Find source access is refreshing.";
-
-export function pdfFindSourceAccessRefreshAbort(): DOMException {
-  return new DOMException(
-    PDF_FIND_SOURCE_ACCESS_REFRESH_ABORT_MESSAGE,
-    "AbortError",
-  );
-}
-
-export function isPdfFindSourceAccessRefreshAbort(
-  error: unknown,
-): error is DOMException {
-  return (
-    error instanceof DOMException &&
-    error.name === "AbortError" &&
-    error.message === PDF_FIND_SOURCE_ACCESS_REFRESH_ABORT_MESSAGE
-  );
-}
-
 export type PdfFindError =
   | { readonly kind: "OriginUnavailable" }
   | { readonly kind: "TextUnavailable"; readonly scope: "EntirePdf" }
@@ -58,17 +38,6 @@ export interface PdfFindLocator {
   readonly startUtf16: number;
   readonly endUtf16: number;
 }
-
-export interface PdfFindOrigin {
-  readonly pageNumber: number;
-  readonly zoom: number;
-  readonly pageTopDeltaPx: number;
-  readonly scrollLeft: number;
-}
-
-export type PdfFindOriginCapture =
-  | { readonly kind: "Captured"; readonly value: PdfFindOrigin }
-  | { readonly kind: "Unavailable" };
 
 interface PdfRuntimeFindRequest {
   readonly generation: number;
@@ -103,8 +72,7 @@ export interface PdfFindRuntime {
   readonly source: PdfFindSource;
   search(request: PdfRuntimeFindRequest): Promise<PdfRuntimeFindResult>;
   activate(locator: PdfFindLocator, signal: AbortSignal): Promise<void>;
-  captureOrigin(): PdfFindOriginCapture;
-  restoreOrigin(origin: PdfFindOrigin, signal: AbortSignal): Promise<void>;
+  currentPageNumber(): number;
   clearPresentation(): void;
 }
 
@@ -117,11 +85,7 @@ interface CreatePdfFindRuntimeOptions {
     readonly signal: AbortSignal;
   }) => Promise<void>;
   readonly revealMatch: (element: HTMLElement) => void;
-  readonly captureOrigin: () => PdfFindOriginCapture;
-  readonly restoreOrigin: (
-    origin: PdfFindOrigin,
-    signal: AbortSignal,
-  ) => Promise<void>;
+  readonly currentPageNumber: () => number;
 }
 
 interface PdfFindRuntimeBinding {
@@ -825,8 +789,7 @@ export function createPdfFindRuntime({
   eventBus,
   revealPage,
   revealMatch,
-  captureOrigin,
-  restoreOrigin,
+  currentPageNumber,
 }: CreatePdfFindRuntimeOptions): PdfFindRuntimeBinding {
   const {
     NexusPdfFindLinkService,
@@ -1004,20 +967,8 @@ export function createPdfFindRuntime({
               findController.activate(locator, commandSignal),
           });
         },
-        captureOrigin() {
-          if (documentLifetime !== lifetime) {
-            return { kind: "Unavailable" };
-          }
-          return captureOrigin();
-        },
-        restoreOrigin(origin, signal) {
-          return runDocumentCommand({
-            lifetime,
-            callerSignal: signal,
-            isCurrent: () => documentLifetime === lifetime,
-            command: (commandSignal) =>
-              restoreOrigin(origin, commandSignal),
-          });
+        currentPageNumber() {
+          return currentPageNumber();
         },
         clearPresentation() {
           if (documentLifetime !== lifetime) {

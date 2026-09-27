@@ -54,10 +54,6 @@ interface TranscriptContentPanelProps {
   contentRef: RefObject<HTMLDivElement | null>;
   segmentListRef: RefObject<HTMLDivElement | null>;
   findPresentation: TranscriptFindPresentation;
-  onFindMatchElement: (
-    key: PaneFindResultKey,
-    element: HTMLSpanElement | null,
-  ) => void;
   onSegmentSelect: (fragment: TranscriptFragment) => void;
   onSeek: (timestampMs: number | null | undefined) => void;
   onContentClick: (event: MouseEvent<HTMLDivElement>) => void;
@@ -173,7 +169,6 @@ export default function TranscriptContentPanel({
   contentRef,
   segmentListRef,
   findPresentation,
-  onFindMatchElement,
   onSegmentSelect,
   onSeek,
   onContentClick,
@@ -380,9 +375,6 @@ export default function TranscriptContentPanel({
                           return (
                             <span
                               key={run.key}
-                              ref={(element) =>
-                                onFindMatchElement(run.key, element)
-                              }
                               className={styles.transcriptFindMatch}
                               role="mark"
                             >
@@ -393,9 +385,6 @@ export default function TranscriptContentPanel({
                           return (
                             <span
                               key={run.key}
-                              ref={(element) =>
-                                onFindMatchElement(run.key, element)
-                              }
                               className={`${styles.transcriptFindMatch} ${styles.transcriptFindActiveMatch}`}
                               role="mark"
                               aria-current="true"

@@ -4,15 +4,13 @@ function extractWikisourceArticle(document) {
     const contentRoot = document.querySelector('.mw-parser-output');
     if (!contentRoot) return null;
 
-    const body = contentRoot.querySelector(':scope > .prp-pages-output:not(.reflist)')
-        || contentRoot.querySelector(':scope > .prp-pages-output');
+    // Wikisource's browser layout wraps the authored body in column containers.
+    const body = contentRoot.querySelector('.prp-pages-output:not(.reflist)')
+        || contentRoot.querySelector('.prp-pages-output');
     if (!body) return null;
 
     const clone = body.cloneNode(true);
     for (const selector of [
-        '.reference',
-        '.references',
-        '.reflist',
         '.ws-noexport',
         '.noprint',
         '.pagenum',
@@ -54,7 +52,34 @@ function extractSemanticMainArticle(document) {
 }
 
 export function extractArticle(document) {
-    return extractWikisourceArticle(document)
+    // Readability absolutizes fragments against <base>. Preserve an authored
+    // local relationship only when its target exists in this source document.
+    const fragmentAttribute = 'data-nexus-authored-fragment';
+    for (const element of document.querySelectorAll(`[${fragmentAttribute}]`)) {
+        element.removeAttribute(fragmentAttribute);
+    }
+    for (const anchor of document.querySelectorAll('a[href^="#"]')) {
+        const href = anchor.getAttribute('href');
+        let targetId;
+        try {
+            targetId = decodeURIComponent(href.slice(1));
+        } catch {
+            continue;
+        }
+        if (targetId && document.getElementById(targetId)) {
+            anchor.setAttribute(fragmentAttribute, href);
+        }
+    }
+    const article = extractWikisourceArticle(document)
         || extractSemanticMainArticle(document)
         || new Readability(document, { keepClasses: true }).parse();
+    if (!article || !article.content.includes(fragmentAttribute)) return article;
+    const content = document.createElement('div');
+    content.innerHTML = article.content;
+    for (const anchor of content.querySelectorAll(`[${fragmentAttribute}]`)) {
+        anchor.setAttribute('href', anchor.getAttribute(fragmentAttribute));
+        anchor.removeAttribute(fragmentAttribute);
+    }
+    article.content = content.innerHTML;
+    return article;
 }

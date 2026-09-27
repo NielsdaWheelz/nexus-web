@@ -94,45 +94,21 @@ measurement. Non-reader and window scroll are outside this contract. See
 [workspace.md](workspace.md#mobile-reader-chrome) for the workspace composition
 contract.
 
-### Pane Find adoption boundary
+### reversible inspection
 
-The shared Pane Search foundation defines `FindOccurrences`, exact
-revision-scoped result keys, one immutable **Go back to reading position**
-origin, and transient Inspector results. Web articles and readable
-video/podcast transcripts, EPUBs, and PDFs use that shared lifecycle.
+`useReaderNavigation` owns one mounted-reader origin across contents, source
+links, highlights, find, native pdf destinations, home/end and scrollbar seeks.
+format adapters own exact cancellable positioning; `paneScroll.ts` owns
+app-controlled scroll movement. inspection fences progress and completion;
+hosted activity can count genuine reading duration without progress or word
+endpoints. close, input and waiting never adopt a detour. the reserved reader
+status offers return, explicit adoption, remote cursor arbitration and recovery.
 
-the controller owns session/query identity and checks captured requests against
-current counters when promises settle. adapters return scopes and semantic
-results. preview settlement records a captured return origin before handling
-cancellation, so closing find during a completed move does not lose Return.
-
-`MediaPaneBody` selects one route-local adapter under one `usePaneFind`
-controller. Web searches every loaded canonical fragment and uses one
-`SearchPreview` lease beside the existing progress/activity owners. The lease
-captures the live origin before the first move and fences cursor persistence
-(including lifecycle flush), completion, and activity until the next trusted
-reader input. Preview and Return use exact canonical DOM anchors and never call
-navigation or URL replacement.
-
-Transcript Find searches timeline-ordered readable fragments and changes only
-the active transcript row and the active layout's scroll owner. Mobile preview
-and Return position the outer document viewport; desktop positions the bounded
-segment list. Both route app-owned movement through `paneScroll.ts`. Find never
-seeks, plays, resumes, mounts a progress seam, or creates an activity seam.
-Partial coverage is explicit in both zero and nonzero result states. Close
-clears marks without returning; Return restores and retires the one origin.
-
-epub find searches canonical fragments through the bounded epub find api.
-cross-fragment preview uses a rendered-fragment override, while committed
-navigation, URL, restore state, progress, completion, and activity remain
-fenced. the first genuine input atomically adopts the rendered fragment and is
-capture-suppressed; later input resumes ordinary reader behavior. same-fragment
-stepping reuses the rendered fragment without a request.
-
-PDF Find delegates exact matching and marks to PDF.js while the shared session
-owns query, cancellation, preview, and Return. App-owned page, zoom, restore,
-and preview positioning runs under `paneScroll.ts`; PDF.js-internal scrolling
-remains library-owned.
+`usePaneFind` still owns query and result identity. hosted article, epub,
+transcript and pdf find delegate reader movement to `useReaderNavigation`;
+conversation and artifact find keep their own non-reader return behavior.
+epub find retains its bounded server scan, and pdf find retains pdf.js matching
+and marks. closing find removes marks while the reader origin remains held.
 
 ### canonical Find marks and rebind
 
@@ -188,10 +164,10 @@ in-flow endcap; navigation remains an explicit user action.
 ### Resource Inspector and Document Map surfaces
 
 The Media pane publishes one `resource-inspector` secondary group:
-**Contents** when available, **Highlights & citations**, and **Dossier**. The
+**Contents** when available, **Evidence**, and **Dossier**. The
 shared inspector action opens and closes that whole group: open restores the remembered tab
 while it is published, else the publication's default. The reader's internal **Document Map** remains the
-owner of Contents, Highlights & citations, and the desktop overview rail; it is
+owner of Contents, Evidence, and the desktop overview rail; it is
 not the generic secondary-pane disclosure contract.
 
 - Desktop has a fixed **Document Map overview rail**. It consumes aggregate
@@ -199,12 +175,12 @@ not the generic secondary-pane disclosure contract.
   for positioned reader facts, and activates the matching contextual target.
   source ticks keep exact coordinates; separate hit groups open their members.
 - contents uses the shared `ReaderDocumentMapDetail`: outline, pinned local
-  scope, current position, and one excursion return.
-- Highlights & citations uses `EvidencePaneSurface`. The surface merges
-  highlights, source-authored apparatus, and resource-graph connections; its wide-reader
-  companion is `MarginRail`.
+  scope and current position. the shared status owns return.
+- evidence uses `EvidencePaneSurface` for aligned highlights, source-authored
+  apparatus and resource-graph connections. follow aligns visible referents;
+  browse retains the complete filtered inventory and active edit state.
 - Mobile has no interactive Document Map overview rail. The same
-  Contents and Highlights & citations bodies render in the Resource Inspector's
+  Contents and Evidence bodies render in the Resource Inspector's
   workspace mobile sheet; readable web, epub, and pdf render a passive, aria-hidden
   reader-relative position ribbon whose only input is the semantic visible
   range. placement is defined by the
@@ -214,7 +190,7 @@ not the generic secondary-pane disclosure contract.
   carry no inspector control, and bare `g` dispatches the header action.
 - bare `g` fires after the 500ms chord delay, or at once when a non-chord key
   follows, and invokes the published inspector action without a trigger, so it
-  agrees with the header in every state. `g e` selects Highlights & citations;
+  agrees with the header in every state. `g e` selects Evidence;
   `g c` and shift-`g` open chat. editable targets, modifier keys, and a topmost modal
   other than the inspector suppress the chord. the chord reads the action when
   it fires, so action or publication identity changes do not cancel it.
@@ -264,7 +240,7 @@ trigger, with pane chrome as the disconnected-trigger fallback.
 The canonical contract for explicit `Passages | Whole document` scope,
 semantic filters, and typed related-object disclosures is
 [`reader-evidence-scope-associations-hard-cutover.md`](../cutovers/reader-evidence-scope-associations-hard-cutover.md).
-Highlights & citations exposes only that target-centered payload; no removed
+Evidence exposes only that target-centered payload; no removed
 reader lens, route, or storage-shaped response remains.
 
 ### fresh-selection icon toolbar
@@ -326,7 +302,7 @@ skins.
   save — there is no discard path. an empty composer creates no note; the
   highlight survives in every branch.
 - all note writes flow through the canonical `saveHighlightNote` path used by
-  Highlights & citations, so composer-written notes appear there with no extra
+  Evidence, so composer-written notes appear there with no extra
   wiring.
 
 the `n` chord is reader-local: `useReaderKeyChord` fires on bare `n`
@@ -381,11 +357,10 @@ explicit workspace or intrinsic runtime-layout publication.
 
 The Document Map overview rail is fixed primary-adjacent chrome: it changes
 rendered pane width without changing stored primary pane width and contains no
-generic open control. Contents and Highlights & citations are Document Map
+generic open control. Contents and Evidence are Document Map
 bodies inside the shared Resource Inspector; Dossier is the third Media tab. The single
 `resource-inspector` width policy is independent from the primary reader width.
-`MarginRail` is wide-reader primary-adjacent evidence presentation, not another
-secondary surface. Mobile panes ignore desktop runtime pane sizing and render at
+mobile panes ignore desktop runtime pane sizing and render at
 viewport width. Mobile workspace mode also suppresses fixed primary chrome,
 desktop-attached secondary columns, and pane resize handles; the Resource
 Inspector reaches mobile through the workspace secondary sheet.
@@ -485,8 +460,7 @@ revision }`; on send the server row-locks the Highlight and captures an
 ### anchored evidence projection
 
 Anchored projection is the reader-owned bridge from target-owned locators to
-visible rows in Highlights & citations and the margin. The overview rail owns
-no DOM geometry:
+visible rows in Evidence. The overview rail owns no DOM geometry:
 marker positions come from aggregate document fractions and its visible band
 comes from the format-owned semantic viewport.
 
@@ -518,9 +492,9 @@ is not generated chat citation evidence and must not write or read
   path before semantic source attributes are sanitized away; `reader_apparatus.py`
   owns the persisted rows.
 - Source-authored standalone margin notes are valid target-only apparatus rows:
-  they appear in Highlights & citations and can jump to the note target, but
+  they appear in Evidence and can jump to the note target, but
   they do not get invented marker edges or hover previews.
-- Highlights & citations exposes apparatus through its `Citations` filter and
+- Evidence exposes apparatus through its `Citations` filter and
   distinguishes source references from generated citations in the typed item contract.
 - Web/EPUB rows may support hover previews and marker/target activation when
   exact locators exist.
@@ -535,7 +509,7 @@ separate from source-authored apparatus.
 
 - Backend ownership remains `resource_edges`; the media reader consumes those
   rows only through `GET /media/{id}/document-map`.
-- Highlights & citations classifies these rows under semantic `Links` and
+- Evidence classifies these rows under semantic `Links` and
   `Synapses` filters; it exposes no storage-shaped `Connections` category.
 - Rows align to the referenced passage when the media-owned endpoint resolves
   to PDF geometry or exact rendered fragment text offsets. Unavailable passage
@@ -788,17 +762,17 @@ pure black/white to reduce halation under long sessions.
   focus, `pageshow`, and `online`. Pure decoding, equality, and
   conflict/adoption decisions live in `apps/web/src/lib/reader/readerProgress.ts`.
   A clean, dormant reader auto-adopts a newer remote cursor; an active or
-  locally dirty reader shows the handoff (`Go to most recent position` /
-  `Stay at this position`) instead of teleporting. A canonical Empty snapshot
+  locally dirty reader shows the shared status (`use newer spot` /
+  `keep my reading spot`) instead of teleporting. A canonical Empty snapshot
   from `ResetProgress` invalidates pending generations and asks the active
   format adapter to apply its existing cold-start beginning; the client never
   fabricates a locator or revision.
 
 The active format publishes a snapshot only when both visible endpoints are
 exact for the current source/layout generation. `Reader` snapshots feed cursor
-and activity owners after genuine input. `Restore`, `Preview`, and `Return`
-snapshots may update the desktop Document Map rail or mobile Web/EPUB/PDF
-position ribbon but retain their existing no-write, no-activity fences.
+and activity owners after genuine input. `Restore` and inspection snapshots
+may update the desktop Document Map rail or mobile Web/EPUB/PDF position ribbon
+without writing progress.
 
 ### consumption activity
 
@@ -813,10 +787,8 @@ Consumption Activity's bounded historical facts.
   activity scrollport through one format-neutral adapter contract. Restore,
   navigation, preview, and return intents remain ineligible until genuine
   input returns the source to `Reader`.
-- a prose tap may adopt the exact restored viewport before a new `Reader`
-  publication. that permission cannot carry into a later restoration, even in
-  the same fragment. source links and control activation do not adopt reading;
-  actual scrolling over a link does. the text leaf and activity adapter share
+- prose taps, source links and control activation do not adopt an inspection
+  location; only the explicit status action does. the text leaf and activity adapter share
   one keyboard-direction classifier so activating an inline button with space
   cannot claim a forward reading gesture.
 - The adapter projects the same semantic viewport that drives document-position
@@ -943,16 +915,15 @@ of its location-target writes uses.
   its position and extent. image-only sections remain distinct inside text-bearing
   fragments. a viewport without a visible text primary has no text percentage
   (apart from a genuine end-of-document witness); it never borrows a later glyph.
-- map preview, return, and restore do not save progress. one excursion origin
-  survives successful subsequent jumps; failed navigation restores departure.
+- inspection and return do not save progress. one origin survives subsequent
+  jumps; failed navigation restores its immediate departure.
   positioning waits for layout readiness, which certifies the mounted section
   dom (after the hosted highlights gate) for the reader instance, fragment and
   typography; a restore that finds no content dom settles instead of waiting,
   so every restore session ends.
   epub section controls and internal source links use the same positioning owner
-  and return origin; navigation does not renew reading activity.
-  mobile map jumps keep detail open so return remains available; explicit
-  dismissal ends the excursion.
+  and return origin. mobile map jumps keep detail open; closing it never adopts
+  the detour.
 - media metadata owns workspace labels; fragment loading and semantic section
   context do not rename the pane.
 

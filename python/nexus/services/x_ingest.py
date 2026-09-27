@@ -567,6 +567,7 @@ def _build_fragment(
         prepared = prepare_web_article_fragment(
             html=html,
             base_url=base_url,
+            document_url=base_url,
             fragment_idx=idx,
             extract_embeds=bool(quote_occurrences),
         )

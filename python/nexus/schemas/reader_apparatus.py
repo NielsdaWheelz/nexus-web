@@ -103,6 +103,7 @@ class ReaderApparatusItemOut(BaseModel):
     kind: ReaderApparatusItemKind
     label: str | None
     body_text: str | None
+    body_html_sanitized: str | None
     locator: RetrievalLocator | None
     locator_status: ReaderApparatusLocatorStatus
     confidence: ReaderApparatusConfidence

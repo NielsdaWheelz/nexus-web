@@ -43,6 +43,19 @@ and aria-hidden; the downloaded reader keeps its `document map` toggle. the
 owner waived physical touch and screen-reader checks for that change, so this
 review stays open.
 
+2026-09-26 source-note work exercised actual hosted android touch: marker
+activation opened the full evidence body, dismissal returned focus to the
+marker, and the cursor did not move. talkback 15 was enabled and its native
+touch/double-tap opened the pane. a dispatched linear swipe did not yield a
+stable accessibility hierarchy (`could not get idle state`); spoken output and
+linear focus order were not observed. this is bounded interaction evidence, not
+screen-reader acceptance. the final offline apk and navigation receipts are in
+[the reader verification](../reader-source-notes-verification.md).
+the same final installed artifact passed a post-freeze hosted compact touch
+check 3/3: complete ordered source bodies opened, dismissal focused the exact
+marker, and canonical cursor revision stayed unchanged. this still does not
+establish spoken announcements or linear assistive focus.
+
 proposed fix: perform and record the operator review; correct any defects at
 the owning control. cover the live and downloaded readers, named map disclosure,
 outline and coincident-member selection, current position, return,

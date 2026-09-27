@@ -14,6 +14,7 @@ import {
   ARTICLE_SOURCE_MAX_BYTES,
   CONTENT_PORT,
   captureFailure,
+  CaptureFailureError,
   fetchFailure,
   readDocumentResponse,
   type ArticlePacket,
@@ -73,7 +74,7 @@ async function serve(request: ContentRequest): Promise<void> {
     if (aborter.signal.aborted) return;
     reply = {
       kind: "failed",
-      failure: captureFailure(
+      failure: error instanceof CaptureFailureError ? error.failure : captureFailure(
         "E_CAPTURE_CONTENT",
         `Nexus could not read this page: ${error instanceof Error ? error.message : String(error)}`,
       ),
@@ -167,11 +168,12 @@ const KEPT_BY_TAG: Record<string, readonly string[]> = {
 };
 const DROPPED_SCHEMES = new Set(["javascript:", "vbscript:", "data:", "file:"]);
 
-function project(root: HTMLElement, baseUri: string): void {
+function project(root: HTMLElement, baseUri: string, preserveUnsupportedEvidence = false): void {
   for (const element of root.querySelectorAll("*")) {
     if (!element.isConnected) continue; // removed with an ancestor
     const tag = element.localName;
-    if (DROPPED_TAGS.has(tag) || element.hasAttribute("hidden")) {
+    const unsupportedEvidence = preserveUnsupportedEvidence && ["svg", "object", "embed"].includes(tag);
+    if ((DROPPED_TAGS.has(tag) && !unsupportedEvidence) || element.hasAttribute("hidden")) {
       element.remove();
       continue;
     }
@@ -205,17 +207,27 @@ function absolute(value: string, baseUri: string, httpOnly: boolean): string | n
   return url.href;
 }
 
-/** Bounded rebuilt embed evidence from the whole document, in document order:
-    iframe src/title, and twitter-quote text plus link hrefs — exactly what
-    document_embed_extraction reads. Whole elements only, ≤ 64 KiB. */
+/** Source notes and embeds omitted by article extraction. Complete subtrees only;
+    overflow refuses capture rather than silently publishing incomplete evidence. */
 function sourceEvidence(clone: Document, baseUri: string): string {
+  const selector = 'iframe[src], blockquote.twitter-tweet, [role="doc-footnote"], [role="doc-endnote"], [role="doc-endnotes"], [role="doc-biblioentry"], [role="doc-bibliography"], [epub\\:type~="footnote"], [epub\\:type~="endnote"], .references, .reflist, .marginnote, fn, ref-list';
   let html = "";
   let bytes = 0;
-  for (const element of clone.querySelectorAll("iframe[src], blockquote.twitter-tweet")) {
-    const piece = element.localName === "iframe" ? iframeEvidence(element, baseUri) : tweetEvidence(clone, element, baseUri);
+  for (const element of clone.querySelectorAll(selector)) {
+    if (element.parentElement?.closest(selector)) continue;
+    let piece: string | null;
+    if (element.localName === "iframe") piece = iframeEvidence(element, baseUri);
+    else if (element.matches("blockquote.twitter-tweet")) piece = tweetEvidence(clone, element, baseUri);
+    else {
+      const projected = new DOMParser().parseFromString(element.outerHTML, "text/html");
+      project(projected.body, baseUri, true);
+      piece = projected.body.innerHTML;
+    }
     if (piece === null) continue;
     const size = utf8Length(piece);
-    if (bytes + size > ARTICLE_SOURCE_MAX_BYTES) break;
+    if (bytes + size > ARTICLE_SOURCE_MAX_BYTES) {
+      throw new CaptureFailureError(captureFailure("E_RESOURCE_LIMIT", "The page's source notes and embeds exceed the capture limit."));
+    }
     html += piece;
     bytes += size;
   }

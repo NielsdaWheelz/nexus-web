@@ -32,6 +32,7 @@ from nexus.schemas.reader_document_map import (
     ReaderEvidenceGeneratedCitationOut,
     ReaderEvidenceHighlightOut,
     ReaderEvidenceItemOut,
+    ReaderEvidenceLinkNoteOut,
     ReaderEvidenceLinkOut,
     ReaderEvidenceNoteObjectOut,
     ReaderEvidenceObjectOut,
@@ -45,6 +46,9 @@ from nexus.schemas.reader_document_map import (
     ReaderEvidenceSynapseOut,
     ReaderEvidenceUnavailableOut,
     ReaderEvidenceUnavailableReason,
+    ReaderSourceHtmlOut,
+    ReaderSourceTextOut,
+    ReaderSourceUnavailableOut,
 )
 from nexus.schemas.resource_graph import ConnectionEndpointOut
 from nexus.schemas.resource_items import ResourceActivationOut
@@ -108,6 +112,10 @@ class _Projection:
 
     media_id: UUID
     page_count: int | None
+    media_kind: str
+    source_targets: dict[str, ReaderEvidenceSourceTargetOut] = field(
+        init=False, default_factory=dict
+    )
     fragment_indexes: dict[str, int]
     message_meta: dict[UUID, _MessageMeta]
     note_meta: dict[UUID, _NoteMeta]
@@ -152,6 +160,7 @@ def build_reader_evidence(
     ctx = _Projection(
         media_id=media_id,
         page_count=page_count,
+        media_kind=media_kind,
         fragment_indexes=fragment_indexes,
         message_meta=message_meta,
         note_meta=note_meta,
@@ -195,6 +204,7 @@ def build_reader_evidence(
                 passages=sum(len(group.items) for group in groups_out),
                 document=len(ctx.document_items),
             ),
+            source_targets=list(ctx.source_targets.values()),
             passage_groups=groups_out,
             document_items=ctx.document_items,
         ),
@@ -271,23 +281,42 @@ def _compose_apparatus(ctx: _Projection, *, apparatus: ReaderApparatusResponse) 
             for key in dict.fromkeys(outgoing.get(owner.stable_key, []))
             if key in by_key
         ]
-        target_out: list[ReaderEvidenceSourceTargetOut] = []
+        if not targets and not owner.kind.endswith("_ref"):
+            targets = [owner]
         for target in targets:
+            if target.resource_ref in ctx.source_targets:
+                continue
             resolution = _apparatus_resolution(ctx, target)
-            target_out.append(
-                ReaderEvidenceSourceTargetOut(
-                    ref=target.resource_ref,
-                    stable_key=target.stable_key,
-                    apparatus_kind=cast(ReaderApparatusItemKind, target.kind),
-                    label=present(target.label) if target.label else absent(),
-                    body=present(target.body_text) if target.body_text else absent(),
-                    activation=_apparatus_activation(ctx, target, resolution=resolution),
-                    resolution=resolution,
+            if target.body_html_sanitized is not None:
+                content = ReaderSourceHtmlOut(
+                    html_sanitized=target.body_html_sanitized, text=target.body_text or ""
                 )
+            elif ctx.media_kind == "pdf" and target.body_text:
+                content = ReaderSourceTextOut(text=target.body_text)
+            else:
+                content = ReaderSourceUnavailableOut()
+            ctx.source_targets[target.resource_ref] = ReaderEvidenceSourceTargetOut(
+                ref=target.resource_ref,
+                stable_key=target.stable_key,
+                apparatus_kind=target.kind,
+                label=present(target.label) if target.label else absent(),
+                content=content,
+                activation=_apparatus_activation(ctx, target, resolution=resolution),
+                resolution=resolution,
             )
-        excerpt = owner.body_text or next(
-            (target.body_text for target in targets if target.body_text), None
+        excerpt = next(
+            (
+                content.text[:240]
+                for target in targets
+                if isinstance(
+                    content := ctx.source_targets[target.resource_ref].content,
+                    (ReaderSourceHtmlOut, ReaderSourceTextOut),
+                )
+                and content.text
+            ),
+            None,
         )
+        marker_anchor_id = owner.source_ref.get("marker_id")
         item = ReaderEvidenceSourceReferenceOut(
             id=f"source-reference:{owner.stable_key}",
             label=owner.label
@@ -297,7 +326,10 @@ def _compose_apparatus(ctx: _Projection, *, apparatus: ReaderApparatusResponse) 
             stable_key=owner.stable_key,
             apparatus_kind=cast(ReaderApparatusItemKind, owner.kind),
             confidence=cast(ReaderApparatusConfidence, owner.confidence),
-            targets=target_out,
+            target_refs=[target.resource_ref for target in targets],
+            marker_anchor_id=present(marker_anchor_id)
+            if isinstance(marker_anchor_id, str) and marker_anchor_id.strip()
+            else absent(),
         )
         _place_item(ctx, owner.resource_ref, _apparatus_resolution(ctx, owner), item)
         ctx.represented_facts[owner.resource_ref].append(item)
@@ -476,6 +508,17 @@ def _add_remaining_connections(
                 group.also_references.append(ReaderEvidenceAlsoReferenceOut(object=related))
             continue
 
+        link_note = absent()
+        if row.connection.link_note is not None:
+            note_id = row.connection.link_note.note_block_id
+            meta = ctx.note_meta[note_id]
+            link_note = present(
+                ReaderEvidenceLinkNoteOut(
+                    note_block_id=note_id,
+                    body_pm_json=meta.body_pm_json,
+                    body_text=meta.body_text,
+                )
+            )
         _place_item(
             ctx,
             locus_ref,
@@ -490,6 +533,7 @@ def _add_remaining_connections(
                 role=row.connection.kind,
                 origin=row.connection.origin,
                 object=related,
+                note=link_note,
             ),
         )
 
@@ -507,7 +551,13 @@ def _load_related_metadata(
         {endpoint.id for endpoint in endpoints if endpoint.scheme == "message"}, key=str
     )
     note_ids = sorted(
-        {endpoint.id for endpoint in endpoints if endpoint.scheme == "note_block"}, key=str
+        {endpoint.id for endpoint in endpoints if endpoint.scheme == "note_block"}
+        | {
+            row.connection.link_note.note_block_id
+            for row in rows
+            if row.connection.link_note is not None
+        },
+        key=str,
     )
     messages: dict[UUID, _MessageMeta] = {}
     if message_ids:

@@ -7,7 +7,6 @@
 
 import type { ApiPath } from "@/lib/api/client";
 import { apiFetch } from "@/lib/api/client";
-import { createRandomId } from "@/lib/createRandomId";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
 import type { ResourceTarget } from "@/lib/resources/resourceTargets";
@@ -119,6 +118,7 @@ export async function deleteLink(linkId: string): Promise<void> {
 }
 
 export interface PutLinkNoteInput {
+  clientMutationId: string;
   noteBlockId: string;
   bodyPmJson: Record<string, unknown>;
 }
@@ -137,7 +137,7 @@ export async function putLinkNote(
     {
       method: "PUT",
       body: JSON.stringify({
-        client_mutation_id: createRandomId("link-note"),
+        client_mutation_id: body.clientMutationId,
         note_block_id: body.noteBlockId,
         body_pm_json: body.bodyPmJson,
       }),

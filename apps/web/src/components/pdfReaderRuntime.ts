@@ -25,10 +25,18 @@ interface PdfPageLike {
   }): PdfViewportLike;
 }
 
+export type PdfDestinationArray = readonly [
+  number | { num: number; gen: number },
+  { name: string },
+  ...(number | null)[],
+];
+
 export interface PdfDocumentLike {
   readonly fingerprints: readonly (string | null)[];
   readonly numPages: number;
   getPage(pageNumber: number): Promise<PdfPageLike>;
+  getDestination(name: string): Promise<PdfDestinationArray | null>;
+  getPageIndex(reference: { num: number; gen: number }): Promise<number>;
   destroy?: () => Promise<void> | void;
 }
 
@@ -85,6 +93,10 @@ export interface PdfLinkServiceLike {
   get page(): number;
   set page(value: number);
   readonly pagesCount: number;
+  goToDestination(destination: string | PdfDestinationArray): Promise<void>;
+  goToPage(page: string | number): void;
+  setHash(hash: string): void;
+  executeNamedAction(action: string): void;
 }
 
 export interface PdfFindMatchLike {
@@ -127,6 +139,13 @@ export interface PdfFindControllerLike {
 export interface PdfViewerLike {
   setDocument(doc: PdfDocumentLike | null): void;
   currentPageNumber: number;
+  pagesRotation: number;
+  pageLabelToPageNumber(label: string): number | null;
+  scrollPageIntoView(request: {
+    pageNumber: number;
+    destArray?: readonly unknown[];
+    allowNegativeOffset?: boolean;
+  }): void;
   currentScale?: number;
   currentScaleValue: string | number;
   pagesCount: number;

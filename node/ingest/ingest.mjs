@@ -9,6 +9,7 @@ async function ingest(url, timeoutMs) {
     const fetched = await fetchAcceptedHtml({ url, timeoutMs });
     if (fetched.tag === 'Failure') return fetched;
     const dom = new JSDOM(fetched.source_html, { url: fetched.final_url });
+    const baseUrl = dom.window.document.baseURI;
     const article = extractArticle(dom.window.document);
     if (!article || typeof article.content !== 'string' || article.content.length === 0) {
         return { tag: 'Failure', failure: { tag: 'Readability' } };
@@ -23,7 +24,7 @@ async function ingest(url, timeoutMs) {
     return {
         tag: 'Success',
         final_url: fetched.final_url,
-        base_url: fetched.final_url,
+        base_url: baseUrl,
         title: boundedText(article.title, 1000),
         content_html: article.content,
         source_html: fetched.source_html,

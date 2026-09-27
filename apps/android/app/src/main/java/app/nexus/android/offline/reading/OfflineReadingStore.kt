@@ -4,6 +4,8 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.system.Os
 import android.system.OsConstants
 import app.nexus.android.offline.NetworkPolicy
@@ -127,10 +129,19 @@ internal class OfflineReadingStore internal constructor(
     private var reconciliationAllowsLiveRunner = false
     private val reconciliationCallbacks =
         mutableListOf<(OfflineReadingReconciliationOutcome) -> Unit>()
+    private val progressNetworkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+            if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+                synchronizeReaderProgress()
+            }
+        }
+    }
 
     init {
         rootDirectory.mkdirs()
         if (reconcileOnInit) requestReconciliation()
+        appContext.getSystemService(ConnectivityManager::class.java)
+            .registerDefaultNetworkCallback(progressNetworkCallback)
     }
 
     fun bindAccountAfterExternalPurge(accountId: UUID): ReadingStoreSnapshot {
@@ -183,7 +194,7 @@ internal class OfflineReadingStore internal constructor(
                 val current = readBinding()
                 require(targetAccountId != null && current?.accountId == targetAccountId)
                 clearRemoteAuthorizationFence(current)
-                return snapshot()
+                return@synchronized
             }
             require(transition.targetAccountId == targetAccountId)
             readBinding()?.let { binding ->
@@ -550,8 +561,11 @@ internal class OfflineReadingStore internal constructor(
 
     fun synchronizeReaderProgress(mediaId: UUID? = null): Boolean {
         if (synchronized(this) { readBinding()?.authorizationRequired != false }) return false
-        val network = appContext.getSystemService(ConnectivityManager::class.java).activeNetwork
-            ?: return false
+        val connectivity = appContext.getSystemService(ConnectivityManager::class.java)
+        val network = connectivity.activeNetwork ?: return false
+        if (connectivity.getNetworkCapabilities(network)
+                ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) != true
+        ) return false
         synchronized(this) {
             val binding = readBinding() ?: return false
             if (binding.authorizationRequired || bindingLocked || readAccountTransition() != null) return false

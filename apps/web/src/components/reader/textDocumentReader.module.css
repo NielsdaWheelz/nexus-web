@@ -50,6 +50,11 @@
   gap: var(--space-6);
 }
 
+.fragments > .fragment {
+  font-size: inherit;
+  line-height: inherit;
+}
+
 .documentViewport {
   width: 100%;
   height: 100%;

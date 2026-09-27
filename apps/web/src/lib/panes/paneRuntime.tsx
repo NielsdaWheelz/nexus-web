@@ -132,7 +132,7 @@ export interface PaneRuntimeContextValue {
     surfaceId: WorkspaceSecondarySurfaceId,
     options?: PaneSecondarySurfaceRequestOptions,
   ) => void;
-  closeSecondaryPane: () => void;
+  closeSecondaryPane: (options?: { focusAfterClose?: HTMLElement | null }) => void;
   requestTransientSecondarySurface: (
     surfaceId: PaneTransientSecondarySurfaceId,
     options?: PaneSecondarySurfaceRequestOptions,
@@ -196,7 +196,7 @@ interface PaneRuntimeProviderProps {
     surfaceId: WorkspaceSecondarySurfaceId,
     returnFocusTo?: HTMLElement | null,
   ) => void;
-  onCloseSecondaryPane: (secondaryPaneId: string) => void;
+  onCloseSecondaryPane: (secondaryPaneId: string, focusAfterClose?: HTMLElement | null) => void;
   onRequestTransientSecondarySurface: (
     paneId: string,
     routeKey: string,
@@ -523,10 +523,10 @@ export function PaneRuntimeProvider({
     },
     [],
   );
-  const closeSecondaryPane = useCallback(() => {
+  const closeSecondaryPane = useCallback((options?: { focusAfterClose?: HTMLElement | null }) => {
     const current = commandsRef.current;
     if (current.secondaryPaneId) {
-      current.onCloseSecondaryPane(current.secondaryPaneId);
+      current.onCloseSecondaryPane(current.secondaryPaneId, options?.focusAfterClose);
     }
   }, []);
   const requestTransientSecondarySurface = useCallback(

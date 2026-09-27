@@ -160,12 +160,22 @@ export interface ReaderEvidenceHighlight extends ReaderEvidenceItemBase {
   is_owner: boolean;
 }
 
+export type ReaderEvidenceSourceContent =
+  | { kind: "Html"; html_sanitized: string; text: string }
+  | { kind: "Text"; text: string }
+  | { kind: "Unavailable" };
+
+export interface ReaderEvidenceSourceActivation {
+  occurrenceItemId: string | null;
+  targetRef: string;
+}
+
 export interface ReaderEvidenceSourceTarget {
   ref: string;
   stable_key: string;
   apparatus_kind: ReaderEvidenceSourceKind;
   label: Presence<string>;
-  body: Presence<string>;
+  content: ReaderEvidenceSourceContent;
   activation: ResourceActivation;
   actionSubject: ResourceActionSubject;
   resolution: ReaderEvidenceResolution;
@@ -176,7 +186,8 @@ export interface ReaderEvidenceSourceReference extends ReaderEvidenceItemBase {
   stable_key: string;
   apparatus_kind: ReaderEvidenceSourceKind;
   confidence: ReaderEvidenceConfidence;
-  targets: ReaderEvidenceSourceTarget[];
+  marker_anchor_id: Presence<string>;
+  target_refs: string[];
 }
 
 export interface ReaderEvidenceGeneratedCitation extends ReaderEvidenceItemBase {
@@ -191,6 +202,11 @@ export interface ReaderEvidenceLink extends ReaderEvidenceItemBase {
   role: EdgeKind;
   origin: EdgeOrigin;
   object: ReaderEvidenceObject;
+  note: Presence<{
+    note_block_id: string;
+    body_pm_json: Record<string, unknown>;
+    body_text: string;
+  }>;
 }
 
 /** Explicit user-authored graph facts that the Evidence presenter may remove.
@@ -241,6 +257,7 @@ export interface ReaderEvidenceCounts {
 
 export interface ReaderEvidence {
   counts: ReaderEvidenceCounts;
+  source_targets: ReaderEvidenceSourceTarget[];
   passage_groups: ReaderEvidencePassageGroup[];
   document_items: ReaderEvidenceItem[];
 }
