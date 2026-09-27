@@ -176,6 +176,9 @@ with identical derived metadata is unchanged: apply does not bump or reindex.
 preserve fragment ids/order, sanitized html, canonical text, assets, source refs,
 existing apparatus identities/edges, highlights and saved cursors. source enrichment
 uses the shared apparatus owner; do not invoke destructive import replacement.
+the sole temporary exception removes a proved reciprocal-marker false body and
+edge with zero dependents; [its ticket](tickets/reader-epub-old-apparatus-body-unproved.md)
+requires removal of that exception after production correction.
 request existing web reindex with reason `reconciliation` in the same transaction.
 epub navigation alone does not require re-embedding unchanged paragraph text.
 
