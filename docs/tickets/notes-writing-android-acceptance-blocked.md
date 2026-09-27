@@ -13,6 +13,9 @@ the 50 ms w6 target, but does not qualify the final code or production web
 build. the owner approved including the notes cutover after its checks. the
 connected phone is the only offline device and is signed in, but no final apk
 has been installed or accepted.
+the only camera currently enumerated on this mac is its built-in camera;
+avfoundation reports a 30 fps maximum for every format. no external optical
+capture source is connected.
 
 prerequisite: a signed apk from the exact released code and the production web
 build, installed without clearing phone data. the existing desktop keydown-to-rAF
