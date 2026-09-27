@@ -48,6 +48,9 @@ def upgrade() -> None:
         SET fragment_idx = NULL, target_offset = NULL, section_id = NULL
         WHERE resolution = 'Unresolved'
     """)
+    # The updates queue deferred foreign-key trigger events on epub_toc_nodes.
+    # Settle them before altering either table in the same migration transaction.
+    op.execute("SET CONSTRAINTS ALL IMMEDIATE")
     op.alter_column("epub_toc_nodes", "resolution", nullable=False)
     op.drop_constraint(
         "fk_epub_nav_locations_toc_node", "epub_nav_locations", type_="foreignkey"
