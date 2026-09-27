@@ -1884,7 +1884,17 @@ export default function PdfReader({
         if (!signal.aborted) reveal(container, element);
       }, signal);
       if (signal.aborted) throw new DOMException("PDF Find was aborted", "AbortError");
-      if (!element.isConnected || !isElementInPaneView(container, element)) {
+      // PDF.js may replace the text layer after reporting the selected span.
+      // The live selected span, not that transient node, owns the final position.
+      const selected = container.querySelector<HTMLElement>(".highlight.selected");
+      if (selected && !isElementInPaneView(container, selected)) {
+        await readerScrollPositioner.run(({ reveal }) => {
+          if (!signal.aborted) reveal(container, selected);
+        }, signal);
+      }
+      if (signal.aborted) throw new DOMException("PDF Find was aborted", "AbortError");
+      const currentSelected = container.querySelector<HTMLElement>(".highlight.selected");
+      if (!currentSelected || !isElementInPaneView(container, currentSelected)) {
         throw new DOMException("PDF Find match did not become visible", "InvalidStateError");
       }
     },
