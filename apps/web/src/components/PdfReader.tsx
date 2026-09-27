@@ -3544,6 +3544,7 @@ export default function PdfReader({
     if (Math.abs(nextZoom - zoomRef.current) <= 0.001) {
       return;
     }
+    navigationActionsRef.current.cancelPositioning();
     waitForReaderPositioningRender(pageNumberRef.current, nextZoom);
     zoomRef.current = nextZoom;
     setZoom(nextZoom);
@@ -3556,6 +3557,7 @@ export default function PdfReader({
     if (Math.abs(nextZoom - zoomRef.current) <= 0.001) {
       return;
     }
+    navigationActionsRef.current.cancelPositioning();
     waitForReaderPositioningRender(pageNumberRef.current, nextZoom);
     zoomRef.current = nextZoom;
     setZoom(nextZoom);

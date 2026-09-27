@@ -55,6 +55,7 @@ class CanonicalStructure:
     text: str
     elements: tuple[CanonicalElement, ...]
     anchors: dict[str, int]
+    apparatus_items: dict[str, int]
 
 
 class _CanonicalTextTarget:
@@ -67,9 +68,11 @@ class _CanonicalTextTarget:
         self.capture_structure = capture_structure
         self.elements: list[CanonicalElement] = []
         self.anchors: dict[str, int] = {}
+        self.apparatus_items: dict[str, int] = {}
         self._visible_stack: list[bool] = []
         self._tag_stack: list[str] = []
         self._ambiguous_anchors: set[str] = set()
+        self._ambiguous_apparatus_items: set[str] = set()
         self._element_stack: list[Presence[int]] = []
         self._container_stack: list[int] = []
         self._numbering_stack: list[bool] = []
@@ -107,6 +110,7 @@ class _CanonicalTextTarget:
         if self.capture_structure and (
             normalized_tag in HEADING_TAGS | STRUCTURAL_TAGS | {"p", "em"}
             or any(attributes.get(attribute) for attribute in ("id", "name"))
+            or attributes.get("data-reader-apparatus-item-id")
         ):
             index = len(self.elements)
             self.elements.append(
@@ -122,16 +126,24 @@ class _CanonicalTextTarget:
             )
             self._element_stack[-1] = present(index)
             self._captured_stack.append(index)
-            for attribute in ("id", "name"):
+            for attribute, identities, ambiguous in (
+                ("id", self.anchors, self._ambiguous_anchors),
+                ("name", self.anchors, self._ambiguous_anchors),
+                (
+                    "data-reader-apparatus-item-id",
+                    self.apparatus_items,
+                    self._ambiguous_apparatus_items,
+                ),
+            ):
                 value = str(attributes.get(attribute) or "")
-                if not value or value in self._ambiguous_anchors:
+                if not value or value in ambiguous:
                     continue
-                previous = self.anchors.get(value)
+                previous = identities.get(value)
                 if previous is not None and previous != index:
-                    del self.anchors[value]
-                    self._ambiguous_anchors.add(value)
+                    del identities[value]
+                    ambiguous.add(value)
                 else:
-                    self.anchors[value] = index
+                    identities[value] = index
             if normalized_tag in STRUCTURAL_TAGS:
                 self._container_stack.append(index)
         if normalized_tag == "br":
@@ -187,10 +199,11 @@ def canonicalize_structure(html_sanitized: str) -> CanonicalStructure:
     raw_text = "".join(target.chunks)
     elements = target.elements
     anchors = target.anchors
+    apparatus_items = target.apparatus_items
     del target
     if not elements:
         text, _sources = _transform(raw_text, None)
-        return CanonicalStructure(text, (), {})
+        return CanonicalStructure(text, (), {}, {})
     boundaries = sorted(
         {offset for element in elements for offset in (element.start_offset, element.end_offset)}
     )
@@ -208,7 +221,7 @@ def canonicalize_structure(html_sanitized: str) -> CanonicalStructure:
     for element in elements:
         element.start_offset = offsets[element.start_offset]
         element.end_offset = offsets[element.end_offset]
-    return CanonicalStructure(text, tuple(elements), anchors)
+    return CanonicalStructure(text, tuple(elements), anchors, apparatus_items)
 
 
 def _transform(raw_text: str, boundaries: Sequence[int] | None) -> tuple[str, array | None]:

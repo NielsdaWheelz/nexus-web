@@ -519,8 +519,8 @@ def attach_fragment_locators(
 ) -> list[dict[str, object]]:
     """Give each item an exact canonical-text offset span, or no locator at all.
 
-    A span is accepted only when the tokenised re-serialisation reproduces the stored
-    canonical text exactly, or when the item's text occurs exactly once in it.
+    A source element span is accepted only when canonicalization reproduces the
+    stored text exactly, or when the item's text occurs exactly once in it.
     """
     locator_text_by_key = _apparatus_locator_texts(html_sanitized)
     locator_span_by_key = _apparatus_locator_spans(html_sanitized, canonical_text)
@@ -1214,73 +1214,23 @@ def _target_kind_for_context(context: str) -> str:
 def _apparatus_locator_spans(
     html_sanitized: str | None, canonical_text: str
 ) -> dict[str, tuple[int, int, str]]:
-    """Map each stamped element to its canonical-text span by re-canonicalising once.
-
-    Sentinel tokens are wrapped around each stamped element's text; if removing them
-    from the re-canonicalised document does not reproduce the stored canonical text
-    exactly, every span is rejected rather than guessed.
-    """
-    spans: dict[str, tuple[int, int, str]] = {}
+    """Use the canonicalizer's exact element boundaries without modifying source text."""
     if not html_sanitized or not html_sanitized.strip() or not canonical_text:
-        return spans
+        return {}
     try:
-        root = parse_html_document(f"<div>{html_sanitized}</div>")
+        structure = canonicalize_structure(html_sanitized)
     except ParserError:
-        return spans
-
-    seed = hashlib.sha256(html_sanitized.encode("utf-8")).hexdigest()[:16]
-    token_pairs: list[tuple[str, str, str]] = []
-    seen_keys: set[str] = set()
-    for idx, element in enumerate(root.iter()):
-        if not isinstance(element, HtmlElement):
-            continue
-        stable_key = (element.get("data-reader-apparatus-item-id") or "").strip()
-        if not stable_key or stable_key in seen_keys:
-            continue
-        start_token = f"__NEXUS_READER_APPARATUS_START_{seed}_{idx}__"
-        end_token = f"__NEXUS_READER_APPARATUS_END_{seed}_{idx}__"
-        if start_token in canonical_text or end_token in canonical_text:
-            continue
-        element.text = f"{start_token}{element.text or ''}"
-        children = list(element)
-        if children:
-            children[-1].tail = f"{children[-1].tail or ''}{end_token}"
-        else:
-            element.text = f"{element.text or ''}{end_token}"
-        token_pairs.append((stable_key, start_token, end_token))
-        seen_keys.add(stable_key)
-
-    if not token_pairs:
-        return spans
-    canonical_with_tokens = generate_canonical_text(serialize_html(root))
-    stripped = canonical_with_tokens
-    for _stable_key, start_token, end_token in token_pairs:
-        stripped = stripped.replace(start_token, "").replace(end_token, "")
-    if stripped != canonical_text:
-        return spans
-
-    token_positions: list[tuple[int, int]] = []
-    found: dict[str, tuple[int, int, int]] = {}
-    for stable_key, start_token, end_token in token_pairs:
-        start_pos = canonical_with_tokens.find(start_token)
-        end_pos = canonical_with_tokens.find(end_token)
-        if start_pos < 0 or end_pos < 0 or end_pos < start_pos:
-            continue
-        token_positions.append((start_pos, len(start_token)))
-        token_positions.append((end_pos, len(end_token)))
-        found[stable_key] = (start_pos, len(start_token), end_pos)
-
-    for stable_key, (start_pos, start_len, end_pos) in found.items():
-        start = start_pos + start_len - _token_length_before(token_positions, start_pos + start_len)
-        end = end_pos - _token_length_before(token_positions, end_pos)
+        return {}
+    if structure.text != canonical_text:
+        return {}
+    spans: dict[str, tuple[int, int, str]] = {}
+    for stable_key, index in structure.apparatus_items.items():
+        element = structure.elements[index]
+        start, end = element.start_offset, element.end_offset
         locator_text = canonical_text[start:end]
         if locator_text:
             spans[stable_key] = (start, end, locator_text)
     return spans
-
-
-def _token_length_before(token_positions: list[tuple[int, int]], position: int) -> int:
-    return sum(length for start, length in token_positions if start < position)
 
 
 def _apparatus_locator_texts(html_sanitized: str | None) -> dict[str, str]:

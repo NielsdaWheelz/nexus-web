@@ -7435,7 +7435,7 @@ export default function MediaPaneBody() {
                         ? occurrence.group.resolution.anchor.locator : null;
                       if (target.value.target.kind === "Anchor" &&
                           occurrence?.item.marker_anchor_id.kind === "Present" &&
-                          locator?.type === "epub_fragment_offsets" &&
+                          (locator?.type === "epub_fragment_offsets" || locator?.type === "web_text_offsets") &&
                           locator.fragment_id === target.value.fragmentId &&
                           occurrence.item.marker_anchor_id.value === target.value.target.anchorId) {
                         void readerNavigationOwner.returnToOrigin();
