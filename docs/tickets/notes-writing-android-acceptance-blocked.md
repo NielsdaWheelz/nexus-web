@@ -1,5 +1,5 @@
-status: deferred by owner for review of pr 1 and the stacked bullet pr
-origin: 2026-09-25 notes writing live acceptance; updated 2026-09-26
+status: open; final signed physical acceptance pending
+origin: 2026-09-25 notes writing live acceptance; updated 2026-09-27 source-note integration
 area: android writing webview
 
 w2 composition, autocorrect, dictation, native selection and keyboard handoff
@@ -10,15 +10,23 @@ the first tap opened the keyboard and a tapped keyboard key edited the note.
 that development build's paced 100-note trace measured 82.9 ms p95 over 100
 edits, versus 21.3 ms for a plain textarea in the same webview. this exceeds
 the 50 ms w6 target, but does not qualify the final code or production web
-build. the phone disconnected before that production trace. the owner asked
-to finish pr 1, review it, stack pr 2, then resume android checks.
+build. the owner approved including the notes cutover after its checks. the
+connected phone is the only offline device and is signed in, but no final apk
+has been installed or accepted.
 
-prerequisite: physical phone access and an isolated build of the final stacked
-code. rerun w2 and w6 on that exact production web build; profile and repair
-the 100-note path at its owner if the latency remains above target. retain the
-temporary probes and their receipts until acceptance is complete.
+prerequisite: a signed apk from the exact released code and the production web
+build, installed without clearing phone data. the existing desktop keydown-to-rAF
+result is prepaint; frame metrics cannot identify the first frame with the edited
+glyph. obtain an external optical contact-to-glyph recording or equivalent
+validated measurement. any cadence suffices only if its conservative timing
+upper bound can prove the strict threshold. rerun w2 and w6; profile and repair
+the 100-note path at its owner if the latency remains above target.
+see [frame timeline](https://perfetto.dev/docs/data-sources/frametimeline) and
+[frame metrics](https://developer.android.com/reference/android/view/FrameMetrics)
+for the scope of the available frame timestamps.
 
 acceptance: physical android w2 writing/ime/selection/handoff cases pass and
-the 100-edit, 100-note trace has p95 input-to-paint below 50 ms, no
-network-gated paint, and no save-induced focus or scroll jump. record build
-identity and timings; then delete this ticket.
+100 attributable edits on a short annotation and a 100-note surface each have
+conservative p95 input-to-visible-glyph below 50 ms, no network-gated paint,
+and no save-induced focus or scroll jump. record exact installed build, web
+revision, fixture and timing method; delete temporary probes and this ticket.
