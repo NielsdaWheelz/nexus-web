@@ -16,6 +16,12 @@ has been installed or accepted.
 the only camera currently enumerated on this mac is its built-in camera;
 avfoundation reports a 30 fps maximum for every format. no external optical
 capture source is connected.
+an isolated 100-root-note/depth-10 fixture was created and cleaned through the
+existing services (`/tmp/nexus-w6-b7-operator/receipt.md`). live fixture creation
+can use authenticated routes, but removing its 101 note blocks has no public
+route. before production measurement, establish an exact-owner operator path
+for cleanup and prove its manifest, account, edge and media guards; do not
+retarget the localhost rehearsal script.
 
 prerequisite: a signed apk from the exact released code and the production web
 build, installed without clearing phone data. the existing desktop keydown-to-rAF
