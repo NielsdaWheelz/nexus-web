@@ -28,8 +28,12 @@ anthropic's 20 nexus cells are blocked because the owner explicitly declined
 the required standard-retention acknowledgement. the four xai cells lack a key
 and carry an explicit owner waiver, not a pass. actual codex auth refresh is
 unproved. the older `a80087ffb` worker-crash replay receipt proves its own
-source only; compare the final journal/publication contract before reusing that
-inference. remaining shell lifecycle denials, all twelve background roles and
+source only. source comparison found the kernel generation/decision files
+unchanged from its pins; nexus's provider no-tool journal and chat publication
+path unchanged except generation-api closure, a no-op without a codex bearer;
+llm-calling changed strict-json tool-bearing decoding and codex execution.
+this supports a narrow replay inference, not an exact-final crash proof.
+remaining shell lifecycle denials, all twelve background roles and
 background effect/list/undo are tracked separately.
 
 ## prerequisite and acceptance
