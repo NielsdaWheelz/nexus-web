@@ -7,7 +7,7 @@ export type ReaderScrollKeyIntent =
 
 /** Native scroll keys express reading only when the focused control does not own them. */
 export function readerScrollKeyIntent(event: KeyboardEvent): ReaderScrollKeyIntent | null {
-  if (!event.isTrusted || event.altKey || event.ctrlKey || event.metaKey || isEditableTarget(event.target)) return null;
+  if (!event.isTrusted || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || isEditableTarget(event.target)) return null;
   if (event.key === " " || event.key === "Spacebar") {
     if (event.target instanceof Element && event.target.closest("button, [role='button']")) return null;
     return { kind: "Traverse", direction: event.shiftKey ? "backward" : "forward" };

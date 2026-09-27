@@ -19,7 +19,7 @@ import type {
   ReaderDocumentMapMarker,
   ReaderMapMarkerPresentation,
 } from "@/lib/reader/documentMap";
-import { findSourceAnchor, resolveEpubInternalLinkTarget, type EpubRestoreRequest } from "@/lib/reader/epubInternalLinks";
+import { findSourceAnchor, findUniqueSourceLinkOwner, resolveReaderInternalLinkTarget, type EpubRestoreRequest } from "@/lib/reader/epubInternalLinks";
 import {
   captureVisibleCanonicalTextRange,
   isCanonicalTextAnchorVisible,
@@ -716,7 +716,11 @@ function OfflineTextReader({ document, session, source, navigation, onAdapterRea
         captureRef.current(false);
         const opener = request.occurrence.kind === "Present" && request.occurrence.value.startsWith(`${body.id}#`)
           ? findSourceAnchor(root, request.occurrence.value.slice(body.id.length + 1)) : null;
-        const focused = request.focus.kind === "Present" && request.focus.value.isConnected ? request.focus.value : opener ?? viewport;
+        const openerLink = opener?.matches("a[href]") ? opener : opener?.querySelector("a[href]");
+        const uniqueOpenerLink = openerLink instanceof HTMLAnchorElement &&
+          (opener === openerLink || opener?.querySelectorAll("a[href]").length === 1) ? openerLink : null;
+        const focused = request.focus.kind === "Present" && request.focus.value.isConnected
+          ? request.focus.value : uniqueOpenerLink ?? viewport;
         focused.focus({ preventScroll: true });
         request.finish({ kind: request.displaced ? "Arrived" : "Unchanged" });
       } else request.finish({ kind: "Unavailable", reason: "TargetUnavailable", displaced: request.displaced });
@@ -806,13 +810,17 @@ function OfflineTextReader({ document, session, source, navigation, onAdapterRea
           onContentFocus={() => undefined}
           onContentBlur={() => undefined}
           onInternalLinkClick={(link) => {
-            const destination = resolveEpubInternalLinkTarget(link);
+            const destination = resolveReaderInternalLinkTarget(link, document.kind === "WebArticle" ? body.id : null);
             if (destination.kind === "Absent") return false;
             const mode = navigation.state.mode;
             const origin = mode.kind === "Exploring" && mode.origin.kind === "Present" && mode.origin.value.kind === "Captured" ? mode.origin.value : null;
             const target = destination.value.target;
-            if (origin?.occurrence.kind === "Present" && target.kind === "Anchor" && origin.occurrence.value === `${destination.value.fragmentId}#${target.anchorId}`) void navigation.returnToOrigin();
-            else void navigation.inspect({ kind: "Text", destination: destination.value }, link.id ? present(`${body.id}#${link.id}`) : absent());
+            if (origin?.occurrence.kind === "Present" && target.kind === "Anchor" && origin.occurrence.value === `${destination.value.fragmentId}#${target.anchorId}`) {
+              void navigation.returnToOrigin();
+            } else {
+              const opener = contentRef.current ? findUniqueSourceLinkOwner(contentRef.current, link) : null;
+              void navigation.inspect({ kind: "Text", destination: destination.value }, opener ? present(`${body.id}#${opener.id}`) : absent());
+            }
             return true;
           }}
         />

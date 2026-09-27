@@ -68,6 +68,7 @@ export interface PdfJsLike {
 }
 
 interface PdfViewportLike {
+  convertToViewportPoint?(x: number, y: number): [number, number];
   width: number;
   height: number;
   scale?: number;
@@ -75,6 +76,10 @@ interface PdfViewportLike {
 }
 
 export interface PdfPageViewLike {
+  width?: number;
+  height?: number;
+  scale?: number;
+  rotation?: number;
   viewport?: PdfViewportLike;
   pdfPage?: {
     getViewport(params: { scale: number; rotation?: number }): PdfViewportLike;
@@ -137,6 +142,7 @@ export interface PdfFindControllerLike {
 }
 
 export interface PdfViewerLike {
+  removePageBorders?: boolean;
   setDocument(doc: PdfDocumentLike | null): void;
   currentPageNumber: number;
   pagesRotation: number;

@@ -1,6 +1,6 @@
 # reader source notes and navigation: verification
 
-status: implemented in `feature/reader-source-notes`; rebased acceptance in progress
+status: implemented in `feature/reader-source-notes`; final main integration in progress
 original base: `cfa27d6ce615bb4775e7784954f19dcdd8c8ebb1`
 rebased candidate: `42117aca9ea4bb914429daf8e90c2a4f022107ae` on
 `8cc5eef8e48fc5394240df4a57f0cab9410eaef2`; `./scripts/test` passed
@@ -11,7 +11,22 @@ the table and artifact receipts below belong to the pre-rebase feature commit
 implementation but do not establish live behavior on the rebased candidate.
 the rebase integrated the new `0243` migration, epub section semantics, source
 issues, offline package version 4, and pending-progress upgrade handling.
-focused live requalification is underway on an isolated database at `0243`.
+focused live requalification passed on the task tree at `0244`. main then merged
+an independent reader-navigation implementation (`9e021e88d`); the final
+integrated tree requires its own static and focused live qualification.
+
+## focused task-tree requalification
+
+| boundary | observed result |
+|---|---|
+| migration and source fidelity | fresh isolated database migrated through `0243` to canonical `0244`; authenticated pillow import matched all 547 earlier note identities and bodies and restored 24 additional genuine numbered translator notes (571 total), each with reciprocal backlink and authored notes heading |
+| hosted contents and evidence | exact auxiliary toc target `10 Mountains` opened at offset 5102 and returned scroll 55→2688→55; an in-text marriage-customs marker opened its full 394-character authored body in evidence, source jump scrolled 4413→17802, return restored 4413; cursor revision remained 4 across the detour; receipts in `/tmp/nexus-reader-source-notes-rebase` |
+| android offline | installed task apk sha256 `0eb6a162f1c499472447cba79b475909aa97129d95738eb0547c96be153480d9`; normal download stored reader contract v4 package sha256 `31c5b10f66d163c4be5ad8977f7cad1aef68d8c70802176bd98c143ab9b2ba91`; with no active network, marker opened the full authored note and return restored scroll 10847.23828125 exactly |
+| transcript find | normal authenticated published ted captions: desktop and narrow real-browser journeys passed find, stepping, close/return, paused-player invariance and no detour cursor write; the final geometry guard passed adoption → immediate reload with the exact target fragment at both widths; receipts in `/tmp/nexus-reader-transcript-b-final` |
+
+these receipts cover task heads `42117aca`, `9ee7bb572` and the transcript
+geometry commit `b2896c0f9`, as labelled in each artifact. they do not certify
+the subsequent integration merge.
 
 the temporary red/green probes used normal ingestion, authenticated http,
 postgres, browsers, firefox capture and an installed android build against an
@@ -52,9 +67,8 @@ each final authenticated read returned 404.
 
 - **blocked by available data:** live generic chat and dossier find smoke have
   no messages or revisions and the isolated model catalog returns 503; the
-  owner approved recording those two checks as blocked. the separate transcript
-  playback smoke also lacks a task-safe fixture and was not covered by that
-  approval. [ticket](tickets/reader-nonreader-find-live-smoke-blocked.md).
+  owner approved recording those two checks as blocked.
+  [ticket](tickets/generic-pane-find-live-acceptance-blocked.md).
 - **open:** spoken screen-reader announcements and linear accessibility focus
   were not established by the bounded talkback attempt. actual android touch
   and double-tap opened the source pane; native hierarchy capture could not

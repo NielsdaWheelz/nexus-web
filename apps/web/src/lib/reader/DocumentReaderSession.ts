@@ -247,7 +247,9 @@ export function createDocumentReaderSession({
           : initialEpubTarget.kind === "Fragment"
             ? initialEpubTarget.id
             : navigation.sections.find((section) => section.section_id === initialEpubTarget?.id)?.target.fragment_id;
-        const fragmentId = locator?.kind === "epub" ? locator.target.fragment_id : initialFragmentId;
+        const fragmentId = initialEpubTarget?.kind === "Fragment"
+          ? initialFragmentId
+          : locator?.kind === "epub" ? locator.target.fragment_id : initialFragmentId;
         if (fragmentId === undefined || !navigation.fragments.some((fragment) => fragment.fragment_id === fragmentId)) {
           throw new ApiError(409, "E_READER_CONTENT_CHANGED", "The requested EPUB fragment is unavailable. Reload the document.");
         }

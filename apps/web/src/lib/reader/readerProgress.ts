@@ -267,12 +267,15 @@ export function reduceReaderProgress(
         queued !== null && !readerResumeStatesEqual(queued, event.snapshot.locator)
           ? { status: "dirty", locator: queued }
           : { status: "clean" };
-      // Any accepted write supersedes an open candidate: this viewport is
-      // canonical now.
+      // A candidate observed after this write committed may still be newer
+      // than its acknowledgement. Keep it for the ordered successor.
       return {
         authority: { status: "ready", snapshot: event.snapshot },
         local,
-        remote: { status: "none" },
+        remote: state.remote.status === "candidate" &&
+          state.remote.snapshot.revision > event.snapshot.revision
+          ? state.remote
+          : { status: "none" },
       };
     }
 

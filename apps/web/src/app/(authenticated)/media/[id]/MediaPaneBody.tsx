@@ -336,7 +336,7 @@ import type { Highlight } from "@/lib/highlights/highlightContract";
 import { useHostedTextHighlights } from "./useHostedTextHighlights";
 import ResourceThumb from "@/components/ui/ResourceThumb";
 import { buildMediaResourceHeader } from "./mediaFormatting";
-import { findSourceAnchor, resolveEpubInternalLinkTarget, type EpubRestoreRequest } from "@/lib/reader/epubInternalLinks";
+import { findSourceAnchor, findUniqueSourceLinkOwner, resolveReaderInternalLinkTarget, type EpubRestoreRequest } from "@/lib/reader/epubInternalLinks";
 import { Activity, ChevronLeft, ChevronRight } from "lucide-react";
 import {
   dispatchReaderPulse,
@@ -2921,11 +2921,29 @@ export default function MediaPaneBody() {
       let restored = false;
       await readerScrollPositioner.run((commands) => {
         restored = restoreTextReaderPlacement(commands, viewport, cursor, content, placement);
-      });
+      }, signal);
       if (!restored || signal.aborted) return { kind: "Unavailable", reason: "PositioningFailed", displaced: true };
       if (request.checkpoint.occurrence.kind === "Present") {
-        const location = sourceReferenceByItemId.get(request.checkpoint.occurrence.value);
-        const opener = location && content.querySelector<HTMLElement>(readerApparatusSelector(location.item.stable_key));
+        const occurrence = request.checkpoint.occurrence.value;
+        let opener: HTMLElement | null = null;
+        if (occurrence.startsWith("source-link:")) {
+          const separator = occurrence.indexOf(":", "source-link:".length);
+          const fragmentId = occurrence.slice("source-link:".length, separator);
+          const anchorId = occurrence.slice(separator + 1);
+          if (separator < 0 || fragmentId !== activeContentRef.current?.fragmentId || !anchorId) {
+            return { kind: "Unavailable", reason: "TargetUnavailable", displaced: true };
+          }
+          const owner = findSourceAnchor(content, anchorId);
+          const link = owner instanceof HTMLAnchorElement
+            ? owner
+            : owner?.querySelector<HTMLAnchorElement>("a[href]") ?? null;
+          opener = link && findUniqueSourceLinkOwner(content, link) === owner ? link : null;
+        } else {
+          const location = sourceReferenceByItemId.get(occurrence);
+          opener = location
+            ? content.querySelector<HTMLElement>(readerApparatusSelector(location.item.stable_key))
+            : null;
+        }
         if (!opener) return { kind: "Unavailable", reason: "TargetUnavailable", displaced: true };
         if (opener.tabIndex < 0) opener.tabIndex = -1;
         opener.focus({ preventScroll: true });
@@ -4330,7 +4348,7 @@ export default function MediaPaneBody() {
       if (Math.abs(viewport.scrollTop - top) <= 1) return { kind: "Unchanged" };
       await readerScrollPositioner.run(({ setTop }) => {
         if (!signal.aborted) setTop(viewport, top);
-      });
+      }, signal);
       if (signal.aborted) return { kind: "Cancelled", displaced: true };
       return Math.abs(viewport.scrollTop - top) <= 1
         ? { kind: "Arrived" }
@@ -4346,7 +4364,7 @@ export default function MediaPaneBody() {
       );
       const container = element ? getPaneScrollContainer(element) : null;
       if (!element || !container) return { kind: "Unavailable", reason: "TargetUnavailable", displaced: true };
-      await readerScrollPositioner.run(({ reveal }) => { if (!signal.aborted) reveal(container, element); });
+      await readerScrollPositioner.run(({ reveal }) => { if (!signal.aborted) reveal(container, element); }, signal);
       if (signal.aborted) return { kind: "Cancelled", displaced: true };
       if (!isElementInPaneView(container, element)) return { kind: "Unavailable", reason: "PositioningFailed", displaced: true };
       if (!focusDestination(contentRef.current && readerSourceFocusElement(contentRef.current, element))) {
@@ -7394,13 +7412,23 @@ export default function MediaPaneBody() {
               onContentFocus={handleContentFocus}
               onContentBlur={handleContentBlur}
               onInternalLinkClick={
-                isEpub
+                isEpub || media?.kind === "web_article"
                   ? (link) => {
-                      const target = resolveEpubInternalLinkTarget(link);
+                      const target = resolveReaderInternalLinkTarget(link,
+                        media?.kind === "web_article" ? activeContent?.fragmentId ?? null : null);
                       if (target.kind === "Absent") return false;
                       const mode = readerNavigationOwner.state.mode;
                       const origin = mode.kind === "Exploring" && mode.origin.kind === "Present"
                         ? mode.origin.value : null;
+                      const sourceLink = contentRef.current ? findUniqueSourceLinkOwner(contentRef.current, link) : null;
+                      const sourceLinkOccurrence = sourceLink && activeContent
+                        ? `source-link:${activeContent.fragmentId}:${sourceLink.id}` : null;
+                      if (target.value.target.kind === "Anchor" &&
+                          origin?.kind === "Captured" && origin.occurrence.kind === "Present" &&
+                          origin.occurrence.value === `source-link:${target.value.fragmentId}:${target.value.target.anchorId}`) {
+                        void readerNavigationOwner.returnToOrigin();
+                        return true;
+                      }
                       const occurrence = origin?.kind === "Captured" && origin.occurrence.kind === "Present"
                         ? sourceReferenceByItemId.get(origin.occurrence.value) : null;
                       const locator = occurrence?.group.resolution.kind === "Resolved"
@@ -7416,7 +7444,8 @@ export default function MediaPaneBody() {
                       void navigationInspect(target.value.target.kind === "Anchor"
                         ? { kind: "SourceAnchor", focus: "Destination", fragmentId: target.value.fragmentId, anchorId: target.value.target.anchorId }
                         : { kind: "Text", focus: "Destination", fragmentId: target.value.fragmentId,
-                            startOffset: target.value.target.offset, endOffset: target.value.target.offset });
+                            startOffset: target.value.target.offset, endOffset: target.value.target.offset },
+                        sourceLinkOccurrence ? present(sourceLinkOccurrence) : absent());
                       return true;
                     }
                   : undefined

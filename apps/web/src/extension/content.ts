@@ -132,10 +132,10 @@ function extract(): ContentReply {
 // What leaves the browser is content-bearing markup only. Dropped with their
 // content: scripts, styles, templates, forms and every control, hidden
 // elements, and embeds the server drops anyway. Kept per element: the
-// attributes sanitize_html admits (a: href/title; img: src/alt; th/td:
-// colspan/rowspan), the ids/classes/link/apparatus attributes html_apparatus
-// and web_article_structure read, and iframe src/title for embed evidence.
-// Everything else — event handlers, style, data-*, aria, srcset — goes.
+// attributes sanitize_html admits (a: href/title/name; img: src/alt; th/td:
+// colspan/rowspan), authored targets and labels, the class/link/apparatus
+// attributes html_apparatus reads, and iframe src/title for embed evidence.
+// Everything else — event handlers, style, data-*, srcset — goes.
 const DROPPED_TAGS = new Set([
   "script",
   "style",
@@ -158,7 +158,7 @@ const DROPPED_TAGS = new Set([
   "link",
   "base",
 ]);
-const KEPT_ATTRIBUTES = new Set(["id", "class", "role", "epub:type", "rid", "ref-type"]);
+const KEPT_ATTRIBUTES = new Set(["id", "aria-labelledby", "class", "role", "epub:type", "rid", "ref-type"]);
 const KEPT_BY_TAG: Record<string, readonly string[]> = {
   a: ["href", "title", "name"],
   img: ["src", "alt"],

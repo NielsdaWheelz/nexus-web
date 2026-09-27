@@ -153,7 +153,7 @@ export async function positionTranscriptMatch(
       if (rect.left < bounds.left) container.scrollLeft += rect.left - bounds.left;
       else if (rect.right > bounds.right) container.scrollLeft += rect.right - bounds.right;
     }
-  });
+  }, signal);
   if (signal.aborted) return { kind: "Cancelled", displaced: displaced() };
   return visible() && focusDestination(source.row)
     ? { kind: "Arrived" }
@@ -204,7 +204,7 @@ export async function restoreTranscriptPlacement(
         viewport.getBoundingClientRect().top - placement.listViewportTopDeltaPx);
       viewport.scrollLeft = placement.viewportScrollLeft;
     }
-  });
+  }, signal);
   if (signal.aborted) return { kind: "Cancelled", displaced: displaced() };
   const delta = list.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
   const textDelta = measureCanonicalTextAnchorViewportDelta(container, source.cursor, placement.text.anchorCp);

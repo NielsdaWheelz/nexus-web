@@ -101,14 +101,22 @@ export function measureCanonicalViewportOrigin(
   cursor: CanonicalCursorResult,
 ): CanonicalTextReaderPlacement | null {
   const anchorCp = findFirstVisibleCanonicalOffset(container, cursor);
-  if (anchorCp === null) return null;
+  // The endcap can occupy the whole viewport at the bottom of a short pane.
+  // In that case the document end is the exact position, even though no text
+  // glyph intersects the viewport. Keep its measured placement for return.
+  const atEnd =
+    Math.abs(container.scrollHeight - container.clientHeight - container.scrollTop) <=
+    READER_END_TOLERANCE_PX;
+  const resolvedAnchorCp = anchorCp ?? (atEnd ? cursor.length : null);
+  if (resolvedAnchorCp === null) return null;
   const viewportTopDeltaPx = measureCanonicalTextAnchorViewportDelta(
     container,
     cursor,
-    anchorCp,
+    resolvedAnchorCp,
   );
   if (viewportTopDeltaPx === null) return null;
-  return { kind: "CanonicalText", anchorCp, viewportTopDeltaPx, scrollLeft: container.scrollLeft };
+  if (anchorCp === null && viewportTopDeltaPx >= container.clientHeight) return null;
+  return { kind: "CanonicalText", anchorCp: resolvedAnchorCp, viewportTopDeltaPx, scrollLeft: container.scrollLeft };
 }
 
 export function measureSourceAnchorViewportOrigin(

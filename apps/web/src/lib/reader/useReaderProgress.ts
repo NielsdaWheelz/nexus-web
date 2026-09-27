@@ -255,6 +255,7 @@ export function useReaderProgress(
    */
   const sendCursor = useCallback(
     (baseRevision: number, keepalive = false): Promise<void> => {
+      if (saveInFlightRef.current !== null) return saveInFlightRef.current;
       const run = async (): Promise<void> => {
         const mediaId = readableMediaId;
         if (mediaId === null) {

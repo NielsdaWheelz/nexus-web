@@ -114,6 +114,7 @@ internal class OfflineReadingStore internal constructor(
     reconcileOnInit: Boolean = true,
 ) : OfflineReaderProgressRepository {
     private val appContext = context.applicationContext
+    private val connectivity = appContext.getSystemService(ConnectivityManager::class.java)
     private val listeners = CopyOnWriteArraySet<(ReadingStoreSnapshot) -> Unit>()
     private val leases = ConcurrentHashMap<UUID, OfflineReadingLease>()
     private val verifiedPackages = ConcurrentHashMap<UUID, OfflineReadingPackage>()
@@ -140,8 +141,7 @@ internal class OfflineReadingStore internal constructor(
     init {
         rootDirectory.mkdirs()
         if (reconcileOnInit) requestReconciliation()
-        appContext.getSystemService(ConnectivityManager::class.java)
-            .registerDefaultNetworkCallback(progressNetworkCallback)
+        connectivity.registerDefaultNetworkCallback(progressNetworkCallback)
     }
 
     fun bindAccountAfterExternalPurge(accountId: UUID): ReadingStoreSnapshot {
@@ -560,15 +560,21 @@ internal class OfflineReadingStore internal constructor(
     }
 
     fun synchronizeReaderProgress(mediaId: UUID? = null): Boolean {
-        if (synchronized(this) { readBinding()?.authorizationRequired != false }) return false
-        val connectivity = appContext.getSystemService(ConnectivityManager::class.java)
+        if (synchronized(this) {
+                !reconciliationComplete || bindingLocked ||
+                    readAccountTransition() != null ||
+                    readBinding()?.authorizationRequired != false
+            }
+        ) return false
         val network = connectivity.activeNetwork ?: return false
         if (connectivity.getNetworkCapabilities(network)
                 ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) != true
         ) return false
         synchronized(this) {
             val binding = readBinding() ?: return false
-            if (binding.authorizationRequired || bindingLocked || readAccountTransition() != null) return false
+            if (!reconciliationComplete || binding.authorizationRequired ||
+                bindingLocked || readAccountTransition() != null
+            ) return false
             val mediaPredicate = if (mediaId == null) "" else " AND media_id = ?"
             val args = mutableListOf<Any>(
                 OfflineReaderSyncState.Pending.name,
@@ -940,6 +946,9 @@ internal class OfflineReadingStore internal constructor(
                 OfflineReadingReconciliationOutcome.Ready(snapshot)
             } else {
                 OfflineReadingReconciliationOutcome.Deferred(snapshot)
+            }
+            if (outcome is OfflineReadingReconciliationOutcome.Ready) {
+                synchronizeReaderProgress()
             }
             callbacks.forEach { callback -> callback(outcome) }
         }

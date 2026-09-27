@@ -82,10 +82,12 @@ export interface ReaderScrollCommands {
 }
 
 export interface ReaderScrollPositioner {
+  /** Abort ends the final layout wait; the caller reports its cancellation outcome. */
   run(
     operation: (
       commands: ReaderScrollCommands,
     ) => void | Promise<void>,
+    signal?: AbortSignal,
   ): Promise<void>;
 }
 
@@ -121,22 +123,36 @@ const readerScrollCommands: ReaderScrollCommands = {
   },
 };
 
-function nextLayoutSample(): Promise<void> {
+function nextLayoutSample(signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve();
   return new Promise((resolve) => {
-    window.requestAnimationFrame(() => resolve());
+    const finish = () => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    };
+    const onAbort = () => {
+      window.cancelAnimationFrame(frame);
+      finish();
+    };
+    const frame = window.requestAnimationFrame(finish);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
   });
 }
 
 export function useReaderScrollPositioner(): ReaderScrollPositioner {
   const visibleLocks = useMobileChromeVisibleLocks();
   const run = useCallback<ReaderScrollPositioner["run"]>(
-    async (operation) => {
+    async (operation, signal) => {
       const release = visibleLocks.acquire("reader-positioning");
       try {
         await operation(readerScrollCommands);
       } finally {
-        await nextLayoutSample();
-        release();
+        try {
+          await nextLayoutSample(signal);
+        } finally {
+          release();
+        }
       }
     },
     [visibleLocks],
