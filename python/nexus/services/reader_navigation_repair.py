@@ -403,13 +403,15 @@ def _reciprocal_marker_correction(
     old_items = {str(item["stable_key"]): item for item in snapshot.installed["items"]}
     fresh_items = {str(item["stable_key"]): item for item in plan.apparatus_items}
     old_ref = old_items.get(str(old_edge["from_stable_key"]))
+    fresh_ref = fresh_items.get(str(old_edge["from_stable_key"]))
     if (
         old_body.get("kind") != "footnote"
         or old_edge.get("to_stable_key") != old_key
         or old_edge.get("relation") != "points_to_note"
         or old_ref is None
         or old_ref.get("kind") != "footnote_ref"
-        or fresh_items.get(str(old_ref["stable_key"])) != old_ref
+        or fresh_ref is None
+        or any(fresh_ref.get(field) != value for field, value in old_ref.items())
     ):
         return None
     old_ref_span = _exact_epub_span(snapshot, old_ref)
