@@ -6,8 +6,8 @@
 
 The flow is linear and idempotent; after any failure, fix the cause and rerun:
 
-    preflight -> inputs -> images -> backup -> migrate -> up -> caddy
-              -> health -> isolation -> current pointer
+    preflight -> inputs -> images -> backup -> migrate -> convert captures
+              -> up -> caddy -> health -> isolation -> current pointer
 
 `--check` runs preflight and the read-only proofs against the SHA the host
 records. There is no attempt/resume state machine: the host keeps one
@@ -431,6 +431,26 @@ def migrate(candidate: CandidateManifest) -> None:
         raise Failure(f"the database is at {reached}, not {candidate.expected_database_revision}")
 
 
+def convert_browser_captures(candidate: CandidateManifest) -> None:
+    """Finish the one-shot capture cutover while the API and workers are stopped."""
+
+    command = "run --rm --no-deps --no-TTY migration nexus convert-browser-article-captures"
+    pending = (
+        "SELECT count(*) FROM media_source_attempts "
+        "WHERE source_type = 'browser_article_capture' AND NOT (source_payload ? 'sha256')"
+    )
+    for attempt in (1, 2):
+        note(f"browser capture conversion pass {attempt}")
+        output = compose(candidate, command, profile="release", timeout=1800).strip()
+        if output:
+            print(output, flush=True)
+        remaining = psql(pending)
+        if remaining != "0":
+            raise Failure(f"{remaining} browser capture attempts remain unconverted")
+        if attempt == 2 and output:
+            raise Failure("the second conversion pass did work")
+
+
 # ---------------------------------------------------------------------------
 # Start, Caddy, health
 # ---------------------------------------------------------------------------
@@ -576,6 +596,7 @@ def release(source_sha: str, workspace: Path) -> None:
     else:
         note("the database is empty; there is nothing to back up")
     migrate(candidate)
+    convert_browser_captures(candidate)
 
     start(candidate)
     reload_caddy()
