@@ -1,6 +1,6 @@
 # reader section semantics
 
-status: local implementation verified; production cutover and two live proofs blocked
+status: local acceptance verified; production rollout deferred by owner
 origin: 2026-09-26 owner approval of [council research](reader-chapter-detection-council.md)
 authority: this plan owns implementation; the research retains sources and receipts.
 
@@ -262,7 +262,8 @@ are fenced, but the declaration cannot be independently recovered from that html
 
 ## implementation receipt
 
-branch: `feature/reader-chapter-semantics`, isolated from main at `47d7448c7`.
+branch: `feature/reader-chapter-semantics`, rebased onto main after the source
+recovery and shared media-row changes.
 the four edition digests are recorded in the [council](reader-chapter-detection-council.md).
 temporary red probes reproduced four false section counts, an ordinary chapter
 misread as a note, a valid anchor retarget, duplicate publisher boundaries,
@@ -271,9 +272,21 @@ pillow 334 (297 numbered entries; 225 commentary headings auxiliary), augustine
 30, montaigne 126. all parse within 30 seconds; the combined four-book probe took
 about 11 seconds. full labels, targets, parent links and routine membership were
 asserted, not only totals. isolated imports, browser navigation, repair generation
-fences, fragment/annotation identity preservation, migration rehearsal and
-python/typescript offline v2 rejection passed. `./scripts/test` and android
-`:app:assembleDebug` passed. temporary probes live only under `/tmp/`.
+fences, fragment/annotation identity preservation, and a fresh `0236→0243`
+migration rehearsal passed. the old disposable acceptance database was reconciled
+from the earlier, conflicting `0242` test stamp; no production schema was changed.
+main had already claimed reader contract v3, so this branch hard-cuts to v4.
+python/typescript reject v3; the installed android v4 apk
+(`sha256:013bf9fe99545130c6ed29ef605bda463e4c018b2f6eaea9bb2813fb9c7de046`)
+marks two sealed v3 copies unsupported and preserves Retry/Remove. normal Retry
+installed the v4 pillow package (`sha256:7ae8897c7539fab3e50a5932898070cb72b4c11dae3d2f696799f0c05e86a8af`);
+installed `reader.json` (`sha256:52d43663be1e784b69300ca319d3b4ffe2d7c8a2d99b003a252cc70c4174d92d`)
+has navigation exactly equal to hosted API. hosted and native readers both reach
+`[1] In spring, the dawn` and the independent notes target at offset 315;
+compact navigation has 328 steps. hosted pointer and keyboard Enter activation
+reach the same notes target; native document-map activation does too. the v4
+contents has 559 nodes, including 225 auxiliary note headings. `./scripts/test`
+and android debug build pass.
 
 the isolated article repair published revision-2 reconciliation through the
 normal exact worker job `02444e86-ac04-4fe7-a8ce-b7734787a3e7`. the index is
@@ -282,5 +295,6 @@ ready with seven content blocks; their only section ids are the repaired
 one-shot isolated worker process; no secret was copied into the task runtime.
 production source/row correspondence, restored rehearsal, pending offline
 progress, and deployment remain unverified because both ssh routes timed out:
-[ticket](tickets/reader-chapter-production-correspondence-unverified.md). these
-mandatory cases prevent a completion claim.
+[ticket](tickets/reader-chapter-production-correspondence-unverified.md). the
+owner explicitly deferred production acceptance for this pass; no production
+state was changed.

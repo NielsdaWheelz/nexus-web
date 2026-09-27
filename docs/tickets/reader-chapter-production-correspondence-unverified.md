@@ -10,6 +10,7 @@ progress, and source/row correspondence remain unknown. `ssh
 nexus@5.78.194.235` and `ssh dev-server-public` both timed out on port 22
 on 2026-09-26; the earlier council inspection had the same blocker. no production
 schema, publication, or offline state was changed in this branch.
+the owner explicitly deferred production acceptance for this pass.
 
 prerequisite: restore a read-only production route and identify the affected
 rows and exact stored originals. rehearse `reader_navigation_repair inspect` on
