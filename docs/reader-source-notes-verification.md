@@ -2,15 +2,16 @@
 
 status: implemented in `feature/reader-source-notes`; rebased acceptance in progress
 original base: `cfa27d6ce615bb4775e7784954f19dcdd8c8ebb1`
-rebased candidate: `ec4b37afb` on `dcfa18538`; `./scripts/test` passed
+rebased candidate: `42117aca9ea4bb914429daf8e90c2a4f022107ae` on
+`8cc5eef8e48fc5394240df4a57f0cab9410eaef2`; `./scripts/test` passed
 date: 2026-09-26–27
 
 the table and artifact receipts below belong to the pre-rebase feature commit
 `16099bdd84f4a20c443b6f066f23bc2a2334056e`. they establish the original
 implementation but do not establish live behavior on the rebased candidate.
 the rebase integrated the new `0243` migration, epub section semantics, source
-issues, and offline package version 4. focused live requalification is underway
-on an isolated database at `0243`.
+issues, offline package version 4, and pending-progress upgrade handling.
+focused live requalification is underway on an isolated database at `0243`.
 
 the temporary red/green probes used normal ingestion, authenticated http,
 postgres, browsers, firefox capture and an installed android build against an
