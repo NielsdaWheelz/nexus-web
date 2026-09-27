@@ -61,7 +61,7 @@ export const PANE_SECONDARY_SURFACE_DEFINITIONS = [
   {
     id: "resource-evidence",
     groupId: "resource-inspector",
-    title: "Evidence",
+    title: "Highlights & citations",
     iconId: "link-2",
   },
   {

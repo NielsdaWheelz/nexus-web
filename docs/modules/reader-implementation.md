@@ -188,11 +188,11 @@ in-flow endcap; navigation remains an explicit user action.
 ### Resource Inspector and Document Map surfaces
 
 The Media pane publishes one `resource-inspector` secondary group:
-**Contents** when available, **Evidence**, and **Dossier**. The shared inspector
-action opens and closes that whole group: open restores the remembered tab
+**Contents** when available, **Highlights & citations**, and **Dossier**. The
+shared inspector action opens and closes that whole group: open restores the remembered tab
 while it is published, else the publication's default. The reader's internal **Document Map** remains the
-owner of Contents, Evidence, and the desktop overview rail; it is not the
-generic secondary-pane disclosure contract.
+owner of Contents, Highlights & citations, and the desktop overview rail; it is
+not the generic secondary-pane disclosure contract.
 
 - Desktop has a fixed **Document Map overview rail**. It consumes aggregate
   markers from `GET /media/{id}/document-map`, shows whole-document positions
@@ -200,12 +200,12 @@ generic secondary-pane disclosure contract.
   source ticks keep exact coordinates; separate hit groups open their members.
 - contents uses the shared `ReaderDocumentMapDetail`: outline, pinned local
   scope, current position, and one excursion return.
-- Evidence uses `EvidencePaneSurface`. The shipped surface merges highlights,
-  source-authored apparatus, and resource-graph connections; its wide-reader
+- Highlights & citations uses `EvidencePaneSurface`. The surface merges
+  highlights, source-authored apparatus, and resource-graph connections; its wide-reader
   companion is `MarginRail`.
 - Mobile has no interactive Document Map overview rail. The same
-  Contents/Evidence bodies render in the Resource Inspector's workspace mobile
-  sheet; readable web, epub, and pdf render a passive, aria-hidden
+  Contents and Highlights & citations bodies render in the Resource Inspector's
+  workspace mobile sheet; readable web, epub, and pdf render a passive, aria-hidden
   reader-relative position ribbon whose only input is the semantic visible
   range. placement is defined by the
   [mobile ribbon cutover](../cutovers/mobile-reader-position-ribbon-hard-cutover.md).
@@ -214,8 +214,8 @@ generic secondary-pane disclosure contract.
   carry no inspector control, and bare `g` dispatches the header action.
 - bare `g` fires after the 500ms chord delay, or at once when a non-chord key
   follows, and invokes the published inspector action without a trigger, so it
-  agrees with the header in every state. `g e` selects Evidence; `g c` and
-  shift-`g` open chat. editable targets, modifier keys, and a topmost modal
+  agrees with the header in every state. `g e` selects Highlights & citations;
+  `g c` and shift-`g` open chat. editable targets, modifier keys, and a topmost modal
   other than the inspector suppress the chord. the chord reads the action when
   it fires, so action or publication identity changes do not cancel it.
 - The open region id is scoped by primary pane and secondary group. Mobile
@@ -264,8 +264,8 @@ trigger, with pane chrome as the disconnected-trigger fallback.
 The canonical contract for explicit `Passages | Whole document` scope,
 semantic filters, and typed related-object disclosures is
 [`reader-evidence-scope-associations-hard-cutover.md`](../cutovers/reader-evidence-scope-associations-hard-cutover.md).
-Evidence exposes only that target-centered payload; no removed reader lens,
-route, or storage-shaped response remains.
+Highlights & citations exposes only that target-centered payload; no removed
+reader lens, route, or storage-shaped response remains.
 
 ### fresh-selection icon toolbar
 
@@ -326,7 +326,7 @@ skins.
   save — there is no discard path. an empty composer creates no note; the
   highlight survives in every branch.
 - all note writes flow through the canonical `saveHighlightNote` path used by
-  Evidence, so composer-written notes appear there with no extra
+  Highlights & citations, so composer-written notes appear there with no extra
   wiring.
 
 the `n` chord is reader-local: `useReaderKeyChord` fires on bare `n`
@@ -378,8 +378,8 @@ explicit workspace or intrinsic runtime-layout publication.
 
 The Document Map overview rail is fixed primary-adjacent chrome: it changes
 rendered pane width without changing stored primary pane width and contains no
-generic open control. Contents and Evidence are Document Map bodies inside the
-shared Resource Inspector; Dossier is the third Media tab. The single
+generic open control. Contents and Highlights & citations are Document Map
+bodies inside the shared Resource Inspector; Dossier is the third Media tab. The single
 `resource-inspector` width policy is independent from the primary reader width.
 `MarginRail` is wide-reader primary-adjacent evidence presentation, not another
 secondary surface. Mobile panes ignore desktop runtime pane sizing and render at
@@ -482,7 +482,8 @@ revision }`; on send the server row-locks the Highlight and captures an
 ### anchored evidence projection
 
 Anchored projection is the reader-owned bridge from target-owned locators to
-visible Evidence and margin rows. The overview rail owns no DOM geometry:
+visible rows in Highlights & citations and the margin. The overview rail owns
+no DOM geometry:
 marker positions come from aggregate document fractions and its visible band
 comes from the format-owned semantic viewport.
 
@@ -514,10 +515,10 @@ is not generated chat citation evidence and must not write or read
   path before semantic source attributes are sanitized away; `reader_apparatus.py`
   owns the persisted rows.
 - Source-authored standalone margin notes are valid target-only apparatus rows:
-  they appear in Evidence and can jump to the note target, but they do not get
-  invented marker edges or hover previews.
-- Evidence exposes apparatus through its `Citations` filter and distinguishes
-  source references from generated citations in the typed item contract.
+  they appear in Highlights & citations and can jump to the note target, but
+  they do not get invented marker edges or hover previews.
+- Highlights & citations exposes apparatus through its `Citations` filter and
+  distinguishes source references from generated citations in the typed item contract.
 - Web/EPUB rows may support hover previews and marker/target activation when
   exact locators exist.
 - Current PDF support is scoped to native internal `cite.*` link graphs.
@@ -531,8 +532,8 @@ separate from source-authored apparatus.
 
 - Backend ownership remains `resource_edges`; the media reader consumes those
   rows only through `GET /media/{id}/document-map`.
-- Evidence classifies these rows under semantic `Links` and `Synapses` filters;
-  it exposes no storage-shaped `Connections` category.
+- Highlights & citations classifies these rows under semantic `Links` and
+  `Synapses` filters; it exposes no storage-shaped `Connections` category.
 - Rows align to the referenced passage when the media-owned endpoint resolves
   to PDF geometry or exact rendered fragment text offsets. Unavailable passage
   facts remain in `Passages` under `Needs attention`; they never invent locator
