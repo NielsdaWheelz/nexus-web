@@ -14,16 +14,20 @@ from provider_runtime import Present as RuntimePresent
 from pydantic import (
     Field,
     JsonValue,
+    SecretStr,
     StringConstraints,
     ValidationInfo,
+    field_serializer,
     field_validator,
     model_validator,
 )
 
 from nexus.schemas.presence import Absent, Presence, Present
+from nexus.services.codex_generation_health_contract import EXECUTION_POLICY_REVISION
 from nexus.services.generation_spec import (
     CodexDispatchTargetSnapshot,
     CodexPersonalSelection,
+    CodexShell,
     GenerationIntent,
     GenerationSpecWire,
     JsonSchemaOutput,
@@ -37,12 +41,12 @@ from nexus.services.generation_spec import (
 if TYPE_CHECKING:
     from provider_runtime.agent_runtime import AgentModelCatalog, AgentModelFacts
 
-COMMAND_SCHEMA_VERSION = "nexus-generation-command.v4"
+COMMAND_SCHEMA_VERSION = "nexus-generation-command.v5"
 COMMAND_DRAFT_SCHEMA_VERSION = "nexus-generation-command-draft.v2"
 ADMISSION_SCHEMA_VERSION = "nexus-generation-admission.v2"
 EVENT_SCHEMA_VERSION = "nexus-generation-event.v3"
-HEALTH_SCHEMA_VERSION = "nexus-generation-health.v3"
-MODEL_CATALOG_SCHEMA_VERSION = "nexus-codex-model-catalog.v2"
+HEALTH_SCHEMA_VERSION = "nexus-generation-health.v4"
+MODEL_CATALOG_SCHEMA_VERSION = "nexus-codex-model-catalog.v3"
 MAX_OUTPUT_SCHEMA_BYTES = 64 * 1024
 MAX_MODEL_CATALOG_BODY_BYTES = 2 * 1024 * 1024
 MAX_ADMISSION_BODY_BYTES = 4 * 1024
@@ -65,6 +69,12 @@ class CodexCatalogReasoning(WireTaggedModel):
     native_wire_value: CatalogKey
 
 
+class CodexExecutionFacts(WireTaggedModel):
+    mode: Literal["contained", "remote_shell"]
+    final_outputs: tuple[Literal["text", "json_schema"], ...] = Field(min_length=1)
+    description: Annotated[str, StringConstraints(min_length=1, max_length=1000)]
+
+
 class CodexCatalogModel(WireTaggedModel):
     key: CatalogKey
     dispatch_model: CatalogKey
@@ -73,6 +83,7 @@ class CodexCatalogModel(WireTaggedModel):
     source_max_output_tokens: Presence[int]
     input_modalities: tuple[Literal["text", "image"], ...] = Field(min_length=1)
     reasoning: tuple[CodexCatalogReasoning, ...] = Field(min_length=1, max_length=16)
+    execution: tuple[CodexExecutionFacts, ...] = Field(min_length=1, max_length=2)
     source_default_reasoning: Presence[CatalogKey]
     row_fingerprint: Sha256Hex
 
@@ -83,6 +94,10 @@ class CodexCatalogModel(WireTaggedModel):
         reasoning_keys = tuple(item.key for item in self.reasoning)
         if len(set(reasoning_keys)) != len(reasoning_keys):
             raise ValueError("Codex catalog reasoning keys must be unique")
+        if len({item.mode for item in self.execution}) != len(self.execution):
+            raise ValueError("Codex catalog execution modes must be unique")
+        if any(len(set(item.final_outputs)) != len(item.final_outputs) for item in self.execution):
+            raise ValueError("Codex catalog final output kinds must be unique")
         for capacity in (self.source_context_window, self.source_max_output_tokens):
             if isinstance(capacity, Present) and capacity.value <= 0:
                 raise ValueError("Codex catalog source capacities must be positive")
@@ -97,13 +112,13 @@ class CodexCatalogModel(WireTaggedModel):
 class CodexModelCatalog(WireTaggedModel):
     """Secret-free authenticated AgentRuntime catalog crossing the private UDS."""
 
-    schema_version: Literal["nexus-codex-model-catalog.v2"] = MODEL_CATALOG_SCHEMA_VERSION
+    schema_version: Literal["nexus-codex-model-catalog.v3"] = MODEL_CATALOG_SCHEMA_VERSION
     backend_contract_revision: CatalogRevision
     definition_revision: Sha256Hex
     native_revision: Presence[CatalogRevision]
     observed_at: datetime
     models: tuple[CodexCatalogModel, ...] = Field(max_length=512)
-    supports_frozen_mcp_tools: bool
+    execution_policy_revision: CatalogRevision
 
     @field_validator("observed_at")
     @classmethod
@@ -129,7 +144,7 @@ def codex_model_catalog_to_wire(catalog: AgentModelCatalog) -> CodexModelCatalog
         native_revision=_to_wire(catalog.native_revision),
         observed_at=catalog.observed_at,
         models=tuple(_codex_model_to_wire(model) for model in catalog.models),
-        supports_frozen_mcp_tools=catalog.supports_frozen_mcp_tools,
+        execution_policy_revision=EXECUTION_POLICY_REVISION,
     )
 
 
@@ -148,6 +163,14 @@ def _codex_model_to_wire(model: AgentModelFacts) -> CodexCatalogModel:
                 native_wire_value=reasoning.native_wire_value,
             )
             for reasoning in model.reasoning
+        ),
+        execution=tuple(
+            CodexExecutionFacts(
+                mode=execution.mode,
+                final_outputs=execution.final_outputs,
+                description=execution.description,
+            )
+            for execution in model.execution
         ),
         source_default_reasoning=_to_wire(model.source_default_reasoning),
         row_fingerprint=model.row_fingerprint,
@@ -178,9 +201,8 @@ class _GenerationCommandFacts(WireTaggedModel):
             instructions_max_bytes=self.spec.bounds.instructions_max_bytes,
             input_max_bytes=self.spec.bounds.input_max_bytes,
         )
-        plan = self.spec.model_tool_plan_snapshot
-        if isinstance(plan, Present):
-            raise ValueError("Codex model tools are unavailable")
+        if not isinstance(self.spec.authority, CodexShell):
+            raise ValueError("Codex generation requires shell authority")
         if isinstance(self.intent.output, JsonSchemaOutput):
             schema_bytes = len(_canonical_json_bytes(self.intent.output.schema_))
             if schema_bytes > MAX_OUTPUT_SCHEMA_BYTES:
@@ -206,10 +228,26 @@ class GenerationCommandDraft(_GenerationCommandFacts):
     schema_version: Literal["nexus-generation-command-draft.v2"] = COMMAND_DRAFT_SCHEMA_VERSION
 
 
+class GenerationApiAccess(WireTaggedModel):
+    generation_id: UUID
+    token: SecretStr = Field(repr=False)
+
+    @field_serializer("token", when_used="json")
+    def _private_wire_token(self, token: SecretStr) -> str:
+        return token.get_secret_value()
+
+
 class GenerationCommand(_GenerationCommandFacts):
     """The sole dispatchable command, created only after host admission."""
 
-    schema_version: Literal["nexus-generation-command.v4"] = COMMAND_SCHEMA_VERSION
+    schema_version: Literal["nexus-generation-command.v5"] = COMMAND_SCHEMA_VERSION
+    api_access: GenerationApiAccess = Field(repr=False)
+
+    @model_validator(mode="after")
+    def _access_matches_generation(self) -> Self:
+        if self.api_access.generation_id != self.request_id:
+            raise ValueError("generation API credential belongs to another generation")
+        return self
 
 
 class GenerationAdmissionRequest(WireTaggedModel):
@@ -376,14 +414,15 @@ class GenerationFrame(WireTaggedModel):
 
 
 class GenerationHealth(WireTaggedModel):
-    schema_version: Literal["nexus-generation-health.v3"] = HEALTH_SCHEMA_VERSION
+    schema_version: Literal["nexus-generation-health.v4"] = HEALTH_SCHEMA_VERSION
     status: Literal["ready"] = "ready"
     backend: Literal["codex"] = "codex"
     transport: Literal["app_server"] = "app_server"
     auth_profile: Literal["codex-personal"] = "codex-personal"
-    command_schema_version: Literal["nexus-generation-command.v4"] = COMMAND_SCHEMA_VERSION
+    command_schema_version: Literal["nexus-generation-command.v5"] = COMMAND_SCHEMA_VERSION
     native_version: Annotated[str, StringConstraints(min_length=1, max_length=128)]
     library_contract_revision: Annotated[str, StringConstraints(min_length=1, max_length=128)]
+    execution_policy_revision: Annotated[str, StringConstraints(min_length=1, max_length=128)]
 
 
 def capacity_rejection_bytes() -> bytes:
@@ -475,10 +514,14 @@ def generation_command_draft(command: GenerationCommand) -> GenerationCommandDra
     )
 
 
-def generation_command_from_draft(draft: GenerationCommandDraft) -> GenerationCommand:
+def generation_command_from_draft(
+    draft: GenerationCommandDraft, *, api_access: GenerationApiAccess
+) -> GenerationCommand:
     """Create the only dispatchable command after successful host admission."""
 
-    return GenerationCommand(request_id=draft.request_id, spec=draft.spec, intent=draft.intent)
+    return GenerationCommand(
+        request_id=draft.request_id, spec=draft.spec, intent=draft.intent, api_access=api_access
+    )
 
 
 def generation_admission_request(draft: GenerationCommandDraft) -> GenerationAdmissionRequest:

@@ -331,6 +331,10 @@ function toolPlanFact(plan: DossierBuildToolPlan, toolPositions: number): string
   switch (plan.kind) {
     case "NoModelTools":
       return "No model tools";
+    case "CodexShell": {
+      const calls = `${toolPositions} api ${toolPositions === 1 ? "call" : "calls"}`;
+      return `Account-wide reading and additive writes · ${calls}`;
+    }
     case "ExactModelTools": {
       const mode = plan.effectMode === "ReadOnly" ? "read-only" : "additive writes";
       const calls = `${toolPositions} tool ${toolPositions === 1 ? "call" : "calls"}`;

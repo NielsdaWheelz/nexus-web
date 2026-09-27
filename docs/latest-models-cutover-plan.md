@@ -1,6 +1,6 @@
 # latest-model generation cutover
 
-status: implementation in progress; live qualification incomplete
+status: implementation in progress; codex shell redesign approved; live qualification incomplete
 origin: 2026-09-25 owner approval; provider, runtime, product/content and adversarial review
 
 ## outcome and boundary
@@ -10,6 +10,10 @@ nexus selects, authorizes, persists and presents. remove retired executable
 paths instead of keeping compatibility. reuse existing catalogs, native
 engines, sealed continuations, kernel generation loop, ledgers, tool plans,
 picker primitives and codex isolation. no new framework or service platform.
+[codex-shell-cutover-plan.md](codex-shell-cutover-plan.md) supersedes this
+plan's earlier frozen-mcp-only codex authority and execution design: subscription
+reading helpers use native shell, disposable scratch, public internet and the
+private nexus generation api. its work boundaries and proof own that change.
 
 approved installation scope: nexus runtime and repository-managed pins only.
 approved policy mapping: old luna → gpt-6-luna; old terra/sol → gpt-6-sol;
@@ -18,9 +22,10 @@ approved data reset: delete existing chat and generation history; preserve
 users, libraries, media, notes and all other domain data.
 
 non-goals: fleet/desktop updates, new providers, embeddings/transcription,
-prompt rewrites, task-quality benchmarking, autonomous delegation, provider
-native web/computer tools, broader chat reliability redesign, permanent tests.
-existing tool authority, budgets, undo and uncertain-dispatch rules remain.
+unrelated prompt rewrites, task-quality benchmarking, autonomous delegation,
+browser/computer product integration, broader chat reliability redesign,
+permanent tests. provider-function authority and domain effect guarantees
+remain; the linked plan explicitly replaces codex's per-run tool grant.
 
 ## exact supported catalog
 
@@ -102,13 +107,15 @@ never silently shrink the target. keep native delegation disabled.
 
 nexus removes `ADMITTED_TARGET_KEYS`, its reasoning enum, model-name parsing
 and provider-specific label/default logic. it composes library facts with
-configured credentials/readiness and operation requirements. selection cannot
-grant tools. capabilities must describe actual text/structured/tool-output
+configured credentials/readiness and operation requirements. browser selection
+cannot invent authority; the server owns each route's contract. capabilities
+must describe actual text/structured/tool-output
 combinations; stop unconditionally marking every api row `StrictStructured`.
 source absence stays absence. no invented capacities/defaults or “first row”
 selection. changes to native mappings/capabilities rotate existing catalog,
 row, backend and request fingerprints. freeze key, dispatch, authority and
-revisions once; workers never substitute a fresh choice.
+revisions once; workers never substitute a fresh choice. codex freezes its
+generation-api/execution policy, not a model-visible tool allowlist.
 
 ## native execution and composition
 
@@ -138,52 +145,20 @@ terminal with usage and executes no tools. bump incompatible codecs; never
 strip signatures, rewrite prefixes or redispatch uncertainty. this fixes both
 anthropic block reordering and lost earlier tool turns.
 
-adopt current upstream websocket-over-unix-socket transport only. native
-codex target is **0.157.1**, verified in the
-[official changelog](https://learn.chatgpt.com/docs/changelog). nexus distributes
-only `openai-codex-cli-bin==0.157.1`; remove python `openai-codex`, the obsolete
-`provider-runtime[codex-sdk]` extra, stdio launching and fake sdk identity.
+codex app-server and exec-server target **0.157.1**, using the locked
+`openai-codex-cli-bin` distribution. remove python `openai-codex`, obsolete
+`provider-runtime[codex-sdk]`, stdio launching and fake sdk identity. keep
+private websocket-over-unix-socket app-server control and external `agent.sock`.
+the [shell plan](codex-shell-cutover-plan.md) owns execution separation,
+remote protocol, api authority, process teardown, auth refresh and readiness.
+do not restore mcp or adopt the prepared metered-api route substitutions.
+text-only codex admission is the current implementation, not acceptance of
+the target. keep it ineligible for tool-bearing work until shell/api proof.
 pin provider/kernel by immutable released commits after their changes land.
-lock the exact binary distribution; launch only its absolute executable path.
-compare the running service's initialization version with 0.157.1 before
-admission. the existing dependency-light health contract owns expected identity;
-api consumers do not import the host-only distribution.
-
-nexus owns one foreground native process group per existing private generation
-root and admission slot; bounded bootstrap/catalog sessions use the same
-owner. start the pinned binary with a private home/tmp/cwd and enrolled auth:
-`codex app-server --listen unix://PATH --strict-config`. await its private
-socket, then pass `codex_endpoints` to `AgentRuntime`. account for native socket
-symlinks: prove the resolved socket/state belongs to the disposable scope,
-or explicitly own and clean its target, including after forced process death.
-the library owns handshake/catalog/session/turn/events/interruption. close
-clients, stop and await the process group, verify/sync auth, then release the
-terminal/root/slot. a disconnected client is NOT proof of process exit.
-unproven teardown closes readiness and retains uncertainty. keep the external
-nexus `agent.sock` protocol and host isolation.
-
-implementation finding (2026-09-26): pinned 0.157.1 has no app-server thread
-tool policy and offers generic MCP resource methods whenever an MCP server is
-mounted. native-tool and sandbox restrictions do not remove those methods.
-the required frozen MCP-only authority therefore cannot be proved. provider
-catalog v4 rejects nonempty Codex MCP publications before effects; Nexus
-removes the private mount and credential path, admits only text-only Codex,
-and marks every tool-bearing Codex workload ineligible. this is a blocker,
-not a qualified substitute for the originally required Codex chat/tool turns.
-do not restore MCP until a pinned native protocol can enforce the exact frozen
-tool set before effects and pass live authority proof. keep the kernel's
-read-only/offline/no-MCP policy. retain sanitized cause, stage and generation
-identity through host failures. an API route for affected workloads requires
-an explicit owner decision and independently qualified capability facts.
-
-qualify 0.157.1 auth refresh against the existing writable-file boundary;
-replace that narrow mechanism if native rename/write behavior changed.
-do not assume the 0.144.4 contract survived. health reports actual native
-version and library/protocol identity. preserve current resource limits until
-measurements justify a change. kernel needs dependency/contract alignment,
-not model tables or provider branches. llm-tools owns declared tool failures:
+kernel needs dependency/contract alignment, not model tables or provider
+branches. llm-tools owns declared tool failures:
 an exact bounded brave invalid-token rejection settles once as
-`CredentialRejected`; unknown responses remain uncertain. no new execution primitive.
+`CredentialRejected`; unknown responses remain uncertain. reuse the existing web executor.
 
 ## interaction and content design
 
@@ -233,12 +208,15 @@ image swap. old history is intentionally recoverable only from that backup.
 ## non-overlapping work and proof
 
 paths are relative to the named repository. shared files have one owner;
-others request changes through that owner. publish interfaces before dependents.
+others request changes through that owner. where both plans name a file, the
+[shell plan's writer](codex-shell-cutover-plan.md#non-overlapping-implementation-and-content-ownership)
+owns the whole file for the combined change; owners here request edits through
+that writer. publish interfaces before dependents.
 
 | package | exclusive ownership |
 | --- | --- |
 | a — provider api + catalog designer | llm-calling `src/provider_runtime/{types,registry,runtime,prices}.py`, price snapshot, `engines/`, continuation/tool-adapter modules and relevant specs. exact catalog/configuration contract, removal of obsolete providers, complete native continuation. |
-| b — codex protocol + runtime designer | llm-calling `src/provider_runtime/agent_runtime/`; nexus `apps/codex_agent/`, `python/nexus/services/codex_generation_{client,contract,operations}.py`, docker/deploy host configuration and runbook. protocol, native-tool/mcp contract, process/auth lifecycle and truthful health. a owns shared provider types. |
+| b — codex protocol + runtime designer | codex work is split by the exclusive owners in [the shell plan](codex-shell-cutover-plan.md); it owns native protocol, isolated execution, generation api and consumer integration. a here retains shared provider-api types. |
 | c — consumer/backend + reset designer | nexus `python/nexus/services/{generation_catalog,generation_policy,generation_spec,generation_service,provider_generation_backend,provider_generation_contract,generation_continuations}.py`, affected ledger/history projections, `python/nexus/schemas/{llm,conversation}.py`, config/credentials, env contracts and `migrations/alembic/versions/` reset migration. consume library facts; exact selection and scoped reset. b owns codex wire files. |
 | d — picker/content designer | nexus `apps/web/src/lib/conversations/{generationCatalog,generationSelection}.ts`, affected draft/request/history consumers, `apps/web/src/components/chat/{GenerationSelectionPicker,CandidateGenerationPicker}.tsx`, related css and privacy copy. no backend/catalog rules. |
 | e — integration/reviewer | all package manifests/locks; kernel definitions/provider pins/spec/adr alignment; final composition, cutover and docs/tickets. assign no overlapping implementation files. |
@@ -256,7 +234,7 @@ integration/live scripts and existing injection boundaries, no test-only
 production hooks or permanent harness dependencies.
 
 1. **red:** establish actual missing-model/configuration, ultra rejection,
-   mcp-authority and multi-round continuation failures on the current stack.
+   native-shell/api and multi-round continuation failures on the current stack.
    working invariants may already pass; do not manufacture reds.
 2. **green:** actual browser/bff/api/db/worker/library/provider, authenticated
    separately for every configured route. exercise every declared configuration
@@ -270,10 +248,11 @@ production hooks or permanent harness dependencies.
    continuation codec; at least three model turns and a unique fact from the
    first tool result. cover fable/opus ordered signed blocks, empty signed
    thinking, gemini signatures, and reasoning replay. exercise strict output
-   wherever offered, codex frozen mcp auth and forbidden native/delegation
-   attempts, cancellation/process death, auth refresh, linux isolation and
+   wherever offered; qualify codex shell/api authority, credential separation,
+   cancellation/process death, auth refresh, linux isolation and
    resource fit and continuation overflow. reopen accepted work without
-   duplicate paid calls/effects.
+   duplicate ledger-owned provider calls or generation-api effects. ordinary
+   shell/public-internet effects are outside that replay guarantee.
 4. **consumer proof:** exact approved model set; reject retired ids, aliases,
    ultra, invalid/cross-model keys and stale revisions before dispatch. verify
    updated background policies, option order/default/reset/singletons and
@@ -288,8 +267,8 @@ production hooks or permanent harness dependencies.
    run static checks on the final tree and remove resolved tickets.
 
 explicit trade-offs: complete opaque choices trade a longer dropdown for no
-provider schema in nexus; per-generation codex processes trade startup cost
-for existing isolation; the approved reset sacrifices chat history to remove
+provider schema in nexus; the shell plan owns codex authority/isolation costs;
+the approved reset sacrifices chat history to remove
 old schemas/codecs outright; 80 configuration cells plus boundary journeys
 cost money but qualify the declared contract;
 deleting temporary tests leaves future regression coverage limited to static

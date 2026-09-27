@@ -207,6 +207,9 @@ def complete_generation_in_current_transaction(
         raise ValueError("a failed generation terminal requires exactly one failure_code")
 
     call = _lock_owned_generation(db, owner=owner, generation_id=generation_id)
+    from nexus.services.agent_api import close_generation_api_admission
+
+    close_generation_api_admission(db, generation_id=generation_id)
     unfinished_tool = db.scalar(
         select(LLMToolPosition.id)
         .where(

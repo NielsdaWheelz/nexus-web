@@ -106,6 +106,11 @@ provider-native Web search, alternate executor, or transport fallback.
 
 ## Backend composition
 
+implementation status: the following describes the current text-only codex
+runtime. the approved replacement is the [subscription shell plan](../codex-shell-cutover-plan.md):
+disposable execution and a private generation api. its implementation and
+qualification are pending; the current rejection remains until then.
+
 Codex Personal uses one private UDS command/NDJSON stream. The adapter binds the
 catalog-validated native model key before dispatch and supplies no model tools.
 Frozen tool-bearing Codex specs fail before host slot admission. Empty native execution
@@ -123,8 +128,8 @@ but Nexus does not project it into tool-bearing route capabilities. Pinned
 Codex exposes additional resource helpers whenever MCP is present, so the
 current host cannot enforce the exact frozen model-visible tool set. The
 tool-bearing Codex Chat seed and three background policies remain ineligible;
-startup fails for the background policies until their owner selects an
-approved route. See the frozen-MCP authority ticket.
+startup fails for the background policies until the approved shell runtime
+is implemented and qualified. see the [runtime ticket](../tickets/codex-shell-runtime-unqualified.md).
 
 Provider API execution uses `ProviderRuntime` with the selected configured
 credential. Each independently accepted provider call is a child model turn.

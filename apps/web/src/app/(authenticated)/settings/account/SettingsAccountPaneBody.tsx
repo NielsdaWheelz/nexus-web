@@ -14,6 +14,7 @@ import {
   apiFetch,
   isApiError,
   isSameSystemApiDefect,
+  type ApiPath,
 } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -42,9 +43,177 @@ import {
 } from "@/lib/ui/copyText";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { decodeAuthenticatedAccountProfile } from "@/lib/account/contract";
+import { isAbortError } from "@/lib/errors";
 
 interface AccountResponse {
   data: unknown;
+}
+
+interface GenerationEffect {
+  position_id: string;
+  generation_id: string;
+  canonical_id: string;
+  replay_status: "Prepared" | "Uncertain" | "Completed";
+  created_at: string;
+  created_refs: Array<Record<string, unknown>> | null;
+  result: { type: "Success" | "Failure" } | null;
+  reverted_at: string | null;
+  undo_allowed: boolean;
+  undo_url: string | null;
+}
+
+interface GenerationEffectsPage {
+  items: GenerationEffect[];
+  next_cursor: string | null;
+}
+
+function effectErrorMessage(error: unknown): string {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  if (error.code === "E_NETWORK") return "Check your connection and try again.";
+  if (error.status === 409) return "This write changed. Refresh the history before trying again.";
+  return "The request failed. Refresh the history to check its current state.";
+}
+
+function effectStatus(effect: GenerationEffect, undone: boolean): string {
+  if (effect.reverted_at || undone) return "Undone";
+  if (effect.replay_status === "Uncertain") return "Outcome uncertain; inspect before retrying";
+  if (effect.replay_status === "Prepared") return "In progress";
+  if (effect.result?.type !== "Success") return "No write completed";
+  return effect.created_refs?.length ? "Assistant-created" : "Completed; no new item created";
+}
+
+function GenerationEffects() {
+  const [page, setPage] = useState<GenerationEffectsPage | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [undone, setUndone] = useState<Set<string>>(() => new Set());
+  const [error, setError] = useState<string | null>(null);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+
+  const refresh = useCallback(async (signal?: AbortSignal) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const next = await apiFetch<GenerationEffectsPage>("/api/generation-effects", {
+        cache: "no-store",
+        signal,
+      });
+      if (!signal?.aborted) {
+        setPage(next);
+        setUndone(new Set());
+      }
+    } catch (caught) {
+      if (signal?.aborted || isAbortError(caught)) return;
+      if (handleUnauthenticatedApiError(caught)) return;
+      try {
+        setError(effectErrorMessage(caught));
+      } catch (unexpected) {
+        setDefect({ error: unexpected });
+      }
+    } finally {
+      if (!signal?.aborted) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void refresh(controller.signal);
+    return () => controller.abort();
+  }, [refresh]);
+
+  const loadMore = async () => {
+    if (!page?.next_cursor || loading || loadingMore || busyId !== null) return;
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const path = `/api/generation-effects?before=${encodeURIComponent(page.next_cursor)}` as ApiPath;
+      const next = await apiFetch<GenerationEffectsPage>(path, { cache: "no-store" });
+      setPage({ items: [...page.items, ...next.items], next_cursor: next.next_cursor });
+    } catch (caught) {
+      if (handleUnauthenticatedApiError(caught)) return;
+      try {
+        setError(effectErrorMessage(caught));
+      } catch (unexpected) {
+        setDefect({ error: unexpected });
+      }
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  const undo = async (effect: GenerationEffect) => {
+    if (!effect.undo_allowed || !effect.undo_url || undone.has(effect.position_id) || busyId || loading || loadingMore) return;
+    setBusyId(effect.position_id);
+    setError(null);
+    try {
+      if (effect.undo_url !== `/generation-effects/${effect.position_id}/undo`) {
+        throw new Error("Undo URL does not match the selected write");
+      }
+      const path = `/api${effect.undo_url}` as ApiPath;
+      const receipt = await apiFetch<{ position_id: string; reverted: boolean; changed: boolean }>(
+        path,
+        { method: "POST" },
+      );
+      if (receipt.position_id !== effect.position_id || !receipt.reverted) {
+        throw new Error("Undo returned a mismatched receipt");
+      }
+      setUndone((current) => new Set(current).add(effect.position_id));
+    } catch (caught) {
+      if (handleUnauthenticatedApiError(caught)) return;
+      try {
+        setError(effectErrorMessage(caught));
+      } catch (unexpected) {
+        setDefect({ error: unexpected });
+      }
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  if (defect) throw defect.error;
+
+  return (
+    <PaneSection
+      title="Background writes"
+      description="Recent writes by background generations. Shell activity is outside this history."
+      actions={<Button variant="ghost" size="sm" onClick={() => void refresh()} disabled={loading || loadingMore || busyId !== null}>Refresh</Button>}
+    >
+      {error ? <p className={styles.effectsError} role="alert">{error}</p> : null}
+      {loading && page === null ? <p className={styles.current}>Loading writes…</p> : null}
+      {!loading && page?.items.length === 0 ? <p className={styles.current}>No background writes yet.</p> : null}
+      {page?.items.length ? (
+        <ol className={styles.effectsList}>
+          {page.items.map((effect) => (
+            <li key={effect.position_id} className={styles.effect}>
+              <div className={styles.effectHeading}>
+                <strong>{effect.canonical_id.replace(/^nexus\./, "").replaceAll(".", " ")}</strong>
+                <time dateTime={effect.created_at}>{new Date(effect.created_at).toLocaleString()}</time>
+              </div>
+              <p className={styles.effectStatus}>{effectStatus(effect, undone.has(effect.position_id))}</p>
+              {effect.created_refs?.length ? (
+                <ul className={styles.effectRefs}>
+                  {effect.created_refs.map((ref, index) => (
+                    <li key={`${String(ref.id)}-${index}`}>
+                      {typeof ref.kind === "string" ? `${ref.kind}: ` : ""}
+                      {typeof ref.label === "string" && ref.label.trim()
+                        ? ref.label
+                        : typeof ref.id === "string" ? ref.id : "created item"}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              <p className={styles.effectProvenance}>Generation {effect.generation_id}</p>
+              {effect.undo_allowed && effect.undo_url && !undone.has(effect.position_id) ? (
+                <Button variant="ghost" size="sm" loading={busyId === effect.position_id} disabled={loading || loadingMore || busyId !== null} onClick={() => void undo(effect)}>Undo write</Button>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      {page?.next_cursor ? <Button variant="ghost" size="sm" loading={loadingMore} disabled={loading || busyId !== null} onClick={() => void loadMore()}>Load older writes</Button> : null}
+    </PaneSection>
+  );
 }
 
 type AccountOperation = "Load" | "DisplayName" | "CalendarTimeZone";
@@ -471,6 +640,7 @@ export default function SettingsAccountPaneBody() {
           <p className={styles.current}>The Post Room is not configured.</p>
         )}
       </PaneSection>
+      <GenerationEffects />
     </PaneSurface>
   );
 }

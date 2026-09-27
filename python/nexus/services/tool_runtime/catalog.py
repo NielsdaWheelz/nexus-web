@@ -16,6 +16,7 @@ from llm_tools import (
     FrozenCapabilityProfile,
     FrozenToolPlan,
     HostTable,
+    HttpApi,
     Native,
     ReplayPolicy,
     SafeWebReader,
@@ -227,6 +228,8 @@ def freeze_tool_plan_snapshot(operation: FrozenToolOperation) -> FrozenToolPlanS
         exposure = FrozenToolExposureSnapshot(type="HostTable")
     elif isinstance(operation.plan.exposure, Native):
         exposure = FrozenToolExposureSnapshot(type="Native")
+    elif isinstance(operation.plan.exposure, HttpApi):
+        exposure = FrozenToolExposureSnapshot(type="HttpApi")
     else:
         raise ValueError("operation uses an unsupported tool exposure")
     profile = operation.profile
@@ -290,7 +293,20 @@ def write_tool_ids() -> tuple[str, ...]:
     )
 
 
+def required_agent_api_operation(runtime: ComposedToolRuntime) -> FrozenToolOperation:
+    """Resolve the one fixed account-visible generation API profile."""
+
+    from nexus.services.tool_runtime.plan_revisions import tool_plan_authority_revision
+
+    return required_tool_operation(
+        runtime,
+        plan_id="CodexGenerationApi",
+        authority_revision=tool_plan_authority_revision("CodexGenerationApi"),
+    )
+
+
 __all__ = [
+    "required_agent_api_operation",
     "WEB_SEARCH_CONTEXT_CHARS",
     "WEB_SEARCH_MAX_RESULTS",
     "WEB_SEARCH_SELECTED_RESULTS",

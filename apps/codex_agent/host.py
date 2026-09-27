@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.metadata
+import json
 from collections.abc import AsyncIterator, Callable, Coroutine
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -28,6 +29,7 @@ from apps.codex_agent.credential_state import (
     validate_enrolled_auth_file,
     validate_runtime_auth_link,
 )
+from apps.codex_agent.exec_server import ExecServer, start_exec_server
 from apps.codex_agent.native_server import NativeCodexServer, start_native_codex_server
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
@@ -99,6 +101,7 @@ from nexus.services.codex_generation_contract import (
     generation_command_draft,
 )
 from nexus.services.codex_generation_health_contract import (
+    EXECUTION_POLICY_REVISION,
     LIBRARY_CONTRACT_REVISION,
     PINNED_CODEX_VERSION,
     expected_health_identity,
@@ -109,6 +112,7 @@ from nexus.services.codex_generation_operations import (
 )
 
 _RUNTIME_DISTRIBUTION = "openai-codex-cli-bin"
+_GENERATION_API_URL = "http://172.30.0.4:8000/agent-api"
 _SYNTHESIS_TEXT_RUN_BYTES = 32 * 1024
 _CATALOG_DEADLINE_SECONDS = 90.0
 _GENERATION_ADMISSION_START_GRACE_SECONDS = 15.0
@@ -382,6 +386,7 @@ def create_codex_agent_app(
     health_identity = GenerationHealth(
         native_version=versions.native,
         library_contract_revision=versions.library_contract_revision,
+        execution_policy_revision=EXECUTION_POLICY_REVISION,
     )
     if health_identity.model_dump(mode="json") != expected_health_identity():
         raise ValueError("Codex generation health identity differs from its probe contract")
@@ -909,6 +914,7 @@ async def _run_turn(
     budget = _StreamBudget(command)
     runtime: AgentRuntimePort | None = None
     native_server: NativeCodexServer | None = None
+    exec_server: ExecServer | None = None
     runtime_auth_link: Path | None = None
     session: AgentSession | None = None
     operation: ResolvedCodexGeneration | None = None
@@ -918,6 +924,8 @@ async def _run_turn(
     failure_stage = "credential_link"
     synthesis_text: list[str] = []
     synthesis_text_bytes = 0
+    bearer = command.api_access.token.get_secret_value()
+    native_tool_ids: dict[str, str] = {}
 
     def serialize(event: GenerationEvent) -> bytes:
         return (
@@ -945,24 +953,27 @@ async def _run_turn(
             lines.append(line)
         return lines
 
-    def flush_synthesis_text() -> list[GenerationEvent]:
-        nonlocal synthesis_text_bytes
-        if not synthesis_text:
-            return []
-        text = "".join(synthesis_text)
-        synthesis_text.clear()
-        synthesis_text_bytes = 0
-        return [GenerationText(text=text)]
-
     try:
         runtime_auth_link = link_runtime_auth(credential_file, runtime_paths)
+        failure_stage = "native_start"
+        native_server = await start_native_codex_server(runtime_paths)
+        failure_stage = "execution_start"
+        access = command.api_access
+        exec_server = await start_exec_server(
+            runtime_paths,
+            api_environment={
+                "NEXUS_AGENT_API_URL": _GENERATION_API_URL,
+                "NEXUS_AGENT_API_SPEC_URL": f"{_GENERATION_API_URL}/openapi.json",
+                "NEXUS_AGENT_API_TOKEN": access.token.get_secret_value(),
+                "NEXUS_GENERATION_ID": str(access.generation_id),
+            },
+        )
         failure_stage = "operation_resolution"
         operation = resolve_codex_generation(
             command,
-            working_directory=runtime_paths.working_directory,
+            working_directory=Path(exec_server.cwd),
+            exec_server_url=exec_server.url,
         )
-        failure_stage = "native_start"
-        native_server = await start_native_codex_server(runtime_paths)
         failure_stage = "session_open"
         runtime = runtime_factory(
             AgentRuntimeConfig(
@@ -1006,28 +1017,19 @@ async def _run_turn(
                     )
                     continue
                 if isinstance(event, AgentText):
-                    for piece in _split_utf8(event.text, _SYNTHESIS_TEXT_RUN_BYTES):
-                        piece_bytes = len(piece.encode())
-                        if (
-                            synthesis_text
-                            and synthesis_text_bytes + piece_bytes > _SYNTHESIS_TEXT_RUN_BYTES
-                        ):
-                            for line in relay(flush_synthesis_text()):
-                                yield line
-                        synthesis_text.append(piece)
-                        synthesis_text_bytes += piece_bytes
-                        if synthesis_text_bytes == _SYNTHESIS_TEXT_RUN_BYTES:
-                            for line in relay(flush_synthesis_text()):
-                                yield line
-                    if terminal is not None:
+                    synthesis_text_bytes += len(event.text.encode())
+                    if synthesis_text_bytes > bounds.stream.max_stream_bytes:
+                        terminal = _failed_terminal(
+                            "output_limit_exceeded",
+                            session=session,
+                            accepted_at=accepted_at,
+                            versions=versions,
+                        )
                         break
+                    synthesis_text.append(event.text)
                     continue
 
-                for line in relay(flush_synthesis_text()):
-                    yield line
-                wire, forbidden = _event_to_wire(event)
-                for line in relay([wire]):
-                    yield line
+                wire, forbidden = _event_to_wire(event, native_tool_ids=native_tool_ids)
                 if forbidden:
                     control.interrupt("policy_violation")
                     terminal = _failed_terminal(
@@ -1037,6 +1039,8 @@ async def _run_turn(
                         versions=versions,
                     )
                     break
+                for line in relay([wire]):
+                    yield line
                 if terminal is not None:
                     break
             if terminal is None:
@@ -1046,9 +1050,6 @@ async def _run_turn(
                     accepted_at=accepted_at,
                     versions=versions,
                 )
-            elif terminal_seen:
-                for line in relay(flush_synthesis_text()):
-                    yield line
     except CredentialStateUnavailable:
         terminal = _failed_terminal(
             "credential_unavailable",
@@ -1094,8 +1095,7 @@ async def _run_turn(
             versions=versions,
         )
     finally:
-        if failure_stage == "native_start" and native_server is None:
-            runtime_close_unproven.set()
+        cleanup_cancelled = False
         try:
             if runtime is not None:
                 try:
@@ -1119,9 +1119,26 @@ async def _run_turn(
                             versions=versions,
                         )
         finally:
+            if exec_server is not None:
+                try:
+                    await exec_server.stop()
+                except asyncio.CancelledError:
+                    cleanup_cancelled = True
+                except Exception:
+                    runtime_close_unproven.set()
+                    terminal = _failed_terminal(
+                        "runtime_defect",
+                        stage="execution_stop",
+                        cause_code="execution_teardown_unproven",
+                        session=session,
+                        accepted_at=accepted_at,
+                        versions=versions,
+                    )
             if native_server is not None:
                 try:
                     await native_server.stop()
+                except asyncio.CancelledError:
+                    cleanup_cancelled = True
                 except Exception:
                     runtime_close_unproven.set()
                     terminal = _failed_terminal(
@@ -1132,6 +1149,8 @@ async def _run_turn(
                         accepted_at=accepted_at,
                         versions=versions,
                     )
+            if cleanup_cancelled:
+                raise asyncio.CancelledError()
 
     if runtime_auth_link is not None and native_server is not None and native_server.stopped:
         try:
@@ -1167,6 +1186,26 @@ async def _run_turn(
             accepted_at=accepted_at,
             versions=versions,
         )
+    if terminal.status == "succeeded":
+        if terminal.structured_output is not None and bearer in json.dumps(
+            terminal.structured_output, ensure_ascii=False
+        ):
+            terminal = _failed_terminal(
+                "policy_violation",
+                stage="final_filter",
+                cause_code="bearer_in_structured_output",
+                session=session,
+                accepted_at=accepted_at,
+                versions=versions,
+            )
+        else:
+            terminal = terminal.model_copy(
+                update={"final_text": terminal.final_text.replace(bearer, "[redacted]")}
+            )
+            text = "".join(synthesis_text).replace(bearer, "[redacted]")
+            for piece in _split_utf8(text, _SYNTHESIS_TEXT_RUN_BYTES):
+                for item in relay([GenerationText(text=piece)]):
+                    yield item
     line = serialize(terminal)
     if not budget.admits_terminal(line):
         terminal = _failed_terminal(
@@ -1216,16 +1255,22 @@ async def close_runtime_before_release(
 
 def _event_to_wire(
     event: AgentEvent,
+    *,
+    native_tool_ids: dict[str, str],
 ) -> tuple[GenerationEvent, bool]:
     if isinstance(event, AgentToolUse):
+        tool_id = native_tool_ids.get(event.tool_call_id)
+        if tool_id is None:
+            tool_id = f"native-tool-{len(native_tool_ids) + 1}"
+            native_tool_ids[event.tool_call_id] = tool_id
         return (
             GenerationToolUse(
-                tool_call_id=event.tool_call_id,
-                name=event.name[:256],
+                tool_call_id=tool_id,
+                name="native_tool",
                 phase=event.phase,
                 succeeded=event.succeeded,
             ),
-            True,
+            False,
         )
     if isinstance(event, AgentUsage):
         return GenerationUsageEvent(usage=_usage(event.usage)), False
@@ -1233,14 +1278,14 @@ def _event_to_wire(
         return (
             GenerationPermissionRequest(
                 operation=event.request.operation,
-                summary=event.request.summary[:1_000],
-                tool_name=event.request.tool_name,
+                summary="native approval request denied",
+                tool_name=("native_tool" if event.request.operation == "tool_use" else None),
                 decision=event.decision,
             ),
             True,
         )
     if isinstance(event, AgentNative):
-        return GenerationNative(native_type=event.native_type), False
+        return GenerationNative(native_type="native_activity"), False
     raise AssertionError("event conversion received terminal, text, or unknown event")
 
 

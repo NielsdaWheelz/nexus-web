@@ -118,7 +118,7 @@ class NexusSearchInput(_StrictModel):
         Field(
             min_length=1,
             max_length=_QUERY_MAX,
-            description="The bounded search query to run over admitted Nexus content.",
+            description="The bounded search query to run over the transport's authorized Nexus content.",
         ),
     ]
     kinds: Annotated[
@@ -149,7 +149,8 @@ class NexusSearchInput(_StrictModel):
         | None,
         Field(
             description=(
-                "Admitted conversation scope URIs, or null for the conversation defaults. "
+                "Scope URIs, or null: provider functions use admitted conversation defaults; "
+                "the generation API searches the visible account corpus. "
                 f"{app_search_scope_hint()}"
             )
         ),
@@ -177,7 +178,7 @@ class NexusSearchSuccess(_StrictModel):
 class ResourceReadInput(_StrictModel):
     uri: Annotated[
         str,
-        Field(max_length=_RESOURCE_URI_MAX, description="An admitted Nexus resource or read URI."),
+        Field(max_length=_RESOURCE_URI_MAX, description="A visible Nexus resource or read URI."),
     ]
 
 
@@ -191,7 +192,7 @@ class ResourceReadSuccess(_StrictModel):
 class DocumentSearchInput(_StrictModel):
     uri: Annotated[
         str,
-        Field(max_length=_RESOURCE_URI_MAX, description="One admitted readable document URI."),
+        Field(max_length=_RESOURCE_URI_MAX, description="One visible readable document URI."),
     ]
     query: Annotated[
         str,
@@ -220,7 +221,7 @@ class DocumentSearchSuccess(_StrictModel):
 class ResourceInspectInput(_StrictModel):
     uri: Annotated[
         str,
-        Field(max_length=_RESOURCE_URI_MAX, description="An admitted inspectable media URI."),
+        Field(max_length=_RESOURCE_URI_MAX, description="A visible inspectable media URI."),
     ]
 
 
@@ -250,7 +251,7 @@ class ResourceInspectSuccess(_StrictModel):
 class RelationsListInput(_StrictModel):
     uri: Annotated[
         str,
-        Field(max_length=_RESOURCE_URI_MAX, description="An admitted relation endpoint URI."),
+        Field(max_length=_RESOURCE_URI_MAX, description="A visible relation endpoint URI."),
     ]
     direction: Annotated[
         ConnectionDirection,
@@ -327,7 +328,7 @@ class HighlightCreateInput(_StrictModel):
     ]
     media_uri: Annotated[
         str,
-        Field(max_length=_RESOURCE_URI_MAX, description="The admitted source media URI."),
+        Field(max_length=_RESOURCE_URI_MAX, description="The visible source media URI."),
     ]
     note: Annotated[
         str | None,

@@ -12,12 +12,10 @@ from typing import Final
 
 TOOL_PLAN_AUTHORITY_REVISIONS: Final[MappingProxyType[str, str]] = MappingProxyType(
     {
+        "CodexGenerationApi": "13099e39cc392652119dada086b87e69c50c2f2cfea081430fecbddd47b9e865",
         "ChatReadAdditiveWrite": (
             "1a80ecc5878f45937a54567f2cc86916f90421c1181b4b0a5f69e28da9177476"
         ),
-        "LibraryDossierRead": ("b6b91ec256ef4113aee8aff329affdfeff08f855eb71cbcce6bf05d1bed93902"),
-        "IdeaDossierRead": ("35ae7ab9ab1b2da96b3c7809b93c1cce8122e9a4eb7ef146d14aec0b2ca34d8b"),
-        "MetadataRead": "19fb9c0910831b79eeec599c8da6f3980268abccac96f880d9357f09b9d62256",
         "idea_dossier_research": (
             "a6681b1d722ca5e27c9f697c6a2d4c96045eb7c20a17576cf69f2682a6bd755d"
         ),

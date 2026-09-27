@@ -45,6 +45,7 @@ from nexus.services.codex_generation_client import (
     CodexGenerationProtocolDefect,
 )
 from nexus.services.codex_generation_contract import CodexModelCatalog
+from nexus.services.codex_generation_health_contract import EXECUTION_POLICY_REVISION
 from nexus.services.generation_admission import GenerationConfigurationDefect
 from nexus.services.generation_policy import (
     GENERATION_POLICY,
@@ -339,8 +340,8 @@ def compose_generation_catalog(
 
     from nexus.services.tool_runtime.catalog import required_tool_operation, unavailable_tool_ids
 
-    if agent_catalog.supports_frozen_mcp_tools:
-        raise GenerationConfigurationDefect("Codex catalog offers unsupported model tools")
+    if agent_catalog.execution_policy_revision != EXECUTION_POLICY_REVISION:
+        raise GenerationConfigurationDefect("Codex execution policy revision drifted")
     configured = _configured_providers(configured_api_providers)
     by_route: dict[str, tuple[_SourceModel, ...]] = {"CodexPersonal": _agent_sources(agent_catalog)}
     for provider in configured:
@@ -376,7 +377,11 @@ def compose_generation_catalog(
         model_rows: list[GenerationModelRow] = []
         for source in sources:
             route_readiness = readiness.route(route_key)
-            state = _selection_state(source, route_readiness, tool_readiness)
+            state = _selection_state(
+                source,
+                route_readiness,
+                tool_readiness if route_key != "CodexPersonal" else None,
+            )
             context_budget, output_budget = _effective_budget(source, chat_workflow)
             reasoning_rows: list[GenerationReasoningRow] = []
             for reasoning in source.reasoning:
@@ -495,12 +500,18 @@ def validate_background_policy(
         pair = snapshot.pair(entry.selection)
         if pair is None:
             raise AssertionError(f"{operation} selection is absent from the catalog")
-        required = workflow_transport_capability(entry.workflow)
+        required = workflow_transport_capability(
+            entry.workflow, codex_shell=isinstance(entry.selection, CodexPersonalSelection)
+        )
         if required not in pair.capabilities:
             raise AssertionError(f"{operation} target does not support its workflow")
 
 
-def workflow_transport_capability(workflow: OperationWorkflowSpec) -> TransportCapability:
+def workflow_transport_capability(
+    workflow: OperationWorkflowSpec, *, codex_shell: bool = False
+) -> TransportCapability:
+    if codex_shell:
+        return "TextWithTools" if workflow.output_contract == "Text" else "StructuredWithTools"
     has_tools = isinstance(workflow.model_tool_policy, ExactModelTools)
     if workflow.output_contract == "Text":
         return "TextWithTools" if has_tools else "Text"
@@ -545,7 +556,16 @@ def _agent_sources(catalog: CodexModelCatalog) -> tuple[_SourceModel, ...]:
                 dispatch_model=row.dispatch_model,
                 agent_definition_revision=catalog.definition_revision,
             ),
-            capabilities=("Text", "StrictStructured"),
+            capabilities=tuple(
+                cast(TransportCapability, capability)
+                for execution in row.execution
+                if execution.mode == "remote_shell"
+                for output, capability in (
+                    ("text", "TextWithTools"),
+                    ("json_schema", "StructuredWithTools"),
+                )
+                if output in execution.final_outputs
+            ),
         )
         for row in catalog.models
     )
@@ -613,7 +633,11 @@ def _route_disclosure(route_key: str) -> _RouteDisclosure:
             label="Codex Personal",
             billing=SubscriptionBilling(),
             privacy=PrivacyDisclosure(
-                summary="Runs through your authenticated local Codex account.",
+                summary=(
+                    "Uses your Codex subscription. Its disposable shell can reach the public "
+                    "internet; the Nexus API can read your account-visible library and create "
+                    "additive content."
+                ),
                 retention="OpenAI Codex account retention applies.",
                 training="Nexus does not opt your content into model training.",
             ),

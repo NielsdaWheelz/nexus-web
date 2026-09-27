@@ -90,8 +90,15 @@ class DossierBuildExactModelToolsOut(ArtifactSchemaModel):
     effect_mode: Literal["ReadOnly", "AdditiveWrites"]
 
 
+class DossierBuildCodexShellOut(ArtifactSchemaModel):
+    kind: Literal["CodexShell"] = "CodexShell"
+    plan_id: str = Field(min_length=1)
+    plan_revision: str = Field(min_length=1)
+    effect_mode: Literal["AdditiveWrites"] = "AdditiveWrites"
+
+
 DossierBuildToolPlanOut = Annotated[
-    DossierBuildNoModelToolsOut | DossierBuildExactModelToolsOut,
+    DossierBuildNoModelToolsOut | DossierBuildExactModelToolsOut | DossierBuildCodexShellOut,
     Field(discriminator="kind"),
 ]
 

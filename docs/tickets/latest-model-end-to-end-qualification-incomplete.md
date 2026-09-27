@@ -4,16 +4,16 @@ status: open · origin: 2026-09-25 latest-model cutover · area: generation rele
 
 ## problem and evidence
 
-current gate (2026-09-26): provider catalog v4 reports that pinned Codex
-0.157.1 cannot enforce the frozen MCP-only tool set. Nexus now admits Codex
-for text-only library calls but marks all 15 Codex chat pairs ineligible;
-three tool-backed background jobs and the approved new-chat seed still point
-at that route. The historical Codex tool-call receipts below prove transport,
-not authority, and do not qualify the final release. The owner is deciding
-whether those workloads may move to ProviderApi. Nexus cannot start with an
-ineligible background policy; do not weaken that validation for qualification.
-The final v4 stack has not been rebuilt or exercised. Temporary proof scripts
-remain until the full acceptance contract is met.
+current gate (2026-09-26): the owner approved native shell, disposable scratch,
+public internet and a private nexus generation api through the codex
+subscription. [the shell plan](../codex-shell-cutover-plan.md) replaces the
+unprovable frozen-mcp-only requirement; no metered-api route substitution was
+approved. current v4 code still admits only tool-free codex work, leaving chat
+and three background policies ineligible. implement and qualify the new
+[runtime boundary](codex-shell-runtime-unqualified.md); do not weaken startup
+validation. historical mcp and model-cell receipts below do not qualify this
+replacement. the final stack remains unbuilt/unexercised; keep temporary proof
+scripts until the revised acceptance contract is met.
 
 the provider passed 61 of 65 api cells; four xai cells are owner-waived, not
 passes. five live three-turn api continuation journeys and all 15 codex
@@ -91,8 +91,8 @@ classifies the bounded Brave 422 `SUBSCRIPTION_TOKEN_INVALID` response as
 `CredentialRejected`; its final browser/ledger journey remains unrun. see the
 separate valid-key web-search ticket. deterministic protocol injection rejected
 five forbidden native/delegation event types; it is not a live model attempt.
-the 20 anthropic nexus cells, actual codex credential refresh, frozen codex
-mcp-only authority, and `web.search` result grounding remain open. the a800
+the 20 anthropic nexus cells, actual codex credential refresh, the replacement
+shell/api boundary, and `web.search` result grounding remain open. the a800
 worker replay must be
 assessed against the final provider pin; repeat the crash-window journey if that
 pin changes the journal, worker replay,
@@ -102,15 +102,15 @@ metadata and accepted response evidence, not a tls packet capture.
 
 ## prerequisite and acceptance
 
-settle the owner route decision and prove any newly required provider capability
-before changing background policies or the new-chat seed. rebuild the exact
-final pinned stack and exercise its catalog, browser, api, worker, ledger and
+retain the approved subscription routes and prove the shell plan's native
+capabilities before enabling them. rebuild the exact final pinned stack and
+exercise its catalog, browser, api, worker, ledger and
 failure states. run a fresh model-originated tool call with a valid protected search credential
 and prove its durable result and answer provenance. obtain explicit owner
 acknowledgement for anthropic's standard retention before setting the required
 timestamp and running its 20 browser/native cells. exercise actual codex auth
 refresh on an independent disposable credential. compare the final provider
 pin with the a800 replay contract, then run a representative final-stack turn;
-repeat the crash-window proof if the replay contract changed. establish frozen
-codex tool authority before qualifying tool-bearing codex cells. keep temporary
+repeat the crash-window proof if the replay contract changed. qualify the new
+codex shell/api authority before tool-bearing codex cells. keep temporary
 live proofs until these cases pass and report xai's owner waiver separately.

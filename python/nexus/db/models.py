@@ -1966,6 +1966,23 @@ class LLMCall(Base):
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
 
+class GenerationApiCredential(Base):
+    """One account-bound bearer admission for a native generation attempt."""
+
+    __tablename__ = "generation_api_credentials"
+
+    generation_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("llm_calls.id"), primary_key=True
+    )
+    token_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    job_execution_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    closed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+
 class LLMModelTurn(Base):
     """One independently accepted or billable model call within a generation."""
 
@@ -2072,6 +2089,7 @@ class LLMToolPosition(Base):
         TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
     )
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    reverted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
 
 class Message(Base):

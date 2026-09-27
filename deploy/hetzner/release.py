@@ -521,11 +521,18 @@ def assert_isolation() -> None:
 
     network = json.loads(host(f"docker network inspect {CODEX_PRIVATE_NETWORK}"))[0]
     gatewayed = any(entry.get("Gateway") for entry in network["IPAM"]["Config"])
-    if network["Internal"] is not True or gatewayed:
+    if network["Internal"] is not True or network["EnableIPv6"] is not False or gatewayed:
         raise Failure("the Codex private network is not an isolated internal bridge")
     members = {value["Name"] for value in network["Containers"].values()}
-    if members != {f"nexus-{CODEX_AGENT_HOST}-1", "nexus-codex-egress-policy-1"}:
+    if members != {
+        f"nexus-{CODEX_AGENT_HOST}-1",
+        "nexus-codex-egress-policy-1",
+        "nexus-api-1",
+    }:
         raise Failure(f"the Codex private network has unexpected members: {sorted(members)}")
+    api_networks = inspect(container("api"))["NetworkSettings"]["Networks"]
+    if api_networks[CODEX_PRIVATE_NETWORK]["IPAddress"] != "172.30.0.4":
+        raise Failure("the generation API private address differs from its runtime contract")
 
     inspected = inspect(container(CODEX_AGENT_HOST))
     configuration = inspected["HostConfig"]
@@ -535,6 +542,7 @@ def assert_isolation() -> None:
         or configuration["CapDrop"] != ["ALL"]
         or configuration["CapAdd"]
         or configuration["Privileged"] is not False
+        or configuration["PortBindings"]
         or list(inspected["NetworkSettings"]["Networks"]) != [CODEX_PRIVATE_NETWORK]
     ):
         raise Failure("the Codex agent host runtime differs from its declared confinement")
@@ -545,8 +553,13 @@ def assert_isolation() -> None:
     denied = (
         f"{CODEX_PRIVATE_BRIDGE_IP}:80 {CODEX_PRIVATE_BRIDGE_IP}:443"
         f" {service_address('postgres')}:5432 {service_address('caddy')}:443"
+        " 169.254.169.254:80"
     )
-    inside(CODEX_AGENT_HOST, f"python -m apps.codex_agent.network_health --denied-targets {denied}")
+    inside(
+        CODEX_AGENT_HOST,
+        "python -m apps.codex_agent.network_health"
+        f" --allowed-target 172.30.0.4:8000 --denied-targets {denied}",
+    )
     note(f"agent host confined; {denied} unreachable from it")
 
 

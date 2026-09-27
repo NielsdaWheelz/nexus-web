@@ -23,6 +23,18 @@ from nexus.services.codex_generation_health_contract import PINNED_CODEX_VERSION
 _START_SECONDS = 15.0
 _STOP_SECONDS = 5.0
 _PROFILE = "codex-personal"
+_CONFIG_OVERRIDES = (
+    "agents.enabled=false",
+    'shell_environment_policy.inherit="all"',
+    "shell_environment_policy.ignore_default_excludes=true",
+    "include_apps_instructions=false",
+    "notify=[]",
+    "orchestrator.mcp.enabled=false",
+    "orchestrator.skills.enabled=false",
+    "skills.bundled.enabled=false",
+    "skills.include_instructions=true",
+    "tools.experimental_request_user_input.enabled=false",
+)
 
 
 @dataclass(slots=True)
@@ -162,6 +174,7 @@ async def start_native_codex_server(paths: EphemeralRuntimePaths) -> NativeCodex
         raise RuntimeError("Codex native socket path already exists")
     environment = {
         "CODEX_HOME": str(codex_home),
+        "CODEX_EXEC_SERVER_URL": "none",
         "HOME": str(home),
         "TMPDIR": str(paths.temporary_directory),
         "LANG": "C.UTF-8",
@@ -170,6 +183,7 @@ async def start_native_codex_server(paths: EphemeralRuntimePaths) -> NativeCodex
     }
     process = await asyncio.create_subprocess_exec(
         str(executable),
+        *(item for value in _CONFIG_OVERRIDES for item in ("--config", value)),
         "app-server",
         "--listen",
         f"unix://{socket_path}",

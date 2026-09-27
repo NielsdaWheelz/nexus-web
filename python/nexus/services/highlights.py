@@ -755,10 +755,14 @@ def delete_highlight_rows(db: Session, highlight: Highlight) -> None:
 
 def delete_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> None:
     def attempt() -> None:
-        delete_highlight_rows(
-            db, get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
-        )
-        db.flush()
+        delete_highlight_in_current_transaction(db, viewer_id, highlight_id)
         db.commit()
 
     retry_read_committed(db, "delete_highlight", attempt)
+
+
+def delete_highlight_in_current_transaction(
+    db: Session, viewer_id: UUID, highlight_id: UUID
+) -> None:
+    delete_highlight_rows(db, get_highlight_for_author_write_or_404(db, viewer_id, highlight_id))
+    db.flush()

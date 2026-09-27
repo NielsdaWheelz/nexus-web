@@ -47,9 +47,7 @@ from nexus.services.collection_revisions import (
 from nexus.services.contributor_writes import MediaTarget
 from nexus.services.contributors import apply_observed_role_slices_in_current_transaction
 from nexus.services.durable_step_journal import Completed, Prepared, StepReplayState, Uncertain
-from nexus.services.generation_backend import BackendToolExecutor
 from nexus.services.generation_spec import (
-    FrozenToolScope,
     GenerationIntent,
     GenerationSpec,
     ImmutablePromptPayloadRef,
@@ -86,7 +84,6 @@ from nexus.services.reader_publication import (
     lock_publication_generation,
     read_publication_generation,
 )
-from nexus.services.tool_authority import DeferredGenerationToolExecutor
 from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
 logger = get_logger(__name__)
@@ -223,22 +220,10 @@ def enrich_metadata(
 
         nonlocal request_fingerprint
 
-        def provider_executor(spec: GenerationSpec) -> BackendToolExecutor:
-            operation = runtime.admission.model_tool_operation(spec)
-            if operation is None:
-                raise AssertionError("metadata lost its frozen tool operation")
-            return DeferredGenerationToolExecutor(
-                session_factory=factory,
-                user_id=requester_user_id,
-                owner=owner,
-                generation_id=generation_id,
-                job_context=context,
-                operation=operation,
-            )
-
         revision = generation_policy.operation_revision("metadata_enrichment")
         request = await admit_job_generation(
             owner=owner,
+            user_id=requester_user_id,
             generation_id=generation_id,
             operation="metadata_enrichment",
             intent=intent,
@@ -252,8 +237,6 @@ def enrich_metadata(
             journal=journal,
             session_factory=factory,
             runtime=runtime,
-            scope=FrozenToolScope(admitted_refs=(f"media:{media_uuid}",), predicates=()),
-            tool_executor_factory=provider_executor,
         )
         request_fingerprint = request.spec.fingerprint
         return await execute_generation(

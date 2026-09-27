@@ -1,81 +1,24 @@
-# Codex Personal Generation Host Operations
+# codex subscription generation host operations
 
-This runbook owns the credential-safe deployment boundary for
-`nexus-codex-agent-host`. The host serves the private v3 event and health protocol,
-including command v4 and the authenticated account model catalog, on
-`/run/nexus-codex/agent.sock`; it has no TCP listener, Nexus application
-configuration, database credential, generation API key, application data mount,
-or host-home mount.
+this runbook owns the credential-safe deployment boundary for
+`nexus-codex-agent-host`. the host serves command v5, the authenticated model
+catalog, events and health over `/run/nexus-codex/agent.sock`. a dynamic
+loopback websocket serves only remote native execution inside the container.
+no port is published. the host has no database credential, application data
+mount or host-home mount.
 
-## Runtime boundary
+## runtime boundary
 
-- The immutable worker image contains the pinned `openai-codex-cli-bin==0.157.1`
-  executable. The host launches its absolute bundled path directly; Codex owns
-  its native sandbox, while the container owns the outer AppArmor/seccomp
-  boundary. API and migration images do not launch Codex.
-- The host runs as `10001:10001`, read-only, capability-free, with
-  `no-new-privileges`, the named AppArmor profile, a 448 MiB cgroup, and one
-  exact encrypted `auth.json` bind mounted writable. Each turn creates private
-  `state/`, empty `workspace/`, and `tmp/` directories under one random root in
-  the bounded, mode-`0700` `/run/nexus-codex-turns` tmpfs and links only the
-  profile's `auth.json` to that exact bind. The private tmpfs is executable for
-  native sandbox work; general `/tmp` remains a separate `noexec` tmpfs. Host
-  startup rejects any other mount shape, then starts a pinned app-server over
-  WebSocket/UDS and verifies its `initialize` version during the authenticated
-  catalog probe. Each catalog read and generation owns its own foreground
-  native process group. After the probe closes the client, stops and awaits
-  that group, validates the credential inode, power-syncs any refresh, and
-  removes its whole root, the entrypoint `exec`s a fresh Python serving phase.
-  Docker readiness uses one bounded
-  standard-library HTTP-over-UDS exchange and validates the complete exact
-  health identity; it never imports a second FastAPI, Pydantic, Nexus, or
-  provider-runtime graph into the measured cgroup. Nexus passes
-  the public typed `CodexSandboxControls` contract to every `AgentRuntime` path;
-  it sets `TMPDIR` to that turn's `tmp/` and fixes
-  Codex workspace-write policy to exclude bare `/tmp` while retaining only
-  `TMPDIR`. The native socket may be an alias into the private
-  `/tmp/codex-daemon-<uid>` directory; the host proves the target identity and
-  removes its owned alias and socket after process-group exit, including a
-  forced stop. Pinned Codex OAuth refresh writes reach the enrolled file;
-  after process exit the host validates and syncs that inode. Session, cache,
-  socket, temporary files, and sibling writes remain disposable. The host
-  removes the per-turn root only after teardown is proven.
-- The host and `codex-egress-policy` are the only members of the internal
-  `nexus_codex_private` network. The host has no public-network attachment;
-  the policy sidecar is the sole member of `nexus_codex_proxy_egress` and the
-  host's only network peer. It exposes private DNS plus a TLS-SNI tunnel for
-  ChatGPT and `auth.openai.com`. TLS stays
-  end-to-end; the sidecar receives no plaintext, grant, or credential. Neither
-  container can reach PostgreSQL, API, Caddy, or either worker directly.
-  Because the HTTP request is encrypted, the sidecar owns hostname/SNI
-  confinement only.
-- The egress policy runs behind Docker's init process so `SIGTERM` reaches a
-  non-PID-1 Python process and child transports are reaped. Expected peer-reset
-  errors during TLS close are absorbed at the transport owner; they never
-  escape as unhandled server tasks.
-- The API and both worker lanes mount
-  `nexus_codex_run:/run/nexus-codex:ro`; this gives the request-scoped dossier
-  resolver the same private client capability without any credential mount.
-- Docker Engine 28 or newer is required. Release admission checks the server
-  version before mutation because `gateway_mode_ipv4=isolated` is part of the
-  private bridge's security contract.
-- Never set `CODEX_HOME` or any `*_API_KEY` on the running host. Startup rejects
-  even a blank inherited API-key variable. The host receives only
-  `NEXUS_CODEX_CREDENTIAL_FILE=/run/nexus-codex-credential/auth.json`;
-  `CODEX_HOME` is legal only for the one enrollment command.
+- the worker image pins codex app-server and exec-server to 0.157.1. the app-server runs outside the namespace with account auth and `CODEX_EXEC_SERVER_URL=none`. each generation starts one exec-server inside a fresh bubblewrap user/pid/mount namespace. the provider library registers its dynamic loopback endpoint, verifies `environment/info`, and selects only that remote environment for thread and turn.
+- the host stays non-root, capability-free, read-only, and limited to one admission slot. the private executable tmpfs holds separate account state and disposable shell scratch. the shell sees read-only system executables/libraries, ca and resolver files, scratch cwd/home, and fresh `/proc` and `/dev`; it cannot mount `/`, account auth, host sockets or product data. bubblewrap clears inherited environment and takes the generation api token through an inherited argument pipe, so the bearer is absent from the host process command line. nested user namespaces are disabled. the namespace init and `--die-with-parent` end detached descendants when the executor stops.
+- the release-owned `nexus-api` skill is copied into the scratch workspace before exec-server startup. the shell receives the run-bound `NEXUS_AGENT_API_*` values and generation id. native shell activity is progress; the host holds model text until it can redact bearer values across chunks and rejects a structured final containing the bearer. account auth remains outside the namespace and refreshes only the enrolled artifact.
+- the host, generation api, and `codex-egress-policy` are the only members of internal `nexus_codex_private`. the api is pinned to `172.30.0.4:8000`; public caddy denies `/agent-api`. the policy sidecar alone joins the public-egress bridge. its dns, http and tls listeners admit public hosts and connect only to globally routable addresses. private services, administration and metadata remain unreachable in both address families. tls remains end-to-end.
+- the authenticated app-server, exec-server, native client and namespace are awaited before scratch is deleted and the slot released. the host refuses readiness after unproven teardown or stale scratch at restart. readiness exercises the actual namespace mounts; deployment checks the private network membership and denied destinations. the generation ledger closes api admission before accepting a terminal.
+- the api and both worker lanes mount the existing private `agent.sock` volume. no account credential or shell endpoint is published there. docker engine 28 or newer is required for the isolated bridge. never set ambient `CODEX_HOME` or any `*_API_KEY` on the running host; only the one-shot enrollment command may set `CODEX_HOME`.
 
-## model-tool boundary
+## execution and api boundary
 
-Codex Personal admits only `NoModelTools`. The command and admission request
-schemas exclude tool grants; frozen tool-bearing specs fail before the host
-reserves a slot. The host supplies no MCP servers or native tool authority and
-fails a turn on any unexpected native tool or user-question event. The pinned
-provider requests empty native environments on new threads and every turn,
-disables native shell, patch, delegation, web, apps, and sleep, and keeps global
-approval at `never`. The model catalog's reported MCP capability is a library
-fact, not Nexus authority to publish a tool. The three tool-bearing background
-policies and the Codex Chat seed remain ineligible until an approved route
-change or a pinned native boundary proves exact model-visible tool exclusion.
+codex has ordinary shell and public internet access inside disposable scratch. the generation api grants the authenticated account's visible corpus and the fixed set of additive operations. its token expires with the generation. api calls retain domain receipts, replay and supported undo; native shell/public-internet effects do not. the managed skill teaches schema discovery, exact operation calls, same-key retry and citation. the host reports credential, runtime and teardown failures by stage and code without logging native frames or bearer values.
 
 ## Encrypted credential state
 
@@ -224,8 +167,8 @@ The isolation contract is declared in `deploy/hetzner/docker-compose.yml`, the
 AppArmor profile, and the boot-guard unit; a release installs those, then
 asserts that Docker and the kernel applied them — see
 [deployment.md](../../deployment.md#codex-agent-host-isolation) for the exact
-assertions. The release also proves the sandbox cannot reach the private bridge,
-Postgres, or Caddy, and the container's own healthcheck
+assertions. The release also proves the sandbox cannot reach Postgres, Caddy, or metadata,
+while the generation api remains private. the container's own healthcheck
 (`apps.codex_agent.health`) is what `up --wait` waits for.
 
 After reboot, unlock and mount the credential state interactively, then run a
@@ -332,5 +275,5 @@ health, policy, sandbox, environment, or resource-limit checks.
   codes are never diagnostic or certification artifacts.
 - The host is not a public generation endpoint. Never expose the UDS through
   TCP, a reverse proxy, WebSocket/App Server, or arbitrary container exec.
-- Codex has no public tool route. Provider API tool calls retain their frozen
-  authority, durable position, effect receipt, and replay checks.
+- the generation api is private and bearer-bound. provider function calls retain
+  their frozen authority, durable position, effect receipt, and replay checks.

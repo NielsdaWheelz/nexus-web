@@ -41,6 +41,7 @@ from provider_runtime.types import (
 from nexus.schemas.presence import Absent, Presence, Present
 from nexus.services.codex_generation_contract import (
     GenerationAdmission,
+    GenerationApiAccess,
     GenerationCommand,
     GenerationCommandDraft,
     GenerationFrame,
@@ -57,10 +58,12 @@ from nexus.services.codex_generation_contract import (
 )
 from nexus.services.generation_spec import (
     CodexPersonalSelection,
+    CodexShell,
     GenerationIntent,
     GenerationSpec,
     ProviderApiSelection,
     ProviderDispatchTargetSnapshot,
+    ProviderFunctions,
     StrictJsonOutputSnapshot,
 )
 from nexus.services.provider_generation_contract import (
@@ -127,7 +130,7 @@ class BackendToolProposed:
 
 @dataclass(frozen=True, slots=True)
 class BackendToolObserved:
-    """An unexpected Codex native tool event; the host treats it as a defect."""
+    """Sanitized native progress; Nexus does not execute the shell tool again."""
 
     kind: Literal["ToolObserved"] = field(default="ToolObserved", init=False)
     route: Literal["CodexPersonal"] = field(default="CodexPersonal", init=False)
@@ -256,6 +259,8 @@ class BackendChildLifecycle(Protocol):
 
     async def arm_child(self, child: BackendChildDispatch) -> None: ...
 
+    def take_codex_api_access(self) -> GenerationApiAccess: ...
+
     async def complete_child(
         self, completion: BackendChildCompletion
     ) -> BackendChildCompletion: ...
@@ -309,15 +314,17 @@ class GenerationBackend:
                 raise GenerationBackendDefect(
                     "CodexPersonal execution received a ProviderApi resume state"
                 )
-            if isinstance(spec.model_tool_plan_snapshot, Present):
-                raise GenerationBackendDefect("Codex model tools are unavailable")
+            if not isinstance(spec.authority, CodexShell):
+                raise GenerationBackendDefect("Codex shell authority is absent")
             start = GenerationTurn(
                 1, GenerationCommandDraft(request_id=generation_id, spec=spec, intent=intent)
             )
             max_turns = 1
         elif isinstance(spec.selection, ProviderApiSelection):
+            if not isinstance(spec.authority, ProviderFunctions):
+                raise GenerationBackendDefect("provider function authority is absent")
             if isinstance(spec.output_contract, StrictJsonOutputSnapshot) and isinstance(
-                spec.model_tool_plan_snapshot, Present
+                spec.authority.model_tool_plan_snapshot, Present
             ):
                 raise GenerationBackendCompositionRefused(
                     "ProviderApi strict structured output and model tools cannot share "
@@ -436,7 +443,9 @@ class _KernelAdapter:
         async def bind(admission: GenerationAdmission) -> GenerationCommand:
             del admission
             await arm()
-            command = generation_command_from_draft(draft)
+            command = generation_command_from_draft(
+                draft, api_access=self.lifecycle.take_codex_api_access()
+            )
             if generation_command_draft(command) != draft:
                 raise GenerationBackendDefect("Codex command changed frozen generation identity")
             return command

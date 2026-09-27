@@ -7,6 +7,8 @@ variables to be configured upfront.
 
 from fastapi import APIRouter
 
+from nexus.api.routes.agent_api import router as agent_api_router
+from nexus.api.routes.agent_api import user_router as generation_effects_router
 from nexus.api.routes.atlas import router as atlas_router
 from nexus.api.routes.auth_handoff_codes import router as auth_handoff_codes_router
 from nexus.api.routes.billing import router as billing_router
@@ -62,6 +64,8 @@ def create_api_router() -> APIRouter:
         Configured APIRouter with all routes registered.
     """
     api_router = APIRouter()
+    api_router.include_router(agent_api_router)
+    api_router.include_router(generation_effects_router)
     api_router.include_router(operational_router)
     api_router.include_router(me_router)
     api_router.include_router(telemetry_router)

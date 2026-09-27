@@ -905,11 +905,17 @@ def remove_lectern_item(viewer_id: UUID, item_id: UUID) -> None:
     """Remove one Lectern row, tolerating an already-removed item (assistant undo)."""
 
     def remove(db: Session) -> None:
-        _lock_viewer(db, viewer_id)
-        _lectern_store.remove_item_if_present_in_txn(db, viewer_id=viewer_id, item_id=item_id)
+        remove_lectern_item_in_current_transaction(db, viewer_id=viewer_id, item_id=item_id)
         db.commit()
 
     _in_own_txn("remove_lectern_item", remove)
+
+
+def remove_lectern_item_in_current_transaction(
+    db: Session, *, viewer_id: UUID, item_id: UUID
+) -> None:
+    _lock_viewer(db, viewer_id)
+    _lectern_store.remove_item_if_present_in_txn(db, viewer_id=viewer_id, item_id=item_id)
 
 
 def delete_media_consumption_state_in_txn(db: Session, *, media_id: UUID) -> None:

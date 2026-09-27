@@ -18,6 +18,7 @@ from nexus.schemas.artifact import (
     CollectionDossierCoverageOut,
     ConversationDossierCoverageOut,
     DossierBuildAdmittedGenerationOut,
+    DossierBuildCodexShellOut,
     DossierBuildCreatedOut,
     DossierBuildExactModelToolsOut,
     DossierBuildExecution,
@@ -191,8 +192,14 @@ def _admitted_generation_out(
     if view is None:
         return absent()
     plan, effect_mode = view.spec.model_tool_plan_snapshot, view.spec.tool_effect_mode
+    api_plan = view.spec.api_plan_snapshot
     tool_plan: DossierBuildToolPlanOut = DossierBuildNoModelToolsOut()
-    if isinstance(plan, Present) and isinstance(effect_mode, Present):
+    if isinstance(api_plan, Present):
+        tool_plan = DossierBuildCodexShellOut(
+            plan_id=api_plan.value.plan_id,
+            plan_revision=api_plan.value.plan_revision,
+        )
+    elif isinstance(plan, Present) and isinstance(effect_mode, Present):
         tool_plan = DossierBuildExactModelToolsOut(
             plan_id=plan.value.plan_id,
             plan_revision=plan.value.plan_revision,

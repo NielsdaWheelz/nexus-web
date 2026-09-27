@@ -639,6 +639,7 @@ async def _dispatch_generation(
         result = await execute_generation(
             GenerationExecutionRequest(
                 owner=LlmCallOwner(kind="chat_run", id=run.id),
+                user_id=run.owner_user_id,
                 generation_id=generation_id,
                 spec=spec,
                 intent=intent,

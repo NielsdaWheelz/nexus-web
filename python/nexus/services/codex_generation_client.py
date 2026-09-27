@@ -22,12 +22,12 @@ from nexus.services.codex_generation_contract import (
     GenerationHealth,
     GenerationPermissionRequest,
     GenerationTerminal,
-    GenerationToolUse,
     capacity_rejection_bytes,
     generation_admission_request,
     generation_command_draft,
 )
 from nexus.services.codex_generation_health_contract import (
+    EXECUTION_POLICY_REVISION,
     LIBRARY_CONTRACT_REVISION,
     PINNED_CODEX_VERSION,
 )
@@ -89,6 +89,7 @@ class CodexGenerationClient:
         if observed != GenerationHealth(
             native_version=PINNED_CODEX_VERSION,
             library_contract_revision=LIBRARY_CONTRACT_REVISION,
+            execution_policy_revision=EXECUTION_POLICY_REVISION,
         ):
             raise CodexGenerationProtocolDefect("Codex generation health runtime identity drifted")
         return observed
@@ -266,7 +267,7 @@ class _FrameStreamValidator:
         self._total_bytes = 0
         self._buffer = bytearray()
         self._terminal: GenerationFrame | None = None
-        self._forbidden_tool_event_seen = False
+        self._permission_request_seen = False
 
     def feed(self, chunk: bytes) -> tuple[GenerationFrame, ...]:
         self._total_bytes += len(chunk)
@@ -308,8 +309,8 @@ class _FrameStreamValidator:
                 self._validate_terminal(event)
                 self._terminal = frame
                 continue
-            if isinstance(event, GenerationToolUse | GenerationPermissionRequest):
-                self._forbidden_tool_event_seen = True
+            if isinstance(event, GenerationPermissionRequest):
+                self._permission_request_seen = True
             observed.append(frame)
         return tuple(observed)
 
@@ -319,9 +320,9 @@ class _FrameStreamValidator:
                 "Codex generation stream ended with an incomplete frame"
             )
         if self._terminal is None:
-            if self._forbidden_tool_event_seen:
+            if self._permission_request_seen:
                 raise CodexGenerationProtocolDefect(
-                    "Codex generation observed a forbidden tool event without terminal"
+                    "Codex generation observed a permission request without terminal"
                 )
             raise CodexGenerationClientError(
                 "Codex generation stream closed after acceptance without terminal"
@@ -336,13 +337,13 @@ class _FrameStreamValidator:
             raise CodexGenerationProtocolDefect(
                 "Codex generation terminal runtime identity drifted"
             )
-        if self._forbidden_tool_event_seen and (
+        if self._permission_request_seen and (
             terminal.status != "failed"
             or terminal.failure is None
             or terminal.failure.kind != "policy_violation"
         ):
             raise CodexGenerationProtocolDefect(
-                "Codex generation observed a forbidden tool event without policy failure"
+                "Codex generation accepted a permission request without policy failure"
             )
 
 

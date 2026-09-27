@@ -442,8 +442,7 @@ def undo_tool_call(
     if row.reverted_at is not None:
         return assistant_message_id
 
-    for ref in row.result_refs or []:
-        _revert_ref(db, viewer_id=viewer_id, ref=ref)
+    revert_created_refs_in_current_transaction(db, viewer_id=viewer_id, refs=row.result_refs or [])
 
     reverted_at = datetime.now(UTC)
     row.reverted_at = reverted_at
@@ -458,6 +457,15 @@ def undo_tool_call(
     return assistant_message_id
 
 
+def revert_created_refs_in_current_transaction(
+    db: Session, *, viewer_id: UUID, refs: list[dict[str, Any]]
+) -> None:
+    """Revert exact assistant-created refs without committing the caller's stamp."""
+
+    for ref in refs:
+        _revert_ref(db, viewer_id=viewer_id, ref=ref)
+
+
 def _revert_ref(db: Session, *, viewer_id: UUID, ref: dict[str, Any]) -> None:
     kind = ref.get("kind")
     try:
@@ -466,7 +474,7 @@ def _revert_ref(db: Session, *, viewer_id: UUID, ref: dict[str, Any]) -> None:
         elif kind == "entry":
             target_scheme = ref["target_scheme"]
             if target_scheme == "media":
-                library_entries.remove_media_from_library(
+                library_entries.remove_media_from_library_in_current_transaction(
                     db,
                     viewer_id,
                     UUID(ref["target_id"]),
@@ -485,12 +493,14 @@ def _revert_ref(db: Session, *, viewer_id: UUID, ref: dict[str, Any]) -> None:
                 # ResourceRef union in its own result_refs payload.
                 raise AssertionError(f"unknown entry target scheme: {target_scheme!r}")
         elif kind == "highlight":
-            highlights.delete_highlight(db, viewer_id, UUID(ref["id"]))
+            highlights.delete_highlight_in_current_transaction(db, viewer_id, UUID(ref["id"]))
         elif kind == "note_block":
-            notes.remove_note_block(db, viewer_id, UUID(ref["id"]))
+            notes.remove_note_block_in_current_transaction(db, viewer_id, UUID(ref["id"]))
         elif kind == "queue":
             # Tolerates an already-removed Lectern item (manual removal, R-5).
-            consumption_service.remove_lectern_item(viewer_id, UUID(ref["id"]))
+            consumption_service.remove_lectern_item_in_current_transaction(
+                db, viewer_id=viewer_id, item_id=UUID(ref["id"])
+            )
     except ApiError as exc:
         if exc.code not in {
             ApiErrorCode.E_NOT_FOUND,
@@ -499,4 +509,3 @@ def _revert_ref(db: Session, *, viewer_id: UUID, ref: dict[str, Any]) -> None:
         }:
             raise
         # justify-ignore-error: R-5 defines an already-removed Undo target as success.
-        db.rollback()

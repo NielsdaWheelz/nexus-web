@@ -40,7 +40,7 @@ from provider_runtime.types import FailureCode as ProviderFailureCode
 from provider_runtime.types import Incomplete as ProviderIncomplete
 from provider_runtime.types import Present as RuntimePresent
 from provider_runtime.types import Succeeded as ProviderSucceeded
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.jobs.queue import (
@@ -55,6 +55,7 @@ from nexus.jobs.queue import (
 from nexus.schemas.llm import CapacityPaused
 from nexus.schemas.presence import Absent, Present, absent, present
 from nexus.services.codex_generation_contract import (
+    GenerationApiAccess,
     GenerationTerminal,
     NormalizedFailureCode,
     normalized_failure,
@@ -88,12 +89,13 @@ from nexus.services.generation_continuations import (
 from nexus.services.generation_policy import BACKGROUND_CAPACITY_PROBE_SECONDS
 from nexus.services.generation_spec import (
     BackgroundOperationKey,
+    CodexShell,
     FrozenHostToolPlanSnapshot,
-    FrozenToolScope,
     GenerationIntent,
     GenerationSpec,
     ImmutablePromptPayloadRef,
     ProviderApiSelection,
+    ProviderFunctions,
     decode_generation_spec_document,
 )
 from nexus.services.llm_ledger import (
@@ -126,7 +128,6 @@ type GenerationFailureCode = NormalizedFailureCode | Literal["cancelled", "turn_
 type EncodeFailure = Callable[[GenerationFailureCode, str], str]
 type ObserveEvent = Callable[[BackendEvent], Awaitable[None]]
 type ResolveTerminal = Callable[[Session, BackendTerminal], "EncodedGenerationTerminal"]
-type ToolExecutorFactory = Callable[[GenerationSpec], BackendToolExecutor]
 
 _MODEL_TURN_COMPONENT = "nexus-generation-model-turn.v1"
 
@@ -163,6 +164,9 @@ class GenerationAdmissionJournal(Protocol):
     Implemented by ``JobGenerationJournal`` over ``background_jobs.payload``.
     Implementations never commit or roll back.
     """
+
+    @property
+    def context(self) -> JobExecutionContext: ...
 
     def read(self, db: Session) -> StepReplayState | None: ...
 
@@ -369,6 +373,7 @@ class GenerationExecutionRequest:
     """Complete immutable request consumed by one durable owner."""
 
     owner: LlmCallOwner
+    user_id: UUID
     generation_id: UUID
     spec: GenerationSpec
     intent: GenerationIntent = field(repr=False)
@@ -382,11 +387,11 @@ class GenerationExecutionRequest:
             raise ValueError("generation intent instructions differ from frozen spec")
         if hashlib.sha256(self.intent.input.encode()).hexdigest() != self.spec.input_digest:
             raise ValueError("generation intent input differs from frozen spec")
-        has_tools = isinstance(self.spec.model_tool_plan_snapshot, Present)
-        is_codex = self.spec.selection.route == "CodexPersonal"
-        if has_tools and is_codex:
-            raise ValueError("Codex model tools are unavailable")
-        if (self.tool_executor is not None) != (has_tools and not is_codex):
+        authority = self.spec.authority
+        has_provider_tools = isinstance(authority, ProviderFunctions) and isinstance(
+            authority.model_tool_plan_snapshot, Present
+        )
+        if (self.tool_executor is not None) != has_provider_tools:
             raise ValueError("only tool-bearing ProviderApi accepts a direct tool executor")
 
 
@@ -452,6 +457,7 @@ class GenerationCapacityPaused(RuntimeError):
 async def admit_job_generation(
     *,
     owner: LlmCallOwner,
+    user_id: UUID,
     generation_id: UUID,
     operation: BackgroundOperationKey,
     intent: GenerationIntent,
@@ -460,10 +466,8 @@ async def admit_job_generation(
     journal: GenerationAdmissionJournal,
     session_factory: sessionmaker[Session],
     runtime: ExecutionRuntime,
-    scope: FrozenToolScope | None = None,
     host_plan: FrozenHostToolPlanSnapshot | None = None,
     host_evidence_revision: str | None = None,
-    tool_executor_factory: ToolExecutorFactory | None = None,
 ) -> GenerationExecutionRequest:
     """Freeze and persist one background admission before any backend I/O.
 
@@ -480,7 +484,6 @@ async def admit_job_generation(
             intent=intent,
             prompt_template_revision=prompt_template_revision,
             prompt_payload_ref=prompt_payload_ref,
-            scope=scope,
             host_plan=host_plan,
             host_evidence_revision=host_evidence_revision,
         )
@@ -498,19 +501,13 @@ async def admit_job_generation(
         )
     if spec.operation != operation or spec.selection_source != "BackgroundPolicy":
         raise AssertionError("frozen job admission has the wrong operation identity")
-    has_tools = isinstance(spec.model_tool_plan_snapshot, Present)
-    is_codex = spec.selection.route == "CodexPersonal"
     return GenerationExecutionRequest(
         owner=owner,
+        user_id=user_id,
         generation_id=generation_id,
         spec=spec,
         intent=frozen_intent,
         journal=journal,
-        tool_executor=(
-            tool_executor_factory(spec)
-            if has_tools and not is_codex and tool_executor_factory is not None
-            else None
-        ),
     )
 
 
@@ -644,10 +641,12 @@ class _LedgerChildLifecycle:
         self._resolve_terminal = resolve_terminal
         self.completed: BackendChildCompletion | None = None
         self.encoded: EncodedGenerationTerminal | None = None
+        self._codex_api_access: GenerationApiAccess | None = None
 
     async def arm_child(self, child: BackendChildDispatch) -> None:
         request = self._request
         _assert_child_identity(child, request)
+        token: str | None = None
         start = ModelTurnStart(
             model_turn_id=_model_turn_id(child.generation_id, child.child_seq),
             generation_id=child.generation_id,
@@ -686,6 +685,20 @@ class _LedgerChildLifecycle:
                     raise GenerationDispatchAborted(
                         f"generation {request.generation_id} lost its claim before dispatch"
                     )
+                if isinstance(request.spec.authority, CodexShell):
+                    from nexus.services.agent_api import (
+                        issue_generation_api_credential_in_current_transaction,
+                    )
+
+                    token = issue_generation_api_credential_in_current_transaction(
+                        db,
+                        user_id=request.user_id,
+                        owner=request.owner,
+                        generation_id=request.generation_id,
+                        job_context=request.journal.context,
+                        expires_at=datetime.now(UTC)
+                        + timedelta(seconds=request.spec.bounds.transport_deadline_seconds),
+                    )
             else:
                 if state.dispatch_phase is not Uncertain:
                     raise AssertionError("provider successor requires an Uncertain owner")
@@ -700,6 +713,17 @@ class _LedgerChildLifecycle:
                     db, source_model_turn_id=pending.source_turn.id, successor=start
                 )
             db.commit()
+        if token is not None:
+            self._codex_api_access = GenerationApiAccess(
+                generation_id=request.generation_id, token=SecretStr(token)
+            )
+
+    def take_codex_api_access(self) -> GenerationApiAccess:
+        access = self._codex_api_access
+        if access is None:
+            raise AssertionError("Codex shell credential was not armed")
+        self._codex_api_access = None
+        return access
 
     async def complete_child(self, completion: BackendChildCompletion) -> BackendChildCompletion:
         request = self._request

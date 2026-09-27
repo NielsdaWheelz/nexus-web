@@ -8,6 +8,7 @@ from pathlib import Path
 from provider_runtime.agent_runtime import (
     CodexCatalogSessionRequest,
     CodexNativeOptions,
+    CodexRemoteExecution,
     CredentialRef,
     JsonSchemaAgentOutput,
     NewSession,
@@ -15,9 +16,9 @@ from provider_runtime.agent_runtime import (
     TextAgentOutput,
     TextContent,
     TurnRequest,
+    UnsafeConfirmation,
 )
 
-from nexus.schemas.presence import Present
 from nexus.services.codex_generation_contract import GenerationCommand
 from nexus.services.generation_spec import (
     CodexDispatchTargetSnapshot,
@@ -27,6 +28,14 @@ from nexus.services.generation_spec import (
 )
 
 AUTH_PROFILE = "codex-personal"
+SHELL_INSTRUCTIONS = (
+    "This run has disposable shell scratch. Public internet access is available; files and "
+    "installed packages disappear when the run ends. Discover Nexus operations from "
+    "NEXUS_AGENT_API_SPEC_URL before calling them. The API can read the account-visible "
+    "corpus and make additive writes. Use the same Idempotency-Key when retrying a lost "
+    "response. Nexus records API writes, but shell and public-internet effects are outside "
+    "its undo history."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +52,7 @@ def resolve_codex_generation(
     command: GenerationCommand,
     *,
     working_directory: Path,
+    exec_server_url: str,
 ) -> ResolvedCodexGeneration:
     """Lower exact frozen facts; never consult current generation policy."""
 
@@ -56,30 +66,34 @@ def resolve_codex_generation(
     if selection.model != target.model_key:
         raise ValueError("Codex selection and frozen dispatch target disagree")
 
-    if isinstance(spec.model_tool_plan_snapshot, Present):
-        raise ValueError("Codex model tools are unavailable")
-
     return ResolvedCodexGeneration(
         session=CodexCatalogSessionRequest(
             auth=CredentialRef(kind="local_account", profile_key=AUTH_PROFILE),
             open=NewSession(),
             cwd=str(working_directory),
             policy=PermissionPolicy(
-                filesystem="read_only",
-                network="disabled",
+                filesystem="full_access",
+                network="unrestricted",
                 approval="deny",
                 allowed_tools=("*",),
+                unsafe_confirmation=UnsafeConfirmation(
+                    acknowledged=("filesystem_full_access", "network_unrestricted")
+                ),
             ),
             model_key=selection.model,
             reasoning=selection.reasoning,
             agent_definition_revision=target.agent_definition_revision,
             row_fingerprint=spec.source_row_fingerprint,
             system=(TextContent(command.intent.instructions),),
-            developer=(),
+            developer=(TextContent(SHELL_INSTRUCTIONS),),
             additional_dirs=(),
             mcp_servers=(),
             output=_output(command),
-            native=CodexNativeOptions(web_search=False, builtin_tools="disabled"),
+            native=CodexNativeOptions(
+                remote_execution=CodexRemoteExecution(
+                    exec_server_url=exec_server_url, cwd=str(working_directory)
+                )
+            ),
         ),
         turn=TurnRequest(
             input=(TextContent(command.intent.input),),

@@ -206,43 +206,28 @@ def _workflow(
     )
 
 
-_METADATA_TOOLS = ExactModelTools(
-    "MetadataRead", _tool_authority_revision("MetadataRead"), "ReadOnly", "MetadataMedia"
-)
-_LIBRARY_TOOLS = ExactModelTools(
-    "LibraryDossierRead",
-    _tool_authority_revision("LibraryDossierRead"),
-    "ReadOnly",
-    "LibraryDossierManifest",
-)
-_IDEA_TOOLS = ExactModelTools(
-    "IdeaDossierRead",
-    _tool_authority_revision("IdeaDossierRead"),
-    "ReadOnly",
-    "IdeaDossierEvidenceLedger",
-)
 _IDEA_HOST_PLAN = ExactHostToolPlan(
     "idea_dossier_research", _tool_authority_revision("idea_dossier_research")
 )
 
 # operation, model, reasoning, turn timeout s, input KiB, context tokens,
-# output tokens, host-tool plan, model-tool policy. Every background operation
+# output tokens, host-tool plan. every background operation
 # is strict JSON over Codex Personal.
 _BACKGROUND_ROWS: tuple[
-    tuple[BackgroundOperationKey, str, str, int, int, int, int, HostToolPlan, ModelToolPolicy], ...
+    tuple[BackgroundOperationKey, str, str, int, int, int, int, HostToolPlan], ...
 ] = (
-    ("metadata_enrichment", "luna", "low", 300, 32, 64_000, 8_000, _NO_HOST, _METADATA_TOOLS),
-    ("media_summary", "luna", "low", 120, 256, 128_000, 16_000, _NO_HOST, _NO_TOOLS),
-    ("synapse", "luna", "low", 120, 256, 128_000, 16_000, _NO_HOST, _NO_TOOLS),
-    ("oracle", "sol", "medium", 180, 256, 128_000, 16_000, _NO_HOST, _NO_TOOLS),
-    ("dossier_page", "luna", "low", 120, 1024, 400_000, 32_000, _NO_HOST, _NO_TOOLS),
-    ("dossier_note", "luna", "low", 120, 1024, 400_000, 32_000, _NO_HOST, _NO_TOOLS),
-    ("dossier_media", "sol", "medium", 180, 1024, 400_000, 32_000, _NO_HOST, _NO_TOOLS),
-    ("dossier_conversation", "sol", "medium", 180, 1024, 400_000, 32_000, _NO_HOST, _NO_TOOLS),
-    ("dossier_library", "sol", "high", 300, 1024, 400_000, 32_000, _NO_HOST, _LIBRARY_TOOLS),
-    ("dossier_podcast", "sol", "high", 300, 1024, 400_000, 32_000, _NO_HOST, _NO_TOOLS),
-    ("dossier_contributor", "sol", "high", 300, 1024, 400_000, 32_000, _NO_HOST, _NO_TOOLS),
-    ("dossier_idea", "sol", "high", 300, 1024, 400_000, 32_000, _IDEA_HOST_PLAN, _IDEA_TOOLS),
+    ("metadata_enrichment", "luna", "low", 300, 32, 64_000, 8_000, _NO_HOST),
+    ("media_summary", "luna", "low", 120, 256, 128_000, 16_000, _NO_HOST),
+    ("synapse", "luna", "low", 120, 256, 128_000, 16_000, _NO_HOST),
+    ("oracle", "sol", "medium", 180, 256, 128_000, 16_000, _NO_HOST),
+    ("dossier_page", "luna", "low", 120, 1024, 400_000, 32_000, _NO_HOST),
+    ("dossier_note", "luna", "low", 120, 1024, 400_000, 32_000, _NO_HOST),
+    ("dossier_media", "sol", "medium", 180, 1024, 400_000, 32_000, _NO_HOST),
+    ("dossier_conversation", "sol", "medium", 180, 1024, 400_000, 32_000, _NO_HOST),
+    ("dossier_library", "sol", "high", 300, 1024, 400_000, 32_000, _NO_HOST),
+    ("dossier_podcast", "sol", "high", 300, 1024, 400_000, 32_000, _NO_HOST),
+    ("dossier_contributor", "sol", "high", 300, 1024, 400_000, 32_000, _NO_HOST),
+    ("dossier_idea", "sol", "high", 300, 1024, 400_000, 32_000, _IDEA_HOST_PLAN),
 )
 _BACKGROUND_OPERATIONS: dict[BackgroundOperationKey, BackgroundOperationPolicy] = {
     operation: BackgroundOperationPolicy(
@@ -255,7 +240,6 @@ _BACKGROUND_OPERATIONS: dict[BackgroundOperationKey, BackgroundOperationPolicy] 
             ),
             output_contract="StrictJson",
             host_tool_plan=host_plan,
-            model_tool_policy=model_tools,
         ),
     )
     for (
@@ -267,7 +251,6 @@ _BACKGROUND_OPERATIONS: dict[BackgroundOperationKey, BackgroundOperationPolicy] 
         context_tokens,
         output_tokens,
         host_plan,
-        model_tools,
     ) in _BACKGROUND_ROWS
 }
 

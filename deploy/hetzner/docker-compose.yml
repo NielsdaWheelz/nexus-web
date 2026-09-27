@@ -77,6 +77,10 @@ services:
         condition: service_started
     expose:
       - "8000"
+    networks:
+      default: {}
+      codex_private:
+        ipv4_address: 172.30.0.4
     volumes:
       - nexus_codex_run:/run/nexus-codex:ro
     healthcheck:

@@ -597,7 +597,7 @@ wheels = [
 [[package]]
 name = "llm-agent-kernel"
 version = "0.1.0"
-source = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git?rev=738c73c41d4313b9c7dd45e666982cd8860045d3#738c73c41d4313b9c7dd45e666982cd8860045d3" }
+source = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git?rev=937434b051d99c3dd10402db23e16d8baf129ebd#937434b051d99c3dd10402db23e16d8baf129ebd" }
 dependencies = [
     { name = "llm-tools" },
     { name = "provider-runtime" },
@@ -607,7 +607,7 @@ dependencies = [
 [[package]]
 name = "llm-tools"
 version = "0.1.0"
-source = { git = "https://github.com/NielsdaWheelz/llm-tools.git?rev=8d5f48884098ecb0cd95ddc590076a74d04b2bd7#8d5f48884098ecb0cd95ddc590076a74d04b2bd7" }
+source = { git = "https://github.com/NielsdaWheelz/llm-tools.git?rev=d305da8fb5f5eda89049779c4c4dfa4f1916618c#d305da8fb5f5eda89049779c4c4dfa4f1916618c" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
@@ -820,12 +820,12 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "html5lib", specifier = "==1.1" },
     { name = "httpx", specifier = ">=0.28.0" },
-    { name = "llm-agent-kernel", git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git?rev=738c73c41d4313b9c7dd45e666982cd8860045d3" },
-    { name = "llm-tools", git = "https://github.com/NielsdaWheelz/llm-tools.git?rev=8d5f48884098ecb0cd95ddc590076a74d04b2bd7" },
+    { name = "llm-agent-kernel", git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git?rev=937434b051d99c3dd10402db23e16d8baf129ebd" },
+    { name = "llm-tools", git = "https://github.com/NielsdaWheelz/llm-tools.git?rev=d305da8fb5f5eda89049779c4c4dfa4f1916618c" },
     { name = "lxml", specifier = ">=5.0.0" },
     { name = "openai-codex-cli-bin", marker = "extra == 'codex-agent'", specifier = "==0.157.1" },
     { name = "pillow", specifier = ">=10.0.0" },
-    { name = "provider-runtime", git = "https://github.com/NielsdaWheelz/llm-calling.git?rev=d245315fd8137912f47b7fe04798d81525cb2304" },
+    { name = "provider-runtime", git = "https://github.com/NielsdaWheelz/llm-calling.git?rev=6a7093f799c88c205c8d797bbb8b14c2a9980db1" },
     { name = "psycopg-binary", specifier = ">=3.1.0" },
     { name = "pydantic-settings", specifier = ">=2.6.0" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.13.0" },
@@ -972,7 +972,7 @@ wheels = [
 [[package]]
 name = "provider-runtime"
 version = "0.1.0"
-source = { git = "https://github.com/NielsdaWheelz/llm-calling.git?rev=d245315fd8137912f47b7fe04798d81525cb2304#d245315fd8137912f47b7fe04798d81525cb2304" }
+source = { git = "https://github.com/NielsdaWheelz/llm-calling.git?rev=6a7093f799c88c205c8d797bbb8b14c2a9980db1#6a7093f799c88c205c8d797bbb8b14c2a9980db1" }
 dependencies = [
     { name = "anthropic" },
     { name = "google-genai" },

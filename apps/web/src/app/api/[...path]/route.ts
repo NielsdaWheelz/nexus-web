@@ -22,6 +22,7 @@ export const revalidate = 0;
 // package token, share tokens, the extension token, public plate bytes). The
 // explicit route files under those prefixes are the only doors into them.
 const DENIED_FIRST_SEGMENTS: ReadonlySet<string> = new Set([
+  "agent-api",
   "auth",
   "docs",
   "extension",

@@ -42,13 +42,22 @@ def prove_unreachable(targets: tuple[DeniedTarget, ...]) -> None:
             raise RuntimeError("Codex host has a route to a denied network target")
 
 
+def prove_reachable(target: DeniedTarget) -> None:
+    with socket.create_connection((str(target.address), target.port), _CONNECT_TIMEOUT_SECONDS):
+        pass
+
+
 def main() -> None:
     stage = "arguments"
     try:
-        if len(sys.argv) < 3 or sys.argv[1] != "--denied-targets":
-            raise ValueError("network proof requires --denied-targets and at least one target")
+        if len(sys.argv) < 5 or sys.argv[1] != "--allowed-target":
+            raise ValueError("network proof requires --allowed-target and --denied-targets")
+        stage = "allowed-target"
+        prove_reachable(DeniedTarget.parse(sys.argv[2]))
+        if sys.argv[3] != "--denied-targets":
+            raise ValueError("network proof requires denied targets")
         stage = "denied-targets"
-        prove_unreachable(tuple(DeniedTarget.parse(value) for value in sys.argv[2:]))
+        prove_unreachable(tuple(DeniedTarget.parse(value) for value in sys.argv[4:]))
     except (OSError, RuntimeError, ValueError) as error:
         print(f"Codex network proof {stage}: {type(error).__name__}", file=sys.stderr)
         raise SystemExit(1) from None

@@ -18,7 +18,6 @@ from apps.codex_agent.auth_environment import (
     reject_ambient_codex_home,
     reject_subscription_api_key_auth,
 )
-from apps.codex_agent.confined_runtime import create_confined_runtime
 from apps.codex_agent.credential_state import (
     EphemeralRuntimePaths,
     create_ephemeral_runtime_paths,
@@ -157,14 +156,14 @@ def _prepare_runtime_boundary(
 
 
 def runtime_factory(config: AgentRuntimeConfig) -> AgentRuntime:
-    return create_confined_runtime(config)
+    return AgentRuntime(config)
 
 
 async def _probe_chatgpt_auth(
     paths: EphemeralRuntimePaths, *, native_exit_proven: asyncio.Event
 ) -> None:
     native = await start_native_codex_server(paths)
-    runtime = create_confined_runtime(
+    runtime = AgentRuntime(
         AgentRuntimeConfig(
             state_root_base=paths.state_root_base,
             codex_endpoints={"codex-personal": native.socket_target},

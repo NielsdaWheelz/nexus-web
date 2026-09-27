@@ -768,6 +768,20 @@ def remove_media_from_library(
     commands (Saved in Nexus, agent undo) that may unfile from All.
     """
 
+    def attempt() -> LibraryEntryRemovalOut:
+        with transaction(db):
+            return remove_media_from_library_in_current_transaction(
+                db, viewer_id, media_id, library_id, allow_default=allow_default
+            )
+
+    return retry_read_committed(db, "remove_media_from_library", attempt)
+
+
+def remove_media_from_library_in_current_transaction(
+    db: Session, viewer_id: UUID, media_id: UUID, library_id: UUID, *, allow_default: bool = False
+) -> LibraryEntryRemovalOut:
+    """Perform actor-gated unfiling inside the caller's transaction."""
+
     def authorize(*, lock: bool) -> None:
         ctx = governance.lock_library_for_member(db, viewer_id, library_id, lock=lock)
         governance.require_admin(ctx.role)
@@ -775,33 +789,28 @@ def remove_media_from_library(
             governance.require_non_default(ctx.is_default)
         governance.require_not_system(ctx.system_key)
 
-    def attempt() -> LibraryEntryRemovalOut:
-        with transaction(db):
-            authorize(lock=False)
-            target = media_target(media_id)
-            if not entry_exists(db, library_id, target):
-                return _entry_revision(db, viewer_id)
-            # A concurrent whole-resource or whole-library teardown removes the
-            # entry with the media row; its commit is a successful serial
-            # predecessor for this idempotent command.
-            if lock_media_rows_in_order(db, [media_id]) != [media_id]:
-                return _entry_revision(db, viewer_id)
+    authorize(lock=False)
+    target = media_target(media_id)
+    if not entry_exists(db, library_id, target):
+        return _entry_revision(db, viewer_id)
+    # A concurrent whole-resource or whole-library teardown removes the
+    # entry with the media row; its commit is a successful serial predecessor.
+    if lock_media_rows_in_order(db, [media_id]) != [media_id]:
+        return _entry_revision(db, viewer_id)
 
-            authorize(lock=True)
-            if not entry_exists(db, library_id, target):
-                return _entry_revision(db, viewer_id)
-            _raise_if_media_teardown_pending(db, media_id)
-            if count_entries_for_media(db, media_id) == 1:
-                raise ConflictError(
-                    ApiErrorCode.E_MEDIA_LAST_REFERENCE,
-                    "Media must remain in at least one library",
-                )
-            delete_entry(db, library_id, target)
-            normalize_positions(db, library_id)
-            _bump_entry_visibility_revisions(db)
-            return _entry_revision(db, viewer_id)
-
-    return retry_read_committed(db, "remove_media_from_library", attempt)
+    authorize(lock=True)
+    if not entry_exists(db, library_id, target):
+        return _entry_revision(db, viewer_id)
+    _raise_if_media_teardown_pending(db, media_id)
+    if count_entries_for_media(db, media_id) == 1:
+        raise ConflictError(
+            ApiErrorCode.E_MEDIA_LAST_REFERENCE,
+            "Media must remain in at least one library",
+        )
+    delete_entry(db, library_id, target)
+    normalize_positions(db, library_id)
+    _bump_entry_visibility_revisions(db)
+    return _entry_revision(db, viewer_id)
 
 
 def ensure_media_absent_from_saved_in_nexus_for_viewer(
