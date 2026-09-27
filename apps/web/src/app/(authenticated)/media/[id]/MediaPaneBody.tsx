@@ -7,7 +7,7 @@
 
 "use client";
 
-import { getPaneScrollContainer, getPaneScrollTopPaddingPx, isElementInPaneView } from "@/lib/reader/paneScroll";
+import { getPaneScrollContainer, getPaneScrollTopPaddingPx } from "@/lib/reader/paneScroll";
 
 import {
   useEffect,
@@ -212,13 +212,11 @@ import {
 } from "./epubRestore";
 import {
   captureVisibleCanonicalTextRange,
-  canonicalTextFocusElement,
   isCanonicalTextAnchorVisible,
   isTextViewportAtEnd,
   measureCanonicalViewportOrigin,
   measureSourceAnchorViewportOrigin,
   restoreTextReaderPlacement,
-  readerSourceFocusElement,
   scrollToExactCanonicalTextAnchor,
   type TextReaderPlacement,
   type TextReaderNavigationTarget,
@@ -245,7 +243,6 @@ import ReaderNavigationStatus, { type ReaderNavigationStatusView } from "@/compo
 import { usePlayerCommands } from "@/lib/player/globalPlayer";
 import {
   type ReaderNavigationSection,
-  type ReaderNavigationTextPoint,
 } from "@/lib/media/readerNavigation";
 import {
   buildTextReaderLocatorAtOffset,
@@ -2680,38 +2677,6 @@ export default function MediaPaneBody() {
     return new Promise((resolve) => { pendingCursorApplyRef.current = { resolve }; });
   }, [applyEpubRestoreRequest, beginRestoreSession, cancelRestoreSession,
     epubFragments, epubSections, readerCapability, replaceReaderLocation]);
-  const applySourceAnchor = useCallback((format: "epub" | "web", request: EpubRestoreRequest): Promise<ApplyCursorResult> => {
-    if (format === "epub") {
-      return applyEpubRestoreRequest(request);
-    }
-    const arrival = applyReaderLocator({
-      kind: "web", target: { fragment_id: request.fragmentId },
-      locations: { text_offset: request.target.kind === "Offset" ? request.target.offset : 0, progression: null, total_progression: null, position: null },
-      text: { quote: null, quote_prefix: null, quote_suffix: null },
-    });
-    const sessionId = restoreSessionIdRef.current;
-    return arrival.then(async (result) => {
-      if (result !== "applied" || sessionId !== restoreSessionIdRef.current) return "failed";
-      if (request.target.kind === "Offset") return "applied";
-      const root = contentRef.current;
-      const viewport = textViewportRef.current;
-      const anchorId = request.target.anchorId;
-      const anchor = root ? findSourceAnchor(root, anchorId) : null;
-      if (!anchor || !viewport) return "failed";
-      await readerScrollPositioner.run(({ setTop }) => {
-        if (sessionId !== restoreSessionIdRef.current) return;
-        setTop(viewport, viewport.scrollTop + anchor.getBoundingClientRect().top - viewport.getBoundingClientRect().top - getPaneScrollTopPaddingPx(viewport));
-        const rect = anchor.getBoundingClientRect();
-        const view = viewport.getBoundingClientRect();
-        if (rect.top >= view.top - 1 && rect.top <= view.bottom) sourceAnchorRef.current = { fragmentId: request.fragmentId, anchorId: present(anchorId) };
-      });
-      if (sessionId !== restoreSessionIdRef.current) return "failed";
-      const rect = anchor.getBoundingClientRect();
-      const view = viewport.getBoundingClientRect();
-      if (rect.top < view.top - 1 || rect.top > view.bottom) return "failed";
-      return "applied";
-    });
-  }, [applyEpubRestoreRequest, applyReaderLocator, readerScrollPositioner]);
   const positionTextLocator = async (locator: ReaderResumeState | null, signal: AbortSignal) => {
     if (signal.aborted) return "cancelled_by_user" as ApplyCursorResult;
     const arrival = applyReaderLocator(locator);
@@ -4155,23 +4120,6 @@ export default function MediaPaneBody() {
   // Section navigation
   // ==========================================================================
 
-  const navigateToEpubRequest = useCallback((request: EpubRestoreRequest) => {
-    if (request.fragmentId !== activeEpubFragmentId) setActiveEpubFragment(null);
-    return applyEpubRestoreRequest(request);
-  }, [activeEpubFragmentId, applyEpubRestoreRequest, setActiveEpubFragment]);
-  const positionAtEpubDocumentMapPoint = useCallback((point: ReaderNavigationTextPoint) => {
-    return navigateToEpubRequest(buildEpubPointRestoreRequest(point));
-  }, [navigateToEpubRequest]);
-
-  const navigateToWebPoint = useCallback((point: ReaderNavigationTextPoint) => {
-    clearFocus();
-    clearRetainedSelection();
-    return applyReaderLocator({
-      kind: "web", target: { fragment_id: point.fragment_id },
-      locations: { text_offset: point.offset, progression: null, total_progression: null, position: null },
-      text: { quote: null, quote_prefix: null, quote_suffix: null },
-    });
-  }, [applyReaderLocator, clearFocus, clearRetainedSelection]);
   const inspectDocumentMapSection = useCallback((section: ReaderNavigationSection) => {
     void navigationInspect(section.anchor_id.kind === "Present"
       ? { kind: "SourceAnchor", focus: "Destination", fragmentId: section.target.fragment_id, anchorId: section.anchor_id.value }
