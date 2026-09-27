@@ -254,13 +254,13 @@ def _embed_identity(embed: DetectedDocumentEmbed) -> tuple[str, str, str]:
 
 
 def add_heading_anchors(html_sanitized: str, *, fragment_idx: int) -> str:
-    """Give every heading a stable, unique id derived from its own text."""
+    """Keep authored heading ids; mint stable ids only for unanchored headings."""
     if not html_sanitized.strip():
         return ""
     root = cast(HtmlElement, fragment_fromstring(html_sanitized, create_parent=True))
     used = {
         value.strip()
-        for value in root.xpath(".//*[@id]/@id")
+        for value in root.xpath(".//*[@id or @name]/@id | .//*[@name]/@name")
         if isinstance(value, str) and value.strip()
     }
     ordinal = 0
@@ -272,7 +272,9 @@ def add_heading_anchors(html_sanitized: str, *, fragment_idx: int) -> str:
             continue
         prefix = f"nexus-web-heading-{fragment_idx}-{ordinal}-"
         existing_id = element.get("id")
-        if existing_id and existing_id.startswith(prefix):
+        # Even a duplicate authored id remains source evidence. The canonical
+        # structure excludes ambiguous tokens from its navigation index.
+        if existing_id:
             ordinal += 1
             continue
         slug = _slug(label)

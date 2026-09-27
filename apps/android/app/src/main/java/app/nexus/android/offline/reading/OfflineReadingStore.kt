@@ -4,6 +4,8 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.system.Os
 import android.system.OsConstants
 import app.nexus.android.offline.NetworkPolicy
@@ -112,12 +114,20 @@ internal class OfflineReadingStore internal constructor(
     reconcileOnInit: Boolean = true,
 ) : OfflineReaderProgressRepository {
     private val appContext = context.applicationContext
+    private val connectivity = appContext.getSystemService(ConnectivityManager::class.java)
     private val listeners = CopyOnWriteArraySet<(ReadingStoreSnapshot) -> Unit>()
     private val leases = ConcurrentHashMap<UUID, OfflineReadingLease>()
     private val verifiedPackages = ConcurrentHashMap<UUID, OfflineReadingPackage>()
     private val scheduler by lazy { schedulerFactory(this) }
     private val progressSyncExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "NexusOfflineReaderProgressSync").apply { isDaemon = true }
+    }
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+            if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+                synchronizeReaderProgress()
+            }
+        }
     }
     @Volatile private var bindingLocked = reconcileOnInit
     @Volatile private var reconciliationComplete = !reconcileOnInit
@@ -131,6 +141,7 @@ internal class OfflineReadingStore internal constructor(
     init {
         rootDirectory.mkdirs()
         if (reconcileOnInit) requestReconciliation()
+        connectivity.registerDefaultNetworkCallback(networkCallback)
     }
 
     fun bindAccountAfterExternalPurge(accountId: UUID): ReadingStoreSnapshot {
@@ -549,12 +560,18 @@ internal class OfflineReadingStore internal constructor(
     }
 
     fun synchronizeReaderProgress(mediaId: UUID? = null): Boolean {
-        if (synchronized(this) { readBinding()?.authorizationRequired != false }) return false
-        val network = appContext.getSystemService(ConnectivityManager::class.java).activeNetwork
-            ?: return false
+        if (synchronized(this) {
+                !reconciliationComplete || bindingLocked ||
+                    readAccountTransition() != null ||
+                    readBinding()?.authorizationRequired != false
+            }
+        ) return false
+        val network = connectivity.activeNetwork ?: return false
         synchronized(this) {
             val binding = readBinding() ?: return false
-            if (binding.authorizationRequired || bindingLocked || readAccountTransition() != null) return false
+            if (!reconciliationComplete || binding.authorizationRequired ||
+                bindingLocked || readAccountTransition() != null
+            ) return false
             val mediaPredicate = if (mediaId == null) "" else " AND media_id = ?"
             val args = mutableListOf<Any>(
                 OfflineReaderSyncState.Pending.name,
@@ -926,6 +943,9 @@ internal class OfflineReadingStore internal constructor(
                 OfflineReadingReconciliationOutcome.Ready(snapshot)
             } else {
                 OfflineReadingReconciliationOutcome.Deferred(snapshot)
+            }
+            if (outcome is OfflineReadingReconciliationOutcome.Ready) {
+                synchronizeReaderProgress()
             }
             callbacks.forEach { callback -> callback(outcome) }
         }

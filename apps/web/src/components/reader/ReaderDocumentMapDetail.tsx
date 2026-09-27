@@ -29,7 +29,6 @@ export default function ReaderDocumentMapDetail({
   onNavigatePoint,
   onActivateMarker,
   onRevealCurrent,
-  onReturn,
 }: {
   navigation: MediaNavigation;
   structure: ReaderDocumentStructure;
@@ -39,7 +38,6 @@ export default function ReaderDocumentMapDetail({
   onNavigatePoint: (point: ReaderNavigationTextPoint) => void;
   onActivateMarker: (marker: ReaderDocumentMapMarker) => void;
   onRevealCurrent: () => void;
-  onReturn: Presence<() => void>;
 }) {
   const currentSection = currentOffset.kind === "Present" ? readerSectionAtPosition(structure, currentOffset.value) : absent<ReaderPositionedSection>();
   const [selection, setSelection] = useState<DetailScope>(() => currentSection.kind === "Present"
@@ -88,7 +86,6 @@ export default function ReaderDocumentMapDetail({
             {selection.kind === "Section" ? <span>{local.kind === "Present" ? `section ${Math.round(local.value * 100)}%` : "outside this section"}</span> : null}
           </>
         )}
-        {onReturn.kind === "Present" ? <button type="button" onClick={onReturn.value}>return to reading position</button> : null}
       </div>
       <div className={styles.content}>
         <div className={styles.outline}>

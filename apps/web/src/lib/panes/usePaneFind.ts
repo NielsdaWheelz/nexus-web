@@ -74,7 +74,7 @@ export interface PaneFindAdapter<TError> {
     request: PaneFindPreviewRequest,
   ): Promise<PaneFindPreviewReceipt<TError>>;
   clearPresentation(request: PaneFindSessionRequest): Promise<void>;
-  returnToReadingPosition(request: PaneFindSessionRequest): Promise<void>;
+  returnToReadingPosition?(request: PaneFindSessionRequest): Promise<void>;
   errorMessage(error: TError): string;
 }
 
@@ -480,7 +480,9 @@ export function usePaneFind<TError>({
               .then((receipt) => {
                 const settlement = settlePreviewAttempt({
                   generation: previewGeneration,
-                  capturedOrigin: receipt.kind === "Previewed",
+                  capturedOrigin:
+                    receipt.kind === "Previewed" &&
+                    sourceAdapter.returnToReadingPosition !== undefined,
                 });
                 if (settlement.kind === "Current" && settlement.reprepare) {
                   startPreparation({
@@ -610,7 +612,9 @@ export function usePaneFind<TError>({
         });
         const settlement = settlePreviewAttempt({
           generation: previewGeneration,
-          capturedOrigin: receipt.kind === "Previewed",
+          capturedOrigin:
+            receipt.kind === "Previewed" &&
+            sourceAdapter.returnToReadingPosition !== undefined,
         });
         if (settlement.kind === "Current" && settlement.reprepare) {
           startPreparation({
@@ -765,7 +769,7 @@ export function usePaneFind<TError>({
   const onReturn = useCallback(() => {
     const current = preparedRef.current;
     if (
-      !sourceAdapter ||
+      !sourceAdapter?.returnToReadingPosition ||
       current.kind !== "Ready" ||
       !returnAvailable ||
       returnInFlightRef.current

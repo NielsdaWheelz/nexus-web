@@ -1,0 +1,52 @@
+.status {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+  padding: var(--space-2);
+  background: var(--reader-bg, var(--surface-1));
+  border-top: 1px solid var(--reader-border, var(--edge));
+  color: var(--reader-text, var(--ink));
+  font-size: var(--text-sm);
+}
+
+.announcement {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.details, .choice, .switcher, .syncError {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.details { max-width: 100%; }
+
+.status button {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  font: inherit;
+}
+
+.status button:disabled {
+  color: var(--ink-faint);
+  cursor: default;
+  text-decoration: none;
+}
+
+.switcher button[aria-pressed="true"] { color: var(--reader-text, var(--ink)); text-decoration: none; }
+.quiet { color: var(--reader-text-muted, var(--ink-faint)) !important; }
+.error { color: var(--warning); }
+.compact { max-width: 100%; }

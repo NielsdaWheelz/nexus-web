@@ -5,6 +5,27 @@ export interface PdfTextItemLike {
   readonly hasEOL: boolean;
 }
 
+export interface PdfViewportPosition {
+  readonly pageNumber: number;
+  readonly zoom: number;
+  readonly pageTopDeltaPx: number;
+  readonly scrollLeft: number;
+}
+
+export type PdfViewportPositionCapture =
+  | { readonly kind: "Captured"; readonly value: PdfViewportPosition }
+  | { readonly kind: "Unavailable" };
+
+export function samePdfViewportPosition(
+  left: PdfViewportPosition,
+  right: PdfViewportPosition,
+): boolean {
+  return left.pageNumber === right.pageNumber &&
+    Math.abs(left.pageTopDeltaPx - right.pageTopDeltaPx) <= 1 &&
+    Math.abs(left.scrollLeft - right.scrollLeft) <= 1 &&
+    Math.abs(left.zoom - right.zoom) <= 0.01;
+}
+
 interface PdfMarkedContentLike {
   readonly type: string;
   readonly id?: string;
@@ -29,6 +50,8 @@ export interface PdfDocumentLike {
   readonly fingerprints: readonly (string | null)[];
   readonly numPages: number;
   getPage(pageNumber: number): Promise<PdfPageLike>;
+  getDestination(name: string): Promise<unknown[] | null>;
+  getPageIndex(reference: object): Promise<number>;
   destroy?: () => Promise<void> | void;
 }
 
@@ -85,6 +108,9 @@ export interface PdfLinkServiceLike {
   get page(): number;
   set page(value: number);
   readonly pagesCount: number;
+  goToDestination(destination: unknown): Promise<void>;
+  goToPage(page: number | string): void;
+  executeNamedAction(action: string): void;
 }
 
 export interface PdfFindMatchLike {
@@ -130,6 +156,8 @@ export interface PdfViewerLike {
   currentScale?: number;
   currentScaleValue: string | number;
   pagesCount: number;
+  pageLabelToPageNumber?(label: string): number | null;
+  scrollPageIntoView(params: { pageNumber: number; destArray?: unknown[] }): void;
   update?: () => void;
   scrollMode?: number;
   getPageView?: (index: number) => PdfPageViewLike | undefined;

@@ -10,10 +10,11 @@ import type {
   TouchEvent,
   WheelEvent,
 } from "react";
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import { composeRefs } from "@/lib/ui/composeRefs";
 import { readerScrollKeyDirection, type TrustedScrollDirection } from "@/lib/reader/readerScrollInput";
+import type { ReaderSeekOperation } from "@/lib/reader/useReaderNavigation";
 import styles from "./textDocumentReader.module.css";
 
 export type ReaderViewportSnapshot = {
@@ -71,6 +72,8 @@ export default function TextDocumentReader({
   onViewportScroll,
   onViewportScrollEnd,
   onTrustedScrollIntent,
+  onGenuineInput,
+  onSeekStart,
   endContent,
   onContentClick,
   onContentPointerOver,
@@ -97,6 +100,8 @@ export default function TextDocumentReader({
   onViewportScroll: (snapshot: ReaderViewportSnapshot) => void;
   onViewportScrollEnd?: (snapshot: ReaderViewportSnapshot) => void;
   onTrustedScrollIntent: (direction: TrustedScrollDirection) => void;
+  onGenuineInput: () => void;
+  onSeekStart: () => ReaderSeekOperation | null;
   endContent: ReactNode;
   onContentClick: (event: MouseEvent<HTMLDivElement>) => void;
   onContentPointerOver: (event: PointerEvent<HTMLDivElement>) => void;
@@ -127,6 +132,9 @@ export default function TextDocumentReader({
   const onViewportScrollRef = useRef(onViewportScroll);
   const onViewportScrollEndRef = useRef(onViewportScrollEnd);
   const onTrustedScrollIntentRef = useRef(onTrustedScrollIntent);
+  const onGenuineInputRef = useRef(onGenuineInput);
+  const onSeekStartRef = useRef(onSeekStart);
+  const seekRef = useRef<{ operation: ReaderSeekOperation; startTop: number } | null>(null);
   const lastTouchYRef = useRef<number | null>(null);
   const pointerScrollActiveRef = useRef(false);
   const lastScrollTopRef = useRef(0);
@@ -134,6 +142,20 @@ export default function TextDocumentReader({
   onViewportScrollRef.current = onViewportScroll;
   onViewportScrollEndRef.current = onViewportScrollEnd;
   onTrustedScrollIntentRef.current = onTrustedScrollIntent;
+  onGenuineInputRef.current = onGenuineInput;
+  onSeekStartRef.current = onSeekStart;
+
+  const settleSeek = useCallback(() => {
+    const seek = seekRef.current;
+    const viewport = textViewportRef.current;
+    if (!seek || !viewport) return;
+    seekRef.current = null;
+    void seek.operation.settle(
+      viewport.scrollTop !== seek.startTop
+        ? { kind: "Arrived" }
+        : { kind: "Unchanged" },
+    );
+  }, [textViewportRef]);
 
   useEffect(() => {
     const viewport = textViewportRef.current;
@@ -154,6 +176,7 @@ export default function TextDocumentReader({
       if (settleTimer !== undefined) window.clearTimeout(settleTimer);
       settleTimer = undefined;
       onViewportScrollEndRef.current?.(snapshot());
+      if (!pointerScrollActiveRef.current) settleSeek();
     };
     const publishScroll = (event: Event) => {
       const nextSnapshot = snapshot();
@@ -165,7 +188,7 @@ export default function TextDocumentReader({
         );
       }
       onViewportScrollRef.current(nextSnapshot);
-      if (!("onscrollend" in viewport) && onViewportScrollEndRef.current) {
+      if (!("onscrollend" in viewport) && (onViewportScrollEndRef.current || seekRef.current !== null)) {
         if (settleTimer !== undefined) window.clearTimeout(settleTimer);
         settleTimer = window.setTimeout(publishScrollEnd, 200);
       }
@@ -173,14 +196,23 @@ export default function TextDocumentReader({
 
     viewport.addEventListener("scroll", publishScroll, { passive: true });
     viewport.addEventListener("scrollend", publishScrollEnd);
+    const finishPointerSeek = () => {
+      pointerScrollActiveRef.current = false;
+      window.requestAnimationFrame(() => settleSeek());
+    };
+    window.addEventListener("pointerup", finishPointerSeek);
+    window.addEventListener("pointercancel", finishPointerSeek);
     return () => {
       if (settleTimer !== undefined) window.clearTimeout(settleTimer);
       viewport.removeEventListener("scroll", publishScroll);
       viewport.removeEventListener("scrollend", publishScrollEnd);
+      window.removeEventListener("pointerup", finishPointerSeek);
+      window.removeEventListener("pointercancel", finishPointerSeek);
     };
-  }, [mediaId, textViewportRef]);
+  }, [mediaId, settleSeek, textViewportRef]);
 
   function publishTrustedScrollIntent(direction: TrustedScrollDirection) {
+    onGenuineInputRef.current();
     onTrustedScrollIntentRef.current(direction);
   }
 
@@ -221,9 +253,34 @@ export default function TextDocumentReader({
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     const direction = readerScrollKeyDirection(event.nativeEvent);
     if (direction !== null) publishTrustedScrollIntent(direction);
+    if (direction !== null && (event.key === "Home" || event.key === "End")) {
+      const viewport = textViewportRef.current;
+      const operation = onSeekStartRef.current();
+      if (!operation) {
+        event.preventDefault();
+        return;
+      }
+      if (viewport && operation) {
+        seekRef.current = { operation, startTop: viewport.scrollTop };
+        window.requestAnimationFrame(() => window.requestAnimationFrame(settleSeek));
+      }
+    }
   }
 
   function handlePointerDown(event: PointerEvent<HTMLDivElement>) {
+    if (event.isTrusted) onGenuineInputRef.current();
+    const viewport = textViewportRef.current;
+    if (event.isTrusted && viewport && viewport.scrollHeight > viewport.clientHeight && event.target === event.currentTarget) {
+      const rect = viewport.getBoundingClientRect();
+      if (event.clientX >= rect.right - Math.max(16, viewport.offsetWidth - viewport.clientWidth)) {
+        const operation = onSeekStartRef.current();
+        if (!operation) {
+          event.preventDefault();
+          return;
+        }
+        if (operation) seekRef.current = { operation, startTop: viewport.scrollTop };
+      }
+    }
     pointerScrollActiveRef.current =
       event.isTrusted && event.pointerType !== "touch" && event.target === event.currentTarget;
   }
@@ -232,6 +289,15 @@ export default function TextDocumentReader({
     const target = event.target;
     let delegatedToContentClick = false;
     if (target instanceof Element) {
+      const anchorEl = target.closest("a[href]");
+      if (
+        onInternalLinkClick &&
+        anchorEl instanceof HTMLAnchorElement &&
+        onInternalLinkClick(anchorEl)
+      ) {
+        event.preventDefault();
+        return;
+      }
       target
         .closest(
           "[data-active-highlight-ids], [data-highlight-anchor], [data-reader-apparatus-item-id]",
@@ -246,16 +312,6 @@ export default function TextDocumentReader({
         }
       }
 
-      if (onInternalLinkClick) {
-        const anchorEl = target.closest("a[href]");
-        if (
-          anchorEl instanceof HTMLAnchorElement &&
-          onInternalLinkClick(anchorEl)
-        ) {
-          event.preventDefault();
-          return;
-        }
-      }
     }
 
     if (!delegatedToContentClick) {
@@ -279,12 +335,6 @@ export default function TextDocumentReader({
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onPointerDown={handlePointerDown}
-        onPointerUp={() => {
-          pointerScrollActiveRef.current = false;
-        }}
-        onPointerCancel={() => {
-          pointerScrollActiveRef.current = false;
-        }}
         onKeyDown={handleKeyDown}
       >
         {beforeContent}
