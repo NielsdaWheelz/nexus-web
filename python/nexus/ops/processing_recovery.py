@@ -15,7 +15,7 @@ from nexus.db.models import Media, ResourceMutation
 from nexus.db.retries import admit_serializable
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode, ConflictError
-from nexus.jobs.queue import current_dead_job_for_payload
+from nexus.jobs.queue import lock_jobs_for_payload
 from nexus.services.content_indexing import request_media_content_reindex
 from nexus.services.media_source_ingest import correct_source_type, reprocess_retained_epub
 from nexus.services.reader_publication import normalize_stored_web_publication
@@ -71,21 +71,30 @@ def normalize_web(
             raise ConflictError(
                 ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Media is not a readable web article."
             )
-        revision = db.scalar(
+        index_state = db.execute(
             text("""
-            SELECT revision FROM content_index_states
+            SELECT revision, status FROM content_index_states
             WHERE owner_kind = 'media' AND owner_id = :media_id FOR UPDATE
         """),
             {"media_id": media_id},
-        )
-        if revision != expected_index_revision:
+        ).one_or_none()
+        if index_state is None or int(index_state.revision) != expected_index_revision:
             raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Content index revision changed.")
-        dead = current_dead_job_for_payload(
+        if index_state.status not in {"pending", "indexing"}:
+            raise ConflictError(
+                ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Content index is not awaiting repair."
+            )
+        revision = int(index_state.revision)
+        jobs = lock_jobs_for_payload(
             db,
             kind="media_content_reindex_job",
             expected_payload_match={"media_id": str(media_id), "revision": revision},
         )
-        if dead is None:
+        if len(jobs) > 1:
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT, "Current index execution changed."
+            )
+        if not jobs or jobs[0].status != "dead":
             raise ConflictError(
                 ApiErrorCode.E_REPAIR_NOT_ALLOWED, "No dead current index execution."
             )
