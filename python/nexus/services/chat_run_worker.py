@@ -305,8 +305,8 @@ async def _execute(
         return None
     spec, intent = _frozen_admission(db, run=run, job=steps.job)
     operation = steps.llm_runtime.admission.model_tool_operation(spec)
-    if operation is None:
-        raise AssertionError("Chat GenerationSpec is missing its model-tool plan")
+    if isinstance(spec.selection, ProviderApiSelection) and operation is None:
+        raise AssertionError("provider Chat GenerationSpec is missing its model-tool plan")
 
     mark_running(db, run.id)
     run = db.get(ChatRun, run_id)
@@ -535,7 +535,7 @@ async def _dispatch_generation(
     generation_id: UUID,
     spec: GenerationSpec,
     intent: GenerationIntent,
-    operation: FrozenToolOperation,
+    operation: FrozenToolOperation | None,
     session_factory: sessionmaker[Session],
     emitter: ChatRunEventEmitter,
 ) -> AssistantTurn | ExpectedFailure | CancelledGeneration | RescheduleRequested:
@@ -620,6 +620,8 @@ async def _dispatch_generation(
 
     tool_executor = None
     if isinstance(spec.selection, ProviderApiSelection):
+        if operation is None:
+            raise AssertionError("provider Chat tool operation disappeared after admission")
         tool_executor = DeferredGenerationToolExecutor(
             session_factory=session_factory,
             user_id=run.owner_user_id,
