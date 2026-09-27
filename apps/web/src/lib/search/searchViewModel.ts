@@ -13,6 +13,8 @@ import type {
   SearchType,
 } from "./types";
 
+type NonMediaSearchResult = Exclude<SearchApiResult, { mediaSummary: unknown }>;
+
 function sanitizeSnippet(snippet: string): string {
   return snippet.replace(/<\/?b>/gi, "");
 }
@@ -45,7 +47,7 @@ export function parseSnippetSegments(snippet: string): EmphasisSegment[] {
   return segments;
 }
 
-function buildSourceMeta(result: SearchApiResult): string | null {
+function buildSourceMeta(result: NonMediaSearchResult): string | null {
   if (result.type === "contributor") {
     // Author rows carry no status/kind after the cutover; the "author" type label
     // is the only meta signal a contributor row needs.
@@ -112,7 +114,7 @@ function buildSourceMeta(result: SearchApiResult): string | null {
 }
 
 function publicationDateFor(
-  result: SearchApiResult,
+  result: NonMediaSearchResult,
 ): Presence<PublicationDate> {
   if (result.type === "web_result") {
     return decodeOptionalPublicationDate(
@@ -124,7 +126,7 @@ function publicationDateFor(
   return result.source.original_published_date;
 }
 
-function buildPrimaryText(result: SearchApiResult): string {
+function buildPrimaryText(result: NonMediaSearchResult): string {
   if (result.type === "contributor") {
     return (
       result.contributor.display_name ||
@@ -136,12 +138,7 @@ function buildPrimaryText(result: SearchApiResult): string {
     if (result.highlight_excerpt) return result.highlight_excerpt;
     return result.body_text || sanitizeSnippet(result.snippet) || "Note";
   }
-  if (
-    result.type === "media" ||
-    result.type === "podcast" ||
-    result.type === "episode" ||
-    result.type === "video"
-  ) {
+  if (result.type === "podcast") {
     return result.title || sanitizeSnippet(result.snippet) || "Untitled";
   }
   if (result.type === "page") {
@@ -180,7 +177,7 @@ const TYPE_LABELS: Partial<Record<SearchType, string>> = {
   web_result: "web result",
 };
 
-function getContributorCredits(result: SearchApiResult): ContributorCredit[] {
+function getContributorCredits(result: NonMediaSearchResult): ContributorCredit[] {
   if ("source" in result) return result.source.contributors;
   if (result.type === "podcast") return result.contributors;
   return [];
@@ -189,13 +186,12 @@ function getContributorCredits(result: SearchApiResult): ContributorCredit[] {
 export function adaptSearchResultRow(
   result: SearchApiResult,
 ): SearchResultRowViewModel {
-  const primaryText = buildPrimaryText(result);
   const href = hrefForResourceActivation(result.activation);
   if (!href) {
     throw new Error("Search result missing activation href");
   }
 
-  return {
+  const base = {
     key: `${result.type}-${result.id}`,
     score: result.score,
     resourceRef: result.resource_ref,
@@ -203,9 +199,6 @@ export function adaptSearchResultRow(
     activation: result.activation,
     actionSubject: result.actionSubject,
     citationTarget: result.citation_target,
-    paneLabelHint: primaryText,
-    type: result.type,
-    mediaId: result.media_id,
     contextRef: {
       type: result.context_ref.type,
       id: result.context_ref.id,
@@ -214,12 +207,21 @@ export function adaptSearchResultRow(
         ? { locator: result.context_ref.locator }
         : {}),
     },
+    snippetSegments: parseSnippetSegments(result.snippet),
+  };
+  if ("mediaSummary" in result) {
+    return { ...base, type: result.type, mediaSummary: result.mediaSummary };
+  }
+  const primaryText = buildPrimaryText(result);
+  return {
+    ...base,
+    type: result.type,
+    paneLabelHint: primaryText,
     typeLabel:
       result.type === "content_chunk" || result.type === "evidence_span"
         ? result.citation_label
         : (TYPE_LABELS[result.type] ?? result.type),
     primaryText,
-    snippetSegments: parseSnippetSegments(result.snippet),
     sourceMeta: buildSourceMeta(result),
     publicationDate: publicationDateFor(result),
     contributorCredits: getContributorCredits(result),

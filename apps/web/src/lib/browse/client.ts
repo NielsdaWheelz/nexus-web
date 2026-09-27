@@ -72,7 +72,16 @@ function bindBrowsePageIdentity(
     actualSort !== expected.sort ||
     page.items.some(
       (candidate) =>
-        candidate.kind !== expected.kind || candidate.source !== expected.source,
+        candidate.source !== expected.source ||
+        (candidate.kind === "OwnedMedia"
+          ? candidate.resolution.mediaSummary.mediaKind !== {
+              Pdf: "pdf",
+              Epub: "epub",
+              WebArticle: "web_article",
+              Video: "video",
+              Podcast: null,
+            }[expected.kind]
+          : candidate.kind !== expected.kind),
     )
   ) {
     throw new TypeError("BrowsePage response changed request identity");

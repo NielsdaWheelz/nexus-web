@@ -8,17 +8,12 @@ import type { LocalAvailability } from "@/lib/offlineMedia/contract";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import type { Presence } from "@/lib/api/presence";
 import type { ContributorCredit } from "@/lib/contributors/types";
-import type { MediaProcessingStatus } from "@/lib/status/mediaProcessing";
 import type { PodcastSyncStatus } from "@/lib/podcasts/types";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
-import type {
-  NonNegativeMinutes,
-  PositiveCount,
-  PositiveMinutes,
-  ProgressFraction,
-} from "@/lib/consumption/activityFacts";
+import type { MediaDuration } from "@/lib/media/mediaSummary";
+import type { PositiveCount } from "@/lib/consumption/activityFacts";
 
 export type { ResourceRowPrimary };
 
@@ -33,37 +28,8 @@ export type CollectionItemKind =
   | "search_result"
   | "settings_row";
 
-export type ConsumptionModality = "Read" | "Listen" | "Watch";
-
-export type InProgressActivity =
-  | {
-      readonly kind: "InProgress";
-      readonly modality: ConsumptionModality;
-      readonly fraction: { readonly kind: "Present"; readonly value: ProgressFraction };
-      readonly remainingMinutes: Presence<NonNegativeMinutes>;
-    }
-  | {
-      readonly kind: "InProgress";
-      readonly modality: ConsumptionModality;
-      readonly fraction: { readonly kind: "Absent" };
-      readonly remainingMinutes: {
-        readonly kind: "Present";
-        readonly value: NonNegativeMinutes;
-      };
-    };
-
 export type CollectionActivity =
-  | {
-      readonly kind: "Unread";
-      readonly modality: ConsumptionModality;
-      readonly totalMinutes: Presence<PositiveMinutes>;
-      readonly remainingMinutes: Presence<NonNegativeMinutes>;
-    }
-  | InProgressActivity
-  | {
-      readonly kind: "Finished";
-      readonly modality: ConsumptionModality;
-    }
+  | { readonly kind: "MediaDuration"; readonly duration: MediaDuration }
   | {
       readonly kind: "Unplayed";
       readonly count: PositiveCount;
@@ -80,7 +46,7 @@ export type CollectionContext =
 export type ExceptionalStatus =
   | {
       readonly kind: "MediaProcessing";
-      readonly status: Exclude<MediaProcessingStatus, "ready_for_reading">;
+      readonly status: "failed";
     }
   | {
       readonly kind: "PodcastSync";
@@ -90,6 +56,8 @@ export type ExceptionalStatus =
 export interface CollectionRowView {
   readonly id: string;
   readonly kind: CollectionItemKind;
+  /** The common stored-media layout also applies when duration is unknown. */
+  readonly mediaIdentity?: true;
   readonly primary: ResourceRowPrimary;
   readonly title: {
     readonly text: string;

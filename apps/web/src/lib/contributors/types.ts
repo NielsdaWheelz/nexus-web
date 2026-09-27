@@ -14,6 +14,7 @@ import type { ContributorHandle } from "@/lib/contributors/handle";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
 import type { Presence } from "@/lib/api/presence";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import type { MediaSummary } from "@/lib/media/mediaSummary";
 
 // ---------------------------------------------------------------------------
 // Embedded snake credit (narrowed, D-33)
@@ -69,14 +70,32 @@ export interface ContributorRoleFact {
   rawRole: string | null;
 }
 
-export interface ContributorWorkItem {
-  title: string;
-  href: string;
-  contentKind: string;
-  date: Presence<PublicationDate>;
-  roleFacts: ContributorRoleFact[];
-  actionSubject: ResourceActionSubject | null;
-}
+export type ContributorWorkItem =
+  | {
+      kind: "Media";
+      mediaSummary: MediaSummary;
+      href: string;
+      roleFacts: ContributorRoleFact[];
+      actionSubject: ResourceActionSubject;
+    }
+  | {
+      kind: "Podcast";
+      title: string;
+      href: string;
+      contentKind: string;
+      date: Presence<PublicationDate>;
+      roleFacts: ContributorRoleFact[];
+      actionSubject: ResourceActionSubject;
+    }
+  | {
+      kind: "ExternalWork";
+      title: string;
+      href: string;
+      contentKind: string;
+      date: Presence<PublicationDate>;
+      roleFacts: ContributorRoleFact[];
+      actionSubject: null;
+    };
 
 export interface MediaAuthorCredit {
   contributorHandle: ContributorHandle;

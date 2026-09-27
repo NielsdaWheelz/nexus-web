@@ -1,6 +1,7 @@
 /** Pure semantic projection for one already-decoded search result row. */
 
 import { absent, present } from "@/lib/api/presence";
+import { presentMedia } from "@/lib/collections/presenters/media";
 import type { CollectionRowView } from "@/lib/collections/types";
 import { hrefForResourceActivation } from "@/lib/resources/activation";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
@@ -11,6 +12,19 @@ export function presentSearchResult(vm: SearchResultRowViewModel): CollectionRow
     throw new Error("Search result missing activation href");
   }
 
+  if ("mediaSummary" in vm) {
+    const evidence = vm.snippetSegments.length > 0 && (
+      vm.snippetSegments.some((segment) => segment.emphasized) ||
+      vm.snippetSegments.map((segment) => segment.text).join("") !== vm.mediaSummary.title
+    ) ? vm.snippetSegments : undefined;
+    return presentMedia(vm.mediaSummary, {
+      id: vm.key,
+      primary: { kind: "link", href, viewTransition: "media-reader" },
+      actionSubject: vm.actionSubject,
+      selected: false,
+      searchEvidence: evidence,
+    });
+  }
   const context =
     vm.snippetSegments.length > 0
       ? present({

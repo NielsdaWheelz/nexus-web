@@ -251,14 +251,14 @@ imported HTML headings beneath its local outline and saturates at `h6` while
 preserving anchor IDs. Main document/transcript content uses offset 1; podcast
 show notes, nested below the local section heading, use offset 2.
 
-The compact credit line renders the ordered first two credit items on desktop
-and the first one on mobile. Resolved visible credits are native pane links;
-unresolved credits are text; noninteractive `+N` counts the unmounted tail.
-Each visible name owns its ellipsis. `media info…` in More opens the original
-and edition publication dates, publisher, and complete linked credit list.
-Authorization-gated `Add author…` /
-`Edit authors…` opens `MediaAuthorsEditor` separately; author administration is
-not inline header content. Both overlays return focus to the exact More
+The compact credit line selects author-role credits only, then renders the
+ordered first two on desktop and the first one on mobile. Resolved visible
+credits are native pane links; unresolved credits are text; noninteractive
+`+N` counts the unmounted tail. Each visible name owns its ellipsis.
+`metadata…` in More opens the shared self-loading overlay with publication,
+source, reading/listening, activity, and availability facts.
+Authorization-gated `Add author…` / `Edit authors…` opens
+`MediaAuthorsEditor` separately. Both overlays return focus to the exact More
 trigger, with pane chrome as the disconnected-trigger fallback.
 
 The canonical contract for explicit `Passages | Whole document` scope,

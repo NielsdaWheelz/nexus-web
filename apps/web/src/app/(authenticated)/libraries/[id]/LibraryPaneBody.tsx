@@ -276,7 +276,7 @@ function formatAdded(iso: string): string {
 }
 
 function libraryEntryFilterFields(entry: LibraryEntry): readonly string[] {
-  const item = entry.kind === "media" ? entry.media : entry.podcast;
+  const item = entry.kind === "media" ? entry.mediaSummary : entry.podcast;
   return [
     item.title,
     ...item.contributors.flatMap((credit) => [
@@ -287,7 +287,7 @@ function libraryEntryFilterFields(entry: LibraryEntry): readonly string[] {
 }
 
 // Membership and remaining-time order can change on consumption writes.
-// Other views refresh only for duration changes or affected placements.
+// Other views refresh on accepted row changes or affected placements.
 function viewIsConsumptionSensitive(view: LibraryEntryView): boolean {
   return (
     view.order.kind === "Remaining" ||
@@ -646,10 +646,9 @@ export default function LibraryPaneBody() {
       const consumptionStale =
         viewIsConsumptionSensitive(entryView) &&
         consumptionChange.revision !== captured.consumption.revision;
-      const durationStale =
-        consumptionChange.durationRevision !==
-        captured.consumption.durationRevision;
-      return placementStale || consumptionStale || durationStale;
+      const rowStale =
+        consumptionChange.rowRevision !== captured.consumption.rowRevision;
+      return placementStale || consumptionStale || rowStale;
     },
     [
       consumptionChange,
@@ -1108,7 +1107,7 @@ export default function LibraryPaneBody() {
         // reconciles it.
         const seedRevisions: LibraryRevisions = {
           placement: 0,
-          consumption: { revision: 0, durationRevision: 0 },
+          consumption: { revision: 0, rowRevision: 0 },
         };
         committedRevisionsRef.current = seedRevisions;
         setController({
@@ -1566,10 +1565,10 @@ export default function LibraryPaneBody() {
     (entry: LibraryEntry): boolean => {
       if (removedEntryIds.ids.has(libraryTargetId(entry))) return false;
       if (entry.kind !== "media") return true;
-      if (hideFinished && entry.media.read_state === "finished") {
+      if (hideFinished && entry.media.readState === "finished") {
         return false;
       }
-      if (isInProgressView && entry.media.read_state !== "in_progress") {
+      if (isInProgressView && entry.media.readState !== "in_progress") {
         return false;
       }
       return true;
@@ -2191,14 +2190,17 @@ export default function LibraryPaneBody() {
         context: showAdded ? addedContext(item) : row.context,
       };
     }
-    const row = presentMedia(item.media, {
-      readingTimeEstimate: item.readingTimeEstimate,
-    });
-    return {
-      ...row,
+    return presentMedia(item.mediaSummary, {
       id: libraryTargetId(item),
-      context: showAdded ? addedContext(item) : row.context,
-    };
+      primary: {
+        kind: "link",
+        href: `/media/${item.mediaSummary.mediaId}`,
+      },
+      actionSubject: {
+        ref: canonicalResourceRef({ scheme: "media", id: item.mediaSummary.mediaId }),
+      },
+      selected: false,
+    });
   };
   const visibleEntryRows = filteredEntries.map(entryRowView);
 

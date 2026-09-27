@@ -570,7 +570,7 @@ export default function AuthorPaneBody() {
     (query: string) => {
       const visibleCount =
         data?.works.filter((work) =>
-          matchesPaneFilterQuery(query, [work.title]),
+          matchesPaneFilterQuery(query, [work.kind === "Media" ? work.mediaSummary.title : work.title]),
         ).length ?? 0;
       const unit = { singular: "work", plural: "works" };
       if (data !== null && requestsFirstPage) {

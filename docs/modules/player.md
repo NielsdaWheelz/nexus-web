@@ -116,11 +116,12 @@ repeatable-read, read-only snapshot without model or provider calls.
 `services/reading_time.py` owns duration from stored canonical word counts and
 the current durable reader cursor; see
 [library duration](library.md#reading-time-projection-and-ordering).
-slate items carry target, factual publication date, canonical consumption and
-shared reading estimate. reasons and anchors remain internal ranking evidence.
-media dates use original publication; podcast episodes use their publication's
-utc calendar date. podcast containers have no publication, consumption or
-reading estimate on this contract.
+media slate targets carry the same `MediaSummaryOut` as lectern and library
+rows. it contains original publication, ordered credits, processing state, and
+modality-specific duration; ranking reasons and anchors remain internal.
+podcast containers retain their separate target contract. `presentMedia`
+projects all stored-media occurrences, while the player retains its separate
+bounded descriptor for playback and native transport.
 
 Media teardown (`docs/cutovers/lectern-player-lifecycle-hard-cutover.md` §3.1;
 see also [storage.md](storage.md)) composes one consumption call,

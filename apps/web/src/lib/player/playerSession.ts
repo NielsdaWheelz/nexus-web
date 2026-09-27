@@ -25,6 +25,7 @@ import type {
   MediaId,
   PlayerDescriptor,
 } from "@/lib/lectern/contract";
+import { parseMediaId } from "@/lib/lectern/contract";
 import { assertNever } from "@/lib/assertNever";
 
 // --- Session / origin model (spec §6) ---------------------------------------
@@ -166,15 +167,15 @@ function activeFrom(session: AudioSession): PlayerSessionState {
  * "`FooterAudio` is the only footer-playable activation").
  */
 export function descriptorFromLecternItem(item: LecternItem): PlayerDescriptor {
-  if (item.activation.kind !== "FooterAudio") {
+  if (item.activation.kind !== "FooterAudio" || item.playerDisplay.kind !== "Present") {
     throw new Error(
-      `descriptorFromLecternItem requires FooterAudio, got ${item.activation.kind} (defect).`,
+      `descriptorFromLecternItem requires FooterAudio and playerDisplay, got ${item.activation.kind} (defect).`,
     );
   }
   return {
-    mediaId: item.mediaId,
-    title: item.title,
-    subtitle: item.subtitle,
+    mediaId: parseMediaId(item.mediaSummary.mediaId),
+    title: item.playerDisplay.value.title,
+    subtitle: item.playerDisplay.value.subtitle,
     activation: item.activation,
   };
 }
@@ -192,7 +193,7 @@ export function resolveOriginForPlay(
   snapshot: LecternSnapshot,
   itemIdHint?: LecternItemId,
 ): PlayerOrigin {
-  const matches = snapshot.items.filter((item) => item.mediaId === descriptor.mediaId);
+  const matches = snapshot.items.filter((item) => item.mediaSummary.mediaId === descriptor.mediaId);
   if (matches.length === 0) return { kind: "Direct" };
   if (itemIdHint !== undefined) {
     const hinted = matches.find((item) => item.itemId === itemIdHint);
@@ -208,7 +209,7 @@ function maintainOrigin(session: AudioSession, snapshot: LecternSnapshot): Audio
   const origin = session.origin;
   if (origin.kind === "Direct") return session;
   const item = snapshot.items.find((row) => row.itemId === origin.itemId);
-  if (item !== undefined && item.mediaId === session.descriptor.mediaId) return session;
+  if (item !== undefined && item.mediaSummary.mediaId === session.descriptor.mediaId) return session;
   return { descriptor: session.descriptor, origin: { kind: "Direct" } };
 }
 
@@ -293,7 +294,7 @@ function selectSuffixAudio(
   }
   for (let index = startIndex; index < items.length; index += 1) {
     const item = items[index];
-    if (item.activation.kind === "FooterAudio" && item.mediaId !== current.descriptor.mediaId) {
+    if (item.activation.kind === "FooterAudio" && item.mediaSummary.mediaId !== current.descriptor.mediaId) {
       return item;
     }
   }
@@ -509,7 +510,7 @@ export function getStartPositionMs(
   const entry = overlay.get(mediaId);
   if (entry !== undefined) return entry.positionMs;
   const item = snapshot.items.find(
-    (row) => row.mediaId === mediaId && row.activation.kind === "FooterAudio",
+    (row) => row.mediaSummary.mediaId === mediaId && row.activation.kind === "FooterAudio",
   );
   if (item !== undefined && item.activation.kind === "FooterAudio") {
     return item.activation.positionMs;

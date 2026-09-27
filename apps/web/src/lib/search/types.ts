@@ -5,6 +5,7 @@ import type { ResourceActivation } from "@/lib/resources/activation";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { Presence } from "@/lib/api/presence";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
+import type { MediaSummary } from "@/lib/media/mediaSummary";
 
 // Canonical internal result-type discriminants (the response union tags). Kept as
 // the validator for normalizeSearchResult — NOT a user-facing filter taxonomy.
@@ -38,14 +39,10 @@ export interface SearchSourceMetadata {
   summary_md: string | null;
 }
 
-export interface SearchBaseResult {
+export interface SearchUntitledBaseResult {
   id: string;
   score: number;
   snippet: string;
-  title: string;
-  source_label: string | null;
-  media_id: string | null;
-  media_kind: string | null;
   resource_ref: string;
   owner_resource_ref: string;
   activation: ResourceActivation;
@@ -59,9 +56,16 @@ export interface SearchBaseResult {
   };
 }
 
-export interface SearchMediaResult extends SearchBaseResult {
+export interface SearchBaseResult extends SearchUntitledBaseResult {
+  title: string;
+  source_label: string | null;
+  media_id: string | null;
+  media_kind: string | null;
+}
+
+export interface SearchMediaResult extends SearchUntitledBaseResult {
   type: "media" | "episode" | "video";
-  source: SearchSourceMetadata;
+  mediaSummary: MediaSummary;
 }
 
 export interface SearchPodcastResult extends SearchBaseResult {
@@ -179,7 +183,7 @@ export type SearchApiResult =
   | SearchArtifactResult
   | SearchWebResult;
 
-export interface SearchResultRowViewModel {
+interface SearchResultRowBase {
   key: string;
   score: number;
   resourceRef: string;
@@ -187,24 +191,32 @@ export interface SearchResultRowViewModel {
   activation: ResourceActivation;
   actionSubject: ResourceActionSubject;
   citationTarget: string | null;
-  paneLabelHint: string;
-  type: SearchType;
-  mediaId: string | null;
   contextRef: {
     type: SearchType;
     id: string;
     evidenceSpanIds: string[];
     locator?: RetrievalLocator;
   } | null;
-  typeLabel: string;
-  primaryText: string;
   snippetSegments: readonly EmphasisSegment[];
-  sourceMeta: string | null;
-  publicationDate: Presence<PublicationDate>;
-  contributorCredits: ContributorCredit[];
-  noteBody: string | null;
-  noteOrigin: "note" | "highlight_note" | null;
 }
+
+export type SearchResultRowViewModel = SearchResultRowBase & (
+  | {
+      type: "media" | "episode" | "video";
+      mediaSummary: MediaSummary;
+    }
+  | {
+      type: Exclude<SearchType, "media" | "episode" | "video">;
+      paneLabelHint: string;
+      typeLabel: string;
+      primaryText: string;
+      sourceMeta: string | null;
+      publicationDate: Presence<PublicationDate>;
+      contributorCredits: ContributorCredit[];
+      noteBody: string | null;
+      noteOrigin: "note" | "highlight_note" | null;
+    }
+);
 
 export interface SearchResultPage {
   rows: SearchResultRowViewModel[];

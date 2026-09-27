@@ -11,7 +11,8 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.schemas.contributors import ContributorCreditOut
+from nexus.schemas.contributor_credit import ContributorCreditOut
+from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.presence import Presence
 from nexus.services.browse.models import (
     BrowseKind,
@@ -135,8 +136,17 @@ def parse_browse_preview_query(
     )
 
 
-class InNexusResolution(BaseModel):
-    kind: Literal["InNexus"] = "InNexus"
+class InNexusMediaResolution(BaseModel):
+    kind: Literal["InNexusMedia"] = "InNexusMedia"
+    href: str
+    action_subject_ref: str = Field(serialization_alias="actionSubjectRef")
+    media_summary: MediaSummaryOut = Field(serialization_alias="mediaSummary")
+
+    model_config = _OUT
+
+
+class InNexusPodcastResolution(BaseModel):
+    kind: Literal["InNexusPodcast"] = "InNexusPodcast"
     href: str
     action_subject_ref: str = Field(serialization_alias="actionSubjectRef")
 
@@ -158,11 +168,11 @@ class ExternalOnlyResolution(BaseModel):
 
 
 type BrowseResolution = Annotated[
-    InNexusResolution | PreviewResolution | ExternalOnlyResolution,
+    InNexusMediaResolution | InNexusPodcastResolution | PreviewResolution | ExternalOnlyResolution,
     Field(discriminator="kind"),
 ]
 type PreviewPageResolution = Annotated[
-    InNexusResolution | PreviewResolution,
+    InNexusMediaResolution | InNexusPodcastResolution | PreviewResolution,
     Field(discriminator="kind"),
 ]
 
@@ -235,8 +245,23 @@ class PodcastCandidate(_Candidate):
     kind_facts: PodcastFacts = Field(serialization_alias="kindFacts")
 
 
+class OwnedMediaCandidate(BaseModel):
+    kind: Literal["OwnedMedia"] = "OwnedMedia"
+    source: Literal[BrowseSource.Nexus] = BrowseSource.Nexus
+    resolution: InNexusMediaResolution
+    description: Presence[str]
+    image: Presence[str]
+
+    model_config = _OUT
+
+
 type BrowseCandidate = Annotated[
-    PdfCandidate | EpubCandidate | WebArticleCandidate | VideoCandidate | PodcastCandidate,
+    OwnedMediaCandidate
+    | PdfCandidate
+    | EpubCandidate
+    | WebArticleCandidate
+    | VideoCandidate
+    | PodcastCandidate,
     Field(discriminator="kind"),
 ]
 

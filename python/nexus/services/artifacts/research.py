@@ -41,6 +41,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from nexus.db.async_session import open_async_session
 from nexus.errors import NotFoundError
 from nexus.schemas.presence import Presence, Present, absent, present
+from nexus.schemas.search import SearchResultMediaOut
 from nexus.services.artifacts.collect import EXCERPT_CHARS, Candidate, Collected
 from nexus.services.artifacts.coordination import DossierBuildRuntime, ResearchLeaseLost
 from nexus.services.artifacts.dossier_types import AudienceScope, WebResearchNotConfigured
@@ -711,7 +712,11 @@ async def _nexus_search(
             NexusSearchItem(
                 read_ref=result.resource_ref,
                 target_ref=result.citation_target,
-                title=result.title,
+                title=(
+                    result.media_summary.title
+                    if isinstance(result, SearchResultMediaOut)
+                    else result.title
+                ),
                 rank=rank,
             )
             for rank, result in enumerate(response.results, start=1)

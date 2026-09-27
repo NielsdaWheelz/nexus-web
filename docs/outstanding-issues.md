@@ -56,7 +56,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] android / test hygiene · 2026-09-25 article-section-navigation device check · the apk and network were restored but pretest auth identity was not captured, so final account identity is unverified: [ticket](tickets/android-device-auth-baseline-not-captured.md).
 - [open] reader / workspace docs · 2026-09-25 article-section-navigation final review · reader and workspace modules cite deleted cutover contracts: [ticket](tickets/reader-workspace-docs-reference-deleted-cutovers.md).
 - [open] android / workspace · 2026-09-22 device verification · an intermediate compatibility probe showed an unproven transient bootstrap failure on reconnect: [ticket](tickets/android-reconnect-transient-workspace-bootstrap.md).
-- [open] library consumption · 2026-09-21 implementation review · ordinary library rows can retain stale finished/unread state after status-only commands: [ticket](tickets/library-status-only-consumption-stays-stale.md).
 - [open] collection docs · 2026-09-21 council · library and lectern contracts still point to deleted cutovers: [ticket](tickets/collection-contract-docs-reference-deleted-cutovers.md).
 
 ### [OPEN] OI-003 — Imports live re-read loses one tick after a failed re-key
@@ -124,13 +123,6 @@ Five of the 46 alphabetised Reason options begin with a bare `X`, which in a fla
 menu reads as an unsubstituted template variable rather than the platform name;
 the row and inspector copy, where the source is on screen, reads correctly. See
 [docs/tickets/imports-reason-filter-x-options-read-as-a-placeholder.md](tickets/imports-reason-filter-x-options-read-as-a-placeholder.md).
-
-### [OPEN] OI-040 — The narrow `ResourceRow` state layout is unreviewed for Collections
-frontend · opened 2026-09-09 by Claude (imports cutover, chain W1) · P3
-Closing the Imports rows' orphaned `·` stopped the shared supporting cell from
-growing, which also moves `CollectionRow`'s narrow state block off the trailing
-edge; no proof or capture covers that second consumer. See
-[docs/tickets/resource-row-narrow-state-layout-is-unreviewed-for-collections.md](tickets/resource-row-narrow-state-layout-is-unreviewed-for-collections.md).
 
 ### [OPEN] OI-043 — The collapsed count chip scales out of its fixed-width rail
 frontend · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain W2) · P3

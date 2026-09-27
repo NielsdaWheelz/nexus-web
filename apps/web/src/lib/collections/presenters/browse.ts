@@ -1,4 +1,5 @@
 import { absent, present } from "@/lib/api/presence";
+import { presentMedia } from "@/lib/collections/presenters/media";
 import {
   browsePreviewHref,
   type BrowseCandidate,
@@ -40,7 +41,8 @@ export function browseKindLabel(kind: BrowseKind): string {
 
 function candidateHref(candidate: BrowseCandidate): string {
   switch (candidate.resolution.kind) {
-    case "InNexus":
+    case "InNexusMedia":
+    case "InNexusPodcast":
       return candidate.resolution.href;
     case "Preview":
       return browsePreviewHref(candidate.resolution.target);
@@ -51,7 +53,8 @@ function candidateHref(candidate: BrowseCandidate): string {
 
 function candidateId(candidate: BrowseCandidate): string {
   switch (candidate.resolution.kind) {
-    case "InNexus":
+    case "InNexusMedia":
+    case "InNexusPodcast":
       return `${candidate.source}:owned:${candidate.resolution.href}`;
     case "Preview":
       return `${candidate.source}:preview:${candidate.resolution.target}`;
@@ -63,10 +66,25 @@ function candidateId(candidate: BrowseCandidate): string {
 export function presentBrowseCandidate(
   candidate: BrowseCandidate,
 ): CollectionRowView {
+  if (candidate.resolution.kind === "InNexusMedia") {
+    return presentMedia(candidate.resolution.mediaSummary, {
+      id: candidateId(candidate),
+      primary: {
+        kind: "link",
+        href: candidate.resolution.href,
+        viewTransition: "media-reader",
+      },
+      actionSubject: candidate.resolution.actionSubject,
+      selected: false,
+    });
+  }
+  if (candidate.kind === "OwnedMedia") {
+    throw new Error("Owned browse media missing media summary");
+  }
   const external = candidate.resolution.kind === "ExternalOnly";
   const source = browseSourceLabel(candidate.source);
   const context =
-    candidate.resolution.kind === "InNexus" && candidate.source !== "Nexus"
+    candidate.resolution.kind === "InNexusPodcast" && candidate.source !== "Nexus"
       ? `${source} · In Nexus`
       : source;
   return {
@@ -86,7 +104,7 @@ export function presentBrowseCandidate(
     exceptionalStatus: absent(),
     localAvailability: absent(),
     actionSubject:
-      candidate.resolution.kind === "InNexus"
+      candidate.resolution.kind === "InNexusPodcast"
         ? candidate.resolution.actionSubject
         : null,
     selected: false,

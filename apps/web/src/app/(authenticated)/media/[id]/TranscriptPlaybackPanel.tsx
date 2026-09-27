@@ -236,7 +236,7 @@ export default function TranscriptPlaybackPanel({
     (activeOrigin?.kind === "Lectern" && activeMediaId === mediaId);
   const onLectern =
     resource.status === "ready" &&
-    resource.data.items.some((item) => item.mediaId === mediaId);
+    resource.data.items.some((item) => item.mediaSummary.mediaId === mediaId);
 
   const handlePlayNext = () => {
     const placement =

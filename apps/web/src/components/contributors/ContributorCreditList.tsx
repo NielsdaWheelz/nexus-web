@@ -10,6 +10,7 @@ interface ContributorCreditListProps {
   credits: readonly ContributorCredit[] | null | undefined;
   className?: string;
   maxVisible?: number;
+  overflowNoun?: string;
 }
 
 // Dense collection/discovery credit line (Surface 5). Renders every credit as an
@@ -21,6 +22,7 @@ export default function ContributorCreditList({
   credits,
   className,
   maxVisible = 3,
+  overflowNoun = "contributors",
 }: ContributorCreditListProps) {
   if (!Array.isArray(credits) || credits.length === 0) {
     return null;
@@ -40,7 +42,12 @@ export default function ContributorCreditList({
           <ContributorChip credit={credit} />
         </Fragment>
       ))}
-      {overflowCount > 0 ? <span className={styles.overflow}>, +{overflowCount}</span> : null}
+      {overflowCount > 0 ? (
+        <span className={styles.overflow}>
+          <span aria-hidden="true">, +{overflowCount}</span>
+          <span className="sr-only">, {overflowCount} more {overflowNoun}</span>
+        </span>
+      ) : null}
     </span>
   );
 }

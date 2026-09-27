@@ -11,6 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
+from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.logging import get_logger
 from nexus.schemas.search import SearchPageInfo, SearchResponse, SearchResultOut
@@ -33,7 +34,12 @@ from nexus.services.search.query import (
     decode_search_cursor,
     encode_search_cursor,
 )
-from nexus.services.search.results import InternalSearchResult, _SearchScore, rank_candidates
+from nexus.services.search.results import (
+    InternalSearchResult,
+    _RankedMediaResult,
+    _SearchScore,
+    rank_candidates,
+)
 from nexus.services.search.retrievers import reopen, retrieve
 from nexus.services.search.scope import authorize_scope
 from nexus.services.semantic_chunks import (
@@ -147,6 +153,11 @@ def search(
             db, q, semantic_types, transaction_active_at_entry=transaction_active_at_entry
         )
 
+    if db.in_transaction():
+        db.rollback()
+    get_repeatable_read_db(db)
+    authorize_scope(db, viewer_id, query.scope.kind, query.scope.id)
+
     # None = no contributor filter; an empty list = requested handles resolved to
     # nothing, which matches nothing.
     contributor_ids = (
@@ -190,8 +201,20 @@ def search(
 
     page = candidates[offset : offset + limit + 1]
     has_more = len(page) > limit
+    from nexus.services.media import list_collection_media_for_viewer_by_ids
+
+    summaries = {
+        media.id: media.summary
+        for media in list_collection_media_for_viewer_by_ids(
+            db,
+            viewer_id=viewer_id,
+            media_ids=[
+                result.id for result in page[:limit] if isinstance(result, _RankedMediaResult)
+            ],
+        )
+    }
     return SearchResponse(
-        results=[_result_to_out(db, viewer_id, result) for result in page[:limit]],
+        results=[_result_to_out(db, viewer_id, result, summaries) for result in page[:limit]],
         page=SearchPageInfo(
             has_more=has_more,
             next_cursor=encode_search_cursor(offset + limit) if has_more else None,
@@ -293,4 +316,14 @@ def get_search_result(
         # podcast, contributor, conversation and artifact are discovery-only:
         # they carry no id_column and fall out of `reopen` as 404.
         result = reopen(db, viewer_id, result_type=result_type, result_id=identity, score=score)
-    return _result_to_out(db, viewer_id, result)
+    from nexus.services.media import list_collection_media_for_viewer_by_ids
+
+    summaries = {
+        media.id: media.summary
+        for media in list_collection_media_for_viewer_by_ids(
+            db,
+            viewer_id=viewer_id,
+            media_ids=[result.id] if isinstance(result, _RankedMediaResult) else [],
+        )
+    }
+    return _result_to_out(db, viewer_id, result, summaries)

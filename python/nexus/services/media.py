@@ -23,13 +23,11 @@ from nexus.db.models import MediaKind
 from nexus.db.sql_patterns import escape_ilike_pattern
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.consumption import PlayerDescriptor
-from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
 from nexus.schemas.media import (
     FragmentOut,
     ListeningStateOut,
     MediaOut,
-    MediaProcessingStatus,
     MediaReadState,
     OfflineDownloadSpecOut,
     PodcastEpisodeChapterOut,
@@ -37,6 +35,7 @@ from nexus.schemas.media import (
     SourceProgress,
     SourceStageProgress,
 )
+from nexus.schemas.media_summary import MediaDurationOut, MediaProcessingStatus, MediaSummaryOut
 from nexus.schemas.presence import (
     Absent,
     Presence,
@@ -45,7 +44,7 @@ from nexus.schemas.presence import (
     presence_from_nullable,
     present,
 )
-from nexus.schemas.publication_dates import PublicationDate
+from nexus.schemas.reading_time import ReadingTimeEstimateOut
 from nexus.services.capabilities import (
     SearchRecoveryAnswer,
     SourceRecoveryAnswer,
@@ -72,6 +71,7 @@ from nexus.services.offline_download_source import (
 )
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
+from nexus.services.reading_time import load_reading_time_estimates
 from nexus.services.resource_grants import media_grant_path_exists_sql
 from nexus.services.source_publication import (
     SourceCountedProgress as PublishedSourceCountedProgress,
@@ -188,6 +188,7 @@ _SELECT_EXPRESSIONS: dict[str, str] = {
     "source_refresh_available": _SOURCE_REFRESH_AVAILABLE_SQL,
     "original_published_date": "m.original_published_date",
     "edition_published_date": "m.edition_published_date",
+    "edition_isbn": "m.edition_isbn",
     "publisher": "m.publisher",
     "language": "m.language",
     "description": "m.description",
@@ -203,6 +204,7 @@ _SELECT_EXPRESSIONS: dict[str, str] = {
     ),
     "listening_position_ms": "pls.position_ms",
     "listening_duration_ms": "pls.duration_ms",
+    "feed_duration_seconds": "pe.duration_seconds",
     "listening_is_completed": "pls.is_completed",
 }
 
@@ -220,6 +222,7 @@ _COLLECTION_ALIASES = tuple(
         "provider_id",
         "updated_at",
         "edition_published_date",
+        "edition_isbn",
         "publisher",
         "language",
         "description",
@@ -275,12 +278,8 @@ def _dedupe_uuid_order(values: Iterable[UUID]) -> list[UUID]:
 
 @dataclass(frozen=True, slots=True)
 class CompactMediaTarget:
-    media_id: UUID
-    media_kind: MediaKind
-    title: str
-    subtitle: Absent | Present[str]
+    summary: MediaSummaryOut
     image_url: Absent | Present[str]
-    publication_date: Presence[PublicationDate]
     href: str
 
 
@@ -306,17 +305,13 @@ class CollectionMedia:
     """Compact viewer-scoped media facts shared by finite collection owners."""
 
     id: UUID
-    kind: Literal["web_article", "epub", "pdf", "podcast_episode", "video"]
-    title: str
+    summary: MediaSummaryOut
     canonical_source_url: str | None
     offline_download_eligible: bool
-    processing_status: MediaProcessingStatus
     transcript_state: str | None
     transcript_coverage: str | None
     listening_state: ListeningStateOut | None
-    contributors: list[ContributorCreditOut]
     author_mode: Literal["automatic", "manual"]
-    original_published_date: Presence[PublicationDate]
     read_state: MediaReadState
     progress_fraction: float | None
     progress_resettable: bool
@@ -350,34 +345,26 @@ def media_candidate_rows_sql() -> str:
 def hydrate_compact_media_targets(
     db: Session, *, viewer_id: UUID, media_ids: list[UUID]
 ) -> dict[UUID, CompactMediaTarget]:
-    """Batch-hydrate visible media into compact target facts.
-
-    Podcast episodes borrow the parent podcast's title and artwork; every other
-    kind uses its publisher as subtitle and has no image.
-    """
-    from nexus.services.podcasts.episodes import episode_publication_rows_sql
+    """Batch-hydrate visible media with episode artwork and activation."""
     from nexus.services.resource_graph.refs import ResourceRef
     from nexus.services.resource_items.routing import resource_activations_for_refs
 
     ordered_ids = _dedupe_uuid_order(media_ids)
     if not ordered_ids:
         return {}
+    summaries = {
+        media.id: media.summary
+        for media in list_collection_media_for_viewer_by_ids(
+            db, viewer_id=viewer_id, media_ids=ordered_ids
+        )
+    }
     rows = db.execute(
         text(f"""
             WITH visible_media AS ({visible_media_ids_cte_sql()})
-            SELECT
-                m.id AS media_id,
-                m.kind AS media_kind,
-                m.title,
-                CASE WHEN m.kind = 'podcast_episode'
-                     THEN to_char(pe.published_at AT TIME ZONE 'UTC', 'YYYY-MM-DD')
-                     ELSE m.original_published_date
-                END AS publication_date,
-                CASE WHEN m.kind = 'podcast_episode' THEN p.title ELSE m.publisher END AS subtitle,
-                CASE WHEN m.kind = 'podcast_episode' THEN p.image_url ELSE NULL END AS image_url
+            SELECT m.id AS media_id, p.image_url
             FROM media m
             JOIN visible_media vm ON vm.media_id = m.id
-            LEFT JOIN ({episode_publication_rows_sql()}) pe ON pe.media_id = m.id
+            LEFT JOIN podcast_episodes pe ON pe.media_id = m.id
             LEFT JOIN podcasts p ON p.id = pe.podcast_id
             WHERE m.id = ANY(:media_ids)
         """),
@@ -391,20 +378,16 @@ def hydrate_compact_media_targets(
         refs=[
             ResourceRef(scheme="media", id=media_id)
             for media_id in ordered_ids
-            if media_id in by_id
+            if media_id in summaries
         ],
     )
     hydrated: dict[UUID, CompactMediaTarget] = {}
     for media_id, row in ((media_id, by_id.get(media_id)) for media_id in ordered_ids):
-        if row is None:
+        if row is None or media_id not in summaries:
             continue
         hydrated[media_id] = CompactMediaTarget(
-            media_id=media_id,
-            media_kind=MediaKind(_status_to_str(row["media_kind"])),
-            title=str(row["title"]),
-            subtitle=presence_from_nullable(_nullable_str(row["subtitle"])),
+            summary=summaries[media_id],
             image_url=presence_from_nullable(_nullable_str(row["image_url"])),
-            publication_date=presence_from_nullable(row["publication_date"]),
             href=cast(str, activations[ResourceRef(scheme="media", id=media_id).uri].href),
         )
     return hydrated
@@ -470,6 +453,27 @@ def _listening_state(row: RowMapping) -> ListeningStateOut | None:
     )
 
 
+def _summary_duration(
+    row: RowMapping, kind: str, estimates: dict[UUID, ReadingTimeEstimateOut]
+) -> Presence[MediaDurationOut]:
+    if kind == MediaKind.podcast_episode.value:
+        return projection.listening_duration(
+            position_ms=int(row["listening_position_ms"] or 0),
+            listening_duration_ms=(
+                int(row["listening_duration_ms"])
+                if row["listening_duration_ms"] is not None
+                else None
+            ),
+            feed_duration_seconds=(
+                int(row["feed_duration_seconds"])
+                if row["feed_duration_seconds"] is not None
+                else None
+            ),
+        )
+    estimate = estimates.get(UUID(str(row["id"])))
+    return present(MediaDurationOut(modality="Read", estimate=estimate)) if estimate else absent()
+
+
 def list_collection_media_for_viewer_by_ids(
     db: Session, *, viewer_id: UUID, media_ids: list[UUID]
 ) -> list[CollectionMedia]:
@@ -503,6 +507,16 @@ def list_collection_media_for_viewer_by_ids(
     pdf_readiness = batch_pdf_quote_text_ready(db, pdf_ids) if pdf_ids else {}
     contributors_by_media = load_contributor_credits_for_media(db, visible_ids)
     read_states = projection.media_read_states(db, viewer_id=viewer_id, media_ids=visible_ids)
+    reading_times = load_reading_time_estimates(
+        db,
+        viewer_id=viewer_id,
+        media_ids=[
+            media_id
+            for media_id in visible_ids
+            if _status_to_str(row_by_media_id[media_id]["kind"])
+            in (MediaKind.web_article.value, MediaKind.epub.value, MediaKind.pdf.value)
+        ],
+    )
 
     collection: list[CollectionMedia] = []
     for media_id in visible_ids:
@@ -544,25 +558,27 @@ def list_collection_media_for_viewer_by_ids(
         collection.append(
             CollectionMedia(
                 id=media_id,
-                kind=cast(
-                    "Literal['web_article', 'epub', 'pdf', 'podcast_episode', 'video']", kind_value
+                summary=MediaSummaryOut(
+                    media_id=media_id,
+                    media_kind=MediaKind(kind_value),
+                    title=str(row["title"]),
+                    contributors=contributors_by_media.get(media_id, []),
+                    original_published_date=presence_from_nullable(row["original_published_date"]),
+                    processing_status=cast(
+                        "MediaProcessingStatus", _status_to_str(row["processing_status"])
+                    ),
+                    duration=_summary_duration(row, kind_value, reading_times),
                 ),
-                title=str(row["title"]),
                 canonical_source_url=cast(str | None, row["canonical_source_url"]),
                 offline_download_eligible=offline_download_eligible(
                     kind=kind_value,
                     title=str(row["title"]),
                     external_playback_url=cast(str | None, row["external_playback_url"]),
                 ),
-                processing_status=cast(
-                    "MediaProcessingStatus", _status_to_str(row["processing_status"])
-                ),
                 transcript_state=transcript_state,
                 transcript_coverage=transcript_coverage,
                 listening_state=_listening_state(row),
-                contributors=contributors_by_media.get(media_id, []),
                 author_mode="manual" if bool(row["authors_manually_managed"]) else "automatic",
-                original_published_date=presence_from_nullable(row["original_published_date"]),
                 read_state=read_states[media_id].state,
                 progress_fraction=read_states[media_id].progress_fraction,
                 progress_resettable=read_states[media_id].progress_resettable,
@@ -659,6 +675,15 @@ def _hydrate_media_out(
     embed_summaries = document_embed_summaries_for_media(db, media_ids)
     progress_by_media = load_source_progress(db, tuple(media_ids))
     read_states = projection.media_read_states(db, viewer_id=viewer_id, media_ids=media_ids)
+    reading_times = load_reading_time_estimates(
+        db,
+        viewer_id=viewer_id,
+        media_ids=[
+            media_id
+            for media_id, kind in zip(media_ids, kinds, strict=True)
+            if kind in (MediaKind.web_article.value, MediaKind.epub.value, MediaKind.pdf.value)
+        ],
+    )
     # Recency: audio rows through the listening owner, documents through the
     # reader-engagement owner; both are the consumption projection.
     engaged_at: dict[UUID, datetime] = {}
@@ -731,6 +756,8 @@ def _hydrate_media_out(
                 author_mode="manual" if row["authors_manually_managed"] else "automatic",
                 original_published_date=presence_from_nullable(row["original_published_date"]),
                 edition_published_date=presence_from_nullable(row["edition_published_date"]),
+                edition_isbn=presence_from_nullable(row["edition_isbn"]),
+                duration=_summary_duration(row, kind_value, reading_times),
                 publisher=row["publisher"],
                 language=row["language"],
                 description=row["description"],

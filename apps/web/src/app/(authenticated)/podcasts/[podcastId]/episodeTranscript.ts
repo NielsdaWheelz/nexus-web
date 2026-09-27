@@ -6,16 +6,7 @@
 
 import { decodePresence, type Presence } from "@/lib/api/presence";
 import type { EpisodeStateFilter } from "@/lib/podcasts/episodeView";
-import type {
-  PositiveMinutes,
-  ProgressFraction,
-} from "@/lib/consumption/activityFacts";
-import { decodeContributorCredit } from "@/lib/contributors/credit";
-import type { ContributorCredit } from "@/lib/contributors/types";
-import {
-  decodePublicationDateOnly,
-  type PublicationDate,
-} from "@/lib/dates/publicationDate";
+import { decodeMediaSummary, type MediaSummary } from "@/lib/media/mediaSummary";
 import {
   canRequestTranscript,
   shouldPollTranscriptProvisioning,
@@ -23,7 +14,6 @@ import {
   type TranscriptState,
 } from "@/lib/media/transcriptView";
 import {
-  expectArray,
   expectBoolean,
   expectExactRecord,
   expectNonnegativeInteger,
@@ -73,11 +63,9 @@ interface MediaCapabilities {
 
 export interface PodcastEpisodeMedia {
   id: string;
-  kind: string;
-  title: string;
+  mediaSummary: MediaSummary;
   canonical_source_url: string | null;
   offline_download_eligible: boolean;
-  processing_status: string;
   transcript_state: TranscriptState;
   transcript_coverage: TranscriptCoverage;
   /**
@@ -94,13 +82,10 @@ export interface PodcastEpisodeMedia {
   episode_state: EpisodeState;
   progress_resettable: boolean;
   capabilities: MediaCapabilities;
-  contributors: ContributorCredit[];
   author_mode: "automatic" | "manual";
-  original_published_date: Presence<PublicationDate>;
   /** Lazy detail enrichment; never present in the compact list wire value. */
   description_text: string | null;
   has_show_notes: boolean;
-  duration_seconds: number | null;
 }
 
 export function decodePodcastEpisodeMedia(raw: unknown): PodcastEpisodeMedia {
@@ -108,21 +93,16 @@ export function decodePodcastEpisodeMedia(raw: unknown): PodcastEpisodeMedia {
     raw,
     [
       "id",
-      "kind",
-      "title",
+      "mediaSummary",
       "canonical_source_url",
       "offline_download_eligible",
-      "processing_status",
       "transcript_state",
       "transcript_coverage",
       "listening_state",
       "episode_state",
       "progress_resettable",
       "capabilities",
-      "contributors",
       "author_mode",
-      "original_published_date",
-      "duration_seconds",
       "has_show_notes",
       "playerDescriptor",
     ],
@@ -132,14 +112,11 @@ export function decodePodcastEpisodeMedia(raw: unknown): PodcastEpisodeMedia {
     item.canonical_source_url,
     (value) => expectString(value, "canonical_source_url.value"),
   );
-  const publishedDate = decodePresence(
-    item.original_published_date,
-    (value) => decodePublicationDateOnly(value, "original_published_date.value"),
-  );
-  const durationSeconds = decodePresence(
-    item.duration_seconds,
-    (value) => expectNonnegativeInteger(value, "duration_seconds.value"),
-  );
+  const mediaSummary = decodeMediaSummary(item.mediaSummary);
+  const id = expectString(item.id, "id");
+  if (id !== mediaSummary.mediaId || mediaSummary.mediaKind !== "podcast_episode") {
+    throw new TypeError("Podcast episode list media identity mismatch");
+  }
   const listening = decodePresence(item.listening_state, (value) => {
     const state = expectExactRecord(
       value,
@@ -171,18 +148,13 @@ export function decodePodcastEpisodeMedia(raw: unknown): PodcastEpisodeMedia {
     "capabilities",
   );
   return {
-    id: expectString(item.id, "id"),
-    kind: expectOneOf(item.kind, ["podcast_episode"] as const, "kind"),
-    title: expectString(item.title, "title"),
+    id,
+    mediaSummary,
     canonical_source_url:
       canonicalSourceUrl.kind === "Present" ? canonicalSourceUrl.value : null,
     offline_download_eligible: expectBoolean(
       item.offline_download_eligible,
       "offline_download_eligible",
-    ),
-    processing_status: expectString(
-      item.processing_status,
-      "processing_status",
     ),
     transcript_state: expectOneOf(
       item.transcript_state,
@@ -250,26 +222,13 @@ export function decodePodcastEpisodeMedia(raw: unknown): PodcastEpisodeMedia {
         "capabilities.can_delete",
       ),
     },
-    contributors: expectArray(
-      item.contributors,
-      (credit, index) =>
-        decodeContributorCredit(
-          credit,
-          index,
-          "Podcast episode contributors",
-        ),
-      "contributors",
-    ),
     author_mode: expectOneOf(
       item.author_mode,
       ["automatic", "manual"] as const,
       "author_mode",
     ),
-    original_published_date: publishedDate,
     description_text: null,
     has_show_notes: expectBoolean(item.has_show_notes, "has_show_notes"),
-    duration_seconds:
-      durationSeconds.kind === "Present" ? durationSeconds.value : null,
   };
 }
 
@@ -291,61 +250,6 @@ export interface TranscriptRequestForecastState {
   request_enqueued: boolean;
   reason: TranscriptRequestReason;
   source: "forecast" | "request";
-}
-
-interface EpisodeActivityFacts {
-  totalMinutes: Presence<PositiveMinutes>;
-  fraction: Presence<ProgressFraction>;
-  remainingMinutes: Presence<PositiveMinutes>;
-}
-
-export function decodeEpisodeTimingFacts(
-  state: PodcastEpisodeMedia["listening_state"],
-): EpisodeActivityFacts {
-  if (state === null) {
-    return {
-      totalMinutes: { kind: "Absent" },
-      fraction: { kind: "Absent" },
-      remainingMinutes: { kind: "Absent" },
-    };
-  }
-  if (!Number.isInteger(state.position_ms) || state.position_ms < 0) {
-    throw new TypeError("episode listening position_ms must be a non-negative integer");
-  }
-  if (state.duration_ms === null) {
-    return {
-      totalMinutes: { kind: "Absent" },
-      fraction: { kind: "Absent" },
-      remainingMinutes: { kind: "Absent" },
-    };
-  }
-  if (
-    !Number.isInteger(state.duration_ms) ||
-    state.duration_ms <= 0 ||
-    state.position_ms > state.duration_ms
-  ) {
-    throw new TypeError(
-      "episode listening duration_ms must be a positive integer at least position_ms",
-    );
-  }
-  const remainingMs = state.duration_ms - state.position_ms;
-  return {
-    totalMinutes: {
-      kind: "Present",
-      value: { value: Math.ceil(state.duration_ms / 60_000) },
-    },
-    fraction: {
-      kind: "Present",
-      value: { value: state.position_ms / state.duration_ms },
-    },
-    remainingMinutes:
-      remainingMs > 0
-        ? {
-            kind: "Present",
-            value: { value: Math.ceil(remainingMs / 60_000) },
-          }
-        : { kind: "Absent" },
-  };
 }
 
 export function canRequestTranscriptForEpisode(

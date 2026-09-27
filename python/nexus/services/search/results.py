@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 from uuid import UUID
 
-from nexus.schemas.contributors import ContributorCreditOut
+from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.presence import presence_from_nullable
 from nexus.schemas.search import SearchResultSourceOut
 from nexus.services.resource_graph.refs import ResourceRef

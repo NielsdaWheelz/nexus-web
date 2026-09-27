@@ -12,6 +12,7 @@ import {
 } from "@/lib/dates/publicationDate";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 import type { ApiError } from "@/lib/api/client";
+import { decodeMediaSummary, type MediaSummary } from "@/lib/media/mediaSummary";
 import {
   decodeResourceActionSubject,
   type ResourceActionSubject,
@@ -36,7 +37,13 @@ export type BrowseSort = "Relevance" | "Newest";
 
 export type BrowseResolution =
   | {
-      readonly kind: "InNexus";
+      readonly kind: "InNexusMedia";
+      readonly href: string;
+      readonly actionSubject: ResourceActionSubject;
+      readonly mediaSummary: MediaSummary;
+    }
+  | {
+      readonly kind: "InNexusPodcast";
       readonly href: string;
       readonly actionSubject: ResourceActionSubject;
     }
@@ -61,6 +68,13 @@ interface BrowseCandidateBase<
 }
 
 export type BrowseCandidate =
+  | {
+      readonly kind: "OwnedMedia";
+      readonly source: "Nexus";
+      readonly resolution: Extract<BrowseResolution, { kind: "InNexusMedia" }>;
+      readonly description: Presence<string>;
+      readonly image: Presence<MediaImageProxySrc>;
+    }
   | BrowseCandidateBase<
       "Pdf",
       "Nexus",
@@ -353,17 +367,30 @@ function decodeContributors(
 function decodeResolution(raw: unknown, context: string): BrowseResolution {
   const value = expectRecord(raw, context);
   switch (value.kind) {
-    case "InNexus": {
-      expectExactRecord(value, ["kind", "href", "actionSubjectRef"], context);
+    case "InNexusMedia": {
+      expectExactRecord(value, ["kind", "href", "actionSubjectRef", "mediaSummary"], context);
       const href = internalHref(value.href, `${context}.href`);
       const actionSubject = decodeResourceActionSubject(
         { ref: value.actionSubjectRef },
         `${context}.actionSubject`,
       );
+      const mediaSummary = decodeMediaSummary(value.mediaSummary);
       return {
-        kind: "InNexus",
+        kind: "InNexusMedia",
         href,
         actionSubject,
+        mediaSummary,
+      };
+    }
+    case "InNexusPodcast": {
+      expectExactRecord(value, ["kind", "href", "actionSubjectRef"], context);
+      return {
+        kind: "InNexusPodcast",
+        href: internalHref(value.href, `${context}.href`),
+        actionSubject: decodeResourceActionSubject(
+          { ref: value.actionSubjectRef },
+          `${context}.actionSubject`,
+        ),
       };
     }
     case "Preview":
@@ -406,6 +433,24 @@ function decodeCommon(value: Record<string, unknown>, context: string) {
 
 function decodeCandidate(raw: unknown, index: number): BrowseCandidate {
   const context = `BrowsePage.items[${index}]`;
+  const record = expectRecord(raw, context);
+  if (record.kind === "OwnedMedia") {
+    const owned = expectExactRecord(
+      raw,
+      ["kind", "source", "resolution", "description", "image"],
+      context,
+    );
+    if (owned.source !== "Nexus") throw new TypeError(`${context}.source is invalid`);
+    const resolution = decodeResolution(owned.resolution, `${context}.resolution`);
+    if (resolution.kind !== "InNexusMedia") throw new TypeError(`${context}.resolution must be InNexusMedia`);
+    return {
+      kind: "OwnedMedia",
+      source: "Nexus",
+      resolution,
+      description: decodePresence(owned.description, (value) => stringValue(value, `${context}.description.value`)),
+      image: decodePresence(owned.image, (value) => proxiedImageHref(value, `${context}.image.value`)),
+    };
+  }
   const value = expectExactRecord(
     raw,
     [

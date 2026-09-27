@@ -9,10 +9,10 @@ from pydantic.alias_generators import to_camel
 
 from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.consumption import PauseShorteningMode, PlaybackRate
-from nexus.schemas.contributors import ContributorCreditIn, ContributorCreditOut
-from nexus.schemas.media import MediaProcessingStatus
+from nexus.schemas.contributor_credit import ContributorCreditOut
+from nexus.schemas.contributors import ContributorCreditIn
+from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.presence import Presence, absent
-from nexus.schemas.publication_dates import PublicationDate
 from nexus.services.podcasts.types import PodcastSyncStatus
 from nexus.services.sealed_handles import DiscoveryTargetHandle
 
@@ -260,21 +260,16 @@ class PodcastEpisodeListItemOut(BaseModel):
     """Compact row projection for one podcast episode."""
 
     id: UUID
-    kind: Literal["podcast_episode"]
-    title: str
+    media_summary: MediaSummaryOut = Field(alias="mediaSummary")
     canonical_source_url: Presence[str]
     offline_download_eligible: bool
-    processing_status: MediaProcessingStatus
     transcript_state: str
     transcript_coverage: str
     listening_state: Presence[PodcastEpisodeListeningStateOut]
     episode_state: Literal["unplayed", "in_progress", "played"]
     progress_resettable: bool
     capabilities: PodcastEpisodeListCapabilitiesOut
-    contributors: list[ContributorCreditOut] = Field(default_factory=list)
     author_mode: Literal["automatic", "manual"]
-    original_published_date: Presence[PublicationDate]
-    duration_seconds: Presence[int]
     has_show_notes: bool
     player_descriptor: Presence[PodcastEpisodeListPlayerDescriptorOut] = Field(
         alias="playerDescriptor"

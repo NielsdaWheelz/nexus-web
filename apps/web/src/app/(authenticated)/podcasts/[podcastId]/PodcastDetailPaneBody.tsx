@@ -959,8 +959,8 @@ export default function PodcastDetailPaneBody() {
     (query: string) => {
       const visibleCount = episodes.filter((episode) =>
         matchesPaneFilterQuery(query, [
-          episode.title,
-          ...episode.contributors.flatMap((credit) => [
+          episode.mediaSummary.title,
+          ...episode.mediaSummary.contributors.flatMap((credit) => [
             credit.contributor_display_name ?? "",
             credit.credited_name,
           ]),
@@ -1097,8 +1097,8 @@ export default function PodcastDetailPaneBody() {
     () =>
       episodes.filter((episode) =>
         matchesPaneFilterQuery(filterQuery, [
-          episode.title,
-          ...episode.contributors.flatMap((credit) => [
+          episode.mediaSummary.title,
+          ...episode.mediaSummary.contributors.flatMap((credit) => [
             credit.contributor_display_name ?? "",
             credit.credited_name,
           ]),

@@ -319,7 +319,6 @@ import {
 } from "@/lib/highlights/api";
 import type { Highlight } from "@/lib/highlights/highlightContract";
 import { useHostedTextHighlights } from "./useHostedTextHighlights";
-import MediaInfoOverlay from "@/components/media/MediaInfoOverlay";
 import ResourceThumb from "@/components/ui/ResourceThumb";
 import { buildMediaResourceHeader } from "./mediaFormatting";
 import { findSourceAnchor, resolveEpubInternalLinkTarget, type EpubRestoreRequest } from "@/lib/reader/epubInternalLinks";
@@ -343,7 +342,6 @@ import { buildReaderSurfaceStyle } from "@/lib/reader/readerSurfaceStyle";
 import { paneSecondaryRegionId } from "@/lib/panes/paneSecondaryModel";
 import type {
   ActionDescriptor,
-  ActionSelectDetail,
 } from "@/lib/ui/actionDescriptor";
 import type { PaneResourceHeaderPublication } from "@/lib/panes/paneHeaderModel";
 import styles from "./page.module.css";
@@ -511,10 +509,6 @@ export default function MediaPaneBody() {
   const requestSecondarySurface = paneRuntime.requestSecondarySurface;
   const closeSecondaryPane = paneRuntime.closeSecondaryPane;
   const secondaryPane = paneRuntime.secondaryPane ?? null;
-  const returnFocusFallback = useCallback(
-    () => findPaneLandmarkFocusTarget(paneRuntime.paneId),
-    [paneRuntime.paneId],
-  );
   // Reader-owned location-target seam: replaces the mounted media visit's
   // href (loc/fragment) without creating a pane-history checkpoint. Pane
   // history instead records destination activations (see the generic
@@ -608,7 +602,7 @@ export default function MediaPaneBody() {
   // explicit next-item prompt.
   const nextReadableItem = useMemo(() => {
     const index = lecternSnapshot.items.findIndex(
-      (item) => item.mediaId === id,
+      (item) => item.mediaSummary.mediaId === id,
     );
     if (index < 0) return null;
     if (lecternSnapshot.items[index]?.consumption.state !== "Finished")
@@ -633,7 +627,7 @@ export default function MediaPaneBody() {
   // returned next entry, and offer Undo. No successor → no navigation.
   const handleOpenNextReadable = useCallback(async () => {
     const snapshot = lecternSnapshotRef.current;
-    const row = snapshot.items.find((item) => item.mediaId === id);
+    const row = snapshot.items.find((item) => item.mediaSummary.mediaId === id);
     try {
       if (row) {
         const result = await lectern.finishLecternItem({
@@ -650,7 +644,7 @@ export default function MediaPaneBody() {
         if (result.nextItem.kind === "Present") {
           activateForkTarget(
             result.nextItem.value.href,
-            result.nextItem.value.title,
+            result.nextItem.value.mediaSummary.title,
           );
         }
       } else {
@@ -682,18 +676,6 @@ export default function MediaPaneBody() {
   >(null);
   // Edit authors is a canonical resource action now: the runtime dispatches it to
   // the app-level ResourceActionOverlays controller (opens the editor by media id).
-  const [mediaInfoOverlayOpen, setMediaInfoOverlayOpen] = useState(false);
-  const [mediaInfoOverlayMounted, setMediaInfoOverlayMounted] = useState(false);
-  const [mediaInfoOverlayTrigger, setMediaInfoOverlayTrigger] =
-    useState<HTMLButtonElement | null>(null);
-  const openMediaInfoOverlay = useCallback(
-    ({ triggerEl }: ActionSelectDetail) => {
-      setMediaInfoOverlayTrigger(triggerEl);
-      setMediaInfoOverlayMounted(true);
-      setMediaInfoOverlayOpen(true);
-    },
-    [],
-  );
   const [error, setError] = useState<FeedbackContent | null>(null);
   // Reset progress is a canonical resource action now: the runtime dispatches it
   // (consumption ResetProgress command + snapshot reconcile).
@@ -5451,17 +5433,6 @@ export default function MediaPaneBody() {
     // because this media genuinely has no such command. Waiting never decides.
     const resolving = media === null;
     const view: ActionDescriptor[] = [];
-    if (resolving || mediaResourceHeader?.status === "Ready") {
-      view.push({
-        kind: "command",
-        id: "ViewAction.Resource.MediaInfo",
-        label: "Media info…",
-        disabled: resolving || undefined,
-        disabledReason: resolving ? PANE_COMMAND_RESOLVING_REASON : undefined,
-        restoreFocusOnClose: false,
-        onSelect: openMediaInfoOverlay,
-      });
-    }
     view.push({
       kind: "command",
       id: "ViewAction.Reader.Settings",
@@ -5516,8 +5487,6 @@ export default function MediaPaneBody() {
     isPdf,
     isReflowableReader,
     media,
-    mediaResourceHeader,
-    openMediaInfoOverlay,
     activateForkTarget,
     readerProfile.theme,
     canRead,
@@ -7057,7 +7026,7 @@ export default function MediaPaneBody() {
       </p>
       {nextReadableItem ? (
         <LecternNextPrompt
-          title={nextReadableItem.title}
+          title={nextReadableItem.mediaSummary.title}
           onSelect={() => void handleOpenNextReadable()}
         />
       ) : null}
@@ -7424,7 +7393,7 @@ export default function MediaPaneBody() {
           {readerProgressOverlay}
           {isPdf && canRead && nextReadableItem ? (
             <LecternNextPrompt
-              title={nextReadableItem.title}
+              title={nextReadableItem.mediaSummary.title}
               onSelect={() => void handleOpenNextReadable()}
             />
           ) : null}
@@ -7512,20 +7481,6 @@ export default function MediaPaneBody() {
         onClose={() => setPendingExistingChatHighlightId(null)}
         onSelectConversation={handleSelectExistingChatDestination}
       />
-
-      {mediaInfoOverlayMounted && mediaResourceHeader?.status === "Ready" ? (
-        <MediaInfoOverlay
-          open={mediaInfoOverlayOpen}
-          title={media.title}
-          creditGroups={mediaResourceHeader.creditGroups}
-          originalPublishedDate={media.original_published_date}
-          editionPublishedDate={media.edition_published_date}
-          publisher={media.publisher}
-          returnFocusTo={() => mediaInfoOverlayTrigger}
-          returnFocusFallback={returnFocusFallback}
-          onClose={() => setMediaInfoOverlayOpen(false)}
-        />
-      ) : null}
 
       <Dialog
         open={highlightColorIntent !== null}

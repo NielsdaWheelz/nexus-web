@@ -17,6 +17,7 @@ from pydantic.alias_generators import to_camel
 
 from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.consumption_activity import CompletionHandle
+from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.presence import Presence
 from nexus.schemas.reader import ReaderCursorSnapshot
 
@@ -99,16 +100,19 @@ class ConsumptionOut(_Out):
     progress_resettable: bool
 
 
-class LecternItemOut(_Out):
-    item_id: UUID
-    media_id: UUID
-    kind: ConsumptionMediaKind
+class PlayerDisplay(_Out):
     title: str
     subtitle: Presence[str]
+
+
+class LecternItemOut(_Out):
+    item_id: UUID
+    media_summary: MediaSummaryOut
     href: str
     added_at: AwareDatetime
     consumption: ConsumptionOut
     activation: LecternActivation
+    player_display: Presence[PlayerDisplay]
 
 
 class LecternSnapshot(_Out):

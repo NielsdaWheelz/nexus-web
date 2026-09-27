@@ -505,7 +505,7 @@ class BrowserActivityRuntime {
             this.outbox.deleteRows(accountId, captureKeys(batch)),
           );
           await this.refresh(accountId);
-          publishConsumptionProjectionChange();
+          publishConsumptionProjectionChange({ rowChanged: true });
           break;
         case "MediaUnavailable":
           await this.failBatch(
@@ -660,7 +660,7 @@ class BrowserActivityRuntime {
       this.nativePublishedRevisions.get(accountId) ?? 0;
     if (snapshot.acceptedRevision <= publishedRevision) return;
     this.nativePublishedRevisions.set(accountId, snapshot.acceptedRevision);
-    publishConsumptionProjectionChange();
+    publishConsumptionProjectionChange({ rowChanged: true });
   }
 
   private blockStorage(): void {

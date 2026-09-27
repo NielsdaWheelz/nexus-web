@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from sqlalchemy.orm import Session
 
+from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.presence import Present
 from nexus.schemas.retrieval import RetrievalLocator
 from nexus.schemas.search import (
@@ -272,7 +273,12 @@ def _envelope(
     }
 
 
-def _result_to_out(db: Session, viewer_id: UUID, result: InternalSearchResult) -> SearchResultOut:
+def _result_to_out(
+    db: Session,
+    viewer_id: UUID,
+    result: InternalSearchResult,
+    summaries: dict[UUID, MediaSummaryOut],
+) -> SearchResultOut:
     """Convert one internal ranked result into the strict response union."""
     if isinstance(result, _RankedFragmentResult):
         from nexus.services.search.retrievers import read_fragment_search_content
@@ -381,4 +387,6 @@ def _result_to_out(db: Session, viewer_id: UUID, result: InternalSearchResult) -
             selected=result.selected,
             **base,
         )
-    return SearchResultMediaOut(type=result.result_type, source=result.source, **base)
+    for key in ("title", "source_label", "media_id", "media_kind"):
+        base.pop(key)
+    return SearchResultMediaOut(type=result.result_type, mediaSummary=summaries[result.id], **base)

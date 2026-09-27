@@ -62,11 +62,11 @@ from nexus.schemas.import_history import (
 from nexus.schemas.imports import RepairSourceOffer, RetrySourceOffer, SourceRecoveryInput
 from nexus.schemas.media import (
     FromUrlResponse,
-    MediaProcessingStatus,
     MediaSourceAttemptStatus,
     SourceRepairAdmission,
     SourceRetryAdmission,
 )
+from nexus.schemas.media_summary import MediaProcessingStatus
 from nexus.schemas.presence import Presence, absent, present
 from nexus.services import library_entries, library_governance
 from nexus.services import media_source_types as source_types
