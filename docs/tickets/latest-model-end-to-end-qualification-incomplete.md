@@ -4,113 +4,38 @@ status: open · origin: 2026-09-25 latest-model cutover · area: generation rele
 
 ## problem and evidence
 
-current gate (2026-09-26): the owner approved native shell, disposable scratch,
-public internet and a private nexus generation api through the codex
-subscription. [the shell plan](../codex-shell-cutover-plan.md) replaces the
-unprovable frozen-mcp-only requirement; no metered-api route substitution was
-approved. current v4 code still admits only tool-free codex work, leaving chat
-and three background policies ineligible. implement and qualify the new
-[runtime boundary](codex-shell-runtime-unqualified.md); do not weaken startup
-validation. historical mcp and model-cell receipts below do not qualify this
-replacement. the final stack remains unbuilt/unexercised; keep temporary proof
-scripts until the revised acceptance contract is met.
+the implemented cohort is nexus api/worker/host `d6b06991c`, repaired web
+`a50401623`, llm-calling `6a7093f7`, llm-tools `d305da8f`, kernel
+`937434b0`, and codex cli 0.157.1. the isolated stacks have not been deployed.
+the nonsecret current evidence and exact
+limits are in [the verification receipt](../codex-shell-cutover-verification.md).
+`./scripts/test` is static only.
 
-the provider passed 61 of 65 api cells; four xai cells are owner-waived, not
-passes. five live three-turn api continuation journeys and all 15 codex
-model/effort cells passed through the provider runtime. pinned codex 0.157.1
-also completed model-originated https mcp calls in text and strict-json modes.
-provider receipt: `/tmp/codex15_receipt_9350.jsonl` (sha256
-`12ea945866dc67dc8cd40b5556e0605fc4d9436acc309df93960cb463773dc1a`).
+all 15 codex browser/native model-effort cells passed on `d6b06991c` before
+the repaired web. a background note dossier completed strict json on older
+`c792536af`, but did not execute its requested write; no other background
+role is live-qualified. model-originated shell create/read, outside-chat read,
+replay/undo and successful `web.search` were proved on `d6b06991c`. the
+repaired web passed six draft reload/collision journeys. all 41
+openai/gemini/deepseek browser cells passed on web `a50401623` and backend
+`d6b06991c`, with an independent native/ledger read. a final provider
+function-tool continuation passed with two completed native turns. prior
+interrupted/mixed-source receipts do not count.
+one `gpt-6-sol/medium` codex turn passed on the repaired web with an
+independent native/ledger read.
 
-all 15 codex browser/bff/api/db/interactive-worker journeys passed with a
-nonempty sse terminal, exact persisted selection/labels and native dispatch,
-one succeeded model turn, and usage. the matrix used api `00ba5948`, worker
-`2668185a` and host `00ba5948`; subsequent final `0c48d6f2` api/worker images
-passed no-key blocked and with-key selectable catalog checks. matrix receipt:
-`/tmp/nexus-codex-15-browser-receipt.md` (sha256
-`09eed8c597dd27a393caa92b7e2ccd70c677a3886c7e090969c4e49e008d19c1`).
-another 41 api browser/bff/api/db/worker cells passed on nexus `5e4a15f`:
-openai 34, gemini 3, deepseek 4. every run gave a correct answer and matched
-its frozen selection, native model/reasoning fragment, usage, labels, and one
-terminal in a read-only postgres check; no tool effects. the interim catalog
-omitted anthropic pending its explicit retention acknowledgement. browser
-receipt: `/tmp/nexus-latest-models-browser/api-41-receipt.jsonl` (sha256
-`32e29bd778fede2b89d33226634c714618045e0466714c5405470bcd0997d2ed`);
-native/db receipt: `/tmp/nexus-api-41-native-receipt.md` (sha256
-`4cf59b3bde65b9faea2964fec97003eba3fb26878c03dca37765f50d5ff54d4e`).
-the linux host denied direct internet and app-db routes. across the matrix its
-cgroup peak was 200,302,592 / 469,762,048 bytes and 40 / 64 processes, with
-zero memory events or oom kills. the egress sidecar stayed below its limits.
-these are cumulative container peaks, not per-cell measurements.
-fresh direct-uds cancellation and native process-death/restart passed; host
-admission replay passed before dispatch. receipt:
-`/tmp/nexus-codex-boundary-20260926-receipt.md` (sha256
-`157c44a63bcd9f96943eaa60554bf5e8721c1e8f016ec90b896713f265a7c39c`).
-on the final `75b60bf` worker, one fresh openai chat was canceled while its
-paid child was armed. browser, sse, run, parent, child and job agreed on
-cancellation; usage was absent and billability remained possible. receipt:
-`/tmp/nexus-fullstack-cancel-20260926.md` (sha256
-`f0c1d7c0461f44c099b03b10e312a2dfdbfc802fe31a00781b61500c9eacd12c`).
-one codex chat completed a model-originated `nexus.search` mcp call with a
-settled zero-attempt empty result (receipt `/tmp/nexus-search-empty-restored-20260926.md`,
-sha256 `e39c7c4747ac836e404df060e40c6d9d46efe9d9f8e751916f9c58c3094b5c6f`).
-one openai api chat settled the same tool through two completed model turns
-and a consumed sealed continuation (receipt
-`/tmp/nexus-provider-search-continuation-20260926.md`, sha256
-`61341c8253164dd8b92608ea71d0fd2651fa9f5e1eb802e6daffe2b68c909222`).
-the empty corpus proves transport and continuation, not factual grounding.
-
-on exact nexus `a80087ffb`, a fresh paid openai chat proved the worker crash
-window. a separate database read saw the parent, child, usage and
-`generation/1=Completed` committed while publication's `UPDATE messages` waited
-on an owned row lock. the interactive worker was hard-stopped, the lock was
-released, and the restarted worker reclaimed the job only after its 1200-second
-lease expired. attempt 2 published the stored answer with one parent, one child
-dispatch, unchanged terminal and usage, zero tool effects and one `done`. two
-fresh authenticated bff gets matched the persisted answer; two sse reads
-replayed the same 323 events with one terminal each. the original runner's
-post-settlement browser read failed while task web was down, so its nonzero
-exit is retained; the independent read-only session supplied that missing
-boundary. receipt: `/tmp/nexus-latest-models-browser/worker-crash-replay-a800-receipt.md`
-(sha256 `19bdd3ea05cba3a3c43f4f8592fb5b8fa49b590c6f2a666670acf6bd6bec293a`).
-the crash probe first exposed a stale chat job payload that regressed the
-completed generation journal to `Prepared` during publication. the fix in
-`a80087ffb` passed a disposable migrated-postgres red/green and `./scripts/test`.
-this no-tool run proves paid-generation and chat-publication replay, not a tool
-effect through the crash window. the later provider pin is not covered by this
-exact a800 stack proof.
-
-no successful model-originated `web.search` result is proved: one call had
-invalid model arguments; a second reached Brave with an invalid
-subscription token and left a billed-once position `Uncertain` while chat
-incorrectly completed. the new parent-terminal guard passed 19 real postgres
-cases and is committed in `5e4a15f`; a separate cancelled-run dead-letter
-guard passed nine migrated-postgres cases and is committed in `75b60bf`.
-neither changes the already-completed test run. llm-tools `8d5f488` now
-classifies the bounded Brave 422 `SUBSCRIPTION_TOKEN_INVALID` response as
-`CredentialRejected`; its final browser/ledger journey remains unrun. see the
-separate valid-key web-search ticket. deterministic protocol injection rejected
-five forbidden native/delegation event types; it is not a live model attempt.
-the 20 anthropic nexus cells, actual codex credential refresh, the replacement
-shell/api boundary, and `web.search` result grounding remain open. the a800
-worker replay must be
-assessed against the final provider pin; repeat the crash-window journey if that
-pin changes the journal, worker replay,
-or publication contract. the 41-cell native check used persisted library encoder
-metadata and accepted response evidence, not a tls packet capture.
-`./scripts/test` is static and cannot qualify them.
+anthropic's 20 nexus cells are blocked because the owner explicitly declined
+the required standard-retention acknowledgement. the four xai cells lack a key
+and carry an explicit owner waiver, not a pass. actual codex auth refresh is
+unproved. the older `a80087ffb` worker-crash replay receipt proves its own
+source only; compare the final journal/publication contract before reusing that
+inference. remaining shell lifecycle denials, all twelve background roles and
+background effect/list/undo are tracked separately.
 
 ## prerequisite and acceptance
 
-retain the approved subscription routes and prove the shell plan's native
-capabilities before enabling them. rebuild the exact final pinned stack and
-exercise its catalog, browser, api, worker, ledger and
-failure states. run a fresh model-originated tool call with a valid protected search credential
-and prove its durable result and answer provenance. obtain explicit owner
-acknowledgement for anthropic's standard retention before setting the required
-timestamp and running its 20 browser/native cells. exercise actual codex auth
-refresh on an independent disposable credential. compare the final provider
-pin with the a800 replay contract, then run a representative final-stack turn;
-repeat the crash-window proof if the replay contract changed. qualify the new
-codex shell/api authority before tool-bearing codex cells. keep temporary
-live proofs until these cases pass and report xai's owner waiver separately.
+complete the remaining shell-plan denials and background roles,
+and observe actual auth refresh using an independent disposable credential.
+run anthropic's 20 cells only after the owner changes the retention decision.
+keep xai marked waived. retain temporary proofs until the complete acceptance
+contract is met; never relabel blocked or historical evidence as a final pass.

@@ -4,11 +4,11 @@ status: open · origin: 2026-09-25 latest-model cutover · area: codex host cred
 
 ## problem and evidence
 
-the pinned 0.157.1 app-server read a private copy of enrolled personal auth,
-completed a text-only turn, and synced the credential file without changing
-the original digest. no actual token refresh or native rename/write event was
-witnessed. therefore the new host's writable-file boundary is unqualified for
-refresh; a successful text turn proves only current-token use.
+the pinned 0.157.1 app-server completed all 15 codex model/effort cells on
+`d6b06991c`, but the protected auth file kept its original digest and mtime
+(`1790402374.7912033`). its access token expires on 2026-10-05 23:07 utc;
+none of those turns exercised refresh or a native credential write. the host's
+writable-file boundary remains unqualified for refresh.
 forcing refresh on a byte copy of the live profile could rotate the shared
 remote refresh token and strand the original, so that is not a safe fixture.
 

@@ -1,6 +1,6 @@
 # codex subscription reading helpers
 
-status: approved direction; implementation and live proof pending
+status: implementation staged; live release qualification incomplete
 origin: 2026-09-26 owner approval; runtime, api/content and adversarial review
 
 ## outcome and decisions

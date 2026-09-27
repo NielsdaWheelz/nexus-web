@@ -1,38 +1,59 @@
 # codex shell runtime unqualified
 
-status: open · origin: 2026-09-26 owner-approved redesign · area: codex execution
+status: open · origin: 2026-09-26 approved shell cutover · area: codex execution
 
 ## problem and evidence
 
-the owner approved subscription-backed native shell, disposable scratch and
-public internet under [the shell plan](../codex-shell-cutover-plan.md). the
-implementation is staged on `c792536afe81fccb18707e0e3772ccaa8d10f671`, but the final artifact still needs
-complete live qualification. earlier nexus mcp receipts and codapt2's 0.153.1
-remote-shell example do not prove the final 0.157.1 boundary.
+the implementation is staged at nexus `d6b06991c` with the browser draft fix
+at `a50401623`, llm-calling `6a7093f7`, llm-tools `d305da8f`, kernel
+`937434b0`, and codex cli 0.157.1. on isolated database `nexus_shell_8e3`,
+all 15 codex model/effort cells completed through browser, api, worker and
+native host, with persisted usage and one terminal each. receipt:
+`/tmp/nexus-shell-cutover/codex-15-d6b06991c-origin-fixed-receipt.jsonl`
+(sha256 `40495277fbd49f5d50dccdaa90fe3bd6a61000797adbea5e14cd1253de0491d8`);
+read-only ledger check sha256
+`bb6e4d81641dc11e9ec284450d7b5a0a7c55e866bbeeaefdbf94532b6e766848`.
 
-on the isolated `nexus_shell_8e3` database and that exact api/worker source, a
-browser-authenticated note dossier build (`67b94b92-ecea-4000-9e9b-6d8ec9938a53`)
-completed as strict json with revision
-`26baf77a-88d9-4892-a103-ed7975cfc25c` and one grounded citation. its
-persisted user instruction first requested `nexus.note.create` for the exact
-marker `background effect probe: amber kestrel 4821`, but generation
-`6ed98892-cd3f-500f-9858-72007789eddc` recorded zero tool positions and
-created no note. this is an unproved background write journey, not evidence
-that the generation api refused a call. a stronger second instruction was
-admitted as build `0e04ed93-4e65-44bf-9f2a-d1f358033c79`, but its queue
-payload recorded `CapacityPaused(code=quota_unavailable)` at
-2026-09-27 05:36:18 utc and deferred it to 05:51:18; no generation was
-dispatched. it was canceled through the authenticated bff at 05:41:03.
-temporary nonsecret receipt: `/tmp/nexus-shell-cutover/background-dossier-receipt.jsonl`.
+model-originated shell fetched the generated api schema, created and read a
+note, then the browser undid it. separate runs read a note outside chat
+context and proved exact-key replay with one durable write and changed-body
+rejection. a model-originated `web.search` returned six brave results and used
+the first title, url and eight normalized snippet words in its answer; the
+initial verifier falsely failed on html markup in the raw snippet, while the
+independent ledger/browser check passed (receipt sha256
+`17bdd2f4376ac4ae3f330118ed9fd5ab5df0bf253963c39860d3a489b81046de`).
+the x86_64 image `sha256:c8383decb18e874701cc822eca703eab8f24abe4d2a83130b1f1ccfe37ad5f5b`
+passed its actual bubblewrap health probe as uid 10001 under production-style
+container restrictions; no paid x86_64 turn was run.
+
+a note dossier completed strict json with a citation on `c792536af`, but did
+not make its requested `nexus.note.create` call. a second build was quota
+paused before dispatch and canceled. the twelve background roles and a
+background effect/list/undo journey remain unqualified. receipt:
+`/tmp/nexus-shell-cutover/background-dossier-receipt.jsonl`.
+on final backend `d6b06991c`, build
+`5a284dec-9f3c-4136-90ae-419f17713922` completed a cited revision, but
+again recorded zero generation-api tool positions and zero account effects.
+postgres confirmed the requested note marker was present in its persisted
+user instruction and the generation had `CodexShell` authority. the model did
+not call the shell; this does not prove an authorization denial. final-source
+receipt sha256 `a58ef597917715083370856fb386df142e9f034d846abcd17e9c677ba2756d15`.
+a follow-up that made the note uri a prerequisite never dispatched: job
+`74e5e2e3-5ca6-4ffc-9cf4-9effe870b8ff` was quota-paused with zero
+attempts/generations and then explicitly canceled. it cannot diagnose the
+prompt. corrected receipt sha256
+`5950251992cb11193e587e916111d133aa9980eeeb4b6193bb42bf66d04a57d8`.
+the isolated database has one note, one page, two libraries and chat history,
+but zero media, podcasts, contributors, highlights or idea subjects; those
+roles need real subject fixtures before their live journeys can run.
 
 ## prerequisite and acceptance
 
-qualify the linked plan without local execution or metered-provider fallback.
-prove native shell and strict json together on 0.157.1, with auth/control paths
-inaccessible. then qualify private api effects/replay,
-account visibility, credential revocation, public/private network boundaries,
-detached-process teardown, auth refresh, every required model/effort and real
-nexus chat/background journeys on the final pins. never bypass startup validation.
-for the background write journey, observe a model-originated operation position,
-the created note, account effect listing, and authenticated undo on the same
-completed generation. a valid dossier revision alone does not establish it.
+determine why background synthesis ignored the explicit user instruction;
+prove a model-originated background write before claiming the shared api grant
+works for these jobs. prove the remaining shell-plan lifecycle and denial
+cases, actual auth refresh on an independent disposable credential, all twelve
+background roles with valid recorded output, and model-originated background
+write/list/undo on the final runtime. retain temporary proof code until the
+complete contract passes; do not infer background write authority from valid
+strict json alone.
