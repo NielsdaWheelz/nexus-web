@@ -933,8 +933,8 @@ export default function MediaPaneBody() {
       ? webFragmentsResource.status === "ready"
         ? [...webFragmentsResource.data.fragments]
         : []
-      : transcriptFragments,
-    [media?.kind, webFragmentsResource, transcriptFragments],
+      : isTranscriptMedia ? transcriptFragments : [],
+    [media?.kind, isTranscriptMedia, webFragmentsResource, transcriptFragments],
   );
   const activeEpubFragment = documentReader.activeEpubFragment;
   const setActiveEpubFragment = documentReader.setActiveEpubFragment;
