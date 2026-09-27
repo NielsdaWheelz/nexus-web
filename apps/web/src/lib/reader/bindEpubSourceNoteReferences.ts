@@ -1,6 +1,34 @@
 import type { CanonicalCursorResult } from "@/lib/highlights/canonicalCursor";
 import type { ReaderEvidencePassageGroup, ReaderEvidenceSourceReference } from "./documentMap";
 
+function sourceMarkerId(marker: HTMLAnchorElement): string | null {
+  const own = (marker.getAttribute("id") || marker.getAttribute("name") || "").trim();
+  if (own) return own;
+  const children = [...marker.children].filter((child) => child.tagName.toLowerCase() === "sup");
+  if (children.length === 1) {
+    const childId = (children[0].getAttribute("id") || "").trim();
+    if (childId) return childId;
+  }
+  const parent = marker.parentElement;
+  if (parent?.tagName.toLowerCase() !== "sup") return null;
+  const parentId = (parent.getAttribute("id") || parent.getAttribute("name") || "").trim();
+  if (parentId) return parentId;
+  for (const current of [marker, parent]) {
+    const previous = current.previousElementSibling;
+    if (!(previous instanceof HTMLAnchorElement) ||
+      (previous.getAttribute("href") || "").trim() || previous.textContent?.trim()) continue;
+    let intervening = false;
+    for (let node = previous.nextSibling; node && node !== current; node = node.nextSibling) {
+      if (node.textContent?.trim()) intervening = true;
+    }
+    if (!intervening) {
+      const id = (previous.getAttribute("id") || previous.getAttribute("name") || "").trim();
+      if (id) return id;
+    }
+  }
+  return null;
+}
+
 /** Attach inferred note references to their exact, preserved source links. */
 export function bindEpubSourceNoteReferences(
   root: HTMLElement,
@@ -32,7 +60,7 @@ export function bindEpubSourceNoteReferences(
     const marker = first?.parentElement?.closest("a[href]");
     if (!(marker instanceof HTMLAnchorElement) || !root.contains(marker) ||
       marker.hasAttribute("data-reader-apparatus-item-id") ||
-      (item.marker_anchor_id.kind === "Present" && item.marker_anchor_id.value !== marker.id)) continue;
+      (item.marker_anchor_id.kind === "Present" && item.marker_anchor_id.value !== sourceMarkerId(marker))) continue;
     // Every span in the locator belongs to this link. Its neighboring
     // canonical characters must be outside the link, so a partial label fails.
     let matchesFullLink = !cursor.provenance[locator.start_offset - 1]?.spans.some(
