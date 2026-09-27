@@ -17,7 +17,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ResourceEdge
-from nexus.db.retries import retry_read_committed, retry_serializable
+from nexus.db.retries import retry_serializable
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
@@ -35,7 +35,7 @@ from nexus.schemas.resource_graph import (
     StanceOut,
     connection_out,
 )
-from nexus.services import highlights, note_bodies, notes, passage_anchors, pdf_highlights
+from nexus.services import highlights, note_bodies, passage_anchors, pdf_highlights
 from nexus.services.note_indexing import enqueue_note_reindex
 from nexus.services.resource_graph import cleanup, connections, edges
 from nexus.services.resource_graph.edges import source_is, target_is
@@ -50,6 +50,7 @@ from nexus.services.resource_graph.schemas import (
     EdgeOut,
     is_neutral_link_shape,
 )
+from nexus.services.resource_items import versions
 from nexus.services.resource_items.capabilities import (
     resource_can_link_source,
     resource_user_link_target_mode,
@@ -194,19 +195,27 @@ def put_link_note(
         if replay is not None:
             return LinkNoteOut.model_validate(replay)
 
-        existing_note_id = edges.link_note_block_for_pair(
+        attached_ids = edges.link_note_blocks_for_pair(
             db, viewer_id=viewer_id, a=link.source, b=link.target
         )
-        if existing_note_id is not None and existing_note_id != request.note_block_id:
-            raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Link already has a different note")
-
+        if request.expected_body.kind == "absent":
+            if attached_ids:
+                raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Link already has a note")
+        elif request.note_block_id not in attached_ids:
+            raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note is no longer attached")
+        note_bodies.require_expected_body(
+            db,
+            viewer_id=viewer_id,
+            block_id=request.note_block_id,
+            expected_body=request.expected_body,
+        )
         block = note_bodies.upsert_note_body(
             db,
             viewer_id=viewer_id,
             block_id=request.note_block_id,
             body_pm_json=request.body_pm_json,
         )
-        if existing_note_id is None:
+        if request.expected_body.kind == "absent":
             note_ref = ResourceRef(scheme="note_block", id=block.id)
             for endpoint in (link.source, link.target):
                 edges.create_edge(
@@ -220,6 +229,11 @@ def put_link_note(
 
         response = LinkNoteOut(
             note_block_id=block.id,
+            body_pm_json=block.body_pm_json,
+            body_text=block.body_text,
+            version_by_lane=versions.versions_for_ref(
+                db, viewer_id=viewer_id, ref=note_bodies.note_ref(block.id)
+            ),
             connection=connection_out(
                 _connection(
                     db,
@@ -244,23 +258,52 @@ def put_link_note(
     return retry_serializable(db, "put_link_note", op)
 
 
-def delete_link_note(db: Session, *, viewer_id: UUID, link_id: UUID) -> None:
-    """Delete the Link's note; the Link itself is preserved. A Link with no note is a no-op.
-
-    Deleting the note removes its own edges, anchors and index rows through the note owner.
-    """
+def detach_link_note(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    link_id: UUID,
+    note_block_id: UUID,
+    client_mutation_id: str,
+) -> None:
+    """Detach the exact Link annotation; preserve the canonical note and Link."""
+    scope = f"link_note:{link_id}"
+    request_bytes = canonical_json_bytes({"operation": "detach", "noteBlockId": str(note_block_id)})
 
     def op() -> None:
         link = _neutral_link(db, viewer_id=viewer_id, link_id=link_id)
-        note_id = edges.link_note_block_for_pair(
+        replay = lookup_replay(
+            db,
+            viewer_id=viewer_id,
+            scope=scope,
+            client_mutation_id=client_mutation_id,
+            request_bytes=request_bytes,
+        )
+        if replay is not None:
+            return
+        attached_ids = edges.link_note_blocks_for_pair(
             db, viewer_id=viewer_id, a=link.source, b=link.target
         )
-        if note_id is None:
-            return
-        if notes.remove_note_block_in_current_transaction(db, viewer_id, note_id):
-            db.commit()
+        if note_block_id not in attached_ids:
+            raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note is no longer attached")
+        cleanup.detach_link_note_motif(
+            db,
+            viewer_id=viewer_id,
+            a=link.source,
+            b=link.target,
+            note_id=note_block_id,
+        )
+        record_replay(
+            db,
+            viewer_id=viewer_id,
+            scope=scope,
+            client_mutation_id=client_mutation_id,
+            request_bytes=request_bytes,
+            response_json={},
+        )
+        db.commit()
 
-    retry_read_committed(db, "delete_link_note", op)
+    retry_serializable(db, "detach_link_note", op)
 
 
 def put_stance(db: Session, *, viewer_id: UUID, request: PutStanceRequest) -> StanceOut:

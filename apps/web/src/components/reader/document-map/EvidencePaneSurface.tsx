@@ -50,6 +50,7 @@ const NO_ANCHORS: AnchoredReaderRow[] = [];
 export interface EvidenceHighlightEditRequest {
   highlightId: string;
   requestId: number;
+  recoveryOwnerKey?: string;
 }
 
 /** One closed projection for the always-published Media Evidence surface. */
@@ -97,17 +98,8 @@ interface EvidencePaneSurfaceProps {
    * association. The caller dispatches context to Link DELETE and stances to
    * stance DELETE from the typed role; generated associations never qualify. */
   onRemoveUserEdge: (edge: ReaderEvidenceUserEdge) => Promise<void>;
-  /** Add/edit the one ordinary note folded onto a neutral (context) Link — mirrors
-   * `links.ts` `putLinkNote(linkId, {noteBlockId, bodyPmJson, clientMutationId})`. */
-  onSaveLinkNote: (
-    linkId: string,
-    noteBlockId: string,
-    bodyPmJson: Record<string, unknown>,
-    clientMutationId: string,
-  ) => Promise<{ note_block_id: string }>;
-  /** Remove the Link's note; mirrors `links.ts` `deleteLinkNote(linkId)`. The Link
-   * itself is preserved. */
-  onDeleteLinkNote: (linkId: string) => Promise<void>;
+  /** Refresh the evidence projection after a committed link-note change. */
+  onLinkNoteChanged: () => void;
 }
 
 export default function EvidencePaneSurface({
@@ -127,8 +119,7 @@ export default function EvidencePaneSurface({
   onHoverItem,
   onDismissSynapse,
   onRemoveUserEdge,
-  onSaveLinkNote,
-  onDeleteLinkNote,
+  onLinkNoteChanged,
 }: EvidencePaneSurfaceProps) {
   const evidence = projection.kind === "Ready" ? projection.evidence : null;
   const aggregateStatus =
@@ -339,9 +330,8 @@ export default function EvidencePaneSurface({
   const linkActions: EvidenceLinkActions = {
     editingLinkId,
     onRemoveUserEdge,
-    onEditLink: (id) => { browse(); setEditingLinkId(id); },
-    onSaveLinkNote,
-    onDeleteLinkNote,
+    onEditLink: setEditingLinkId,
+    onLinkNoteChanged,
   };
 
   useEffect(() => {
@@ -463,6 +453,10 @@ export default function EvidencePaneSurface({
       hovered={hoveredItemId === item.id}
       disclosureOpen={openDisclosureIds.has(`item:${item.id}`)}
       editing={item.kind === "Highlight" && editingHighlightId === item.highlight_id}
+      highlightRecoveryOwnerKey={
+        item.kind === "Highlight" && highlightEditRequest?.highlightId === item.highlight_id
+          ? highlightEditRequest.recoveryOwnerKey : undefined
+      }
       highlightActions={highlightActions}
       linkActions={linkActions}
       rowActions={rowActions}
@@ -545,6 +539,7 @@ export default function EvidencePaneSurface({
             hoveredItemId={hoveredItemId}
             openDisclosureIds={openDisclosureIds}
             editingHighlightId={editingHighlightId}
+            highlightEditRequest={highlightEditRequest}
             highlightActions={highlightActions}
             onActivate={() => { browse(); onActivatePassage(group); }}
             linkActions={linkActions}
@@ -652,6 +647,7 @@ function PassageGroup({
   hoveredItemId,
   openDisclosureIds,
   editingHighlightId,
+  highlightEditRequest,
   highlightActions,
   onActivate,
   linkActions,
@@ -669,6 +665,7 @@ function PassageGroup({
   hoveredItemId: string | null;
   openDisclosureIds: Set<string>;
   editingHighlightId: string | null;
+  highlightEditRequest: EvidenceHighlightEditRequest | null;
   highlightActions: EvidenceHighlightActions;
   onActivate: () => void;
   linkActions: EvidenceLinkActions;
@@ -725,6 +722,10 @@ function PassageGroup({
             editing={
               item.kind === "Highlight" &&
               editingHighlightId === item.highlight_id
+            }
+            highlightRecoveryOwnerKey={
+              item.kind === "Highlight" && highlightEditRequest?.highlightId === item.highlight_id
+                ? highlightEditRequest.recoveryOwnerKey : undefined
             }
             highlightActions={highlightActions}
             linkActions={linkActions}

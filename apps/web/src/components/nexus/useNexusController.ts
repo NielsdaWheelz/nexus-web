@@ -27,6 +27,7 @@ import { createLibrary } from "@/lib/libraries/client";
 import { DESTINATIONS } from "@/lib/navigation/destinations";
 import { createNotePage } from "@/lib/notes/api";
 import {
+  DailyDraftStorageError,
   readDailyDraft,
   subscribeDailyDraft,
   type DailyDraft,
@@ -250,6 +251,16 @@ const EMPTY_NEXUS_PROJECTION_BY_SURFACE: Readonly<
 };
 const TODAY_APPEND_UNAVAILABLE =
   "Open Today to finish the current embedded draft";
+const TODAY_STORAGE_UNAVAILABLE =
+  "Device storage is unavailable. Open Today to review any unsaved text.";
+
+function readTodayDraft(accountId: string, localDate: string): { draft: DailyDraft | null; storageUnavailable: boolean } {
+  try { return { draft: readDailyDraft(accountId, localDate), storageUnavailable: false }; }
+  catch (error) {
+    if (!(error instanceof DailyDraftStorageError)) throw error;
+    return { draft: null, storageUnavailable: true };
+  }
+}
 
 type ExitIntent =
   | { readonly kind: "Close" }
@@ -437,10 +448,10 @@ export function useNexusController(): NexusController {
   } | null>(null);
   const [pendingDismissal, setPendingDismissal] =
     useState<PendingDismissal | null>(null);
-  const [todayDraft, setTodayDraft] = useState<DailyDraft | null>(() => {
-    if (typeof window === "undefined") return null;
+  const [todayDraft, setTodayDraft] = useState(() => {
+    if (typeof window === "undefined") return { draft: null, storageUnavailable: false };
     const localDate = resolveDailyLocalDate({ kind: "Today" }, calendarTimeZone);
-    return readDailyDraft(accountId, localDate);
+    return readTodayDraft(accountId, localDate);
   });
   const userMovedRef = useRef(false);
   const suppressReturnFocusRef = useRef(false);
@@ -494,9 +505,10 @@ export function useNexusController(): NexusController {
     calendarTimeZone,
   );
   useEffect(() => {
-    setTodayDraft(readDailyDraft(accountId, todayLocalDate));
-    return subscribeDailyDraft(accountId, todayLocalDate, setTodayDraft);
-  }, [accountId, todayLocalDate]);
+    setTodayDraft(readTodayDraft(accountId, todayLocalDate));
+    return subscribeDailyDraft(accountId, todayLocalDate, (draft, storageUnavailable) =>
+      setTodayDraft({ draft, storageUnavailable }));
+  }, [accountId, open, todayLocalDate]);
 
   useEffect(() => {
     if (open) {
@@ -804,9 +816,11 @@ export function useNexusController(): NexusController {
   );
   const todayAppend = useMemo(
     () =>
-      todayDraft === null || dailyDraftAcceptsText(todayDraft)
-        ? ({ kind: "Available" } as const)
-        : ({ kind: "Unavailable", reason: TODAY_APPEND_UNAVAILABLE } as const),
+      todayDraft.storageUnavailable
+        ? ({ kind: "Unavailable", reason: TODAY_STORAGE_UNAVAILABLE } as const)
+        : todayDraft.draft === null || dailyDraftAcceptsText(todayDraft.draft)
+          ? ({ kind: "Available" } as const)
+          : ({ kind: "Unavailable", reason: TODAY_APPEND_UNAVAILABLE } as const),
     [todayDraft],
   );
   const requestedActiveKey = parsed.text
@@ -1203,7 +1217,13 @@ export function useNexusController(): NexusController {
         return;
       }
       setAnnouncement("");
-      const prepared = materialize(action.availability.target);
+      let prepared: MaterializedNexusTarget;
+      try { prepared = materialize(action.availability.target); }
+      catch (error) {
+        if (!(error instanceof DailyDraftStorageError)) throw error;
+        setAnnouncement(TODAY_STORAGE_UNAVAILABLE);
+        return;
+      }
       const attempt = () => {
         void dispatch(prepared, activation, entry).catch((error: unknown) =>
           fail(error, { target: prepared, activation, attempt }),
@@ -1499,7 +1519,13 @@ export function useNexusController(): NexusController {
           return;
         case "Navigate": {
           const activation = intent.activation ?? PROGRAMMATIC_NEXUS_TARGET_ACTIVATION;
-          const target = materialize(intent.target);
+          let target: MaterializedNexusTarget;
+          try { target = materialize(intent.target); }
+          catch (error) {
+            if (!(error instanceof DailyDraftStorageError)) throw error;
+            setAnnouncement(TODAY_STORAGE_UNAVAILABLE);
+            return;
+          }
           const attempt = () => {
             void settleNexusDispatch(() =>
               dispatchNexusTarget(target, dispatchCtx, activation),
@@ -1561,7 +1587,13 @@ export function useNexusController(): NexusController {
           setOpen(true);
           if (detail.kind === "QuickAction") {
             const command = getNexusCommand(detail.actionId);
-            const target = materialize(command.target({ argument: "" }));
+            let target: MaterializedNexusTarget;
+            try { target = materialize(command.target({ argument: "" })); }
+            catch (error) {
+              if (!(error instanceof DailyDraftStorageError)) throw error;
+              setAnnouncement(TODAY_STORAGE_UNAVAILABLE);
+              return;
+            }
             const attempt = () => {
               void dispatch(
                 target,
@@ -1779,6 +1811,7 @@ export function useNexusController(): NexusController {
   }, []);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       const openBinding = keybindings["Nexus.Open"];
       if (openBinding && matchesKeyEvent(openBinding, event)) {
         event.preventDefault();

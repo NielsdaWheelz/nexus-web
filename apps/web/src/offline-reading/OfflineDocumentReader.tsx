@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import PdfReader, {
-  type PdfReaderDecorationWrites,
   type PdfReaderNavigationAdapter,
   type PdfReaderNavigationPlacement,
   type PdfReaderNavigationTarget,
@@ -41,6 +40,7 @@ import {
 } from "@/lib/reader/readerDocumentPosition";
 import type {
   PdfHighlightOut,
+  PdfReaderDecorations,
 } from "@/lib/reader/ReaderDecorations";
 import {
   buildTextReaderLocatorAtOffset,
@@ -106,7 +106,10 @@ const offlineReaderSurfaceStyle = buildReaderSurfaceStyle(
   OFFLINE_SHELF_READER_PROFILE,
 );
 
-const noOfflinePdfDecorations: PdfReaderDecorationWrites = {
+const noOfflinePdfDecorations: PdfReaderDecorations = {
+  async loadPageHighlights(): Promise<readonly PdfHighlightOut[]> {
+    return [];
+  },
   async createHighlight(): Promise<PdfHighlightOut> {
     throw new Error("Highlights are unavailable in downloaded copies");
   },

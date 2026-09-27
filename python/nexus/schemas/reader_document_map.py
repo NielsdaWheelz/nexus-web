@@ -20,7 +20,7 @@ from nexus.schemas.reader_apparatus import (
     ReaderApparatusConfidence,
     ReaderApparatusItemKind,
 )
-from nexus.schemas.resource_graph import EdgeKind, EdgeOrigin
+from nexus.schemas.resource_graph import ConnectionLinkNoteOut, EdgeKind, EdgeOrigin
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import MediaRetrievalLocator
 
@@ -214,21 +214,13 @@ class ReaderEvidenceGeneratedCitationOut(ReaderEvidenceItemBaseOut):
     role: EdgeKind
 
 
-class ReaderEvidenceLinkNoteOut(BaseModel):
-    note_block_id: UUID
-    body_pm_json: dict[str, object]
-    body_text: str
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class ReaderEvidenceLinkOut(ReaderEvidenceItemBaseOut):
     kind: Literal["Link"] = "Link"
     edge_id: UUID
     role: EdgeKind
     origin: EdgeOrigin
     object: ReaderEvidenceObjectOut
-    note: Presence[ReaderEvidenceLinkNoteOut]
+    link_note: ConnectionLinkNoteOut | None
 
 
 class ReaderEvidenceSynapseOut(ReaderEvidenceItemBaseOut):

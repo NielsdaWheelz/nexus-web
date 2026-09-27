@@ -4,7 +4,6 @@ import {
   isRetrievalLocator,
 } from "@/lib/api/sse/locators";
 import { HIGHLIGHT_COLORS } from "@/lib/highlights/segmenter";
-import { decodeNoteBodyValue } from "@/lib/notes/prosemirror/schema";
 import { decodeDocumentEmbeds } from "@/lib/media/documentEmbeds";
 import { decodeMediaNavigation } from "@/lib/media/readerNavigation";
 import { EDGE_KINDS, EDGE_ORIGINS } from "@/lib/resourceGraph/connections";
@@ -380,10 +379,26 @@ function decodeEvidenceItem(raw: unknown, index: number): ReaderEvidenceItem {
           "role",
           "origin",
           "object",
-          "note",
+          "link_note",
         ],
         name,
       );
+      const linkNote = item.link_note === null
+        ? null
+        : expectExactRecord(
+            item.link_note,
+            ["ref", "note_block_id", "preview"],
+            `${name}.link_note`,
+          );
+      const linkNoteId = linkNote
+        ? expectString(linkNote.note_block_id, `${name}.link_note.note_block_id`)
+        : null;
+      const linkNoteRef = linkNote
+        ? expectResourceRef(linkNote.ref, `${name}.link_note.ref`)
+        : null;
+      if (linkNoteId && linkNoteRef !== `note_block:${linkNoteId}`) {
+        defect(`${name}.link_note identity mismatch`);
+      }
       return {
         ...decodeItemBase(item, name),
         kind: "Link",
@@ -391,15 +406,13 @@ function decodeEvidenceItem(raw: unknown, index: number): ReaderEvidenceItem {
         role: expectOneOf(item.role, EDGE_KINDS, `${name}.role`),
         origin: expectOneOf(item.origin, EDGE_ORIGINS, `${name}.origin`),
         object: decodeEvidenceObject(item.object, `${name}.object`),
-        note: decodePresence(item.note, (rawNote) => {
-          const note = expectExactRecord(rawNote, ["note_block_id", "body_pm_json", "body_text"], `${name}.note.value`);
-          const body = decodeNoteBodyValue(note.body_pm_json, note.body_text, `${name}.note.value`);
-          return {
-            note_block_id: expectString(note.note_block_id, `${name}.note.value.note_block_id`),
-            body_pm_json: body.bodyPmJson,
-            body_text: body.bodyText,
-          };
-        }),
+        link_note: linkNote && linkNoteId && linkNoteRef
+          ? {
+              ref: linkNoteRef,
+              note_block_id: linkNoteId,
+              preview: expectNullableString(linkNote.preview, `${name}.link_note.preview`),
+            }
+          : null,
       };
     }
     case "Synapse": {

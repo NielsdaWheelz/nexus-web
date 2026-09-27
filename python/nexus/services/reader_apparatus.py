@@ -537,6 +537,81 @@ def _source_identity(item: Mapping[str, Any]) -> tuple[str, ...] | None:
     return None
 
 
+def match_apparatus_source_items(
+    old: Sequence[Mapping[str, Any]], items: Sequence[Mapping[str, object]]
+) -> dict[str, str]:
+    """Match only unique authored, contextual, or unchanged exact source occurrences."""
+    by_identity: dict[tuple[str, ...], list[Mapping[str, Any]]] = defaultdict(list)
+    by_context: dict[tuple[str, str, str], list[Mapping[str, Any]]] = defaultdict(list)
+    by_locator: dict[tuple[str, str, str, str], list[Mapping[str, Any]]] = defaultdict(list)
+    for row in old:
+        if identity := _source_identity(row):
+            by_identity[identity].append(row)
+        source = _object_dict(row.get("source_ref"))
+        if context := source.get("quote_context"):
+            document = str(source.get("package_href") or source.get("document_href") or "web")
+            by_context[(str(row["kind"]), document, json.dumps(context, sort_keys=True))].append(
+                row
+            )
+        if row.get("locator_status") == "exact" and row.get("locator"):
+            target = source.get("target_ref") or source.get("target_id") or source.get("target_ids")
+            key = (
+                str(row["kind"]),
+                json.dumps(row["locator"], sort_keys=True),
+                str(row.get("body_text")),
+                json.dumps(target, sort_keys=True),
+            )
+            by_locator[key].append(row)
+    identities = Counter(_source_identity(item) for item in items)
+    contexts: Counter[tuple[str, str, str]] = Counter()
+    locators: Counter[tuple[str, str, str, str]] = Counter()
+    for item in items:
+        source = _object_dict(item.get("source_ref"))
+        if context := source.get("quote_context"):
+            document = str(source.get("package_href") or source.get("document_href") or "web")
+            contexts[(str(item["kind"]), document, json.dumps(context, sort_keys=True))] += 1
+        if item.get("locator_status") == "exact" and item.get("locator"):
+            target = source.get("target_ref") or source.get("target_id") or source.get("target_ids")
+            key = (
+                str(item["kind"]),
+                json.dumps(item["locator"], sort_keys=True),
+                str(item.get("body_text")),
+                json.dumps(target, sort_keys=True),
+            )
+            locators[key] += 1
+    matches: dict[str, str] = {}
+    claimed: set[str] = set()
+    for item in items:
+        identity = _source_identity(item)
+        candidates = by_identity.get(identity, []) if identity and identities[identity] == 1 else []
+        source = _object_dict(item.get("source_ref"))
+        own_id = source.get("marker_id" if str(item["kind"]).endswith("_ref") else "target_id")
+        if _object_dict(source.get("identity")).get("kind") == "Anonymous":
+            own_id = None
+        if not candidates and not own_id and (context := source.get("quote_context")):
+            document = str(source.get("package_href") or source.get("document_href") or "web")
+            key = (str(item["kind"]), document, json.dumps(context, sort_keys=True))
+            if contexts[key] == 1:
+                candidates = by_context.get(key, [])
+        if not candidates and item.get("locator_status") == "exact" and item.get("locator"):
+            target = source.get("target_ref") or source.get("target_id") or source.get("target_ids")
+            key = (
+                str(item["kind"]),
+                json.dumps(item["locator"], sort_keys=True),
+                str(item.get("body_text")),
+                json.dumps(target, sort_keys=True),
+            )
+            if locators[key] == 1:
+                candidates = by_locator.get(key, [])
+        if len(candidates) != 1 or str(candidates[0]["kind"]) != str(item["kind"]):
+            continue
+        old_key = str(candidates[0]["stable_key"])
+        if old_key not in claimed:
+            matches[str(item["stable_key"])] = old_key
+            claimed.add(old_key)
+    return matches
+
+
 def _reconcile_items(
     db: Session,
     *,
@@ -545,57 +620,29 @@ def _reconcile_items(
     edges: list[dict[str, object]],
 ) -> None:
     """Keep occurrence identities by source correspondence, never by extraction order."""
-    old = (
-        db.execute(
-            text(
-                "SELECT id, stable_key, kind, source_ref FROM reader_apparatus_items WHERE media_id=:id"
-            ),
-            {"id": media_id},
-        )
-        .mappings()
-        .all()
-    )
-    by_identity: dict[tuple[str, ...], list[Mapping[str, Any]]] = defaultdict(list)
-    by_context: dict[tuple[str, str, str], list[Mapping[str, Any]]] = defaultdict(list)
-    for row in old:
-        row = dict(row)
-        identity = _source_identity(row)
-        if identity:
-            by_identity[identity].append(row)
-        context = dict(row["source_ref"] or {}).get("quote_context")
-        if context:
-            source = dict(row["source_ref"] or {})
-            document = str(source.get("package_href") or source.get("document_href") or "web")
-            by_context[(str(row["kind"]), document, json.dumps(context, sort_keys=True))].append(
-                row
+    old = [
+        dict(row)
+        for row in (
+            db.execute(
+                text(
+                    "SELECT id, stable_key, kind, body_text, locator, locator_status, source_ref"
+                    " FROM reader_apparatus_items WHERE media_id=:id"
+                ),
+                {"id": media_id},
             )
-    new_identities = Counter(_source_identity(item) for item in items)
-    new_contexts: Counter[tuple[str, str, str]] = Counter()
-    for item in items:
-        source = _object_dict(item.get("source_ref"))
-        if context := source.get("quote_context"):
-            document = str(source.get("package_href") or source.get("document_href") or "web")
-            new_contexts[(str(item["kind"]), document, json.dumps(context, sort_keys=True))] += 1
+            .mappings()
+            .all()
+        )
+    ]
+    matches = match_apparatus_source_items(old, items)
+    old_by_key = {str(row["stable_key"]): row for row in old}
     old_keys = {str(row["stable_key"]) for row in old}
     retained: set[UUID] = set()
     replacements: dict[str, str] = {}
     for item in items:
-        identity = _source_identity(item)
-        candidates = (
-            by_identity.get(identity, []) if identity and new_identities[identity] == 1 else []
-        )
-        source = dict(cast(dict[str, object], item.get("source_ref") or {}))
-        context = source.get("quote_context")
-        own_id = source.get("marker_id" if str(item["kind"]).endswith("_ref") else "target_id")
-        if _object_dict(source.get("identity")).get("kind") == "Anonymous":
-            own_id = None
-        if not candidates and context and not own_id:
-            document = str(source.get("package_href") or source.get("document_href") or "web")
-            context_key = (str(item["kind"]), document, json.dumps(context, sort_keys=True))
-            if new_contexts[context_key] == 1:
-                candidates = by_context.get(context_key, [])
-        if len(candidates) == 1 and candidates[0]["id"] not in retained:
-            row = candidates[0]
+        matched_key = matches.get(str(item["stable_key"]))
+        if matched_key is not None:
+            row = old_by_key[matched_key]
             retained.add(row["id"])
             replacements[str(item["stable_key"])] = str(row["stable_key"])
             item["stable_key"] = str(row["stable_key"])

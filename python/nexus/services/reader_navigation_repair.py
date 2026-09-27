@@ -37,6 +37,7 @@ from nexus.services.html_apparatus import (
 )
 from nexus.services.parser_temp import parser_attempt_directory, stream_storage_object_to_file
 from nexus.services.reader_apparatus import (
+    match_apparatus_source_items,
     note_regions_from_publication,
     read_note_regions,
     replace_media_apparatus,
@@ -259,6 +260,36 @@ def _read_snapshot(session_factory: sessionmaker[Session], media_id: UUID) -> _S
         )
 
 
+def _align_apparatus_keys(
+    installed: Sequence[dict[str, object]],
+    proposed_items: Sequence[dict[str, object]],
+    proposed_edges: Sequence[dict[str, object]],
+) -> tuple[tuple[dict[str, object], ...], tuple[dict[str, object], ...]]:
+    """Use stored identities before the repair's no-deletion inspection."""
+    matches = match_apparatus_source_items(installed, proposed_items)
+    items = tuple(
+        {**item, "stable_key": matches.get(str(item["stable_key"]), str(item["stable_key"]))}
+        for item in proposed_items
+    )
+    if len({str(item["stable_key"]) for item in items}) != len(items):
+        raise ValueError("Reader repair has ambiguous source item correspondence")
+    edges = tuple(
+        {
+            **edge,
+            "from_stable_key": matches.get(
+                str(edge["from_stable_key"]), str(edge["from_stable_key"])
+            ),
+            "to_stable_key": matches.get(str(edge["to_stable_key"]), str(edge["to_stable_key"])),
+        }
+        for edge in proposed_edges
+    )
+    for edge in edges:
+        edge["stable_key"] = f"{edge['from_stable_key']}->{edge['to_stable_key']}"
+    if len({str(edge["stable_key"]) for edge in edges}) != len(edges):
+        raise ValueError("Reader repair has ambiguous source edge correspondence")
+    return items, edges
+
+
 def _prepare(snapshot: _Snapshot, storage_client: StorageClient) -> _Prepared:
     if snapshot.kind == "epub":
         assert snapshot.storage_path is not None and snapshot.source_size_bytes is not None
@@ -277,6 +308,10 @@ def _prepare(snapshot: _Snapshot, storage_client: StorageClient) -> _Prepared:
                 storage_path=snapshot.storage_path,
                 retained_fragments=snapshot.fragments,
             )
+        aligned_items, aligned_edges = _align_apparatus_keys(
+            snapshot.installed["items"], plan.apparatus_items, plan.apparatus_edges
+        )
+        plan = replace(plan, apparatus_items=aligned_items, apparatus_edges=aligned_edges)
         fresh_keys = {str(item["stable_key"]) for item in plan.apparatus_items}
         # A fresh import only emits reciprocally proved bodies. Repair also keeps
         # older unlinked body identities when exact retained text lies wholly in
@@ -350,10 +385,11 @@ def _prepare(snapshot: _Snapshot, storage_client: StorageClient) -> _Prepared:
                 fragment.html_sanitized, fragment.canonical_text, fragment.id
             )
         )
+    aligned_items, aligned_edges = _align_apparatus_keys(snapshot.installed["items"], items, edges)
     retained_items = {str(item["stable_key"]): item for item in snapshot.installed["items"]}
-    retained_items.update({str(item["stable_key"]): item for item in items})
+    retained_items.update({str(item["stable_key"]): item for item in aligned_items})
     retained_edges = {str(edge["stable_key"]): edge for edge in snapshot.installed["edges"]}
-    retained_edges.update({str(edge["stable_key"]): edge for edge in edges})
+    retained_edges.update({str(edge["stable_key"]): edge for edge in aligned_edges})
 
     derived_groups = groups
     retained_groups = [NotesGroup.model_validate(group) for group in snapshot.installed["groups"]]

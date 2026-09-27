@@ -314,13 +314,6 @@ def link_note_blocks_for_pair(
     return link_note_blocks_for_pairs(db, viewer_id=viewer_id, pairs=[pair]).get(pair, [])
 
 
-def link_note_block_for_pair(
-    db: Session, *, viewer_id: UUID, a: ResourceRef, b: ResourceRef
-) -> UUID | None:
-    attached = link_note_blocks_for_pair(db, viewer_id=viewer_id, a=a, b=b)
-    return attached[0] if attached else None
-
-
 def source_is(ref: ResourceRef):
     return and_(ResourceEdge.source_scheme == ref.scheme, ResourceEdge.source_id == ref.id)
 

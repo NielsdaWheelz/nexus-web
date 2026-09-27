@@ -17,10 +17,9 @@ import {
 
 export interface HighlightLinkedNoteBlock {
   note_block_id: string;
-  // The shared PDF leaf shape remains optional; hosted text-highlight
-  // responses always decode this field below.
-  body_pm_json?: Record<string, unknown>;
+  body_pm_json: Record<string, unknown>;
   body_text: string;
+  version_by_lane: { body: number; outgoing_edges: number };
 }
 
 export interface HighlightLinkedConversation {
@@ -87,7 +86,7 @@ export function decodeHighlightLinkedNoteBlock(
 ): HighlightLinkedNoteBlock {
   const value = expectExactRecord(
     raw,
-    ["note_block_id", "body_pm_json", "body_text"],
+    ["note_block_id", "body_pm_json", "body_text", "version_by_lane"],
     name,
   );
   const body = decodeNoteBodyValue(
@@ -95,10 +94,21 @@ export function decodeHighlightLinkedNoteBlock(
     value.body_text,
     name,
   );
+  const versions = expectExactRecord(
+    value.version_by_lane,
+    ["body", "outgoing_edges"],
+    `${name}.version_by_lane`,
+  );
+  const bodyVersion = expectInteger(versions.body, `${name}.version_by_lane.body`);
+  const edgeVersion = expectInteger(versions.outgoing_edges, `${name}.version_by_lane.outgoing_edges`);
+  if (bodyVersion < 1 || edgeVersion < 0) {
+    throw new TypeError(`${name}.version_by_lane is invalid`);
+  }
   return {
     note_block_id: expectString(value.note_block_id, `${name}.note_block_id`),
     body_pm_json: body.bodyPmJson,
     body_text: body.bodyText,
+    version_by_lane: { body: bodyVersion, outgoing_edges: edgeVersion },
   };
 }
 

@@ -32,7 +32,6 @@ from nexus.schemas.reader_document_map import (
     ReaderEvidenceGeneratedCitationOut,
     ReaderEvidenceHighlightOut,
     ReaderEvidenceItemOut,
-    ReaderEvidenceLinkNoteOut,
     ReaderEvidenceLinkOut,
     ReaderEvidenceNoteObjectOut,
     ReaderEvidenceObjectOut,
@@ -50,7 +49,7 @@ from nexus.schemas.reader_document_map import (
     ReaderSourceTextOut,
     ReaderSourceUnavailableOut,
 )
-from nexus.schemas.resource_graph import ConnectionEndpointOut
+from nexus.schemas.resource_graph import ConnectionEndpointOut, ConnectionLinkNoteOut
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.reader_connections import ReaderConnectionRow
 from nexus.services.reader_evidence_markers import build_markers
@@ -508,17 +507,6 @@ def _add_remaining_connections(
                 group.also_references.append(ReaderEvidenceAlsoReferenceOut(object=related))
             continue
 
-        link_note = absent()
-        if row.connection.link_note is not None:
-            note_id = row.connection.link_note.note_block_id
-            meta = ctx.note_meta[note_id]
-            link_note = present(
-                ReaderEvidenceLinkNoteOut(
-                    note_block_id=note_id,
-                    body_pm_json=meta.body_pm_json,
-                    body_text=meta.body_text,
-                )
-            )
         _place_item(
             ctx,
             locus_ref,
@@ -533,7 +521,17 @@ def _add_remaining_connections(
                 role=row.connection.kind,
                 origin=row.connection.origin,
                 object=related,
-                note=link_note,
+                link_note=(
+                    ConnectionLinkNoteOut(
+                        ref=row.connection.link_note.ref,
+                        note_block_id=row.connection.link_note.note_block_id,
+                        preview=row.connection.link_note.preview,
+                    )
+                    if row.connection.origin == "user"
+                    and row.connection.kind == "context"
+                    and row.connection.link_note is not None
+                    else None
+                ),
             ),
         )
 

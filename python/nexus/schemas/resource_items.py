@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Annotated, Any, Literal, TypeGuard
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from pydantic import AliasChoices, AliasGenerator, BaseModel, ConfigDict, Field, field_validator
@@ -36,7 +37,23 @@ NOTE_PM_NODE_TYPES = {
     "image",
 }
 NOTE_PM_INLINE_NODE_TYPES = {"text", "hard_break", "object_ref", "image"}
-NOTE_PM_MARK_TYPES = {"strong", "em", "code", "link", "strikethrough"}
+NOTE_PM_MARK_TYPES = {"strong", "em", "code", "link", "strikethrough", "underline"}
+
+
+class AbsentExpectedBody(BaseModel):
+    kind: Literal["absent"]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class VersionExpectedBody(BaseModel):
+    kind: Literal["version"]
+    version: int = Field(ge=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+ExpectedNoteBody = Annotated[AbsentExpectedBody | VersionExpectedBody, Field(discriminator="kind")]
 
 
 class CamelModel(BaseModel):
@@ -136,9 +153,30 @@ def _validate_pm_marks(marks: object, *, path: str) -> None:
         if mark_type == "link":
             if not isinstance(attrs, dict) or not isinstance(attrs.get("href"), str):
                 raise ValueError(f"{mark_path}.attrs.href must be a string")
+            if not _safe_note_link_href(attrs["href"]):
+                raise ValueError(f"{mark_path}.attrs.href must be a safe link")
             title = attrs.get("title")
             if title is not None and not isinstance(title, str):
                 raise ValueError(f"{mark_path}.attrs.title must be a string or null")
+
+
+def _safe_note_link_href(href: str) -> bool:
+    if not href or any(
+        char.isspace() or ord(char) < 32 or ord(char) == 127 or char == "\\" for char in href
+    ):
+        return False
+    if href.startswith("/"):
+        return not href.startswith("//")
+    try:
+        parsed = urlsplit(href)
+        if parsed.scheme in {"http", "https"}:
+            if "%" in parsed.netloc:
+                return False
+            _ = parsed.port  # reject malformed or out-of-range ports, as the browser does
+            return bool(parsed.hostname)
+    except ValueError:
+        return False
+    return parsed.scheme == "mailto" and bool(parsed.path) and not parsed.netloc
 
 
 def _validate_pm_attrs(node_type: str, attrs: dict[str, Any] | None, *, path: str) -> None:
