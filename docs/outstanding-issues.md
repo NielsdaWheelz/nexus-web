@@ -41,6 +41,7 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] workspace / rendering · 2026-09-24 reader-inspector-controls · PaneRuntimeFrame memo never bails out: [ticket](tickets/pane-runtime-frame-memo-never-bails-out.md).
 - [open] workspace / copy · 2026-09-24 reader-inspector-controls · secondary tab close label case differs from pane close: [ticket](tickets/secondary-tab-close-label-case.md).
 - [open] epub ingest · 2026-09-24 reader-inspector-controls · fragmentless nav hrefs duplicate contents: [ticket](tickets/epub-nav-without-fragments-duplicates-contents.md).
+- [open] epub ingest · 2026-09-26 fragment-only nav fix review · unsafe authored nav hrefs lack source issues: [ticket](tickets/epub-unsafe-nav-targets-have-no-source-issue.md).
 - [open] chat api · 2026-09-24 reader-inspector-controls · conversation read returns 500 without a generation catalog: [ticket](tickets/conversation-read-500s-without-generation-catalog.md).
 - [open] worker / indexing · 2026-09-24 reader-inspector-controls · a missing indexing credential is classified as a child defect: [ticket](tickets/indexing-without-credential-is-a-child-defect.md).
 - [open] android offline reading · 2026-09-24 reader-inspector-controls · back from the downloaded reader shows Not found: [ticket](tickets/android-back-from-downloaded-reader-shows-not-found.md).
