@@ -587,6 +587,24 @@ def release(source_sha: str, workspace: Path) -> None:
         " the API is down from here until `up` succeeds"
     )
     compose(candidate, f"stop --timeout 30 {' '.join(WRITERS)}", timeout=300)
+    if (
+        starting_revision in {"0241", "0242", "0243", "0244"}
+        and candidate.expected_database_revision == "0245"
+    ):
+        missing = psql("""
+            SELECT COUNT(DISTINCT item.media_id)
+            FROM reader_apparatus_items item
+            LEFT JOIN reader_publications publication ON publication.media_id = item.media_id
+            WHERE publication.media_id IS NULL
+        """)
+        if not missing.isdecimal():
+            raise Failure(f"invalid apparatus publication count: {missing!r}")
+        if int(missing):
+            raise Failure(
+                f"0245 blocked: {missing} apparatus media have no reader publication;"
+                " repair their publication or stale apparatus before releasing"
+            )
+        note("0245 publication preflight: zero apparatus media without a reader publication")
     if starting_revision:
         backup(candidate, starting_revision)
     elif psql("SELECT count(*) FROM pg_tables WHERE schemaname = 'public'") != "0":

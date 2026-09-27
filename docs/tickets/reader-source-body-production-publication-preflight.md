@@ -13,8 +13,10 @@ production query on 2026-09-27 at revision 0241 found 21 distinct apparatus
 media and zero without a publication. repeat the count under the stopped-writer
 release fence; this observation can drift before cutover.
 
-prerequisite: production is at revision `0244` after the shared note-link
-migration; coordinate a read-only check before applying `0245`. if the count
+prerequisite: the release controller stops writers at production's current
+`0241` revision and counts missing publications before backup or migration.
+revisions `0242`–`0244` do not change apparatus-publication ownership; the
+`0245` migration repeats the guard before altering its schema. if the count
 is nonzero, inspect each media and repair
 its publication or stale apparatus under the existing publication contract.
 do not bypass the migration guard or discard source issues.
