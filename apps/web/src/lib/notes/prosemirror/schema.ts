@@ -269,18 +269,15 @@ export function emptyNoteBody(): NoteBodyValue {
 }
 
 export function createNoteBodyDoc(input: {
-  bodyPmJson?: Record<string, unknown>;
-  fallbackBodyText?: string;
+  bodyPmJson: Record<string, unknown>;
 }): ProseMirrorNode {
-  const body = noteBodyNodeFromJson(
-    input.bodyPmJson,
-    input.fallbackBodyText ?? "",
-  );
+  const body = decodeNoteBodyNode(input.bodyPmJson, "note body");
   return noteBodySchema.nodes.note_body_doc!.create(null, body);
 }
 
 export function noteBodyValueFromDoc(doc: ProseMirrorNode): NoteBodyValue {
-  const body = doc.firstChild ?? paragraphFromText("");
+  const body = doc.firstChild;
+  if (!body) throw new TypeError("note body document must contain one block");
   return noteBodyValueFromNode(body);
 }
 
@@ -289,6 +286,7 @@ function decodeNoteBodyNode(raw: unknown, name: string): ProseMirrorNode {
   let body: ProseMirrorNode;
   try {
     body = noteBodySchema.nodeFromJSON(bodyPmJson);
+    body.check();
   } catch {
     throw new TypeError(`${name} must be a valid note body`);
   }
@@ -312,14 +310,6 @@ export function decodeNoteBodyValue(
     throw new TypeError(`${name}.bodyText must match bodyPmJson`);
   }
   return value;
-}
-
-function noteBodyNodeFromJson(
-  bodyPmJson: Record<string, unknown> | undefined,
-  fallbackBodyText = "",
-): ProseMirrorNode {
-  if (bodyPmJson === undefined) return paragraphFromText(fallbackBodyText);
-  return decodeNoteBodyNode(bodyPmJson, "note body");
 }
 
 function noteBodyValueFromNode(body: ProseMirrorNode): NoteBodyValue {

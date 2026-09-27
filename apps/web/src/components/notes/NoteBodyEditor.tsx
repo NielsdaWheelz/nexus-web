@@ -225,11 +225,8 @@ export default function NoteBodyEditor({
   const autocompleteListboxId = useId();
   const viewRef = useRef<EditorView | null>(null);
   const externalDoc = useMemo(
-    () => createNoteBodyDoc({
-      bodyPmJson: document.body.bodyPmJson,
-      fallbackBodyText: document.body.bodyText,
-    }),
-    [document.body.bodyPmJson, document.body.bodyText],
+    () => createNoteBodyDoc({ bodyPmJson: document.body.bodyPmJson }),
+    [document.body.bodyPmJson],
   );
   const initialDocRef = useRef(externalDoc);
   const initialResourceKeyRef = useRef(resourceKey);

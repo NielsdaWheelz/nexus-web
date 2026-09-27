@@ -222,8 +222,11 @@ temporary tests are absent, and the saving/annotation tickets linked by the
 [audit](research/notes-current-system.md#saving-and-the-important-defects) are
 resolved and removed from the register.
 
-2026-09-26 implementation receipt: desktop w1, w3 and w5 pass; w4's reachable
-save/replay paths pass, while duplicate exact anchors are rejected before its
-ambiguous ui can exist. desktop w6 passes; physical android w2/w6 remain blocked
-by another session's use of the phone. release preflights remain open. temporary
-live tests stay outside the repository until all required checks pass.
+2026-09-26 review handoff: desktop w1, w3 and w5 pass on the production web
+build; w4's reachable save/replay paths pass, while duplicate exact anchors
+are rejected before its ambiguous ui can exist. desktop w6 passes. a new
+whitespace/hard-break draft now survives save and reopen after a live red/green
+repair. the owner deferred physical android w2/w6 until after review and the
+stacked bullet pr; the final-build device result remains unverified. target
+draft and data preflights remain open. temporary live probes stay outside the
+repository until the deferred acceptance is complete.
