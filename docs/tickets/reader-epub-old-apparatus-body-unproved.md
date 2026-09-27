@@ -1,6 +1,6 @@
-# historical epub apparatus body cannot be preserved
+# historical epub marker correction awaits production
 
-status: open
+status: open; code proved on restored clone, production repair pending
 origin: 2026-09-27 production corpus census, base `3029201f`
 area: epub apparatus repair
 
@@ -16,14 +16,20 @@ the restored production clone. private evidence:
 `/tmp/nexus-chapter-rehearsal.nx22kQ/census/receipts.jsonl` (0600). dropping
 the item would still delete a published stable identity.
 
-prerequisites: explicit acceptance of a narrowly proved correction to the
-published-identity preservation rule. require reciprocal retained-dom markers,
-exact old/new ref and marker-span matches, two disjoint note bodies, the source
-target relationship, and zero external dependents. recheck dependents under a
-write barrier during apply; reject every ambiguous shape. do not relax the
-general group or old-identity guards.
+the approved one-time correction checks reciprocal retained-dom markers,
+exact old/new ref and marker-span matches, two disjoint note bodies, source
+target identity, and zero external dependents. apply rechecks under a
+`share nowait` write barrier; other old identities retain their strict guard.
+on the restored production clone, `d924e3eb4` inspect → apply → inspect was
+changed → changed → unchanged in 1.31 seconds. old ref uuid and published
+content/state hashes stayed fixed; one false body and edge were removed; four
+items and two correct edges remain. altered quote, edge, reciprocal href, and
+an injected dependent all rejected without persisted writes.
 
-acceptance: fenced inspect/apply removes only the false old body and edge,
-retains the unchanged old ref, installs the two proved pairs, and preserves all
-unrelated items, edges, and user state. negative shapes reject without a write.
-until then inspect rejects and the combined reader cutover waits.
+prerequisite: the release candidate must include the proved correction and
+pass the full ready-epub census. after production repair, remove this temporary
+exception in the second cleanup release.
+
+acceptance: production fenced inspect/apply shows the same single correction
+and idempotent re-inspection, with all unrelated reader state preserved; the
+cleanup release restores unconditional old-identity preservation.
