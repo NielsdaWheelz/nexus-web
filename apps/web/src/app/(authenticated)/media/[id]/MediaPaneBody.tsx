@@ -3375,7 +3375,7 @@ export default function MediaPaneBody() {
     const cursor = cursorRef.current;
     if (!isEpub || !root || !cursor || !activeContent ||
       !validateCanonicalText(cursor, activeContent.canonicalText)) return;
-    bindEpubSourceNoteReferences(root, cursor, activeContent.fragmentId,
+    return bindEpubSourceNoteReferences(root, cursor, activeContent.fragmentId,
       readerEvidence?.passage_groups ?? []);
   }, [isEpub, activeContent, activeTextPublicationKey, renderedHtml,
     readerEvidence, textHighlightInitialLoading]);

@@ -7,8 +7,11 @@ export function bindEpubSourceNoteReferences(
   cursor: CanonicalCursorResult,
   fragmentId: string,
   groups: readonly ReaderEvidencePassageGroup[],
-): void {
+): () => void {
   const canonicalCharacters = [...cursor.emitted];
+  const bound: Array<{ marker: HTMLAnchorElement; itemId: string; kind: string; confidence: string }> = [];
+  const candidates = new Map<HTMLAnchorElement, ReaderEvidenceSourceReference>();
+  const ambiguous = new Set<HTMLAnchorElement>();
   for (const group of groups) {
     if (group.resolution.kind !== "Resolved") continue;
     const references = group.items.filter((item): item is ReaderEvidenceSourceReference =>
@@ -45,8 +48,28 @@ export function bindEpubSourceNoteReferences(
     }
     if (!matchesFullLink) continue;
 
+    const previous = candidates.get(marker);
+    if (previous && (previous.id !== item.id || previous.stable_key !== item.stable_key)) {
+      ambiguous.add(marker);
+    } else {
+      candidates.set(marker, item);
+    }
+  }
+  for (const [marker, item] of candidates) {
+    if (ambiguous.has(marker)) continue;
     marker.setAttribute("data-reader-apparatus-item-id", item.stable_key);
     marker.setAttribute("data-reader-apparatus-kind", item.apparatus_kind);
     marker.setAttribute("data-reader-apparatus-confidence", item.confidence);
+    bound.push({ marker, itemId: item.stable_key, kind: item.apparatus_kind, confidence: item.confidence });
   }
+  return () => {
+    for (const { marker, itemId, kind, confidence } of bound) {
+      if (marker.getAttribute("data-reader-apparatus-item-id") !== itemId ||
+        marker.getAttribute("data-reader-apparatus-kind") !== kind ||
+        marker.getAttribute("data-reader-apparatus-confidence") !== confidence) continue;
+      marker.removeAttribute("data-reader-apparatus-item-id");
+      marker.removeAttribute("data-reader-apparatus-kind");
+      marker.removeAttribute("data-reader-apparatus-confidence");
+    }
+  };
 }
