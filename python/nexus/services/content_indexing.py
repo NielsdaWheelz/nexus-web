@@ -77,7 +77,7 @@ CONTENT_INDEX_SPOOL_MAX_BYTES = 384 * 1024 * 1024
 _SPOOL_RECORD_MAX_BYTES = CONTENT_INDEX_CHUNK_MAX_BYTES * 16 + 1024 * 1024
 MEDIA_CONTENT_REINDEX_JOB_KIND = "media_content_reindex_job"
 MEDIA_CONTENT_REINDEX_REASONS = frozenset(
-    {"source_success", "reconciliation", "oracle_corpus_seed"}
+    {"source_success", "reconciliation", "oracle_corpus_seed", "operator_heading_normalization"}
 )
 DocumentSourceKind = Literal["web_article", "epub", "pdf"]
 _SOURCE_KINDS = ("web_article", "epub", "pdf", "transcript", "note")
@@ -1188,6 +1188,9 @@ def request_media_content_reindex(
     db: Session, *, media_id: UUID, reason: str, request_id: str | None
 ) -> MediaContentReindexIntent:
     """Raise the index revision and leave exactly one waiting job for it."""
+    if not isinstance(reason, str) or reason not in MEDIA_CONTENT_REINDEX_REASONS:
+        raise ValueError("media content-reindex reason is invalid")
+
     from nexus.jobs.queue import (
         enqueue_job,
         lock_jobs_for_payload,
@@ -1264,6 +1267,9 @@ def ensure_media_content_reindex_job(
     db: Session, *, media_id: UUID, reason: str, request_id: str | None
 ) -> MediaContentReindexIntent:
     """Ensure the current revision owns a queue row, without raising it."""
+    if not isinstance(reason, str) or reason not in MEDIA_CONTENT_REINDEX_REASONS:
+        raise ValueError("media content-reindex reason is invalid")
+
     from nexus.jobs.queue import enqueue_job, lock_jobs_for_payload
     from nexus.jobs.registry import get_default_registry
 
