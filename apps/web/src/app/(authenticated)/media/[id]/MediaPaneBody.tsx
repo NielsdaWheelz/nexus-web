@@ -1903,6 +1903,41 @@ export default function MediaPaneBody() {
       : readerNavigation
         ? `${id}:${readerNavigation.generation}`
         : null;
+  // Both navigation adoption and lifecycle saves address the visible timeline.
+  // The selected detail is retained separately so a detour can restore it.
+  const captureTranscriptPosition = () => {
+    const viewport = transcriptViewportRef.current;
+    const list = transcriptSegmentListRef.current;
+    const placement = viewport && list ? captureTranscriptPlacement(viewport, list) : null;
+    const selectedLocator = buildTextLocatorAtOffset(0);
+    if (!viewport || !placement || selectedLocator?.kind !== "transcript" ||
+        !navigationSource || isMismatchDisabled) return null;
+    let locator = selectedLocator;
+    if (placement.listVisible) {
+      let documentStartOffset = 0;
+      const fragment = transcriptFindSnapshot?.fragments.find((candidate) => {
+        if (candidate.id === placement.fragmentId) return true;
+        documentStartOffset += canonicalCpLength(candidate.canonicalText);
+        return false;
+      });
+      if (!fragment || fragment.canonicalText !== placement.canonicalText) return null;
+      const visibleLocator = buildTextReaderLocatorAtOffset({
+        anchorOffset: placement.text.anchorCp,
+        canonicalText: fragment.canonicalText,
+        fragmentId: fragment.id,
+        format: "transcript",
+        documentStartOffset,
+        documentLength: totalTextLength,
+        isFinalUnit: false,
+        epubFragment: null,
+        epubAnchorId: null,
+        positionBucketCodePoints: READER_POSITION_BUCKET_CP,
+      });
+      if (visibleLocator?.kind !== "transcript") return null;
+      locator = visibleLocator;
+    }
+    return { viewport, placement, selectedLocator, locator, source: navigationSource };
+  };
   const readerNavigationOwner = useReaderNavigation<HostedNavigationTarget, HostedNavigationPlacement>({
     visitKey: `${paneRuntime.visitId}:${id}`,
     source: navigationSource,
@@ -1913,40 +1948,13 @@ export default function MediaPaneBody() {
           return checkpoint ? { ...checkpoint, placement: { kind: "Pdf" as const, value: checkpoint.placement } } : null;
         }
         if (isTranscriptMedia) {
-          const viewport = transcriptViewportRef.current;
-          const list = transcriptSegmentListRef.current;
-          const placement = viewport && list ? captureTranscriptPlacement(viewport, list) : null;
-          const selectedLocator = buildTextLocatorAtOffset(0);
-          if (!viewport || !placement || selectedLocator?.kind !== "transcript" ||
-              !navigationSource || isMismatchDisabled) return null;
-          let locator = selectedLocator;
-          if (placement.listVisible) {
-            let documentStartOffset = 0;
-            const fragment = transcriptFindSnapshot?.fragments.find((candidate) => {
-              if (candidate.id === placement.fragmentId) return true;
-              documentStartOffset += canonicalCpLength(candidate.canonicalText);
-              return false;
-            });
-            if (!fragment || fragment.canonicalText !== placement.canonicalText) return null;
-            const visibleLocator = buildTextReaderLocatorAtOffset({
-              anchorOffset: placement.text.anchorCp,
-              canonicalText: fragment.canonicalText,
-              fragmentId: fragment.id,
-              format: "transcript",
-              documentStartOffset,
-              documentLength: totalTextLength,
-              isFinalUnit: false,
-              epubFragment: null,
-              epubAnchorId: null,
-              positionBucketCodePoints: READER_POSITION_BUCKET_CP,
-            });
-            if (visibleLocator?.kind !== "transcript") return null;
-            locator = visibleLocator;
-          }
+          const capture = captureTranscriptPosition();
+          if (!capture) return null;
+          const { viewport, placement, selectedLocator, locator, source } = capture;
           const focus = document.activeElement;
           return {
             kind: "Captured",
-            source: navigationSource,
+            source,
             locator,
             placement: { kind: "Transcript", value: placement, selectedLocator },
             occurrence: absent(),
@@ -2712,6 +2720,9 @@ export default function MediaPaneBody() {
   // Lifecycle promotion and `Stay at this position` consume the latest exact
   // format publication. They never trigger a second geometry pass.
   captureCurrentLocatorRef.current = () => {
+    if (isTranscriptMedia) {
+      return captureTranscriptPosition()?.locator ?? null;
+    }
     if (isPdf) {
       pdfControlsRef.current?.captureResumeState();
     } else {
