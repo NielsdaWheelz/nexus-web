@@ -36,7 +36,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] reader / find · 2026-09-24 reader-inspector-controls · web and transcript find keep a render frame budget: [ticket](tickets/web-and-transcript-find-render-budget.md).
 - [open] reader / inspector · 2026-09-24 reader-inspector-controls · reload open on Contents briefly shows Evidence: [ticket](tickets/reader-contents-publishes-after-navigation.md).
 - [open] reader / apparatus · 2026-09-26 reader chapter repair · newly inferred notes in preserved legacy html lack inline marker activation: [ticket](tickets/reader-repaired-note-markers-not-inline.md).
-- [open] reader / indexing verification · 2026-09-26 reader chapter repair · isolated article reindex acceptance needs an embedding credential: [ticket](tickets/reader-article-reindex-acceptance-needs-embedding-credential.md).
 - [open] epub / sections · 2026-09-26 chapter implementation · ambiguous pillow frontmatter headings still become routine stops: [ticket](tickets/epub-contents-union-overpromotes-source-headings.md).
 - [open] reader / production · 2026-09-26 chapter implementation · affected production originals and pending offline state remain unverified while both ssh routes time out: [ticket](tickets/reader-chapter-production-correspondence-unverified.md).
 - [open] reader / navigation · 2026-09-24 reader-inspector-controls · document-map return drifts a line per round trip: [ticket](tickets/document-map-return-drifts-per-round-trip.md).

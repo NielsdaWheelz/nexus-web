@@ -275,9 +275,11 @@ fences, fragment/annotation identity preservation, migration rehearsal and
 python/typescript offline v2 rejection passed. `./scripts/test` and android
 `:app:assembleDebug` passed. temporary probes live only under `/tmp/`.
 
-the isolated article repair queued revision-2 reconciliation, but its worker
-cannot publish indexed blocks without an embedding credential:
-[ticket](tickets/reader-article-reindex-acceptance-needs-embedding-credential.md).
+the isolated article repair published revision-2 reconciliation through the
+normal exact worker job `02444e86-ac04-4fe7-a8ce-b7734787a3e7`. the index is
+ready with seven content blocks; their only section ids are the repaired
+`A short chapter` and `Notes` headings. a credential was supplied only to the
+one-shot isolated worker process; no secret was copied into the task runtime.
 production source/row correspondence, restored rehearsal, pending offline
 progress, and deployment remain unverified because both ssh routes timed out:
 [ticket](tickets/reader-chapter-production-correspondence-unverified.md). these
