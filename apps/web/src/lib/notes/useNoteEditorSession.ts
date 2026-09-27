@@ -86,7 +86,7 @@ export function useNoteEditorSession(input: UseNoteEditorSessionOptions): NoteEd
   const flush = useCallback(() => store.flush(noteRef), [store, noteRef]);
   const retry = useCallback(() => store.retry(noteRef), [store, noteRef]);
   const recoveryCandidates = useCallback(() => store.listRecovery(ownerKey), [store, ownerKey]);
-  const recover = useCallback((candidate: RecoveryCandidate) => candidate.revision !== null && !candidate.corrupt && store.recover(noteRef, candidate.key, candidate.revision), [store, noteRef]);
+  const recover = useCallback((candidate: RecoveryCandidate) => candidate.revision !== null && !candidate.corrupt && !candidate.legacy && store.recover(noteRef, candidate.key, candidate.revision), [store, noteRef]);
   const discard = useCallback(() => store.discard(noteRef), [store, noteRef]);
   const exportRaw = useCallback((key: string) => store.exportRaw(key), [store]);
   const reapply = useCallback(() => store.reapply(noteRef), [store, noteRef]);
@@ -95,7 +95,7 @@ export function useNoteEditorSession(input: UseNoteEditorSessionOptions): NoteEd
   const rebindOwner = useCallback((nextOwnerKey: string) => store.rebindOwner(noteRef, nextOwnerKey), [store, noteRef]);
   const submitOperation = useCallback((operation: { key: string; intent: unknown } & OperationCallbacks) => store.enqueueOperation({ ownerKey, ...operation }), [store, ownerKey]);
   const recoverOperation = useCallback((candidate: RecoveryCandidate, callbacks: OperationCallbacks) => {
-    if (candidate.corrupt || candidate.revision === null || candidate.operationId === null) return false;
+    if (candidate.corrupt || candidate.legacy || candidate.revision === null || candidate.operationId === null) return false;
     if (!store.recoverOperation(candidate.key, candidate.revision, candidate.operationId)) return false;
     store.attachOperation(candidate.operationId, callbacks);
     return true;

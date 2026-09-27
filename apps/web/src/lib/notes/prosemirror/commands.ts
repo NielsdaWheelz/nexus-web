@@ -64,8 +64,8 @@ export const insertCodeNewline: Command = (state, dispatch) => {
 export function splitNoteBodyAtSelection(
   state: EditorState,
 ): NoteBodySplit | null {
+  if (!state.selection.empty) state = state.apply(state.tr.deleteSelection());
   if (
-    !state.selection.empty ||
     state.selection.$from.parent !== state.doc.firstChild ||
     state.selection.$from.parent.type !== noteBodySchema.nodes.paragraph
   ) {

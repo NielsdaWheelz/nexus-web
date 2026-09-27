@@ -138,6 +138,10 @@ export interface NoteBodyEditorProps {
   focusRequest?: number;
   onSplit?: (split: NoteBodySplit) => void;
   onEmptyBackspace?: () => void;
+  onIndent?: () => void;
+  onOutdent?: () => void;
+  onSelectBlock?: () => void;
+  onBoundaryJoin?: (direction: "backward" | "forward") => void;
   inputHandoff?: NoteBodyInputHandoff | null;
   onInputHandoffClaimed?: (handoffId: string) => void;
 }
@@ -216,6 +220,10 @@ export default function NoteBodyEditor({
   focusRequest = 0,
   onSplit,
   onEmptyBackspace,
+  onIndent,
+  onOutdent,
+  onSelectBlock,
+  onBoundaryJoin,
   inputHandoff = null,
   onInputHandoffClaimed,
 }: NoteBodyEditorProps) {
@@ -228,7 +236,6 @@ export default function NoteBodyEditor({
     () => createNoteBodyDoc({ bodyPmJson: document.body.bodyPmJson }),
     [document.body.bodyPmJson],
   );
-  const initialDocRef = useRef(externalDoc);
   const initialResourceKeyRef = useRef(resourceKey);
   const appliedRevisionRef = useRef(document.revision);
   const latestDocumentRef = useRef({ doc: externalDoc, revision: document.revision });
@@ -250,6 +257,7 @@ export default function NoteBodyEditor({
   const onErrorRef = useRef(onError);
   const onSplitRef = useRef(onSplit);
   const onEmptyBackspaceRef = useRef(onEmptyBackspace);
+  const structuralKeysRef = useRef({ onIndent, onOutdent, onSelectBlock, onBoundaryJoin });
   const onInputHandoffClaimedRef = useRef(onInputHandoffClaimed);
   const claimedInputHandoffIdsRef = useRef<Set<string>>(new Set());
   const notePulseTargetRef = useRef(notePulseTarget);
@@ -271,7 +279,6 @@ export default function NoteBodyEditor({
 
   if (initialResourceKeyRef.current !== resourceKey) {
     initialResourceKeyRef.current = resourceKey;
-    initialDocRef.current = externalDoc;
     appliedRevisionRef.current = document.revision;
   }
 
@@ -288,6 +295,7 @@ export default function NoteBodyEditor({
   onErrorRef.current = onError;
   onSplitRef.current = onSplit;
   onEmptyBackspaceRef.current = onEmptyBackspace;
+  structuralKeysRef.current = { onIndent, onOutdent, onSelectBlock, onBoundaryJoin };
   onInputHandoffClaimedRef.current = onInputHandoffClaimed;
   notePulseTargetRef.current = notePulseTarget;
   ariaLabelRef.current = ariaLabel;
@@ -446,7 +454,7 @@ export default function NoteBodyEditor({
     ) return;
     applyCanonicalDoc(view, externalDoc);
     appliedRevisionRef.current = document.revision;
-  }, [document.revision, externalDoc]);
+  }, [document.revision, editorReady, externalDoc]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -696,7 +704,7 @@ export default function NoteBodyEditor({
     const view = new EditorView(host, {
       state: EditorState.create({
         schema: noteBodySchema,
-        doc: initialDocRef.current,
+        doc: latestDocumentRef.current.doc,
         plugins: [
           createNotePulseDecorationPlugin(),
           createNoteBodyKeymap({
@@ -831,38 +839,74 @@ export default function NoteBodyEditor({
               );
               return true;
             }
-            if (
-              event.target !== currentView.dom &&
-              event.target.closest(
-                "button, a, input, textarea, select, [contenteditable='false']",
-              )
-            ) {
-              return false;
-            }
-          }
-          if (
-            event.key === "Backspace" &&
-            onEmptyBackspaceRef.current &&
-            isEmptyBodyAtStart(currentView.state)
-          ) {
-            event.preventDefault();
-            onEmptyBackspaceRef.current();
-            return true;
-          }
-          if (
-            event.key === "Enter" &&
-            !event.shiftKey &&
-            onSplitRef.current &&
-            !currentView.state.selection.$from.parent.type.spec.code
-          ) {
-            const split = splitNoteBodyAtSelection(currentView.state);
-            if (!split) return false;
-            event.preventDefault();
-            onSplitRef.current(publicSplit(split));
-            return true;
           }
           return false;
         },
+      },
+      handleKeyDown(currentView, event) {
+        if (currentView.composing || event.isComposing || event.keyCode === 229) return false;
+        if (event.target instanceof HTMLElement && event.target !== currentView.dom &&
+            event.target.closest("button, a, input, textarea, select, [contenteditable='false']")) return false;
+        const structural = structuralKeysRef.current;
+        if ((event.key === "Enter" && onSplitRef.current) ||
+            (event.key === "Backspace" && (onEmptyBackspaceRef.current || structural.onBoundaryJoin)) ||
+            (event.key === "Delete" && structural.onBoundaryJoin) ||
+            (event.key === "Tab" && (structural.onIndent || structural.onOutdent)) ||
+            (event.key === "Escape" && structural.onSelectBlock)) {
+          // Native navigation can move the caret before selectionchange fires.
+          // Structural commands must use that caret, not the previous PM state.
+          const native = currentView.dom.ownerDocument.getSelection();
+          if (native?.anchorNode && native.focusNode &&
+              currentView.dom.contains(native.anchorNode) && currentView.dom.contains(native.focusNode)) {
+            const anchor = currentView.posAtDOM(native.anchorNode, native.anchorOffset);
+            const head = currentView.posAtDOM(native.focusNode, native.focusOffset);
+            const state = currentView.state;
+            if ((anchor !== state.selection.anchor || head !== state.selection.head) &&
+                state.doc.resolve(anchor).parent.inlineContent && state.doc.resolve(head).parent.inlineContent) {
+              currentView.dispatch(state.tr.setSelection(TextSelection.create(state.doc, anchor, head)));
+            }
+          }
+        }
+        if (event.key === "Escape" && structural.onSelectBlock) {
+          event.preventDefault(); structural.onSelectBlock(); return true;
+        }
+        if (event.key === "Tab" && !event.altKey && !event.ctrlKey && !event.metaKey) {
+          const action = event.shiftKey ? structural.onOutdent : structural.onIndent;
+          if (action) { event.preventDefault(); action(); return true; }
+        }
+        if (structural.onBoundaryJoin && currentView.state.selection.empty &&
+            currentView.state.selection.$from.parent.type === noteBodySchema.nodes.paragraph &&
+            !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
+          const position = currentView.state.selection.$from;
+          if (event.key === "Backspace" && position.parentOffset === 0 && position.parent.content.size > 0) {
+            event.preventDefault(); structural.onBoundaryJoin("backward"); return true;
+          }
+          if (event.key === "Delete" && position.parentOffset === position.parent.content.size) {
+            event.preventDefault(); structural.onBoundaryJoin("forward"); return true;
+          }
+        }
+        if (
+          event.key === "Backspace" && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey &&
+          onEmptyBackspaceRef.current &&
+          isEmptyBodyAtStart(currentView.state)
+        ) {
+          event.preventDefault();
+          onEmptyBackspaceRef.current();
+          return true;
+        }
+        if (
+          event.key === "Enter" &&
+          !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey &&
+          onSplitRef.current &&
+          !currentView.state.selection.$from.parent.type.spec.code
+        ) {
+          const split = splitNoteBodyAtSelection(currentView.state);
+          if (!split) return false;
+          event.preventDefault();
+          onSplitRef.current(publicSplit(split));
+          return true;
+        }
+        return false;
       },
       dispatchTransaction(transaction) {
         const before = view.state;
@@ -894,6 +938,7 @@ export default function NoteBodyEditor({
     });
 
     viewRef.current = view;
+    appliedRevisionRef.current = latestDocumentRef.current.revision;
     setEditorReady(true);
     if (notePulseTargetRef.current) {
       applyNotePulseTarget(notePulseTargetRef.current);

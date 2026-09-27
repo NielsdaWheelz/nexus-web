@@ -693,7 +693,7 @@ def _resolution_for_connection(
                 assert_never(unexpected)
     return ReaderEvidenceUnavailableOut(
         reason=reason,
-        sort_order_key=row.connection.target_order_key
+        sort_order_key=None
         if row.connection.direction == "incoming"
         else row.connection.source_order_key,
     )

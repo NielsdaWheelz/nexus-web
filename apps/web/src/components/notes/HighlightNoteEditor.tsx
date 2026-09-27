@@ -559,8 +559,8 @@ function AnnotationBody({
           <summary>Other unsaved drafts</summary>
           {recoveryCandidates.map((candidate, index) => (
             <div key={`${candidate.key}:${candidate.noteRef ?? candidate.operationId ?? index}`} className={styles.recoveryCandidate}>
-              <span>{candidate.corrupt ? "Unreadable draft" : candidate.noteRef === noteRef ? "This note" : "Another note or pending removal"}</span>
-              {!candidate.corrupt && candidate.noteRef === noteRef && candidate.revision !== null ? (
+              <span>{candidate.legacy ? "Previous writing format — copy recovery data" : candidate.corrupt ? "Unreadable draft" : candidate.noteRef === noteRef ? "This note" : "Another note or pending removal"}</span>
+              {!candidate.corrupt && !candidate.legacy && candidate.noteRef === noteRef && candidate.revision !== null ? (
                 <Button variant="secondary" size="sm" onClick={() => {
                   if (!session.recover(candidate)) return;
                   session.rebindOwner(activeOwnerKey);
@@ -572,7 +572,7 @@ function AnnotationBody({
                   }
                 }}>Recover note</Button>
               ) : null}
-              {!candidate.corrupt && candidate.operationId && candidate.revision !== null ? (
+              {!candidate.corrupt && !candidate.legacy && candidate.operationId && candidate.revision !== null ? (
                 <Button variant="secondary" size="sm" onClick={() => recoverDetach(candidate)}>Retry removal</Button>
               ) : null}
               <Button variant="ghost" size="sm" onClick={() => exportText("writing-journal.json", session.exportRaw(candidate.key) ?? candidate.raw, "application/json")}>Export raw</Button>

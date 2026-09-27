@@ -344,8 +344,10 @@ class ResourceSurfaceNode(BaseModel):
 
 
 class ResourceSurfaceOccurrence(BaseModel):
-    occurrence_id: UUID
+    link_id: UUID
     target: ResourceSurfaceNode
+    collapsed: bool
+    has_link_note: bool
 
     model_config = ConfigDict(extra="forbid")
 
@@ -359,8 +361,15 @@ class ResourceSurfaceOut(BaseModel):
 
 class ResourceLaneVersionIn(BaseModel):
     ref: str
-    lane: Literal["title", "body", "outgoing_edges"]
+    lane: Literal["title", "body", "links"]
     version: int = Field(ge=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SurfaceContext(BaseModel):
+    root_ref: str
+    link_path: list[UUID]
 
     model_config = ConfigDict(extra="forbid")
 
@@ -373,7 +382,7 @@ class SurfaceStartPosition(BaseModel):
 
 class SurfaceAfterPosition(BaseModel):
     kind: Literal["after"]
-    occurrence_id: UUID
+    link_id: UUID
 
     model_config = ConfigDict(extra="forbid")
 
@@ -382,6 +391,18 @@ SurfacePosition = Annotated[
     SurfaceStartPosition | SurfaceAfterPosition,
     Field(discriminator="kind"),
 ]
+
+
+class SurfaceBodyEdit(BaseModel):
+    ref: str
+    body_pm_json: dict[str, Any]
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("body_pm_json")
+    @classmethod
+    def validate_body_pm_json(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_note_body_pm_json(value) or value
 
 
 class InsertNoteSurfaceCommand(BaseModel):
@@ -400,7 +421,7 @@ class InsertNoteSurfaceCommand(BaseModel):
 
 class SplitNoteSurfaceCommand(BaseModel):
     type: Literal["split_note"]
-    occurrence_id: UUID
+    link_id: UUID
     note_id: UUID
     left_body_pm_json: dict[str, Any]
     right_body_pm_json: dict[str, Any]
@@ -423,15 +444,81 @@ class InsertResourceSurfaceCommand(BaseModel):
 
 class MoveOccurrenceSurfaceCommand(BaseModel):
     type: Literal["move_occurrence"]
-    occurrence_id: UUID
+    link_id: UUID
     position: SurfacePosition
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SurfaceRemoval(BaseModel):
+    endpoint_ref: str
+    link_id: UUID
+    context: SurfaceContext
 
     model_config = ConfigDict(extra="forbid")
 
 
 class RemoveOccurrenceSurfaceCommand(BaseModel):
     type: Literal["remove_occurrence"]
-    occurrence_id: UUID
+    entries: list[SurfaceRemoval] = Field(min_length=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RelinkSurfaceCommand(BaseModel):
+    type: Literal["relink"]
+    link_id: UUID
+    destination_ref: str
+    position: SurfacePosition
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class JoinNotesSurfaceCommand(BaseModel):
+    type: Literal["join_notes"]
+    earlier_link_id: UUID
+    later_link_id: UUID
+    body_pm_json: dict[str, Any]
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("body_pm_json")
+    @classmethod
+    def validate_body_pm_json(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_note_body_pm_json(value) or value
+
+
+class OutlineNote(BaseModel):
+    note_id: UUID
+    body_pm_json: dict[str, Any]
+    parent_index: int | None = Field(default=None, ge=0)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("parent_index")
+    @classmethod
+    def validate_parent_index(cls, value: int | None) -> int:
+        if value is None:
+            raise ValueError("Omit parent_index for a root item")
+        return value
+
+    @field_validator("body_pm_json")
+    @classmethod
+    def validate_body_pm_json(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_note_body_pm_json(value) or value
+
+
+class PasteOutlineSurfaceCommand(BaseModel):
+    type: Literal["paste_outline"]
+    position: SurfacePosition
+    items: list[OutlineNote] = Field(min_length=1, max_length=1000)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ReverseEditSurfaceCommand(BaseModel):
+    type: Literal["reverse_edit"]
+    receipt_id: UUID
 
     model_config = ConfigDict(extra="forbid")
 
@@ -441,14 +528,20 @@ SurfaceCommand = Annotated[
     | SplitNoteSurfaceCommand
     | InsertResourceSurfaceCommand
     | MoveOccurrenceSurfaceCommand
-    | RemoveOccurrenceSurfaceCommand,
+    | RemoveOccurrenceSurfaceCommand
+    | RelinkSurfaceCommand
+    | JoinNotesSurfaceCommand
+    | PasteOutlineSurfaceCommand
+    | ReverseEditSurfaceCommand,
     Field(discriminator="type"),
 ]
 
 
 class ResourceSurfaceCommandRequest(BaseModel):
     client_mutation_id: str = Field(min_length=1, max_length=120)
-    base_versions: list[ResourceLaneVersionIn] = Field(default_factory=list)
+    base_versions: list[ResourceLaneVersionIn]
+    context: SurfaceContext
+    body_edits: list[SurfaceBodyEdit]
     command: SurfaceCommand
 
     model_config = ConfigDict(extra="forbid")
@@ -456,7 +549,10 @@ class ResourceSurfaceCommandRequest(BaseModel):
 
 class ResourceSurfaceCommandOut(BaseModel):
     client_mutation_id: str
-    surface: ResourceSurfaceOut
+    receipt_id: UUID
+    reverse_versions: list[ResourceLaneVersionIn]
+    nodes: list[ResourceSurfaceNode]
+    surfaces: list[ResourceSurfaceOut]
 
     model_config = ConfigDict(extra="forbid")
 

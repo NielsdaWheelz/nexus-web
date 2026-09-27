@@ -87,7 +87,6 @@ class ConnectionOut(ResourceGraphModel):
     origin: EdgeOrigin
     snapshot: dict[str, Any] | None
     source_order_key: str | None
-    target_order_key: str | None
     ordinal: int | None
     source_ref: str
     target_ref: str
@@ -246,7 +245,6 @@ def connection_out(item: Connection) -> ConnectionOut:
         origin=item.origin,
         snapshot=snapshot_to_jsonb(item.snapshot) if item.snapshot is not None else None,
         source_order_key=item.source_order_key,
-        target_order_key=item.target_order_key,
         ordinal=item.ordinal,
         source_ref=item.source_ref.uri,
         target_ref=item.target_ref.uri,

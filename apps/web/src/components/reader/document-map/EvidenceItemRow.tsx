@@ -184,7 +184,7 @@ export function EvidenceItemRow({
         note_block_id: editingNoteId,
         body_pm_json: surface.source.content.bodyPmJson,
         body_text: surface.source.content.bodyText,
-        version_by_lane: { body: version.body, outgoing_edges: version.outgoing_edges },
+        version_by_lane: { body: version.body, links: version.links },
       });
       setNoteLoadError(false);
     }).catch(() => {

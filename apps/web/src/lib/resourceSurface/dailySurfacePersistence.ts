@@ -139,7 +139,9 @@ export function provisionalDailyOccurrence(input: {
 }): ResourceSurfaceOccurrence {
   const noteId = input.noteRef.slice("note_block:".length);
   return {
-    occurrenceId: input.occurrenceId,
+    linkId: input.occurrenceId,
+    collapsed: true,
+    hasLinkNote: false,
     target: {
       item: {
         ref: input.noteRef,
@@ -177,7 +179,7 @@ export function provisionalDailyOccurrence(input: {
           adjacencySource: false,
           adjacencyTarget: false,
         },
-        versionByLane: { body: 0, outgoing_edges: 0 },
+        versionByLane: { body: 0, links: 0 },
       },
       content: {
         kind: "note_body",

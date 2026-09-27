@@ -69,7 +69,6 @@ class EdgeCreate:
     kind: EdgeKind
     origin: EdgeOrigin
     source_order_key: str | None = None
-    target_order_key: str | None = None
     ordinal: int | None = None
     snapshot: CitationSnapshot | None = None
 
@@ -82,7 +81,6 @@ class EdgeOut:
     kind: EdgeKind
     origin: EdgeOrigin
     source_order_key: str | None
-    target_order_key: str | None
     ordinal: int | None
     snapshot: CitationSnapshot | None
     created_at: datetime
@@ -95,12 +93,11 @@ def is_neutral_link_shape(
     ordinal: int | None,
     snapshot: object | None,
     source_order_key: str | None,
-    target_order_key: str | None,
 ) -> bool:
     """The canonical neutral-Link predicate: ``uq_resource_edges_user_context_link_pair``.
 
     The writer, the delete gate and the "is this undirected?" read all share it, so the
-    neutral-Link shape cannot drift between them. Stance and ordered adjacency are out.
+    neutral-Link shape cannot drift between them. Stances and directed conversation context are excluded.
     """
     return (
         origin == "user"
@@ -108,7 +105,6 @@ def is_neutral_link_shape(
         and ordinal is None
         and snapshot is None
         and source_order_key is None
-        and target_order_key is None
     )
 
 
@@ -191,7 +187,6 @@ class Connection:
     origin: EdgeOrigin
     snapshot: CitationSnapshot | None
     source_order_key: str | None
-    target_order_key: str | None
     ordinal: int | None
     source_ref: ResourceRef
     target_ref: ResourceRef
