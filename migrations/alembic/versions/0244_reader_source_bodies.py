@@ -17,6 +17,29 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    missing_count, sample_ids = (
+        op.get_bind()
+        .execute(
+            sa.text("""
+        WITH missing AS (
+            SELECT DISTINCT item.media_id
+            FROM reader_apparatus_items item
+            LEFT JOIN reader_publications publication ON publication.media_id = item.media_id
+            WHERE publication.media_id IS NULL
+        )
+        SELECT (SELECT COUNT(*) FROM missing),
+               ARRAY(SELECT media_id FROM missing ORDER BY media_id LIMIT 10)
+        """)
+        )
+        .one()
+    )
+    if missing_count:
+        raise RuntimeError(
+            f"0244 blocked: {missing_count} apparatus media have no reader publication; "
+            f"sample media ids: {', '.join(str(media_id) for media_id in sample_ids)}. "
+            "repair publication linkage and retry"
+        )
+
     op.add_column(
         "reader_apparatus_items",
         sa.Column("body_html_sanitized", sa.Text(), nullable=True),

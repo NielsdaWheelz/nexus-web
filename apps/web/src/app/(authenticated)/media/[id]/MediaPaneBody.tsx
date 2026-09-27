@@ -7,7 +7,7 @@
 
 "use client";
 
-import { getPaneScrollContainer, getPaneScrollTopPaddingPx } from "@/lib/reader/paneScroll";
+import { getPaneScrollContainer, getPaneScrollTopPaddingPx, isElementInPaneView } from "@/lib/reader/paneScroll";
 
 import {
   useEffect,
@@ -212,11 +212,13 @@ import {
 } from "./epubRestore";
 import {
   captureVisibleCanonicalTextRange,
+  canonicalTextFocusElement,
   isCanonicalTextAnchorVisible,
   isTextViewportAtEnd,
   measureCanonicalViewportOrigin,
   measureSourceAnchorViewportOrigin,
   restoreTextReaderPlacement,
+  readerSourceFocusElement,
   scrollToExactCanonicalTextAnchor,
   type TextReaderPlacement,
   type TextReaderNavigationTarget,
@@ -243,6 +245,7 @@ import ReaderNavigationStatus, { type ReaderNavigationStatusView } from "@/compo
 import { usePlayerCommands } from "@/lib/player/globalPlayer";
 import {
   type ReaderNavigationSection,
+  type ReaderNavigationTextPoint,
 } from "@/lib/media/readerNavigation";
 import {
   buildTextReaderLocatorAtOffset,
@@ -2677,6 +2680,38 @@ export default function MediaPaneBody() {
     return new Promise((resolve) => { pendingCursorApplyRef.current = { resolve }; });
   }, [applyEpubRestoreRequest, beginRestoreSession, cancelRestoreSession,
     epubFragments, epubSections, readerCapability, replaceReaderLocation]);
+  const applySourceAnchor = useCallback((format: "epub" | "web", request: EpubRestoreRequest): Promise<ApplyCursorResult> => {
+    if (format === "epub") {
+      return applyEpubRestoreRequest(request);
+    }
+    const arrival = applyReaderLocator({
+      kind: "web", target: { fragment_id: request.fragmentId },
+      locations: { text_offset: request.target.kind === "Offset" ? request.target.offset : 0, progression: null, total_progression: null, position: null },
+      text: { quote: null, quote_prefix: null, quote_suffix: null },
+    });
+    const sessionId = restoreSessionIdRef.current;
+    return arrival.then(async (result) => {
+      if (result !== "applied" || sessionId !== restoreSessionIdRef.current) return "failed";
+      if (request.target.kind === "Offset") return "applied";
+      const root = contentRef.current;
+      const viewport = textViewportRef.current;
+      const anchorId = request.target.anchorId;
+      const anchor = root ? findSourceAnchor(root, anchorId) : null;
+      if (!anchor || !viewport) return "failed";
+      await readerScrollPositioner.run(({ setTop }) => {
+        if (sessionId !== restoreSessionIdRef.current) return;
+        setTop(viewport, viewport.scrollTop + anchor.getBoundingClientRect().top - viewport.getBoundingClientRect().top - getPaneScrollTopPaddingPx(viewport));
+        const rect = anchor.getBoundingClientRect();
+        const view = viewport.getBoundingClientRect();
+        if (rect.top >= view.top - 1 && rect.top <= view.bottom) sourceAnchorRef.current = { fragmentId: request.fragmentId, anchorId: present(anchorId) };
+      });
+      if (sessionId !== restoreSessionIdRef.current) return "failed";
+      const rect = anchor.getBoundingClientRect();
+      const view = viewport.getBoundingClientRect();
+      if (rect.top < view.top - 1 || rect.top > view.bottom) return "failed";
+      return "applied";
+    });
+  }, [applyEpubRestoreRequest, applyReaderLocator, readerScrollPositioner]);
   const positionTextLocator = async (locator: ReaderResumeState | null, signal: AbortSignal) => {
     if (signal.aborted) return "cancelled_by_user" as ApplyCursorResult;
     const arrival = applyReaderLocator(locator);
@@ -4120,6 +4155,126 @@ export default function MediaPaneBody() {
   // Section navigation
   // ==========================================================================
 
+  const navigateToEpubRequest = useCallback((request: EpubRestoreRequest) => {
+    if (request.fragmentId !== activeEpubFragmentId) setActiveEpubFragment(null);
+    return applyEpubRestoreRequest(request);
+  }, [activeEpubFragmentId, applyEpubRestoreRequest, setActiveEpubFragment]);
+  const positionAtEpubDocumentMapPoint = useCallback((point: ReaderNavigationTextPoint) => {
+    return navigateToEpubRequest(buildEpubPointRestoreRequest(point));
+  }, [navigateToEpubRequest]);
+
+  const navigateToWebPoint = useCallback((point: ReaderNavigationTextPoint) => {
+    clearFocus();
+    clearRetainedSelection();
+    return applyReaderLocator({
+      kind: "web", target: { fragment_id: point.fragment_id },
+      locations: { text_offset: point.offset, progression: null, total_progression: null, position: null },
+      text: { quote: null, quote_prefix: null, quote_suffix: null },
+    });
+  }, [applyReaderLocator, clearFocus, clearRetainedSelection]);
+  textNavigationPositionRef.current = async (target, signal) => {
+    const viewport = textViewportRef.current;
+    if (signal.aborted) return { kind: "Cancelled", displaced: false };
+    if (!viewport) return { kind: "Unavailable", reason: "TargetUnavailable", displaced: false };
+    const focusDestination = (element: HTMLElement | null): boolean => {
+      if (target.focus === "Preserve") return true;
+      if (!element) return false;
+      if (isMobileViewport && secondaryPane?.visibility === "visible") {
+        closeSecondaryPane({ focusAfterClose: element });
+        return true;
+      }
+      element.focus({ preventScroll: true });
+      return element.ownerDocument.activeElement === element;
+    };
+    if (target.kind === "Boundary") {
+      const top = target.edge === "Start" ? 0 : viewport.scrollHeight - viewport.clientHeight;
+      if (Math.abs(viewport.scrollTop - top) <= 1) return { kind: "Unchanged" };
+      await readerScrollPositioner.run(({ setTop }) => {
+        if (!signal.aborted) setTop(viewport, top);
+      });
+      if (signal.aborted) return { kind: "Cancelled", displaced: true };
+      return Math.abs(viewport.scrollTop - top) <= 1
+        ? { kind: "Arrived" }
+        : { kind: "Unavailable", reason: "PositioningFailed", displaced: true };
+    }
+    if (target.kind === "Embed") {
+      const point = { fragment_id: target.fragmentId, offset: target.offset };
+      const loaded = await (isEpub ? positionAtEpubDocumentMapPoint(point) : navigateToWebPoint(point));
+      if (signal.aborted) return { kind: "Cancelled", displaced: loaded === "applied" };
+      if (loaded !== "applied") return { kind: "Unavailable", reason: "TargetUnavailable", displaced: false };
+      const element = contentRef.current?.querySelector<HTMLElement>(
+        `[data-nexus-document-embed-id="${escapeAttrValue(target.occurrenceKey)}"]`,
+      );
+      const container = element ? getPaneScrollContainer(element) : null;
+      if (!element || !container) return { kind: "Unavailable", reason: "TargetUnavailable", displaced: true };
+      await readerScrollPositioner.run(({ reveal }) => { if (!signal.aborted) reveal(container, element); });
+      if (signal.aborted) return { kind: "Cancelled", displaced: true };
+      if (!isElementInPaneView(container, element)) return { kind: "Unavailable", reason: "PositioningFailed", displaced: true };
+      if (!focusDestination(contentRef.current && readerSourceFocusElement(contentRef.current, element))) {
+        return { kind: "Unavailable", reason: "PositioningFailed", displaced: true };
+      }
+      pulseReaderApparatusElement(element);
+      return { kind: "Arrived" };
+    }
+    const currentContent = activeContentRef.current;
+    if (target.kind === "Text" && currentContent?.fragmentId === target.fragmentId &&
+        cursorRef.current && isCanonicalTextAnchorVisible(viewport, cursorRef.current, target.startOffset)) {
+      return focusDestination(contentRef.current && canonicalTextFocusElement(contentRef.current, cursorRef.current, target.startOffset))
+        ? { kind: "Unchanged" }
+        : { kind: "Unavailable", reason: "PositioningFailed", displaced: false };
+    }
+    if (target.kind === "SourceAnchor" && currentContent?.fragmentId === target.fragmentId &&
+        contentRef.current && findSourceAnchor(contentRef.current, target.anchorId) &&
+        isElementInPaneView(viewport, findSourceAnchor(contentRef.current, target.anchorId)!)) {
+      return focusDestination(readerSourceFocusElement(contentRef.current, findSourceAnchor(contentRef.current, target.anchorId)!))
+        ? { kind: "Unchanged" }
+        : { kind: "Unavailable", reason: "PositioningFailed", displaced: false };
+    }
+    let move: Promise<ApplyCursorResult>;
+    if (target.kind === "SourceAnchor") {
+      move = applySourceAnchor(isEpub ? "epub" : "web", {
+        fragmentId: target.fragmentId,
+        target: { kind: "Anchor", anchorId: target.anchorId },
+      });
+    } else if (isTranscriptMedia) {
+      const fragment = fragments.find((item) => item.id === target.fragmentId);
+      if (!fragment) return { kind: "Unavailable", reason: "TargetUnavailable", displaced: false };
+      handleTranscriptSegmentSelect(fragment);
+      move = Promise.resolve("applied");
+    } else {
+      const point = { fragment_id: target.fragmentId, offset: target.startOffset };
+      move = isEpub ? positionAtEpubDocumentMapPoint(point) : navigateToWebPoint(point);
+    }
+    const sessionId = restoreSessionIdRef.current;
+    const cancel = () => {
+      if (restoreSessionIdRef.current === sessionId) cancelRestoreSession();
+    };
+    signal.addEventListener("abort", cancel, { once: true });
+    const result = await move.finally(() => signal.removeEventListener("abort", cancel));
+    if (signal.aborted) return { kind: "Cancelled", displaced: result === "applied" };
+    if (result !== "applied") return { kind: "Unavailable", reason: "PositioningFailed", displaced: true };
+    if (target.kind === "SourceAnchor") {
+      const root = contentRef.current;
+      const anchor = root && findSourceAnchor(root, target.anchorId);
+      if (!anchor || !isElementInPaneView(viewport, anchor) ||
+          !focusDestination(root && readerSourceFocusElement(root, anchor))) {
+        return { kind: "Unavailable", reason: "PositioningFailed", displaced: true };
+      }
+      return { kind: "Arrived" };
+    }
+    const rendered = activeContentRef.current;
+    const cursor = cursorRef.current;
+    if (rendered?.fragmentId !== target.fragmentId ||
+        (target.kind === "Text" && target.endOffset > canonicalCpLength(rendered.canonicalText)) ||
+        !cursor ||
+        !isCanonicalTextAnchorVisible(viewport, cursor, target.startOffset)) {
+      return { kind: "Unavailable", reason: "PositioningFailed", displaced: true };
+    }
+    if (!focusDestination(contentRef.current && canonicalTextFocusElement(contentRef.current, cursor, target.startOffset))) {
+      return { kind: "Unavailable", reason: "PositioningFailed", displaced: true };
+    }
+    return { kind: "Arrived" };
+  };
   const inspectDocumentMapSection = useCallback((section: ReaderNavigationSection) => {
     void navigationInspect(section.anchor_id.kind === "Present"
       ? { kind: "SourceAnchor", focus: "Destination", fragmentId: section.target.fragment_id, anchorId: section.anchor_id.value }
