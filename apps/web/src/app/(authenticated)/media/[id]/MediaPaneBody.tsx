@@ -265,7 +265,7 @@ import {
 import { createHostedReaderProgressPort } from "@/lib/reader/ReaderProgressPort";
 import { createHostedPdfReaderDecorations } from "./hostedPdfReaderDecorations";
 import { useHostedPdfPageHighlights } from "./useHostedPdfPageHighlights";
-import { canReadMediaDocument } from "@/lib/media/documentReadiness";
+import { canReadMediaDocument, shouldLoadInitialMediaFragments } from "@/lib/media/documentReadiness";
 import {
   renderDocumentEmbedsInHtml,
   type DocumentEmbed,
@@ -691,7 +691,7 @@ export default function MediaPaneBody() {
   useSetPaneLabel(loading ? null : media?.title.trim() || "Media");
 
   // ---- Non-EPUB fragment state ----
-  const [fragments, setFragments] = useState<Fragment[]>([]);
+  const [transcriptFragments, setTranscriptFragments] = useState<Fragment[]>([]);
   const [initialFragmentsFailure, setInitialFragmentsFailure] =
     useState<PaneSubresourceFailure | null>(null);
   const [activeTranscriptFragmentId, setActiveTranscriptFragmentId] = useState<
@@ -927,6 +927,15 @@ export default function MediaPaneBody() {
     refreshToken: pdfRefreshToken,
   });
   const readerProgress = documentReader.progress;
+  const webFragmentsResource = documentReader.textDocument;
+  const fragments = useMemo(
+    () => media?.kind === "web_article"
+      ? webFragmentsResource.status === "ready"
+        ? [...webFragmentsResource.data.fragments]
+        : []
+      : transcriptFragments,
+    [media?.kind, webFragmentsResource, transcriptFragments],
+  );
   const activeEpubFragment = documentReader.activeEpubFragment;
   const setActiveEpubFragment = documentReader.setActiveEpubFragment;
   const epubFragmentLoading = documentReader.epubFragmentLoading;
@@ -2145,14 +2154,16 @@ export default function MediaPaneBody() {
 
     if (initialMediaResource.status === "ready") {
       setMedia(initialMediaResource.data.media);
-      if (initialMediaResource.data.fragments.status === "ready") {
-        setFragments(
-          normalizeFragments(initialMediaResource.data.fragments.data),
-        );
-        setInitialFragmentsFailure(null);
-      } else {
-        setFragments([]);
-        setInitialFragmentsFailure(initialMediaResource.data.fragments.error);
+      if (shouldLoadInitialMediaFragments(initialMediaResource.data.media)) {
+        if (initialMediaResource.data.fragments.status === "ready") {
+          setTranscriptFragments(
+            normalizeFragments(initialMediaResource.data.fragments.data),
+          );
+          setInitialFragmentsFailure(null);
+        } else {
+          setTranscriptFragments([]);
+          setInitialFragmentsFailure(initialMediaResource.data.fragments.error);
+        }
       }
       setActiveTranscriptFragmentId(null);
       setError(null);
@@ -2200,7 +2211,7 @@ export default function MediaPaneBody() {
         return;
       }
 
-      setFragments(nextFragments);
+      setTranscriptFragments(nextFragments);
       setInitialFragmentsFailure(null);
       setActiveTranscriptFragmentId((prev) =>
         nextFragments.some((fragment) => fragment.id === prev) ? prev : null,
@@ -2218,14 +2229,6 @@ export default function MediaPaneBody() {
     if (!processingSnapshot) return;
     setMedia((prev) => (prev ? { ...prev, ...processingSnapshot } : prev));
   }, [processingSnapshot]);
-
-  const webFragmentsResource = documentReader.textDocument;
-
-  useEffect(() => {
-    if (webFragmentsResource.status === "ready") {
-      setFragments([...webFragmentsResource.data.fragments]);
-    }
-  }, [webFragmentsResource]);
 
   // ==========================================================================
   // EPUB restore — once per loaded navigation, resolve the initial section
@@ -4637,6 +4640,9 @@ export default function MediaPaneBody() {
           ? { retry: webFragmentsResource.retry }
           : {}),
       };
+    }
+    if (webFragmentsResource.status !== "ready") {
+      return { status: "loading" as const, message: "Loading…" };
     }
     if (fragments.length === 0) {
       return {
