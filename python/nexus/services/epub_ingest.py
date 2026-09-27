@@ -116,6 +116,8 @@ _XML_ENTRY_READ_ERRORS = (*_ZIP_ENTRY_READ_ERRORS, ET.ParseError)
 _RESOURCE_ATTRS = frozenset({"src", "href", "xlink:href", "poster"})
 _IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"})
 _SVG_IMAGE_TYPE = "image/svg+xml"
+_SVG_DEFINITION_TAGS = frozenset({"defs", "symbol", "clippath", "lineargradient", "radialgradient"})
+_SVG_INVALID_USE_TARGETS = frozenset({"defs", "clippath", "lineargradient", "radialgradient"})
 
 # The one stored `epub_resources.content_type` vocabulary: this is the write gate.
 SUPPORTED_IMAGE_TYPES = frozenset("image/png image/jpeg image/gif image/svg+xml image/webp".split())
@@ -606,6 +608,7 @@ def _build_plan(
             created_at=now,
         )
         fragment_specs.append(_FragmentSpec(fragment, chapter, apparatus_items, apparatus_edges))
+        retained_image, warning_markers = _retained_image_and_warning_markers(html_sanitized)
         source_issues.extend(
             MissingImage(
                 fragment_id=fragment.id,
@@ -613,8 +616,9 @@ def _build_plan(
                 resource_path=ref.resource_path,
             )
             for ref in missing_refs
+            if ref.marker_ordinal in warning_markers
         )
-        readable_source |= bool(canonical.text.strip()) or _has_retained_image(html_sanitized)
+        readable_source |= bool(canonical.text.strip()) or retained_image
         structure_fragments.append(
             EpubStructureFragment(fragment.id, fragment_idx, chapter.href, canonical)
         )
@@ -1181,7 +1185,6 @@ def _stage_epub_chapters(
     target_count = 0
     retained_utf8_bytes = 0
     backlink_count = 0
-    missing_ref_count = 0
     for chapter in chapter_specs:
         try:
             # `zipfile` hands out at most the declared uncompressed size and fails
@@ -1195,11 +1198,6 @@ def _stage_epub_chapters(
         rewritten_html, missing_refs = _rewrite_chapter_resources(
             _decode_epub_text(raw), chapter.href, package
         )
-        missing_ref_count += len(missing_refs)
-        if missing_ref_count > 10_000:
-            raise _EpubResourceLimitExceeded(
-                "EPUB source issues exceed 10000 records", dimension="Output"
-            )
         del raw
         html_path = staging_directory / f"chapter-{chapter.spine_idx}.html"
         html_path.write_text(rewritten_html, encoding="utf-8")
@@ -1284,34 +1282,101 @@ def _rewrite_chapter_resources(
     return inner_html(body), missing_refs
 
 
-def _has_retained_image(html: str) -> bool:
+def _retained_image_and_warning_markers(html: str) -> tuple[bool, set[int]]:
     doc = parse_html_document(html)
-    return any(
-        isinstance(element, HtmlElement)
-        and (
-            (local_name(element.tag) == "img" and bool(element.get("src") or element.get("srcset")))
-            or (
-                local_name(element.tag) == "svg"
-                and any(
-                    local_name(child.tag)
-                    in {
-                        "path",
-                        "circle",
-                        "ellipse",
-                        "line",
-                        "polyline",
-                        "polygon",
-                        "rect",
-                        "image",
-                        "use",
-                    }
-                    for child in element.iterdescendants()
-                    if isinstance(child, HtmlElement)
-                )
-            )
+    retained_image = False
+    warning_markers: set[int] = set()
+    state: dict[HtmlElement, tuple[bool, bool, bool]] = {}
+    svg_targets: dict[str, HtmlElement] = {}
+    visible_uses: list[HtmlElement] = []
+    for element in doc.iter():
+        if not isinstance(element, HtmlElement):
+            continue
+        marker = element.get("data-reader-source-warning")
+        if marker is not None:
+            warning_markers.add(int(marker))
+        parent_visible, parent_svg, parent_definition = state.get(
+            element.getparent(), (True, False, False)
         )
-        for element in doc.iter()
-    )
+        visible = (
+            parent_visible
+            and "hidden" not in element.attrib
+            and element.get("aria-hidden", "").lower() != "true"
+        )
+        tag = local_name(element.tag)
+        in_svg = parent_svg or tag == "svg"
+        in_definition = parent_definition or tag in _SVG_DEFINITION_TAGS
+        state[element] = (visible, in_svg, in_definition)
+        if in_svg and element.get("id"):
+            svg_targets.setdefault(element.get("id", ""), element)
+        if not visible:
+            continue
+        if tag == "img" and (element.get("src") or element.get("srcset")):
+            retained_image = True
+        elif in_svg and not in_definition:
+            if _svg_element_has_image(element):
+                retained_image = True
+            elif tag == "use":
+                visible_uses.append(element)
+
+    def referenced_image(target: HtmlElement, seen: set[str]) -> bool:
+        pending = [(target, True)]
+        while pending:
+            element, reference_root = pending.pop()
+            if not state[element][0]:
+                continue
+            tag = local_name(element.tag)
+            if not reference_root and tag in _SVG_DEFINITION_TAGS:
+                continue
+            if _svg_element_has_image(element):
+                return True
+            if tag == "use":
+                href = element.get("href") or element.get("xlink:href") or ""
+                if href.startswith("#") and href not in seen:
+                    seen.add(href)
+                    nested = svg_targets.get(href[1:])
+                    if (
+                        nested is not None
+                        and local_name(nested.tag) not in _SVG_INVALID_USE_TARGETS
+                    ):
+                        pending.append((nested, True))
+            pending.extend((child, False) for child in element if isinstance(child, HtmlElement))
+        return False
+
+    if not retained_image:
+        # A local target's drawable content is independent of which use references it.
+        seen_refs: set[str] = set()
+        for element in visible_uses:
+            href = element.get("href") or element.get("xlink:href") or ""
+            if href in seen_refs:
+                continue
+            seen_refs.add(href)
+            target = svg_targets.get(href[1:]) if href.startswith("#") else None
+            if target is not None and local_name(target.tag) not in _SVG_INVALID_USE_TARGETS:
+                if referenced_image(target, seen_refs):
+                    retained_image = True
+                    break
+    return retained_image, warning_markers
+
+
+def _svg_element_has_image(element: HtmlElement) -> bool:
+    """Require retained drawing data; this does not evaluate SVG paint or layout."""
+    tag = local_name(element.tag)
+    if tag == "image":
+        return bool(element.get("href") or element.get("xlink:href"))
+    if tag == "path":
+        return bool(element.get("d", "").strip())
+    if tag == "circle":
+        return bool(element.get("r", "").strip())
+    if tag == "ellipse":
+        return bool(element.get("rx", "").strip() and element.get("ry", "").strip())
+    if tag == "rect":
+        return bool(element.get("width", "").strip() and element.get("height", "").strip())
+    if tag == "line":
+        return any(element.get(attr, "").strip() for attr in ("x1", "y1", "x2", "y2"))
+    if tag in {"polyline", "polygon"}:
+        return bool(element.get("points", "").strip())
+    return False
 
 
 def _rewrite_image_resource_url(
