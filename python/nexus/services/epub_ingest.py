@@ -53,7 +53,7 @@ from nexus.schemas.source_issues import (
     UnresolvedNavigationTarget,
     source_issues_payload,
 )
-from nexus.services.canonicalize import canonicalize_structure
+from nexus.services.canonicalize import CanonicalStructure, canonicalize_structure
 from nexus.services.epub_sanitize import (
     local_name,
     materialize_epub_body_anchor,
@@ -96,6 +96,7 @@ from nexus.services.reader_apparatus import note_regions_from_publication, repla
 from nexus.storage.client import StorageError
 from nexus.storage.paths import build_epub_attempt_asset_storage_path
 from nexus.tasks.storage_object_cleanup import reserve_storage_object_write
+from nexus.text import normalize_whitespace
 
 if TYPE_CHECKING:
     from nexus.storage.client import StorageClient
@@ -595,13 +596,14 @@ def _build_plan(
             if published.text != retained.canonical_text:
                 raise ValueError("Retained EPUB HTML disagrees with canonical text")
             source_canonical_text = canonical.text
+            source_structure = canonical
             source_html_sanitized = html_sanitized
+            source_apparatus_items = apparatus_items
             source_markers = {
                 str(item["stable_key"]): item
                 for item in apparatus_items
                 if item.get("kind") in {"footnote_ref", "endnote_ref", "bibliography_ref"}
                 and isinstance(item.get("source_ref"), dict)
-                and cast(dict[str, object], item["source_ref"]).get("target_ref")
             }
             html_sanitized, apparatus_items, apparatus_edges = extract_html_apparatus(
                 retained.html_sanitized,
@@ -611,10 +613,22 @@ def _build_plan(
                 confirmed_target_refs=confirmed_target_refs,
                 source_ref=_chapter_source_ref(chapter),
                 verified_source_markers=source_markers,
+                verified_source_items={str(item["stable_key"]): item for item in apparatus_items},
             )
             prepare_apparatus_bodies(
                 apparatus_items, sanitize=sanitize_epub_chapter, media_kind="epub"
             )
+            retained_target_bodies = {
+                str(item["stable_key"]): item.get("body_text") for item in apparatus_items
+            }
+            source_by_key = {str(item["stable_key"]): item for item in source_apparatus_items}
+            for item in apparatus_items:
+                if item["kind"] in {"footnote_ref", "endnote_ref", "bibliography_ref"}:
+                    continue
+                source_item = source_by_key[str(item["stable_key"])]
+                item["label"] = source_item["label"]
+                item["body_text"] = source_item["body_text"]
+                item["body_html_sanitized"] = source_item["body_html_sanitized"]
             canonical = canonicalize_structure(html_sanitized)
             if (
                 canonical.text != retained.canonical_text
@@ -630,6 +644,14 @@ def _build_plan(
                 source_html_sanitized=source_html_sanitized,
                 retained_canonical_text=retained.canonical_text,
                 retained_html_sanitized=html_sanitized,
+            )
+            _verify_retained_epub_targets(
+                source=source_structure,
+                retained=canonical,
+                source_items=source_apparatus_items,
+                retained_items=apparatus_items,
+                retained_target_bodies=retained_target_bodies,
+                document_href=chapter.href,
             )
         rendered_text_bytes += utf8_byte_length(canonical.text)
         if rendered_text_bytes > EPUB_RENDERED_TEXT_MAX_BYTES:
@@ -1298,6 +1320,89 @@ def _verify_retained_epub_markers(
             )
         ):
             raise ValueError("Retained EPUB marker positions disagree with verified source")
+
+
+def _verify_retained_epub_targets(
+    *,
+    source: CanonicalStructure,
+    retained: CanonicalStructure,
+    source_items: list[dict[str, object]],
+    retained_items: list[dict[str, object]],
+    retained_target_bodies: dict[str, object],
+    document_href: str,
+) -> None:
+    """Keep source content while proving each retained target names its source occurrence."""
+    retained_keys = {str(item["stable_key"]) for item in retained_items}
+    normalized_equal: bool | None = None
+    for item in source_items:
+        if item["kind"] in {"footnote_ref", "endnote_ref", "bibliography_ref"}:
+            continue
+        key = str(item["stable_key"])
+        if key not in retained_keys:
+            raise ValueError("Retained EPUB omits a verified source target")
+        source_ref = item.get("source_ref")
+        if not isinstance(source_ref, dict):
+            raise ValueError("Verified source target has no source identity")
+        if source_ref.get("target_href", document_href) != document_href:
+            continue
+        target_id = source_ref.get("target_id")
+        source_index = (
+            source.anchors.get(target_id)
+            if isinstance(target_id, str) and target_id
+            else source.apparatus_items.get(key)
+        )
+        retained_index = (
+            retained.anchors.get(target_id)
+            if isinstance(target_id, str) and target_id
+            else retained.apparatus_items.get(key)
+        )
+        if source_index is None or retained_index is None:
+            raise ValueError("Retained EPUB loses a verified source target anchor")
+        source_start = source.elements[source_index].start_offset
+        retained_start = retained.elements[retained_index].start_offset
+        if source.text == retained.text:
+            if (
+                source_start != retained_start
+                or item.get("body_text") != retained_target_bodies[key]
+            ):
+                raise ValueError("Retained EPUB moves a verified source target")
+            continue
+        if normalized_equal is None:
+            normalized_equal = normalize_whitespace(source.text) == normalize_whitespace(
+                retained.text
+            )
+        if (
+            normalized_equal
+            and normalize_whitespace(source.text[:source_start])
+            == normalize_whitespace(retained.text[:retained_start])
+            and normalize_whitespace(str(item.get("body_text") or ""))
+            == normalize_whitespace(str(retained_target_bodies[key] or ""))
+        ):
+            continue
+        left = (
+            source.text[source_start - 64 : source_start]
+            if source_start >= 64 and retained_start >= 64
+            else ""
+        )
+        right = (
+            source.text[source_start : source_start + 64]
+            if source_start + 64 <= len(source.text) and retained_start + 64 <= len(retained.text)
+            else ""
+        )
+        left_matches = bool(
+            left
+            and _occurs_once(source.text, left)
+            and _occurs_once(retained.text, left)
+            and left == retained.text[retained_start - 64 : retained_start]
+        )
+        right_matches = bool(
+            right
+            and _occurs_once(source.text, right)
+            and _occurs_once(retained.text, right)
+            and right == retained.text[retained_start : retained_start + 64]
+        )
+        if not (left_matches or right_matches):
+            raise ValueError(f"Retained EPUB target location disagrees with verified source: {key}")
 
 
 def _occurs_once(text: str, witness: str) -> bool:

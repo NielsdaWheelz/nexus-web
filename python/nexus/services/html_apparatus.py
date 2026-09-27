@@ -121,6 +121,7 @@ def extract_html_apparatus(
     external_targets: Mapping[str, Mapping[str, object]] | None = None,
     confirmed_target_refs: set[str] | None = None,
     verified_source_markers: Mapping[str, Mapping[str, object]] | None = None,
+    verified_source_items: Mapping[str, Mapping[str, object]] | None = None,
 ) -> tuple[str, list[dict[str, object]], list[dict[str, object]]]:
     """Stamp the apparatus this document carries and return it as items and edges."""
     if not html.strip():
@@ -176,7 +177,7 @@ def extract_html_apparatus(
     if verified_source_markers is not None:
         for marker in verified_source_markers.values():
             marker_source = _object_dict(marker.get("source_ref"))
-            target_ref = marker_source.get("target_ref")
+            target_ref = _verified_target_ref(marker_source, document_href)
             label = marker.get("label")
             if isinstance(target_ref, str) and isinstance(label, str):
                 marker_id = marker_source.get("marker_id")
@@ -274,7 +275,7 @@ def extract_html_apparatus(
                 )
             if (
                 not isinstance(marker_source, dict)
-                or marker_source.get("target_ref") != target_ref
+                or _verified_target_ref(marker_source, document_href) != target_ref
                 or source_marker.get("label") != _element_text(element)
                 or (
                     marker_source.get("marker_id") is not None
@@ -287,6 +288,8 @@ def extract_html_apparatus(
             ):
                 raise ValueError("Retained EPUB marker disagrees with verified source semantics")
             classified = corroborated
+        if verified_source_markers is not None and source_marker is None:
+            continue
         if classified is None:
             continue
 
@@ -410,6 +413,28 @@ def extract_html_apparatus(
         and matched_marker_keys != verified_source_markers.keys()
     ):
         raise ValueError("Retained EPUB omits a verified source marker")
+    if verified_source_items is not None:
+        items = [
+            item
+            for item in items
+            if (source := verified_source_items.get(str(item["stable_key"]))) is not None
+            and source.get("kind") == item["kind"]
+        ]
+        retained_keys = {str(item["stable_key"]) for item in items}
+        if retained_keys != verified_source_items.keys():
+            raise ValueError("Retained EPUB omits a verified source apparatus item")
+        edges = [edge for edge in edges if edge["from_stable_key"] in retained_keys]
+        if verified_source_markers is not None and not verified_source_markers.keys() <= {
+            str(edge["from_stable_key"]) for edge in edges
+        }:
+            raise ValueError("Retained EPUB changes verified source apparatus links")
+        for element in root.iter():
+            if not isinstance(element, HtmlElement):
+                continue
+            if element.get("data-reader-apparatus-item-id") not in retained_keys:
+                for attr in list(element.attrib):
+                    if attr.lower().startswith("data-reader-apparatus-"):
+                        del element.attrib[attr]
     if document_href:
         for item in items:
             source = item.get("source_ref")
@@ -1644,6 +1669,16 @@ def _canonical_target_ref(href: str, document_href: str | None) -> str:
     raw = f"{document_href}{href}" if href.startswith("#") and document_href else href
     path, separator, fragment = raw.partition("#")
     return f"{path}#{unquote(fragment)}" if separator else raw
+
+
+def _verified_target_ref(source: Mapping[str, object], document_href: str | None) -> str | None:
+    external = source.get("target_ref")
+    if isinstance(external, str):
+        return external
+    local = source.get("target_id")
+    if isinstance(local, str) and document_href:
+        return f"{document_href}#{local}"
+    return None
 
 
 def _link_hrefs(

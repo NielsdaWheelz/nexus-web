@@ -933,7 +933,21 @@ def _exact_epub_body_enrichment(
     assert fragment is not None and type(start) is int and type(end) is int
     assert isinstance(quote, dict)
     if installed.get("body_html_sanitized") is None:
-        return quote.get("exact") == text_value
+        old_source = installed.get("source_ref")
+        new_source = proposed.get("source_ref")
+        return bool(
+            quote.get("exact") == text_value
+            or (
+                installed.get("body_text") == text_value
+                and installed.get("locator") == locator
+                and isinstance(old_source, dict)
+                and isinstance(new_source, dict)
+                and all(
+                    old_source.get(field) == new_source.get(field)
+                    for field in ("format", "package_href", "target_id")
+                )
+            )
+        )
     old_html = installed.get("body_html_sanitized")
     old_text = installed.get("body_text")
     if (
