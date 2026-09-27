@@ -231,6 +231,14 @@ export default function EvidencePaneSurface({
     if (listRef.current) listRef.current.scrollTop = 0;
   };
   const displayedGroupKey = displayedGroups.map(({ group }) => group.locus_ref).join("|");
+  const previousFilterRef = useRef(filters.filter);
+  useLayoutEffect(() => {
+    if (previousFilterRef.current === filters.filter) return;
+    previousFilterRef.current = filters.filter;
+    const index = visiblePassageGroups.findIndex(({ items }) =>
+      items.some((item) => item.id === revealedItemId));
+    if (index >= 0) setBrowsePage(Math.floor(index / BROWSE_PAGE_SIZE));
+  }, [filters.filter, revealedItemId, visiblePassageGroups]);
   useLayoutEffect(() => {
     const list = listRef.current;
     if (!list) return;
@@ -254,18 +262,25 @@ export default function EvidencePaneSurface({
   }, [displayedGroupKey, scope, placement.measureKey, following, positions]);
 
   useLayoutEffect(() => {
-    if (!activeItemId || followGeneration === 0) return;
+    if (!activeItemId || followGeneration === 0 || !evidence) return;
     if (lastActivationRef.current?.itemId === activeItemId &&
       lastActivationRef.current.generation === followGeneration) return;
+    const inDocument = evidence.document_items.some((item) => item.id === activeItemId);
+    const index = visiblePassageGroups.findIndex(({ items }) => items.some((item) => item.id === activeItemId));
+    if (!inDocument && index < 0) {
+      if (evidence.passage_groups.some((group) => group.items.some((item) => item.id === activeItemId))) {
+        setRevealedItemId(activeItemId);
+      }
+      return;
+    }
     lastActivationRef.current = { itemId: activeItemId, generation: followGeneration };
     browse();
     setMode("browse");
-    setScope(evidence?.document_items.some((item) => item.id === activeItemId) ? "document" : "all");
+    setScope(inDocument ? "document" : "all");
     setRevealedItemId(activeItemId);
-    const index = visiblePassageGroups.findIndex(({ items }) => items.some((item) => item.id === activeItemId));
     if (index >= 0) setBrowsePage(Math.floor(index / BROWSE_PAGE_SIZE));
     pendingRevealRef.current = activeItemId;
-  }, [activeItemId, followGeneration, browse, evidence?.document_items, visiblePassageGroups]);
+  }, [activeItemId, followGeneration, browse, evidence, visiblePassageGroups]);
 
   useLayoutEffect(() => {
     const request = highlightEditRequest;
@@ -275,12 +290,16 @@ export default function EvidencePaneSurface({
     const item = [...evidence.passage_groups.flatMap((group) => group.items), ...evidence.document_items]
       .find((candidate) => candidate.kind === "Highlight" && candidate.highlight_id === request.highlightId);
     if (!item) return;
+    const index = visiblePassageGroups.findIndex(({ items }) => items.some((candidate) => candidate.id === item.id));
+    if (index < 0 && !evidence.document_items.some((candidate) => candidate.id === item.id)) {
+      setRevealedItemId(item.id);
+      return;
+    }
     lastHighlightEditRef.current = request;
     browse();
     setMode("browse");
     setScope("all");
     setRevealedItemId(item.id);
-    const index = visiblePassageGroups.findIndex(({ items }) => items.some((candidate) => candidate.id === item.id));
     if (index >= 0) setBrowsePage(Math.floor(index / BROWSE_PAGE_SIZE));
     setEditingHighlightId(request.highlightId);
     pendingRevealRef.current = item.id;
@@ -348,7 +367,15 @@ export default function EvidencePaneSurface({
   const linkActions: EvidenceLinkActions = {
     editingLinkId,
     onRemoveUserEdge,
-    onEditLink: setEditingLinkId,
+    onEditLink: (id) => {
+      if (id) {
+        const item = evidence?.passage_groups.flatMap((group) => group.items).find(
+          (candidate) => isReaderEvidenceUserLink(candidate) && candidate.edge_id === id,
+        );
+        if (item) setRevealedItemId(item.id);
+      }
+      setEditingLinkId(id);
+    },
     onLinkNoteChanged,
   };
 
@@ -381,6 +408,12 @@ export default function EvidencePaneSurface({
     onToggleDisclosure: toggleDisclosure,
     onEditHighlight: (id) => {
       browse();
+      if (id) {
+        const item = evidence?.passage_groups.flatMap((group) => group.items).find(
+          (candidate) => candidate.kind === "Highlight" && candidate.highlight_id === id,
+        );
+        if (item) setRevealedItemId(item.id);
+      }
       if (editingHighlightId && editingHighlightId !== id) {
         onHighlightEditClose(editingHighlightId);
       }
