@@ -37,7 +37,8 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] reader / inspector · 2026-09-24 reader-inspector-controls · reload open on Contents briefly shows Evidence: [ticket](tickets/reader-contents-publishes-after-navigation.md).
 - [open] reader / apparatus · 2026-09-26 reader chapter repair · newly inferred notes in preserved legacy html lack inline marker activation: [ticket](tickets/reader-repaired-note-markers-not-inline.md).
 - [open] epub / sections · 2026-09-26 chapter implementation · ambiguous pillow frontmatter headings still become routine stops: [ticket](tickets/epub-contents-union-overpromotes-source-headings.md).
-- [open] reader / production · 2026-09-26 chapter implementation · owner deferred production acceptance; affected originals and pending offline state remain unverified: [ticket](tickets/reader-chapter-production-correspondence-unverified.md).
+- [open] reader / production · 2026-09-27 release preflight · four exact ready books need source-byte proof and fenced 0243 repair before the deferred cutover: [ticket](tickets/reader-chapter-production-correspondence-unverified.md).
+- [open] api / operations · 2026-09-27 release preflight · a read-only live source-hash probe exited 137 and restarted the api once: [ticket](tickets/live-api-source-hash-probe-restarted-container.md).
 - [open] reader / navigation · 2026-09-24 reader-inspector-controls · document-map return drifts a line per round trip: [ticket](tickets/document-map-return-drifts-per-round-trip.md).
 - [open] reader / selection · 2026-09-24 reader-inspector-controls · retained selection geometry ignores a canonical reset: [ticket](tickets/retained-selection-geometry-ignores-canonical-reset.md).
 - [open] workspace / geometry · 2026-09-24 reader-inspector-controls · pdf inspector overflows the viewport at the pane minimum: [ticket](tickets/pdf-inspector-overflows-viewport-at-pane-minimum.md).

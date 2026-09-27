@@ -3,7 +3,7 @@
 status: isolated implementation verified in part; production release and exact-item repair not run
 origin: 2026-09-26 implementation of [the approved plan](processing-recovery-plan.md)
 
-the branch uses the existing parser, publication, source admission, queue and
+the merged implementation uses the existing parser, publication, source admission, queue and
 offline owners. migration 0242 records an ordered issue list on each publication
 generation. no production data has been changed. private exact-source files and
 disposable test-stack receipts remain under `/tmp/nexus-processing-review-20260926/`.
@@ -18,8 +18,11 @@ disposable test-stack receipts remain under `/tmp/nexus-processing-review-202609
 | a6 | real postgres reconciliation excluded 25 older dead source and index obligations before each limit, admitted the younger jobless obligation once, and kept dead work suspended. url admission, email retained-artifact seam and storage-outage replay checked | postrelease observation for newly accepted work |
 | a7 | exact fanged ordinary retry published 45 fragments, 35 toc nodes, 13 assets, no issues. isolated authenticated android on clean debug apk sha256 `f82fc9b54e607ff259d1b83a55cd76af4f528609cd694d8ff4ef91d619a07e6d` downloaded the exact 802,207-byte odyssey archive (sha256 `4d365f7a4678323e5b865bca52b60c47ce5f291fac30cebcb43a941d66da6393`), opened with one legible issue notice, and reopened radio-off after force-stop at saved text offset 476. baseline lacked `scrollend` and saved no position; shared fallback passed on the clean apk. hosted notice and light-reader warning contrast were visually checked | video/x/capture provider outcomes, two exact note indexes, signed physical-device acceptance |
 
-`./scripts/test` passed on the current code after temporary red/green probes were
-removed. android clean debug apk compilation and isolated emulator verification passed.
+`./scripts/test` passed on the processing branch after temporary red/green probes
+were removed. android clean debug apk compilation and isolated emulator verification
+passed on that branch. subsequent reader-section and pending-progress changes
+passed their own static checks; the combined release still needs exact-artifact
+acceptance.
 the original checkout and its existing emulator were not changed. release must use one clean merged source sha,
 the release owner's verified database backup and no-use window, and a signed
 android artifact. old offline packages require redownload; pending progress and
