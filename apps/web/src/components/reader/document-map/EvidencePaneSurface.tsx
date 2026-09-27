@@ -144,6 +144,8 @@ export default function EvidencePaneSurface({
   const lastActivationRef = useRef<{ itemId: string; generation: number } | null>(null);
   const lastHighlightEditRef = useRef<EvidenceHighlightEditRequest | null>(null);
   const [revealedItemId, setRevealedItemId] = useState<string | null>(null);
+  const linkEditorRevealedItemRef = useRef<string | null>(null);
+  const highlightEditorRevealedItemRef = useRef<string | null>(null);
   const [browseInset, setBrowseInset] = useState(0);
   const [heights, setHeights] = useState(new Map<string, number>());
   const [listGeometry, setListGeometry] = useState({ top: 0, height: 0 });
@@ -225,6 +227,16 @@ export default function EvidencePaneSurface({
     ? visiblePassageGroups.filter(({ group }) => positionById.has(group.locus_ref))
     : visiblePassageGroups.slice(effectiveBrowsePage * BROWSE_PAGE_SIZE, (effectiveBrowsePage + 1) * BROWSE_PAGE_SIZE);
   const changeBrowsePage = (page: number) => {
+    if (editingLinkId) setEditingLinkId(null);
+    if (editingHighlightId) {
+      setEditingHighlightId(null);
+      onHighlightEditClose(editingHighlightId);
+    }
+    if (revealedItemId !== activeItemId &&
+      (linkEditorRevealedItemRef.current === revealedItemId ||
+       highlightEditorRevealedItemRef.current === revealedItemId)) setRevealedItemId(null);
+    linkEditorRevealedItemRef.current = null;
+    highlightEditorRevealedItemRef.current = null;
     browseAnchorRef.current = null;
     pendingRevealRef.current = null;
     setBrowsePage(page);
@@ -369,10 +381,22 @@ export default function EvidencePaneSurface({
     onRemoveUserEdge,
     onEditLink: (id) => {
       if (id) {
+        if (editingHighlightId) {
+          setEditingHighlightId(null);
+          onHighlightEditClose(editingHighlightId);
+        }
         const item = evidence?.passage_groups.flatMap((group) => group.items).find(
           (candidate) => isReaderEvidenceUserLink(candidate) && candidate.edge_id === id,
         );
-        if (item) setRevealedItemId(item.id);
+        if (item && item.id !== revealedItemId) {
+          linkEditorRevealedItemRef.current = item.id;
+          setRevealedItemId(item.id);
+        } else linkEditorRevealedItemRef.current = null;
+      } else {
+        if (linkEditorRevealedItemRef.current === revealedItemId && revealedItemId !== activeItemId) {
+          setRevealedItemId(null);
+        }
+        linkEditorRevealedItemRef.current = null;
       }
       setEditingLinkId(id);
     },
@@ -409,10 +433,19 @@ export default function EvidencePaneSurface({
     onEditHighlight: (id) => {
       browse();
       if (id) {
+        setEditingLinkId(null);
         const item = evidence?.passage_groups.flatMap((group) => group.items).find(
           (candidate) => candidate.kind === "Highlight" && candidate.highlight_id === id,
         );
-        if (item) setRevealedItemId(item.id);
+        if (item && item.id !== revealedItemId) {
+          highlightEditorRevealedItemRef.current = item.id;
+          setRevealedItemId(item.id);
+        } else highlightEditorRevealedItemRef.current = null;
+      } else {
+        if (highlightEditorRevealedItemRef.current === revealedItemId && revealedItemId !== activeItemId) {
+          setRevealedItemId(null);
+        }
+        highlightEditorRevealedItemRef.current = null;
       }
       if (editingHighlightId && editingHighlightId !== id) {
         onHighlightEditClose(editingHighlightId);
