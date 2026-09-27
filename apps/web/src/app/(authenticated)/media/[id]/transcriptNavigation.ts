@@ -4,13 +4,17 @@ import {
 } from "@/lib/highlights/canonicalCursor";
 import { resolveDomTextRanges } from "@/lib/highlights/domTextRanges";
 import {
+  findFirstVisibleCanonicalOffset,
   measureCanonicalViewportOrigin,
   measureCanonicalTextAnchorViewportDelta,
   restoreCanonicalTextAnchorViewportPosition,
   scrollToExactCanonicalTextAnchor,
   type CanonicalTextReaderPlacement,
 } from "@/lib/reader/canonicalTextAnchor";
-import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
+import {
+  getPaneScrollTopPaddingPx,
+  type ReaderScrollPositioner,
+} from "@/lib/reader/paneScroll";
 import type { ReaderNavigationOutcome } from "@/lib/reader/useReaderNavigation";
 
 export interface TranscriptPlacement {
@@ -79,6 +83,9 @@ export function captureTranscriptPlacement(
   const viewportRect = viewport.getBoundingClientRect();
   const listVisible = intersects(listRect, viewportRect);
   const scrollport = listClipsContent(list) ? "List" : listVisible ? "Viewport" : "Offscreen";
+  const container = scrollport === "Viewport" ? viewport : list;
+  const readingTop = container.getBoundingClientRect().top + getPaneScrollTopPaddingPx(container);
+  let firstVisible: TranscriptPlacement | null = null;
   for (const row of list.querySelectorAll<HTMLElement>("[data-transcript-fragment-id]")) {
     const rowRect = row.getBoundingClientRect();
     if (!intersects(rowRect, listRect) ||
@@ -87,9 +94,10 @@ export function captureTranscriptPlacement(
     if (!fragmentId) return null;
     const source = transcriptText(list, fragmentId);
     if (!source) return null;
-    const text = measureCanonicalViewportOrigin(scrollport === "Viewport" ? viewport : list, source.cursor);
+    if (findFirstVisibleCanonicalOffset(container, source.cursor) === null) continue;
+    const text = measureCanonicalViewportOrigin(container, source.cursor);
     if (!text) continue;
-    return {
+    const placement: TranscriptPlacement = {
       fragmentId,
       canonicalText: source.cursor.emitted,
       text,
@@ -99,8 +107,13 @@ export function captureTranscriptPlacement(
       listVisible,
       layout,
     };
+    firstVisible ??= placement;
+    const ranges = resolveDomTextRanges(source.cursor, text.anchorCp, text.anchorCp + 1);
+    if (ranges?.some((range) => [...range.getClientRects()].some((rect) => rect.bottom > readingTop))) {
+      return placement;
+    }
   }
-  return null;
+  return firstVisible;
 }
 
 export async function positionTranscriptMatch(
