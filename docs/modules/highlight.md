@@ -102,8 +102,8 @@ There are two read scopes:
 
 - Per-fragment and per-page highlight reads feed inline highlight rendering and
   visible-row projection for the active reader location.
-- Media-wide reads feed cross-fragment experiences such as Evidence highlight
-  facts, linked note/chat summaries, markers, and quote-to-chat lookup.
+- Media-wide reads feed highlight facts in Highlights & citations, linked
+  note/chat summaries, markers, and quote-to-chat lookup.
 
 The browser reader consumes media-wide highlight data through
 `GET /media/{id}/document-map`, whose aggregate response is owned by the reader
@@ -158,7 +158,7 @@ Reindex and source refresh (web, EPUB, transcript-current, podcast
 transcription) never delete Highlights or their anchors; only the refreshed
 web/EPUB/transcript-current lifecycles used to call explicit highlight-root
 deletion on refresh, and that call is removed. An unresolved Highlight after
-content changes stays visible in Evidence/Connections rather than
+content changes stays visible in Highlights & citations or Connections rather than
 disappearing or silently repointing to the wrong location.
 
 The quick-note composer is a frontend presentation owner. It may create a
@@ -193,16 +193,15 @@ still publishes no Inspector.
 Inline highlight rendering remains separate from the Document Map. Inline
 rendering follows the current reader location and active fragment/page data.
 
-Evidence is the Media Resource Inspector's cross-document reader surface for
-highlights. It remains a Document Map body: it renders the stored `exact` quote
+Highlights & citations is the Media Resource Inspector's cross-document reader
+surface for highlights. It remains a Document Map body: it renders the stored `exact` quote
 when available, shows an explicit placeholder for geometry-only PDF highlights,
 mounts the canonical resource menu, and shows linked note/chat summaries from
 the aggregate read model. Highlight does not publish the Inspector group or its
 inspector action.
 
 The wide reader may also project highlight-linked marginalia through
-`MarginRail`. Neither Evidence nor the margin owns highlight persistence or
-mutation behavior.
+`MarginRail`. Neither surface owns highlight persistence or mutation behavior.
 
 A fresh reader selection has no Highlight yet. Its `SelectionPopover` renders
 the dedicated icon-only `SelectionActionDock`; `buildSelectionActions` owns
@@ -212,7 +211,8 @@ action list in every representation. Clicking a Highlight in reader text or a
 PDF opens that menu directly at the Highlight, with no intermediate overflow
 button. Loading and unavailable states explain themselves in the open surface;
 Escape, outside clicks, and reader scrolling dismiss it. Scrolling within the
-menu keeps its actions reachable. Evidence rows retain their overflow trigger.
+menu keeps its actions reachable. Rows in Highlights & citations retain their
+overflow trigger.
 The selection actions use the fixed names
 **Highlight**, **Note**, **Link**, **Ask**, **Learn**,
 **Ask in existing chat…**, and **Share**. `projectSelectionActionPlan` is the sole
@@ -269,14 +269,14 @@ resolved through the `highlight:<id>` resource and graph citation path.
 
 ## Composition Rules
 
-- Do not duplicate highlight mutation logic in Evidence or chat code.
+- Do not duplicate highlight mutation logic in Highlights & citations or chat code.
 - Do not persist rendered DOM geometry as highlight truth.
 - Do not infer citations from `reader_selection`; cite the durable
   `highlight:<id>` resource or resolved evidence.
 - Do not introduce another highlight-note store. Use note blocks plus
   `resource_edges`.
-- Do not make Evidence the owner of highlight CRUD. It is an aggregate read and
-  presentation surface.
+- Do not make Highlights & citations the owner of highlight CRUD. It is an
+  aggregate read and presentation surface.
 - Do not key a learning Dossier by Highlight occurrence or add a second Learn
   preview surface; the Highlight is provenance for an Idea Artifact.
 - Do not delete a Highlight or its anchors from reindex/refresh code, and do

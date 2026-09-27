@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import type { ComponentType } from "react";
 import {
   FileText,
@@ -70,6 +70,29 @@ export default function SecondarySurfaceTabs({
   const tabRefs = useRef(
     new Map<PaneSecondaryPresentationSurfaceId, HTMLButtonElement>(),
   );
+
+  useLayoutEffect(() => {
+    const tab = tabRefs.current.get(activeSurfaceId);
+    const tabList = tab?.parentElement;
+    if (!tab || !tabList) return;
+
+    const revealActiveTab = () => {
+      const tabBounds = tab.getBoundingClientRect();
+      const listBounds = tabList.getBoundingClientRect();
+      if (tabBounds.left < listBounds.left) {
+        tabList.scrollLeft += tabBounds.left - listBounds.left;
+      } else if (tabBounds.right > listBounds.right) {
+        tabList.scrollLeft += tabBounds.right - listBounds.right;
+      }
+    };
+
+    // External selection and resizing must reveal the label without moving
+    // focus or scrolling the reader and its workspace ancestors.
+    revealActiveTab();
+    const observer = new ResizeObserver(revealActiveTab);
+    observer.observe(tabList);
+    return () => observer.disconnect();
+  }, [activeSurfaceId, surfaces]);
 
   const selectSurface = (surfaceId: PaneSecondaryPresentationSurfaceId) => {
     onSelect(surfaceId);

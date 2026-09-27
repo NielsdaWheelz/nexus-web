@@ -1023,8 +1023,8 @@ resource activation plus an optional reader-internal focus target.
 linked-items policy, Forks, and default surface order; the committed TypeScript
 projection must agree with the backend. Every eligible resource implies Dossier.
 `useResourceInspector` composes one stable publication and inspector action per
-pane from route-owned Contents/Evidence/Context/Forks/Connections bodies plus
-the shared Dossier body. Selecting that action validates the requested surface
+pane from route-owned Contents, Highlights & citations, Context, Forks, and
+Connections bodies plus the shared Dossier body. Selecting that action validates the requested surface
 against its route-owned publication and, when attached to the workspace host,
 synchronously reasserts the same publication before requesting its surface, so
 publication cleanup and command acceptance cannot race or silently discard a
@@ -1258,8 +1258,8 @@ through byte-size-checked storage helpers. EPUB assets are not in Next Image
 selection becomes a stored highlight with a precomputed
 `exact`/`prefix`/`suffix` triple (a 64-codepoint context window) that doubles as
 the canonical quote shown to chat. PDF highlights may have empty `exact` (no
-text-layer match) — a first-class geometry-only state Evidence renders with an
-explicit placeholder. The current highlight
+text-layer match) — a first-class geometry-only state that Highlights & citations
+renders with an explicit placeholder. The current highlight
 contract lives in [`modules/highlight.md`](modules/highlight.md). Highlight-note
 persistence has one strict request wire: `note_block_id`,
 `client_mutation_id`, and `body_pm_json`. Camel-case spellings and the generic
@@ -1301,9 +1301,9 @@ annotation transforms, and applies the bounded media `h1`-to-`h2` projection
 beneath the resource heading. Inline
 highlight rendering remains separate for text selection. Media publishes one
 shared **Resource Inspector** whose tabs are `Contents` when
-available, `Evidence`, and `Dossier`. Contents and Evidence retain their
-internal **Document Map** semantics:
-Evidence is a target-centered aggregate of highlights, source references,
+available, `Highlights & citations`, and `Dossier`. Contents and Highlights &
+citations retain their internal **Document Map** semantics:
+Highlights & citations is a target-centered aggregate of highlights, source references,
 generated citations, links, and Synapses, separated into passage and
 whole-document scopes with typed one-hop associations. `MarginRail` is the
 wide-reader spatial presenter for the same filtered passage facts. The desktop
@@ -2029,7 +2029,7 @@ they open over Resume and never become panes.
   the inner NexusControl without moving that wrapper. Every
   eligible resource pane publishes one
   `resource-inspector` secondary group through `useResourceInspector`: Media
-  (`Contents | Evidence | Dossier`), Conversation
+  (`Contents | Highlights & citations | Dossier`), Conversation
   (`Context | Forks | Dossier`), Library
   (`Members | Connections | Dossier` when the viewer can administer it, else
   `Connections | Dossier`), and Podcast/Author/Page/Note

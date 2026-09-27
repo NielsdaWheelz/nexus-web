@@ -245,8 +245,8 @@ export default function EvidencePaneSurface({
 
   const header = (
     <header className={styles.header}>
-      <h2 className={styles.title}>Evidence</h2>
-      <TabsList aria-label="Evidence scope" className={styles.scopeTabs}>
+      <h2 className={styles.title}>Highlights &amp; citations</h2>
+      <TabsList aria-label="By location" className={styles.scopeTabs}>
         <TabsTrigger
           id="evidence-scope-passages"
           value="passages"
@@ -264,7 +264,7 @@ export default function EvidencePaneSurface({
           <span className={styles.count}>{evidence?.counts.document ?? 0}</span>
         </TabsTrigger>
       </TabsList>
-      <div className={styles.filters} role="group" aria-label="Evidence types">
+      <div className={styles.filters} role="group" aria-label="Filter by type">
         <Chip
           pressed={filters.filter.highlight}
           onPressedChange={() => filters.toggleFilter("highlight")}
@@ -315,7 +315,7 @@ export default function EvidencePaneSurface({
           title:
             projection.source === "media"
               ? "This media is still being processed."
-              : "Loading evidence...",
+              : "Loading reader items…",
         }}
         announcement="Polite"
       />
@@ -339,8 +339,8 @@ export default function EvidencePaneSurface({
           tone: "Neutral",
           title:
             scope === "passages"
-              ? "No passage-aligned evidence in this document."
-              : "No whole-document evidence in this document.",
+              ? "No items attached to passages."
+              : "No items attached to the whole document.",
         }}
         announcement="None"
       />
@@ -349,7 +349,7 @@ export default function EvidencePaneSurface({
     content = (
       <div className={styles.filteredEmpty}>
         <FeedbackNotice
-          content={{ tone: "Neutral", title: "No evidence matches these filters." }}
+          content={{ tone: "Neutral", title: "No items match these filters." }}
           announcement="None"
         />
         <button
@@ -443,12 +443,13 @@ export default function EvidencePaneSurface({
       }}
       variant="segmented"
       className={styles.root}
-      aria-label="Evidence"
+      role="group"
+      aria-label="Highlights, citations, links, and synapses"
     >
       {header}
       {aggregateStatus === "partial" ? (
         <FeedbackNotice
-          content={{ tone: "Warning", title: "Some document evidence is unavailable." }}
+          content={{ tone: "Warning", title: "Some reader items are unavailable." }}
           announcement="Polite"
         />
       ) : null}
@@ -461,7 +462,8 @@ export default function EvidencePaneSurface({
         <div
           ref={scope === "passages" ? listRef : undefined}
           className={styles.list}
-          aria-label="Passage evidence"
+          role="group"
+          aria-label="Passage items"
           tabIndex={0}
           onWheel={pauseFollow}
           onTouchMove={pauseFollow}
@@ -480,7 +482,8 @@ export default function EvidencePaneSurface({
         <div
           ref={scope === "document" ? listRef : undefined}
           className={styles.list}
-          aria-label="Whole-document evidence"
+          role="group"
+          aria-label="Whole-document items"
           tabIndex={0}
           onWheel={pauseFollow}
           onTouchMove={pauseFollow}
