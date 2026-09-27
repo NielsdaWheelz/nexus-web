@@ -12,6 +12,7 @@ from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.presence import Presence
 from nexus.schemas.publication_dates import PublicationDate
+from nexus.schemas.source_issues import SourceIssue
 from nexus.schemas.upload_failures import UploadTransportFailure, UploadVerificationFailureCode
 from nexus.services.offline_download_source import (
     OFFLINE_DOWNLOAD_SOURCE_URL_MAX_LENGTH,
@@ -695,6 +696,7 @@ class MediaNavigationOut(_Strict):
     media_id: UUID
     kind: Literal["epub", "web_article"]
     generation: int = Field(ge=1, strict=True)
+    source_issues: list[SourceIssue]
     fragments: list[ReaderNavigationFragmentOut]
     sections: list[ReaderNavigationSectionOut]
     toc_nodes: list[ReaderNavigationTocNodeOut]

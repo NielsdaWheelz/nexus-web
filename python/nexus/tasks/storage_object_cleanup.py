@@ -372,9 +372,7 @@ def _resolve_armed(
 
         if decision in (_RETAINED, _DELETE_REQUIRED) and not update_running_job_payload(
             db,
-            job_id=context.job_id,
-            worker_id=context.worker_id,
-            attempt_no=context.attempt_no,
+            context=context,
             payload={**base_payload, "checkpoint": {"kind": decision}},
         ):
             raise RuntimeError("lost lease writing storage_object_cleanup checkpoint")
@@ -397,9 +395,7 @@ def _perform_delete(
     with transaction(db):
         if not update_running_job_payload(
             db,
-            job_id=context.job_id,
-            worker_id=context.worker_id,
-            attempt_no=context.attempt_no,
+            context=context,
             payload={**base_payload, "checkpoint": {"kind": _DELETED}},
         ):
             raise RuntimeError("lost lease recording storage_object_cleanup Deleted")

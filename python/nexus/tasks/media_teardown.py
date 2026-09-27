@@ -87,9 +87,7 @@ def _write_checkpoint(
     """Lease-fenced checkpoint write; a lost lease aborts the whole transition."""
     if not update_running_job_payload(
         db,
-        job_id=context.job_id,
-        worker_id=context.worker_id,
-        attempt_no=context.attempt_no,
+        context=context,
         payload={**job.payload, "checkpoint": dict(checkpoint)},
     ):
         raise RuntimeError("lost lease writing media_teardown checkpoint")

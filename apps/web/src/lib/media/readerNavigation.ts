@@ -1,4 +1,5 @@
 import { decodePresence, type Presence } from "@/lib/api/presence";
+import { decodeReaderSourceIssues, type ReaderSourceIssue } from "@/lib/media/readerSourceIssues";
 import {
   expectArray,
   expectExactRecord,
@@ -56,6 +57,7 @@ export interface MediaNavigationResponse {
     toc_nodes: ReaderNavigationTocNode[];
     landmarks: ReaderNavigationLocation[];
     page_list: ReaderNavigationLocation[];
+    source_issues: ReaderSourceIssue[];
   };
 }
 
@@ -76,6 +78,7 @@ export function decodeMediaNavigation(
       "toc_nodes",
       "landmarks",
       "page_list",
+      "source_issues",
     ],
     name,
   );
@@ -116,6 +119,7 @@ export function decodeMediaNavigation(
         decodeNavigationLocation(location, `${name}.page_list[${index}]`),
       `${name}.page_list`,
     ),
+    source_issues: decodeReaderSourceIssues(value.source_issues, `${name}.source_issues`),
   };
   assertNavigationRelations(navigation, name);
   return navigation;
@@ -192,8 +196,13 @@ function assertNavigationRelations(
       parent = ancestor.parent_section_id;
     }
   }
+  const seenToc = new Set<string>();
+  const unresolvedNodes = new Set<string>();
   const walkToc = (nodes: ReaderNavigationTocNode[]) => {
     for (const node of nodes) {
+      if (seenToc.has(node.id)) throw new TypeError(`${name}.toc_nodes contain duplicate ids`);
+      seenToc.add(node.id);
+      if (node.section_id.kind === "Absent") unresolvedNodes.add(node.id);
       if (node.section_id.kind === "Present" && !sections.has(node.section_id.value)) {
         throw new TypeError(`${name}.toc_nodes target an absent section`);
       }
@@ -203,6 +212,27 @@ function assertNavigationRelations(
   walkToc(navigation.toc_nodes);
   for (const location of [...navigation.landmarks, ...navigation.page_list]) {
     if (location.target.kind === "Present") pointOffset(location.target.value);
+    else unresolvedNodes.add(location.id);
+  }
+  const issueKeys = new Set<string>();
+  for (const issue of navigation.source_issues) {
+    if (issue.kind === "MissingImage") {
+      if (!fragmentIds.has(issue.fragment_id)) {
+        throw new TypeError(`${name}.source_issues target an absent fragment`);
+      }
+      const key = `image:${issue.fragment_id}:${issue.marker_ordinal}:${issue.resource_path}`;
+      if (issueKeys.has(key)) throw new TypeError(`${name}.source_issues repeat an image reference`);
+      issueKeys.add(key);
+    } else {
+      if (!unresolvedNodes.has(issue.node_id)) {
+        throw new TypeError(`${name}.source_issues target an absent or actionable navigation node`);
+      }
+      const key = `navigation:${issue.node_id}`;
+      if (issueKeys.has(key)) {
+        throw new TypeError(`${name}.source_issues repeat or exceed a navigation node id`);
+      }
+      issueKeys.add(key);
+    }
   }
 }
 

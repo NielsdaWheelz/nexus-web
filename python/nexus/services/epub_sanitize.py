@@ -40,7 +40,7 @@ SVG_FORBIDDEN_TAGS = frozenset(
 GLOBAL_ATTRS = frozenset(
     "id title lang dir xml:lang hidden aria-hidden aria-labelledby"
     " data-reader-apparatus-item-id data-reader-apparatus-kind"
-    " data-reader-apparatus-confidence".split()
+    " data-reader-apparatus-confidence data-reader-source-warning".split()
 )
 ALLOWED_ATTRS = {
     "a": frozenset("href title name".split()),
@@ -170,6 +170,8 @@ def _sanitize_attributes(element: HtmlElement, tag: str) -> None:
         allowed.update(ALLOWED_ATTRS.get(tag, frozenset()))
     if tag in ALLOWED_SVG_TAGS:
         allowed.update(ALLOWED_SVG_ATTRS.get(tag, frozenset()))
+    if tag == "span" and element.get("data-reader-source-warning") is not None:
+        allowed.update({"name", "role", "aria-label"})
 
     for attr in list(element.attrib):
         name = normalized_attr_name(attr)

@@ -176,9 +176,7 @@ async def _build(
         return "ok"
     head = _Head(media_id, UUID(str(job.payload["summary_id"])), content_fingerprint)
     owner = LlmCallOwner(kind="media_summary", id=head.summary_id)
-    if not running_job_claim_is_current(
-        db, job_id=ctx.job_id, worker_id=ctx.worker_id, attempt_no=ctx.attempt_no
-    ):
+    if not running_job_claim_is_current(db, context=ctx):
         db.rollback()
         return "ok"
 

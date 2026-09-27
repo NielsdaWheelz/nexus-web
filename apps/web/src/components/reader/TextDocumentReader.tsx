@@ -149,6 +149,12 @@ export default function TextDocumentReader({
 
     lastScrollTopRef.current = viewport.scrollTop;
     onViewportReadyRef.current(snapshot());
+    let settleTimer: number | undefined;
+    const publishScrollEnd = () => {
+      if (settleTimer !== undefined) window.clearTimeout(settleTimer);
+      settleTimer = undefined;
+      onViewportScrollEndRef.current?.(snapshot());
+    };
     const publishScroll = (event: Event) => {
       const nextSnapshot = snapshot();
       const delta = nextSnapshot.scrollTop - lastScrollTopRef.current;
@@ -159,12 +165,16 @@ export default function TextDocumentReader({
         );
       }
       onViewportScrollRef.current(nextSnapshot);
+      if (!("onscrollend" in viewport) && onViewportScrollEndRef.current) {
+        if (settleTimer !== undefined) window.clearTimeout(settleTimer);
+        settleTimer = window.setTimeout(publishScrollEnd, 200);
+      }
     };
 
     viewport.addEventListener("scroll", publishScroll, { passive: true });
-    const publishScrollEnd = () => onViewportScrollEndRef.current?.(snapshot());
     viewport.addEventListener("scrollend", publishScrollEnd);
     return () => {
+      if (settleTimer !== undefined) window.clearTimeout(settleTimer);
       viewport.removeEventListener("scroll", publishScroll);
       viewport.removeEventListener("scrollend", publishScrollEnd);
     };

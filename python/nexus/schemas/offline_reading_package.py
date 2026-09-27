@@ -1,4 +1,4 @@
-"""Archive grammar V1 carrying the strict V2 reader document contract."""
+"""Archive grammar V1 carrying the strict V3 reader document contract."""
 
 from __future__ import annotations
 
@@ -21,10 +21,11 @@ from pydantic import (
 from pydantic.alias_generators import to_camel
 
 from nexus.schemas.media import EpubFragmentOut, MediaNavigationOut, NavigationTextPointOut
+from nexus.schemas.source_issues import MissingImage, UnresolvedNavigationTarget
 
 OFFLINE_READING_PACKAGE_SCHEMA_VERSION = 1
-OFFLINE_READING_READER_CONTRACT_VERSION = 2
-OFFLINE_READING_READER_BUNDLE_VERSION = 2
+OFFLINE_READING_READER_CONTRACT_VERSION = 3
+OFFLINE_READING_READER_BUNDLE_VERSION = 3
 
 # V1's single bounds owner. Other language implementations mirror these values.
 OFFLINE_READING_MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
@@ -240,8 +241,8 @@ class OfflineReadingEntry(OfflineReadingSchemaModel):
 
 class OfflineReadingManifest(OfflineReadingSchemaModel):
     package_schema_version: Literal[1]
-    reader_contract_version: Literal[2]
-    minimum_reader_bundle_version: Literal[2]
+    reader_contract_version: Literal[3]
+    minimum_reader_bundle_version: Literal[3]
     media_id: UUID
     media_kind: Literal["Pdf", "Epub", "WebArticle"]
     title: str = Field(min_length=1, max_length=OFFLINE_READING_MAX_TITLE_CODEPOINTS)
@@ -284,7 +285,7 @@ class OfflineReadingManifest(OfflineReadingSchemaModel):
 
 
 class OfflineReaderDocumentBase(OfflineReadingSchemaModel):
-    reader_contract_version: Literal[2]
+    reader_contract_version: Literal[3]
     media_id: UUID
     title: str = Field(min_length=1, max_length=OFFLINE_READING_MAX_TITLE_CODEPOINTS)
 
@@ -342,7 +343,7 @@ class EpubOfflineFragment(EpubFragmentOut):
     def validate_html(self) -> EpubOfflineFragment:
         if self.char_count != len(self.canonical_text):
             raise ValueError("EPUB char_count must equal canonical_text length")
-        referenced = _validate_sanitized_html(self.html_sanitized, web_text_only=False)
+        referenced, _ = _validate_sanitized_html(self.html_sanitized, web_text_only=False)
         if referenced != set(self.asset_paths):
             raise ValueError("EPUB HTML assets must exactly match asset_paths")
         return self
@@ -371,6 +372,14 @@ class EpubOfflineReaderDocument(OfflineReaderDocumentBase):
             if fragment.document_word_start != word_start:
                 raise ValueError("EPUB fragment word prefixes must follow document order")
             word_start += fragment.word_count
+        expected: dict[UUID, set[int]] = {}
+        for issue in self.navigation.source_issues:
+            if isinstance(issue, MissingImage):
+                expected.setdefault(issue.fragment_id, set()).add(issue.marker_ordinal)
+        for fragment in self.fragments:
+            _, markers = _validate_sanitized_html(fragment.html_sanitized, web_text_only=False)
+            if markers != expected.get(fragment.fragment_id, set()):
+                raise ValueError("EPUB source issues and image markers must match")
         return self
 
 
@@ -394,7 +403,9 @@ class WebOfflineFragment(OfflineReadingSchemaModel):
     @field_validator("html_sanitized")
     @classmethod
     def validate_html(cls, value: str) -> str:
-        _validate_sanitized_html(value, web_text_only=True)
+        _, markers = _validate_sanitized_html(value, web_text_only=True)
+        if markers:
+            raise ValueError("web article HTML cannot contain source issue markers")
         return value
 
 
@@ -487,6 +498,32 @@ def _validate_navigation_fragments(
         if location.target.kind == "Present":
             point(location.target.value)
 
+    unresolved_nodes: set[str] = set()
+    pending = list(navigation.toc_nodes)
+    while pending:
+        node = pending.pop()
+        if node.section_id.kind == "Absent":
+            unresolved_nodes.add(node.id)
+        pending.extend(node.children)
+    for location in [*navigation.landmarks, *navigation.page_list]:
+        if location.target.kind == "Absent":
+            unresolved_nodes.add(location.id)
+    issue_keys: set[tuple[object, ...]] = set()
+    for issue in navigation.source_issues:
+        if isinstance(issue, MissingImage):
+            if kind != "epub" or issue.fragment_id not in coordinates:
+                raise ValueError("image issue must target a declared EPUB fragment")
+            key = ("image", issue.fragment_id, issue.marker_ordinal, issue.resource_path)
+        elif isinstance(issue, UnresolvedNavigationTarget):
+            if kind != "epub" or issue.node_id not in unresolved_nodes:
+                raise ValueError("navigation issue must target a nonactionable EPUB node")
+            key = ("navigation", issue.node_id)
+        else:
+            raise AssertionError("closed source issue union was not exhaustive")
+        if key in issue_keys:
+            raise ValueError("source issues must not repeat one source reference")
+        issue_keys.add(key)
+
 
 OfflineReaderDocument = Annotated[
     PdfOfflineReaderDocument | EpubOfflineReaderDocument | WebArticleOfflineReaderDocument,
@@ -495,13 +532,14 @@ OfflineReaderDocument = Annotated[
 _READER_DOCUMENT_ADAPTER = TypeAdapter(OfflineReaderDocument)
 
 
-def _validate_sanitized_html(value: str, *, web_text_only: bool) -> set[str]:
+def _validate_sanitized_html(value: str, *, web_text_only: bool) -> tuple[set[str], set[int]]:
     try:
         roots = html.fragments_fromstring(value)
     except (ValueError, TypeError) as exc:
         raise ValueError("htmlSanitized must be parseable HTML") from exc
 
     referenced_assets: set[str] = set()
+    warning_markers: set[int] = set()
     for root in roots:
         elements = root.iter() if hasattr(root, "iter") else ()
         for element in elements:
@@ -517,6 +555,30 @@ def _validate_sanitized_html(value: str, *, web_text_only: bool) -> set[str]:
                 name = raw_name.rsplit("}", 1)[-1].lower()
                 if name.startswith("on") or name in {"srcdoc", "style"}:
                     raise ValueError("offline HTML contains executable attributes")
+                if name == "data-reader-source-warning":
+                    if (
+                        not raw_value.isascii()
+                        or not raw_value.isdecimal()
+                        or len(raw_value) > 5
+                        or str(int(raw_value)) != raw_value
+                        or int(raw_value) >= 10_000
+                        or (
+                            tag != "img"
+                            and not (
+                                tag == "span"
+                                and element.get("role") == "img"
+                                and (element.get("aria-label") or "").startswith(
+                                    "image unavailable"
+                                )
+                            )
+                        )
+                    ):
+                        raise ValueError("offline HTML has an invalid image issue marker")
+                    ordinal = int(raw_value)
+                    if ordinal in warning_markers:
+                        raise ValueError("offline HTML repeats an image issue marker")
+                    warning_markers.add(ordinal)
+                    continue
                 if name not in OFFLINE_READING_URL_ATTRIBUTES:
                     continue
                 if _REMOTE_OR_EXECUTABLE_URL.search(raw_value):
@@ -526,10 +588,19 @@ def _validate_sanitized_html(value: str, *, web_text_only: bool) -> set[str]:
                 if not web_text_only and tag == "img" and name == "src":
                     referenced_assets.add(validate_safe_package_path(raw_value))
                     continue
+                if not web_text_only and tag == "img" and name == "srcset":
+                    for candidate in raw_value.split(","):
+                        tokens = candidate.strip().split()
+                        if not tokens:
+                            raise ValueError("EPUB srcset has an empty image candidate")
+                        referenced_assets.add(validate_safe_package_path(tokens[0]))
+                    continue
                 raise ValueError(
                     "offline HTML contains an undeclared navigation or subresource URL"
                 )
-    return referenced_assets
+            if tag == "img" and "src" not in element.attrib and "srcset" not in element.attrib:
+                raise ValueError("offline image has no declared source")
+    return referenced_assets, warning_markers
 
 
 def parse_offline_reading_manifest(payload: bytes) -> OfflineReadingManifest:

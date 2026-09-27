@@ -105,7 +105,7 @@ export const IMPORT_FAILURE_COPY: Readonly<
   },
   E_INGEST_TIMEOUT: {
     reason: "Import timed out",
-    title: "This import took too long.",
+    title: "Processing took too long.",
     explanation: "The source was still being processed when the time ran out.",
     recovery: "SameSource",
   },
@@ -256,10 +256,9 @@ export const IMPORT_FAILURE_COPY: Readonly<
     recovery: "None",
   },
   E_SOURCE_NOT_READABLE: {
-    reason: "No readable article found",
-    title: "Nexus could not find a readable article.",
-    explanation:
-      "Use a different source, or open the original page and capture it from your browser.",
+    reason: "No readable content found",
+    title: "No readable content was found.",
+    explanation: "Try another copy of this source with readable content.",
     recovery: "OpenOriginal",
   },
   E_SOURCE_TOO_LARGE: {
@@ -527,7 +526,9 @@ export function importStatusLine(item: ImportItem): string {
     case "NeedsAttention":
       return attentionLine(item, state);
     case "Complete":
-      return "Imported";
+      return item.sourceIssueCount > 0
+        ? `${item.sourceIssueCount} source ${item.sourceIssueCount === 1 ? "issue" : "issues"} recorded`
+        : "Imported";
     default:
       return assertNever(state, "Unreachable import state");
   }
@@ -611,16 +612,16 @@ export const IMPORT_STATE_KIND_LABEL: Readonly<Record<ImportStateKind, string>> 
 };
 
 /** The badge and Pill wording for a row's current state. */
-export function importStateLabel(state: ImportState): string {
-  switch (state.kind) {
+export function importStateLabel(item: ImportItem): string {
+  switch (item.state.kind) {
     case "Active":
-      return state.status === "Queued" ? "Queued" : "In progress";
+      return item.state.status === "Queued" ? "Queued" : "In progress";
     case "NeedsAttention":
       return "Needs attention";
     case "Complete":
-      return "Complete";
+      return item.sourceIssueCount > 0 ? "Readable with issues" : "Complete";
     default:
-      return assertNever(state, "Unreachable import state");
+      return assertNever(item.state, "Unreachable import state");
   }
 }
 
@@ -644,6 +645,9 @@ export function importConsequenceLine(
     return `${copy.title} ${copy.explanation}`;
   }
   if (state.kind === "Complete") {
+    if (item.sourceIssueCount > 0 && readiness.canRead) {
+      return "Some source content is unavailable. You can read the available content.";
+    }
     return readiness.canRead
       ? "Imported. You can read this document."
       : "Imported.";
@@ -679,7 +683,7 @@ export function importRecoveryRestrictionLine(
     case "NotOwner":
       return "Only the person who created this import can recover it.";
     case "SameSourceTerminal":
-      return "The same source cannot succeed. Start a new import from a different source.";
+      return "No retry is currently available for this import. If you have another copy, start a new import.";
     case "SourceNotReacquirable":
       return "The original file is no longer stored, so it cannot be processed again.";
     case "UploadRejected":
@@ -805,9 +809,18 @@ function historyEventLabel(entry: HistoryEntry): string {
         ? IMPORT_STAGE_COPY[entry.stage.value].failed
         : "Failed";
     case "SourceRecoveryAccepted":
-      return facts.recovery.kind === "RetrySource"
-        ? "Retry accepted"
-        : "Repair accepted";
+      switch (facts.recovery.kind) {
+        case "RetrySource":
+          return "Retry accepted";
+        case "RepairSource":
+          return "Repair accepted";
+        case "ReprocessSource":
+          return "Reprocessing accepted";
+        case "CorrectSourceType":
+          return "Source type corrected; processing queued";
+        default:
+          return assertNever(facts.recovery, "Unreachable source recovery");
+      }
     case "SourceSucceeded":
       return "Source processing finished";
     case "SourceSuperseded":

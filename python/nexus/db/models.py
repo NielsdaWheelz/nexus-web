@@ -1070,6 +1070,9 @@ class ReaderPublication(Base):
         unique=True,
     )
     generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source_issues: Mapped[list[dict[str, object]]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
     changed_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),

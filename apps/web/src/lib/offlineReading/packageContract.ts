@@ -219,13 +219,14 @@ function safeHtml(
   raw: unknown,
   name: string,
   webTextOnly: boolean,
-): { readonly html: string; readonly referencedAssets: ReadonlySet<string> } {
+): { readonly html: string; readonly referencedAssets: ReadonlySet<string>; readonly warningMarkers: ReadonlySet<number> } {
   const value = boundedString(raw, name);
   const parser = new DOMParser();
   const document = parser.parseFromString(`<body>${value}</body>`, "text/html");
   const body = document.body;
   const walker = document.createTreeWalker(body, NodeFilter.SHOW_ALL);
   const referencedAssets = new Set<string>();
+  const warningMarkers = new Set<number>();
   for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
     if (node.nodeType === Node.COMMENT_NODE || node.nodeType === Node.PROCESSING_INSTRUCTION_NODE) {
       throw new TypeError(`${name} contains comments or processing instructions`);
@@ -244,6 +245,18 @@ function safeHtml(
       if (attributeName.startsWith("on") || attributeName === "srcdoc" || attributeName === "style") {
         throw new TypeError(`${name} contains executable attributes`);
       }
+      if (attributeName === "data-reader-source-warning") {
+        if (
+          !/^(?:0|[1-9]\d{0,4})$/u.test(attributeValue) ||
+          Number(attributeValue) >= 10_000 ||
+          (tag !== "img" && !(tag === "span" && node.getAttribute("role") === "img" &&
+            (node.getAttribute("aria-label") ?? "").startsWith("image unavailable")))
+        ) throw new TypeError(`${name} has an invalid image issue marker`);
+        const marker = Number(attributeValue);
+        if (warningMarkers.has(marker)) throw new TypeError(`${name} repeats an image issue marker`);
+        warningMarkers.add(marker);
+        continue;
+      }
       if (!URL_ATTRIBUTES.has(attributeName)) continue;
       if (REMOTE_OR_EXECUTABLE_URL_RE.test(attributeValue)) {
         throw new TypeError(`${name} contains a remote or executable URL`);
@@ -253,10 +266,21 @@ function safeHtml(
         referencedAssets.add(safeEntryPath(attributeValue, `${name} image src`));
         continue;
       }
+      if (!webTextOnly && tag === "img" && attributeName === "srcset") {
+        for (const candidate of attributeValue.split(",")) {
+          const tokens = candidate.trim().split(/\s+/u);
+          if (!tokens[0]) throw new TypeError(`${name} has an empty srcset candidate`);
+          referencedAssets.add(safeEntryPath(tokens[0], `${name} image srcset`));
+        }
+        continue;
+      }
       throw new TypeError(`${name} contains an undeclared navigation or subresource URL`);
     }
+    if (tag === "img" && !node.hasAttribute("src") && !node.hasAttribute("srcset")) {
+      throw new TypeError(`${name} image has no declared source`);
+    }
   }
-  return { html: value, referencedAssets };
+  return { html: value, referencedAssets, warningMarkers };
 }
 
 export function decodeOfflineReaderDocument(raw: string): OfflineReaderDocument {
@@ -273,7 +297,7 @@ export function decodeOfflineReaderDocument(raw: string): OfflineReaderDocument 
     "readerContractVersion", "mediaId", "mediaKind", "title",
     ...(kind === "Pdf" ? ["documentPath"] : ["navigation", "fragments"]),
   ], "reader document");
-  if (value.readerContractVersion !== 2) throw new TypeError("Unsupported reader contract");
+  if (value.readerContractVersion !== 3) throw new TypeError("Unsupported reader contract");
   const mediaId = canonicalUuid(value.mediaId, "mediaId");
   const title = string(value.title, "title");
   if (kind === "Pdf") {
@@ -297,21 +321,31 @@ export function decodeOfflineReaderDocument(raw: string): OfflineReaderDocument 
     }
   };
   if (kind === "WebArticle") {
+    if (navigation.source_issues.length > 0) throw new TypeError("Web article cannot contain EPUB source issues");
     const fragments = rawFragments.map((item, index): OfflineWebFragment => {
       const fragment = exactRecord(item, ["fragmentId", "fragmentIdx", "htmlSanitized", "canonicalText", "createdAt"], `fragments[${index}]`);
       const fragmentId = canonicalUuid(fragment.fragmentId, "fragmentId");
       const fragmentIdx = nonnegativeInteger(fragment.fragmentIdx, "fragmentIdx");
       const canonicalText = boundedString(fragment.canonicalText, "canonicalText");
       validateFragment(index, fragmentId, fragmentIdx, canonicalText);
+      const checked = safeHtml(fragment.htmlSanitized, "htmlSanitized", true);
+      if (checked.warningMarkers.size > 0) throw new TypeError("Web article has image issue markers");
       return {
         fragmentId, fragmentIdx, canonicalText,
-        htmlSanitized: safeHtml(fragment.htmlSanitized, "htmlSanitized", true).html,
+        htmlSanitized: checked.html,
         createdAt: string(fragment.createdAt, "createdAt"),
       };
     });
     return { kind, mediaId, title, navigation, fragments };
   }
   let wordStart = 0;
+  const expectedMarkers = new Map<string, Set<number>>();
+  for (const issue of navigation.source_issues) {
+    if (issue.kind !== "MissingImage") continue;
+    const markers = expectedMarkers.get(issue.fragment_id) ?? new Set<number>();
+    markers.add(issue.marker_ordinal);
+    expectedMarkers.set(issue.fragment_id, markers);
+  }
   const fragments = rawFragments.map((item, index): EpubFragmentContent => {
     const value = exactRecord(item, [
       "fragment_id", "fragment_idx", "href_path", "html_sanitized", "canonical_text",
@@ -332,9 +366,13 @@ export function decodeOfflineReaderDocument(raw: string): OfflineReaderDocument 
       !path.startsWith("assets/") || (index > 0 && assetPaths[index - 1]! > path))) {
       throw new TypeError("EPUB asset paths must be unique, sorted, and below assets/");
     }
-    const referenced = safeHtml(fragment.html_sanitized, "html_sanitized", false).referencedAssets;
-    if (assetPaths.length !== referenced.size || assetPaths.some((path) => !referenced.has(path))) {
+    const checked = safeHtml(fragment.html_sanitized, "html_sanitized", false);
+    if (assetPaths.length !== checked.referencedAssets.size || assetPaths.some((path) => !checked.referencedAssets.has(path))) {
       throw new TypeError("EPUB asset declarations must match local references");
+    }
+    const markers = expectedMarkers.get(fragment.fragment_id) ?? new Set<number>();
+    if (markers.size !== checked.warningMarkers.size || [...markers].some((marker) => !checked.warningMarkers.has(marker))) {
+      throw new TypeError("EPUB source issues and image markers must match");
     }
     return fragment;
   });

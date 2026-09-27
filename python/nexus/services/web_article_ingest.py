@@ -36,7 +36,7 @@ from nexus.services.node_ingest import (
     run_node_ingest,
 )
 from nexus.services.reader_apparatus import replace_media_apparatus
-from nexus.services.reader_publication import replace_reader_publication
+from nexus.services.reader_publication import ReplaceSourceIssues, replace_reader_publication
 from nexus.services.source_publication import SourcePublicationFence, run_source_publication_phase
 from nexus.services.url_normalize import normalize_url_for_display
 from nexus.services.web_article_artifacts import delete_web_article_artifacts
@@ -169,6 +169,7 @@ def materialize_web_article_source(
                 db,
                 media_id=media_id,
                 expected_kind="web_article",
+                issues=ReplaceSourceIssues(issues=()),
                 replace_projection=lambda media: _replace_projection(
                     db,
                     media=media,

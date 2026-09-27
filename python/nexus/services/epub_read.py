@@ -26,7 +26,10 @@ from nexus.schemas.media import (
 from nexus.schemas.presence import absent, presence_from_nullable, present
 from nexus.services.capabilities import is_document_status_ready
 from nexus.services.html_tree import inner_html
-from nexus.services.reader_publication import read_publication_generation
+from nexus.services.reader_publication import (
+    read_publication_generation,
+    read_publication_source_issues,
+)
 
 _FRAGMENT_SOURCES_SQL = """
     SELECT f.idx, COALESCE(n.label, source.package_href) AS label,
@@ -274,6 +277,7 @@ def read_epub_navigation(
         media_id=media_id,
         kind="epub",
         generation=generation,
+        source_issues=read_publication_source_issues(db, media_id=media_id, generation=generation),
         fragments=[
             ReaderNavigationFragmentOut(
                 fragment_id=row["id"],

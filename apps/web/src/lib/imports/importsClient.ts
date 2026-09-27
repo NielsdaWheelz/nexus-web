@@ -11,6 +11,7 @@
 import { apiFetch, decodeApiPayload } from "@/lib/api/client";
 import { decodePresence, type Presence } from "@/lib/api/presence";
 import { MEDIA_KINDS, type MediaKind } from "@/lib/media/kind";
+import { decodeReaderSourceIssues, type ReaderSourceIssue } from "@/lib/media/readerSourceIssues";
 import {
   decodeMediaSourceProgress,
   type MediaSourceProgress,
@@ -169,7 +170,9 @@ export type SourceHistoryFacts =
       readonly sourceAttemptId: string;
       readonly recovery:
         | { readonly kind: "RetrySource"; readonly newSourceAttemptId: string }
-        | { readonly kind: "RepairSource"; readonly jobId: string };
+        | { readonly kind: "RepairSource"; readonly jobId: string }
+        | { readonly kind: "ReprocessSource"; readonly newSourceAttemptId: string }
+        | { readonly kind: "CorrectSourceType"; readonly newSourceAttemptId: string; readonly sourceType: "remote_epub_url" };
     }
   | {
       readonly kind: "SourceSucceeded";
@@ -246,6 +249,7 @@ export interface ImportItem {
   readonly updatedAt: string;
   readonly matchedEvent: Presence<HistoryEntry>;
   readonly capabilities: ImportCapabilities;
+  readonly sourceIssueCount: number;
 }
 
 export interface ImportStageGroup {
@@ -273,6 +277,7 @@ export type HistoryCoverage =
 
 export interface ImportDetail {
   readonly item: ImportItem;
+  readonly sourceIssues: Presence<{ readonly generation: number; readonly issues: ReaderSourceIssue[] }>;
   readonly readiness: {
     readonly canRead: boolean;
     readonly canSearch: boolean;
@@ -531,10 +536,10 @@ function acceptedSourceRecovery(
 ): Extract<SourceHistoryFacts, { kind: "SourceRecoveryAccepted" }>["recovery"] {
   const kind = expectOneOf(
     expectRecord(raw, name).kind,
-    ["RetrySource", "RepairSource"] as const,
+    ["RetrySource", "RepairSource", "ReprocessSource", "CorrectSourceType"] as const,
     `${name}.kind`,
   );
-  if (kind === "RetrySource") {
+  if (kind === "RetrySource" || kind === "ReprocessSource") {
     const recovery = expectExactRecord(
       raw,
       ["kind", "new_source_attempt_id"],
@@ -546,6 +551,14 @@ function acceptedSourceRecovery(
         recovery.new_source_attempt_id,
         `${name}.new_source_attempt_id`,
       ),
+    };
+  }
+  if (kind === "CorrectSourceType") {
+    const recovery = expectExactRecord(raw, ["kind", "new_source_attempt_id", "source_type"], name);
+    return {
+      kind,
+      newSourceAttemptId: expectCanonicalRfcUuid(recovery.new_source_attempt_id, `${name}.new_source_attempt_id`),
+      sourceType: expectOneOf(recovery.source_type, ["remote_epub_url"] as const, `${name}.source_type`),
     };
   }
   const recovery = expectExactRecord(raw, ["kind", "job_id"], name);
@@ -959,6 +972,7 @@ function importItem(raw: unknown, name: string): ImportItem {
       "updated_at",
       "matched_event",
       "capabilities",
+      "source_issue_count",
     ],
     name,
   );
@@ -982,6 +996,7 @@ function importItem(raw: unknown, name: string): ImportItem {
       item.capabilities,
       `${name}.capabilities`,
     ),
+    sourceIssueCount: expectNonnegativeInteger(item.source_issue_count, `${name}.source_issue_count`),
   };
 }
 
@@ -1071,7 +1086,7 @@ export function decodeImportDetail(raw: unknown): ImportDetail {
   const name = "GET /api/imports/:ref";
   const data = expectExactRecord(
     expectExactRecord(raw, ["data"], name).data,
-    ["item", "readiness", "history_coverage"],
+    ["item", "readiness", "history_coverage", "source_issues"],
     `${name}.data`,
   );
   const readiness = expectExactRecord(
@@ -1079,8 +1094,20 @@ export function decodeImportDetail(raw: unknown): ImportDetail {
     ["can_read", "can_search", "can_play"],
     `${name}.readiness`,
   );
+  const item = importItem(data.item, `${name}.item`);
+  const sourceIssues = decodePresence(data.source_issues, (rawIssues) => {
+    const value = expectExactRecord(rawIssues, ["generation", "issues"], `${name}.source_issues.value`);
+    return {
+      generation: expectPositiveInteger(value.generation, `${name}.source_issues.value.generation`),
+      issues: decodeReaderSourceIssues(value.issues, `${name}.source_issues.value.issues`),
+    };
+  });
+  if (item.sourceIssueCount !== (sourceIssues.kind === "Present" ? sourceIssues.value.issues.length : 0)) {
+    throw new TypeError(`${name}.source_issues must match the current import count`);
+  }
   return {
-    item: importItem(data.item, `${name}.item`),
+    item,
+    sourceIssues,
     readiness: {
       canRead: expectBoolean(readiness.can_read, `${name}.readiness.can_read`),
       canSearch: expectBoolean(
