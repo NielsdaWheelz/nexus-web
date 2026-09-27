@@ -24,7 +24,7 @@ acceptance: one stop per wolfe chapter title group, preserved pillow numbered
 entries, notes accessible without each commentary heading entering routine
 navigation, and consistent shared controls. counts alone are insufficient.
 
-receipt: `/tmp/nexus-chapter-council-20260926/`; source at `cfa27d6ce615bb4775e7784954f19dcdd8c8ebb1`;
+research source at `cfa27d6ce615bb4775e7784954f19dcdd8c8ebb1`;
 relevant extraction owners match production backend `7dc68929b4d5ddfd77eb1a50228d477fa0148b5d`.
 production book bytes were not inspected.
 

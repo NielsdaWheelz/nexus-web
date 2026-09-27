@@ -32,8 +32,8 @@ these are local parser observations, not production counts or desired counts.
 the probe invoked existing package parsing, staged resource rewriting, apparatus
 extraction, sanitization, canonicalization, publisher parsing and structure
 construction. it did not publish fragments, upload assets, or call the database.
-temporary receipts: `/tmp/nexus-chapter-council-20260926/inspect_books.py` and
-`wolfe.json`, `pillow.json`, `augustine.json`, `montaigne.json` in that directory.
+temporary probe code and data were deleted after local acceptance; source hashes,
+counts and conclusions remain here.
 
 | edition | spine files | published toc entries | current derived sections | demonstrated cause |
 | --- | ---: | ---: | ---: | --- |

@@ -287,6 +287,8 @@ compact navigation has 328 steps. hosted pointer and keyboard Enter activation
 reach the same notes target; native document-map activation does too. the v4
 contents has 559 nodes, including 225 auxiliary note headings. `./scripts/test`
 and android debug build pass.
+temporary test code, fixture data, local credentials and dependency links were
+deleted after acceptance; this receipt retains the outcomes and artifact hashes.
 
 the isolated article repair published revision-2 reconciliation through the
 normal exact worker job `02444e86-ac04-4fe7-a8ce-b7734787a3e7`. the index is
