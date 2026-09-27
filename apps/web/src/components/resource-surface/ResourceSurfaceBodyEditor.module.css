@@ -1,174 +1,38 @@
-.body {
-  max-width: 76ch;
-  width: 100%;
-}
-
-.inspectionNotice {
-  margin: 0;
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-}
-
-.rows {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.noteRow,
-.resourceRow,
-.insertionRow {
-  position: relative;
-  transition:
-    background-color 150ms var(--ease-glide),
-    opacity 150ms var(--ease-glide),
-    transform 150ms var(--ease-glide);
-}
-
-.emptyRow {
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-  min-height: 44px;
-  padding: var(--space-3);
-}
-
-.noteRow {
-  min-height: 44px;
-  padding-block: var(--space-2);
-}
-
-.noteEditor {
-  padding-inline-end: calc(var(--size-xl) + var(--space-1));
-}
-
-.resourceRow {
-  align-items: center;
-  display: flex;
-  min-height: 52px;
-}
-
-.resourceActivation {
-  align-items: flex-start;
-  background: transparent;
-  border: 0;
-  color: var(--ink);
-  cursor: pointer;
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-height: 44px;
-  min-width: 0;
-  padding: var(--space-2) calc(var(--size-xl) + var(--space-1)) var(--space-2) var(--space-3);
-  text-align: start;
-}
-
-.resourceActivation:hover {
-  background: color-mix(in srgb, var(--ink) 5%, transparent);
-}
-
-.resourceActivation:focus-visible,
-.insertNote:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--ink) 42%, transparent);
-  outline-offset: 2px;
-}
-
-.resourceLabel {
-  font-size: var(--text-md);
-  font-weight: var(--weight-medium);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  width: 100%;
-}
-
-.resourceSummary {
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  width: 100%;
-}
-
-.rowActions {
-  align-items: center;
-  display: flex;
-  gap: var(--space-1);
-  inset-inline-end: 0;
-  opacity: 0;
-  position: absolute;
-  top: var(--space-1);
-  transition: opacity 150ms var(--ease-glide);
-}
-
-.noteRow:hover .rowActions,
-.noteRow:focus-within .rowActions,
-.resourceRow:hover .rowActions,
-.resourceRow:focus-within .rowActions {
-  opacity: 1;
-}
-
-.insertionRow {
-  min-height: 44px;
-}
-
-.insertNote {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  color: var(--ink-muted);
-  cursor: text;
-  display: flex;
-  gap: var(--space-2);
-  min-height: 44px;
-  padding: 0 var(--space-3);
-  width: 100%;
-}
-
-.insertNote:hover {
-  color: var(--ink);
-}
-
-.addItem {
-  padding-block-start: var(--space-2);
-}
-
-.addItemSearch {
-  display: grid;
-  gap: var(--space-2);
-}
-
-.addItemSearch label {
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-}
-
-.addItemSearch input {
-  background: var(--surface-canvas);
-  border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent);
-  border-radius: var(--radius-md);
-  color: var(--ink);
-  font: inherit;
-  min-height: 44px;
-  padding-inline: var(--space-3);
-}
-
-.addItemSearch input:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--ink) 42%, transparent);
-  outline-offset: 2px;
-}
-
-@media (hover: none) {
-  .rowActions {
-    opacity: 1;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .noteRow,
-  .resourceRow,
-  .insertionRow,
-  .rowActions {
-    transition: none;
-  }
-}
+.body { max-width: 76ch; width: 100%; outline: none; }
+.inspectionNotice { margin: 0; color: var(--ink-muted); font-size: var(--text-sm); }
+.rows { list-style: none; margin: 0; padding: 0; }
+.noteRow, .resourceRow, .insertionRow { position: relative; padding-inline-start: calc(var(--outline-depth, 0) * 1.5rem + 3.5rem); }
+.noteRow, .resourceRow { min-height: 44px; }
+.noteRow[data-selected], .resourceRow[data-selected] { background: color-mix(in srgb, var(--ink) 8%, transparent); border-radius: var(--radius-md); }
+.noteRow[data-drop="before"], .resourceRow[data-drop="before"] { box-shadow: inset 0 2px var(--ink); }
+.noteRow[data-drop="after"], .resourceRow[data-drop="after"] { box-shadow: inset 0 -2px var(--ink); }
+.noteRow[data-drop="inside"], .resourceRow[data-drop="inside"] { background: color-mix(in srgb, var(--ink) 10%, transparent); }
+.rowLead { align-items: center; display: flex; flex-direction: row-reverse; gap: 3px; inset-inline-start: calc(var(--outline-depth, 0) * 1.5rem); position: absolute; top: .35rem; }
+.bullet, .disclosure { align-items: center; background: none; border: 0; color: var(--ink-muted); cursor: pointer; display: inline-flex; justify-content: center; min-height: 32px; padding: 0; }
+.bullet { border-radius: 50%; font-size: 1.15rem; width: 24px; }
+.disclosure { width: 16px; }
+.disclosure svg { transition: transform 150ms var(--ease-glide); }
+.disclosure svg[data-open] { transform: rotate(90deg); }
+.bullet:hover, .disclosure:hover { color: var(--ink); }
+.bullet:focus-visible, .disclosure:focus-visible, .terminal:focus-visible, .resourceActivation:focus-visible, .insertNote:focus-visible { outline: 2px solid color-mix(in srgb, var(--ink) 42%, transparent); outline-offset: 2px; }
+.noteEditor { padding-block: var(--space-2); padding-inline-end: calc(var(--size-xl) + var(--space-1)); }
+.resourceRow { align-items: center; display: flex; }
+.resourceActivation, .terminal { background: none; border: 0; color: var(--ink); cursor: pointer; min-height: 44px; padding: var(--space-2) calc(var(--size-xl) + var(--space-1)) var(--space-2) 0; text-align: start; }
+.resourceActivation { align-items: flex-start; display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.terminal { color: var(--ink-muted); font-size: var(--text-sm); }
+.resourceLabel { font-size: var(--text-md); font-weight: var(--weight-medium); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
+.resourceSummary { color: var(--ink-muted); font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
+.neighborhoodStatus { color: var(--ink-muted); font-size: var(--text-sm); }
+.rowActions { align-items: center; display: flex; inset-inline-end: 0; opacity: 0; position: absolute; top: var(--space-1); transition: opacity 150ms var(--ease-glide); }
+.noteRow:hover .rowActions, .noteRow:focus-within .rowActions, .resourceRow:hover .rowActions, .resourceRow:focus-within .rowActions { opacity: 1; }
+.emptyRow { color: var(--ink-muted); font-size: var(--text-sm); min-height: 44px; padding: var(--space-3); }
+.insertionRow { min-height: 44px; }
+.insertNote { align-items: center; background: none; border: 0; color: var(--ink-muted); cursor: text; display: flex; gap: var(--space-2); min-height: 44px; padding: 0; width: 100%; }
+.insertNote:hover { color: var(--ink); }
+.addItem { padding-block-start: var(--space-2); }
+.addItemSearch { display: grid; gap: var(--space-2); }
+.addItemSearch label { color: var(--ink-muted); font-size: var(--text-sm); }
+.addItemSearch input { background: var(--surface-canvas); border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent); border-radius: var(--radius-md); color: var(--ink); font: inherit; min-height: 44px; padding-inline: var(--space-3); }
+.addItemSearch input:focus-visible { outline: 2px solid color-mix(in srgb, var(--ink) 42%, transparent); outline-offset: 2px; }
+@media (hover: none) { .rowActions { opacity: 1; } .bullet, .disclosure { min-height: 44px; } .bullet { width: 32px; } .disclosure { width: 24px; } .rowLead { top: 0; } .noteRow, .resourceRow, .insertionRow { padding-inline-start: calc(var(--outline-depth, 0) * 1.5rem + 4.25rem); } }
+@media (prefers-reduced-motion: reduce) { .rowActions, .disclosure svg { transition: none; } }

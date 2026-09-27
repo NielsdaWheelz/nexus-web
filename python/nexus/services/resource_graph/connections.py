@@ -97,7 +97,6 @@ def query_connections(db: Session, *, viewer_id: UUID, query: ConnectionQuery) -
                 origin=cast("EdgeOrigin", row.origin),
                 snapshot=snapshot_from_jsonb(row.snapshot) if row.snapshot is not None else None,
                 source_order_key=row.source_order_key,
-                target_order_key=row.target_order_key,
                 ordinal=row.ordinal,
                 source_ref=source_ref,
                 target_ref=target_ref,
@@ -223,7 +222,6 @@ def _is_neutral_link_row(row: ResourceEdge) -> bool:
         ordinal=row.ordinal,
         snapshot=row.snapshot,
         source_order_key=row.source_order_key,
-        target_order_key=row.target_order_key,
     )
 
 

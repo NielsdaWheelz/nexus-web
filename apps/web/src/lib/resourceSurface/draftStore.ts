@@ -1,27 +1,16 @@
-import type { ResourceSurfaceCommand } from "@/lib/resourceSurface/model";
-
-export type ResourceSurfaceOccurrenceAnchor =
-  | { kind: "persisted"; occurrenceId: string }
-  | { kind: "pending"; clientMutationId: string };
-
-export type ResourceSurfaceDraftPosition =
-  | { kind: "start" }
-  | { kind: "after"; anchor: ResourceSurfaceOccurrenceAnchor };
+import type { ResourceSurface } from "@/lib/resources/resourceItems";
+import type { ResourceSurfaceCommand, SurfaceBodyEdit, SurfaceContext } from "./model";
 
 export type ResourceSurfaceDraftIntent = {
   clientMutationId: string;
+  endpointRef: string;
+  context: SurfaceContext;
   command: ResourceSurfaceCommand;
-  occurrenceAnchor?: ResourceSurfaceOccurrenceAnchor;
-  position?: ResourceSurfaceDraftPosition;
+  bodyEdits: SurfaceBodyEdit[];
+  baseSurfaces: ResourceSurface[];
+  inverseSurfaces?: ResourceSurface[];
+  reversesMutationId?: string;
+  reverseVersions?: Array<{ ref: string; lane: "body" | "links" | "title"; version: number }>;
 };
-
-export type ResourceSurfacePendingTitle = {
-  value: string;
-  clientMutationId: string;
-};
-
-export type ResourceSurfacePendingBody = {
-  bodyPmJson: Record<string, unknown>;
-  bodyText: string;
-  clientMutationId: string;
-};
+export type ResourceSurfacePendingTitle = { value: string; clientMutationId: string };
+export type ResourceSurfacePendingBody = { bodyPmJson: Record<string, unknown>; bodyText: string; clientMutationId: string };

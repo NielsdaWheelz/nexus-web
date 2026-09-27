@@ -8,7 +8,8 @@ import { expectRecord, expectInteger, expectString } from "@/lib/validation";
 import { noteBodyHasContent } from "@/lib/notes/prosemirror/bodyContent";
 import { decodeNoteBodyValue, type NoteBodyValue } from "@/lib/notes/prosemirror/schema";
 
-const PREFIX = "nexus.writingJournal:v3:";
+const PREFIX = "nexus.writingJournal:v4:";
+const PREVIOUS_PREFIX = "nexus.writingJournal:v3:";
 const IDLE_MS = 1500;
 const MAX_MS = 5000;
 
@@ -39,7 +40,7 @@ export type WritingSnapshot = {
   hasRecoveredDraft: boolean;
   conflict: { local: NoteBodyValue; remote: NoteBodyValue | null } | null;
 };
-export type RecoveryCandidate = { key: string; revision: number | null; ownerKey: string | null; noteRef: string | null; operationId: string | null; raw: string; corrupt: boolean };
+export type RecoveryCandidate = { key: string; revision: number | null; ownerKey: string | null; noteRef: string | null; operationId: string | null; raw: string; corrupt: boolean; legacy: boolean };
 export type PendingBodyIdentity = { noteRef: string; sourceKey: string | null; revision: number | null };
 
 type Submitted = { request: FrozenRequest; clientMutationId: string; body: NoteBodyValue; revision: number; expectedBody: ExpectedBody };
@@ -65,7 +66,7 @@ type OperationEntry = {
   paused: "network" | "conflict" | "server" | "storage" | null;
 };
 type Journal = {
-  version: 3;
+  version: 4;
   accountId: string;
   writerId: string;
   revision: number;
@@ -96,6 +97,14 @@ type BodyRuntime = {
   remote: NoteBodyValue | null;
   awaitExternalCreation: boolean;
 };
+export type SurfaceHistorySelection =
+  | { kind: "text"; occurrenceId: string; anchor: number; head: number }
+  | { kind: "blocks"; anchor: string; occurrenceIds: string[] }
+  | null;
+export type SurfaceHistoryItem =
+  | { kind: "body"; noteRef: string; occurrenceId: string; edit: NoteBodyEdit; group: number }
+  | { kind: "structure"; mutationId: string; receiptId: string | null; bodyRefs: string[]; reverseVersions?: Array<{ ref: string; lane: "body" | "links" | "title"; version: number }>; before: unknown; after: unknown; selectionBefore: SurfaceHistorySelection; selectionAfter: SurfaceHistorySelection };
+type SurfaceHistory = { undo: SurfaceHistoryItem[]; redo: SurfaceHistoryItem[]; group: number };
 type HistoryItem = { before: NoteBodyValue; after: NoteBodyValue; selectionBefore: NoteBodySelection; selectionAfter: NoteBodySelection; group: number; source: NoteBodyEdit["source"] };
 export type OperationCallbacks = { prepare: (intent: unknown) => FrozenRequest; onAck: (data: unknown) => void; onError?: (error: unknown) => void };
 type OperationRuntime = OperationCallbacks;
@@ -113,7 +122,7 @@ function parseJournal(raw: string, accountId: string): Journal {
   const value: unknown = JSON.parse(raw);
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("journal must be an object");
   const journal = value as Journal;
-  if (journal.version !== 3 || journal.accountId !== accountId || typeof journal.writerId !== "string" ||
+  if (journal.version !== 4 || journal.accountId !== accountId || typeof journal.writerId !== "string" ||
     !Number.isSafeInteger(journal.revision) || !journal.entries || typeof journal.entries !== "object" ||
     Array.isArray(journal.entries) || !Array.isArray(journal.operations) || !Array.isArray(journal.adoptedSources)) {
     throw new TypeError("journal identity or structure is invalid");
@@ -178,13 +187,14 @@ export class WritingSession {
   private readonly listeners = new Set<() => void>();
   private readonly operations = new Map<string, OperationRuntime>();
   private readonly journal: Journal;
+  private readonly surfaceHistories = new Map<string, SurfaceHistory>();
   private active: string | null = null;
   private blocked: string | null = null;
   private sequence = 0;
 
   constructor(accountId: string) {
     this.accountId = accountId;
-    this.journal = { version: 3, accountId, writerId: this.writerId, revision: 0, adoptedSources: [], entries: {}, operations: [] };
+    this.journal = { version: 4, accountId, writerId: this.writerId, revision: 0, adoptedSources: [], entries: {}, operations: [] };
   }
 
   subscribe = (listener: () => void): (() => void) => {
@@ -298,6 +308,71 @@ export class WritingSession {
     else body.observers.delete(viewId);
   }
 
+  private surfaceHistory(ownerKey: string): SurfaceHistory {
+    let history = this.surfaceHistories.get(ownerKey);
+    if (!history) { history = { undo: [], redo: [], group: 0 }; this.surfaceHistories.set(ownerKey, history); }
+    return history;
+  }
+  surfaceBoundary(ownerKey: string): void { this.surfaceHistory(ownerKey).group += 1; }
+  recordStructure(ownerKey: string, item: Extract<SurfaceHistoryItem, { kind: "structure" }>): void {
+    const history = this.surfaceHistory(ownerKey);
+    history.undo.push(item); history.redo = []; history.group += 1;
+  }
+  structureSelection(ownerKey: string, selection: SurfaceHistorySelection): void {
+    const item = this.surfaceHistory(ownerKey).undo.at(-1);
+    if (item?.kind === "structure") item.selectionAfter = selection;
+  }
+  acknowledgeStructure(ownerKey: string, mutationId: string, receiptId: string, reverseVersions: Array<{ ref: string; lane: "body" | "links" | "title"; version: number }>): void {
+    const history = this.surfaceHistory(ownerKey);
+    for (const item of [...history.undo, ...history.redo]) if (item.kind === "structure" && item.mutationId === mutationId) { item.receiptId = receiptId; item.reverseVersions = reverseVersions; }
+  }
+  rewriteSurfaceHistory(ownerKey: string, rewrite: (item: SurfaceHistoryItem) => void): void {
+    const history = this.surfaceHistory(ownerKey);
+    for (const item of [...history.undo, ...history.redo]) rewrite(item);
+  }
+  surfaceUndo(ownerKey: string, redo = false): SurfaceHistoryItem | null {
+    const history = this.surfaceHistory(ownerKey);
+    const from = redo ? history.redo : history.undo;
+    const to = redo ? history.undo : history.redo;
+    const item = from.at(-1);
+    if (!item) return null;
+    if (item.kind === "body") {
+      const runtime = this.state(item.noteRef);
+      if (!sameBody(runtime.body, redo ? item.edit.before : item.edit.after)) return null;
+      this.acceptBody(item.noteRef, redo ? item.edit.after : item.edit.before);
+    }
+    from.pop(); to.push(item); history.group += 1;
+    return item;
+  }
+  updateStructureFrontier(item: Extract<SurfaceHistoryItem, { kind: "structure" }>, mutationId: string): void {
+    item.mutationId = mutationId; item.receiptId = null;
+  }
+  structuralBodyBase(noteRef: string): NoteBodyValue {
+    const body = this.state(noteRef);
+    return body.entry?.submitted?.body ?? body.entry?.acknowledged?.body ?? (body.entry ? body.initialBody : body.body);
+  }
+  absorbSurfaceBodyHistory(ownerKey: string, noteRef: string, base: NoteBodyValue): void {
+    const history = this.surfaceHistory(ownerKey);
+    for (let index = history.undo.length - 1; index >= 0; index -= 1) {
+      const item = history.undo[index]!;
+      if (item.kind === "structure") break;
+      if (item.noteRef !== noteRef) continue;
+      if (sameBody(item.edit.after, base)) break;
+      history.undo.splice(index, 1);
+    }
+    history.group += 1;
+  }
+  structuralBodyEdits(noteRefs: readonly string[]): Array<{ ref: string; bodyPmJson: Record<string, unknown> }> {
+    const edits: Array<{ ref: string; bodyPmJson: Record<string, unknown> }> = [];
+    for (const ref of new Set(noteRefs)) {
+      const body = this.bodies.get(ref);
+      if (!body?.entry) continue;
+      body.entry.heldForStructure = true; body.ready = false; this.clearTimers(body);
+      edits.push({ ref, bodyPmJson: body.body.bodyPmJson });
+    }
+    this.retain();
+    return edits;
+  }
   private history(body: BodyRuntime, viewId: string): { undo: HistoryItem[]; redo: HistoryItem[]; group: number } {
     let history = body.histories.get(viewId);
     if (!history) { history = { undo: [], redo: [], group: 0 }; body.histories.set(viewId, history); }
@@ -306,10 +381,21 @@ export class WritingSession {
   boundary(noteRef: string, viewId: string): void { this.history(this.state(noteRef), viewId).group += 1; }
   selection(noteRef: string, viewId: string, _selection: NoteBodySelection): void { this.boundary(noteRef, viewId); }
 
-  edit(noteRef: string, viewId: string, edit: NoteBodyEdit): boolean {
+  edit(noteRef: string, viewId: string, edit: NoteBodyEdit, surfaceOwner?: string): boolean {
     const body = this.state(noteRef);
     if (!sameBody(body.body, edit.before)) return false;
     if (sameBody(edit.before, edit.after)) return true;
+    if (surfaceOwner) {
+      const history = this.surfaceHistory(surfaceOwner);
+      const last = history.undo.at(-1);
+      if (edit.source === "input" && last?.kind === "body" && last.noteRef === noteRef && last.occurrenceId === viewId && last.edit.source === "input" && last.group === history.group && sameBody(last.edit.after, edit.before)) {
+        last.edit.after = edit.after; last.edit.selectionAfter = edit.selectionAfter;
+      } else history.undo.push({ kind: "body", noteRef, occurrenceId: viewId, edit: { ...edit }, group: history.group });
+      history.redo = [];
+      if (edit.source !== "input") history.group += 1;
+      this.acceptBody(noteRef, edit.after);
+      return true;
+    }
     const history = this.history(body, viewId);
     const last = history.undo.at(-1);
     if (edit.source === "input" && last?.source === "input" && last.group === history.group && sameBody(last.after, edit.before)) {
@@ -452,7 +538,7 @@ export class WritingSession {
     if (!retained) { entry.paused = "storage"; this.operations.get(id)?.onError?.(new WritingStorageError()); }
     return retained;
   }
-  acknowledgeExternalBody(noteRef: string, ack: BodyAck): void {
+  acknowledgeExternalBody(noteRef: string, ack: BodyAck, heldForStructure = false): void {
     const runtime = this.bodies.get(noteRef);
     if (!runtime) return;
     if (runtime.version !== null && ack.version < runtime.version) return;
@@ -468,19 +554,23 @@ export class WritingSession {
     const entry = runtime.entry;
     if (entry.submitted) throw new Error("external body acknowledgement overtook a submitted body");
     entry.acknowledged = ack;
-    entry.heldForStructure = false;
+    entry.heldForStructure = heldForStructure;
     if (sameBody(entry.desired, ack.body)) {
       runtime.entry = null; delete this.journal.entries[noteRef];
       this.removeCleanJournal(); this.snapshot(runtime, "saved", true);
     } else {
       const retained = this.retain();
-      runtime.ready = true;
+      runtime.ready = !heldForStructure;
       this.snapshot(runtime, retained ? "dirty" : "storage_failed", retained);
     }
   }
 
   private pump(): void {
     if (this.active || this.blocked) return;
+    // A semantic successor cannot run past a rejected predecessor. Its versions
+    // and inverse still describe that ordered edit sequence.
+    if (this.journal.operations.some((entry) => entry.paused === "conflict" || entry.paused === "server" || entry.paused === "storage")) return;
+    if (Object.values(this.journal.entries).some((entry) => entry.paused === "conflict" && this.journal.operations.some((operation) => entry.ownerKeys.includes(operation.ownerKey)))) return;
     const candidates: Array<{ key: string; sequence: number; body?: BodyEntry; operation?: OperationEntry }> = [];
     for (const entry of Object.values(this.journal.entries)) {
       const runtime = this.bodies.get(entry.noteRef);
@@ -516,6 +606,7 @@ export class WritingSession {
           runtime.onError?.(error);
           this.pump(); return;
         }
+        for (const ownerKey of runtime.ownerKeys) this.surfaceBoundary(ownerKey);
         entry.submitted = { request, clientMutationId, body: entry.desired, revision: entry.desiredRevision, expectedBody };
         runtime.submittedObservers = null; runtime.submittedAdapterObserver = null;
         const retained = this.retain();
@@ -711,23 +802,29 @@ export class WritingSession {
       const storage = window.localStorage;
       for (let index = 0; index < storage.length; index++) {
         const key = storage.key(index);
-        if (!key?.startsWith(`${PREFIX}${this.accountId}:`) || key === this.key()) continue;
+        if (!key || key === this.key()) continue;
+        const legacy = key.startsWith(`${PREVIOUS_PREFIX}${this.accountId}:`);
+        if (!legacy && !key.startsWith(`${PREFIX}${this.accountId}:`)) continue;
         const raw = storage.getItem(key);
         if (raw === null) continue;
+        if (legacy) {
+          results.push({ key, revision: null, ownerKey: null, noteRef: null, operationId: null, raw, corrupt: false, legacy: true });
+          continue;
+        }
         try {
           const journal = parseJournal(raw, this.accountId);
           for (const entry of Object.values(journal.entries)) {
             if (ownerKey && !entry.ownerKeys.includes(ownerKey)) continue;
             if (this.journal.adoptedSources.some((source) => source.key === key && source.revision === journal.revision && source.entryId === entry.noteRef)) continue;
-            results.push({ key, revision: journal.revision, ownerKey: entry.ownerKey, noteRef: entry.noteRef, operationId: null, raw, corrupt: false });
+            results.push({ key, revision: journal.revision, ownerKey: entry.ownerKey, noteRef: entry.noteRef, operationId: null, raw, corrupt: false, legacy: false });
           }
           for (const operation of journal.operations) {
             if (ownerKey && operation.ownerKey !== ownerKey) continue;
             if (this.journal.adoptedSources.some((source) => source.key === key && source.revision === journal.revision && source.entryId === operation.id)) continue;
-            results.push({ key, revision: journal.revision, ownerKey: operation.ownerKey, noteRef: null, operationId: operation.id, raw, corrupt: false });
+            results.push({ key, revision: journal.revision, ownerKey: operation.ownerKey, noteRef: null, operationId: operation.id, raw, corrupt: false, legacy: false });
           }
         } catch {
-          results.push({ key, revision: null, ownerKey: null, noteRef: null, operationId: null, raw, corrupt: true });
+          results.push({ key, revision: null, ownerKey: null, noteRef: null, operationId: null, raw, corrupt: true, legacy: false });
         }
       }
     } catch {

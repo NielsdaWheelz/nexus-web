@@ -31,8 +31,11 @@ import {
   type RecoveryCandidate,
   type WritingStatus,
 } from "@/lib/notes/writingSession";
+import { subscribeLinkMutations, type LinkMutation } from "@/lib/resourceGraph/links";
+import { resolveResourceLocator } from "@/lib/resources/resourceLocators";
+import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { copyText } from "@/lib/ui/copyText";
-import type { ResourceSurface } from "@/lib/resources/resourceItems";
+import type { ResourceSurface, ResourceSurfaceNode } from "@/lib/resources/resourceItems";
 import {
   decodeResourceSurfaceCommand,
   decodeResourceSurfaceTitle,
@@ -47,6 +50,7 @@ import {
   createDailyDraft,
   draftNoteRef,
   loadDailySurface,
+  provisionalDailyOccurrence,
   type DailySurfaceSessionOptions,
 } from "@/lib/resourceSurface/dailySurfacePersistence";
 import {
@@ -56,14 +60,17 @@ import {
 } from "@/lib/resourceSurface/draftStore";
 import {
   createResourceSurfaceIntent,
-  materializeResourceSurfaceIntent,
-  projectResourceSurface,
-  rebindAcknowledgedResourceSurfaceIntents,
+  projectSurfaceGraph,
+  remapSurfaceIntent,
+  surfacePathKey,
+  surfaceIntentBodyRefs,
+  type SurfaceContext,
   resourceSurfaceLaneVersion,
-  resourceSurfaceOccurrenceForRef,
-  resourceSurfacePendingOccurrenceId,
+  surfaceLinkForTarget,
+  pendingSurfaceLinkId,
   type ResourceSurfaceCommand,
 } from "@/lib/resourceSurface/model";
+import { createOutlineViewState, createResourceOutline, outlineRows, type ResourceOutline, type OutlineRow, type NeighborhoodLoad } from "./outline";
 import { expectRecord, expectString } from "@/lib/validation";
 
 type SurfaceOperation =
@@ -82,7 +89,48 @@ type PersistedOptions = {
 
 type RestoreSelection = { token: number; selection: NoteBodySelection };
 
+type SharedGraph = { lastLinkMutation: LinkMutation | null; nodes: Map<string, ResourceSurfaceNode>; surfaces: Map<string, ResourceSurface>; loads: Map<string, NeighborhoodLoad>; requests: Map<string, Promise<void>> };
+const graphOwners = new Map<string, SharedGraph>();
+function newestSurfaceNode(current: ResourceSurfaceNode | undefined, next: ResourceSurfaceNode): ResourceSurfaceNode {
+  if (!current) return next;
+  const versions = { ...next.item.versionByLane };
+  for (const [lane, version] of Object.entries(current.item.versionByLane)) versions[lane] = Math.max(version, versions[lane] ?? 0);
+  const lane = next.content.kind === "note_body" ? "body" : next.content.kind === "page_title" ? "title" : null;
+  const older = lane
+    ? (current.item.versionByLane[lane] ?? 0) > (next.item.versionByLane[lane] ?? 0)
+    : Object.entries(current.item.versionByLane).some(([key, version]) => version > (next.item.versionByLane[key] ?? 0));
+  const value = older ? current : next;
+  return { ...value, item: { ...value.item, versionByLane: versions } };
+}
+function acceptGraphNode(graph: SharedGraph, node: ResourceSurfaceNode): ResourceSurfaceNode {
+  const ref = node.item.ref;
+  const next = newestSurfaceNode(graph.nodes.get(ref) ?? graph.surfaces.get(ref)?.source, node);
+  graph.nodes.set(ref, next);
+  for (const [endpoint, surface] of graph.surfaces) {
+    // A node's newer links version does not refresh this adjacency snapshot.
+    const source = endpoint === ref ? { ...next, item: { ...next.item, versionByLane: { ...next.item.versionByLane, links: resourceSurfaceLaneVersion(surface.source.item, "links") } } } : surface.source;
+    graph.surfaces.set(endpoint, { source, orderedItems: surface.orderedItems.map((row) => row.target.item.ref === ref ? { ...row, target: next } : row) });
+  }
+  return next;
+}
+function acceptGraphSurface(graph: SharedGraph, next: ResourceSurface): ResourceSurface {
+  const ref = next.source.item.ref;
+  const linksVersion = resourceSurfaceLaneVersion(next.source.item, "links");
+  for (const node of [next.source, ...next.orderedItems.map((row) => row.target)]) acceptGraphNode(graph, node);
+  const current = graph.surfaces.get(ref);
+  if (current && resourceSurfaceLaneVersion(current.source.item, "links") > linksVersion) return current;
+  const source = graph.nodes.get(ref)!;
+  next = {
+    source: { ...source, item: { ...source.item, versionByLane: { ...source.item.versionByLane, links: linksVersion } } },
+    orderedItems: next.orderedItems.map((row) => ({ ...row, target: graph.nodes.get(row.target.item.ref)! })),
+  };
+  graph.surfaces.set(ref, next);
+  return next;
+}
+
+
 type SharedSurfaceOwner = {
+  graph: SharedGraph;
   surface: ResourceSurface | null;
   sourceRef: string | null;
   listeners: Set<() => void>;
@@ -97,25 +145,29 @@ function getSurfaceOwner(
   surface: ResourceSurface | null,
   sourceRef: string | null,
 ): SharedSurfaceOwner {
+  let graph = graphOwners.get(accountId);
+  if (!graph) { graph = { lastLinkMutation: null, nodes: new Map(), surfaces: new Map(), loads: new Map(), requests: new Map() }; graphOwners.set(accountId, graph); }
+  if (surface && !graph.surfaces.has(surface.source.item.ref)) acceptGraphSurface(graph, surface);
   if (typeof window === "undefined") {
-    return { surface, sourceRef, listeners: new Set(), failure: null, retained: true };
+    return { graph, surface, sourceRef, listeners: new Set(), failure: null, retained: true };
   }
   const key = accountId + ":" + ownerKey;
   let owner = surfaceOwners.get(key);
   if (!owner) {
-    owner = { surface, sourceRef, listeners: new Set(), failure: null, retained: true };
+    owner = { graph, surface, sourceRef, listeners: new Set(), failure: null, retained: true };
     surfaceOwners.set(key, owner);
   }
   return owner;
 }
 
 export interface ResourceSurfaceSession {
+  outline: ResourceOutline;
   surface: ResourceSurface;
   status: WritingStatus;
   localRetained: boolean;
   hasRecoveredDraft: boolean;
   recoveryCandidates: readonly RecoveryCandidate[];
-  recover(candidate: RecoveryCandidate): boolean;
+  recover(candidate: RecoveryCandidate): Promise<boolean>;
   bodyDocument(occurrenceId: string): NoteBodyEditorDocument;
   restoreSelection(occurrenceId: string): RestoreSelection | undefined;
   editBody(input: { occurrenceId: string; edit: NoteBodyEdit }): void;
@@ -124,7 +176,7 @@ export interface ResourceSurfaceSession {
   undo(occurrenceId: string): void;
   redo(occurrenceId: string): void;
   updateTitle(title: string): void;
-  command(command: ResourceSurfaceCommand): string | null;
+  command(command: ResourceSurfaceCommand, context?: SurfaceContext): string | null;
   flush(): void;
   retry(): void;
   reload(): Promise<void>;
@@ -157,7 +209,7 @@ function noteBodyAdapter() {
 function surfaceBody(surface: ResourceSurface, noteRef: string): { body: NoteBodyValue; version: number } | null {
   const node = surface.source.item.ref === noteRef
     ? surface.source
-    : resourceSurfaceOccurrenceForRef(surface, noteRef)?.target;
+    : surfaceLinkForTarget(surface, noteRef)?.target;
   if (!node || node.content.kind !== "note_body") return null;
   return {
     body: bodyFromJson(node.content.bodyPmJson),
@@ -203,6 +255,7 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
     const mounted = "daily" in input ? initial?.surface ?? null : input.initialSurface;
     if (mounted) {
       owner.surface = mounted;
+      owner.surface = acceptGraphSurface(owner.graph, mounted);
       owner.sourceRef = mounted.source.item.ref;
     }
   }
@@ -217,6 +270,8 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
     retained: boolean;
   }>());
   const pendingHandoffClaimRef = useRef<string | null>(null);
+  const outlineView = useRef(createOutlineViewState());
+  const projectedGraphRef = useRef(new Map(owner.graph.surfaces));
   const selectionRef = useRef(new Map<string, RestoreSelection>());
   const tokenRef = useRef(0);
   const currentSurfaceRef = useRef<ResourceSurface | null>(null);
@@ -229,6 +284,7 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
   useEffect(() => session.subscribe(publish), [session]);
   useEffect(() => {
     const receive = () => {
+      owner.surface = owner.sourceRef ? owner.graph.surfaces.get(owner.sourceRef) ?? owner.surface : owner.surface;
       acknowledgedRef.current = owner.surface;
       sourceRefRef.current = owner.sourceRef;
       publish();
@@ -239,14 +295,48 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
   }, [owner]);
   const acceptSurface = useCallback((next: ResourceSurface | null, nextSourceRef: string | null) => {
     owner.surface = next;
+    if (next) next = acceptGraphSurface(owner.graph, next);
+    owner.surface = next;
     owner.sourceRef = nextSourceRef;
     acknowledgedRef.current = next;
     sourceRefRef.current = nextSourceRef;
     for (const listener of owner.listeners) listener();
   }, [owner]);
   const publishOwner = useCallback(() => {
-    for (const listener of owner.listeners) listener();
+    for (const candidate of surfaceOwners.values()) if (candidate.graph === owner.graph) for (const listener of candidate.listeners) listener();
   }, [owner]);
+
+  const loadNeighborhood = useCallback(async (ref: string, refresh = false): Promise<void> => {
+    if (!refresh && owner.graph.surfaces.has(ref) && owner.graph.loads.get(ref)?.kind !== "error") return;
+    const pending = owner.graph.requests.get(ref);
+    if (pending && !refresh) return pending;
+    owner.graph.loads.set(ref, { kind: "loading" }); publishOwner();
+    const fetch = () => fetchResourceSurface(ref).then((surface) => {
+      const accepted = acceptGraphSurface(owner.graph, surface);
+      projectedGraphRef.current.set(ref, accepted);
+      owner.graph.loads.delete(ref);
+    }).catch((error: unknown) => { owner.graph.loads.set(ref, { kind: "error", error }); throw error; });
+    // A read started before an acknowledged generic link mutation cannot satisfy
+    // that mutation's refresh. Wait for it to settle, then issue a fresh read.
+    const request = (pending ? pending.then(fetch, fetch) : fetch()).finally(() => {
+      if (owner.graph.requests.get(ref) === request) owner.graph.requests.delete(ref);
+      publishOwner();
+    });
+    owner.graph.requests.set(ref, request);
+    await request;
+  }, [owner, publishOwner]);
+
+  useEffect(() => subscribeLinkMutations((mutation) => {
+    if (owner.graph.lastLinkMutation === mutation) return;
+    owner.graph.lastLinkMutation = mutation;
+    const refs = mutation.kind === "created"
+      ? [mutation.sourceRef, mutation.targetRef].filter((ref) => owner.graph.surfaces.has(ref) || owner.graph.requests.has(ref))
+      : [...new Set([
+          ...[...owner.graph.surfaces].filter(([, surface]) => surface.orderedItems.some((row) => row.linkId === mutation.linkId)).map(([ref]) => ref),
+          ...owner.graph.requests.keys(),
+        ])];
+    for (const ref of refs) void loadNeighborhood(ref, true).catch((error: unknown) => inputRef.current.onError?.(error));
+  }), [loadNeighborhood, owner]);
 
   const acknowledged = acknowledgedRef.current;
   const { pending, surface } = useMemo(() => {
@@ -259,42 +349,33 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
       ? { value: titleOperation.title, clientMutationId: titleOperation.clientMutationId }
       : undefined;
     const bodyMap = new Map<string, ResourceSurfacePendingBody>();
-    if (acknowledged) {
-      const nodes = [acknowledged.source, ...acknowledged.orderedItems.map((row) => row.target)];
-      for (const node of nodes) {
-        if (node.content.kind !== "note_body" || bodyMap.has(node.item.ref)) continue;
-        session.openBody({
-          noteRef: node.item.ref,
-          ownerKey,
-          initial: surfaceBody(acknowledged, node.item.ref)!,
-          adapter: noteBodyAdapter(),
-          onError: (error) => inputRef.current.onError?.(error),
-          ...(node.item.ref === acknowledged.source.item.ref
-            ? { onMutationStarted: () => inputRef.current.onSourceBodyMutationStarted?.() ?? null }
-            : {}),
-        });
-        const body = session.getSnapshot(node.item.ref).document.body;
-        bodyMap.set(node.item.ref, { bodyPmJson: body.bodyPmJson, bodyText: body.bodyText, clientMutationId: "" });
-      }
+    const open = (node: ResourceSurfaceNode, fresh: boolean) => {
+      if (node.content.kind !== "note_body" || bodyMap.has(node.item.ref)) return;
+      session.openBody({ noteRef: node.item.ref, ownerKey,
+        initial: { body: bodyFromJson(node.content.bodyPmJson), version: fresh ? null : resourceSurfaceLaneVersion(node.item, "body") },
+        adapter: noteBodyAdapter(), awaitExternalCreation: fresh,
+        onError: (error) => inputRef.current.onError?.(error),
+        ...(node.item.ref === acknowledged?.source.item.ref ? { onMutationStarted: () => inputRef.current.onSourceBodyMutationStarted?.() ?? null } : {}),
+      });
+      const body = session.getSnapshot(node.item.ref).document.body;
+      bodyMap.set(node.item.ref, { ...body, clientMutationId: "" });
+    };
+    for (const cached of owner.graph.surfaces.values()) {
+      open(cached.source, false);
+      for (const row of cached.orderedItems) open(row.target, false);
     }
-    let surface = acknowledged ? projectResourceSurface({ acknowledgedSurface: acknowledged, intents: graph, title, bodies: bodyMap }) : null;
-    if (surface) {
-      for (const row of surface.orderedItems) {
-        if (row.target.content.kind !== "note_body" || bodyMap.has(row.target.item.ref)) continue;
-        session.openBody({
-          noteRef: row.target.item.ref,
-          ownerKey,
-          initial: { body: bodyFromJson(row.target.content.bodyPmJson), version: null },
-          adapter: noteBodyAdapter(),
-          awaitExternalCreation: true,
-        });
-        const body = session.getSnapshot(row.target.item.ref).document.body;
-        bodyMap.set(row.target.item.ref, { bodyPmJson: body.bodyPmJson, bodyText: body.bodyText, clientMutationId: "" });
-      }
-      surface = projectResourceSurface({ acknowledgedSurface: acknowledged!, intents: graph, title, bodies: bodyMap });
+    const projectionBase = new Map([...owner.graph.surfaces, ...(graph[0]?.baseSurfaces ?? []).map((surface) => [surface.source.item.ref, surface] as const)]);
+    let projected = projectSurfaceGraph(projectionBase, graph, bodyMap);
+    for (const cached of projected.values()) {
+      open(cached.source, !owner.graph.surfaces.has(cached.source.item.ref) && ![...owner.graph.surfaces.values()].some((surface) => surface.orderedItems.some((row) => row.target.item.ref === cached.source.item.ref)));
+      for (const row of cached.orderedItems) open(row.target, row.linkId.startsWith("pending:"));
     }
+    projected = projectSurfaceGraph(projectionBase, graph, bodyMap);
+    projectedGraphRef.current = projected;
+    let surface = acknowledged ? projected.get(acknowledged.source.item.ref) ?? null : null;
+    if (surface && title && surface.source.content.kind === "page_title") surface = { ...surface, source: { ...surface.source, content: { kind: "page_title", title: title.value } } };
     return { pending, surface };
-  }, [acknowledged, ownerKey, revision, session]);
+  }, [acknowledged, owner, ownerKey, revision, session]);
   const draft = dailyDraftRef.current;
   const provisionalRef = draft && !surface?.orderedItems.some((row) => row.target.item.ref === draftNoteRef(draft.noteId))
     ? draftNoteRef(draft.noteId)
@@ -314,12 +395,12 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
   const noteRefFor = useCallback((occurrenceId: string): string => {
     const current = currentSurfaceRef.current;
     if (current?.source.item.ref === occurrenceId) return occurrenceId;
-    const row = current?.orderedItems.find((item) => item.occurrenceId === occurrenceId);
-    if (row?.target.content.kind === "note_body") return row.target.item.ref;
+    const row = current ? outlineRows(current.source.item.ref, projectedGraphRef.current, outlineView.current, owner.graph.loads).find((item) => item.occurrenceId === occurrenceId) : undefined;
+    if (row?.target.content.kind === "note_body" && !row.terminal) return row.target.item.ref;
     const activeDraft = dailyDraftRef.current;
     if (activeDraft && occurrenceId === "daily-provisional:" + activeDraft.noteId) return draftNoteRef(activeDraft.noteId);
     throw new Error("note body occurrence is unavailable");
-  }, []);
+  }, [owner]);
   const viewIdFor = useCallback((occurrenceId: string) => ownerKey + ":" + occurrenceId, [ownerKey]);
 
   const bodyDocument = useCallback((occurrenceId: string) =>
@@ -328,10 +409,11 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
     selectionRef.current.get(viewIdFor(occurrenceId)), [viewIdFor]);
   const editBody = ({ occurrenceId, edit }: { occurrenceId: string; edit: NoteBodyEdit }) => {
     const ref = noteRefFor(occurrenceId);
-    if (!session.edit(ref, viewIdFor(occurrenceId), edit)) {
+    if (!session.edit(ref, occurrenceId, edit, ownerKey)) {
       publishOwner();
       return;
     }
+    outlineView.current.selection = { kind: "text", occurrenceId, ...edit.selectionAfter };
     publishOwner();
     const activeDraft = dailyDraftRef.current;
     if (daily && activeDraft && ref === draftNoteRef(activeDraft.noteId)) {
@@ -352,21 +434,52 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
     }
   };
   const selection = useCallback(({ occurrenceId, selection: next }: { occurrenceId: string; selection: NoteBodySelection }) => {
-    session.selection(noteRefFor(occurrenceId), viewIdFor(occurrenceId), next);
-  }, [noteRefFor, session, viewIdFor]);
-  const boundary = useCallback((occurrenceId: string) => {
-    session.boundary(noteRefFor(occurrenceId), viewIdFor(occurrenceId));
-  }, [noteRefFor, session, viewIdFor]);
-  const undo = useCallback((occurrenceId: string) => {
-    const selected = session.undo(noteRefFor(occurrenceId), viewIdFor(occurrenceId));
-    if (selected) selectionRef.current.set(viewIdFor(occurrenceId), { token: ++tokenRef.current, selection: selected });
+    session.surfaceBoundary(ownerKey);
+    outlineView.current.selection = { kind: "text", occurrenceId, ...next };
+  }, [ownerKey, session]);
+  const boundary = useCallback((_occurrenceId: string) => { session.surfaceBoundary(ownerKey); }, [ownerKey, session]);
+  const revealHistoryOccurrence = (id: string) => {
+    if (!id.startsWith("[")) return;
+    const [rootRef, ...links] = JSON.parse(id) as string[];
+    if (!rootRef) throw new Error("History appearance has no root");
+    for (let depth = 1; depth < links.length; depth += 1) outlineView.current.folds.set(surfacePathKey({ rootRef, linkPath: links.slice(0, depth) }), false);
+    const focused = outlineView.current.focusedPath;
+    if (focused && !focused.linkPath.every((link, index) => links[index] === link)) outlineView.current.focusedPath = null;
+  };
+  const changeHistory = (redo: boolean) => {
+    const item = session.surfaceUndo(ownerKey, redo);
+    if (!item) return;
+    if (item.kind === "body") {
+      revealHistoryOccurrence(item.occurrenceId);
+      outlineView.current.selection = { kind: "text", occurrenceId: item.occurrenceId, ...(redo ? item.edit.selectionAfter : item.edit.selectionBefore) };
+      selectionRef.current.set(viewIdFor(item.occurrenceId), { token: ++tokenRef.current, selection: redo ? item.edit.selectionAfter : item.edit.selectionBefore });
+      outlineView.current.focusRequest = { occurrenceId: item.occurrenceId, serial: ++tokenRef.current };
+    } else {
+      const before = item.before as ResourceSurface[];
+      const after = item.after as ResourceSurface[];
+      const ref = sourceRefRef.current;
+      if (!ref) return;
+      const mutationId = resourceSurfaceCommandId();
+      const intent: ResourceSurfaceDraftIntent = { clientMutationId: mutationId, endpointRef: ref, context: { rootRef: ref, linkPath: [] }, command: { type: "reverse_edit", receiptId: item.receiptId ?? item.mutationId }, bodyEdits: [], baseSurfaces: [...projectedGraphRef.current.values()], inverseSurfaces: redo ? after : before, reversesMutationId: item.mutationId, reverseVersions: item.reverseVersions };
+      const restoredBodies = new Map<string, NoteBodyValue>();
+      for (const restored of intent.inverseSurfaces!) for (const node of [restored.source, ...restored.orderedItems.map((link) => link.target)]) {
+        if (node.content.kind === "note_body" && item.bodyRefs.includes(node.item.ref) && session.peekSnapshot(node.item.ref)) restoredBodies.set(node.item.ref, bodyFromJson(node.content.bodyPmJson));
+      }
+      for (const [ref, body] of restoredBodies) session.stageStructuralBody(ref, body);
+      session.updateStructureFrontier(item, mutationId);
+      enqueue({ kind: "graph", sourceRef: ref, intent });
+      const selection = redo ? item.selectionAfter : item.selectionBefore;
+      outlineView.current.selection = selection;
+      if (selection?.kind === "text") {
+        revealHistoryOccurrence(selection.occurrenceId);
+        outlineView.current.focusRequest = { occurrenceId: selection.occurrenceId, serial: ++tokenRef.current };
+        selectionRef.current.set(viewIdFor(selection.occurrenceId), { token: ++tokenRef.current, selection: { anchor: selection.anchor, head: selection.head } });
+      }
+    }
     publishOwner();
-  }, [noteRefFor, publishOwner, session, viewIdFor]);
-  const redo = useCallback((occurrenceId: string) => {
-    const selected = session.redo(noteRefFor(occurrenceId), viewIdFor(occurrenceId));
-    if (selected) selectionRef.current.set(viewIdFor(occurrenceId), { token: ++tokenRef.current, selection: selected });
-    publishOwner();
-  }, [noteRefFor, publishOwner, session, viewIdFor]);
+  };
+  const undo = (_occurrenceId: string) => changeHistory(false);
+  const redo = (_occurrenceId: string) => changeHistory(true);
 
   function prepareOperation(raw: unknown): FrozenRequest {
     const operation = asOperation(raw);
@@ -379,30 +492,45 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
         body: JSON.stringify({ clientMutationId: operation.clientMutationId, noteId: operation.noteId, bodyPmJson: body.bodyPmJson }),
       };
     }
-    const ack = acknowledgedRef.current;
-    if (!ack || ack.source.item.ref !== operation.sourceRef) throw new Error("surface owner changed before mutation");
-    if (operation.kind === "title") {
-      return prepareResourceSurfaceTitle({
-        sourceRef: operation.sourceRef,
-        clientMutationId: operation.clientMutationId,
-        baseVersion: resourceSurfaceLaneVersion(ack.source.item, "title"),
-        title: operation.title,
-      });
+    const ack = owner.graph.surfaces.get(operation.sourceRef);
+    if (!ack) throw new Error("Command endpoint has not loaded");
+    if (operation.kind === "title") return prepareResourceSurfaceTitle({ sourceRef: operation.sourceRef, clientMutationId: operation.clientMutationId, baseVersion: resourceSurfaceLaneVersion(ack.source.item, "title"), title: operation.title });
+    const intent = operation.intent;
+    const versions = new Map<string, { ref: string; lane: "links" | "body" | "title"; version: number }>();
+    const node = (ref: string) => owner.graph.nodes.get(ref) ?? owner.graph.surfaces.get(ref)?.source ?? [...owner.graph.surfaces.values()].flatMap((surface) => surface.orderedItems).find((row) => row.target.item.ref === ref)?.target;
+    const add = (ref: string, lane: "links" | "body" | "title") => {
+      const current = node(ref);
+      if (!current) throw new Error("Versioned resource has not loaded");
+      const version = lane === "body" && session.peekSnapshot(ref) ? session.bodyVersion(ref)! : resourceSurfaceLaneVersion(current.item, lane);
+      versions.set(ref + ":" + lane, { ref, lane, version });
+    };
+    const path = (context: SurfaceContext) => {
+      let ref = context.rootRef; add(ref, "links");
+      for (const linkId of context.linkPath) {
+        const link = owner.graph.surfaces.get(ref)?.orderedItems.find((row) => row.linkId === linkId);
+        if (!link) throw new Error("Command path is stale");
+        ref = link.target.item.ref; add(ref, "links");
+      }
+      return ref;
+    };
+    path(intent.context); add(operation.sourceRef, "links");
+    const linkTarget = (ref: string, linkId: string) => {
+      const link = owner.graph.surfaces.get(ref)?.orderedItems.find((row) => row.linkId === linkId);
+      if (!link) throw new Error("Command link is no longer incident");
+      return link.target.item.ref;
+    };
+    const command = intent.command;
+    switch (command.type) {
+      case "split_note": add(linkTarget(operation.sourceRef, command.linkId), "body"); break;
+      case "insert_resource": add(command.targetRef, "links"); break;
+      case "relink": add(linkTarget(operation.sourceRef, command.linkId), "links"); add(command.destinationRef, "links"); break;
+      case "remove_occurrence": for (const entry of command.entries) { path(entry.context); add(entry.endpointRef, "links"); add(linkTarget(entry.endpointRef, entry.linkId), "links"); } break;
+      case "join_notes": add(linkTarget(operation.sourceRef, command.earlierLinkId), "body"); add(linkTarget(operation.sourceRef, command.laterLinkId), "body"); add(linkTarget(operation.sourceRef, command.laterLinkId), "links"); break;
+      case "reverse_edit": if (!intent.reverseVersions) throw new Error("Inverse receipt has not settled"); for (const version of intent.reverseVersions) add(version.ref, version.lane); break;
+      case "insert_note": case "move_occurrence": case "paste_outline": break;
     }
-    const command = materializeResourceSurfaceIntent(ack, operation.intent);
-    if (!command) throw new Error("queued surface command no longer matches resource order");
-    const baseVersions: Array<{ ref: string; lane: "outgoing_edges" | "body"; version: number }> = [{ ref: operation.sourceRef, lane: "outgoing_edges", version: resourceSurfaceLaneVersion(ack.source.item, "outgoing_edges") }];
-    if (command.type === "split_note") {
-      const row = ack.orderedItems.find((item) => item.occurrenceId === command.occurrenceId);
-      if (!row) throw new Error("split target no longer exists");
-      baseVersions.push({ ref: row.target.item.ref, lane: "body", version: session.bodyVersion(row.target.item.ref) ?? resourceSurfaceLaneVersion(row.target.item, "body") });
-    }
-    return prepareResourceSurfaceCommand({
-      sourceRef: operation.sourceRef,
-      clientMutationId: operation.intent.clientMutationId,
-      baseVersions,
-      command,
-    });
+    for (const edit of intent.bodyEdits) add(edit.ref, "body");
+    return prepareResourceSurfaceCommand({ sourceRef: operation.sourceRef, clientMutationId: intent.clientMutationId, baseVersions: [...versions.values()], command, context: intent.context, bodyEdits: intent.bodyEdits });
   }
 
   function onOperationAck(id: string, raw: unknown, data: unknown): void {
@@ -443,34 +571,62 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
       }, sourceRefRef.current);
       return;
     }
-    const next = decodeResourceSurfaceCommand(data);
-    const remaining = session.pendingOperations(ownerKey).filter((entry) => entry.id !== id && asOperation(entry.intent).kind === "graph");
-    const rebound = rebindAcknowledgedResourceSurfaceIntents({
-      previousSurface: previous,
-      acknowledgedSurface: next,
-      completedIntent: operation.intent,
-      remainingIntents: remaining.map((entry) => (asOperation(entry.intent) as Extract<SurfaceOperation, { kind: "graph" }>).intent),
-    });
-    remaining.forEach((entry, index) => {
-      if (!session.replaceOperation(entry.id, { kind: "graph", sourceRef: operation.sourceRef, intent: rebound[index]! })) {
-        owner.retained = false;
-        owner.failure = "storage_failed";
+    const receipt = decodeResourceSurfaceCommand(data);
+    if (receipt.clientMutationId !== operation.intent.clientMutationId) throw new TypeError("Surface receipt mutation identity mismatch");
+    const local = projectSurfaceGraph(new Map(operation.intent.baseSurfaces.map((surface) => [surface.source.item.ref, surface])), [operation.intent]);
+    const mapping = new Map<string, string>();
+    for (const next of receipt.surfaces) {
+      for (const row of local.get(next.source.item.ref)?.orderedItems ?? []) {
+        if (!row.linkId.startsWith("pending:")) continue;
+        const committed = next.orderedItems.find((candidate) => candidate.target.item.ref === row.target.item.ref);
+        if (committed) mapping.set(row.linkId, committed.linkId);
+      }
+      acceptGraphSurface(owner.graph, next);
+    }
+    const laterBodyRefs = new Set(session.pendingOperations(ownerKey).filter((entry) => entry.id !== id).flatMap((entry) => {
+      const next = asOperation(entry.intent);
+      return next.kind === "graph" ? [...surfaceIntentBodyRefs(next.intent)] : [];
+    }));
+    for (const node of receipt.nodes) {
+      acceptGraphNode(owner.graph, node);
+      if (node.content.kind === "note_body" && session.peekSnapshot(node.item.ref)) session.acknowledgeExternalBody(node.item.ref, { body: bodyFromJson(node.content.bodyPmJson), version: resourceSurfaceLaneVersion(node.item, "body") }, laterBodyRefs.has(node.item.ref));
+    }
+    for (const entry of session.pendingOperations(ownerKey)) {
+      if (entry.id === id) continue;
+      const remaining = asOperation(entry.intent);
+      if (remaining.kind !== "graph") continue;
+      let intent = remapSurfaceIntent(remaining.intent, mapping);
+      if (intent.reversesMutationId === receipt.clientMutationId && intent.command.type === "reverse_edit") intent = { ...intent, command: { type: "reverse_edit", receiptId: receipt.receiptId }, reverseVersions: receipt.reverseVersions };
+      if (!session.replaceOperation(entry.id, { ...remaining, intent })) { owner.retained = false; owner.failure = "storage_failed"; }
+    }
+    const remapKey = (key: string) => { if (!key.startsWith("[")) return key; const parts = JSON.parse(key) as string[]; return JSON.stringify(parts.map((part) => mapping.get(part) ?? part)); };
+    const remapSnapshot = (surfaces: ResourceSurface[]) => surfaces.map((surface) => ({ ...surface, orderedItems: surface.orderedItems.map((row) => ({ ...row, linkId: mapping.get(row.linkId) ?? row.linkId })) }));
+    session.rewriteSurfaceHistory(ownerKey, (item) => {
+      if (item.kind === "body") item.occurrenceId = remapKey(item.occurrenceId);
+      else {
+        item.before = remapSnapshot(item.before as ResourceSurface[]); item.after = remapSnapshot(item.after as ResourceSurface[]);
+        for (const key of ["selectionBefore", "selectionAfter"] as const) {
+          const selection = item[key];
+          if (selection?.kind === "text") item[key] = { ...selection, occurrenceId: remapKey(selection.occurrenceId) };
+          else if (selection?.kind === "blocks") item[key] = { kind: "blocks", anchor: remapKey(selection.anchor), occurrenceIds: selection.occurrenceIds.map(remapKey) };
+        }
       }
     });
-    acceptSurface(next, sourceRefRef.current);
-    const command = operation.intent.command;
-    if (command.type === "insert_note" || command.type === "split_note") {
-      const created = surfaceBody(next, draftNoteRef(command.noteId));
-      if (!created) throw new TypeError("surface insertion omitted its note body");
-      session.acknowledgeExternalBody(draftNoteRef(command.noteId), created);
-    }
-    if (command.type === "split_note") {
-      const before = previous.orderedItems.find((row) => row.occurrenceId === command.occurrenceId);
-      if (!before) throw new Error("split source disappeared");
-      const left = surfaceBody(next, before.target.item.ref);
-      if (!left) throw new TypeError("split acknowledgement omitted left body");
-      session.acknowledgeExternalBody(before.target.item.ref, left);
-    }
+    selectionRef.current = new Map([...selectionRef.current].map(([key, value]) => {
+      const prefix = ownerKey + ":";
+      return [key.startsWith(prefix) ? prefix + remapKey(key.slice(prefix.length)) : key, value];
+    }));
+    const view = outlineView.current;
+    view.focusReturns = view.focusReturns.map((entry) => ({ occurrenceId: remapKey(entry.occurrenceId), path: entry.path ? { ...entry.path, linkPath: entry.path.linkPath.map((id) => mapping.get(id) ?? id) } : null }));
+    view.folds = new Map([...view.folds].map(([key, value]) => [remapKey(key), value]));
+    if (view.focusedPath) view.focusedPath = { ...view.focusedPath, linkPath: view.focusedPath.linkPath.map((id) => mapping.get(id) ?? id) };
+    if (view.focusRequest) view.focusRequest = { ...view.focusRequest, occurrenceId: remapKey(view.focusRequest.occurrenceId) };
+    if (view.selection?.kind === "text") view.selection = { ...view.selection, occurrenceId: remapKey(view.selection.occurrenceId) };
+    else if (view.selection?.kind === "blocks") view.selection = { kind: "blocks", anchor: remapKey(view.selection.anchor), occurrenceIds: view.selection.occurrenceIds.map(remapKey) };
+    if (view.selection?.kind === "text") selectionRef.current.set(viewIdFor(view.selection.occurrenceId), { token: ++tokenRef.current, selection: { anchor: view.selection.anchor, head: view.selection.head } });
+    session.acknowledgeStructure(ownerKey, receipt.clientMutationId, receipt.receiptId, receipt.reverseVersions);
+    acceptSurface(owner.graph.surfaces.get(previous.source.item.ref)!, sourceRefRef.current);
+
     publishOwner();
   }
 
@@ -695,7 +851,7 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
     publishOwner();
   };
 
-  const command = (next: ResourceSurfaceCommand): string | null => {
+  const command = (next: ResourceSurfaceCommand, context?: SurfaceContext): string | null => {
     if (daily && !acknowledgedRef.current && next.type === "insert_note") {
       if (dailyStorageUnavailable || dailyDraftRef.current) return null;
       const draft = createDailyDraft(daily, next.noteId, resourceSurfaceCommandId(), next.bodyPmJson);
@@ -708,22 +864,93 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
       publishOwner();
       return "daily-provisional:" + next.noteId;
     }
-    const current = currentSurfaceRef.current;
-    const sourceRef = sourceRefRef.current;
-    if (!current || !sourceRef) return null;
+    const rootRef = sourceRefRef.current;
+    if (!rootRef) return null;
+    const path = context ?? { rootRef, linkPath: [] };
+    let endpointRef = path.rootRef;
+    for (const linkId of path.linkPath) {
+      const link = projectedGraphRef.current.get(endpointRef)?.orderedItems.find((row) => row.linkId === linkId);
+      if (!link) throw new Error("Command appearance path is stale");
+      endpointRef = link.target.item.ref;
+    }
+    return commitCommand(endpointRef, path, next);
+  };
+
+  function commitCommand(endpointRef: string, context: SurfaceContext, next: ResourceSurfaceCommand, focusRef?: string, focusContext: SurfaceContext = context): string | null {
+    const current = projectedGraphRef.current.get(endpointRef);
+    if (!current) throw new Error("Command neighborhood has not loaded");
     const clientMutationId = resourceSurfaceCommandId();
-    const intent = createResourceSurfaceIntent({ surface: current, command: next, clientMutationId });
-    if (!intent) throw new Error("surface command no longer matches its projected order");
+    const before = [...projectedGraphRef.current.values()];
+    const selectionBefore = outlineView.current.selection;
+    const owned = new Set<string>();
     if (next.type === "split_note") {
-      const row = current.orderedItems.find((item) => item.occurrenceId === next.occurrenceId);
-      if (!row) throw new Error("split source does not exist");
+      const row = current.orderedItems.find((row) => row.linkId === next.linkId);
+      if (!row) throw new Error("Split link is absent");
+      owned.add(row.target.item.ref);
       session.stageStructuralBody(row.target.item.ref, bodyFromJson(next.leftBodyPmJson));
     }
-    enqueue({ kind: "graph", sourceRef, intent });
-    return next.type === "insert_note" || next.type === "split_note" || next.type === "insert_resource"
-      ? resourceSurfacePendingOccurrenceId(clientMutationId)
-      : null;
-  };
+    if (next.type === "join_notes") {
+      const row = current.orderedItems.find((row) => row.linkId === next.earlierLinkId);
+      if (!row) throw new Error("Join link is absent");
+      owned.add(row.target.item.ref);
+      session.stageStructuralBody(row.target.item.ref, bodyFromJson(next.bodyPmJson));
+    }
+    const dependencies = new Set<string>();
+    const dependencyLink = (endpoint: string, linkId: string) => {
+      const ref = projectedGraphRef.current.get(endpoint)?.orderedItems.find((row) => row.linkId === linkId)?.target.item.ref;
+      if (ref) dependencies.add(ref);
+    };
+    if ("linkId" in next) dependencyLink(endpointRef, next.linkId);
+    if (next.type === "join_notes") { dependencyLink(endpointRef, next.earlierLinkId); dependencyLink(endpointRef, next.laterLinkId); }
+    if (next.type === "remove_occurrence") for (const entry of next.entries) dependencyLink(entry.endpointRef, entry.linkId);
+    if (next.type === "relink") dependencies.add(next.destinationRef);
+    const dependentRefs = [...dependencies].filter((ref) => !owned.has(ref) && session.peekSnapshot(ref));
+    const bodyEdits = session.structuralBodyEdits(dependentRefs);
+    const absorbedRefs = new Set([...owned, ...bodyEdits.map((edit) => edit.ref)]);
+    const queued = session.pendingOperations(ownerKey).map((entry) => asOperation(entry.intent)).filter((operation): operation is Extract<SurfaceOperation, { kind: "graph" }> => operation.kind === "graph").map((operation) => operation.intent);
+    const queuedProjection = projectSurfaceGraph(new Map([...owner.graph.surfaces, ...(queued[0]?.baseSurfaces ?? []).map((surface) => [surface.source.item.ref, surface] as const)]), queued);
+    const queuedBodyRefs = new Set(queued.flatMap((intent) => [...surfaceIntentBodyRefs(intent)]));
+    const checkpointBodies = new Map<string, NoteBodyValue>();
+    for (const ref of absorbedRefs) {
+      const projected = queuedProjection.get(ref)?.source ?? [...queuedProjection.values()].flatMap((surface) => surface.orderedItems).find((row) => row.target.item.ref === ref)?.target;
+      const base = queuedBodyRefs.has(ref) && projected?.content.kind === "note_body" ? bodyFromJson(projected.content.bodyPmJson) : session.structuralBodyBase(ref);
+      checkpointBodies.set(ref, base);
+      session.absorbSurfaceBodyHistory(ownerKey, ref, base);
+    }
+    const checkpointNode = (node: ResourceSurfaceNode): ResourceSurfaceNode => {
+      const body = checkpointBodies.get(node.item.ref);
+      return body && node.content.kind === "note_body" ? { ...node, content: { kind: "note_body", ...body } } : node;
+    };
+    const beforeCheckpoint = before.map((surface) => ({ source: checkpointNode(surface.source), orderedItems: surface.orderedItems.map((row) => ({ ...row, target: checkpointNode(row.target) })) }));
+    const intent = createResourceSurfaceIntent({ surface: current, command: next, clientMutationId, context, bodyEdits, baseSurfaces: before });
+    const after = projectSurfaceGraph(projectedGraphRef.current, [intent]);
+    const changedRefs = new Set([...after].filter(([ref, surface]) => JSON.stringify(projectedGraphRef.current.get(ref)) !== JSON.stringify(surface)).map(([ref]) => ref));
+    if (next.type !== "reverse_edit") session.recordStructure(ownerKey, { kind: "structure", mutationId: clientMutationId, receiptId: null, bodyRefs: [...absorbedRefs], before: [...beforeCheckpoint.filter((surface) => changedRefs.has(surface.source.item.ref)), ...[...after.values()].filter((surface) => !projectedGraphRef.current.has(surface.source.item.ref)).map((surface) => ({ ...surface, orderedItems: [] }))], after: [...after.values()].filter((surface) => changedRefs.has(surface.source.item.ref)), selectionBefore, selectionAfter: selectionBefore });
+    projectedGraphRef.current = after;
+    enqueue({ kind: "graph", sourceRef: endpointRef, intent });
+    const root = sourceRefRef.current;
+    if (focusRef && root) {
+      const visible = outlineRows(root, after, outlineView.current, owner.graph.loads);
+      const focused = visible.find((row) => row.target.item.ref === focusRef && !row.terminal && row.path.linkPath.slice(0, -1).join() === focusContext.linkPath.join());
+      if (focused) {
+        outlineView.current.focusRequest = { occurrenceId: focused.occurrenceId, serial: ++tokenRef.current };
+        const selection = next.type === "relink" && selectionBefore?.kind === "text" ? { anchor: selectionBefore.anchor, head: selectionBefore.head } : { anchor: 1, head: 1 };
+        outlineView.current.selection = { kind: "text", occurrenceId: focused.occurrenceId, ...selection };
+        selectionRef.current.set(viewIdFor(focused.occurrenceId), { token: ++tokenRef.current, selection });
+      }
+    }
+    session.structureSelection(ownerKey, outlineView.current.selection);
+    publishOwner();
+    return next.type === "insert_note" || next.type === "split_note" || next.type === "insert_resource" ? surfacePathKey({ rootRef: context.rootRef, linkPath: [...context.linkPath, pendingSurfaceLinkId(clientMutationId)] }) : null;
+  }
+
+  async function resolveNode(ref: string): Promise<void> {
+    if (ref.startsWith("note_block:") || ref.startsWith("page:")) { await loadNeighborhood(ref); return; }
+    if (owner.graph.nodes.has(ref) || owner.graph.surfaces.has(ref) || [...owner.graph.surfaces.values()].some((surface) => surface.orderedItems.some((row) => row.target.item.ref === ref))) return;
+    const resolved = await resolveResourceLocator({ kind: "resource_ref", ref: assumeCanonicalResourceRef(ref) });
+    acceptGraphNode(owner.graph, { item: resolved.resourceItem, content: { kind: "resource_summary" } });
+  }
+
 
   const finalizeDailyHandoff = (handoffId: string): void => {
     const activeDraft = dailyDraftRef.current;
@@ -761,6 +988,7 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
 
   const flush = useCallback(() => session.flush(), [session]);
   const retry = () => {
+    for (const [ref, load] of owner.graph.loads) if (load.kind === "error") void loadNeighborhood(ref, true).catch((error: unknown) => inputRef.current.onError?.(error));
     let recoveredStorage = false;
     for (const entry of session.pendingOperations(ownerKey)) {
       if (entry.paused === null || entry.paused === "conflict") continue;
@@ -803,7 +1031,7 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
           return;
         }
         try {
-          projectResourceSurface({ acknowledgedSurface: next, intents: graphIntents, title: undefined, bodies: new Map() });
+          projectSurfaceGraph(new Map([...owner.graph.surfaces, [next.source.item.ref, next], ...graphIntents[0]!.baseSurfaces.map((surface) => [surface.source.item.ref, surface] as const)]), graphIntents);
         } catch {
           owner.failure = "conflict";
           return;
@@ -825,28 +1053,56 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
     }
     publishOwner();
   };
-  const recover = (candidate: RecoveryCandidate): boolean => {
-    if (candidate.corrupt || candidate.revision === null || candidate.ownerKey !== ownerKey) return false;
-    if (candidate.noteRef) {
-      const current = currentSurfaceRef.current;
-      const ref = candidate.noteRef;
-      if (!current || (current.source.item.ref !== ref && !resourceSurfaceOccurrenceForRef(current, ref) && draftNoteRef(dailyDraftRef.current?.noteId ?? "") !== ref)) return false;
-      const result = session.recover(ref, candidate.key, candidate.revision);
-      if (result) publishOwner();
-      return result;
+  const recover = async (candidate: RecoveryCandidate): Promise<boolean> => {
+    if (candidate.corrupt || candidate.legacy || candidate.revision === null || candidate.ownerKey !== ownerKey) return false;
+    const candidates = session.listRecovery(ownerKey).filter((entry) => entry.key === candidate.key && entry.revision === candidate.revision && !entry.corrupt);
+    const raw = expectRecord(JSON.parse(candidate.raw), "recovered writing journal");
+    if (!Array.isArray(raw.operations)) throw new TypeError("Recovered writing journal operations are invalid");
+    const pending = raw.operations.map((value) => expectRecord(value, "recovered operation")).filter((entry) => entry.ownerKey === ownerKey);
+    const operations = pending.map((entry) => ({ id: expectString(entry.id, "recovered operation id"), operation: asOperation(entry.intent), sequence: Number(entry.sequence) })).sort((left, right) => left.sequence - right.sequence);
+    // Adopt the complete owner queue before attaching callbacks. A successor may
+    // refer to a pending pair created by the lost reply, so replaying one entry
+    // in isolation would strand its identity mapping in the old journal.
+    for (const { operation } of operations) if (operation.kind === "graph") {
+      for (const surface of operation.intent.baseSurfaces) {
+        if (!owner.graph.surfaces.has(surface.source.item.ref)) owner.graph.surfaces.set(surface.source.item.ref, surface);
+        for (const node of [surface.source, ...surface.orderedItems.map((row) => row.target)]) {
+          if (node.content.kind !== "note_body" || session.peekSnapshot(node.item.ref)) continue;
+          session.openBody({ noteRef: node.item.ref, ownerKey, initial: { body: bodyFromJson(node.content.bodyPmJson), version: resourceSurfaceLaneVersion(node.item, "body") }, adapter: noteBodyAdapter() });
+        }
+      }
+      const projected = projectSurfaceGraph(new Map(operation.intent.baseSurfaces.map((surface) => [surface.source.item.ref, surface])), [operation.intent]);
+      for (const surface of projected.values()) for (const node of [surface.source, ...surface.orderedItems.map((row) => row.target)]) {
+        if (node.content.kind !== "note_body" || session.peekSnapshot(node.item.ref)) continue;
+        session.openBody({ noteRef: node.item.ref, ownerKey, initial: { body: bodyFromJson(node.content.bodyPmJson), version: null }, adapter: noteBodyAdapter(), awaitExternalCreation: true });
+      }
     }
-    if (!candidate.operationId) return false;
-    const result = session.recoverOperation(candidate.key, candidate.revision, candidate.operationId);
-    if (!result) return false;
-    session.attachOperation(candidate.operationId, {
-      prepare: prepareOperation,
-      onAck: (data) => {
-        const operation = session.pendingOperations(ownerKey).find((entry) => entry.id === candidate.operationId);
-        if (!operation) throw new Error("recovered surface operation disappeared");
-        onOperationAck(candidate.operationId!, operation.intent, data);
-      },
-      onError: onOperationError,
-    });
+    for (const entry of candidates) {
+      if (!entry.noteRef) continue;
+      if (!session.peekSnapshot(entry.noteRef)) {
+        await loadNeighborhood(entry.noteRef);
+        const node = owner.graph.surfaces.get(entry.noteRef)?.source;
+        if (!node || node.content.kind !== "note_body") return false;
+        session.openBody({ noteRef: entry.noteRef, ownerKey, initial: { body: bodyFromJson(node.content.bodyPmJson), version: resourceSurfaceLaneVersion(node.item, "body") }, adapter: noteBodyAdapter() });
+      }
+      if (!session.recover(entry.noteRef, entry.key, entry.revision!)) return false;
+    }
+    for (const { id } of operations) {
+      if (!candidates.some((entry) => entry.operationId === id)) continue;
+      if (!session.recoverOperation(candidate.key, candidate.revision, id)) return false;
+    }
+    for (const { id } of operations) {
+      if (!session.pendingOperations(ownerKey).some((entry) => entry.id === id)) continue;
+      session.attachOperation(id, {
+        prepare: prepareOperation,
+        onAck: (data) => {
+          const operation = session.pendingOperations(ownerKey).find((entry) => entry.id === id);
+          if (!operation) throw new Error("Recovered surface operation disappeared");
+          onOperationAck(id, operation.intent, data);
+        },
+        onError: onOperationError,
+      });
+    }
     publishOwner();
     return true;
   };
@@ -900,9 +1156,9 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
       }
     : null;
   const bodyRefs = new Set<string>();
-  if (surface) {
-    if (surface.source.content.kind === "note_body") bodyRefs.add(surface.source.item.ref);
-    for (const row of surface.orderedItems) if (row.target.content.kind === "note_body") bodyRefs.add(row.target.item.ref);
+  for (const cached of projectedGraphRef.current.values()) {
+    if (cached.source.content.kind === "note_body") bodyRefs.add(cached.source.item.ref);
+    for (const row of cached.orderedItems) if (row.target.content.kind === "note_body") bodyRefs.add(row.target.item.ref);
   }
   if (provisionalRef) bodyRefs.add(provisionalRef);
   let status: WritingStatus = owner.failure ?? "clean";
@@ -942,11 +1198,23 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
   const hasRecoveredDraft = recoveryCandidates.length > 0 || recoveredPauseRef.current || unreadableDailyDraft;
   if (storageUnavailable) { status = "storage_failed"; localRetained = false; }
   else if (status === "clean" && hasRecoveredDraft) status = "recovered";
+  const provisionalRow: OutlineRow | null = daily && provisional ? {
+    occurrenceId: provisional.occurrenceId,
+    path: { rootRef: sourceRefRef.current ?? ownerKey, linkPath: [] },
+    endpointRef: sourceRefRef.current ?? ownerKey,
+    linkId: provisional.occurrenceId,
+    target: provisionalDailyOccurrence(provisional).target,
+    depth: 0, collapsed: true, hasLinkNote: false, terminal: null, neighborhood: "unloaded",
+  } : null;
   const shared = {
     status, localRetained, hasRecoveredDraft, recoveryCandidates, recover,
     bodyDocument, restoreSelection, editBody, selection, boundary, undo, redo,
+    outline: createResourceOutline({ rootRef: sourceRefRef.current ?? ownerKey, provisional: provisionalRow, graph: () => projectedGraphRef.current, view: outlineView.current, loads: owner.graph.loads, load: loadNeighborhood, resolve: resolveNode, publish: publishOwner, recordSelection: (selection) => session.structureSelection(ownerKey, selection), command: commitCommand, body: (ref) => session.getSnapshot(ref).document.body.bodyPmJson, restore: (id, selection) => { selectionRef.current.set(viewIdFor(id), { token: ++tokenRef.current, selection }); session.structureSelection(ownerKey, { kind: "text", occurrenceId: id, ...selection }); } }),
     updateTitle, command, flush, retry, reload, copyRecovery,
   };
+  if (daily && !surface) {
+    shared.outline.insert = (position) => { command({ type: "insert_note", noteId: crypto.randomUUID(), position, bodyPmJson: { type: "paragraph" } }); };
+  }
   if (daily) {
     return {
       ...shared,

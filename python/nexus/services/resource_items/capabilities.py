@@ -737,24 +737,21 @@ NOTE_MEDIA_SEARCH_EDGE_ORIGINS: tuple[EdgeOrigin, ...] = (
 
 
 _PAGE_NOTE_BLOCKS_SQL = """
-WITH RECURSIVE contained(id) AS (
-    SELECT target_id
+WITH RECURSIVE links AS (
+    SELECT source_scheme AS a_scheme, source_id AS a_id, target_scheme AS b_scheme, target_id AS b_id
     FROM resource_edges
-    WHERE user_id = :viewer_id
-      AND origin = 'user'
-      AND source_scheme = 'page'
-      AND source_id = :id
-      AND target_scheme = 'note_block'
-      AND source_order_key IS NOT NULL
+    WHERE user_id = :viewer_id AND origin = 'user' AND kind = 'context'
+      AND ordinal IS NULL AND snapshot IS NULL AND source_order_key IS NULL
+    UNION ALL
+    SELECT target_scheme, target_id, source_scheme, source_id
+    FROM resource_edges
+    WHERE user_id = :viewer_id AND origin = 'user' AND kind = 'context'
+      AND ordinal IS NULL AND snapshot IS NULL AND source_order_key IS NULL
+), connected(id) AS (
+    SELECT b_id FROM links WHERE a_scheme = 'page' AND a_id = :id AND b_scheme = 'note_block'
     UNION
-    SELECT e.target_id
-    FROM resource_edges e
-    JOIN contained c ON c.id = e.source_id
-    WHERE e.user_id = :viewer_id
-      AND e.origin = 'user'
-      AND e.source_scheme = 'note_block'
-      AND e.target_scheme = 'note_block'
-      AND e.source_order_key IS NOT NULL
+    SELECT l.b_id FROM links l JOIN connected c ON l.a_id = c.id
+    WHERE l.a_scheme = 'note_block' AND l.b_scheme = 'note_block'
 )
-SELECT id FROM contained
+SELECT id FROM connected
 """

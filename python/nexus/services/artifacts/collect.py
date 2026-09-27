@@ -469,9 +469,6 @@ def one_hop_connection_candidates(
         )
         seen += len(page.items)
         for connection in page.items:
-            # Ordered Page/Note containment is Contents, not a Connection candidate.
-            if connection.source_order_key is not None:
-                continue
             endpoint = connection.other
             if endpoint.missing or endpoint.ref == subject:
                 continue

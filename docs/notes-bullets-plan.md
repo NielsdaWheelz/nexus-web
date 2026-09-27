@@ -1,6 +1,6 @@
 # roam-style bullets over shared links
 
-status: approved direction; implementation contract for pr 2 of 2
+status: implemented candidate; stacked pr 2 of 2
 date: 2026-09-25; baseline: pr 1, [writing and saving](notes-writing-plan.md)
 evidence: [roam reference](research/notes-roam-reference.md), [current owners](research/notes-current-system.md)
 
@@ -31,13 +31,17 @@ offline mode, crdt, new editor framework, task system or full roam syntax suite.
 reuse the existing view-state uniqueness `(user, surface scheme/id, edge id)`;
 add uniqueness of endpoint/order key for ordered rows. validate membership and
 visibility through graph owners; `surface` is the viewing endpoint and `target`
-is its other endpoint. preserve existing saved collapse values as the initial
-state for an occurrence; subsequent fold/zoom is local to that writing session.
+is its other endpoint. preserve saved collapse at the root. nested appearances
+start closed until that exact path is deliberately disclosed; subsequent
+fold/zoom is local to that writing session.
 
 read one-hop neighborhoods through the existing surface owner. cache each
-canonical node/neighborhood once per session; expand on demand, never recursively
+canonical node/neighborhood once per session; initially show the root's one
+hop and load nested neighborhoods only when disclosed or focused. a neighborhood
+loaded for one appearance does not open another appearance. never recursively
 load the whole connected component. every appearance uses the same neighbor
-set/order. repeated ancestors render a terminal reference with a return action;
+set/order.
+repeated ancestors render a terminal reference with a return action;
 stop expansion by the current path, not a global visited set. longer graph
 cycles remain legal. pages and non-note resources remain reference/card rows;
 only note bodies expand inline. roots retain their existing title/body controls.
@@ -111,8 +115,13 @@ and supplies `{endpointRef, linkId}` entries. validate every incident pair and
 affected endpoint version, deduplicate shared relations, then remove atomically
 with one inverse receipt. the route does not grant authority over its neighbors.
 
-- envelope remains `{client_mutation_id, base_versions, command}`; request bytes
-  freeze before submission. rename note/page `outgoing_edges` lane to `links`;
+- envelope becomes `{client_mutation_id, base_versions, context, body_edits,
+  command}`. `context={root_ref,link_path}` witnesses the displayed path to the
+  route endpoint; multi-context remove carries a context per entry. validate
+  traversed endpoints and their versions. `body_edits` contains dependent
+  never-submitted canonical bodies; split/join command bodies cannot duplicate
+  them. request bytes freeze before submission. rename note/page
+  `outgoing_edges` lane to `links`;
   retain independent `body` and `title` lanes.
 - closed commands: existing insert/split/move/remove plus `relink`, `join_notes`,
   `paste_outline`, and `reverse_edit`. remove accepts the endpoint/link entries
@@ -120,8 +129,10 @@ with one inverse receipt. the route does not grant authority over its neighbors.
   endpoint and `start|after(linkId)`; join supplies the two canonical notes and
   displayed relation; paste supplies validated bodies and local parent indexes.
 - request versions cover every read/written body and endpoint, including the
-  destination used for a duplicate check. response returns changed bodies,
-  neighborhoods and committed versions, not a replacement for newer input.
+  destination used for a duplicate check. response returns a receipt id,
+  changed canonical nodes, affected neighborhoods, committed versions and
+  `reverse_versions` for the exact lanes an inverse must guard, not a
+  replacement for newer input.
 - store inverse effect snapshots with the committed mutation receipt;
   `reverse_edit` references that viewer-owned receipt, validates CURRENT
   expected versions and touched postimage preconditions, then returns new
@@ -212,6 +223,10 @@ conversion. keep `source_order_key` for those real uses; remove the obsolete
 reserved `target_order_key` and the page/note outgoing-only adjacency path.
 update every active nested reader/writer, including vault, artifacts, capability
 scope expansion and highlight-note ordering; no old/new traversal fallback.
+vault page sync exports canonical note bodies once and keeps their versioned
+body edits; it rejects topology-marker edits explicitly. its former
+single-parent markdown topology writer cannot represent diamonds or cycles and
+is removed. an editable graph-markdown format is outside this cutover.
 
 before cutover, census pairs/order/annotations and checkpoint or drain pending
 client requests. preserve/export undrainable raw drafts and their old identity
@@ -237,20 +252,24 @@ designers inspect rendered specimens; static checks do not prove taste or touch.
 | b4: view/clipboard | folding one occurrence leaves the other visible; focus returns; text copy/paste creates new identities, reference paste reuses one; mixed-depth/multi-context cut unlinks exactly selected pairs, one undo restores them, one annotated member rejects all; no note resource deletion |
 | b5: durability | lose actual committed structural response, type/move again, retry and reload: exact replay and successor retained; old reply never replaces newer projection; annotated relation shortcut rejects intact |
 | b6: cutover | rehearse duplicates, reverse edges, nested links, annotations, pending drafts, old replay receipts and conversation contexts; preserve data and explicit scope exclusions; exercise actual post-migration readers |
-| b7: feel | iphone/mac specimen review, keyboard escape, screen-reader names, non-drag move and android/webview smoke; 100 edits on a 100-note/depth-10 fixture satisfy pr 1's input budget with no caret/scroll jumps |
+| b7: feel | android webview/mac browser specimen review, keyboard escape, screen-reader names and non-drag move; 100 edits on a 100-note/depth-10 fixture satisfy pr 1's input budget with no caret/scroll jumps |
 
 trade-offs: this is roam's interaction vocabulary over a graph, not its ownership
 tree. split changes the original text everywhere but attaches its new right half
 only to the displayed context. join copies then unlinks; it does not fuse ids.
-rewiring changes a shared relation everywhere; folding remains local. graph
-cycles produce terminal references; annotated relations require explicit removal.
+rewiring changes a shared relation everywhere; folding remains local. nested
+saved expand state is ignored to avoid recursive diamond/cycle forests when one
+cached neighborhood appears in several places. graph cycles produce terminal
+references; annotated relations require explicit removal.
 multi-selection supports copy/cut/remove, not batch indentation or reordering;
 native text selection takes priority over roam's conflicting reorder bindings.
 undo preserves generated note resources even after removing their new links.
+vault markdown no longer edits graph topology; it retains canonical body sync
+until a separate occurrence-aware graph-markdown contract exists.
 these differences are intentional and must appear in the implementation pr.
 
-done: b1–b7 and final `./scripts/test` pass, temporary tests and retired paths
-are absent, owning architecture docs describe the graph projection, and resolved
-graph/reference-evidence tickets are deleted from the register. code/live work:
-not run. unknown reference geometry/bindings must be observed or explicitly
-declared nexus choices before implementation acceptance, never guessed.
+completion: b1–b6 and desktop b7 require live receipts and final `./scripts/test`.
+the physical android b7 check is deferred at the user's request and tracked in
+`docs/tickets/notes-bullets-android-acceptance-deferred.md`. temporary tests and
+retired paths must be absent from the pr. unknown reference geometry/bindings
+remain explicit nexus choices rather than guessed parity claims.

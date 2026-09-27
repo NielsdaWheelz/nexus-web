@@ -122,8 +122,7 @@ def create_link(db: Session, *, viewer_id: UUID, request: CreateLinkRequest) -> 
         if source_ref.uri == target_ref.uri:
             raise ApiError(ApiErrorCode.E_LINK_SELF, "A resource cannot be linked to itself")
 
-        a, b = _canonical_pair(source_ref, target_ref)
-        write = edges.create_link(db, viewer_id=viewer_id, source=a, target=b)
+        write = edges.create_link(db, viewer_id=viewer_id, source=source_ref, target=target_ref)
         response = CreateLinkOut(
             created=write.created,
             created_source_ref=created_source_ref.uri if created_source_ref is not None else None,
@@ -132,7 +131,7 @@ def create_link(db: Session, *, viewer_id: UUID, request: CreateLinkRequest) -> 
                     db,
                     viewer_id=viewer_id,
                     edge_id=write.edge.id,
-                    refs=(a, b),
+                    refs=(source_ref, target_ref),
                     filters=_LINK_FILTERS,
                 )
             ),
@@ -169,7 +168,6 @@ def delete_link(db: Session, *, viewer_id: UUID, link_id: UUID) -> None:
         if not _is_neutral_link(edge):
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Link not found")
         cleanup.detach_link_note_motif(db, viewer_id=viewer_id, a=edge.source, b=edge.target)
-        cleanup.clear_edge_view_state(db, edge_id=link_id)
         edges.delete_edge(db, viewer_id=viewer_id, edge_id=link_id)
         db.commit()
 
@@ -355,7 +353,6 @@ def delete_stance(db: Session, *, viewer_id: UUID, stance_id: UUID) -> None:
             )
         if edge.kind not in ("supports", "contradicts"):
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Stance not found")
-        cleanup.clear_edge_view_state(db, edge_id=stance_id)
         edges.delete_edge(db, viewer_id=viewer_id, edge_id=stance_id)
         db.commit()
 
@@ -454,7 +451,6 @@ def _replace_stance(
             ResourceEdge.ordinal.is_(None),
             ResourceEdge.snapshot.is_(None),
             ResourceEdge.source_order_key.is_(None),
-            ResourceEdge.target_order_key.is_(None),
             or_(
                 and_(source_is(source), target_is(target)),
                 and_(source_is(target), target_is(source)),
@@ -470,7 +466,6 @@ def _replace_stance(
             and prior.kind == kind
         ):
             return prior
-        cleanup.clear_edge_view_state(db, edge_id=prior_id)
         edges.delete_edge(db, viewer_id=viewer_id, edge_id=prior_id)
     return edges.create_edge(
         db,
@@ -501,10 +496,6 @@ def _parse_ref(raw: str) -> ResourceRef:
     )
 
 
-def _canonical_pair(x: ResourceRef, y: ResourceRef) -> tuple[ResourceRef, ResourceRef]:
-    return (x, y) if (x.scheme, str(x.id)) <= (y.scheme, str(y.id)) else (y, x)
-
-
 def _is_neutral_link(edge: EdgeOut | ResourceEdge) -> bool:
     return is_neutral_link_shape(
         origin=edge.origin,
@@ -512,7 +503,6 @@ def _is_neutral_link(edge: EdgeOut | ResourceEdge) -> bool:
         ordinal=edge.ordinal,
         snapshot=edge.snapshot,
         source_order_key=edge.source_order_key,
-        target_order_key=edge.target_order_key,
     )
 
 

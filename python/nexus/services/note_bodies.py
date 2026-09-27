@@ -135,7 +135,7 @@ def upsert_note_body(
         )
         db.add(block)
         db.flush()
-        for lane in ("body", "outgoing_edges"):
+        for lane in ("body", "links"):
             versions.ensure_version(db, viewer_id=viewer_id, ref=note_ref(block.id), lane=lane)
         sync_note_body_edges(db, viewer_id=viewer_id, block=block)
         return block

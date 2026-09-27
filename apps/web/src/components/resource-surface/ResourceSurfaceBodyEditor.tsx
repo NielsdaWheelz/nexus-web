@@ -1,602 +1,269 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, Link2, Plus, Trash2 } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { ChevronRight, Link2, Plus } from "lucide-react";
 import ActionMenu from "@/components/ui/ActionMenu";
-import { useResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime";
-import NoteBodyEditor, {
-  type NoteBodyEdit,
-  type NoteBodyEditorDocument,
-  type NoteBodyInputHandoff,
-  type NoteBodySelection,
-  type NoteBodySplit,
-} from "@/components/notes/NoteBodyEditor";
-import ResourceTargetListbox, {
-  resourceTargetKey,
-  resourceTargetOptionId,
-} from "@/components/resources/ResourceTargetListbox";
 import Button from "@/components/ui/Button";
-import type {
-  ResourceItem,
-  ResourceSurfaceOccurrence,
-  SurfacePosition,
-} from "@/lib/resources/resourceItems";
-import { useResourceTargetSearch } from "@/lib/resources/useResourceTargetSearch";
+import NoteBodyEditor, { type NoteBodyEdit, type NoteBodyEditorDocument, type NoteBodyInputHandoff, type NoteBodySelection } from "@/components/notes/NoteBodyEditor";
+import ResourceTargetListbox, { resourceTargetKey, resourceTargetOptionId } from "@/components/resources/ResourceTargetListbox";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { useResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime";
+import { useMobileChromeActionMenuLock } from "@/lib/workspace/useMobileChromeActionMenuLock";
+import { useResourceTargetSearch } from "@/lib/resources/useResourceTargetSearch";
+import type { ResourceItem, SurfacePosition } from "@/lib/resources/resourceItems";
+import type { ResourceOutline, OutlineRow } from "@/lib/resourceSurface/outline";
+import { ProtectedSurfaceLinkError, TerminalSurfaceLinkError } from "@/lib/resourceSurface/outline";
+import { ClipboardWriteUnavailableError, copyText } from "@/lib/ui/copyText";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
-import { useMobileChromeActionMenuLock } from "@/lib/workspace/useMobileChromeActionMenuLock";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { resourceSurfaceFilterFields } from "./resourceSurfaceFilterFields";
 import styles from "./ResourceSurfaceBodyEditor.module.css";
 
-export interface ResourceSurfaceBodyFocusRequest {
-  occurrenceId: string | null;
-  serial: number;
-}
-
-export interface ResourceSurfaceSplitRequest {
-  occurrenceId: string;
-  leftBodyPmJson: Record<string, unknown>;
-  rightBodyPmJson: Record<string, unknown>;
-}
-
-export interface ResourceSurfaceMoveRequest {
-  occurrenceId: string;
-  position: SurfacePosition;
-}
-
-export interface ResourceSurfaceInsertResourceRequest {
-  targetRef: string;
-  position: SurfacePosition;
-}
-
-export interface ResourceSurfaceBodyEditorProps {
-  sourceRef?: string;
-  editorSessionKey?: string;
-  orderedItems: ResourceSurfaceOccurrence[];
+interface Props {
+  editorSessionKey: string;
+  outline: ResourceOutline;
   rowFilterQuery?: string;
   editable?: boolean;
   structuralEditing?: boolean;
-  focusRequest?: ResourceSurfaceBodyFocusRequest;
-  onInsertNote: (position: SurfacePosition) => void;
-  onSplitNote: (request: ResourceSurfaceSplitRequest) => void;
-  onMoveOccurrence: (request: ResourceSurfaceMoveRequest) => void;
-  onRemoveOccurrence: (occurrenceId: string) => void;
-  onInsertResource: (request: ResourceSurfaceInsertResourceRequest) => void;
-  bodyDocument: (occurrenceId: string) => NoteBodyEditorDocument;
-  restoreSelection: (occurrenceId: string) => { token: number; selection: NoteBodySelection } | undefined;
+  focusRequest?: { occurrenceId: string | null; serial: number };
+  bodyDocument: (id: string) => NoteBodyEditorDocument;
+  restoreSelection: (id: string) => { token: number; selection: NoteBodySelection } | undefined;
   onBodyEdit: (input: { occurrenceId: string; edit: NoteBodyEdit }) => void;
   onSelectionChange: (input: { occurrenceId: string; selection: NoteBodySelection }) => void;
-  onHistoryBoundary: (occurrenceId: string) => void;
-  onUndo: (occurrenceId: string) => void;
-  onRedo: (occurrenceId: string) => void;
+  onHistoryBoundary: (id: string) => void;
+  onUndo: (id: string) => void;
+  onRedo: (id: string) => void;
   onFlush: () => void;
-  onActivate: (
-    item: ResourceItem,
-    disposition: WorkspaceTargetDisposition,
-  ) => void;
-  onOpenObject: (
-    objectType: string,
-    objectId: string,
-    disposition: WorkspaceTargetDisposition,
-  ) => void;
+  onActivate: (item: ResourceItem, disposition: WorkspaceTargetDisposition) => void;
+  onOpenObject: (objectType: string, objectId: string, disposition: WorkspaceTargetDisposition) => void;
   onFeedback?: (feedback: FeedbackContent) => void;
   onError?: (error: unknown) => void;
-  inputHandoff?: {
-    noteRef: string;
-    handoff: NoteBodyInputHandoff;
-  } | null;
-  onInputHandoffClaimed?: (handoffId: string) => void;
-}
-
-interface LocalFocusRequest {
-  occurrenceId: string;
-  serial: number;
+  inputHandoff?: { noteRef: string; handoff: NoteBodyInputHandoff } | null;
+  onInputHandoffClaimed?: (id: string) => void;
 }
 
 export default function ResourceSurfaceBodyEditor({
-  sourceRef,
-  editorSessionKey = sourceRef ?? "resource-surface",
-  orderedItems,
-  rowFilterQuery = "",
-  editable = true,
-  structuralEditing = true,
-  focusRequest,
-  onInsertNote,
-  onSplitNote,
-  onMoveOccurrence,
-  onRemoveOccurrence,
-  onInsertResource,
-  bodyDocument,
-  restoreSelection,
-  onBodyEdit,
-  onSelectionChange,
-  onHistoryBoundary,
-  onUndo,
-  onRedo,
-  onFlush,
-  onActivate,
-  onOpenObject,
-  onFeedback,
-  onError,
-  inputHandoff = null,
+  editorSessionKey, outline, rowFilterQuery = "", editable = true,
+  structuralEditing = true, focusRequest, bodyDocument, restoreSelection,
+  onBodyEdit, onSelectionChange, onHistoryBoundary, onUndo, onRedo, onFlush,
+  onActivate, onOpenObject, onFeedback, onError, inputHandoff,
   onInputHandoffClaimed,
-}: ResourceSurfaceBodyEditorProps) {
+}: Props) {
   const [addItemOpen, setAddItemOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeTargetKey, setActiveTargetKey] = useState<string | null>(null);
-  const [localFocusRequest, setLocalFocusRequest] =
-    useState<LocalFocusRequest | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [drop, setDrop] = useState<{ id: string; placement: "before" | "after" | "inside" } | null>(null);
+  const sectionRef = useRef<HTMLElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const addItemInputId = useId();
   const addItemListboxId = useId();
   const filtering = rowFilterQuery.trim().length > 0;
-  const directEditingAvailable = editable && !filtering;
-  const structuralEditingAvailable =
-    directEditingAvailable && structuralEditing;
-  const presentRefs = useMemo(
-    () => [
-      ...(sourceRef ? [sourceRef] : []),
-      ...orderedItems.map((occurrence) => occurrence.target.item.ref),
-    ],
-    [orderedItems, sourceRef],
-  );
-  const visibleRows = useMemo(() => {
-    if (!filtering) {
-      return orderedItems.map((occurrence, sourceIndex) => ({
-        occurrence,
-        sourceIndex,
-      }));
-    }
-    return orderedItems.flatMap((occurrence, sourceIndex) =>
-      matchesPaneFilterQuery(
-        rowFilterQuery,
-        resourceSurfaceFilterFields(occurrence),
-      )
-        ? [{ occurrence, sourceIndex }]
-        : [],
-    );
-  }, [filtering, orderedItems, rowFilterQuery]);
-  const { targets, loading, error } = useResourceTargetSearch({
-    purpose: "link",
-    query,
-    sourceRef,
-    excludeRefs: presentRefs,
-  });
-  const directTargets = useMemo(
-    () =>
-      targets.filter(
-        (target) =>
-          target.kind === "resource" &&
-          target.item.capabilities.adjacencyTarget &&
-          !presentRefs.includes(target.item.ref),
-      ),
-    [presentRefs, targets],
-  );
-
-  useEffect(() => {
-    if (addItemOpen) searchInputRef.current?.focus();
-  }, [addItemOpen]);
-
+  const structural = editable && structuralEditing && !filtering;
+  const visibleRows = useMemo(() => filtering
+    ? outline.rows.filter((row) => matchesPaneFilterQuery(rowFilterQuery, resourceSurfaceFilterFields(row)))
+    : outline.rows, [filtering, outline.rows, rowFilterQuery]);
+  const presentRefs = useMemo(() => [outline.activeEndpointRef, ...outline.rows.filter((row) => row.depth === 0).map((row) => row.target.item.ref)], [outline.activeEndpointRef, outline.rows]);
+  const { targets, loading, error } = useResourceTargetSearch({ purpose: "link", query, sourceRef: outline.activeEndpointRef, excludeRefs: presentRefs });
+  const directTargets = useMemo(() => targets.filter((target) => target.kind === "resource" && target.item.capabilities.adjacencyTarget), [targets]);
+  useEffect(() => { if (addItemOpen) searchInputRef.current?.focus(); }, [addItemOpen]);
   useEffect(() => {
     const keys = directTargets.map(resourceTargetKey);
-    setActiveTargetKey((current) =>
-      current && keys.includes(current) ? current : (keys[0] ?? null),
-    );
+    setActiveTargetKey((current) => current && keys.includes(current) ? current : keys[0] ?? null);
   }, [directTargets]);
-
-  const activeTarget = directTargets.find(
-    (target) => resourceTargetKey(target) === activeTargetKey,
-  );
-
+  const selected = outline.selection?.kind === "blocks" ? outline.selection.occurrenceIds : [];
+  const selectedSet = new Set(selected);
+  const lastTopRow = outline.rows.filter((row) => row.depth === 0).at(-1);
+  const end: SurfacePosition = lastTopRow ? { kind: "after", linkId: lastTopRow.linkId } : { kind: "start" };
+  const report = (failure: unknown) => {
+    if (failure instanceof ProtectedSurfaceLinkError) {
+      onFeedback?.({ tone: "Warning", title: "This link has a note", message: "Use link actions to change it." });
+    } else if (failure instanceof TerminalSurfaceLinkError) {
+      onFeedback?.({ tone: "Warning", title: "Already shown above", message: "Edit the earlier appearance." });
+    } else if (failure instanceof ClipboardWriteUnavailableError) {
+      onFeedback?.({ tone: "Warning", title: "Copy unavailable", message: "Clipboard access is unavailable." });
+    } else onError?.(failure);
+  };
+  const run = (operation: Promise<void> | void) => { if (operation) void operation.catch(report); };
   const pickTarget = (target: (typeof directTargets)[number]) => {
     if (target.kind !== "resource") return;
-    onInsertResource({
-      targetRef: target.item.ref,
-      position: endPosition(orderedItems),
-    });
-    setQuery("");
-    setActiveTargetKey(null);
-    setAddItemOpen(false);
+    run(outline.reference(target.item.ref, end));
+    setAddItemOpen(false); setQuery(""); setActiveTargetKey(null);
   };
-
-  const focusForOccurrence = (occurrenceId: string): number => {
-    if (
-      focusRequest?.occurrenceId === occurrenceId &&
-      focusRequest.serial > 0
-    ) {
-      return focusRequest.serial;
+  const activeTarget = directTargets.find((target) => resourceTargetKey(target) === activeTargetKey);
+  const focusSerial = (id: string) => focusRequest?.occurrenceId === id ? focusRequest.serial : outline.focusRequest?.occurrenceId === id ? outline.focusRequest.serial : 0;
+  const selectBlock = (id: string, extend = false) => { outline.select(id, extend); sectionRef.current?.focus(); };
+  const blockKey = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.target !== sectionRef.current) return;
+    const key = event.key;
+    const mac = navigator.platform.toLowerCase().includes("mac");
+    const modifier = mac ? event.metaKey : event.ctrlKey;
+    if (modifier && key.toLowerCase() === "z" || !mac && event.ctrlKey && key.toLowerCase() === "y") {
+      event.preventDefault();
+      if (event.shiftKey || key.toLowerCase() === "y") onRedo(""); else onUndo("");
+      return;
     }
-    return localFocusRequest?.occurrenceId === occurrenceId
-      ? localFocusRequest.serial
-      : 0;
-  };
-
-  const focusPreviousEditableRow = (index: number) => {
-    for (let candidate = index - 1; candidate >= 0; candidate -= 1) {
-      const occurrence = orderedItems[candidate];
-      if (occurrence?.target.content.kind === "note_body") {
-        setLocalFocusRequest((current) => ({
-          occurrenceId: occurrence.occurrenceId,
-          serial: (current?.serial ?? 0) + 1,
-        }));
-        return;
-      }
+    if (outline.selection?.kind !== "blocks" || !selected.length) return;
+    const current = selected.length === 1 || selected[0] === outline.selection.anchor
+      ? selected.at(-1)!
+      : selected[0]!;
+    const index = visibleRows.findIndex((row) => row.occurrenceId === current);
+    const provisional = current.startsWith("daily-provisional:");
+    const reorder = mac ? event.metaKey : event.altKey;
+    if (key === "Tab") {
+      event.preventDefault();
+      const focusables = [...document.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')].filter((element) => !sectionRef.current?.contains(element) && element.getClientRects().length > 0);
+      const outside = event.shiftKey
+        ? focusables.filter((element) => Boolean((sectionRef.current?.compareDocumentPosition(element) ?? 0) & Node.DOCUMENT_POSITION_PRECEDING)).at(-1)
+        : focusables.find((element) => Boolean((sectionRef.current?.compareDocumentPosition(element) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING));
+      outside?.focus();
+      return;
     }
+    if (key === "Escape") { event.preventDefault(); outline.clearSelection(); return; }
+    if (key === "Enter") {
+      event.preventDefault();
+      const row = visibleRows[index];
+      if (row?.terminal) run(outline.focus(row.occurrenceId));
+      else if (row?.target.content.kind === "note_body") outline.resume(row.occurrenceId);
+      else if (row) onActivate(row.target.item, { kind: "Follow" });
+      return;
+    }
+    if (!structural || provisional) return;
+    if (modifier && !event.shiftKey && (key === "ArrowUp" || key === "ArrowDown")) {
+      event.preventDefault(); run(outline.fold(current, key === "ArrowUp")); return;
+    }
+    if (reorder && event.shiftKey && (key === "ArrowUp" || key === "ArrowDown")) {
+      event.preventDefault(); if (selected.length === 1) run(outline.move(current, key === "ArrowUp" ? "up" : "down")); return;
+    }
+    if (key === "ArrowUp" || key === "ArrowDown") {
+      event.preventDefault();
+      const next = visibleRows[index + (key === "ArrowUp" ? -1 : 1)];
+      if (next) outline.select(next.occurrenceId, event.shiftKey);
+      return;
+    }
+    if (key === "Backspace" || key === "Delete") { event.preventDefault(); run(outline.remove(selected)); }
   };
-
   return (
-    <section
-      className={styles.body}
-      aria-label="Ordered resources"
-      data-pane-return-scope="Notes.EditorBlocks"
-    >
-      {filtering ? (
-        <p className={styles.inspectionNotice} role="status">
-          Filtered view is inspection only — clear Filter to edit.
-        </p>
-      ) : null}
+    <section ref={sectionRef} className={styles.body} aria-label="Linked notes" data-pane-return-scope="Notes.EditorBlocks" tabIndex={-1}
+      onKeyDown={blockKey}
+      onCopy={(event) => { if (selected.length) { event.preventDefault(); run(outline.copy(event.clipboardData)); } }}
+      onCut={(event) => { if (structural && selected.length && selected.every((id) => !id.startsWith("daily-provisional:"))) { event.preventDefault(); run(outline.copy(event.clipboardData, true)); } }}
+      onPaste={(event) => { if (structural && selected.length && selected.every((id) => !id.startsWith("daily-provisional:"))) { event.preventDefault(); void outline.paste(event.clipboardData).catch(report); } }}>
+      {outline.focusedPath ? <Button variant="ghost" size="sm" onClick={outline.returnFocus}>Back to linked notes</Button> : null}
+      {filtering ? <p className={styles.inspectionNotice} role="status">Filtered view is inspection only — clear Filter to edit.</p> : null}
       <ol className={styles.rows}>
-        {visibleRows.map(({ occurrence, sourceIndex }) => {
-          const { item, content } = occurrence.target;
-          const label = item.label.trim() || item.scheme.replaceAll("_", " ");
-          const actionSubject = {
-            ref: assumeCanonicalResourceRef(item.ref),
-          } as const;
-          if (content.kind === "note_body") {
-            return (
-              <li
-              key={occurrence.occurrenceId}
-                className={styles.noteRow}
-                data-occurrence-id={occurrence.occurrenceId}
-                data-collection-row-id={occurrence.occurrenceId}
-                data-note-ref={item.ref}
-              >
-                <div className={styles.noteEditor}>
-                  <NoteBodyEditor
-                    resourceKey={`${editorSessionKey}:${occurrence.occurrenceId}:${item.ref}`}
-                    document={bodyDocument(occurrence.occurrenceId)}
-                    restoreSelection={restoreSelection(occurrence.occurrenceId)}
-                    editable={directEditingAvailable}
-                    ariaLabel={`Edit note ${sourceIndex + 1}`}
-                    focusRequest={focusForOccurrence(occurrence.occurrenceId)}
-                    onEdit={(edit) => onBodyEdit({ occurrenceId: occurrence.occurrenceId, edit })}
-                    onSelectionChange={(selection) => onSelectionChange({ occurrenceId: occurrence.occurrenceId, selection })}
-                    onHistoryBoundary={() => onHistoryBoundary(occurrence.occurrenceId)}
-                    onUndoRequest={() => onUndo(occurrence.occurrenceId)}
-                    onRedoRequest={() => onRedo(occurrence.occurrenceId)}
-                    onFlushRequest={onFlush}
-                    onSplit={
-                      structuralEditingAvailable
-                        ? (split) =>
-                            onSplitNoteRequest(
-                              occurrence.occurrenceId,
-                              split,
-                              onSplitNote,
-                            )
-                        : undefined
-                    }
-                    onEmptyBackspace={
-                      structuralEditingAvailable
-                        ? () => {
-                            focusPreviousEditableRow(sourceIndex);
-                            onRemoveOccurrence(occurrence.occurrenceId);
-                          }
-                        : undefined
-                    }
-                    onOpenObject={onOpenObject}
-                    onFeedback={onFeedback}
-                    onError={onError}
-                    inputHandoff={
-                      inputHandoff?.noteRef === item.ref
-                        ? inputHandoff.handoff
-                        : null
-                    }
-                    onInputHandoffClaimed={onInputHandoffClaimed}
-                  />
-                </div>
-                <div className={styles.rowActions}>
-                  <SurfaceRowActions
-                    actionSubject={actionSubject}
-                    label={label || `note ${sourceIndex + 1}`}
-                    structuralEditingAvailable={structuralEditingAvailable}
-                    canMoveUp={sourceIndex > 0}
-                    canMoveDown={sourceIndex < orderedItems.length - 1}
-                    onMoveUp={() => {
-                      const position = positionForMove(orderedItems, sourceIndex, "up");
-                      if (position) onMoveOccurrence({ occurrenceId: occurrence.occurrenceId, position });
-                    }}
-                    onMoveDown={() => {
-                      const position = positionForMove(orderedItems, sourceIndex, "down");
-                      if (position) onMoveOccurrence({ occurrenceId: occurrence.occurrenceId, position });
-                    }}
-                    onRemove={() => onRemoveOccurrence(occurrence.occurrenceId)}
-                  />
-                </div>
-              </li>
-            );
-          }
-
-          return (
-            <li
-              key={occurrence.occurrenceId}
-              className={styles.resourceRow}
-              data-occurrence-id={occurrence.occurrenceId}
-              data-collection-row-id={occurrence.occurrenceId}
-            >
-              <button
-                type="button"
-                className={styles.resourceActivation}
-                aria-label={`Open ${label}`}
-                onClick={(event) =>
-                  onActivate(
-                    item,
-                    workspaceTargetClickIntent(event).disposition,
-                  )
-                }
-              >
-                <span className={styles.resourceLabel}>{label}</span>
-                {item.summary ? (
-                  <span className={styles.resourceSummary}>{item.summary}</span>
-                ) : null}
-              </button>
-              <div className={styles.rowActions}>
-                <SurfaceRowActions
-                  actionSubject={actionSubject}
-                  label={label}
-                  structuralEditingAvailable={structuralEditingAvailable}
-                  canMoveUp={sourceIndex > 0}
-                  canMoveDown={sourceIndex < orderedItems.length - 1}
-                  onMoveUp={() => {
-                    const position = positionForMove(orderedItems, sourceIndex, "up");
-                    if (position) onMoveOccurrence({ occurrenceId: occurrence.occurrenceId, position });
-                  }}
-                  onMoveDown={() => {
-                    const position = positionForMove(orderedItems, sourceIndex, "down");
-                    if (position) onMoveOccurrence({ occurrenceId: occurrence.occurrenceId, position });
-                  }}
-                  onRemove={() => onRemoveOccurrence(occurrence.occurrenceId)}
-                />
-              </div>
-            </li>
-          );
-        })}
-        {filtering && visibleRows.length === 0 ? (
-          <li className={styles.emptyRow} role="status">
-            No items match this filter.
-          </li>
-        ) : null}
-        {structuralEditingAvailable ? (
-          <li className={styles.insertionRow}>
-            <button
-              type="button"
-              className={styles.insertNote}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && event.shiftKey) {
-                  event.preventDefault();
-                }
-              }}
-              onClick={() => onInsertNote(endPosition(orderedItems))}
-            >
-              <Plus size={16} aria-hidden="true" />
-              <span>Add a note</span>
-            </button>
-          </li>
-        ) : null}
-      </ol>
-
-      {structuralEditingAvailable ? (
-        <div className={styles.addItem}>
-          {addItemOpen ? (
-            <div className={styles.addItemSearch}>
-              <label htmlFor={addItemInputId}>Add item</label>
-              <input
-                ref={searchInputRef}
-                id={addItemInputId}
-                type="search"
-                value={query}
-                role="combobox"
-                aria-autocomplete="list"
-                aria-controls={addItemListboxId}
-                aria-expanded={Boolean(query.trim())}
-                aria-activedescendant={
-                  activeTarget
-                    ? resourceTargetOptionId(addItemListboxId, activeTarget)
-                    : undefined
-                }
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                    setAddItemOpen(false);
-                    setQuery("");
-                    setActiveTargetKey(null);
-                    return;
-                  }
-                  if (!query.trim() || directTargets.length === 0) return;
-                  const currentIndex = Math.max(
-                    0,
-                    directTargets.findIndex(
-                      (target) => resourceTargetKey(target) === activeTargetKey,
-                    ),
-                  );
-                  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                    event.preventDefault();
-                    const delta = event.key === "ArrowDown" ? 1 : -1;
-                    const target =
-                      directTargets[
-                        (currentIndex + delta + directTargets.length) %
-                          directTargets.length
-                      ];
-                    setActiveTargetKey(
-                      target ? resourceTargetKey(target) : null,
-                    );
-                    return;
-                  }
-                  if (
-                    event.key === "Enter" &&
-                    !event.shiftKey &&
-                    !event.altKey &&
-                    !event.ctrlKey &&
-                    !event.metaKey
-                  ) {
-                    event.preventDefault();
-                    const target =
-                      directTargets.find(
-                        (candidate) =>
-                          resourceTargetKey(candidate) === activeTargetKey,
-                      ) ?? directTargets[0];
-                    if (target) pickTarget(target);
-                  }
-                }}
-              />
-              {query.trim() ? (
-                <ResourceTargetListbox
-                  id={addItemListboxId}
-                  ariaLabel="Resources to add"
-                  targets={directTargets}
-                  activeKey={activeTargetKey}
-                  loading={loading}
-                  error={error}
-                  onHover={(target) =>
-                    setActiveTargetKey(resourceTargetKey(target))
-                  }
-                  onPick={pickTarget}
-                />
-              ) : null}
+        {visibleRows.map((row, index) => {
+          const item = row.target.item;
+          const isNote = row.target.content.kind === "note_body";
+          const terminal = row.terminal !== null;
+          const noteText = row.target.content.kind === "note_body"
+            ? terminal ? row.target.content.bodyText : bodyDocument(row.occurrenceId).body.bodyText
+            : null;
+          const label = noteText !== null
+            ? noteText.split("\n")[0]?.trim().slice(0, 48) || "note"
+            : item.label.trim() || "linked item";
+          const provisional = row.linkId.startsWith("daily-provisional:");
+          const canEditLink = structural && !terminal && !provisional && selected.length <= 1;
+          const marked = selectedSet.has(row.occurrenceId);
+          const style = { "--outline-depth": row.depth } as CSSProperties;
+          return <li key={row.occurrenceId} className={isNote ? styles.noteRow : styles.resourceRow} style={style}
+            data-occurrence-id={row.occurrenceId} data-collection-row-id={row.occurrenceId} data-note-ref={isNote ? item.ref : undefined}
+            data-selected={marked || undefined} data-drop={drop?.id === row.occurrenceId ? drop.placement : undefined}
+            onDragOver={(event) => {
+              if (!dragId || dragId === row.occurrenceId || !structural) return;
+              event.preventDefault();
+              const fraction = (event.clientY - event.currentTarget.getBoundingClientRect().top) / event.currentTarget.getBoundingClientRect().height;
+              const inside = isNote && !terminal && !provisional;
+              setDrop({ id: row.occurrenceId, placement: fraction < 0.25 ? "before" : fraction > 0.75 || !inside ? "after" : "inside" });
+            }}
+            onDragLeave={() => setDrop(null)}
+            onDrop={(event) => { event.preventDefault(); if (dragId && drop) run(outline.drop(dragId, drop.id, drop.placement)); setDragId(null); setDrop(null); }}>
+            <div className={styles.rowLead}>
+              <button type="button" className={styles.bullet} aria-label={isNote ? `Focus linked notes for ${label}` : `Open ${label}`}
+                draggable={canEditLink}
+                onDragStart={(event) => { setDragId(row.occurrenceId); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", row.occurrenceId); }}
+                onDragEnd={() => { setDragId(null); setDrop(null); }}
+                onClick={(event) => event.shiftKey ? selectBlock(row.occurrenceId, true) : isNote ? run(outline.focus(row.occurrenceId)) : onActivate(item, workspaceTargetClickIntent(event).disposition)}>•</button>
+              {isNote && !terminal && !provisional ? <button type="button" className={styles.disclosure}
+                aria-label={`${row.collapsed || row.neighborhood !== "ready" ? "Show" : "Hide"} linked notes for ${label}`} aria-expanded={!row.collapsed && row.neighborhood === "ready"}
+                onClick={() => run(outline.fold(row.occurrenceId, row.neighborhood === "ready" && !row.collapsed))}>
+                <ChevronRight size={14} aria-hidden="true" data-open={!row.collapsed && row.neighborhood === "ready" || undefined} />
+              </button> : null}
             </div>
-          ) : (
-            <Button
-              variant="ghost"
-              size="sm"
-              leadingIcon={<Link2 size={16} aria-hidden="true" />}
-              onClick={() => setAddItemOpen(true)}
-            >
-              Add item
-            </Button>
-          )}
-        </div>
-      ) : null}
+            {terminal ? <button type="button" className={styles.terminal} aria-label={`Return to ${label}, already shown above`} onClick={() => run(outline.focus(row.occurrenceId))}>Already shown above: {label}</button>
+              : isNote ? <div className={styles.noteEditor}><NoteBodyEditor
+                resourceKey={`${editorSessionKey}:${row.occurrenceId}:${item.ref}`}
+                document={bodyDocument(row.occurrenceId)} restoreSelection={restoreSelection(row.occurrenceId)}
+                editable={editable && !filtering} ariaLabel={`Edit note ${index + 1}`} focusRequest={focusSerial(row.occurrenceId)}
+                onEdit={(edit) => onBodyEdit({ occurrenceId: row.occurrenceId, edit })}
+                onSelectionChange={(selection) => onSelectionChange({ occurrenceId: row.occurrenceId, selection })}
+                onHistoryBoundary={() => onHistoryBoundary(row.occurrenceId)}
+                onUndoRequest={() => onUndo(row.occurrenceId)} onRedoRequest={() => onRedo(row.occurrenceId)} onFlushRequest={onFlush}
+                onSplit={canEditLink ? (split) => run(outline.split(row.occurrenceId, split)) : undefined}
+                onEmptyBackspace={canEditLink ? () => run(outline.remove([row.occurrenceId])) : undefined}
+                onIndent={canEditLink ? () => run(outline.indent(row.occurrenceId)) : undefined}
+                onOutdent={canEditLink ? () => run(outline.outdent(row.occurrenceId)) : undefined}
+                onBoundaryJoin={canEditLink ? (direction) => run(outline.join(row.occurrenceId, direction)) : undefined}
+                onSelectBlock={() => selectBlock(row.occurrenceId)}
+                onOpenObject={onOpenObject} onFeedback={onFeedback} onError={onError}
+                inputHandoff={inputHandoff?.noteRef === item.ref ? inputHandoff.handoff : null}
+                onInputHandoffClaimed={onInputHandoffClaimed}
+              /></div>
+              : <button type="button" className={styles.resourceActivation} aria-label={`Open ${label}`}
+                onClick={(event) => onActivate(item, workspaceTargetClickIntent(event).disposition)}>
+                  <span className={styles.resourceLabel}>{label}</span>
+                  {item.summary ? <span className={styles.resourceSummary}>{item.summary}</span> : null}
+                </button>}
+            {row.neighborhood === "loading" && !row.collapsed ? <span className={styles.neighborhoodStatus} role="status">Loading linked notes…</span> : null}
+            {row.neighborhood === "error" && !row.collapsed ? <span className={styles.neighborhoodStatus} role="status">Linked notes unavailable. Try Show linked notes again.</span> : null}
+            <div className={styles.rowActions}><RowActions row={row} label={label} text={noteText ?? label} outline={outline} enabled={canEditLink} report={report} onSelectBlock={() => selectBlock(row.occurrenceId)} /></div>
+          </li>;
+        })}
+        {filtering && !visibleRows.length ? <li className={styles.emptyRow} role="status">No items match this filter.</li> : null}
+        {structural ? <li className={styles.insertionRow}><button type="button" className={styles.insertNote} onClick={() => outline.insert(end)}><Plus size={16} aria-hidden="true" />Add a note</button></li> : null}
+      </ol>
+      {structural ? <div className={styles.addItem}>{addItemOpen ? <div className={styles.addItemSearch}>
+        <label htmlFor={addItemInputId}>Add item</label><input ref={searchInputRef} id={addItemInputId} type="search" value={query}
+          role="combobox" aria-autocomplete="list" aria-controls={addItemListboxId} aria-expanded={Boolean(query.trim())}
+          aria-activedescendant={activeTarget ? resourceTargetOptionId(addItemListboxId, activeTarget) : undefined}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") { event.preventDefault(); setAddItemOpen(false); setQuery(""); return; }
+            if (!query.trim() || !directTargets.length) return;
+            const index = Math.max(0, directTargets.findIndex((target) => resourceTargetKey(target) === activeTargetKey));
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setActiveTargetKey(resourceTargetKey(directTargets[(index + (event.key === "ArrowDown" ? 1 : -1) + directTargets.length) % directTargets.length]!)); }
+            if (event.key === "Enter") { event.preventDefault(); pickTarget(directTargets[index]!); }
+          }} />
+        {query.trim() ? <ResourceTargetListbox id={addItemListboxId} ariaLabel="Resources to add" targets={directTargets} activeKey={activeTargetKey} loading={loading} error={error} onHover={(target) => setActiveTargetKey(resourceTargetKey(target))} onPick={pickTarget} /> : null}
+      </div> : <Button variant="ghost" size="sm" leadingIcon={<Link2 size={16} aria-hidden="true" />} onClick={() => setAddItemOpen(true)}>Add item</Button>}</div> : null}
     </section>
   );
 }
 
-function SurfaceRowActions({
-  actionSubject,
-  label,
-  structuralEditingAvailable,
-  canMoveUp,
-  canMoveDown,
-  onMoveUp,
-  onMoveDown,
-  onRemove,
-}: {
-  actionSubject: ResourceActionSubject;
-  label: string;
-  structuralEditingAvailable: boolean;
-  canMoveUp: boolean;
-  canMoveDown: boolean;
-  onMoveUp: () => void;
-  onMoveDown: () => void;
-  onRemove: () => void;
+function RowActions({ row, label, text, outline, enabled, report, onSelectBlock }: {
+  row: OutlineRow; label: string; text: string; outline: ResourceOutline; enabled: boolean;
+  report: (error: unknown) => void; onSelectBlock: () => void;
 }) {
-  const model = useResourceActionMenuModel(actionSubject);
+  const model = useResourceActionMenuModel({ ref: assumeCanonicalResourceRef(row.target.item.ref) });
   const { onOpenChange } = useMobileChromeActionMenuLock();
-  const ordinary = model.descriptors.filter((action) => action.tone !== "danger");
-  const danger = model.descriptors.filter((action) => action.tone === "danger");
-  const options: ActionDescriptor[] = [...ordinary];
-  if (structuralEditingAvailable && model.status === "Loading") {
-    options.push({
-      kind: "command",
-      id: "ResourceSurface.ResourceActionsLoading",
-      label: "Resource actions are loading",
-      disabled: true,
-      onSelect: () => undefined,
-    });
-  }
-  if (structuralEditingAvailable) {
-    options.push(
-      {
-        kind: "command",
-        id: "ResourceSurface.MoveEarlier",
-        label: `Move ${label} earlier`,
-        icon: <ChevronUp size={16} aria-hidden="true" />,
-        disabled: !canMoveUp,
-        separatorBefore: options.length > 0,
-        onSelect: onMoveUp,
-      },
-      {
-        kind: "command",
-        id: "ResourceSurface.MoveLater",
-        label: `Move ${label} later`,
-        icon: <ChevronDown size={16} aria-hidden="true" />,
-        disabled: !canMoveDown,
-        onSelect: onMoveDown,
-      },
-      {
-        kind: "command",
-        id: "ResourceSurface.Remove",
-        label: `Remove ${label} from this surface`,
-        icon: <Trash2 size={16} aria-hidden="true" />,
-        tone: "danger",
-        separatorBefore: true,
-        onSelect: onRemove,
-      },
-    );
-  }
-  options.push(...danger.map((action, index) =>
-    structuralEditingAvailable && index === 0
-      ? { ...action, separatorBefore: false }
-      : action,
-  ));
-  return (
-    <ActionMenu
-      label={`More actions for ${label}`}
-      options={options}
-      triggerDisabled={options.length === 0 && model.triggerDisabled}
-      triggerDisabledReason={options.length === 0 ? model.triggerDisabledReason : undefined}
-      onOpenChange={onOpenChange}
-    />
+  const run = (work: Promise<void>) => { void work.catch(report); };
+  const siblings = outline.rows.filter((candidate) => candidate.endpointRef === row.endpointRef && candidate.path.linkPath.slice(0, -1).join() === row.path.linkPath.slice(0, -1).join());
+  const index = siblings.findIndex((candidate) => candidate.occurrenceId === row.occurrenceId);
+  const preceding = siblings.slice(0, index).reverse().find((candidate) => !candidate.terminal && candidate.target.content.kind === "note_body");
+  const options: ActionDescriptor[] = [...model.descriptors.filter((action) => action.tone !== "danger")];
+  options.push(
+    { kind: "command", id: "Notes.SelectBlock", label: "Select block", onSelect: onSelectBlock },
+    { kind: "command", id: "Notes.CopyText", label: "Copy text", disabled: Boolean(row.terminal), onSelect: () => run(copyText(text)) },
+    { kind: "command", id: "Notes.CopyReference", label: "Copy reference", onSelect: () => run(outline.copyReference(row.occurrenceId)) },
+    { kind: "command", id: "Notes.IndentLink", label: "Indent link", disabled: !enabled || row.target.content.kind !== "note_body" || row.hasLinkNote || !preceding || preceding.target.item.ref === row.target.item.ref, onSelect: () => run(outline.indent(row.occurrenceId)) },
+    { kind: "command", id: "Notes.OutdentLink", label: "Outdent link", disabled: !enabled || row.target.content.kind !== "note_body" || row.hasLinkNote || row.path.linkPath.length < 2, onSelect: () => run(outline.outdent(row.occurrenceId)) },
+    { kind: "command", id: "Notes.MoveEarlier", label: "Move link earlier", disabled: !enabled || index <= 0, onSelect: () => run(outline.move(row.occurrenceId, "up")) },
+    { kind: "command", id: "Notes.MoveLater", label: "Move link later", disabled: !enabled || index >= siblings.length - 1, onSelect: () => run(outline.move(row.occurrenceId, "down")) },
+    { kind: "command", id: "Notes.RemoveLink", label: "Remove link", tone: "danger", disabled: !enabled || row.hasLinkNote, onSelect: () => run(outline.remove([row.occurrenceId])) },
   );
-}
-
-function onSplitNoteRequest(
-  occurrenceId: string,
-  split: NoteBodySplit,
-  onSplitNote: (request: ResourceSurfaceSplitRequest) => void,
-) {
-  onSplitNote({
-    occurrenceId,
-    leftBodyPmJson: split.leftBodyPmJson,
-    rightBodyPmJson: split.rightBodyPmJson,
-  });
-}
-
-function endPosition(
-  orderedItems: ResourceSurfaceOccurrence[],
-): SurfacePosition {
-  const last = orderedItems.at(-1);
-  return last
-    ? { kind: "after", occurrenceId: last.occurrenceId }
-    : { kind: "start" };
-}
-
-function positionForMove(
-  orderedItems: ResourceSurfaceOccurrence[],
-  index: number,
-  direction: "up" | "down",
-): SurfacePosition | null {
-  if (direction === "up") {
-    if (index <= 0) return null;
-    const beforePrevious = orderedItems[index - 2];
-    return beforePrevious
-      ? { kind: "after", occurrenceId: beforePrevious.occurrenceId }
-      : { kind: "start" };
-  }
-  const next = orderedItems[index + 1];
-  return next ? { kind: "after", occurrenceId: next.occurrenceId } : null;
+  options.push(...model.descriptors.filter((action) => action.tone === "danger"));
+  return <ActionMenu label={`More actions for ${label}`} options={options} onOpenChange={onOpenChange} />;
 }
