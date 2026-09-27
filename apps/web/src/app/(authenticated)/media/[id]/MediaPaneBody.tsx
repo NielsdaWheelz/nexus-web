@@ -200,7 +200,7 @@ import {
   projectReaderDocumentPoint,
   buildReaderDocumentStructure,
   readerTextPointOffset,
-  readerSectionAtPosition,
+  readerStepAtPosition,
   type ReaderDocumentProjection,
   type ReaderDocumentStructure,
   type ReaderPositionedSection,
@@ -1977,15 +1977,15 @@ export default function MediaPaneBody() {
     () => currentDocumentOffsetValue === null ? absent<number>() : present(currentDocumentOffsetValue),
     [currentDocumentOffsetValue],
   );
-  const currentDocumentSection = documentStructure.kind === "Present" && currentDocumentOffsetValue !== null
-    ? readerSectionAtPosition(documentStructure.value, currentDocumentOffsetValue)
+  const currentReaderStep = documentStructure.kind === "Present" && currentDocumentOffsetValue !== null
+    ? readerStepAtPosition(documentStructure.value, currentDocumentOffsetValue)
     : absent<ReaderPositionedSection>();
-  const currentSectionIdValue = currentDocumentSection.kind === "Present"
-    ? currentDocumentSection.value.section.section_id
+  const currentStepIdValue = currentReaderStep.kind === "Present"
+    ? currentReaderStep.value.section.section_id
     : null;
-  const currentSectionId = useMemo(
-    () => currentSectionIdValue === null ? absent<string>() : present(currentSectionIdValue),
-    [currentSectionIdValue],
+  const currentStepId = useMemo(
+    () => currentStepIdValue === null ? absent<string>() : present(currentStepIdValue),
+    [currentStepIdValue],
   );
   const currentDocumentPositionValue = documentStructure.kind === "Present" && documentStructure.value.length > 0 && currentDocumentOffsetValue !== null
     ? currentDocumentOffsetValue / documentStructure.value.length
@@ -4432,17 +4432,18 @@ export default function MediaPaneBody() {
     navigateToWebSection(activeRequestedReaderLoc);
   }, [activeRequestedReaderLoc, media?.kind, navigateToWebSection]);
 
-  const activeSectionIndex = sectionNavigation && currentSectionId.kind === "Present"
-    ? sectionNavigation.findIndex((section) => section.section_id === currentSectionId.value)
+  const sectionSteps = useMemo(
+    () => documentStructure.kind === "Present" ? documentStructure.value.steps : [],
+    [documentStructure],
+  );
+  const activeSectionIndex = currentStepId.kind === "Present"
+    ? sectionSteps.findIndex((step) => step.section.section_id === currentStepId.value)
     : null;
-  const sectionDestinations = documentStructure.kind === "Present"
-    ? documentStructure.value.sections.filter((section, index, all) => index === 0 || section.start !== all[index - 1]!.start)
-    : [];
   const prevSection = currentDocumentOffset.kind === "Present"
-    ? sectionDestinations.findLast((section) => section.start < currentDocumentOffset.value)?.section ?? null
+    ? sectionSteps.findLast((section) => section.start < currentDocumentOffset.value)?.section ?? null
     : null;
   const nextSection = currentDocumentOffset.kind === "Present"
-    ? sectionDestinations.find((section) => section.start > currentDocumentOffset.value)?.section ?? null
+    ? sectionSteps.find((section) => section.start > currentDocumentOffset.value)?.section ?? null
     : null;
 
   const epubTextDocumentContentState = (() => {
@@ -5596,7 +5597,7 @@ export default function MediaPaneBody() {
         ),
       };
     }
-    if (canRead && sectionNavigation && sectionNavigation.length > 0) {
+    if (canRead && sectionNavigation && sectionSteps.length > 0) {
       return {
         label: "section navigation",
         content: (
@@ -5623,9 +5624,9 @@ export default function MediaPaneBody() {
                 {activeSectionIndex !== null && activeSectionIndex >= 0 ? (
                   <span
                     className={`${styles.mediaInstrumentStatus} ${styles.mediaInstrumentSectionStatus}`}
-                    aria-label={`Section ${activeSectionIndex + 1} of ${sectionNavigation.length}`}
+                    aria-label={`Section ${activeSectionIndex + 1} of ${sectionSteps.length}`}
                   >
-                    {activeSectionIndex + 1} / {sectionNavigation.length}
+                    {activeSectionIndex + 1} / {sectionSteps.length}
                   </span>
                 ) : null}
                 <Button
@@ -5647,7 +5648,7 @@ export default function MediaPaneBody() {
                 <Select
                   className={styles.mediaInstrumentSectionSelect}
                   size="sm"
-                  value={currentSectionId.kind === "Present" ? currentSectionId.value : ""}
+                  value={currentStepId.kind === "Present" ? currentStepId.value : ""}
                   onChange={(event) => {
                     if (event.target.value) {
                       navigateToSection(event.target.value);
@@ -5655,10 +5656,10 @@ export default function MediaPaneBody() {
                   }}
                   aria-label="Select section"
                   title={activeSectionIndex !== null && activeSectionIndex >= 0
-                    ? sectionNavigation[activeSectionIndex]?.label : undefined}
+                    ? sectionSteps[activeSectionIndex]?.section.label : undefined}
                 >
                   <option value="" disabled>between sections</option>
-                  {sectionNavigation.map((section) => (
+                  {sectionSteps.map(({ section }) => (
                     <option
                       key={section.section_id}
                       value={section.section_id}
@@ -5683,9 +5684,10 @@ export default function MediaPaneBody() {
     nextSection,
     pdfControlsState,
     prevSection,
-    currentSectionId,
+    currentStepId,
     runPdfPageTurnFromGenuineInput,
     sectionNavigation,
+    sectionSteps,
   ]);
   useEffect(() => {
     setVideoSeekTargetMs(null);
@@ -6390,10 +6392,10 @@ export default function MediaPaneBody() {
         currentOffset={currentDocumentOffset}
         visibleRange={readerDocumentVisibleRange ? present(readerDocumentVisibleRange) : absent()}
         destinations={documentMapDestinations}
-        onNavigateSection={(sectionId) => {
-          const section = readerNavigation.sections.find((entry) => entry.section_id === sectionId);
-          if (!section) return;
-          void positionFromDocumentMap(() => positionAtDocumentMapSection(section));
+        onNavigatePoint={(point) => {
+          void positionFromDocumentMap(() => isEpub
+            ? positionAtEpubDocumentMapPoint(point)
+            : navigateToWebPoint(point));
         }}
         onActivateMarker={activateDocumentMapMarker}
         onRevealCurrent={revealCurrentDocumentPosition}
@@ -6401,7 +6403,8 @@ export default function MediaPaneBody() {
       />
     </div>
   ) : null, [activateDocumentMapMarker, currentDocumentOffset, documentMapDestinations, documentStructure,
-    id, mapExcursionOrigin, positionAtDocumentMapSection, positionFromDocumentMap, readerDocumentVisibleRange,
+    id, isEpub, mapExcursionOrigin, navigateToWebPoint, positionAtEpubDocumentMapPoint,
+    positionFromDocumentMap, readerDocumentVisibleRange,
     readerNavigation, returnFromDocumentMap, revealCurrentDocumentPosition, secondaryPane?.activeSurfaceId,
     secondaryPane?.groupId, secondaryPane?.visibility]);
   useEffect(() => {

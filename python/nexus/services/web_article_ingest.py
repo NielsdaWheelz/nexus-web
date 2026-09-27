@@ -27,7 +27,7 @@ from nexus.services.document_embeds import (
     replace_document_embed_artifact,
 )
 from nexus.services.fragment_blocks import insert_fragment_blocks
-from nexus.services.html_apparatus import attach_fragment_locators
+from nexus.services.html_apparatus import attach_fragment_locators, derive_fragment_note_groups
 from nexus.services.media_author_observation_seam import attach_author_observation
 from nexus.services.node_ingest import (
     IngestError,
@@ -307,6 +307,12 @@ def _replace_projection(
             html_sanitized=prepared.html_sanitized,
         ),
         edges=source_apparatus.apparatus_edges,
+        note_groups=derive_fragment_note_groups(
+            prepared.html_sanitized,
+            prepared.canonical_text,
+            fragment.id,
+            source_html=ingest_result.content_html,
+        ),
     )
     return fragment.id
 

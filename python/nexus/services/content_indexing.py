@@ -38,6 +38,7 @@ from nexus.schemas.import_history import (
 from nexus.schemas.imports import RepairSearchOffer
 from nexus.schemas.media import SearchRepairAdmission
 from nexus.schemas.presence import absent, present
+from nexus.schemas.reader_apparatus import NoteRegion
 from nexus.services import media_intelligence_lifecycle
 from nexus.services.capabilities import (
     OperatorRecovery,
@@ -47,6 +48,7 @@ from nexus.services.capabilities import (
 )
 from nexus.services.import_history import append_processing_event
 from nexus.services.parser_temp import utf8_byte_length
+from nexus.services.reader_apparatus import read_note_regions
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_mutation_replay import (
@@ -201,6 +203,7 @@ def _fragment_blocks(
     source_kind: str,
     fragments: Sequence[Mapping[Any, Any]],
     blocks_by_fragment: dict[UUID, list[Mapping[Any, Any]]],
+    note_regions: Sequence[NoteRegion],
 ) -> list[IndexableBlock]:
     """Blocks for a fragment-backed document (web article or epub)."""
     blocks: list[IndexableBlock] = []
@@ -217,7 +220,11 @@ def _fragment_blocks(
                 # it requests an index revision.
                 raise AssertionError("web source fragment is missing Nexus heading anchors")
             for spec in build_web_article_index_blocks(
-                html_sanitized=html, canonical_text=fragment_text, fragment_idx=fragment_idx
+                html_sanitized=html,
+                canonical_text=fragment_text,
+                fragment_idx=fragment_idx,
+                fragment_id=fragment_id,
+                note_regions=note_regions,
             ):
                 locator: dict[str, object] = {
                     "type": "web_text_offsets",
@@ -454,6 +461,7 @@ def _snapshot_media_blocks(
         source_kind=source_kind,
         fragments=fragments,
         blocks_by_fragment=blocks_by_fragment,
+        note_regions=read_note_regions(db, media_id) if source_kind == "web_article" else (),
     )
 
 

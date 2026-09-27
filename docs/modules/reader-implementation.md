@@ -344,19 +344,22 @@ The document table of contents (epub + web article) is the Resource Inspector
   Media's capability default order selects it first.
 - it is available independent of highlights: it shows whenever the document
   has TOC nodes, including focus mode where highlights are hidden.
-- selecting an entry runs the existing section/anchor navigation, which
+- selecting a reachable entry runs exact-point navigation, which
   replaces the pane's active href and adds no Back/Forward entry (see pane
   history).
+- publisher and source-only note targets remain reachable in the full contents
+  without acquiring a reading-section identity. unresolved labels are inert.
 - mobile reaches Contents through the same Resource Inspector sheet.
 - it has no internal scroll container: the secondary body is the single scroll
   owner. the reader prose keeps a single scroll owner (`.documentViewport`);
   the TOC is not rendered inline.
 
 Hosted EPUB and web articles with at least one ready navigation section publish
-the same pane-bar instrument. Its native picker uses ordered section identities
-and labels; previous/next use distinct source positions. The count follows the
-semantic viewport. Before the first heading, the picker has no selection or
-count. Zero sections publish no instrument. User jumps use Document Map
+the same pane-bar instrument. One shared projection groups coincident section
+starts and selects the deepest division; its sequence drives the picker, count,
+previous and next. Active state uses the original section extents, so a gap is
+unselected. Before the first heading, the picker has no selection or count. Zero
+sections publish no instrument while reachable contents remain available. User jumps use Document Map
 positioning and its return origin without renewing reading activity; PDF page
 controls remain separate.
 
@@ -927,6 +930,9 @@ of its location-target writes uses.
   of its number of headings. the removed section-content route has no adapter.
 - publisher targets and headings reconcile by exact source identity. bounded
   numbered entries carry visible `InferredNumberedEntry` provenance.
+- exact note bodies and evidenced note groups exclude their subordinate headings
+  from routine sections. toc targets remain independently reachable. a linked
+  section must begin at the same exact point as its toc target.
 - current section is the deepest range containing the exact visible locus.
   unique source positions determine next/previous sections; source fragments
   determine resource continuation, including books without an outline.
@@ -966,7 +972,7 @@ The title is bounded presentation metadata, not authorization or package
 identity; the verified package manifest replaces it after installation.
 
 `offline_reading_packages.py` creates deterministic package-schema and
-archive1/reader2 zips. unique fragment bodies and the full hosted navigation
+archive1/reader3 zips. unique fragment bodies and the full hosted navigation
 contract are serialized once; adapters never invent source metadata. native verifies the response digest, ZIP grammar, manifest and entry
 integrity, supported versions, media/account/generation binding, and baseline
 before publishing one package row and sealed directory.

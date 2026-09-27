@@ -1,10 +1,13 @@
 """Semantic section extents over canonical text, independent of rendering units."""
 
-from collections.abc import Sequence
+from bisect import bisect_right
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from itertools import groupby
+from uuid import UUID
 
 from nexus.schemas.presence import Presence, Present, absent, present
+from nexus.schemas.reader_apparatus import NoteBodyRegion, NoteGroupRegion, NoteRegion
 
 
 @dataclass(frozen=True, order=True)
@@ -20,6 +23,53 @@ class SectionRangeInput:
     parent_section_id: Presence[str]
     container_end: Presence[DocumentPoint]
     owns_container: bool
+
+
+class NavigationNoteIndex:
+    """One publication's note ranges, indexed once for repeated candidate reads."""
+
+    def __init__(self, regions: Sequence[NoteRegion], fragment_order: Mapping[UUID, int]) -> None:
+        bodies: dict[int, list[tuple[int, int]]] = {}
+        groups: dict[int, list[tuple[int, int]]] = {}
+        headings: set[DocumentPoint] = set()
+        for region in regions:
+            start = region.range.start
+            end = region.range.end
+            idx = fragment_order[start.fragment_id]
+            if fragment_order[end.fragment_id] != idx:
+                raise ValueError("A note region must remain within one canonical fragment")
+            target = bodies if isinstance(region, NoteBodyRegion) else groups
+            target.setdefault(idx, []).append((start.offset, end.offset))
+            if isinstance(region, NoteGroupRegion) and isinstance(region.heading, Present):
+                headings.add(DocumentPoint(idx, region.heading.value.offset))
+        self._bodies = {idx: self._merge(ranges) for idx, ranges in bodies.items()}
+        self._groups = {idx: self._merge(ranges) for idx, ranges in groups.items()}
+        self._headings = headings
+
+    @staticmethod
+    def _merge(ranges: list[tuple[int, int]]) -> tuple[tuple[int, ...], tuple[int, ...]]:
+        merged: list[tuple[int, int]] = []
+        for start, end in sorted(ranges):
+            if merged and start <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(end, merged[-1][1]))
+            else:
+                merged.append((start, end))
+        return tuple(start for start, _ in merged), tuple(end for _, end in merged)
+
+    @staticmethod
+    def _contains(index: tuple[tuple[int, ...], tuple[int, ...]] | None, offset: int) -> bool:
+        if index is None:
+            return False
+        starts, ends = index
+        candidate = bisect_right(starts, offset) - 1
+        return candidate >= 0 and offset < ends[candidate]
+
+    def is_routine(self, point: DocumentPoint) -> bool:
+        if self._contains(self._bodies.get(point.fragment_idx), point.offset):
+            return False
+        return not self._contains(self._groups.get(point.fragment_idx), point.offset) or (
+            point in self._headings
+        )
 
 
 def resolve_section_ends(

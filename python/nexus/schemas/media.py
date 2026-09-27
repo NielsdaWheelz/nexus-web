@@ -4,14 +4,14 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, FiniteFloat
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, FiniteFloat, model_validator
 from pydantic.alias_generators import to_camel
 
 from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.media_summary import MediaDurationOut, MediaProcessingStatus
-from nexus.schemas.presence import Presence
+from nexus.schemas.presence import Presence, Present
 from nexus.schemas.publication_dates import PublicationDate
 from nexus.schemas.source_issues import SourceIssue
 from nexus.schemas.upload_failures import UploadTransportFailure, UploadVerificationFailureCode
@@ -678,10 +678,11 @@ class ReaderNavigationSectionOut(_Strict):
 
 
 class ReaderNavigationTocNodeOut(_Strict):
-    """A TOC node extended with its canonical section target linkage."""
+    """A published destination, independently linked to a reading section."""
 
     id: str
     label: str
+    target: Presence[NavigationTextPointOut]
     section_id: Presence[str]
     children: list["ReaderNavigationTocNodeOut"]
 
@@ -704,6 +705,39 @@ class MediaNavigationOut(_Strict):
     toc_nodes: list[ReaderNavigationTocNodeOut]
     landmarks: list[ReaderNavigationLocationOut]
     page_list: list[ReaderNavigationLocationOut]
+
+    @model_validator(mode="after")
+    def validate_destinations(self) -> "MediaNavigationOut":
+        fragments = {fragment.fragment_id: fragment.char_count for fragment in self.fragments}
+        if len(fragments) != len(self.fragments):
+            raise ValueError("Reader navigation fragment identities are duplicated")
+        if [fragment.fragment_idx for fragment in self.fragments] != list(
+            range(len(self.fragments))
+        ):
+            raise ValueError("Reader navigation fragments are not in canonical order")
+        sections = {section.section_id: section.target for section in self.sections}
+        if len(sections) != len(self.sections):
+            raise ValueError("Reader navigation section identities are duplicated")
+
+        def valid_point(point: NavigationTextPointOut) -> bool:
+            count = fragments.get(point.fragment_id)
+            return count is not None and point.offset <= count
+
+        for section in self.sections:
+            if not valid_point(section.target):
+                raise ValueError("Reader section target is outside published fragments")
+        pending = list(self.toc_nodes)
+        while pending:
+            node = pending.pop()
+            pending.extend(node.children)
+            if isinstance(node.target, Present) and not valid_point(node.target.value):
+                raise ValueError("Reader contents target is outside published fragments")
+            if isinstance(node.section_id, Present) and (
+                not isinstance(node.target, Present)
+                or sections.get(node.section_id.value) != node.target.value
+            ):
+                raise ValueError("Reader contents section linkage disagrees with its target")
+        return self
 
 
 class EpubFragmentOut(_Strict):

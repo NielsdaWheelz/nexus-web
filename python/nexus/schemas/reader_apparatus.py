@@ -1,11 +1,13 @@
 """Reader apparatus item, edge and read-model shapes."""
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, JsonValue, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
+from nexus.schemas.media import NavigationTextPointOut, NavigationTextRangeOut
+from nexus.schemas.presence import Presence, Present
 from nexus.schemas.retrieval import RetrievalLocator
 
 ReaderApparatusStatus = Literal["ready", "empty", "partial", "unsupported", "failed"]
@@ -33,6 +35,65 @@ ReaderApparatusRelation = Literal[
 ]
 ReaderApparatusConfidence = Literal["exact", "strong", "probable"]
 ReaderApparatusLocatorStatus = Literal["exact", "container", "missing"]
+
+
+class NotesGroup(BaseModel):
+    range: NavigationTextRangeOut
+    heading: Presence[NavigationTextPointOut]
+    provenance: Literal["Declared", "Inferred"]
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "NotesGroup":
+        start, end = self.range.start, self.range.end
+        if start.fragment_id == end.fragment_id and start.offset >= end.offset:
+            raise ValueError("note group requires a nonempty range")
+        if isinstance(self.heading, Present) and (
+            (
+                self.heading.value.fragment_id == start.fragment_id
+                and self.heading.value.offset < start.offset
+            )
+            or (
+                self.heading.value.fragment_id == end.fragment_id
+                and self.heading.value.offset >= end.offset
+            )
+        ):
+            raise ValueError("note group heading must lie within its range")
+        return self
+
+
+class NoteBodyRegion(BaseModel):
+    kind: Literal["Body"] = "Body"
+    range: NavigationTextRangeOut
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "NoteBodyRegion":
+        if (
+            self.range.start.fragment_id != self.range.end.fragment_id
+            or self.range.start.offset >= self.range.end.offset
+        ):
+            raise ValueError("note body requires a nonempty range within one fragment")
+        return self
+
+
+class NoteGroupRegion(BaseModel):
+    kind: Literal["Group"] = "Group"
+    range: NavigationTextRangeOut
+    heading: Presence[NavigationTextPointOut]
+    provenance: Literal["Declared", "Inferred"]
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "NoteGroupRegion":
+        NotesGroup(range=self.range, heading=self.heading, provenance=self.provenance)
+        return self
+
+
+type NoteRegion = Annotated[NoteBodyRegion | NoteGroupRegion, Field(discriminator="kind")]
 
 
 class ReaderApparatusItemOut(BaseModel):

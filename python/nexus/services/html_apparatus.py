@@ -20,7 +20,15 @@ from lxml.etree import ParserError
 from lxml.html import HtmlElement
 
 from nexus.errors import ResourceFailureDimension
-from nexus.services.canonicalize import generate_canonical_text
+from nexus.schemas.media import NavigationTextPointOut, NavigationTextRangeOut
+from nexus.schemas.presence import Present, absent, present
+from nexus.schemas.reader_apparatus import NotesGroup
+from nexus.services.canonicalize import (
+    HEADING_TAGS,
+    STRUCTURAL_TAGS,
+    canonicalize_structure,
+    generate_canonical_text,
+)
 from nexus.services.html_tree import inner_html, parse_html_document, serialize_html
 from nexus.services.parser_temp import nested_utf8_byte_length
 from nexus.services.reader_apparatus import stable_token
@@ -89,6 +97,7 @@ def extract_html_apparatus(
     source_ref: dict[str, object],
     document_href: str | None = None,
     external_targets: Mapping[str, Mapping[str, object]] | None = None,
+    confirmed_target_refs: set[str] | None = None,
 ) -> tuple[str, list[dict[str, object]], list[dict[str, object]]]:
     """Stamp the apparatus this document carries and return it as items and edges."""
     if not html.strip():
@@ -119,9 +128,14 @@ def extract_html_apparatus(
 
     items: list[dict[str, object]] = []
     edges: list[dict[str, object]] = []
-    target_item_key_by_id: dict[str, str] = {}
     ancestor_prefixes: dict[HtmlElement, str] = {}
+    note_containers = _nested_declared_note_containers(root, ancestor_prefixes)
+    target_item_key_by_id: dict[str, str] = {}
     external_targets = external_targets or {}
+    if confirmed_target_refs is None and document_href:
+        confirmed_target_refs = confirm_html_apparatus_target_refs(
+            html, document_href=document_href, external_targets=external_targets
+        )
 
     _extract_standalone_margin_notes(
         root, source_kind=source_kind, source_ref=source_ref, items=items
@@ -129,9 +143,19 @@ def extract_html_apparatus(
     _materialize_external_targets_in_document(
         targets=targets,
         external_targets=external_targets,
+        confirmed_target_refs=confirmed_target_refs or set(),
         document_href=document_href,
         target_item_key_by_id=target_item_key_by_id,
         items=items,
+    )
+    _extract_unlinked_declared_notes(
+        root,
+        note_containers=note_containers,
+        source_kind=source_kind,
+        source_ref=source_ref,
+        target_item_key_by_id=target_item_key_by_id,
+        items=items,
+        ancestor_prefixes=ancestor_prefixes,
     )
 
     ordinal = 0
@@ -142,6 +166,8 @@ def extract_html_apparatus(
             continue
         target_id = _local_target_id(element)
         target = targets.get(target_id) if target_id else None
+        if target in note_containers:
+            continue
         external_target = external_targets.get(_target_ref(element) or "")
         if target is None and external_target is None:
             continue
@@ -153,8 +179,9 @@ def extract_html_apparatus(
             continue
 
         marker_text = _element_text(element)
+        target_body = _note_body_element(target) if target is not None else None
         target_text = (
-            _element_text(target)
+            _element_text(target_body if target_body is not None else target)
             if target is not None
             else str((external_target or {}).get("body_text") or "")
         )
@@ -200,7 +227,12 @@ def extract_html_apparatus(
             if target_id:
                 target_item_key_by_id[target_id] = target_key
             if target is not None:
-                _stamp(target, target_key, classified.target_kind, classified.confidence)
+                _stamp(
+                    target_body if target_body is not None else target,
+                    target_key,
+                    classified.target_kind,
+                    classified.confidence,
+                )
 
         _stamp(element, marker_key, classified.marker_kind, classified.confidence)
         items.append(
@@ -256,18 +288,23 @@ def collect_html_apparatus_targets(
     body = doc.body
     root = body if body is not None else doc
     targets: dict[str, dict[str, object]] = {}
+    ancestor_prefixes: dict[HtmlElement, str] = {}
+    note_containers = _nested_declared_note_containers(root, ancestor_prefixes)
     ordinal = 0
     retained_utf8_bytes = 0
     backlink_count = 0
-    ancestor_prefixes: dict[HtmlElement, str] = {}
     for element in root.iter():
         if not isinstance(element, HtmlElement):
             continue
         target_id = (element.get("id") or element.get("name") or "").strip()
         if not target_id:
             continue
+        if element in note_containers:
+            continue
         context = _target_context(element, ancestor_prefixes).semantic
-        if context not in {"note", "endnote", "bibliography"}:
+        body = _note_body_element(element)
+        inferred_note = context is None and _looks_like_note_body(body)
+        if context not in {"note", "endnote", "bibliography"} and not inferred_note:
             continue
         if context in {"note", "endnote"} and not _is_note_body_target(element):
             continue
@@ -275,7 +312,7 @@ def collect_html_apparatus_targets(
             element, ancestor_prefixes
         ):
             continue
-        body_text = _element_text(element)
+        body_text = _element_text(body if inferred_note else element)
         if not body_text:
             continue
         if ordinal >= max_targets:
@@ -283,18 +320,20 @@ def collect_html_apparatus_targets(
                 "HTML apparatus target count exceeded", dimension="Output"
             )
         target_ref = f"{document_href}#{target_id}"
-        backlinks = _link_hrefs(element, max_count=max_backlinks - backlink_count)
+        backlinks = _link_hrefs(
+            body if inferred_note else element, max_count=max_backlinks - backlink_count
+        )
         backlink_count += len(backlinks)
         target = {
             "target_ref": target_ref,
             "target_href": document_href,
             "target_id": target_id,
-            "context": context,
-            "kind": _target_kind_for_context(context),
+            "context": context or "note",
+            "kind": _target_kind_for_context(context or "note"),
             "label": _target_label(body_text),
             "body_text": body_text,
-            "confidence": "exact",
-            "extraction_method": extraction_method,
+            "confidence": "strong" if inferred_note else "exact",
+            "extraction_method": "html_link_graph" if inferred_note else extraction_method,
             "source_ref": {**source_ref, "target_href": document_href, "target_id": target_id},
             "sort_key": f"{_source_order_key(element, ordinal)}.target",
             "stable_key": f"{source_kind}:target:{stable_token(target_ref)}",
@@ -308,6 +347,37 @@ def collect_html_apparatus_targets(
         targets[target_ref] = target
         ordinal += 1
     return targets, ordinal, retained_utf8_bytes, backlink_count
+
+
+def confirm_html_apparatus_target_refs(
+    html: str | bytes,
+    *,
+    document_href: str,
+    external_targets: Mapping[str, Mapping[str, object]],
+) -> set[str]:
+    """Confirm inferred targets from actual reciprocal source markers."""
+    if not html.strip():
+        return set()
+    try:
+        doc = parse_html_document(html)
+    except ParserError:
+        return set()
+    confirmed: set[str] = set()
+    ancestor_prefixes: dict[HtmlElement, str] = {}
+    for marker in doc.iter():
+        if not isinstance(marker, HtmlElement):
+            continue
+        ref = _target_ref(marker)
+        if not ref:
+            continue
+        target_ref = f"{document_href}{ref}" if ref.startswith("#") else ref
+        target = external_targets.get(target_ref)
+        if target is None or str(target.get("confidence")) != "strong":
+            continue
+        facts = _target_facts(marker, None, target, document_href, ancestor_prefixes)
+        if facts.has_backlink and _classify(marker, facts) is not None:
+            confirmed.add(target_ref)
+    return confirmed
 
 
 def attach_fragment_locators(
@@ -359,6 +429,170 @@ def attach_fragment_locators(
     return result
 
 
+def derive_fragment_note_groups(
+    html_sanitized: str,
+    canonical_text: str,
+    fragment_id: UUID,
+    *,
+    source_html: str | None = None,
+) -> list[NotesGroup]:
+    """Bound a governed collection only when repeated note bodies corroborate it."""
+    structure = canonicalize_structure(html_sanitized)
+    if structure.text != canonical_text:
+        raise ValueError("note group source must equal stored canonical text")
+    headings = [element for element in structure.elements if element.tag in HEADING_TAGS]
+    declared: list[NotesGroup] = []
+    if source_html:
+        source = parse_html_document(source_html)
+        aside_structure = None
+        for wrapper in source.iter():
+            if not isinstance(wrapper, HtmlElement):
+                continue
+            if not _semantic_tokens(wrapper) & {
+                "endnotes",
+                "doc-endnotes",
+                "footnotes",
+                "doc-footnotes",
+            }:
+                continue
+            wrapper_tag = str(wrapper.tag).lower()
+            mapped = structure
+            if wrapper_tag == "aside":
+                if aside_structure is None:
+                    sanitized = parse_html_document(html_sanitized)
+                    sanitized_root = sanitized.body if sanitized.body is not None else sanitized
+                    for node in sanitized_root.iter():
+                        if isinstance(node, HtmlElement) and str(node.tag).lower() == "aside":
+                            node.tag = "section"
+                    aside_structure = canonicalize_structure(inner_html(sanitized_root))
+                if aside_structure.text != canonical_text:
+                    continue
+                mapped = aside_structure
+            mapped_headings = [
+                element for element in mapped.elements if element.tag in HEADING_TAGS
+            ]
+            wrapper_id = (wrapper.get("id") or "").strip()
+            index = mapped.anchors.get(wrapper_id) if wrapper_id else None
+            if index is None:
+                if wrapper_tag not in STRUCTURAL_TAGS | {"aside"}:
+                    continue
+                source_heading = next(
+                    (node for node in wrapper.iter() if str(node.tag).lower() in HEADING_TAGS),
+                    None,
+                )
+                if source_heading is None:
+                    continue
+                label = normalize_whitespace(_element_text(source_heading)).casefold()
+                matches = [
+                    heading
+                    for heading in mapped_headings
+                    if normalize_whitespace(
+                        canonical_text[heading.start_offset : heading.end_offset]
+                    ).casefold()
+                    == label
+                ]
+                if len(matches) != 1 or not isinstance(matches[0].parent_container, Present):
+                    continue
+                index = matches[0].parent_container.value
+            element = mapped.elements[index]
+            if element.tag != ("section" if wrapper_tag == "aside" else wrapper_tag):
+                continue
+            if element.start_offset >= element.end_offset:
+                continue
+            heading = next(
+                (
+                    item
+                    for item in mapped_headings
+                    if element.start_offset <= item.start_offset < element.end_offset
+                ),
+                None,
+            )
+            start = NavigationTextPointOut(fragment_id=fragment_id, offset=element.start_offset)
+            declared.append(
+                NotesGroup(
+                    range=NavigationTextRangeOut(
+                        start=start,
+                        end=NavigationTextPointOut(
+                            fragment_id=fragment_id, offset=element.end_offset
+                        ),
+                    ),
+                    heading=(
+                        present(
+                            NavigationTextPointOut(
+                                fragment_id=fragment_id, offset=heading.start_offset
+                            )
+                        )
+                        if heading is not None
+                        else absent()
+                    ),
+                    provenance="Declared",
+                )
+            )
+    candidate_headings = [
+        heading
+        for heading in headings
+        if normalize_whitespace(
+            canonical_text[heading.start_offset : heading.end_offset]
+        ).casefold()
+        in {"notes", "endnotes", "footnotes"}
+    ]
+    if not candidate_headings:
+        return declared
+    note_spans = [
+        (start, end)
+        for key, (start, end, _text) in _apparatus_locator_spans(
+            html_sanitized, canonical_text
+        ).items()
+        if ":target:" in key or ":html-margin-note:" in key
+    ]
+    groups: list[NotesGroup] = list(declared)
+    for heading in candidate_headings:
+        index = headings.index(heading)
+        rank = int(heading.tag[1])
+        end = next(
+            (later.start_offset for later in headings[index + 1 :] if int(later.tag[1]) <= rank),
+            len(canonical_text),
+        )
+        if end <= heading.start_offset or any(
+            group.range.start.offset <= heading.start_offset < group.range.end.offset
+            for group in declared
+        ):
+            continue
+        spans = sorted(
+            (start, stop) for start, stop in note_spans if heading.end_offset <= start < stop <= end
+        )
+        if len(spans) < 2:
+            continue
+        paragraphs = [
+            paragraph
+            for paragraph in structure.elements
+            if paragraph.tag == "p"
+            and heading.end_offset <= paragraph.start_offset < end
+            and paragraph.start_offset < paragraph.end_offset
+        ]
+        marked = [
+            any(
+                start <= paragraph.start_offset and paragraph.end_offset <= stop
+                for start, stop in spans
+            )
+            for paragraph in paragraphs
+        ]
+        if not marked or sum(marked) <= len(marked) - sum(marked):
+            continue
+        start_point = NavigationTextPointOut(fragment_id=fragment_id, offset=heading.start_offset)
+        groups.append(
+            NotesGroup(
+                range=NavigationTextRangeOut(
+                    start=start_point,
+                    end=NavigationTextPointOut(fragment_id=fragment_id, offset=end),
+                ),
+                heading=present(start_point),
+                provenance="Inferred",
+            )
+        )
+    return groups
+
+
 def _extract_standalone_margin_notes(
     root: HtmlElement,
     *,
@@ -396,6 +630,80 @@ def _extract_standalone_margin_notes(
         ordinal += 1
 
 
+def _extract_unlinked_declared_notes(
+    root: HtmlElement,
+    *,
+    note_containers: set[HtmlElement],
+    source_kind: str,
+    source_ref: dict[str, object],
+    target_item_key_by_id: dict[str, str],
+    items: list[dict[str, object]],
+    ancestor_prefixes: dict[HtmlElement, str],
+) -> None:
+    candidates = [
+        element
+        for element in root.iter()
+        if isinstance(element, HtmlElement)
+        and _is_note_body_target(element)
+        and _target_context(element, ancestor_prefixes).semantic in {"note", "endnote"}
+    ]
+    for ordinal, element in enumerate(candidates):
+        if element in note_containers:
+            continue
+        context = _target_context(element, ancestor_prefixes).semantic
+        if context is None:
+            continue
+        if (element.get("data-reader-apparatus-item-id") or "").strip():
+            continue
+        target_id = (element.get("id") or element.get("name") or "").strip()
+        if target_id and target_id in target_item_key_by_id:
+            continue
+        body_text = _element_text(element)
+        if not body_text:
+            continue
+        key = (
+            f"{source_kind}:target:{target_id}"
+            if target_id
+            else f"{source_kind}:declared-note:{ordinal:06d}"
+        )
+
+        _stamp(element, key, _target_kind_for_context(context), "exact")
+        if target_id:
+            target_item_key_by_id[target_id] = key
+        items.append(
+            {
+                "stable_key": key,
+                "kind": _target_kind_for_context(context),
+                "label": _target_label(body_text),
+                "body_text": body_text,
+                "confidence": "exact",
+                "extraction_method": "html_semantic",
+                "source_ref": {**source_ref, "target_id": target_id or None},
+                "sort_key": f"{_source_order_key(element, ordinal)}.target",
+                "_locator_text": body_text,
+            }
+        )
+
+
+def _nested_declared_note_containers(
+    root: HtmlElement, ancestor_prefixes: dict[HtmlElement, str]
+) -> set[HtmlElement]:
+    bodies = [
+        element
+        for element in root.iter()
+        if isinstance(element, HtmlElement)
+        and _is_note_body_target(element)
+        and _target_context(element, ancestor_prefixes).semantic in {"note", "endnote"}
+    ]
+    body_set = set(bodies)
+    return {
+        ancestor
+        for body in bodies
+        for ancestor in body.iterancestors()
+        if isinstance(ancestor, HtmlElement) and ancestor in body_set
+    }
+
+
 def _is_ignored_margin_note_context(element: HtmlElement) -> bool:
     for node in [element, *element.iterancestors()]:
         if not isinstance(node, HtmlElement):
@@ -417,6 +725,7 @@ def _materialize_external_targets_in_document(
     *,
     targets: dict[str, HtmlElement],
     external_targets: Mapping[str, Mapping[str, object]],
+    confirmed_target_refs: set[str],
     document_href: str | None,
     target_item_key_by_id: dict[str, str],
     items: list[dict[str, object]],
@@ -428,6 +737,11 @@ def _materialize_external_targets_in_document(
     for target_ref, external_target in external_targets.items():
         if not target_ref.startswith(prefix):
             continue
+        if (
+            str(external_target.get("confidence")) == "strong"
+            and target_ref not in confirmed_target_refs
+        ):
+            continue
         target_id = target_ref[len(prefix) :]
         target = targets.get(target_id)
         body_text = str(external_target.get("body_text") or "")
@@ -436,7 +750,7 @@ def _materialize_external_targets_in_document(
         target_key = str(external_target["stable_key"])
         kind = str(external_target["kind"])
         confidence = str(external_target["confidence"])
-        _stamp(target, target_key, kind, confidence)
+        _stamp(_note_body_element(target), target_key, kind, confidence)
         target_item_key_by_id[target_id] = target_key
         items.append(
             {
@@ -461,10 +775,14 @@ def _target_facts(
     ancestor_prefixes: dict[HtmlElement, str],
 ) -> _TargetFacts:
     if target is not None:
+        body = _note_body_element(target)
+        context = _target_context(target, ancestor_prefixes)
+        if context.loose is None and _looks_like_note_body(body):
+            context = _TargetContext(semantic=None, loose="note")
         return _TargetFacts(
-            context=_target_context(target, ancestor_prefixes),
+            context=context,
             is_bibliography_entry=_is_bibliography_entry_target(target, ancestor_prefixes),
-            has_backlink=_has_backlink(marker, target),
+            has_backlink=_has_backlink(marker, body),
             method="html_semantic",
             confidence="exact",
             loose_method="html_link_graph",
@@ -495,18 +813,29 @@ def _classify(marker: HtmlElement, facts: _TargetFacts) -> _Classified | None:
     ref_type = (marker.get("ref-type") or "").strip().lower()
     semantic = facts.context.semantic
     loose = facts.context.loose
+    inferred_marker = not _is_ignored_margin_note_context(marker) and not any(
+        isinstance(ancestor, HtmlElement) and str(ancestor.tag).lower() in HEADING_TAGS
+        for ancestor in marker.iterancestors()
+    )
 
     if "noteref" in tokens or "doc-noteref" in tokens or ref_type == "fn":
         if semantic in ("note", "endnote"):
             return declared(semantic)
-        return inferred("note") if loose == "note" and facts.has_backlink else None
+        return (
+            inferred("note") if inferred_marker and loose == "note" and facts.has_backlink else None
+        )
     if "biblioref" in tokens or "doc-biblioref" in tokens or ref_type == "bibr":
         if not facts.is_bibliography_entry:
             return None
         if semantic == "bibliography":
             return declared("bibliography")
         return inferred("bibliography") if loose == "bibliography" else None
-    if str(marker.tag).lower() == "a" and _parent_tag(marker) == "sup":
+    if (
+        inferred_marker
+        and str(marker.tag).lower() == "a"
+        and _numeric_marker(marker)
+        and _is_sup_marker(marker)
+    ):
         if loose in ("note", "endnote") and facts.has_backlink:
             return inferred(loose)
         if loose == "bibliography" and facts.is_bibliography_entry:
@@ -585,7 +914,10 @@ def _external_target_has_backlink(
     backlinks = target.get("backlinks")
     if not marker_id or not document_href or not isinstance(backlinks, list):
         return False
-    return f"{document_href}#{marker_id}" in {str(href) for href in backlinks}
+    return bool(
+        {f"{document_href}#{marker_id}", f"#{marker_id}"}
+        & {unquote(str(href)) for href in backlinks}
+    )
 
 
 def _is_bibliography_entry_target(
@@ -606,6 +938,59 @@ def _is_note_body_target(target: HtmlElement) -> bool:
     if str(target.tag).lower() in {"li", "aside", "fn", "footnote"}:
         return True
     return bool(tokens & {"footnote", "doc-footnote", "endnote", "doc-endnote"})
+
+
+def _note_body_element(target: HtmlElement) -> HtmlElement:
+    """Use the smallest prose container for an anchor that only names a note."""
+    if str(target.tag).lower() in {"li", "aside", "fn", "footnote"}:
+        return target
+    if _semantic_tokens(target) & (_FOOTNOTE_TOKENS | _ENDNOTE_TOKENS):
+        return target
+    parent = target.getparent()
+    if not isinstance(parent, HtmlElement):
+        return target
+    if str(target.tag).lower() == "sup" and str(parent.tag).lower() == "a":
+        parent = parent.getparent()
+        if not isinstance(parent, HtmlElement):
+            return target
+    if str(parent.tag).lower() == "span":
+        return parent
+    if str(parent.tag).lower() in {"p", "li"}:
+        return parent
+    grandparent = parent.getparent()
+    if isinstance(grandparent, HtmlElement) and str(grandparent.tag).lower() in {"p", "li"}:
+        return grandparent
+    return target
+
+
+def _numeric_marker(element: HtmlElement) -> bool:
+    return bool(re.fullmatch(r"\[?\d+\]?", _element_text(element)))
+
+
+def _is_sup_marker(element: HtmlElement) -> bool:
+    return _parent_tag(element) == "sup" or any(
+        isinstance(child, HtmlElement) and str(child.tag).lower() == "sup"
+        for child in element.iterdescendants()
+    )
+
+
+def _looks_like_note_body(body: HtmlElement) -> bool:
+    """A numbered return link followed by prose, not just a reciprocal link."""
+    if any(
+        isinstance(element, HtmlElement) and str(element.tag).lower() in HEADING_TAGS
+        for element in body.iterdescendants()
+    ):
+        return False
+    text_value = _element_text(body)
+    for link in body.iter("a"):
+        if not isinstance(link, HtmlElement):
+            continue
+        if not (link.get("href") or "").strip() or not _numeric_marker(link):
+            continue
+        marker = _element_text(link)
+        if text_value.startswith(marker) and re.search(r"\w", text_value[len(marker) :]):
+            return True
+    return False
 
 
 def _target_kind_for_context(context: str) -> str:
@@ -783,9 +1168,32 @@ def _source_element_id(element: HtmlElement) -> str | None:
     value = (element.get("id") or element.get("name") or "").strip()
     if value:
         return value
+    if str(element.tag).lower() == "a":
+        child_ids = [
+            (child.get("id") or "").strip()
+            for child in element
+            if isinstance(child, HtmlElement) and str(child.tag).lower() == "sup"
+        ]
+        if len(child_ids) == 1 and child_ids[0]:
+            return child_ids[0]
     parent = element.getparent()
     if isinstance(parent, HtmlElement) and str(parent.tag).lower() == "sup":
-        return (parent.get("id") or parent.get("name") or "").strip() or None
+        parent_id = (parent.get("id") or parent.get("name") or "").strip()
+        if parent_id:
+            return parent_id
+        sibling = element.getprevious()
+        if (
+            isinstance(sibling, HtmlElement)
+            and str(sibling.tag).lower() == "a"
+            and not (sibling.get("href") or "").strip()
+            and not _element_text(sibling)
+        ):
+            sibling_id = (sibling.get("id") or sibling.get("name") or "").strip()
+            if sibling_id:
+                return sibling_id
+        previous = parent.getprevious()
+        if isinstance(previous, HtmlElement) and str(previous.tag).lower() == "a":
+            return (previous.get("id") or previous.get("name") or "").strip() or None
     return None
 
 

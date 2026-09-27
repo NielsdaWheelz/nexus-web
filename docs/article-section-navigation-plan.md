@@ -143,8 +143,8 @@ no new compact control. these are accepted scope choices; the sidebar continues
 to supply full structure. rollback is the previous frontend build, with no data
 migration or stored-source change.
 
-separate work remains ticketed: [multiline labels](tickets/web-article-contents-truncates-multiline-headings.md),
-[authored anchors](tickets/web-ingest-replaces-authored-heading-anchors.md),
+multiline labels were resolved in the reader chapter implementation. separate
+work remains ticketed: [authored anchors](tickets/web-ingest-replaces-authored-heading-anchors.md),
 [empty inspector contract](tickets/reader-empty-contents-availability-contract.md),
 [saved cursors](tickets/web-publication-invalidates-saved-reader-cursors.md),
 [contents flash](tickets/reader-contents-publishes-after-navigation.md),

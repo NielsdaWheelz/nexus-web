@@ -2853,6 +2853,8 @@ class EpubTocNode(Base):
     href: Mapped[str | None] = mapped_column(Text, nullable=True)
     fragment_idx: Mapped[int | None] = mapped_column(Integer, nullable=True)
     target_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    section_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolution: Mapped[str] = mapped_column(Text, nullable=False)
     depth: Mapped[int] = mapped_column(Integer, nullable=False)
     order_key: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -2881,7 +2883,6 @@ class EpubNavLocation(Base):
     )
     location_id: Mapped[str] = mapped_column(Text, nullable=False, primary_key=True)
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
-    source_node_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     parent_section_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     label: Mapped[str] = mapped_column(Text, nullable=False)
     fragment_idx: Mapped[int] = mapped_column(Integer, nullable=False)
