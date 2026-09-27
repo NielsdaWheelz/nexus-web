@@ -744,7 +744,7 @@ def _materialize_external_targets_in_document(
             continue
         target_id = target_ref[len(prefix) :]
         target = targets.get(target_id)
-        body_text = str(external_target.get("body_text") or "")
+        body_text = _element_text(_note_body_element(target)) if target is not None else ""
         if target is None or target_id in target_item_key_by_id or not body_text:
             continue
         target_key = str(external_target["stable_key"])
@@ -756,7 +756,7 @@ def _materialize_external_targets_in_document(
             {
                 "stable_key": target_key,
                 "kind": kind,
-                "label": external_target.get("label"),
+                "label": _target_label(body_text),
                 "body_text": body_text,
                 "confidence": confidence,
                 "extraction_method": str(external_target["extraction_method"]),

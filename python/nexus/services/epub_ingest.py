@@ -382,7 +382,7 @@ def prepare_epub_navigation_repair(
     storage_path: str,
     retained_fragments: tuple[RetainedEpubFragment, ...],
 ) -> EpubNavigationRepairPlan:
-    """Reparse retained source through import's parser without replacing content or assets."""
+    """Use retained publication coordinates with verified source semantics."""
     if tuple(fragment.idx for fragment in retained_fragments) != tuple(
         range(len(retained_fragments))
     ):
@@ -396,30 +396,11 @@ def prepare_epub_navigation_repair(
                 record_progress=lambda _done, _total, _unit: None,
                 attempt_directory=attempt_directory,
                 now=datetime.now(UTC),
-                retained_fragment_ids=tuple(fragment.id for fragment in retained_fragments),
+                retained_fragments=retained_fragments,
             )
         if isinstance(parsed, EpubExtractionError):
             raise ValueError(parsed.error_message)
         content, _package = parsed
-        if len(content.fragment_specs) != len(retained_fragments):
-            raise ValueError("Retained EPUB fragment count disagrees with its source")
-        for spec, retained in zip(content.fragment_specs, retained_fragments, strict=True):
-            if (
-                spec.chapter.href != retained.package_href
-                or spec.fragment.canonical_text != retained.canonical_text
-            ):
-                raise ValueError("Retained EPUB content or package href disagrees with its source")
-            source = canonicalize_structure(spec.fragment.html_sanitized)
-            published = canonicalize_structure(retained.html_sanitized)
-            source_anchors = {
-                name: source.elements[index].start_offset for name, index in source.anchors.items()
-            }
-            published_anchors = {
-                name: published.elements[index].start_offset
-                for name, index in published.anchors.items()
-            }
-            if source_anchors != published_anchors:
-                raise ValueError("Retained EPUB anchors disagree with its source")
         return EpubNavigationRepairPlan(
             toc_nodes=content.toc_nodes,
             nav_locations=content.nav_locations,
@@ -470,7 +451,7 @@ def _build_plan(
     record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
     attempt_directory: Path,
     now: datetime,
-    retained_fragment_ids: tuple[UUID, ...] | None = None,
+    retained_fragments: tuple[RetainedEpubFragment, ...] | None = None,
 ) -> tuple[_ParsedEpub, _Package] | EpubExtractionError:
     """Parse one opened archive and stage its attempt-owned assets."""
     settings = get_settings()
@@ -563,8 +544,6 @@ def _build_plan(
         return _error(
             ApiErrorCode.E_SOURCE_NOT_READABLE, "Zero renderable chapters after sanitization"
         )
-    del external_targets
-
     # Keep the first mapping if a malformed book repeats an href.
     href_to_frag_idx: dict[str, int] = {}
     for fragment_idx, (chapter, _html, _items, _edges, _missing) in enumerate(sanitized):
@@ -590,17 +569,39 @@ def _build_plan(
                 ApiErrorCode.E_SANITIZATION_FAILED,
                 f"Canonicalization failed for spine item {chapter.spine_idx}: {exc}",
             )
+        retained = None
+        if retained_fragments is not None:
+            if fragment_idx >= len(retained_fragments):
+                raise ValueError("Retained EPUB has fewer fragments than its source")
+            retained = retained_fragments[fragment_idx]
+            if chapter.href != retained.package_href:
+                raise ValueError("Retained EPUB package href disagrees with its source")
+            published = canonicalize_structure(retained.html_sanitized)
+            if published.text != retained.canonical_text:
+                raise ValueError("Retained EPUB HTML disagrees with canonical text")
+            if canonical.anchors.keys() != published.anchors.keys():
+                raise ValueError("Retained EPUB anchors disagree with its source")
+            html_sanitized, apparatus_items, apparatus_edges = extract_html_apparatus(
+                retained.html_sanitized,
+                source_kind=f"epub:{chapter.spine_idx}",
+                document_href=chapter.href,
+                external_targets=external_targets,
+                confirmed_target_refs=confirmed_target_refs,
+                source_ref=_chapter_source_ref(chapter),
+            )
+            canonical = canonicalize_structure(html_sanitized)
+            if (
+                canonical.text != retained.canonical_text
+                or canonical.anchors.keys() != published.anchors.keys()
+            ):
+                raise ValueError("Retained EPUB apparatus marking changes published structure")
         rendered_text_bytes += utf8_byte_length(canonical.text)
         if rendered_text_bytes > EPUB_RENDERED_TEXT_MAX_BYTES:
             return _resource_limit(
                 "EPUB rendered text exceeds the 64 MiB limit", dimension="Output"
             )
-        if retained_fragment_ids is not None and fragment_idx >= len(retained_fragment_ids):
-            raise ValueError("Retained EPUB has fewer fragments than its source")
         fragment = Fragment(
-            id=retained_fragment_ids[fragment_idx]
-            if retained_fragment_ids is not None
-            else new_uuid7(),
+            id=retained.id if retained is not None else new_uuid7(),
             media_id=media_id,
             idx=fragment_idx,
             html_sanitized=html_sanitized,
@@ -626,6 +627,7 @@ def _build_plan(
 
     if not readable_source:
         return _error(ApiErrorCode.E_SOURCE_NOT_READABLE, "No surviving source text or image")
+    del external_targets
 
     apparatus_items: list[dict[str, object]] = []
     note_groups: list[NotesGroup] = []
@@ -682,7 +684,7 @@ def _build_plan(
             dimension="Time",
         )
 
-    if retained_fragment_ids is not None and len(retained_fragment_ids) != len(fragment_specs):
+    if retained_fragments is not None and len(retained_fragments) != len(fragment_specs):
         raise ValueError("Retained EPUB fragment count disagrees with the source")
     return _ParsedEpub(
         result=EpubExtractionResult(

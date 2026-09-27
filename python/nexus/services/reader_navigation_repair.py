@@ -423,8 +423,15 @@ def _inspection(snapshot: _Snapshot, prepared: _Prepared) -> ReaderNavigationRep
     new_items = {str(item["stable_key"]): item for item in new["items"]}
     old_items = {str(item["stable_key"]): item for item in old["items"]}
     for item in old["items"]:
-        if item["kind"] != new_items[str(item["stable_key"])]["kind"]:
+        proposed = new_items[str(item["stable_key"])]
+        if item["kind"] != proposed["kind"]:
             raise ValueError("Reader repair would change an existing apparatus item's kind")
+        if item["locator_status"] == "exact" and (
+            proposed["locator_status"] != "exact"
+            or item["locator"] != proposed["locator"]
+            or item["body_text"] != proposed["body_text"]
+        ):
+            raise ValueError("Reader repair would change an existing anchored apparatus item")
     new_edges = {str(edge["stable_key"]): edge for edge in new["edges"]}
     old_edges = {str(edge["stable_key"]): edge for edge in old["edges"]}
     for edge in old["edges"]:
