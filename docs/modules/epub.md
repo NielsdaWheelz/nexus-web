@@ -51,9 +51,12 @@ ordered occurrence locators and plain-text snippets, stops at match 2,001, and
 uses no global search index.
 
 cross-fragment results render through an ephemeral preview override. the
-committed fragment, url, restore session, reader progress, activity, and
-completion remain unchanged until genuine reader input adopts the rendered
-fragment. one immutable origin powers **go back to reading position**.
+shared reader navigation owner holds the departure and fences progress during
+inspection. closing find, scrolling, or selecting does not adopt a preview.
+**continue reading here** explicitly commits the rendered fragment and its
+exact locator; **back to your spot** restores the captured passage and
+placement. terminal fragment-load failure ends find with a typed unavailable
+result rather than leaving it pending.
 
 ## Reader Apparatus
 

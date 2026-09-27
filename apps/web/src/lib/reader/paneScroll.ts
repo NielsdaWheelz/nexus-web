@@ -86,7 +86,25 @@ export interface ReaderScrollPositioner {
     operation: (
       commands: ReaderScrollCommands,
     ) => void | Promise<void>,
+    signal?: AbortSignal,
   ): Promise<void>;
+}
+
+export function nextReaderAnimationFrame(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(new DOMException("Reader positioning cancelled.", "AbortError"));
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      window.cancelAnimationFrame(frame);
+      signal.removeEventListener("abort", onAbort);
+      reject(new DOMException("Reader positioning cancelled.", "AbortError"));
+    };
+    const frame = window.requestAnimationFrame(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    });
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
 }
 
 const readerScrollCommands: ReaderScrollCommands = {
@@ -130,13 +148,16 @@ function nextLayoutSample(): Promise<void> {
 export function useReaderScrollPositioner(): ReaderScrollPositioner {
   const visibleLocks = useMobileChromeVisibleLocks();
   const run = useCallback<ReaderScrollPositioner["run"]>(
-    async (operation) => {
+    async (operation, signal) => {
       const release = visibleLocks.acquire("reader-positioning");
       try {
         await operation(readerScrollCommands);
       } finally {
-        await nextLayoutSample();
-        release();
+        try {
+          await (signal ? nextReaderAnimationFrame(signal) : nextLayoutSample());
+        } finally {
+          release();
+        }
       }
     },
     [visibleLocks],

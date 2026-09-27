@@ -12,32 +12,12 @@ import type {
   PdfLinkServiceLike,
   PdfTextItemLike,
   PdfViewerLike,
+  PdfViewportPositionCapture,
 } from "@/components/pdfReaderRuntime";
 
 const PDF_FIND_MATCH_THRESHOLD = 2_000;
 export const PDF_FIND_STALL_TIMEOUT_MS = 30_000;
-const PDF_FIND_SOURCE_ACCESS_REFRESH_ABORT_MESSAGE =
-  "PDF Find source access is refreshing.";
-
-export function pdfFindSourceAccessRefreshAbort(): DOMException {
-  return new DOMException(
-    PDF_FIND_SOURCE_ACCESS_REFRESH_ABORT_MESSAGE,
-    "AbortError",
-  );
-}
-
-export function isPdfFindSourceAccessRefreshAbort(
-  error: unknown,
-): error is DOMException {
-  return (
-    error instanceof DOMException &&
-    error.name === "AbortError" &&
-    error.message === PDF_FIND_SOURCE_ACCESS_REFRESH_ABORT_MESSAGE
-  );
-}
-
 export type PdfFindError =
-  | { readonly kind: "OriginUnavailable" }
   | { readonly kind: "TextUnavailable"; readonly scope: "EntirePdf" }
   | { readonly kind: "RuntimeUnavailable" };
 
@@ -58,17 +38,6 @@ export interface PdfFindLocator {
   readonly startUtf16: number;
   readonly endUtf16: number;
 }
-
-export interface PdfFindOrigin {
-  readonly pageNumber: number;
-  readonly zoom: number;
-  readonly pageTopDeltaPx: number;
-  readonly scrollLeft: number;
-}
-
-export type PdfFindOriginCapture =
-  | { readonly kind: "Captured"; readonly value: PdfFindOrigin }
-  | { readonly kind: "Unavailable" };
 
 interface PdfRuntimeFindRequest {
   readonly generation: number;
@@ -103,8 +72,7 @@ export interface PdfFindRuntime {
   readonly source: PdfFindSource;
   search(request: PdfRuntimeFindRequest): Promise<PdfRuntimeFindResult>;
   activate(locator: PdfFindLocator, signal: AbortSignal): Promise<void>;
-  captureOrigin(): PdfFindOriginCapture;
-  restoreOrigin(origin: PdfFindOrigin, signal: AbortSignal): Promise<void>;
+  captureViewportPosition(): PdfViewportPositionCapture;
   clearPresentation(): void;
 }
 
@@ -116,12 +84,8 @@ interface CreatePdfFindRuntimeOptions {
     readonly pageNumber: number;
     readonly signal: AbortSignal;
   }) => Promise<void>;
-  readonly revealMatch: (element: HTMLElement) => void;
-  readonly captureOrigin: () => PdfFindOriginCapture;
-  readonly restoreOrigin: (
-    origin: PdfFindOrigin,
-    signal: AbortSignal,
-  ) => Promise<void>;
+  readonly revealMatch: (element: HTMLElement) => Promise<void>;
+  readonly captureViewportPosition: () => PdfViewportPositionCapture;
 }
 
 interface PdfFindRuntimeBinding {
@@ -301,6 +265,7 @@ function createControllerClasses(viewerModule: PdfJsViewerLike) {
       matchIdx: -1,
     };
     private pendingScroll: PdfFindSelectionLike | null = null;
+    private pendingReveal: { resolve: () => void; reject: (error: unknown) => void } | null = null;
     private queryState: PdfFindEventState | null = null;
     private activationGeneration = 0;
     private activationAbortController: AbortController | null = null;
@@ -402,7 +367,9 @@ function createControllerClasses(viewerModule: PdfJsViewerLike) {
         return;
       }
       this.pendingScroll = null;
-      this.revealMatch(element);
+      const pendingReveal = this.pendingReveal;
+      this.pendingReveal = null;
+      void this.revealMatch(element).then(pendingReveal?.resolve, pendingReveal?.reject);
     }
 
     beginSearch(
@@ -539,6 +506,8 @@ function createControllerClasses(viewerModule: PdfJsViewerLike) {
       this.activationAbortController = activationAbortController;
       const handleAbort = () => {
         activationAbortController.abort();
+        this.pendingReveal?.reject(abortError());
+        this.pendingReveal = null;
       };
       signal.addEventListener("abort", handleAbort, { once: true });
       if (signal.aborted) {
@@ -552,6 +521,10 @@ function createControllerClasses(viewerModule: PdfJsViewerLike) {
       };
       this.nexusSelection = next;
       this.pendingScroll = next;
+      const revealed = new Promise<void>((resolve, reject) => {
+        this.pendingReveal = { resolve, reject };
+      });
+      void revealed.catch(() => undefined);
       try {
         await this.revealPage({
           pageNumber: locator.pageNumber,
@@ -585,13 +558,29 @@ function createControllerClasses(viewerModule: PdfJsViewerLike) {
           });
           await Promise.resolve();
         }
-        this.pendingScroll = null;
+        let timeout: ReturnType<typeof setTimeout> | null = null;
+        try {
+          await Promise.race([
+            revealed,
+            new Promise<never>((_resolve, reject) => {
+              timeout = setTimeout(
+                () => reject(new Error("PDF Find selected match did not become visible.")),
+                PDF_FIND_STALL_TIMEOUT_MS,
+              );
+            }),
+          ]);
+        } finally {
+          if (timeout !== null) clearTimeout(timeout);
+        }
+        if (activationAbortController.signal.aborted) throw abortError();
       } catch (error) {
         if (this.activationGeneration !== activationGeneration) {
           throw abortError();
         }
         this.nexusSelection = previous;
         this.pendingScroll = null;
+        this.pendingReveal?.reject(error);
+        this.pendingReveal = null;
         this.nexusEventBus.dispatch("updatetextlayermatches", {
           source: this,
           pageIndex,
@@ -624,6 +613,8 @@ function createControllerClasses(viewerModule: PdfJsViewerLike) {
       this.activationAbortController?.abort();
       this.activationAbortController = null;
       this.pendingScroll = null;
+      this.pendingReveal?.reject(abortError());
+      this.pendingReveal = null;
     }
 
     private handleMatchesCount(event: unknown): void {
@@ -825,8 +816,7 @@ export function createPdfFindRuntime({
   eventBus,
   revealPage,
   revealMatch,
-  captureOrigin,
-  restoreOrigin,
+  captureViewportPosition,
 }: CreatePdfFindRuntimeOptions): PdfFindRuntimeBinding {
   const {
     NexusPdfFindLinkService,
@@ -1004,20 +994,11 @@ export function createPdfFindRuntime({
               findController.activate(locator, commandSignal),
           });
         },
-        captureOrigin() {
+        captureViewportPosition() {
           if (documentLifetime !== lifetime) {
             return { kind: "Unavailable" };
           }
-          return captureOrigin();
-        },
-        restoreOrigin(origin, signal) {
-          return runDocumentCommand({
-            lifetime,
-            callerSignal: signal,
-            isCurrent: () => documentLifetime === lifetime,
-            command: (commandSignal) =>
-              restoreOrigin(origin, commandSignal),
-          });
+          return captureViewportPosition();
         },
         clearPresentation() {
           if (documentLifetime !== lifetime) {

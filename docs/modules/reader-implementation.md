@@ -40,9 +40,11 @@ contract.
 The shared document-reader composition is the one format coordinator for PDF,
 EPUB, and web articles. Within it, `DocumentReaderSession` owns source/progress
 orchestration, initial active-unit and preferred-locator selection, and the
-canonical locator projection helpers. Format composition and
-`useReaderProgress` retain visible navigation/scroll/Find state and cursor
-ordering, suppression, revalidation, and writes. `ReaderDocumentSource`
+canonical locator projection helpers. `useReaderNavigation` owns one mounted
+visit's reading/inspection mode and exact return checkpoint. format adapters
+capture and position; they own no history or progress policy.
+`useReaderProgress` owns ordered cursor writes and remote revalidation, admitting
+only navigation-eligible reader publications. `ReaderDocumentSource`
 supplies resolved format inputs and `ReaderProgressPort` supplies
 load/save/conflict transport. Neither interface grants generic network or
 storage access.
@@ -951,8 +953,13 @@ of its location-target writes uses.
   so every restore session ends.
   epub section controls and internal source links use the same positioning owner
   and return origin; navigation does not renew reading activity.
-  mobile map jumps keep detail open so return remains available; explicit
-  dismissal ends the excursion.
+  mobile map jumps keep detail open; dismissing detail leaves the held origin
+  available through the reader status until return or adoption.
+- new web-article ingests retain valid authored ids, named anchors and
+  `aria-labelledby`. same-document `#` links resolve only unique mounted
+  targets through the same excursion owner; ambiguous or missing targets do not
+  fall through to native browser fragment scrolling. previously stored articles
+  need separate source-evidenced repair.
 - media metadata owns workspace labels; fragment loading and semantic section
   context do not rename the pane.
 

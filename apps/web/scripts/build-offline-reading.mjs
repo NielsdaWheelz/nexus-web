@@ -87,9 +87,9 @@ assertPdfJsRuntimeClosure(packagedPdfJsDir, "the packaged offline shelf");
 // (their comments legitimately cite spec and project URLs). Every non-pdf.js
 // emitted text asset gets the strict scan below.
 const runtimeFileNames = new Map([
-  ["pdf.mjs", "build/pdf.mjs"],
-  ["pdf.worker.min.mjs", "build/pdf.worker.min.mjs"],
-  ["pdf_viewer.mjs", "web/pdf_viewer.mjs"],
+  ["pdf.mjs", "legacy/build/pdf.mjs"],
+  ["pdf.worker.min.mjs", "legacy/build/pdf.worker.min.mjs"],
+  ["pdf_viewer.mjs", "legacy/web/pdf_viewer.mjs"],
 ]);
 for (const relativePath of filesUnder(packagedPdfJsDir)) {
   const sourcePath = runtimeFileNames.get(relativePath) ?? relativePath;

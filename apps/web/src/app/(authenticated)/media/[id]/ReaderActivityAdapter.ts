@@ -11,6 +11,7 @@ import {
   type ReaderDocumentProjection,
   type ReaderSemanticViewport,
 } from "@/lib/reader/readerDocumentPosition";
+import type { ReaderNavigationPort } from "@/lib/reader/useReaderNavigation";
 
 interface ReaderActivityText {
   fragmentId: string;
@@ -34,14 +35,12 @@ interface UseReaderActivityAdapterInput {
   semanticViewport: ReaderSemanticViewport | null;
   documentProjection: ReaderDocumentProjection | null;
   onGenuineReaderInput: () => void;
-  previewLease: {
-    isActive(): boolean;
-    subscribe(listener: () => void): () => void;
-  };
+  navigation: Pick<ReaderNavigationPort, "isReadingEligible">;
 }
 
 interface ReaderActivityAdapter {
   noteGenuineInput: () => void;
+  closeActivity: () => void;
 }
 
 const READING_IDLE_AFTER_MS = 300_000;
@@ -61,7 +60,7 @@ export function useReaderActivityAdapter({
   semanticViewport,
   documentProjection,
   onGenuineReaderInput,
-  previewLease,
+  navigation: { isReadingEligible },
 }: UseReaderActivityAdapterInput): ReaderActivityAdapter {
   const lastGenuineInputMonoRef = useRef<number | undefined>(undefined);
   const semanticViewportRef = useRef(semanticViewport);
@@ -71,6 +70,13 @@ export function useReaderActivityAdapter({
   const genuineRestoreViewportRef = useRef<ReaderSemanticViewport | null>(null);
   const documentKind = documentProjection?.kind ?? null;
   const updateRef = useRef<() => void>(() => undefined);
+  const closingRef = useRef(false);
+
+  const closeActivity = useCallback(() => {
+    closingRef.current = true;
+    updateRef.current();
+    closingRef.current = false;
+  }, []);
 
   const noteGenuineInput = useCallback(() => {
     const currentViewport = semanticViewportRef.current;
@@ -100,15 +106,17 @@ export function useReaderActivityAdapter({
       const lastGenuineInputMono = lastGenuineInputMonoRef.current;
       const currentSemanticViewport = semanticViewportRef.current;
       const currentDocumentProjection = documentProjectionRef.current;
+      const reading = isReadingEligible();
       const visibleStart = currentSemanticViewport?.visibleStart;
       const progress =
-        currentSemanticViewport && currentDocumentProjection
+        reading && currentSemanticViewport && currentDocumentProjection
           ? projectReaderDocumentPoint(
               currentDocumentProjection,
               currentSemanticViewport.visibleStart,
             )
           : undefined;
       const wordPosition =
+        !reading ||
         visibleStart?.kind !== "Text" ||
         visibleStart.fragmentId !== activeContent?.fragmentId ||
         activeContent?.documentWordStart === undefined
@@ -124,10 +132,10 @@ export function useReaderActivityAdapter({
         deviceClass: viewport.kind === "mobile" ? "Mobile" : "Desktop",
         eligible:
           paneActive &&
-          !previewLease.isActive() &&
-          (currentSemanticViewport?.intent === "Reader" ||
+          !closingRef.current &&
+          (reading ? (currentSemanticViewport?.intent === "Reader" ||
             (currentSemanticViewport?.intent === "Restore" &&
-              genuineRestoreViewportRef.current === currentSemanticViewport)) &&
+              genuineRestoreViewportRef.current === currentSemanticViewport)) : true) &&
           document.visibilityState === "visible" &&
           document.hasFocus() &&
           lastGenuineInputMono !== undefined &&
@@ -165,7 +173,6 @@ export function useReaderActivityAdapter({
       noteGenuineInput();
     };
     updateRef.current = update;
-    const unsubscribePreviewLease = previewLease.subscribe(update);
     root.addEventListener("pointerdown", noteInput, { passive: true });
     root.addEventListener("click", noteInput, { passive: true });
     root.addEventListener("touchmove", noteInput, { passive: true });
@@ -185,7 +192,6 @@ export function useReaderActivityAdapter({
       window.removeEventListener("focus", update);
       window.removeEventListener("blur", update);
       updateRef.current = () => undefined;
-      unsubscribePreviewLease();
       unregister();
     };
   }, [
@@ -198,7 +204,7 @@ export function useReaderActivityAdapter({
     noteGenuineInput,
     paneActive,
     activityRootRef,
-    previewLease,
+    isReadingEligible,
     viewport.hydrated,
     viewport.kind,
   ]);
@@ -212,5 +218,5 @@ export function useReaderActivityAdapter({
     updateRef.current();
   }, [documentProjection, semanticViewport]);
 
-  return { noteGenuineInput };
+  return { noteGenuineInput, closeActivity };
 }

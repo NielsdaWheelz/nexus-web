@@ -373,11 +373,11 @@ Highlight-to-Idea command succeeds. Artifact revision navigation is in-place:
 `?revision=artifact_revision:<id>` changes the viewed revision without changing
 the pane's Artifact resource identity or creating a duplicate pane.
 
-Pane Find movement is reversible inspection, not pane navigation. Web,
-transcript, and accepted Artifact previews write no pane href or history
-entry. Their single **Go back to reading position** origin is ephemeral,
-revision-bound presentation state retired by Return, source replacement, or
-route exit.
+Pane Find movement is inspection, not pane navigation. reader Find consumes the
+shared mounted-reader navigation owner: its origin survives closing Find and
+ordinary input, and only verified return or explicit adoption ends inspection.
+Artifact and other non-reader Find retain their own return contract. previews
+write no pane history entry.
 
 `targetLinkActivation.ts` is the one browser gesture adapter. Plain click and
 `Enter` are `Follow`; `Shift`+click is `Fork`; Meta/Ctrl/Alt, middle-click,

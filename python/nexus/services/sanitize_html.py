@@ -5,7 +5,7 @@ canonicalization, so every rule here is part of the persisted byte contract.
 """
 
 import re
-from urllib.parse import quote, urljoin, urlparse
+from urllib.parse import quote, urldefrag, urljoin, urlparse
 
 from lxml.etree import ParserError
 from lxml.html import HtmlElement
@@ -98,11 +98,12 @@ def _sanitize_element(
             keep = allow_reader_apparatus_attrs
         elif name in DOCUMENT_EMBED_ATTRS:
             keep = allow_document_embed_attrs and tag in {"figure", "figcaption"}
+        elif name == "id" or name == "aria-labelledby" or (name == "name" and tag == "a"):
+            keep = name == "aria-labelledby" or _valid_target(element.attrib[attr])
         else:
             keep = (
                 not EVENT_HANDLER_RE.match(name)
-                and name not in {"style", "class", "id"}
-                and not (name == "name" and tag == "a")
+                and name not in {"style", "class"}
                 and name in allowed
             )
         if not keep:
@@ -122,11 +123,19 @@ def _sanitize_link(element: HtmlElement, base_url: str) -> None:
     if urlparse(absolute_url).scheme.lower() in FORBIDDEN_SCHEMES:
         del element.attrib["href"]
         return
+    source_url, fragment = urldefrag(absolute_url)
+    if href.startswith("#") or (fragment and source_url == urldefrag(base_url).url):
+        element.set("href", f"#{fragment}")
+        return
     element.set("href", absolute_url)
     rel_values = set(element.get("rel", "").split()) | {"noopener", "noreferrer"}
     element.set("rel", " ".join(sorted(rel_values)))
     element.set("target", "_blank")
     element.set("referrerpolicy", "no-referrer")
+
+
+def _valid_target(value: str) -> bool:
+    return bool(value) and not any(char.isspace() or ord(char) < 32 for char in value)
 
 
 def _sanitize_image(element: HtmlElement, base_url: str) -> None:

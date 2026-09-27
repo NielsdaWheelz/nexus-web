@@ -365,10 +365,14 @@ workspace to guess reader semantics from URL shape; instead the reader
 replaces its own address and the workspace's Back/Forward stays about panes,
 not passages.
 
-document-map excursions retain one exact departure for return, without adding
-pane history or a reader history stack. successful arrival establishes the
-origin; failure preserves the prior position. genuine reading adoption,
-dismissal, source replacement, and successful return clear it.
+contents, notes, highlights, find, explicit targets, and seeks share one
+inspection origin without adding pane history or a reader history stack.
+capture precedes movement; a failed later jump rolls back to its immediate
+departure while retaining the first origin. inspection does not write progress.
+scroll, selection, and inspector closure retain the origin. only verified
+return, explicit **continue reading here**, authoritative reset, or visit exit
+ends inspection; source replacement makes an old origin unavailable. the
+reserved status stays reachable outside prose and has no timeout.
 
 ### epub request surface
 

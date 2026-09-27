@@ -13,12 +13,21 @@ import {
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { mediaErrorMessage } from "@/lib/media/mediaErrorMessage";
 import type { PdfReaderResumeState } from "@/lib/reader/types";
+import { absent, present } from "@/lib/api/presence";
+import type {
+  NavigationOutcome,
+  ReaderCheckpoint,
+  ReaderNavigationAdapter,
+  ReaderNavigationPort,
+  ReaderSeekOperation,
+} from "@/lib/reader/useReaderNavigation";
 import type {
   ReaderPositionIntent,
   ReaderSemanticViewport,
 } from "@/lib/reader/readerDocumentPosition";
+import { readerScrollKeyDirection } from "@/lib/reader/readerScrollInput";
 import { useReaderPulseHighlight } from "@/lib/reader/pulseEvent";
-import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
+import { isElementInPaneView, type ReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import { composeRefs } from "@/lib/ui/composeRefs";
 import {
   PDF_CMAP_URL,
@@ -36,12 +45,13 @@ import {
   type PdfLinkServiceLike,
   type PdfPageViewLike,
   type PdfViewerLike,
+  samePdfViewportPosition,
+  type PdfViewportPosition,
+  type PdfViewportPositionCapture,
 } from "@/components/pdfReaderRuntime";
 import {
   createPdfFindRuntime,
-  pdfFindSourceAccessRefreshAbort,
-  type PdfFindOrigin,
-  type PdfFindOriginCapture,
+  PDF_FIND_STALL_TIMEOUT_MS,
   type PdfFindRuntime,
 } from "@/components/pdfPaneFind";
 import SelectionPopover, { DEFAULT_COLOR } from "./SelectionPopover";
@@ -128,6 +138,7 @@ export interface PdfReaderControlActions {
   applyResumeState: (resume: PdfReaderResumeState, isCurrent: () => boolean) => Promise<boolean>;
   /** Synchronous freshest-position capture for lifecycle promotion. */
   captureResumeState: () => PdfReaderResumeState | null;
+  navigationAdapter: ReaderNavigationAdapter;
 }
 
 interface OpenedPdfDocument {
@@ -161,6 +172,7 @@ export type PdfReaderDecorationWrites = Pick<
 
 interface PdfReaderProps {
   mediaId: string;
+  navigation?: ReaderNavigationPort;
   resources: PdfReaderResources;
   decorations: PdfReaderDecorationWrites;
   isMobile: boolean;
@@ -266,6 +278,7 @@ interface ViewerEventHandlers {
   pagerendered: (event: unknown) => void;
   textlayerrendered: (event: unknown) => void;
   annotationlayerrendered: (event: unknown) => void;
+  updateviewarea: (event: unknown) => void;
 }
 
 interface PdfReaderPositioningRenderTarget {
@@ -277,6 +290,11 @@ interface PdfReaderPositioningRenderTarget {
 type PdfViewportIntent = "ReaderRestore" | "FindPreview" | "FindReturn";
 
 const SIGNED_URL_REFRESH_SKEW_MS = 2_000;
+const PDF_SOURCE_ACCESS_REFRESH_ABORT_MESSAGE = "PDF source access is refreshing.";
+
+function pdfSourceAccessRefreshAbort(): DOMException {
+  return new DOMException(PDF_SOURCE_ACCESS_REFRESH_ABORT_MESSAGE, "AbortError");
+}
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 2;
 const ZOOM_STEP = 0.25;
@@ -290,6 +308,10 @@ const PDF_SELECTION_POLL_INTERVAL_MS = 150;
 const PDF_FIND_VIEWPORT_FRAME_BUDGET = 180;
 const PDF_FIND_VIEWPORT_POSITION_EPSILON_PX = 1;
 const PDF_FIND_VIEWPORT_SCALE_EPSILON = 0.01;
+// Keep native destination verification in step with the pinned pdf.js viewer.
+const PDF_DESTINATION_CSS_UNITS = 4 / 3;
+const PDF_DESTINATION_SCROLLBAR_PADDING_PX = 40;
+const PDF_DESTINATION_VERTICAL_PADDING_PX = 5;
 const OVERLAY_COLOR_MAP: Record<HighlightColor, string> = {
   yellow: "rgba(255, 235, 59, 0.35)",
   green: "rgba(76, 175, 80, 0.3)",
@@ -714,6 +736,7 @@ function applyViewerPageNumber(
 
 export default function PdfReader({
   mediaId,
+  navigation,
   resources,
   decorations,
   isMobile,
@@ -821,6 +844,8 @@ export default function PdfReader({
   const pdfJsViewerRef = useRef<PdfJsViewerLike | null>(null);
   const eventBusRef = useRef<PdfEventBusLike | null>(null);
   const linkServiceRef = useRef<PdfLinkServiceLike | null>(null);
+  const navigationRef = useRef(navigation);
+  navigationRef.current = navigation;
   const pdfViewerRef = useRef<PdfViewerLike | null>(null);
   const pdfFindRuntimeRef = useRef<ReturnType<
     typeof createPdfFindRuntime
@@ -833,7 +858,11 @@ export default function PdfReader({
   >(null);
   const activePageScaleRef = useRef(1);
   const zoomRef = useRef(startZoomRef.current ?? 1);
+  const lastZoomEffectRef = useRef(startZoomRef.current ?? 1);
+  const viewerReportedZoomRef = useRef<number | null>(null);
   const runRef = useRef(0);
+  const handleAuthenticationErrorRef = useRef(handleAuthenticationError);
+  handleAuthenticationErrorRef.current = handleAuthenticationError;
   const pageNumberRef = useRef(startPageNumberRef.current ?? 1);
   const pendingStartPageProgressionRef = useRef(
     startPageProgressionRef.current ?? null,
@@ -869,6 +898,15 @@ export default function PdfReader({
   const pendingSemanticCaptureRef = useRef<{
     sourceKey: string;
     layoutGeneration: number;
+    readerInput: boolean;
+  } | null>(null);
+  const readerScrollInputRef = useRef(false);
+  const readerScrollInputFrameRef = useRef(0);
+  const nativeSeekRef = useRef<{
+    kind: "Key" | "Pointer";
+    operation: ReaderSeekOperation;
+    top: number;
+    left: number;
   } | null>(null);
   const latestSemanticViewportRef = useRef<ReaderSemanticViewport | null>(null);
   const readerRestoreSettledRef = useRef(false);
@@ -1165,7 +1203,9 @@ export default function PdfReader({
         intent = "Restore";
         break;
       case null:
-        intent = readerRestoreSettledRef.current ? "Reader" : "Restore";
+        intent = readerRestoreSettledRef.current && fence.readerInput
+          ? "Reader"
+          : "Restore";
         break;
     }
     const pageProgression = captured.visibleStart.pageFraction;
@@ -1194,7 +1234,7 @@ export default function PdfReader({
       pending.resolve(pending.isCurrent() && start <= target + 1e-6 && target <= end + 1e-6 && zoomMatches);
     }
   }, []);
-  const scheduleSemanticViewportCapture = useCallback(() => {
+  const scheduleSemanticViewportCapture = useCallback((readerInput = false) => {
     const sourceKey = semanticSourceKeyRef.current;
     if (sourceKey === null) {
       latestSemanticViewportRef.current = null;
@@ -1204,6 +1244,7 @@ export default function PdfReader({
     pendingSemanticCaptureRef.current = {
       sourceKey,
       layoutGeneration: semanticLayoutGenerationRef.current,
+      readerInput,
     };
     if (semanticCaptureFrameRef.current !== 0) {
       return;
@@ -1263,12 +1304,107 @@ export default function PdfReader({
     if (!container || numPages <= 0) {
       return;
     }
-    container.addEventListener("scroll", scheduleSemanticViewportCapture, {
-      passive: true,
-    });
+    const markInput = (event: Event) => {
+      if (!event.isTrusted || event.defaultPrevented) return;
+      readerScrollInputRef.current = true;
+      if (readerScrollInputFrameRef.current !== 0) {
+        window.cancelAnimationFrame(readerScrollInputFrameRef.current);
+      }
+      readerScrollInputFrameRef.current = window.requestAnimationFrame(() => {
+        readerScrollInputRef.current = false;
+        readerScrollInputFrameRef.current = 0;
+      });
+      navigationRef.current?.noteGenuineInput();
+    };
+    const markKeyInput = (event: KeyboardEvent) => {
+      if (readerScrollKeyDirection(event) === null) return;
+      if (event.key === "Home" || event.key === "End") {
+        readerScrollInputRef.current = false;
+        const operation = navigationRef.current?.beginSeek();
+        if (!operation) {
+          event.preventDefault();
+          return;
+        }
+        nativeSeekRef.current = {
+          kind: "Key",
+          operation,
+          top: container.scrollTop,
+          left: container.scrollLeft,
+        };
+        window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+          const seek = nativeSeekRef.current;
+          if (!seek || seek.operation !== operation) return;
+          nativeSeekRef.current = null;
+          const moved = Math.abs(container.scrollTop - seek.top) > 1 ||
+            Math.abs(container.scrollLeft - seek.left) > 1;
+          void operation.settle(moved ? { kind: "Arrived" } : { kind: "Unchanged" });
+        }));
+        return;
+      }
+      markInput(event);
+    };
+    const markPointerInput = (event: PointerEvent) => {
+      if (event.target !== container || !event.isTrusted) return;
+      if (event.type === "pointerdown") {
+        readerScrollInputRef.current = false;
+        const operation = navigationRef.current?.beginSeek();
+        if (!operation) {
+          event.preventDefault();
+          return;
+        }
+        nativeSeekRef.current = {
+          kind: "Pointer",
+          operation,
+          top: container.scrollTop,
+          left: container.scrollLeft,
+        };
+      }
+    };
+    const finishPointerSeek = (event: PointerEvent) => {
+      const seek = nativeSeekRef.current;
+      if (!seek || seek.kind !== "Pointer") return;
+      nativeSeekRef.current = null;
+      window.requestAnimationFrame(() => {
+        const moved = Math.abs(container.scrollTop - seek.top) > 1 ||
+          Math.abs(container.scrollLeft - seek.left) > 1;
+        if (event.type === "pointercancel") {
+          void seek.operation.cancel(moved);
+        } else {
+          void seek.operation.settle(moved ? { kind: "Arrived" } : { kind: "Unchanged" });
+        }
+      });
+    };
+    const handleScroll = () => {
+      const readerInput = nativeSeekRef.current === null && readerScrollInputRef.current;
+      readerScrollInputRef.current = false;
+      if (readerScrollInputFrameRef.current !== 0) {
+        window.cancelAnimationFrame(readerScrollInputFrameRef.current);
+        readerScrollInputFrameRef.current = 0;
+      }
+      scheduleSemanticViewportCapture(readerInput);
+    };
+    container.addEventListener("wheel", markInput, { passive: true });
+    container.addEventListener("touchmove", markInput, { passive: true });
+    container.addEventListener("pointerdown", markPointerInput);
+    container.addEventListener("keydown", markKeyInput);
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    window.addEventListener("pointerup", finishPointerSeek);
+    window.addEventListener("pointercancel", finishPointerSeek);
     scheduleSemanticViewportCapture();
     return () => {
-      container.removeEventListener("scroll", scheduleSemanticViewportCapture);
+      container.removeEventListener("wheel", markInput);
+      container.removeEventListener("touchmove", markInput);
+      container.removeEventListener("pointerdown", markPointerInput);
+      container.removeEventListener("keydown", markKeyInput);
+      container.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("pointerup", finishPointerSeek);
+      window.removeEventListener("pointercancel", finishPointerSeek);
+      nativeSeekRef.current = null;
+      if (readerScrollInputFrameRef.current !== 0) {
+        window.cancelAnimationFrame(readerScrollInputFrameRef.current);
+        readerScrollInputFrameRef.current = 0;
+      }
+      readerScrollInputRef.current = false;
     };
   }, [numPages, scheduleSemanticViewportCapture]);
 
@@ -1593,9 +1729,9 @@ export default function PdfReader({
     [getTextLayerRootForPage, readPageScale],
   );
 
-  const capturePdfFindOrigin = useCallback((): PdfFindOriginCapture => {
+  const capturePdfViewportPosition = useCallback((pageNumber = pageNumberRef.current): PdfViewportPositionCapture => {
     const container = viewerContainerRef.current;
-    const pageElement = getPageElement(pageNumberRef.current);
+    const pageElement = getPageElement(pageNumber);
     const viewer = pdfViewerRef.current;
     const zoom = viewer ? (readViewerZoom(viewer) ?? zoomRef.current) : null;
     if (!container || !pageElement || !documentRef.current || zoom === null) {
@@ -1604,7 +1740,7 @@ export default function PdfReader({
     return {
       kind: "Captured",
       value: {
-        pageNumber: pageNumberRef.current,
+        pageNumber,
         zoom,
         pageTopDeltaPx:
           pageElement.getBoundingClientRect().top -
@@ -1615,14 +1751,18 @@ export default function PdfReader({
   }, [getPageElement]);
 
   const revealPdfFindMatch = useCallback(
-    (element: HTMLElement): void => {
+    async (element: HTMLElement): Promise<void> => {
       const container = viewerContainerRef.current;
       if (!container || !container.contains(element)) {
         throw new Error("PDF Find match is outside the active scroll owner");
       }
-      void readerScrollPositioner.run(({ reveal }) => {
+      await readerScrollPositioner.run(({ reveal }) => {
         reveal(container, element);
       });
+      if (!element.isConnected || !isElementInPaneView(container, element)) {
+        throw new Error("PDF Find selected match did not reach the viewport.");
+      }
+      container.focus({ preventScroll: true });
     },
     [readerScrollPositioner],
   );
@@ -1667,8 +1807,8 @@ export default function PdfReader({
     [applyPdfViewportPage, awaitPdfFindTextLayer, readerScrollPositioner],
   );
 
-  const restorePdfFindOrigin = useCallback(
-    async (origin: PdfFindOrigin, signal: AbortSignal) => {
+  const restorePdfViewportPosition = useCallback(
+    async (origin: PdfViewportPosition, signal: AbortSignal) => {
       const viewer = pdfViewerRef.current;
       const container = viewerContainerRef.current;
       if (signal.aborted) {
@@ -1701,13 +1841,16 @@ export default function PdfReader({
         return true;
       };
       if (refreshExpiredSourceAccess()) {
-        throw pdfFindSourceAccessRefreshAbort();
+        throw pdfSourceAccessRefreshAbort();
       }
 
       const previousIntent = viewportIntentRef.current;
       viewportIntentGenerationRef.current += 1;
       const intentGeneration = viewportIntentGenerationRef.current;
       viewportIntentRef.current = "FindReturn";
+      readerScrollInputRef.current = false;
+      latestSemanticViewportRef.current = null;
+      onSemanticViewportChangeRef.current?.(null);
       try {
         await readerScrollPositioner.run(async ({ adjustTop }) => {
           const textLayerRenderEpoch =
@@ -1759,10 +1902,7 @@ export default function PdfReader({
           ) {
             throw new Error("PDF Find origin could not be restored exactly");
           }
-          // React effects and browser scroll delivery caused by the page/zoom
-          // restoration must settle while FindReturn still fences resume
-          // publication. Releasing the preview lease before this tail drains
-          // can persist the programmatic viewport as genuine reader movement.
+          // Let page/zoom effects settle before releasing return positioning.
           await awaitPdfFindFrame(signal);
           await awaitPdfFindFrame(signal);
           if (container.isConnected) {
@@ -1771,10 +1911,11 @@ export default function PdfReader({
         });
       } catch (error) {
         if (!signal.aborted && refreshExpiredSourceAccess()) {
-          throw pdfFindSourceAccessRefreshAbort();
+          throw pdfSourceAccessRefreshAbort();
         }
         throw error;
       } finally {
+        scheduleSemanticViewportCapture();
         if (
           viewportIntentGenerationRef.current === intentGeneration &&
           viewportIntentRef.current === "FindReturn"
@@ -1789,6 +1930,7 @@ export default function PdfReader({
       awaitPdfFindTextLayer,
       getPageElement,
       readerScrollPositioner,
+      scheduleSemanticViewportCapture,
     ],
   );
 
@@ -1832,6 +1974,7 @@ export default function PdfReader({
         eventBus.off("pagesloaded", handlers.pagesloaded);
         eventBus.off("pagerendered", handlers.pagerendered);
         eventBus.off("textlayerrendered", handlers.textlayerrendered);
+        eventBus.off("updateviewarea", handlers.updateviewarea);
         eventBus.off(
           "annotationlayerrendered",
           handlers.annotationlayerrendered,
@@ -1876,7 +2019,282 @@ export default function PdfReader({
       }
 
       const eventBus = new viewerModule.EventBus();
-      const linkService = new viewerModule.PDFLinkService({
+      let latestLocation: { left: number; top: number } | null = null;
+      const handleUpdateViewArea = (rawEvent: unknown) => {
+        const location = (rawEvent as { location?: { left?: unknown; top?: unknown } }).location;
+        latestLocation = typeof location?.left === "number" && Number.isFinite(location.left) &&
+          typeof location.top === "number" && Number.isFinite(location.top)
+          ? { left: location.left, top: location.top }
+          : null;
+      };
+      const pageOffset = (page: number) => {
+        const scrollport = viewerContainerRef.current;
+        const pageElement = getPageElement(page);
+        if (!scrollport || !pageElement) return null;
+        let top = pageElement.offsetTop + pageElement.clientTop;
+        let left = pageElement.offsetLeft + pageElement.clientLeft;
+        let parent = pageElement.offsetParent as HTMLElement | null;
+        while (parent && parent !== scrollport &&
+          parent.clientHeight === parent.scrollHeight && parent.clientWidth === parent.scrollWidth) {
+          top += parent.offsetTop;
+          left += parent.offsetLeft;
+          parent = parent.offsetParent as HTMLElement | null;
+        }
+        return parent === scrollport ? { top, left } : null;
+      };
+      const verifyPageTop = (page: number) => {
+        const scrollport = viewerContainerRef.current;
+        const offset = pageOffset(page);
+        if (!scrollport || !offset) return false;
+        const expected = Math.min(Math.max(0, offset.top), Math.max(0, scrollport.scrollHeight - scrollport.clientHeight));
+        return Math.abs(scrollport.scrollTop - expected) <= PDF_FIND_VIEWPORT_POSITION_EPSILON_PX;
+      };
+      const linkService = new (class extends viewerModule.PDFLinkService {
+        private async inspectNative(move: (signal: AbortSignal) => Promise<{
+          page: number | null;
+          verify?: () => boolean;
+        } | undefined>): Promise<void> {
+          const owner = navigationRef.current;
+          if (!owner) return;
+          await owner.inspect(async (signal) => {
+            const sourceKey = semanticSourceKeyRef.current;
+            const before = capturePdfViewportPosition();
+            if (sourceKey === null || before.kind === "Unavailable") {
+              return { kind: "Unavailable", reason: "CaptureUnavailable", displaced: false };
+            }
+            if (signal.aborted) return { kind: "Cancelled", displaced: false };
+            const displaced = () => {
+              if (sourceKey !== semanticSourceKeyRef.current) return true;
+              const after = capturePdfViewportPosition();
+              return after.kind === "Unavailable" ||
+                !samePdfViewportPosition(before.value, after.value);
+            };
+            let target: { page: number | null; verify?: () => boolean } | undefined;
+            try {
+              target = await move(signal);
+              if (target !== undefined && target.page !== null) {
+                await awaitPdfFindTextLayer(
+                  target.page,
+                  null,
+                  textLayerRenderEpochByPageRef.current.get(target.page) ?? 0,
+                  false,
+                  signal,
+                );
+              }
+              if (target !== undefined) await awaitPdfFindFrame(signal);
+            } catch (error) {
+              if (sourceKey !== semanticSourceKeyRef.current) {
+                return { kind: "Unavailable", reason: "SourceChanged", displaced: true };
+              }
+              if (signal.aborted) return { kind: "Cancelled", displaced: displaced() };
+              console.error("PDF destination positioning failed:", error);
+              return { kind: "Unavailable", reason: "PositioningFailed", displaced: displaced() };
+            }
+            if (sourceKey !== semanticSourceKeyRef.current) {
+              return { kind: "Unavailable", reason: "SourceChanged", displaced: true };
+            }
+            if (signal.aborted) return { kind: "Cancelled", displaced: displaced() };
+            if (target === undefined) {
+              return { kind: "Unavailable", reason: "TargetUnavailable", displaced: false };
+            }
+            const after = capturePdfViewportPosition();
+            if (after.kind === "Unavailable" ||
+              (target.page !== null && pageNumberRef.current !== target.page) ||
+              (target.verify && !target.verify())) {
+              return { kind: "Unavailable", reason: "PositioningFailed", displaced: displaced() };
+            }
+            const unchanged = samePdfViewportPosition(before.value, after.value);
+            if (!unchanged) viewerContainerRef.current?.focus({ preventScroll: true });
+            return unchanged ? { kind: "Unchanged" } : { kind: "Arrived" };
+          });
+        }
+
+        override async goToDestination(destination: unknown): Promise<void> {
+          await this.inspectNative(async (signal) => {
+            const document = documentRef.current;
+            if (!document) return undefined;
+            const resolved = await destination;
+            if (signal.aborted || document !== documentRef.current) return undefined;
+            const explicit = typeof resolved === "string"
+              ? await document.getDestination(resolved)
+              : resolved;
+            if (signal.aborted || document !== documentRef.current) return undefined;
+            if (!Array.isArray(explicit) || explicit.length === 0) return undefined;
+            const destinationType = (explicit[1] as { name?: unknown } | undefined)?.name;
+            const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+            switch (destinationType) {
+              case "XYZ":
+                if ((explicit[2] !== null && !finite(explicit[2])) ||
+                  (explicit[3] !== null && !finite(explicit[3])) ||
+                  (explicit[4] !== null && explicit[4] !== undefined &&
+                    (!finite(explicit[4]) || explicit[4] < 0))) return undefined;
+                break;
+              case "Fit":
+              case "FitB":
+                break;
+              case "FitH":
+              case "FitBH":
+              case "FitV":
+              case "FitBV":
+                if (explicit[2] !== null && !finite(explicit[2])) return undefined;
+                break;
+              case "FitR":
+                if (![2, 3, 4, 5].every((index) => finite(explicit[index])) ||
+                  explicit[2] === explicit[4] || explicit[3] === explicit[5]) return undefined;
+                break;
+              default:
+                return undefined;
+            }
+            const reference: unknown = explicit[0];
+            let page: number | null = null;
+            if (Number.isInteger(reference)) {
+              page = (reference as number) + 1;
+            } else if (reference !== null && typeof reference === "object") {
+              try {
+                page = (await document.getPageIndex(reference)) + 1;
+              } catch {
+                return undefined;
+              }
+            }
+            if (page === null || page < 1 || page > document.numPages) return undefined;
+            if (signal.aborted || document !== documentRef.current) return undefined;
+            const viewer = pdfViewerRef.current;
+            if (!viewer) return undefined;
+            const previousLocation = latestLocation;
+            const previousZoom = readViewerZoom(viewer);
+            pendingViewerScaleRef.current = null;
+            pendingViewerPageRef.current = null;
+            readerScrollInputRef.current = false;
+            viewer.scrollPageIntoView({ pageNumber: page, destArray: explicit });
+            const destinationZoom = readViewerZoom(viewer);
+            if (destinationZoom !== null && previousZoom !== null &&
+              Math.abs(destinationZoom - previousZoom) > PDF_FIND_VIEWPORT_SCALE_EPSILON) {
+              zoomRef.current = destinationZoom;
+              viewerReportedZoomRef.current = destinationZoom;
+              setZoom(destinationZoom);
+            }
+            const verify = () => {
+                  const scrollport = viewerContainerRef.current;
+                  const offset = pageOffset(page);
+                  const pageView = viewer.getPageView?.(page - 1) as {
+                    viewport?: { convertToViewportPoint?: (x: number, y: number) => [number, number] };
+                    width?: number;
+                    height?: number;
+                    scale?: number;
+                    rotation?: number;
+                  } | undefined;
+                  if (!scrollport || !offset || !pageView) return false;
+                  const actualZoom = readViewerZoom(viewer);
+                  if (destinationType === "XYZ" && typeof explicit[4] === "number" && explicit[4] > 0 &&
+                    (actualZoom === null || Math.abs(actualZoom - explicit[4]) > PDF_FIND_VIEWPORT_SCALE_EPSILON)) return false;
+                  if ((destinationType === "Fit" || destinationType === "FitB") &&
+                    viewer.currentScaleValue !== "page-fit") return false;
+                  if ((destinationType === "FitH" || destinationType === "FitBH") &&
+                    viewer.currentScaleValue !== "page-width") return false;
+                  if ((destinationType === "FitV" || destinationType === "FitBV") &&
+                    viewer.currentScaleValue !== "page-height") return false;
+                  if (!finite(pageView.width) || !finite(pageView.height) || !finite(pageView.scale) ||
+                    !finite(pageView.rotation) || pageView.scale <= 0) return false;
+                  const rotated = pageView.rotation % 180 !== 0;
+                  const pageWidth = (rotated ? pageView.height : pageView.width) / pageView.scale / PDF_DESTINATION_CSS_UNITS;
+                  const pageHeight = (rotated ? pageView.width : pageView.height) / pageView.scale / PDF_DESTINATION_CSS_UNITS;
+                  if (destinationType === "FitR") {
+                    const rectWidth = (explicit[4] as number) - (explicit[2] as number);
+                    const rectHeight = (explicit[5] as number) - (explicit[3] as number);
+                    if (rectWidth === 0 || rectHeight === 0) return false;
+                    const removeBorders = (viewer as PdfViewerLike & { removePageBorders?: boolean }).removePageBorders;
+                    const widthScale = (scrollport.clientWidth - (removeBorders ? 0 : PDF_DESTINATION_SCROLLBAR_PADDING_PX)) / rectWidth / PDF_DESTINATION_CSS_UNITS;
+                    const heightScale = (scrollport.clientHeight - (removeBorders ? 0 : PDF_DESTINATION_VERTICAL_PADDING_PX)) / rectHeight / PDF_DESTINATION_CSS_UNITS;
+                    const expectedZoom = Math.min(Math.abs(widthScale), Math.abs(heightScale));
+                    if (actualZoom === null || Math.abs(actualZoom - expectedZoom) > PDF_FIND_VIEWPORT_SCALE_EPSILON) return false;
+                  }
+                  let left = 0;
+                  let top = 0;
+                  const fitWithSpot = (destinationType === "Fit" || destinationType === "FitB") && Boolean(explicit[4]);
+                  if ((destinationType !== "Fit" && destinationType !== "FitB") || fitWithSpot) {
+                    const viewport = pageView.viewport;
+                    if (!viewport?.convertToViewportPoint) return false;
+                    let x = destinationType === "Fit" || destinationType === "FitB" ? 0 : explicit[2] as number;
+                    let y = 0;
+                    let width = 0;
+                    let height = 0;
+                    if (destinationType === "XYZ") {
+                      x = explicit[2] === null ? 0 : explicit[2] as number;
+                      y = explicit[3] === null ? pageHeight : explicit[3] as number;
+                    } else if (destinationType === "FitH" || destinationType === "FitBH") {
+                      x = 0;
+                      y = explicit[2] as number;
+                      if (explicit[2] === null && previousLocation) {
+                        if (!finite(previousLocation.left) || !finite(previousLocation.top)) return false;
+                        x = previousLocation.left;
+                        y = previousLocation.top;
+                      } else if (explicit[2] === null || y < 0) {
+                        y = pageHeight;
+                      }
+                    } else if (destinationType === "FitV" || destinationType === "FitBV") {
+                      x = explicit[2] === null ? 0 : explicit[2] as number;
+                      width = pageWidth;
+                      height = pageHeight;
+                    } else if (destinationType === "FitR") {
+                      y = explicit[3] as number;
+                      width = (explicit[4] as number) - x;
+                      height = (explicit[5] as number) - y;
+                    }
+                    const first = viewport.convertToViewportPoint(x, y);
+                    if (!first.every(Number.isFinite)) return false;
+                    const opposite = viewport.convertToViewportPoint(x + width, y + height);
+                    if (!opposite.every(Number.isFinite)) return false;
+                    left = Math.min(first[0], opposite[0]);
+                    top = Math.min(first[1], opposite[1]);
+                  }
+                  const wantedTop = offset.top + Math.max(0, top);
+                  const wantedLeft = offset.left + Math.max(0, left);
+                  const expectedTop = Math.min(Math.max(0, wantedTop), Math.max(0, scrollport.scrollHeight - scrollport.clientHeight));
+                  const expectedLeft = Math.min(Math.max(0, wantedLeft), Math.max(0, scrollport.scrollWidth - scrollport.clientWidth));
+                  return Math.abs(scrollport.scrollTop - expectedTop) <= PDF_FIND_VIEWPORT_POSITION_EPSILON_PX &&
+                    (((destinationType === "Fit" || destinationType === "FitB") && !fitWithSpot) ||
+                      Math.abs(scrollport.scrollLeft - expectedLeft) <= PDF_FIND_VIEWPORT_POSITION_EPSILON_PX);
+                };
+            return { page, verify };
+          }).catch(reportReaderError);
+        }
+
+        override goToPage(page: number | string): void {
+          void this.inspectNative(async () => {
+            const viewer = pdfViewerRef.current;
+            const document = documentRef.current;
+            if (!viewer || !document) return undefined;
+            const targetPage = typeof page === "string"
+              ? viewer.pageLabelToPageNumber?.(page) || Number(page)
+              : page;
+            if (!Number.isInteger(targetPage) || targetPage < 1 || targetPage > document.numPages) {
+              return undefined;
+            }
+            pendingViewerScaleRef.current = null;
+            pendingViewerPageRef.current = null;
+            super.goToPage(page);
+            return { page: targetPage, verify: () => verifyPageTop(targetPage) };
+          })
+            .catch(reportReaderError);
+        }
+
+        override executeNamedAction(action: string): void {
+          if (["NextPage", "PrevPage", "FirstPage", "LastPage"].includes(action)) {
+            void this.inspectNative(async () => {
+              pendingViewerScaleRef.current = null;
+              pendingViewerPageRef.current = null;
+              super.executeNamedAction(action);
+              const page = pdfViewerRef.current?.currentPageNumber;
+              return typeof page === "number"
+                ? { page, verify: () => verifyPageTop(page) }
+                : undefined;
+            })
+              .catch(reportReaderError);
+            return;
+          }
+          super.executeNamedAction(action);
+        }
+      })({
         eventBus,
         externalLinkTarget:
           viewerModule.LinkTarget?.BLANK ?? PDF_LINK_TARGET_BLANK,
@@ -1888,8 +2306,7 @@ export default function PdfReader({
         eventBus,
         revealPage: revealPdfFindPage,
         revealMatch: revealPdfFindMatch,
-        captureOrigin: capturePdfFindOrigin,
-        restoreOrigin: restorePdfFindOrigin,
+        captureViewportPosition: capturePdfViewportPosition,
       });
       const pdfViewer = new viewerModule.PDFViewer({
         container,
@@ -2116,6 +2533,7 @@ export default function PdfReader({
       eventBus.on("pagerendered", handlePageRendered);
       eventBus.on("textlayerrendered", handleTextLayerRendered);
       eventBus.on("annotationlayerrendered", handleAnnotationLayerRendered);
+      eventBus.on("updateviewarea", handleUpdateViewArea);
 
       eventBusRef.current = eventBus;
       linkServiceRef.current = linkService;
@@ -2127,14 +2545,18 @@ export default function PdfReader({
         pagerendered: handlePageRendered,
         textlayerrendered: handleTextLayerRendered,
         annotationlayerrendered: handleAnnotationLayerRendered,
+        updateviewarea: handleUpdateViewArea,
       };
     },
     [
       applyStartPageProgression,
-      capturePdfFindOrigin,
+      awaitPdfFindFrame,
+      awaitPdfFindTextLayer,
+      capturePdfViewportPosition,
       clearSelection,
       evaluatePageGeometryReliability,
       ensurePdfJsViewer,
+      getPageElement,
       invalidateSemanticViewport,
       isTextLayerUsableForPage,
       markPageSurface,
@@ -2142,7 +2564,6 @@ export default function PdfReader({
       readerScrollPositioner,
       reportReaderError,
       rememberPageScale,
-      restorePdfFindOrigin,
       revealPdfFindMatch,
       revealPdfFindPage,
       scheduleIntrinsicWidthPublish,
@@ -2169,11 +2590,11 @@ export default function PdfReader({
       pageGeometryReliabilityRef.current.clear();
       pendingViewerPageRef.current = null;
       removeOverlayLayers();
-      const fingerprint = doc.fingerprints.find(
-        (value): value is string =>
-          typeof value === "string" && value.length > 0,
-      );
-      semanticSourceKeyRef.current = `${mediaId}:pdf:${fingerprint ?? runId}`;
+      const fingerprint = doc.fingerprints[0];
+      if (typeof fingerprint !== "string" || fingerprint.length === 0) {
+        throw new Error("Loaded PDF identity is malformed.");
+      }
+      semanticSourceKeyRef.current = `${mediaId}:pdf:${fingerprint}`;
       invalidateSemanticViewport();
 
       const boundedPage = clamp(targetPage, 1, doc.numPages);
@@ -2825,7 +3246,11 @@ export default function PdfReader({
   );
 
   useEffect(() => {
+    if (lastZoomEffectRef.current === zoom) return;
+    lastZoomEffectRef.current = zoom;
     zoomRef.current = zoom;
+    const viewerReportedZoom = viewerReportedZoomRef.current;
+    viewerReportedZoomRef.current = null;
     const viewer = pdfViewerRef.current;
     if (!viewer) {
       return;
@@ -2835,7 +3260,13 @@ export default function PdfReader({
       pageGeometryReliabilityRef.current.clear();
       if (viewer.pagesCount > 0) {
         try {
-          applyViewerScale(viewer, zoom, "zoomEffect/currentScaleValue");
+          const currentZoom = readViewerZoom(viewer);
+          if (
+            (viewerReportedZoom === null || Math.abs(viewerReportedZoom - zoom) > PDF_FIND_VIEWPORT_SCALE_EPSILON) &&
+            (currentZoom === null || Math.abs(currentZoom - zoom) > PDF_FIND_VIEWPORT_SCALE_EPSILON)
+          ) {
+            applyViewerScale(viewer, zoom, "zoomEffect/currentScaleValue");
+          }
         } catch (error) {
           reportReaderError(error);
           return;
@@ -2882,6 +3313,7 @@ export default function PdfReader({
     setError(null);
     setPageNumber(startPage);
     setNumPages(0);
+    lastZoomEffectRef.current = startZoomLevel;
     setZoom(startZoomLevel);
     setPageScale(startZoomLevel);
     setPageRenderEpoch(0);
@@ -2950,7 +3382,7 @@ export default function PdfReader({
     let pendingTask: PdfDocumentLoadingTaskLike | null = null;
 
     if (signedUrlResource.status === "error") {
-      if (handleAuthenticationError(signedUrlResource.error)) {
+      if (handleAuthenticationErrorRef.current(signedUrlResource.error)) {
         setLoading(false);
         return;
       }
@@ -3001,7 +3433,7 @@ export default function PdfReader({
       } catch (err) {
         if (active && runId === runRef.current) {
           onFindRuntimeReadyRef.current?.(null);
-          if (!handleAuthenticationError(err)) reportReaderError(err);
+          if (!handleAuthenticationErrorRef.current(err)) reportReaderError(err);
         }
       } finally {
         const task = pendingTask;
@@ -3025,7 +3457,6 @@ export default function PdfReader({
   }, [
     attachDocumentToViewer,
     ensurePdfJs,
-    handleAuthenticationError,
     replaceDocument,
     reportReaderError,
     signedUrlResource,
@@ -3460,6 +3891,171 @@ export default function PdfReader({
     return locator?.kind === "pdf" ? locator : null;
   }, [publishPendingSemanticViewport]);
 
+  const navigationAdapter = useMemo<ReaderNavigationAdapter>(() => {
+    const readPosition = () => {
+      const container = viewerContainerRef.current;
+      const viewer = pdfViewerRef.current;
+      return {
+        sourceKey: semanticSourceKeyRef.current,
+        exact: capturePdfViewportPosition(),
+        page: pageNumberRef.current,
+        top: container?.scrollTop ?? null,
+        left: container?.scrollLeft ?? null,
+        zoom: viewer ? readViewerZoom(viewer) : null,
+      };
+    };
+    const displacedSince = (before: ReturnType<typeof readPosition>) => {
+      const after = readPosition();
+      if (before.sourceKey !== after.sourceKey) return true;
+      if (before.exact.kind === "Captured" && after.exact.kind === "Captured") {
+        return !samePdfViewportPosition(before.exact.value, after.exact.value);
+      }
+      if (before.exact.kind !== after.exact.kind) return true;
+      return before.page !== after.page ||
+        (before.top === null || after.top === null
+          ? before.top !== after.top
+          : Math.abs(before.top - after.top) > 1) ||
+        (before.left === null || after.left === null
+          ? before.left !== after.left
+          : Math.abs(before.left - after.left) > 1) ||
+        (before.zoom === null || after.zoom === null
+          ? before.zoom !== after.zoom
+          : Math.abs(before.zoom - after.zoom) > PDF_FIND_VIEWPORT_SCALE_EPSILON);
+    };
+    const capture: ReaderNavigationAdapter["capture"] = () => {
+      const sourceKey = semanticSourceKeyRef.current;
+      const locator = captureResumeState();
+      const position = locator === null
+        ? { kind: "Unavailable" as const }
+        : capturePdfViewportPosition(locator.page);
+      if (sourceKey === null || locator === null || position.kind === "Unavailable") {
+        return null;
+      }
+      const focused = document.activeElement;
+      const content = internalContentRef.current;
+      const focusId = focused instanceof HTMLAnchorElement && focused.id &&
+        focused.closest(".annotationLayer") && content?.contains(focused) &&
+        Array.from(content.querySelectorAll<HTMLElement>("[id]")).filter((element) => element.id === focused.id).length === 1
+        ? focused.id
+        : null;
+      return {
+        kind: "Captured",
+        sourceKey,
+        locator,
+        placement: {
+          kind: "Pdf",
+          pageDelta: position.value.pageTopDeltaPx,
+          zoom: position.value.zoom,
+          horizontal: position.value.scrollLeft,
+        },
+        occurrence: absent(),
+        focus: focusId === null ? absent() : present(focusId),
+      };
+    };
+    return {
+      capture,
+      captureReading() {
+        const checkpoint = capture();
+        const viewport = latestSemanticViewportRef.current;
+        if (
+          !checkpoint || !viewport ||
+          viewport.intent !== "Reader" ||
+          !readerRestoreSettledRef.current ||
+          viewportIntentRef.current !== null ||
+          pendingResumeApplicationRef.current !== null ||
+          pendingStartPageProgressionRef.current !== null ||
+          viewport.sourceKey !== semanticSourceKeyRef.current ||
+          viewport.layoutGeneration !== semanticLayoutGenerationRef.current
+        ) return null;
+        return checkpoint;
+      },
+      async position(checkpoint: ReaderCheckpoint, signal: AbortSignal): Promise<NavigationOutcome> {
+        if (signal.aborted) return { kind: "Cancelled", displaced: false };
+        if (checkpoint.sourceKey !== semanticSourceKeyRef.current) {
+          return { kind: "Unavailable", reason: "SourceChanged", displaced: false };
+        }
+        if (checkpoint.locator.kind !== "pdf") {
+          return { kind: "Unavailable", reason: "TargetUnavailable", displaced: false };
+        }
+        const before = readPosition();
+        if (checkpoint.kind === "Saved") {
+          const arrived = await applyResumeState(checkpoint.locator, () => !signal.aborted);
+          if (checkpoint.sourceKey !== semanticSourceKeyRef.current) {
+            return { kind: "Unavailable", reason: "SourceChanged", displaced: true };
+          }
+          return arrived
+            ? { kind: "Arrived" }
+            : signal.aborted
+              ? { kind: "Cancelled", displaced: displacedSince(before) }
+              : { kind: "Unavailable", reason: "PositioningFailed", displaced: displacedSince(before) };
+        }
+        if (checkpoint.placement.kind !== "Pdf") {
+          return { kind: "Unavailable", reason: "TargetUnavailable", displaced: false };
+        }
+        const origin = {
+          pageNumber: checkpoint.locator.page,
+          pageTopDeltaPx: checkpoint.placement.pageDelta,
+          zoom: checkpoint.placement.zoom,
+          scrollLeft: checkpoint.placement.horizontal,
+        };
+        const previousRun = runRef.current;
+        try {
+          await restorePdfViewportPosition(origin, signal);
+        } catch (error) {
+          if (semanticSourceKeyRef.current !== null &&
+            checkpoint.sourceKey !== semanticSourceKeyRef.current) {
+            return { kind: "Unavailable", reason: "SourceChanged", displaced: true };
+          }
+          if (signal.aborted) return { kind: "Cancelled", displaced: displacedSince(before) };
+          if (
+            error instanceof DOMException &&
+            error.name === "AbortError" &&
+            error.message === PDF_SOURCE_ACCESS_REFRESH_ABORT_MESSAGE
+          ) {
+            const deadline = performance.now() + PDF_FIND_STALL_TIMEOUT_MS;
+            while (!signal.aborted && performance.now() < deadline) {
+              if (runRef.current !== previousRun && semanticSourceKeyRef.current !== null) {
+                if (checkpoint.sourceKey !== semanticSourceKeyRef.current) {
+                  return { kind: "Unavailable", reason: "SourceChanged", displaced: true };
+                }
+                try {
+                  await restorePdfViewportPosition(origin, signal);
+                } catch (retryError) {
+                  if (semanticSourceKeyRef.current !== null &&
+                    checkpoint.sourceKey !== semanticSourceKeyRef.current) {
+                    return { kind: "Unavailable", reason: "SourceChanged", displaced: true };
+                  }
+                  if (signal.aborted) {
+                    return { kind: "Cancelled", displaced: displacedSince(before) };
+                  }
+                  console.error("PDF source refresh positioning failed:", retryError);
+                  return { kind: "Unavailable", reason: "PositioningFailed", displaced: displacedSince(before) };
+                }
+                if (checkpoint.sourceKey !== semanticSourceKeyRef.current) {
+                  return { kind: "Unavailable", reason: "SourceChanged", displaced: true };
+                }
+                return { kind: "Arrived" };
+              }
+              await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+            }
+            return signal.aborted
+              ? { kind: "Cancelled", displaced: displacedSince(before) }
+              : { kind: "Unavailable", reason: "PositioningFailed", displaced: displacedSince(before) };
+          }
+          if (checkpoint.sourceKey !== semanticSourceKeyRef.current) {
+            return { kind: "Unavailable", reason: "SourceChanged", displaced: true };
+          }
+          console.error("PDF checkpoint positioning failed:", error);
+          return { kind: "Unavailable", reason: "PositioningFailed", displaced: displacedSince(before) };
+        }
+        if (checkpoint.sourceKey !== semanticSourceKeyRef.current) {
+          return { kind: "Unavailable", reason: "SourceChanged", displaced: true };
+        }
+        return { kind: "Arrived" };
+      },
+    };
+  }, [applyResumeState, capturePdfViewportPosition, captureResumeState, restorePdfViewportPosition]);
+
   useEffect(() => {
     if (!onControlsReady) {
       return;
@@ -3471,6 +4067,7 @@ export default function PdfReader({
       zoomOut,
       applyResumeState,
       captureResumeState,
+      navigationAdapter,
     });
     return () => {
       onControlsReady(null);
@@ -3478,6 +4075,7 @@ export default function PdfReader({
   }, [
     applyResumeState,
     captureResumeState,
+    navigationAdapter,
     goToNextPage,
     goToPreviousPage,
     onControlsReady,

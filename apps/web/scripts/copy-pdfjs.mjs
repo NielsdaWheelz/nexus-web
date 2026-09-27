@@ -28,9 +28,9 @@ const expectedVersion = "5.7.284";
 
 /** Single files copied verbatim from `pdfjs-dist` into the runtime root. */
 const RUNTIME_FILES = [
-  ["build/pdf.mjs", "pdf.mjs"],
-  ["build/pdf.worker.min.mjs", "pdf.worker.min.mjs"],
-  ["web/pdf_viewer.mjs", "pdf_viewer.mjs"],
+  ["legacy/build/pdf.mjs", "pdf.mjs"],
+  ["legacy/build/pdf.worker.min.mjs", "pdf.worker.min.mjs"],
+  ["legacy/web/pdf_viewer.mjs", "pdf_viewer.mjs"],
 ];
 
 /** Directories `getDocument` resolves at runtime (cMapUrl/standardFontDataUrl/wasmUrl). */

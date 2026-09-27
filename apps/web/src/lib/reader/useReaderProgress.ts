@@ -36,6 +36,7 @@ import type {
   ReaderProgressView,
 } from "./ReaderProgressPort";
 import { readerResumeStatesEqual, type ReaderResumeState } from "./types";
+import type { ReaderNavigationPort } from "./useReaderNavigation";
 
 const SAVE_IDLE_MS = 500;
 const SAVE_MAX_WAIT_MS = 5_000;
@@ -103,10 +104,8 @@ export interface UseReaderProgressOptions {
   applyCursor: (command: ApplyCursorCommand) => Promise<ApplyCursorResult>;
   /** A terminal web/EPUB cursor write was durably acknowledged by the server. */
   onTerminalWriteAcknowledged: () => void;
-  /** Route-local programmatic Find movement fence. */
-  previewLease: {
-    isActive(): boolean;
-  };
+  /** The mounted reader's synchronous movement and lifecycle eligibility. */
+  navigation: Pick<ReaderNavigationPort, "isReadingEligible" | "heldLocator">;
   /**
    * Initial authority supplied by the session's composed load transaction.
    * Consumed once per readable media/locator identity: a later
@@ -126,6 +125,8 @@ export interface ReaderProgress {
   initialSnapshot: ReaderCursorSnapshot | undefined;
   /** Genuine reader movement; replaces the pending locator. */
   reportMovement: (locator: ReaderResumeState) => void;
+  /** Explicit adoption of an exact destination captured while inspection is protected. */
+  reportAdoption: (locator: ReaderResumeState) => void;
   /** Genuine input that may not produce a locator (cancels auto-adoption). */
   noteGenuineInput: () => void;
   retryLoad: () => void;
@@ -213,9 +214,12 @@ export function useReaderProgress(
   const applyInFlightRef = useRef(false);
   const applyIdRef = useRef(0);
   const saveInFlightRef = useRef<Promise<void> | null>(null);
+  const keepAfterSaveRef = useRef<{ generation: number; locator: ReaderResumeState } | null>(null);
 
   const captureRef = useRef(options.captureCurrentLocator);
   captureRef.current = options.captureCurrentLocator;
+  const navigationRef = useRef(options.navigation);
+  navigationRef.current = options.navigation;
   const applyCursorRef = useRef(options.applyCursor);
   applyCursorRef.current = options.applyCursor;
   const onTerminalWriteAcknowledgedRef = useRef(
@@ -252,6 +256,7 @@ export function useReaderProgress(
    */
   const sendCursor = useCallback(
     (baseRevision: number, keepalive = false): Promise<void> => {
+      if (saveInFlightRef.current !== null) return saveInFlightRef.current;
       const run = async (): Promise<void> => {
         const mediaId = readableMediaId;
         if (mediaId === null) {
@@ -542,7 +547,8 @@ export function useReaderProgress(
           becameCandidate &&
           startedDormant &&
           inputSeqRef.current === inputSeqAtStart &&
-          next.local.status === "clean";
+          next.local.status === "clean" &&
+          navigationRef.current.isReadingEligible();
         if (autoAdopt && next.remote.status === "candidate") {
           void applyRemote(next.remote.snapshot, true);
         }
@@ -587,9 +593,9 @@ export function useReaderProgress(
       // A save is already in flight; its own response settles engagement.
       return;
     }
-    if (options.previewLease.isActive()) {
-      // A dirty locator predating the preview may still be flushed unchanged.
-      // A clean reader must not capture or engage the preview viewport.
+    if (!navigationRef.current.isReadingEligible()) {
+      // A dirty locator predating inspection may still be flushed unchanged.
+      // A clean reader must not capture or engage the inspection viewport.
       if (
         current.local.status === "dirty" ||
         current.local.status === "save_failed"
@@ -622,7 +628,7 @@ export function useReaderProgress(
     }
     apply({ type: "moved", locator: captured });
     void sendCursor(saveBaseRevision(current), true);
-  }, [apply, options.previewLease, readableMediaId, sendCursor]);
+  }, [apply, readableMediaId, sendCursor]);
 
   // Generation lifecycle: reset and (re)establish authority per readable
   // media/locator-kind; Unavailable performs no progress I/O.
@@ -636,7 +642,7 @@ export function useReaderProgress(
     if (readableMediaId === null || readableLocatorKind === null) {
       return;
     }
-    const composedKey = `${readableMediaId} ${readableLocatorKind}`;
+    const composedKey = `${readableMediaId}\u0000${readableLocatorKind}`;
     if (
       composedAuthorityRef.current !== undefined &&
       composedConsumedKeyRef.current !== composedKey
@@ -797,11 +803,8 @@ export function useReaderProgress(
     }
   }, [isPaneActive, lifecycleFlush, readableMediaId, revalidate]);
 
-  const reportMovement = useCallback(
+  const reportAdoption = useCallback(
     (locator: ReaderResumeState) => {
-      if (options.previewLease.isActive()) {
-        return;
-      }
       inputSeqRef.current += 1;
       const current = stateRef.current;
       const canonical =
@@ -819,8 +822,12 @@ export function useReaderProgress(
       lastMovedAtRef.current = Date.now();
       apply({ type: "moved", locator });
     },
-    [apply, options.previewLease],
+    [apply],
   );
+
+  const reportMovement = useCallback((locator: ReaderResumeState) => {
+    if (navigationRef.current.isReadingEligible()) reportAdoption(locator);
+  }, [reportAdoption]);
 
   const noteGenuineInput = useCallback(() => {
     inputSeqRef.current += 1;
@@ -866,6 +873,7 @@ export function useReaderProgress(
   const acceptRemoteCursor = useCallback(() => {
     const current = stateRef.current;
     if (current.remote.status === "candidate") {
+      keepAfterSaveRef.current = null;
       void applyRemote(current.remote.snapshot, false);
     }
   }, [applyRemote]);
@@ -876,10 +884,17 @@ export function useReaderProgress(
       return;
     }
     const pending = pendingLocator(current.local);
-    const captured =
+    const held = navigationRef.current.heldLocator();
+    if (!navigationRef.current.isReadingEligible() && held === null) {
+      apply({ type: "remote_kept_inspecting" });
+      setCaptureUnavailable(false);
+      return;
+    }
+    const captured = held ?? (
       pending !== null && isTerminalReaderLocator(pending)
         ? pending
-        : captureRef.current();
+        : captureRef.current()
+    );
     if (captured === null) {
       setCaptureUnavailable(true);
       return;
@@ -887,6 +902,26 @@ export function useReaderProgress(
     setCaptureUnavailable(false);
     inputSeqRef.current += 1;
     apply({ type: "moved", locator: captured });
+    const inFlight = saveInFlightRef.current;
+    if (inFlight !== null) {
+      const choice = { generation: generationRef.current, locator: captured };
+      keepAfterSaveRef.current = choice;
+      void inFlight.then(() => {
+        if (keepAfterSaveRef.current !== choice) return;
+        keepAfterSaveRef.current = null;
+        if (generationRef.current !== choice.generation) return;
+        const settled = stateRef.current;
+        const wanted = pendingLocator(settled.local);
+        if (wanted !== null && !readerResumeStatesEqual(wanted, choice.locator)) return;
+        if (settled.remote.status === "candidate") {
+          if (wanted === null) apply({ type: "moved", locator: choice.locator });
+          void sendCursor(settled.remote.snapshot.revision);
+        } else if (settled.authority.status === "ready" && wanted !== null && settled.local.status === "dirty") {
+          void sendCursor(settled.authority.snapshot.revision);
+        }
+      });
+      return;
+    }
     // Intentionally canonicalize this viewport against the remote revision.
     void sendCursor(current.remote.snapshot.revision);
   }, [apply, sendCursor]);
@@ -912,6 +947,7 @@ export function useReaderProgress(
           : "loading",
     initialSnapshot,
     reportMovement,
+    reportAdoption,
     noteGenuineInput,
     retryLoad,
     saveFailed: state.local.status === "save_failed",

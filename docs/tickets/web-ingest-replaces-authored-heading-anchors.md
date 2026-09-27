@@ -1,4 +1,4 @@
-status: open
+status: open; new-ingest repair implemented on `feature/reader-reversible-navigation`, stored-source repair remains
 origin: 2026-09-12 reader cutover adversarial review, `329bac8622`
 area: web article ingestion
 
@@ -31,3 +31,10 @@ acceptance: a manual web ingestion retains an authored heading, an internal link
 and its labelled container; each resolves after canonicalization. generated ids
 remain deterministic for unanchored headings. existing-source repair preserves
 canonical text and accepted locators.
+
+2026-09-26 new-ingest proof: normally uploaded media
+`01a0e0e4-bf52-7fb1-9459-3f181385677e` retained authored heading
+`#middle`, `#note-one`, named anchor, `aria-labelledby="middle"`, and `#` links.
+browser first-note → actual-opener backlink returned; other-opener backlink
+stayed in inspection until explicit return. previously stored imports still need
+source-evidenced repair and cursor reconciliation before this ticket closes.

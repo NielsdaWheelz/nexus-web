@@ -69,10 +69,7 @@ export function findFirstVisibleCanonicalOffset(
   );
 }
 
-/**
- * The viewport coordinates a Find preview must restore: the first visible
- * canonical offset plus that offset's distance from the container top.
- */
+/** The first visible passage and its exact viewport placement. */
 export function measureCanonicalViewportOrigin(
   container: HTMLElement,
   cursor: CanonicalCursorResult,
@@ -82,14 +79,22 @@ export function measureCanonicalViewportOrigin(
   readonly scrollLeft: number;
 } | null {
   const anchorCp = findFirstVisibleCanonicalOffset(container, cursor);
-  if (anchorCp === null) return null;
+  // The endcap can occupy the whole viewport at the bottom of a short pane.
+  // In that case the document end is the exact position, even though no text
+  // glyph intersects the viewport. Keep its measured placement for return.
+  const atEnd =
+    Math.abs(container.scrollHeight - container.clientHeight - container.scrollTop) <=
+    READER_END_TOLERANCE_PX;
+  const resolvedAnchorCp = anchorCp ?? (atEnd ? cursor.length : null);
+  if (resolvedAnchorCp === null) return null;
   const viewportTopDeltaPx = measureCanonicalTextAnchorViewportDelta(
     container,
     cursor,
-    anchorCp,
+    resolvedAnchorCp,
   );
   if (viewportTopDeltaPx === null) return null;
-  return { anchorCp, viewportTopDeltaPx, scrollLeft: container.scrollLeft };
+  if (anchorCp === null && viewportTopDeltaPx >= container.clientHeight) return null;
+  return { anchorCp: resolvedAnchorCp, viewportTopDeltaPx, scrollLeft: container.scrollLeft };
 }
 
 function canonicalOffsetRects(
