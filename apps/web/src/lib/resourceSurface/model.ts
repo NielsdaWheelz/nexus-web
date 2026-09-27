@@ -1,495 +1,204 @@
-import type {
-  ResourceItem,
-  ResourceSurface,
-  ResourceSurfaceOccurrence,
-  SurfacePosition,
-} from "@/lib/resources/resourceItems";
+import type { ResourceItem, ResourceSurface, ResourceSurfaceNode, ResourceSurfaceOccurrence, SurfacePosition } from "@/lib/resources/resourceItems";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import type {
-  ResourceSurfaceDraftIntent,
-  ResourceSurfaceDraftPosition,
-  ResourceSurfaceOccurrenceAnchor,
-  ResourceSurfacePendingBody,
-  ResourceSurfacePendingTitle,
-} from "@/lib/resourceSurface/draftStore";
-import { isCanonicalUuid } from "@/lib/validation";
+import type { ResourceSurfaceDraftIntent, ResourceSurfacePendingBody } from "./draftStore";
 
-const PENDING_OCCURRENCE_PREFIX = "pending:";
-
+export type SurfaceContext = { rootRef: string; linkPath: string[] };
+export type SurfaceBodyEdit = { ref: string; bodyPmJson: Record<string, unknown> };
+export type SurfaceRemoval = { endpointRef: string; linkId: string; context: SurfaceContext };
+export type OutlinePasteItem = { noteId: string; bodyPmJson: Record<string, unknown>; parentIndex?: number };
 export type ResourceSurfaceCommand =
-  | {
-      type: "insert_note";
-      noteId: string;
-      position: SurfacePosition;
-      bodyPmJson: Record<string, unknown>;
-    }
-  | {
-      type: "split_note";
-      occurrenceId: string;
-      noteId: string;
-      leftBodyPmJson: Record<string, unknown>;
-      rightBodyPmJson: Record<string, unknown>;
-    }
-  | {
-      type: "insert_resource";
-      targetRef: string;
-      position: SurfacePosition;
-    }
-  | {
-      type: "move_occurrence";
-      occurrenceId: string;
-      position: SurfacePosition;
-    }
-  | { type: "remove_occurrence"; occurrenceId: string };
+  | { type: "insert_note"; noteId: string; position: SurfacePosition; bodyPmJson: Record<string, unknown> }
+  | { type: "split_note"; linkId: string; noteId: string; leftBodyPmJson: Record<string, unknown>; rightBodyPmJson: Record<string, unknown> }
+  | { type: "insert_resource"; targetRef: string; position: SurfacePosition }
+  | { type: "move_occurrence"; linkId: string; position: SurfacePosition }
+  | { type: "remove_occurrence"; entries: SurfaceRemoval[] }
+  | { type: "relink"; linkId: string; destinationRef: string; position: SurfacePosition }
+  | { type: "join_notes"; earlierLinkId: string; laterLinkId: string; bodyPmJson: Record<string, unknown> }
+  | { type: "paste_outline"; position: SurfacePosition; items: OutlinePasteItem[] }
+  | { type: "reverse_edit"; receiptId: string };
 
-export function resourceSurfaceLaneVersion(
-  item: ResourceItem,
-  lane: "title" | "body" | "outgoing_edges",
-): number {
+export function resourceSurfaceLaneVersion(item: ResourceItem, lane: "title" | "body" | "links"): number {
   const value = item.versionByLane[lane];
-  if (typeof value !== "number") {
-    throw new Error(
-      `Resource surface is missing ${lane} version for ${item.ref}`,
-    );
-  }
+  if (typeof value !== "number") throw new Error(`Resource surface is missing ${lane} version for ${item.ref}`);
   return value;
 }
-
-export function resourceSurfaceOccurrenceForRef(
-  surface: ResourceSurface,
-  ref: string,
-): ResourceSurfaceOccurrence | undefined {
+export function surfaceLinkForTarget(surface: ResourceSurface, ref: string): ResourceSurfaceOccurrence | undefined {
   return surface.orderedItems.find((item) => item.target.item.ref === ref);
 }
-
-export function resourceSurfacePendingOccurrenceId(
-  clientMutationId: string,
-): string {
-  return `${PENDING_OCCURRENCE_PREFIX}${clientMutationId}`;
+export function pendingSurfaceLinkId(clientMutationId: string, index = 0): string {
+  return `pending:${clientMutationId}:${index}`;
 }
-
-function occurrenceAnchor(
-  surface: ResourceSurface,
-  occurrenceId: string,
-): ResourceSurfaceOccurrenceAnchor | null {
-  if (
-    isCanonicalUuid(occurrenceId) &&
-    surface.orderedItems.some((item) => item.occurrenceId === occurrenceId)
-  ) {
-    return { kind: "persisted", occurrenceId };
-  }
-  if (occurrenceId.startsWith(PENDING_OCCURRENCE_PREFIX)) {
-    const clientMutationId = occurrenceId.slice(PENDING_OCCURRENCE_PREFIX.length);
-    if (
-      isCanonicalUuid(clientMutationId) &&
-      surface.orderedItems.some((item) => item.occurrenceId === occurrenceId)
-    ) {
-      return { kind: "pending", clientMutationId };
-    }
-  }
-  return null;
+export function surfacePathKey(context: SurfaceContext): string {
+  return JSON.stringify([context.rootRef, ...context.linkPath]);
 }
-
-function materializeOccurrence(
-  surface: ResourceSurface,
-  anchor: ResourceSurfaceOccurrenceAnchor,
-): ResourceSurfaceOccurrence | undefined {
-  const occurrenceId =
-    anchor.kind === "persisted"
-      ? anchor.occurrenceId
-      : resourceSurfacePendingOccurrenceId(anchor.clientMutationId);
-  return surface.orderedItems.find(
-    (item) => item.occurrenceId === occurrenceId,
-  );
+export function surfacePositionAtEnd(surface: ResourceSurface, excludingTargetRef?: string): SurfacePosition {
+  const last = surface.orderedItems.filter((row) => row.target.item.ref !== excludingTargetRef).at(-1);
+  return last ? { kind: "after", linkId: last.linkId } : { kind: "start" };
 }
-
-function materializePosition(
-  surface: ResourceSurface,
-  position: ResourceSurfaceDraftPosition,
-): SurfacePosition | null {
-  if (position.kind === "start") return { kind: "start" };
-  const occurrence = materializeOccurrence(surface, position.anchor);
-  return occurrence === undefined
-    ? null
-    : { kind: "after", occurrenceId: occurrence.occurrenceId };
-}
-
-function insertionIndex(
-  items: readonly ResourceSurfaceOccurrence[],
-  position: SurfacePosition,
-): number {
+function insertionIndex(items: readonly ResourceSurfaceOccurrence[], position: SurfacePosition): number {
   if (position.kind === "start") return 0;
-  const index = items.findIndex(
-    (item) => item.occurrenceId === position.occurrenceId,
-  );
-  if (index < 0) {
-    throw new Error("Resource surface position is not in the source");
-  }
+  const index = items.findIndex((item) => item.linkId === position.linkId);
+  if (index < 0) throw new Error("Position anchor is not incident to this endpoint");
   return index + 1;
 }
-
-function localOccurrence(input: {
-  surface: ResourceSurface;
-  noteId: string;
-  bodyPmJson: Record<string, unknown>;
-  clientMutationId: string;
-}): ResourceSurfaceOccurrence {
-  const ref = `note_block:${input.noteId}`;
+function requireLink(surface: ResourceSurface, linkId: string): ResourceSurfaceOccurrence {
+  const row = surface.orderedItems.find((item) => item.linkId === linkId);
+  if (!row) throw new Error("Link is not incident to this endpoint");
+  return row;
+}
+function createdNode(surface: ResourceSurface, noteId: string, bodyPmJson: Record<string, unknown>): ResourceSurfaceNode {
+  const ref = `note_block:${noteId}`;
   return {
-    occurrenceId: resourceSurfacePendingOccurrenceId(input.clientMutationId),
-    target: {
-      item: {
-        ...input.surface.source.item,
-        ref,
-        scheme: "note_block",
-        id: input.noteId,
-        label: "",
-        summary: "",
-        route: `/notes/${input.noteId}`,
-        activation: {
-          resourceRef: ref,
-          kind: "route",
-          href: `/notes/${input.noteId}`,
-          unresolvedReason: null,
-        },
-        versionByLane: { body: 0, outgoing_edges: 0 },
-      },
-      content: {
-        kind: "note_body",
-        bodyPmJson: input.bodyPmJson,
-        bodyText: "",
-      },
-    },
+    item: { ...surface.source.item, ref, scheme: "note_block", id: noteId, label: "", summary: "", route: `/notes/${noteId}`, activation: { resourceRef: ref, kind: "route", href: `/notes/${noteId}`, unresolvedReason: null }, versionByLane: { body: 0, links: 0 } },
+    content: { kind: "note_body", bodyPmJson, bodyText: "" },
   };
 }
-
-function requireOccurrence(
-  surface: ResourceSurface,
-  occurrenceId: string,
-): ResourceSurfaceOccurrence {
-  const occurrence = surface.orderedItems.find(
-    (item) => item.occurrenceId === occurrenceId,
-  );
-  if (occurrence === undefined) {
-    throw new Error("Resource surface occurrence is not in the source");
-  }
-  return occurrence;
-}
-
-function projectResourceSurfaceCommand(
-  surface: ResourceSurface,
-  command: ResourceSurfaceCommand,
-  clientMutationId: string,
-): ResourceSurface {
-  if (command.type === "remove_occurrence") {
-    requireOccurrence(surface, command.occurrenceId);
-    return {
-      ...surface,
-      orderedItems: surface.orderedItems.filter(
-        (item) => item.occurrenceId !== command.occurrenceId,
-      ),
-    };
-  }
-  if (command.type === "move_occurrence") {
-    const occurrence = requireOccurrence(surface, command.occurrenceId);
-    const orderedItems = surface.orderedItems.filter(
-      (item) => item !== occurrence,
-    );
-    orderedItems.splice(insertionIndex(orderedItems, command.position), 0, occurrence);
-    return { ...surface, orderedItems };
-  }
-  if (command.type === "insert_note") {
-    const orderedItems = [...surface.orderedItems];
-    orderedItems.splice(
-      insertionIndex(orderedItems, command.position),
-      0,
-      localOccurrence({
-        surface,
-        noteId: command.noteId,
-        bodyPmJson: command.bodyPmJson,
-        clientMutationId,
-      }),
-    );
-    return { ...surface, orderedItems };
-  }
-  if (command.type === "split_note") {
-    const occurrence = requireOccurrence(surface, command.occurrenceId);
-    if (occurrence.target.content.kind !== "note_body") {
-      throw new Error("Only note occurrences can be split");
-    }
-    const index = surface.orderedItems.indexOf(occurrence);
-    const orderedItems = [...surface.orderedItems];
-    orderedItems[index] = {
-      ...occurrence,
-      target: {
-        ...occurrence.target,
-        content: {
-          kind: "note_body",
-          bodyPmJson: command.leftBodyPmJson,
-          bodyText: "",
-        },
-      },
-    };
-    orderedItems.splice(
-      index + 1,
-      0,
-      localOccurrence({
-        surface,
-        noteId: command.noteId,
-        bodyPmJson: command.rightBodyPmJson,
-        clientMutationId,
-      }),
-    );
-    return { ...surface, orderedItems };
-  }
-
-  const parsedTarget = parseResourceRef(command.targetRef);
-  if (parsedTarget === null) {
-    throw new TypeError("insert_resource targetRef must be canonical");
-  }
-  const orderedItems = [...surface.orderedItems];
-  orderedItems.splice(insertionIndex(orderedItems, command.position), 0, {
-    occurrenceId: resourceSurfacePendingOccurrenceId(clientMutationId),
-    target: {
-      item: {
-        ...surface.source.item,
-        ref: command.targetRef,
-        scheme: parsedTarget.scheme,
-        id: parsedTarget.id,
-        label: "Resource",
-        summary: "",
-        route: null,
-        activation: {
-          resourceRef: command.targetRef,
-          kind: "none",
-          href: null,
-          unresolvedReason: null,
-        },
-      },
-      content: { kind: "resource_summary" },
-    },
-  });
-  return { ...surface, orderedItems };
-}
-
-export function createResourceSurfaceIntent(input: {
-  surface: ResourceSurface;
-  command: ResourceSurfaceCommand;
-  clientMutationId: string;
-}): ResourceSurfaceDraftIntent | null {
-  const occurrenceId =
-    input.command.type === "split_note" ||
-    input.command.type === "move_occurrence" ||
-    input.command.type === "remove_occurrence"
-      ? input.command.occurrenceId
-      : undefined;
-  const targetAnchor =
-    occurrenceId === undefined
-      ? undefined
-      : occurrenceAnchor(input.surface, occurrenceId) ?? undefined;
-  const rawPosition =
-    input.command.type === "insert_note" ||
-    input.command.type === "insert_resource" ||
-    input.command.type === "move_occurrence"
-      ? input.command.position
-      : undefined;
-  let position: ResourceSurfaceDraftPosition | undefined;
-  if (rawPosition?.kind === "start") {
-    position = rawPosition;
-  } else if (rawPosition?.kind === "after") {
-    const anchor = occurrenceAnchor(input.surface, rawPosition.occurrenceId);
-    if (anchor === null) return null;
-    position = { kind: "after", anchor };
-  }
-  if (occurrenceId !== undefined && targetAnchor === undefined) return null;
-  return {
-    clientMutationId: input.clientMutationId,
-    command: input.command,
-    occurrenceAnchor: targetAnchor,
-    position,
+export function projectSurfaceGraph(surfaces: ReadonlyMap<string, ResourceSurface>, intents: readonly ResourceSurfaceDraftIntent[], bodies: ReadonlyMap<string, ResourceSurfacePendingBody> = new Map()): Map<string, ResourceSurface> {
+  const graph = new Map(surfaces);
+  const node = (ref: string): ResourceSurfaceNode | undefined => graph.get(ref)?.source ?? [...graph.values()].flatMap((surface) => surface.orderedItems).find((row) => row.target.item.ref === ref)?.target;
+  const replaceNode = (next: ResourceSurfaceNode) => {
+    for (const [ref, surface] of graph) graph.set(ref, { source: ref === next.item.ref ? next : surface.source, orderedItems: surface.orderedItems.map((row) => row.target.item.ref === next.item.ref ? { ...row, target: next } : row) });
   };
-}
-
-export function materializeResourceSurfaceIntent(
-  surface: ResourceSurface,
-  intent: ResourceSurfaceDraftIntent,
-): ResourceSurfaceCommand | null {
-  const occurrence = intent.occurrenceAnchor
-    ? materializeOccurrence(surface, intent.occurrenceAnchor)
-    : undefined;
-  const position = intent.position
-    ? materializePosition(surface, intent.position)
-    : undefined;
-  const command = intent.command;
-  if (command.type === "insert_note" && position) return { ...command, position };
-  if (command.type === "insert_resource" && position) {
-    return { ...command, position };
-  }
-  if (command.type === "move_occurrence" && occurrence && position) {
-    return { ...command, occurrenceId: occurrence.occurrenceId, position };
-  }
-  if (command.type === "remove_occurrence" && occurrence) {
-    return { ...command, occurrenceId: occurrence.occurrenceId };
-  }
-  if (command.type === "split_note" && occurrence) {
-    return { ...command, occurrenceId: occurrence.occurrenceId };
-  }
-  return null;
-}
-
-function createdOccurrenceTargetRef(
-  command: ResourceSurfaceCommand,
-): string | null {
-  switch (command.type) {
-    case "insert_note":
-    case "split_note":
-      return `note_block:${command.noteId}`;
-    case "insert_resource":
-      return command.targetRef;
-    case "move_occurrence":
-    case "remove_occurrence":
-      return null;
-  }
-}
-
-function rebindAcknowledgedAnchor(
-  anchor: ResourceSurfaceOccurrenceAnchor,
-  completedClientMutationId: string,
-  occurrenceId: string,
-): ResourceSurfaceOccurrenceAnchor {
-  return anchor.kind === "pending" &&
-    anchor.clientMutationId === completedClientMutationId
-    ? { kind: "persisted", occurrenceId }
-    : anchor;
-}
-
-export function rebindAcknowledgedResourceSurfaceIntents(input: {
-  previousSurface: ResourceSurface;
-  acknowledgedSurface: ResourceSurface;
-  completedIntent: ResourceSurfaceDraftIntent;
-  remainingIntents: readonly ResourceSurfaceDraftIntent[];
-}): ResourceSurfaceDraftIntent[] {
-  const expectedRef = createdOccurrenceTargetRef(input.completedIntent.command);
-  if (expectedRef === null) {
-    return [...input.remainingIntents];
-  }
-  const previousIds = new Set(
-    input.previousSurface.orderedItems.map((item) => item.occurrenceId),
-  );
-  const created = input.acknowledgedSurface.orderedItems.filter(
-    (item) => !previousIds.has(item.occurrenceId),
-  );
-  const acknowledgedIds = new Set(
-    input.acknowledgedSurface.orderedItems.map((item) => item.occurrenceId),
-  );
-  const createdOccurrence = created[0];
-  if (
-    created.length !== 1 ||
-    createdOccurrence === undefined ||
-    input.previousSurface.orderedItems.some(
-      (item) => !acknowledgedIds.has(item.occurrenceId),
-    )
-  ) {
-    throw new Error(
-      "Resource surface insertion acknowledgement must create one occurrence",
-    );
-  }
-  if (createdOccurrence.target.item.ref !== expectedRef) {
-    throw new Error(
-      "Resource surface insertion acknowledgement must match its target",
-    );
-  }
-  const completedClientMutationId = input.completedIntent.clientMutationId;
-  const occurrenceId = createdOccurrence.occurrenceId;
-  return input.remainingIntents.map((intent) => ({
-    ...intent,
-    ...(intent.occurrenceAnchor === undefined
-      ? {}
-      : {
-          occurrenceAnchor: rebindAcknowledgedAnchor(
-            intent.occurrenceAnchor,
-            completedClientMutationId,
-            occurrenceId,
-          ),
-        }),
-    ...(intent.position?.kind !== "after"
-      ? {}
-      : {
-          position: {
-            kind: "after" as const,
-            anchor: rebindAcknowledgedAnchor(
-              intent.position.anchor,
-              completedClientMutationId,
-              occurrenceId,
-            ),
-          },
-        }),
-  }));
-}
-
-export function projectResourceSurface(input: {
-  acknowledgedSurface: ResourceSurface;
-  intents: readonly ResourceSurfaceDraftIntent[];
-  title: ResourceSurfacePendingTitle | undefined;
-  bodies: ReadonlyMap<string, ResourceSurfacePendingBody>;
-}): ResourceSurface {
-  let surface = input.acknowledgedSurface;
-  for (const intent of input.intents) {
-    const command = materializeResourceSurfaceIntent(surface, intent);
-    if (command === null) {
-      throw new Error(
-        "Queued resource surface intent cannot materialize against its owner",
-      );
-    }
-    surface = projectResourceSurfaceCommand(
-      surface,
-      command,
-      intent.clientMutationId,
-    );
-  }
-  if (input.title !== undefined && surface.source.content.kind === "page_title") {
-    surface = {
-      ...surface,
-      source: {
-        ...surface.source,
-        content: { kind: "page_title", title: input.title.value },
-      },
-    };
-  }
-  const projectBody = (
-    occurrence: ResourceSurfaceOccurrence,
-  ): ResourceSurfaceOccurrence => {
-    const body = input.bodies.get(occurrence.target.item.ref);
-    return body !== undefined && occurrence.target.content.kind === "note_body"
-      ? {
-          ...occurrence,
-          target: {
-            ...occurrence.target,
-            content: {
-              kind: "note_body",
-              bodyPmJson: body.bodyPmJson,
-              bodyText: body.bodyText,
-            },
-          },
-        }
-      : occurrence;
+  const writeBody = (ref: string, bodyPmJson: Record<string, unknown>) => {
+    const current = node(ref);
+    if (!current || current.content.kind !== "note_body") throw new Error("Structural body target is unavailable");
+    replaceNode({ ...current, content: { kind: "note_body", bodyPmJson, bodyText: "" } });
   };
-  surface = {
-    ...surface,
-    orderedItems: surface.orderedItems.map(projectBody),
+  const remove = (linkId: string) => {
+    for (const [ref, surface] of graph) graph.set(ref, { ...surface, orderedItems: surface.orderedItems.filter((row) => row.linkId !== linkId) });
   };
-  const sourceBody = input.bodies.get(surface.source.item.ref);
-  return sourceBody !== undefined && surface.source.content.kind === "note_body"
-    ? {
-        ...surface,
-        source: {
-          ...surface.source,
-          content: {
-            kind: "note_body",
-            bodyPmJson: sourceBody.bodyPmJson,
-            bodyText: sourceBody.bodyText,
-          },
-        },
+  const insert = (endpoint: string, target: ResourceSurfaceNode, linkId: string, position: SurfacePosition) => {
+    const surface = graph.get(endpoint);
+    if (!surface) throw new Error("Destination neighborhood has not loaded");
+    if (endpoint === target.item.ref) throw new Error("A note cannot link to itself");
+    const existing = surface.orderedItems.find((row) => row.target.item.ref === target.item.ref);
+    const row = existing ?? { linkId, target, collapsed: false, hasLinkNote: false };
+    const rows = surface.orderedItems.filter((item) => item !== existing);
+    rows.splice(insertionIndex(rows, position), 0, row);
+    graph.set(endpoint, { ...surface, orderedItems: rows });
+    const reverse = graph.get(target.item.ref);
+    if (reverse && !existing) graph.set(target.item.ref, { ...reverse, orderedItems: [...reverse.orderedItems, { ...row, target: surface.source }] });
+    return row.linkId;
+  };
+  for (const intent of intents) {
+    const surface = graph.get(intent.endpointRef);
+    if (!surface) throw new Error("Command neighborhood has not loaded");
+    const command = intent.command;
+    for (const edit of intent.bodyEdits) writeBody(edit.ref, edit.bodyPmJson);
+    switch (command.type) {
+      case "insert_note": {
+        const target = createdNode(surface, command.noteId, command.bodyPmJson);
+        graph.set(target.item.ref, { source: target, orderedItems: [] });
+        insert(intent.endpointRef, target, pendingSurfaceLinkId(intent.clientMutationId), command.position);
+        break;
       }
-    : surface;
+      case "split_note": {
+        const row = requireLink(surface, command.linkId);
+        writeBody(row.target.item.ref, command.leftBodyPmJson);
+        const target = createdNode(surface, command.noteId, command.rightBodyPmJson);
+        graph.set(target.item.ref, { source: target, orderedItems: [] });
+        insert(intent.endpointRef, target, pendingSurfaceLinkId(intent.clientMutationId), { kind: "after", linkId: command.linkId });
+        break;
+      }
+      case "insert_resource": {
+        const existing = surface.orderedItems.find((row) => row.target.item.ref === command.targetRef);
+        if (existing) break;
+        const parsed = parseResourceRef(command.targetRef);
+        if (!parsed) throw new TypeError("Reference must be canonical");
+        const target = node(command.targetRef) ?? { item: { ...surface.source.item, ref: command.targetRef, scheme: parsed.scheme, id: parsed.id, label: "Resource", summary: "", route: null, activation: { resourceRef: command.targetRef, kind: "none" as const, href: null, unresolvedReason: null } }, content: { kind: "resource_summary" as const } };
+        insert(intent.endpointRef, target, pendingSurfaceLinkId(intent.clientMutationId), command.position);
+        break;
+      }
+      case "move_occurrence": {
+        const row = requireLink(surface, command.linkId);
+        insert(intent.endpointRef, row.target, row.linkId, command.position);
+        break;
+      }
+      case "remove_occurrence":
+        for (const entry of command.entries) remove(entry.linkId);
+        break;
+      case "relink": {
+        const row = requireLink(surface, command.linkId);
+        remove(row.linkId);
+        insert(command.destinationRef, row.target, pendingSurfaceLinkId(intent.clientMutationId), command.position);
+        break;
+      }
+      case "join_notes": {
+        writeBody(requireLink(surface, command.earlierLinkId).target.item.ref, command.bodyPmJson);
+        remove(command.laterLinkId);
+        break;
+      }
+      case "paste_outline": {
+        let rootPosition = command.position;
+        command.items.forEach((item, index) => {
+          const target = createdNode(surface, item.noteId, item.bodyPmJson);
+          graph.set(target.item.ref, { source: target, orderedItems: [] });
+          const parent = item.parentIndex === undefined ? intent.endpointRef : `note_block:${command.items[item.parentIndex]!.noteId}`;
+          const position = item.parentIndex === undefined ? rootPosition : surfacePositionAtEnd(graph.get(parent)!);
+          const linkId = insert(parent, target, pendingSurfaceLinkId(intent.clientMutationId, index), position);
+          if (item.parentIndex === undefined) rootPosition = { kind: "after", linkId };
+        });
+        break;
+      }
+      case "reverse_edit":
+        for (const restored of intent.inverseSurfaces ?? []) graph.set(restored.source.item.ref, restored);
+        break;
+    }
+  }
+  for (const [ref, body] of bodies) {
+    const current = node(ref);
+    if (current?.content.kind === "note_body") replaceNode({ ...current, content: { kind: "note_body", bodyPmJson: body.bodyPmJson, bodyText: body.bodyText } });
+  }
+  return graph;
+}
+export function createResourceSurfaceIntent(input: { surface: ResourceSurface; command: ResourceSurfaceCommand; clientMutationId: string; context?: SurfaceContext; bodyEdits?: SurfaceBodyEdit[]; baseSurfaces: ResourceSurface[] }): ResourceSurfaceDraftIntent {
+  return { clientMutationId: input.clientMutationId, endpointRef: input.surface.source.item.ref, context: input.context ?? { rootRef: input.surface.source.item.ref, linkPath: [] }, command: input.command, bodyEdits: input.bodyEdits ?? [], baseSurfaces: input.baseSurfaces };
+}
+export function remapSurfaceIntent(intent: ResourceSurfaceDraftIntent, links: ReadonlyMap<string, string>): ResourceSurfaceDraftIntent {
+  const map = (id: string) => links.get(id) ?? id;
+  const context = (value: SurfaceContext): SurfaceContext => ({ ...value, linkPath: value.linkPath.map(map) });
+  const position = (value: SurfacePosition): SurfacePosition => value.kind === "start" ? value : { kind: "after", linkId: map(value.linkId) };
+  let command = intent.command;
+  switch (command.type) {
+    case "insert_note": case "insert_resource": case "paste_outline": command = { ...command, position: position(command.position) }; break;
+    case "split_note": command = { ...command, linkId: map(command.linkId) }; break;
+    case "move_occurrence": case "relink": command = { ...command, linkId: map(command.linkId), position: position(command.position) }; break;
+    case "remove_occurrence": command = { ...command, entries: command.entries.map((entry) => ({ ...entry, linkId: map(entry.linkId), context: context(entry.context) })) }; break;
+    case "join_notes": command = { ...command, earlierLinkId: map(command.earlierLinkId), laterLinkId: map(command.laterLinkId) }; break;
+    case "reverse_edit": break;
+  }
+  const remapSurface = (surface: ResourceSurface): ResourceSurface => ({ ...surface, orderedItems: surface.orderedItems.map((row) => ({ ...row, linkId: map(row.linkId) })) });
+  return { ...intent, context: context(intent.context), command, baseSurfaces: intent.baseSurfaces.map(remapSurface), ...(intent.inverseSurfaces ? { inverseSurfaces: intent.inverseSurfaces.map(remapSurface) } : {}) };
+}
+
+export function surfaceIntentBodyRefs(intent: ResourceSurfaceDraftIntent): Set<string> {
+  const refs = new Set(intent.bodyEdits.map((edit) => edit.ref));
+  const surface = intent.baseSurfaces.find((surface) => surface.source.item.ref === intent.endpointRef);
+  const command = intent.command;
+  switch (command.type) {
+    case "insert_note": refs.add(`note_block:${command.noteId}`); break;
+    case "split_note": {
+      refs.add(`note_block:${command.noteId}`);
+      const row = surface?.orderedItems.find((row) => row.linkId === command.linkId);
+      if (row) refs.add(row.target.item.ref);
+      break;
+    }
+    case "join_notes": {
+      const row = surface?.orderedItems.find((row) => row.linkId === command.earlierLinkId);
+      if (row) refs.add(row.target.item.ref);
+      break;
+    }
+    case "paste_outline": for (const item of command.items) refs.add(`note_block:${item.noteId}`); break;
+    case "reverse_edit":
+      for (const version of intent.reverseVersions ?? []) if (version.lane === "body") refs.add(version.ref);
+      if (!intent.reverseVersions) {
+        const before = new Map(intent.baseSurfaces.flatMap((surface) => [surface.source, ...surface.orderedItems.map((row) => row.target)]).map((node) => [node.item.ref, node]));
+        for (const node of (intent.inverseSurfaces ?? []).flatMap((surface) => [surface.source, ...surface.orderedItems.map((row) => row.target)])) {
+          if (node.content.kind === "note_body" && JSON.stringify(before.get(node.item.ref)?.content) !== JSON.stringify(node.content)) refs.add(node.item.ref);
+        }
+      }
+      break;
+    case "insert_resource": case "move_occurrence": case "remove_occurrence": case "relink": break;
+  }
+  return refs;
 }

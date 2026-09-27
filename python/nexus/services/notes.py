@@ -36,7 +36,6 @@ from nexus.services.highlights import get_highlight_for_visible_read_or_404
 from nexus.services.note_indexing import enqueue_note_reindex
 from nexus.services.resource_graph import highlight_notes as graph_highlight_notes
 from nexus.services.resource_graph.cleanup import (
-    clear_edge_view_state,
     delete_edges_for_deleted_resource,
     delete_resource_protocol_state,
 )
@@ -537,7 +536,6 @@ def detach_highlight_note_in_current_transaction(
     if not edge_ids:
         raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note is no longer attached")
     for edge_id in edge_ids:
-        clear_edge_view_state(db, edge_id=edge_id)
         delete_edge(db, viewer_id=viewer_id, edge_id=edge_id)
     record_replay(
         db,
@@ -587,7 +585,7 @@ def _materialize_daily_page(db: Session, viewer_id: UUID, local_date: date, page
 
 
 def _ensure_page_versions(db: Session, viewer_id: UUID, page_id: UUID) -> None:
-    for lane in ("title", "outgoing_edges"):
+    for lane in ("title", "links"):
         versions.ensure_version(db, viewer_id=viewer_id, ref=_page_ref(page_id), lane=lane)
 
 

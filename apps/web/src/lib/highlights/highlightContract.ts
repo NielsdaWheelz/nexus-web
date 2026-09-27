@@ -19,7 +19,7 @@ export interface HighlightLinkedNoteBlock {
   note_block_id: string;
   body_pm_json: Record<string, unknown>;
   body_text: string;
-  version_by_lane: { body: number; outgoing_edges: number };
+  version_by_lane: { body: number; links: number };
 }
 
 export interface HighlightLinkedConversation {
@@ -96,11 +96,11 @@ export function decodeHighlightLinkedNoteBlock(
   );
   const versions = expectExactRecord(
     value.version_by_lane,
-    ["body", "outgoing_edges"],
+    ["body", "links"],
     `${name}.version_by_lane`,
   );
   const bodyVersion = expectInteger(versions.body, `${name}.version_by_lane.body`);
-  const edgeVersion = expectInteger(versions.outgoing_edges, `${name}.version_by_lane.outgoing_edges`);
+  const edgeVersion = expectInteger(versions.links, `${name}.version_by_lane.links`);
   if (bodyVersion < 1 || edgeVersion < 0) {
     throw new TypeError(`${name}.version_by_lane is invalid`);
   }
@@ -108,7 +108,7 @@ export function decodeHighlightLinkedNoteBlock(
     note_block_id: expectString(value.note_block_id, `${name}.note_block_id`),
     body_pm_json: body.bodyPmJson,
     body_text: body.bodyText,
-    version_by_lane: { body: bodyVersion, outgoing_edges: edgeVersion },
+    version_by_lane: { body: bodyVersion, links: edgeVersion },
   };
 }
 

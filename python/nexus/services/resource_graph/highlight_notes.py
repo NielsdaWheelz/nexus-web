@@ -3,7 +3,7 @@
 from uuid import UUID
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import highlight_readability_filter
 from nexus.db.models import Highlight, NoteBlock, ResourceEdge
@@ -12,23 +12,14 @@ from nexus.db.models import Highlight, NoteBlock, ResourceEdge
 def linked_note_blocks_for_highlights(
     db: Session, viewer_id: UUID, highlight_ids: list[UUID]
 ) -> dict[UUID, list[NoteBlock]]:
-    """Attached notes per highlight, ordered by their containing surface then age."""
+    """Attached notes per highlight, ordered by canonical attachment creation."""
     if not highlight_ids:
         return {}
-    containment = aliased(ResourceEdge)
     rows = db.execute(
         select(ResourceEdge.source_id, NoteBlock)
         .join(
             NoteBlock,
             (ResourceEdge.target_scheme == "note_block") & (ResourceEdge.target_id == NoteBlock.id),
-        )
-        .outerjoin(
-            containment,
-            (containment.user_id == ResourceEdge.user_id)
-            & (containment.origin == "user")
-            & (containment.target_scheme == "note_block")
-            & (containment.target_id == NoteBlock.id)
-            & containment.source_order_key.is_not(None),
         )
         .where(
             ResourceEdge.user_id == viewer_id,
@@ -39,7 +30,6 @@ def linked_note_blocks_for_highlights(
         )
         .order_by(
             ResourceEdge.source_id.asc(),
-            containment.source_order_key.asc().nulls_last(),
             NoteBlock.created_at.asc(),
             ResourceEdge.created_at.asc(),
             ResourceEdge.id.asc(),

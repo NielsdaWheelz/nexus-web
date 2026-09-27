@@ -86,7 +86,9 @@ export interface ResourceSurfaceNode {
 }
 
 export interface ResourceSurfaceOccurrence {
-  occurrenceId: string;
+  linkId: string;
+  collapsed: boolean;
+  hasLinkNote: boolean;
   target: ResourceSurfaceNode;
 }
 
@@ -97,7 +99,7 @@ export interface ResourceSurface {
 
 export type SurfacePosition =
   | { kind: "start" }
-  | { kind: "after"; occurrenceId: string };
+  | { kind: "after"; linkId: string };
 
 const RESOURCE_ITEM_KEYS = [
   "ref",
@@ -351,7 +353,7 @@ function normalizeResourceSurfaceContent(raw: unknown): ResourceSurfaceContent {
   }
 }
 
-function normalizeResourceSurfaceNode(raw: unknown): ResourceSurfaceNode {
+export function normalizeResourceSurfaceNode(raw: unknown): ResourceSurfaceNode {
   const node = expectExactRecord(raw, ["item", "content"], "surface node");
   return {
     item: decodeResourceItem(node.item),
@@ -374,103 +376,17 @@ export function normalizeResourceSurface(raw: unknown): ResourceSurface {
     orderedItems: surface.ordered_items.map((rawOccurrence) => {
       const occurrence = expectExactRecord(
         rawOccurrence,
-        ["occurrence_id", "target"],
+        ["link_id", "target", "collapsed", "has_link_note"],
         "surface occurrence",
       );
       return {
-        occurrenceId: expectCanonicalUuid(
-          occurrence.occurrence_id,
-          "surface occurrence.occurrence_id",
+        linkId: expectCanonicalUuid(
+          occurrence.link_id,
+          "surface occurrence.link_id",
         ),
         target: normalizeResourceSurfaceNode(occurrence.target),
-      };
-    }),
-  };
-}
-
-function decodeResourceSurfaceSnapshotContent(
-  raw: unknown,
-): ResourceSurfaceContent {
-  const record = expectRecord(raw, "resource surface snapshot content");
-  switch (expectString(record.kind, "resource surface snapshot content.kind")) {
-    case "page_title": {
-      const content = expectExactRecord(
-        raw,
-        ["kind", "title"],
-        "page title resource surface snapshot content",
-      );
-      return {
-        kind: "page_title",
-        title: expectString(
-          content.title,
-          "page title resource surface snapshot content.title",
-        ),
-      };
-    }
-    case "note_body": {
-      const content = expectExactRecord(
-        raw,
-        ["kind", "bodyPmJson", "bodyText"],
-        "note body resource surface snapshot content",
-      );
-      const body = decodeNoteBodyValue(
-        content.bodyPmJson,
-        content.bodyText,
-        "note body resource surface snapshot content",
-      );
-      return {
-        kind: "note_body",
-        ...body,
-      };
-    }
-    case "resource_summary":
-      expectExactRecord(
-        raw,
-        ["kind"],
-        "resource summary resource surface snapshot content",
-      );
-      return { kind: "resource_summary" };
-    default:
-      throw new TypeError("resource surface snapshot content.kind is invalid");
-  }
-}
-
-function decodeResourceSurfaceSnapshotNode(raw: unknown): ResourceSurfaceNode {
-  const node = expectExactRecord(
-    raw,
-    ["item", "content"],
-    "resource surface snapshot node",
-  );
-  return {
-    item: decodeResourceItem(node.item),
-    content: decodeResourceSurfaceSnapshotContent(node.content),
-  };
-}
-
-/** Exact decoder for the camel-case browser-persisted surface snapshot. */
-export function decodeResourceSurfaceSnapshot(raw: unknown): ResourceSurface {
-  const surface = expectExactRecord(
-    raw,
-    ["source", "orderedItems"],
-    "resource surface snapshot",
-  );
-  if (!Array.isArray(surface.orderedItems)) {
-    throw new TypeError("resource surface snapshot.orderedItems must be an array");
-  }
-  return {
-    source: decodeResourceSurfaceSnapshotNode(surface.source),
-    orderedItems: surface.orderedItems.map((rawOccurrence) => {
-      const occurrence = expectExactRecord(
-        rawOccurrence,
-        ["occurrenceId", "target"],
-        "resource surface snapshot occurrence",
-      );
-      return {
-        occurrenceId: expectCanonicalUuid(
-          occurrence.occurrenceId,
-          "resource surface snapshot occurrence.occurrenceId",
-        ),
-        target: decodeResourceSurfaceSnapshotNode(occurrence.target),
+        collapsed: expectBoolean(occurrence.collapsed, "surface link.collapsed"),
+        hasLinkNote: expectBoolean(occurrence.has_link_note, "surface link.has_link_note"),
       };
     }),
   };

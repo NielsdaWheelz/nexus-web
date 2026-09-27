@@ -545,7 +545,7 @@ def _page_inputs(db: Session, subject: Subject, audience: AudienceScope) -> Coll
                 {
                     "ref": block_ref.uri,
                     "body_sha256": _sha256(body),
-                    "order_key": node.source_order_key,
+                    "order_key": node.order_key,
                     "updated_at": str(node.block.updated_at),
                 }
             )
@@ -554,7 +554,7 @@ def _page_inputs(db: Session, subject: Subject, audience: AudienceScope) -> Coll
                     Candidate(
                         index=len(candidates),
                         target=block_ref,
-                        text=f"Contained note block ({node.source_order_key}):\n{body}",
+                        text=f"Linked note block ({node.order_key}):\n{body}",
                         snapshot=CitationSnapshot(
                             title=surface.page.title,
                             excerpt=body[:EXCERPT_CHARS],

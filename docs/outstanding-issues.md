@@ -288,9 +288,10 @@ unexpected timeouts. See
 - [open] 2026-09-26 processing plan · epub reprocessing can replace fragment identities beneath reader state: [ticket](tickets/epub-reprocessing-can-replace-reader-fragment-identity.md).
 - [open] 2026-09-26 processing implementation · artifact web acceptance can commit before its owning build result: [ticket](tickets/artifact-web-acceptance-commits-inside-build-transaction.md).
 - [open] 2026-09-25 notes writing release preflight · census unsafe stored link hrefs on target data: [ticket](tickets/notes-writing-target-unsafe-links-census.md).
-- [open] 2026-09-25 notes writing release preflight · census missing canonical body and outgoing-edge versions on target data: [ticket](tickets/notes-writing-target-missing-body-versions.md).
+- [open] 2026-09-25 notes writing release preflight · census missing canonical body and links versions on target data: [ticket](tickets/notes-writing-target-missing-body-versions.md).
 - [open] 2026-09-25 notes writing live proof · vault existing page prose edits need a versioned, lossless round trip: [ticket](tickets/vault-existing-page-prose-edits-need-versioned-roundtrip.md).
-- [open] 2026-09-25 notes writing adversarial review · stale vault page structure can revert newer links: [ticket](tickets/vault-stale-page-structure-import-can-revert-newer-links.md).
 - [open] 2026-09-25 notes writing release preflight · checkpoint old browser drafts before removing readers: [ticket](tickets/notes-writing-legacy-draft-checkpoint.md).
 - [deferred] 2026-09-25 notes writing acceptance · final-build android w2 and w6 remain open; a development-build 100-note trace exceeded the latency target: [ticket](tickets/notes-writing-android-acceptance-blocked.md).
+- [deferred] 2026-09-26 notes bullets acceptance · physical android webview b7 is not run until the stacked prs are reviewable: [ticket](tickets/notes-bullets-android-acceptance-deferred.md).
+- [open] 2026-09-26 notes bullets cache review · non-note card labels lack a revision for ordering concurrent reads: [ticket](tickets/resource-surface-card-labels-have-no-revision.md).
 - [open] 2026-09-25 notes writing live action probe · overlapping pdf highlight overlays block pointer access to a covered highlight: [ticket](tickets/pdf-overlapping-highlights-block-pointer-action.md).

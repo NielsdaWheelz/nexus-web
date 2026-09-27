@@ -81,6 +81,20 @@ export interface CreateLinkOut {
   connection: ConnectionOut;
 }
 
+/** Committed generic link actions invalidate the same graph used by writing surfaces. */
+export type LinkMutation =
+  | { kind: "created"; sourceRef: string; targetRef: string }
+  | { kind: "deleted"; linkId: string };
+
+const linkMutationListeners = new Set<(mutation: LinkMutation) => void>();
+
+export function subscribeLinkMutations(
+  listener: (mutation: LinkMutation) => void,
+): () => void {
+  linkMutationListeners.add(listener);
+  return () => { linkMutationListeners.delete(listener); };
+}
+
 export async function createLink(
   input: CreateLinkInput,
 ): Promise<CreateLinkOut> {
@@ -100,7 +114,7 @@ export async function createLink(
     ["created", "created_source_ref", "connection"],
     "CreateLinkOut",
   );
-  return {
+  const result = {
     created: expectBoolean(value.created, "CreateLinkOut.created"),
     created_source_ref: expectNullableString(
       value.created_source_ref,
@@ -111,19 +125,24 @@ export async function createLink(
       "CreateLinkOut.connection",
     ),
   };
+  const mutation: LinkMutation = { kind: "created", sourceRef: result.connection.source_ref, targetRef: result.connection.target_ref };
+  for (const listener of linkMutationListeners) listener(mutation);
+  return result;
 }
 
 export async function deleteLink(linkId: string): Promise<void> {
   await apiFetch(`/api/resource-graph/links/${linkId}` as ApiPath, {
     method: "DELETE",
   });
+  const mutation: LinkMutation = { kind: "deleted", linkId };
+  for (const listener of linkMutationListeners) listener(mutation);
 }
 
 export interface LinkNoteOut {
   note_block_id: string;
   body_pm_json: Record<string, unknown>;
   body_text: string;
-  version_by_lane: { body: number; outgoing_edges: number };
+  version_by_lane: { body: number; links: number };
   connection: ConnectionOut;
 }
 
@@ -136,11 +155,11 @@ export function decodeLinkNoteOut(raw: unknown): LinkNoteOut {
   const noteBody = decodeNoteBodyValue(value.body_pm_json, value.body_text, "LinkNoteOut");
   const versions = expectExactRecord(
     value.version_by_lane,
-    ["body", "outgoing_edges"],
+    ["body", "links"],
     "LinkNoteOut.version_by_lane",
   );
   const bodyVersion = expectFiniteNumber(versions.body, "LinkNoteOut.version_by_lane.body");
-  const edgeVersion = expectFiniteNumber(versions.outgoing_edges, "LinkNoteOut.version_by_lane.outgoing_edges");
+  const edgeVersion = expectFiniteNumber(versions.links, "LinkNoteOut.version_by_lane.links");
   if (!Number.isInteger(bodyVersion) || bodyVersion < 1 || !Number.isInteger(edgeVersion) || edgeVersion < 0) {
     throw new TypeError("LinkNoteOut.version_by_lane is invalid");
   }
@@ -148,7 +167,7 @@ export function decodeLinkNoteOut(raw: unknown): LinkNoteOut {
     note_block_id: expectString(value.note_block_id, "LinkNoteOut.note_block_id"),
     body_pm_json: noteBody.bodyPmJson,
     body_text: noteBody.bodyText,
-    version_by_lane: { body: bodyVersion, outgoing_edges: edgeVersion },
+    version_by_lane: { body: bodyVersion, links: edgeVersion },
     connection: decodeConnectionOut(value.connection, "LinkNoteOut.connection"),
   };
 }

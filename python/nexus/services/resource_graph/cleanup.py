@@ -26,7 +26,8 @@ from nexus.db.models import (
 )
 from nexus.errors import ApiErrorCode, ConflictError
 from nexus.services.resource_graph.edges import Pair, link_note_blocks_for_pair
-from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
+from nexus.services.resource_items import versions
 
 
 def delete_edges_for_deleted_resource(db: Session, *, ref: ResourceRef) -> None:
@@ -43,6 +44,33 @@ def delete_edges_for_deleted_resources(db: Session, *, refs: Iterable[ResourceRe
     _delete_link_note_motifs_for_targets(db, target_pairs=pairs)
     source = tuple_(ResourceEdge.source_scheme, ResourceEdge.source_id).in_(pairs)
     target = tuple_(ResourceEdge.target_scheme, ResourceEdge.target_id).in_(pairs)
+
+    neutral = db.scalars(
+        select(ResourceEdge).where(
+            ResourceEdge.origin == "user",
+            ResourceEdge.kind == "context",
+            ResourceEdge.source_order_key.is_(None),
+            ResourceEdge.ordinal.is_(None),
+            ResourceEdge.snapshot.is_(None),
+            or_(source, target),
+        )
+    ).all()
+    affected = {
+        (edge.user_id, scheme, resource_id)
+        for edge in neutral
+        for scheme, resource_id in (
+            (edge.source_scheme, edge.source_id),
+            (edge.target_scheme, edge.target_id),
+        )
+        if (scheme, resource_id) not in pairs
+    }
+    for viewer_id, scheme, resource_id in affected:
+        versions.bump_version(
+            db,
+            viewer_id=viewer_id,
+            ref=assert_resource_ref(f"{scheme}:{resource_id}"),
+            lane="links",
+        )
 
     bare = select(ResourceEdge.id).where(ResourceEdge.ordinal.is_(None), or_(source, target))
     db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id.in_(bare)))
@@ -84,11 +112,6 @@ def detach_link_note_motif(
         edge_ids = [edge_id for edge_id, _, _ in rows]
         db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id.in_(edge_ids)))
         db.execute(delete(ResourceEdge).where(ResourceEdge.id.in_(edge_ids)))
-
-
-def clear_edge_view_state(db: Session, *, edge_id: UUID) -> None:
-    """Drop the view states referencing one edge, before the caller deletes it."""
-    db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id == edge_id))
 
 
 def delete_resource_protocol_state(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> None:
