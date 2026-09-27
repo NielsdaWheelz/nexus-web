@@ -57,6 +57,12 @@ persistence repairs. the isolated linux arm64 stack uses database
   and `/api/agent-api/openapi.json`; direct private api without a bearer returned
   401. the x86_64 worker image `sha256:c8383decb18e874701cc822eca703eab8f24abe4d2a83130b1f1ccfe37ad5f5b`
   passed its bubblewrap health probe as uid 10001. no x86_64 paid turn was run.
+- in the isolated arm64 host's actual bubblewrap command, public https and a
+  small pypi wheel download succeeded; scratch was writable and removed at
+  teardown. credential/control/source paths were absent, and direct database,
+  metadata and ipv6-mapped database connections failed. this was a sandbox
+  probe without a model turn, not full lifecycle qualification. receipt sha256
+  `f73992473d2e58648ad59d131045765006e3550cfe3ab0637fe38d17efa9c97a`.
 
 ## unqualified
 
