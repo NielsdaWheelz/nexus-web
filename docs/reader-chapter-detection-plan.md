@@ -156,8 +156,16 @@ labels, groups, targets and section changes. both use the ordinary builders;
 there is no separate repair algorithm or durable job framework.
 
 prepare outside the transaction from retained originals and stored fragments.
-prove source digest, package-href/anchor correspondence and exact canonical-text
-equality. no network refetch. apply consumes the EXACT inspected digest/generation
+prove source digest, ordered package-href identity and retained-html
+self-canonicalization before assigning any coordinate. resolve authored toc
+targets against retained anchors; an absent target is explicitly unresolved.
+the retained publication owns every target, locator, note group and
+source-issue coordinate. source bytes supply spine, hrefs, authored toc and note
+evidence; historical importer output can differ in text and anchor offsets, so
+equality with a current reparse would reject legitimate published coordinates.
+an old apparatus identity or coordinate that cannot be proved fails closed;
+never map by fuzzy text or source offset. no network refetch. apply consumes the
+EXACT inspected digest/generation
 (epub original digest; stored article bytes digest), rechecked under existing
 media→publication locks, then uses `replace_reader_publication` to install
 apparatus/group/navigation changes and advance generation atomically. a stale
@@ -168,6 +176,9 @@ with identical derived metadata is unchanged: apply does not bump or reindex.
 preserve fragment ids/order, sanitized html, canonical text, assets, source refs,
 existing apparatus identities/edges, highlights and saved cursors. source enrichment
 uses the shared apparatus owner; do not invoke destructive import replacement.
+the sole temporary exception removes a proved reciprocal-marker false body and
+edge with zero dependents; [its ticket](tickets/reader-epub-old-apparatus-body-unproved.md)
+requires removal of that exception after production correction.
 request existing web reindex with reason `reconciliation` in the same transaction.
 epub navigation alone does not require re-embedding unchanged paragraph text.
 

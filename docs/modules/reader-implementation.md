@@ -943,7 +943,7 @@ The title is bounded presentation metadata, not authorization or package
 identity; the verified package manifest replaces it after installation.
 
 `offline_reading_packages.py` creates deterministic package-schema and
-archive1/reader3 zips. unique fragment bodies and the full hosted navigation
+archive1/reader4 zips. unique fragment bodies and the full hosted navigation
 contract are serialized once; adapters never invent source metadata. native verifies the response digest, ZIP grammar, manifest and entry
 integrity, supported versions, media/account/generation binding, and baseline
 before publishing one package row and sealed directory.

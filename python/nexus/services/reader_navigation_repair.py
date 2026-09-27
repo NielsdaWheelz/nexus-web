@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Literal
 from uuid import UUID
 
+from lxml.html import HtmlElement, fragment_fromstring
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -32,6 +33,7 @@ from nexus.services.html_apparatus import (
     attach_fragment_locators,
     derive_fragment_note_groups,
     extract_html_apparatus,
+    prepare_apparatus_bodies,
 )
 from nexus.services.parser_temp import parser_attempt_directory, stream_storage_object_to_file
 from nexus.services.reader_apparatus import (
@@ -45,6 +47,7 @@ from nexus.services.reader_publication import (
     reconcile_navigation_source_issues,
     replace_reader_publication,
 )
+from nexus.services.sanitize_html import sanitize_html
 from nexus.services.web_article_structure import build_web_article_index_blocks
 from nexus.storage.client import StorageClient
 
@@ -70,8 +73,10 @@ class ReaderNavigationRepairInspection:
     source_issues_before: tuple[dict[str, object], ...]
     source_issues_after: tuple[dict[str, object], ...]
     item_keys_added: tuple[str, ...]
+    item_keys_removed: tuple[str, ...]
     item_keys_changed: tuple[str, ...]
     edge_keys_added: tuple[str, ...]
+    edge_keys_removed: tuple[str, ...]
     edge_keys_changed: tuple[str, ...]
 
 
@@ -91,6 +96,7 @@ class _Snapshot:
 class _Prepared:
     metadata: dict[str, Any]
     epub: EpubNavigationRepairPlan | None
+    corrected_legacy_marker: tuple[str, str] | None = None
 
 
 def inspect_reader_navigation_repair(
@@ -103,6 +109,11 @@ def inspect_reader_navigation_repair(
     snapshot = _read_snapshot(session_factory, media_id)
     prepared = _prepare(snapshot, storage_client)
     _check_snapshot_current(session_factory, snapshot)
+    if prepared.corrected_legacy_marker is not None:
+        with session_factory() as db:
+            _assert_legacy_marker_unreferenced(
+                db, snapshot.media_id, prepared.corrected_legacy_marker[0], lock=False
+            )
     return _inspection(snapshot, prepared)
 
 
@@ -141,6 +152,10 @@ def apply_reader_navigation_repair(
         _check_locked_source(db, snapshot)
         if _installed_metadata(db, media_id, snapshot.kind) != snapshot.installed:
             raise ValueError("Reader repair metadata changed after inspection")
+        if prepared.corrected_legacy_marker is not None:
+            _assert_legacy_marker_unreferenced(
+                db, media_id, prepared.corrected_legacy_marker[0], lock=True
+            )
         if not inspection.changed:
             return "unchanged"
 
@@ -271,14 +286,18 @@ def _prepare(snapshot: _Snapshot, storage_client: StorageClient) -> _Prepared:
             for item in snapshot.installed["items"]
             if str(item["stable_key"]) not in fresh_keys
         ]
-        if any(not _preservable_epub_note_body(snapshot, plan, item) for item in retained_items):
-            raise ValueError("Stored EPUB apparatus item cannot be preserved as a note body")
         fresh_edge_keys = {str(edge["stable_key"]) for edge in plan.apparatus_edges}
         retained_edges = [
             edge
             for edge in snapshot.installed["edges"]
             if str(edge["stable_key"]) not in fresh_edge_keys
         ]
+        correction = _reciprocal_marker_correction(snapshot, plan, retained_items, retained_edges)
+        if correction is not None:
+            retained_items = []
+            retained_edges = []
+        if any(not _preservable_epub_note_body(snapshot, plan, item) for item in retained_items):
+            raise ValueError("Stored EPUB apparatus item cannot be preserved as a note body")
         plan = replace(
             plan,
             apparatus_items=(*plan.apparatus_items, *retained_items),
@@ -295,7 +314,7 @@ def _prepare(snapshot: _Snapshot, storage_client: StorageClient) -> _Prepared:
                 ],
             )
         )
-        return _Prepared(metadata, plan)
+        return _Prepared(metadata, plan, correction)
 
     from nexus.schemas.reader_apparatus import NotesGroup
 
@@ -310,6 +329,11 @@ def _prepare(snapshot: _Snapshot, storage_client: StorageClient) -> _Prepared:
         )
         if generate_canonical_text(marked) != fragment.canonical_text:
             raise ValueError("Stored article HTML disagrees with canonical text")
+        prepare_apparatus_bodies(
+            extracted_items,
+            sanitize=lambda body: sanitize_html(body, "", document_url=None),
+            media_kind="web_article",
+        )
         items.extend(
             attach_fragment_locators(
                 media_id=snapshot.media_id,
@@ -372,6 +396,227 @@ def _prepare(snapshot: _Snapshot, storage_client: StorageClient) -> _Prepared:
     return _Prepared(metadata, None)
 
 
+def _reciprocal_marker_correction(
+    snapshot: _Snapshot,
+    plan: EpubNavigationRepairPlan,
+    missing_items: list[dict[str, object]],
+    missing_edges: list[dict[str, object]],
+) -> tuple[str, str] | None:
+    """Recognize one historical marker mistaken for a note body."""
+    if len(missing_items) != 1 or len(missing_edges) != 1:
+        return None
+    old_body, old_edge = missing_items[0], missing_edges[0]
+    old_key, old_edge_key = str(old_body["stable_key"]), str(old_edge["stable_key"])
+    old_items = {str(item["stable_key"]): item for item in snapshot.installed["items"]}
+    fresh_items = {str(item["stable_key"]): item for item in plan.apparatus_items}
+    old_ref = old_items.get(str(old_edge["from_stable_key"]))
+    fresh_ref = fresh_items.get(str(old_edge["from_stable_key"]))
+    if (
+        old_body.get("kind") != "footnote"
+        or old_edge.get("to_stable_key") != old_key
+        or old_edge.get("relation") != "points_to_note"
+        or old_ref is None
+        or old_ref.get("kind") != "footnote_ref"
+        or fresh_ref is None
+        or any(fresh_ref.get(field) != value for field, value in old_ref.items())
+    ):
+        return None
+    old_ref_span = _exact_epub_span(snapshot, old_ref)
+    old_body_span = _exact_epub_span(snapshot, old_body)
+    if (
+        old_ref_span is None
+        or old_body_span is None
+        or old_ref_span[0] != old_body_span[0]
+        or old_ref_span[2] - old_ref_span[1] != 1
+        or old_body_span[2] - old_body_span[1] != 1
+    ):
+        return None
+    other_refs = [
+        item
+        for item in plan.apparatus_items
+        if item.get("kind") == "footnote_ref" and _exact_epub_span(snapshot, item) == old_body_span
+    ]
+    if len(other_refs) != 1:
+        return None
+    other_ref = other_refs[0]
+    source_a, source_b, old_source = (
+        old_ref.get("source_ref"),
+        other_ref.get("source_ref"),
+        old_body.get("source_ref"),
+    )
+    if (
+        not isinstance(source_a, dict)
+        or not isinstance(source_b, dict)
+        or not isinstance(old_source, dict)
+    ):
+        return None
+    old_body_locator = old_body.get("locator")
+    old_body_quote = (
+        old_body_locator.get("text_quote_selector") if isinstance(old_body_locator, dict) else None
+    )
+    if not isinstance(old_body_quote, dict) or old_body.get("body_text") != old_body_quote.get(
+        "exact"
+    ):
+        return None
+    marker_a, target_a = source_a.get("marker_id"), source_a.get("target_id")
+    marker_b, target_b = source_b.get("marker_id"), source_b.get("target_id")
+    if (
+        not all(
+            isinstance(value, str) and value for value in (marker_a, target_a, marker_b, target_b)
+        )
+        or marker_a == marker_b
+        or target_a != marker_b
+        or target_b != marker_a
+        or old_source.get("target_id") != target_a
+    ):
+        return None
+    fragment = next((part for part in snapshot.fragments if part.id == old_ref_span[0]), None)
+    if fragment is None:
+        return None
+    root = fragment_fromstring(fragment.html_sanitized, create_parent=True)
+    for marker_id, target_id in ((marker_a, target_a), (marker_b, target_b)):
+        anchors = root.xpath(".//a[@id=$value or @name=$value]", value=marker_id)
+        if len(anchors) != 1:
+            return None
+        anchor = anchors[0]
+        if (
+            not isinstance(anchor, HtmlElement)
+            or anchor.get("href") != f"#{target_id}"
+            or anchor.getparent() is None
+            or anchor.getparent().tag != "sup"
+            or any(anchor.get(name) for name in ("class", "role", "epub:type"))
+        ):
+            return None
+    bodies: list[tuple[UUID, int, int]] = []
+    for ref, target_id, marker_span in (
+        (old_ref, target_a, old_body_span),
+        (other_ref, target_b, old_ref_span),
+    ):
+        matching_edges = [
+            edge
+            for edge in plan.apparatus_edges
+            if edge.get("from_stable_key") == ref["stable_key"]
+            and edge.get("relation") == "points_to_note"
+        ]
+        if len(matching_edges) != 1:
+            return None
+        body = fresh_items.get(str(matching_edges[0]["to_stable_key"]))
+        if body is None or body.get("kind") != "footnote":
+            return None
+        body_source = body.get("source_ref")
+        body_span = _exact_epub_span(snapshot, body)
+        if (
+            not isinstance(body_source, dict)
+            or body_source.get("target_id") != target_id
+            or body_span is None
+            or body_span[0] != marker_span[0]
+            or not body_span[1] <= marker_span[1] < marker_span[2] <= body_span[2]
+            or body_span[2] - body_span[1] <= 1
+            or sum(char.isalnum() for char in fragment.canonical_text[body_span[1] : body_span[2]])
+            < 2
+        ):
+            return None
+        bodies.append(body_span)
+    if bodies[0][1] < bodies[1][2] and bodies[1][1] < bodies[0][2]:
+        return None
+    return old_key, old_edge_key
+
+
+def _exact_epub_span(snapshot: _Snapshot, item: dict[str, object]) -> tuple[UUID, int, int] | None:
+    if item.get("locator_status") != "exact":
+        return None
+    locator = item.get("locator")
+    if (
+        not isinstance(locator, dict)
+        or locator.get("type") != "epub_fragment_offsets"
+        or locator.get("media_id") != str(snapshot.media_id)
+        or locator.get("media_kind") not in (None, "epub")
+    ):
+        return None
+    fragment = next(
+        (part for part in snapshot.fragments if str(part.id) == locator.get("fragment_id")), None
+    )
+    start, end, quote = (
+        locator.get("start_offset"),
+        locator.get("end_offset"),
+        locator.get("text_quote_selector"),
+    )
+    if (
+        fragment is None
+        or type(start) is not int
+        or type(end) is not int
+        or not 0 <= start < end <= len(fragment.canonical_text)
+        or not isinstance(quote, dict)
+        or fragment.canonical_text[start:end] != quote.get("exact")
+    ):
+        return None
+    return fragment.id, start, end
+
+
+def _assert_legacy_marker_unreferenced(
+    db: Session, media_id: UUID, stable_key: str, *, lock: bool
+) -> None:
+    # These scheme/id references have no FK to the apparatus item. A SHARE lock
+    # excludes concurrent inserts until the exceptional deletion commits.
+    if lock:
+        db.execute(
+            text(
+                "LOCK TABLE chat_run_turn_contexts, message_retrievals, resource_edges,"
+                " resource_grants, resource_versions, resource_view_states"
+                " IN SHARE MODE NOWAIT"
+            )
+        )
+    row = db.execute(
+        text(
+            "SELECT id FROM reader_apparatus_items"
+            " WHERE media_id = :media_id AND stable_key = :stable_key"
+            + (" FOR UPDATE" if lock else "")
+        ),
+        {"media_id": media_id, "stable_key": stable_key},
+    ).one_or_none()
+    if row is None:
+        raise ValueError("Legacy marker correction is stale")
+    item_id = row.id
+    checks = (
+        (
+            "SELECT 1 FROM resource_edges WHERE"
+            " (source_scheme = 'reader_apparatus_item' AND source_id = :id) OR"
+            " (target_scheme = 'reader_apparatus_item' AND target_id = :id) LIMIT 1",
+            {"id": item_id},
+        ),
+        (
+            "SELECT 1 FROM message_retrievals WHERE"
+            " result_type = 'reader_apparatus_item' AND source_id = :id LIMIT 1",
+            {"id": str(item_id)},
+        ),
+        (
+            "SELECT 1 FROM resource_view_states WHERE"
+            " (surface_scheme = 'reader_apparatus_item' AND surface_id = :id) OR"
+            " (target_scheme = 'reader_apparatus_item' AND target_id = :id) LIMIT 1",
+            {"id": item_id},
+        ),
+        (
+            "SELECT 1 FROM resource_versions WHERE"
+            " resource_scheme = 'reader_apparatus_item' AND resource_id = :id LIMIT 1",
+            {"id": item_id},
+        ),
+        (
+            "SELECT 1 FROM resource_grants WHERE"
+            " subject_scheme = 'reader_apparatus_item' AND subject_id = :id LIMIT 1",
+            {"id": item_id},
+        ),
+        (
+            "SELECT 1 FROM chat_run_turn_contexts WHERE"
+            " (subject_scheme = 'reader_apparatus_item' AND subject_id = :id) OR"
+            " (requested_subject_scheme = 'reader_apparatus_item'"
+            " AND requested_subject_id = :id) LIMIT 1",
+            {"id": item_id},
+        ),
+    )
+    if any(db.scalar(text(query), params) is not None for query, params in checks):
+        raise ValueError("Legacy marker correction would remove a referenced apparatus item")
+
+
 def _preservable_epub_note_body(
     snapshot: _Snapshot, plan: EpubNavigationRepairPlan, item: dict[str, object]
 ) -> bool:
@@ -418,16 +663,32 @@ def _inspection(snapshot: _Snapshot, prepared: _Prepared) -> ReaderNavigationRep
     new_item_keys = {str(item["stable_key"]) for item in new["items"]}
     old_edge_keys = {str(edge["stable_key"]) for edge in old["edges"]}
     new_edge_keys = {str(edge["stable_key"]) for edge in new["edges"]}
-    if not old_item_keys <= new_item_keys or not old_edge_keys <= new_edge_keys:
+    removed_items = old_item_keys - new_item_keys
+    removed_edges = old_edge_keys - new_edge_keys
+    correction = prepared.corrected_legacy_marker
+    if (removed_items or removed_edges) and (
+        correction is None or removed_items != {correction[0]} or removed_edges != {correction[1]}
+    ):
         raise ValueError("Reader repair would remove existing apparatus identities or edges")
     new_items = {str(item["stable_key"]): item for item in new["items"]}
     old_items = {str(item["stable_key"]): item for item in old["items"]}
     for item in old["items"]:
-        if item["kind"] != new_items[str(item["stable_key"])]["kind"]:
+        if str(item["stable_key"]) in removed_items:
+            continue
+        proposed = new_items[str(item["stable_key"])]
+        if item["kind"] != proposed["kind"]:
             raise ValueError("Reader repair would change an existing apparatus item's kind")
+        if item["locator_status"] == "exact" and (
+            proposed["locator_status"] != "exact"
+            or item["locator"] != proposed["locator"]
+            or item["body_text"] != proposed["body_text"]
+        ):
+            raise ValueError("Reader repair would change an existing anchored apparatus item")
     new_edges = {str(edge["stable_key"]): edge for edge in new["edges"]}
     old_edges = {str(edge["stable_key"]): edge for edge in old["edges"]}
     for edge in old["edges"]:
+        if str(edge["stable_key"]) in removed_edges:
+            continue
         proposed = new_edges[str(edge["stable_key"])]
         if any(
             edge[field] != proposed[field]
@@ -477,10 +738,12 @@ def _inspection(snapshot: _Snapshot, prepared: _Prepared) -> ReaderNavigationRep
         source_issues_before=tuple(old["source_issues"]),
         source_issues_after=tuple(new["source_issues"]),
         item_keys_added=tuple(sorted(new_item_keys - old_item_keys)),
+        item_keys_removed=tuple(sorted(removed_items)),
         item_keys_changed=tuple(
             sorted(key for key in old_item_keys & new_item_keys if old_items[key] != new_items[key])
         ),
         edge_keys_added=tuple(sorted(new_edge_keys - old_edge_keys)),
+        edge_keys_removed=tuple(sorted(removed_edges)),
         edge_keys_changed=tuple(
             sorted(key for key in old_edge_keys & new_edge_keys if old_edges[key] != new_edges[key])
         ),
@@ -574,6 +837,7 @@ def _apparatus_metadata(
         "kind",
         "label",
         "body_text",
+        "body_html_sanitized",
         "locator",
         "locator_status",
         "confidence",
@@ -721,7 +985,7 @@ def _installed_metadata(
             dict(row)
             for row in db.execute(
                 text(
-                    "SELECT stable_key, kind, label, body_text, locator, locator_status,"
+                    "SELECT stable_key, kind, label, body_text, body_html_sanitized, locator, locator_status,"
                     " confidence, extraction_method, source_ref, sort_key"
                     " FROM reader_apparatus_items WHERE state_id = :id ORDER BY stable_key"
                 ),

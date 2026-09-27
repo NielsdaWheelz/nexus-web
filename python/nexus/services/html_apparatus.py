@@ -885,7 +885,6 @@ def _materialize_external_targets_in_document(
             continue
         target_id = target_ref[len(prefix) :]
         target = targets.get(target_id)
-        body_text = str(external_target.get("body_text") or "")
         if target is None or target_id in target_item_key_by_id:
             continue
         if external_target.get("extraction_method") == "html_note_boundary":
@@ -893,18 +892,22 @@ def _materialize_external_targets_in_document(
             if recovered is None:
                 continue
             target = recovered
+        body = _note_body_element(target)
+        body_text = _element_text(body)
+        if not body_text:
+            continue
         target_key = str(external_target["stable_key"])
         kind = str(external_target["kind"])
         confidence = str(external_target["confidence"])
-        _stamp(_note_body_element(target), target_key, kind, confidence)
+        _stamp(body, target_key, kind, confidence)
         target_item_key_by_id[target_id] = target_key
         items.append(
             {
                 "stable_key": target_key,
                 "kind": kind,
-                "label": external_target.get("label"),
+                "label": _target_label(body_text),
                 "body_text": body_text,
-                "_body_html": external_target.get("_body_html"),
+                "_body_html": inner_html(body),
                 "confidence": confidence,
                 "extraction_method": str(external_target["extraction_method"]),
                 "source_ref": _object_dict(external_target.get("source_ref")),
