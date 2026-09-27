@@ -41,6 +41,20 @@ export function useChatDraft({
   }, [view.accountId]);
   const editableDraftKey =
     `${CHAT_DRAFT_STORAGE_PREFIX}${view.accountId}:${serializeChatDraftKey(draftKey)}`;
+  const pathTargetId = draftKey.kind === "Path" ? draftKey.targetId : null;
+  useEffect(() => {
+    if (
+      conversationId === null ||
+      pathTargetId === null ||
+      pathTargetId === conversationId
+    ) return;
+    chatDraftStoreFor(
+      `${CHAT_DRAFT_STORAGE_PREFIX}${view.accountId}:${serializeChatDraftKey({ kind: "Path", targetId: conversationId })}`,
+    ).settleProvisionalDraft(
+      chatDraftStoreFor(editableDraftKey),
+      view.accountId,
+    );
+  }, [conversationId, pathTargetId, editableDraftKey, view.accountId]);
   const { identity, accountId } = view;
   const getStorageKey = useCallback(
     () =>

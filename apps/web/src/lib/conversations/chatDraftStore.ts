@@ -274,6 +274,23 @@ export class ChatDraftStore {
         selection: decodeSelectionDraft(selection),
       });
   };
+  settleProvisionalDraft = (
+    path: ChatDraftStore,
+    accountId: AuthenticatedAccount["accountId"],
+  ): void => {
+    const source = this.getSnapshot();
+    if (source.operation.kind !== "Absent" || source.text === "") return;
+    const destination = path.getSnapshot();
+    if (destination.operation.kind === "Absent" && destination.text === "") {
+      path.write(source);
+    } else {
+      window.sessionStorage.setItem(
+        RECOVERED_DRAFTS_PREFIX + accountId,
+        JSON.stringify([...readRecoveredChatDrafts(accountId), source.text]),
+      );
+    }
+    this.write(EMPTY_DRAFT_RECORD);
+  };
   assertAccount = (accountId: AuthenticatedAccount["accountId"]): void => {
     const operation = this.getSnapshot().operation;
     if (

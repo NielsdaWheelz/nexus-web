@@ -330,6 +330,7 @@ export default function ChatComposer({
       operation.kind !== "Absent" ||
       selection.kind !== "Uninitialized"
     ) return;
+    if (store.getSnapshot().selection.kind !== "Uninitialized") return;
     setSelection({
       kind: "Selected",
       selection: inheritedRunSelection?.selection ?? catalog.chat_seed.selection,
@@ -342,6 +343,7 @@ export default function ChatComposer({
     selection,
     sendCapability.kind,
     setSelection,
+    store,
   ]);
 
   useEffect(() => {
