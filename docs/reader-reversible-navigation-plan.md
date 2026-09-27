@@ -276,7 +276,46 @@ activation pass; spoken announcement output was not recorded. final acceptance,
 temporary-probe deletion and source repair remain open until the stated gaps are
 closed. the separate worker-image local url-ingest defect has its own
 [ticket](tickets/local-worker-image-misses-local-node-ingest-path.md).
-nonsecret live receipts remain under `/tmp/nexus-reader-navigation-live/`,
-including `source-replacement-receipt.json` and
-`final-android-article-fix-receipt.md`; temporary probes and credentials remain
-because the blocked generic-find gate prevents the requested delete phase.
+the temporary live receipts, probes and credentials used for this execution
+were task-owned and removed during release cleanup. the significant outcomes
+and limits are retained here and in the linked tickets. the blocked generic-find
+case needs a fresh isolated environment when its codex host exists.
+
+## rebased integration, 2026-09-26
+
+product commit `215f6e6dc3429581d91f2cbf4f4c7adfeeb50ddf` rebases the change onto
+`3029201f9a89bdc06390e8d1986978c38f11aa4c`. `./scripts/test`, android
+kotlin compilation, and pr checks pass. the isolated database advanced normally
+from schema `0241` to `0243` after a verified task-owned backup. restarted api,
+web and worker used the rebased source. focused hosted journeys passed: article
+section return `932 → 1889 → 932` px, epub cross-fragment return to `695` px,
+and keyboard-activated native pdf link return `1 → 1602 → 1` px. the first
+android download retry failed because the task web restart omitted its public
+origin and rejected the token post before the api; setting
+`APP_PUBLIC_URL=http://localhost:3009` restored normal authenticated writes.
+this was test-stack configuration, not product behavior.
+
+the rebased debug apk sha256
+`d5f3d2403d9f4d483d7130cafb0bbcd63caa5cde7e441c9c849f837a11a80b0d`
+matched the installed bytes on task emulator-5560 before and after smoke. normal
+hosted downloads installed article, epub and pdf bundle v4. in airplane mode,
+the authored article's real `#call-one` pointer held the opening; its backlink
+returned within `0.381` px, and an explicit return also worked. epub's real
+cross-chapter backlink returned to the second chapter at `1406.857` px exactly;
+a native pdf annotation returned page 3 → 1 → 3 → 1, ending at scroll top `0`.
+no detour locator entered native pending progress. after reconnect, article
+opening offset `503` and epub second-chapter offset `2074` cleared from pending
+and matched authenticated hosted state at revisions `2` and `29`; pdf remained
+synced at revision `6`. the physical phone was untouched.
+
+the earlier apk and browser receipts above belong to the pre-rebase tree. they
+establish the red/green/refactor path, not proof for the integrated commit.
+generic conversation/artifact find remains `NOT_RUN` by owner direction; a
+separate codex host is required. changed-byte return and spoken talkback output
+remain unverified. the observed offline-to-hosted bootstrap failure remains
+[open](tickets/android-offline-to-hosted-deep-link-transient-boundary.md).
+the plan's literal complete-acceptance condition is therefore unmet at merge.
+the owner requested merge and cleanup with that gate recorded as blocked.
+deleting the temporary probes relinquishes immediate replay; the reader
+journeys were verified on the identified rebased browser and android builds
+before deletion.

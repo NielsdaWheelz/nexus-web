@@ -30,7 +30,7 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
-- [open] android / offline-hosted handoff · 2026-09-26 reader navigation acceptance · one first deep link showed an offline-reading load boundary before succeeding after home navigation; cause unproven: [ticket](tickets/android-offline-to-hosted-deep-link-transient-boundary.md).
+- [open] android / offline-hosted handoff · 2026-09-26 reader navigation acceptance · shelf-to-hosted bootstrap can fail in mobile viewport and leave a late bridge reply; cold restart recovers: [ticket](tickets/android-offline-to-hosted-deep-link-transient-boundary.md).
 - [open] reader / accessibility · 2026-09-26 reader navigation acceptance · talkback exposed the held-position live region, but its spoken words could not be independently observed: [ticket](tickets/reader-navigation-talkback-spoken-announcement-unverified.md).
 - [open] worker / local development · 2026-09-26 reader navigation acceptance · the local worker image resolves its url-ingest script outside the image: [ticket](tickets/local-worker-image-misses-local-node-ingest-path.md).
 - [blocked] conversation and artifact find / live acceptance · 2026-09-26 reader navigation acceptance · the isolated generation catalog needs an unavailable codex host, so no ordinary chat or dossier exists: [ticket](tickets/generic-pane-find-live-acceptance-blocked.md).
