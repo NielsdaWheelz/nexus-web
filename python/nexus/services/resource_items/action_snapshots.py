@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Literal, assert_never
+from typing import Literal, assert_never, cast
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -546,6 +546,7 @@ def _extend_media(
     media = facts.media.get(ref.id)
     if media is None:
         return
+    capabilities.append(_simple("MediaMetadata"))
     if media.canonical_source_url:
         capabilities.append(
             OpenSourceResourceActionCapabilityOut(
@@ -577,7 +578,7 @@ def _extend_media(
     if media.progress_resettable:
         capabilities.append(_simple("ResetProgress"))
 
-    if media.kind == "podcast_episode":
+    if media.summary.media_kind == "podcast_episode":
         capabilities.append(
             EpisodeConsumptionResourceActionCapabilityOut(
                 availability=_available(),
@@ -592,7 +593,7 @@ def _extend_media(
             )
         )
 
-    if media.kind in ("podcast_episode", "video"):
+    if media.summary.media_kind in ("podcast_episode", "video"):
         state = _TRANSCRIPT_ACTION_STATE.get(media.transcript_state)
         coverage = _TRANSCRIPT_ACTION_COVERAGE.get(media.transcript_coverage)
         if state is None or coverage is None:
@@ -625,16 +626,18 @@ def _extend_media(
     if media.offline_download_eligible:
         capabilities.append(_simple("OfflineAudio"))
     if (
-        media.kind in ("web_article", "epub", "pdf")
-        and media.processing_status == "ready_for_reading"
-        and 1 <= len(media.title) <= OFFLINE_READING_MAX_TITLE_CODEPOINTS
-        and not media.title.isspace()
+        media.summary.media_kind in ("web_article", "epub", "pdf")
+        and media.summary.processing_status == "ready_for_reading"
+        and 1 <= len(media.summary.title) <= OFFLINE_READING_MAX_TITLE_CODEPOINTS
+        and not media.summary.title.isspace()
     ):
         capabilities.append(
             OfflineReadingResourceActionCapabilityOut(
                 availability=_available(),
-                media_kind=media.kind,
-                requested_title=media.title,
+                media_kind=cast(
+                    Literal["web_article", "epub", "pdf"], media.summary.media_kind.value
+                ),
+                requested_title=media.summary.title,
             )
         )
 

@@ -23,7 +23,7 @@ from nexus.schemas.browse import (
     WebArticleCandidate,
     WebArticleFacts,
 )
-from nexus.schemas.contributors import ContributorCreditOut
+from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.presence import absent, present
 from nexus.services.browse.models import (
     BrowseProviderFailure,

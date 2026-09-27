@@ -20,8 +20,9 @@ from nexus.errors import (
     NotFoundError,
 )
 from nexus.logging import get_logger
-from nexus.schemas.media import MediaProcessingStatus, TranscriptRequestResponse
 from nexus.schemas.media import TranscriptRequestReason as TranscriptResponseReason
+from nexus.schemas.media import TranscriptRequestResponse
+from nexus.schemas.media_summary import MediaProcessingStatus
 from nexus.schemas.podcast import (
     PodcastEpisodeQueryTranscriptForecastOut,
     PodcastEpisodeQueryTranscriptRequestOut,

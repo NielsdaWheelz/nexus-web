@@ -1,32 +1,22 @@
 "use client";
 
-import { useRef, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import {
   FeedbackNotice,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
-import CollectionRow from "@/components/collections/CollectionRow";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
-import CollectionView, {
-  type CollectionViewRowRenderProps,
-} from "@/components/collections/CollectionView";
+import CollectionView from "@/components/collections/CollectionView";
 import type { ExhaustionState } from "@/lib/api/useExhaustivePagination";
-import {
-  presentEpisode,
-  type EpisodePresenterItem,
-} from "@/lib/collections/presenters/episode";
-import { absent } from "@/lib/api/presence";
-import { requireDocumentProcessingStatus } from "@/lib/media/documentReadiness";
-import type { LocalAvailability } from "@/lib/offlineMedia/contract";
+import { presentMedia } from "@/lib/collections/presenters/media";
 import type { EpisodeStateFilter } from "@/lib/podcasts/episodeView";
-import { useOfflineMediaItem } from "@/lib/offlineMedia/OfflineMediaProvider";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import EpisodeControls from "./EpisodeControls";
 import {
   EPISODE_WIDE_COMMAND_LABELS,
-  decodeEpisodeTimingFacts,
   shouldPollTranscriptProvisioningForEpisode,
   type PodcastEpisodeMedia,
 } from "./episodeTranscript";
@@ -38,33 +28,6 @@ type EpisodeTranscriptController = ReturnType<
 >;
 
 type StringIdSet = ReturnType<typeof useStringIdSet>;
-interface EpisodePresentation {
-  readonly item: EpisodePresenterItem;
-}
-
-function OfflineEpisodeCollectionRow({
-  presentation,
-  rowRenderProps,
-}: {
-  readonly presentation: EpisodePresentation;
-  readonly rowRenderProps: CollectionViewRowRenderProps;
-}) {
-  const { item } = presentation;
-  const offlineMedia = useOfflineMediaItem(item.id, item.title);
-  const offlineReady = offlineMedia.capability.kind === "Ready";
-  const localAvailability =
-    offlineReady &&
-    (item.offline_download_eligible ||
-      offlineMedia.availability.kind === "Present")
-      ? offlineMedia.availability
-      : absent<LocalAvailability>();
-  return (
-    <CollectionRow
-      {...rowRenderProps}
-      row={presentEpisode(item, { localAvailability })}
-    />
-  );
-}
 
 interface PodcastEpisodeListProps {
   episodes: PodcastEpisodeMedia[];
@@ -102,30 +65,12 @@ export default function PodcastEpisodeList({
   const localFilterActive = filterQuery.trim().length > 0;
   const commandLabels = EPISODE_WIDE_COMMAND_LABELS[episodeStateFilter];
   const localFilterDisabledReason = "Clear Filter to use episode-wide actions";
-  const rowPresentations: EpisodePresentation[] = episodes.map((episode) => ({
-    item: {
+  const rows = episodes.map((episode) =>
+    presentMedia(episode.mediaSummary, {
       id: episode.id,
-      title: episode.title,
-      kind: episode.kind,
-      processing_status: requireDocumentProcessingStatus(
-        episode.processing_status,
-      ),
-      episode_state: episode.episode_state,
-      canonical_source_url: episode.canonical_source_url,
-      offline_download_eligible: episode.offline_download_eligible,
-      contributors: episode.contributors,
-      capabilities: episode.capabilities,
-      publicationDate: episode.original_published_date,
-      activityFacts: decodeEpisodeTimingFacts(episode.listening_state),
-    },
-  }));
-  const presentationsByIdRef = useRef(new Map<string, EpisodePresentation>());
-  for (const presentation of rowPresentations) {
-    presentationsByIdRef.current.set(presentation.item.id, presentation);
-  }
-  const rows = rowPresentations.map((presentation) =>
-    presentEpisode(presentation.item, {
-      localAvailability: absent<LocalAvailability>(),
+      primary: { kind: "link", href: `/media/${episode.id}` },
+      actionSubject: { ref: canonicalResourceRef({ scheme: "media", id: episode.id }) },
+      selected: false,
     }),
   );
 
@@ -254,24 +199,6 @@ export default function PodcastEpisodeList({
       <CollectionView
         returnScope="PodcastDetail.Episodes"
         rows={rows}
-        renderRow={(rowRenderProps) => {
-          const presentation = presentationsByIdRef.current.get(
-            rowRenderProps.row.id,
-          );
-          if (presentation === undefined) {
-            // justify-defect: CollectionView renders exactly the row ids
-            // projected from this presentation map.
-            throw new Error(
-              `Missing podcast episode presentation: ${rowRenderProps.row.id}`,
-            );
-          }
-          return (
-            <OfflineEpisodeCollectionRow
-              presentation={presentation}
-              rowRenderProps={rowRenderProps}
-            />
-          );
-        }}
         status="ready"
         collectionBusy={collectionBusy}
         footer={<CollectionExhaustionNotice state={exhaustion} />}

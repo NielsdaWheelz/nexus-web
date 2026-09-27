@@ -29,10 +29,7 @@ import type {
   LecternItemId,
   LecternSnapshot,
 } from "@/lib/lectern/contract";
-import {
-  assumeMediaId,
-  lecternActivityFacts,
-} from "@/lib/lectern/contract";
+import { assumeMediaId } from "@/lib/lectern/contract";
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import {
   CANONICAL_LECTERN_VIEW,
@@ -64,9 +61,9 @@ const LECTERN_FILTER_UNIT = { singular: "item", plural: "items" };
 
 /** The presented row text the local Filter matches: title and podcast show. */
 function lecternFilterFields(item: LecternItem): string[] {
-  return item.subtitle.kind === "Present"
-    ? [item.title, item.subtitle.value]
-    : [item.title];
+  return item.playerDisplay.kind === "Present" && item.playerDisplay.value.subtitle.kind === "Present"
+    ? [item.mediaSummary.title, item.playerDisplay.value.subtitle.value]
+    : [item.mediaSummary.title];
 }
 
 function PlaybackButton({
@@ -454,9 +451,7 @@ export default function LecternPaneBody() {
     },
   });
 
-  const queueRows = visibleItems.map((item) =>
-    presentLecternItem(item, lecternActivityFacts(item)),
-  );
+  const queueRows = visibleItems.map(presentLecternItem);
   const queueControls = Object.fromEntries(
     visibleItems.flatMap((item) => {
       if (item.activation.kind !== "FooterAudio") return [];
@@ -465,7 +460,7 @@ export default function LecternPaneBody() {
           item.itemId,
           <PlaybackButton
             key="play"
-            title={item.title}
+            title={item.mediaSummary.title}
             consumption={item.consumption}
             onPlay={() => playAudio(descriptorFromLecternItem(item))}
           />,

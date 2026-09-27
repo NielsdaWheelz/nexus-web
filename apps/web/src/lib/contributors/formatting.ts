@@ -18,6 +18,13 @@ interface ContributorDisplayGroup {
   readonly credits: readonly ContributorDisplayCredit[];
 }
 
+/** Preserve the canonical credit order; other roles never stand in for authors. */
+export function selectMediaAuthors(
+  credits: readonly ContributorCredit[],
+): readonly ContributorCredit[] {
+  return credits.filter((credit) => credit.role === "author");
+}
+
 export function groupContributorCredits(
   credits: readonly ContributorCredit[] | null | undefined,
 ): readonly ContributorDisplayGroup[] {

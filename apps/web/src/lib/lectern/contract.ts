@@ -22,10 +22,6 @@ import {
   decodeCollectionRevision,
   type CollectionRevision,
 } from "@/lib/api/collectionPage";
-import type {
-  PositiveMinutes,
-  ProgressFraction,
-} from "@/lib/consumption/activityFacts";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import {
@@ -47,7 +43,7 @@ import {
   expectString,
   isCanonicalUuid,
 } from "@/lib/validation";
-import { MEDIA_KINDS, type MediaKind } from "@/lib/media/kind";
+import { decodeMediaSummary, type MediaSummary } from "@/lib/media/mediaSummary";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
 // --- Branded identities ------------------------------------------------------
@@ -147,63 +143,14 @@ export type Activation =
 
 export interface LecternItem {
   itemId: LecternItemId;
-  mediaId: MediaId;
-  kind: MediaKind;
-  title: string;
-  subtitle: Presence<string>;
+  mediaSummary: MediaSummary;
+  playerDisplay: Presence<{ title: string; subtitle: Presence<string> }>;
   href: AppHref;
   /** ISO 8601 aware instant this row joined the Lectern (the Added sort key). */
   addedAt: string;
   consumption: ConsumptionInfo;
   activation: Activation;
   actionSubject: ResourceActionSubject;
-}
-
-export interface LecternActivityFacts {
-  totalMinutes: Presence<PositiveMinutes>;
-  fraction: Presence<ProgressFraction>;
-  remainingMinutes: Presence<PositiveMinutes>;
-}
-
-export function lecternActivityFacts(item: LecternItem): LecternActivityFacts {
-  const fraction =
-    item.consumption.progress.kind === "Present"
-      ? {
-          kind: "Present" as const,
-          value: { value: item.consumption.progress.value },
-        }
-      : { kind: "Absent" as const };
-  if (
-    item.activation.kind !== "FooterAudio" ||
-    item.activation.durationMs.kind === "Absent"
-  ) {
-    return {
-      totalMinutes: { kind: "Absent" },
-      fraction,
-      remainingMinutes: { kind: "Absent" },
-    };
-  }
-  const durationMs = item.activation.durationMs.value;
-  if (durationMs <= 0 || item.activation.positionMs > durationMs) {
-    throw new TypeError(
-      "Lectern FooterAudio duration must be positive and at least positionMs",
-    );
-  }
-  const remainingMs = durationMs - item.activation.positionMs;
-  return {
-    totalMinutes: {
-      kind: "Present",
-      value: { value: Math.ceil(durationMs / 60_000) },
-    },
-    fraction,
-    remainingMinutes:
-      remainingMs > 0
-        ? {
-            kind: "Present",
-            value: { value: Math.ceil(remainingMs / 60_000) },
-          }
-        : { kind: "Absent" },
-  };
 }
 
 export interface LecternSnapshot {
@@ -577,10 +524,8 @@ export function decodeLecternItem(raw: unknown): LecternItem {
     raw,
     [
       "itemId",
-      "mediaId",
-      "kind",
-      "title",
-      "subtitle",
+      "mediaSummary",
+      "playerDisplay",
       "href",
       "addedAt",
       "consumption",
@@ -588,20 +533,31 @@ export function decodeLecternItem(raw: unknown): LecternItem {
     ],
     "LecternItemOut",
   );
-  const mediaId = decodeMediaId(rec.mediaId);
+  const mediaSummary = decodeMediaSummary(rec.mediaSummary);
   const href = decodeAppHref(rec.href);
+  const activation = decodeActivation(rec.activation);
+  const playerDisplay = decodePresence(rec.playerDisplay, (value) => {
+    const display = expectExactRecord(value, ["title", "subtitle"], "LecternItemOut.playerDisplay");
+    const title = expectString(display.title, "LecternItemOut.playerDisplay.title");
+    if (title.length > 300) throw new TypeError("LecternItemOut.playerDisplay.title exceeds 300 characters");
+    return {
+      title,
+      subtitle: decodePresence(display.subtitle, (v) => expectString(v, "LecternItemOut.playerDisplay.subtitle")),
+    };
+  });
+  if ((activation.kind === "FooterAudio") !== (playerDisplay.kind === "Present")) {
+    throw new TypeError("LecternItemOut.playerDisplay must match FooterAudio activation");
+  }
   return {
     itemId: decodeLecternItemId(rec.itemId),
-    mediaId,
-    kind: expectOneOf(rec.kind, MEDIA_KINDS, "LecternItemOut.kind"),
-    title: expectString(rec.title, "LecternItemOut.title"),
-    subtitle: decodePresence(rec.subtitle, (v) => expectString(v, "LecternItemOut.subtitle")),
+    mediaSummary,
+    playerDisplay,
     href,
     addedAt: expectIsoInstant(rec.addedAt, "LecternItemOut.addedAt"),
     consumption: decodeConsumption(rec.consumption),
-    activation: decodeActivation(rec.activation),
+    activation,
     actionSubject: {
-      ref: canonicalResourceRef({ scheme: "media", id: mediaId }),
+      ref: canonicalResourceRef({ scheme: "media", id: mediaSummary.mediaId }),
     },
   };
 }

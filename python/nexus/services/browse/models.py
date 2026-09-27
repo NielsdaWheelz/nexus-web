@@ -12,7 +12,8 @@ from urllib.parse import quote
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.schemas.contributors import ContributorCreditOut, ContributorRole
+from nexus.schemas.contributor_credit import ContributorCreditOut
+from nexus.services.contributor_taxonomy import ContributorRole
 from nexus.services.sealed_handles import (
     DiscoveryTargetHandle,
     seal_discovery_target,

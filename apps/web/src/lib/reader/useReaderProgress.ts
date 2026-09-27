@@ -284,7 +284,7 @@ export function useReaderProgress(
           }
           // A teardown flush still changes server facts after this reader's
           // generation ends. Publish before guarding local state installation.
-          publishConsumptionProjectionChange({ durationChanged: true });
+          publishConsumptionProjectionChange({ rowChanged: true });
           if (generationRef.current !== generation) {
             return;
           }

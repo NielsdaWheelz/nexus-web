@@ -9,7 +9,8 @@ from pydantic.alias_generators import to_camel
 
 from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.consumption import PlayerDescriptor
-from nexus.schemas.contributors import ContributorCreditOut
+from nexus.schemas.contributor_credit import ContributorCreditOut
+from nexus.schemas.media_summary import MediaDurationOut, MediaProcessingStatus
 from nexus.schemas.presence import Presence
 from nexus.schemas.publication_dates import PublicationDate
 from nexus.schemas.source_issues import SourceIssue
@@ -29,7 +30,6 @@ class _Strict(BaseModel):
 
 _CAMEL_CONFIG = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
 
-MediaProcessingStatus = Literal["pending", "extracting", "ready_for_reading", "failed", "suspended"]
 MediaSourceAttemptStatus = Literal["accepted", "queued", "running", "succeeded", "failed"]
 MediaReadState = Literal["unread", "in_progress", "finished"]
 MediaIntelligenceStatus = Literal[
@@ -256,6 +256,8 @@ class MediaOut(BaseModel):
     author_mode: Literal["automatic", "manual"] = "automatic"
     original_published_date: Presence[PublicationDate]
     edition_published_date: Presence[PublicationDate]
+    edition_isbn: Presence[str]
+    duration: Presence[MediaDurationOut]
     publisher: str | None = None
     language: str | None = None
     description: str | None = None

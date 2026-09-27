@@ -9,9 +9,9 @@ from pydantic.alias_generators import to_camel
 
 from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.consumption import PauseShorteningMode, PlaybackRate
-from nexus.schemas.contributors import ContributorCreditOut
+from nexus.schemas.contributor_credit import ContributorCreditOut
+from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.presence import Presence
-from nexus.schemas.publication_dates import PublicationDate
 from nexus.schemas.reading_time import ReadingTimeEstimateOut
 from nexus.services.podcasts.types import PodcastSyncStatus
 from nexus.services.sealed_handles import LibraryInvitationHandle, UserHandle
@@ -247,14 +247,9 @@ class LibraryEntryMediaCapabilitiesOut(_Snake):
 
 class LibraryEntryMediaOut(_Snake):
     id: UUID
-    kind: Literal["web_article", "epub", "pdf", "podcast_episode", "video"]
-    title: str
     created_at: datetime
-    contributors: list[ContributorCreditOut] = Field(default_factory=list)
     author_mode: Literal["automatic", "manual"]
-    original_published_date: Presence[PublicationDate]
     canonical_source_url: str | None
-    processing_status: Literal["pending", "extracting", "ready_for_reading", "failed", "suspended"]
     read_state: Literal["unread", "in_progress", "finished"]
     progress_fraction: float | None = Field(default=None, ge=0, le=1)
     progress_resettable: bool
@@ -269,10 +264,10 @@ class LibraryEntryPlacementOut(_Camel):
 
 class LibraryMediaListItemOut(_Camel):
     kind: Literal["media"]
+    media_summary: MediaSummaryOut
     placement: Presence[LibraryEntryPlacementOut]
     added_at: datetime
     media: LibraryEntryMediaOut
-    reading_time_estimate: Presence[ReadingTimeEstimateOut]
 
 
 class LibraryPodcastListItemOut(_Camel):

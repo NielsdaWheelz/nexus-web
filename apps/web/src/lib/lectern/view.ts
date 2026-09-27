@@ -178,8 +178,8 @@ export function orderLecternItems(
       const sign = signOf(view.direction);
       return [...items].sort(
         (a, b) =>
-          sign * compareText(titleKey(a.title), titleKey(b.title)) ||
-          sign * compareText(a.title, b.title) ||
+          sign * compareText(titleKey(a.mediaSummary.title), titleKey(b.mediaSummary.title)) ||
+          sign * compareText(a.mediaSummary.title, b.mediaSummary.title) ||
           compareText(a.itemId, b.itemId),
       );
     }

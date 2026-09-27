@@ -2,20 +2,12 @@
 
 import { decodePresence, type Presence } from "@/lib/api/presence";
 import {
-  decodePublicationDateOnly,
-  type PublicationDate,
-} from "@/lib/dates/publicationDate";
-import {
   assumeAppHref,
   decodeConsumption,
   type AppHref,
   type ConsumptionInfo,
 } from "@/lib/lectern/contract";
-import {
-  decodeReadingTimeEstimate,
-  type ReadingTimeEstimatePresence,
-} from "@/lib/media/readingTime";
-import { MEDIA_KINDS, type MediaKind } from "@/lib/media/kind";
+import { decodeMediaSummary, type MediaSummary } from "@/lib/media/mediaSummary";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
@@ -29,22 +21,17 @@ export type ResourceRefUri = string & {
 
 interface SlateTargetBase {
   ref: ResourceRefUri;
-  title: string;
-  subtitle: Presence<string>;
-  imageUrl: Presence<string>;
   href: AppHref;
   actionSubject: ResourceActionSubject;
 }
 
 export type SlateTarget =
-  | (SlateTargetBase & { kind: "Media"; mediaKind: MediaKind })
-  | (SlateTargetBase & { kind: "Podcast" });
+  | (SlateTargetBase & { kind: "Media"; mediaSummary: MediaSummary; imageUrl: Presence<string> })
+  | (SlateTargetBase & { kind: "Podcast"; title: string; subtitle: Presence<string>; imageUrl: Presence<string> });
 
 export interface SlateItem {
   target: SlateTarget;
-  publicationDate: Presence<PublicationDate>;
   consumption: Presence<ConsumptionInfo>;
-  readingTimeEstimate: ReadingTimeEstimatePresence;
 }
 
 export interface SlateSnapshot {
@@ -101,7 +88,7 @@ function decodeTarget(raw: unknown): SlateTarget {
   if (kind === "Media") {
     expectExactRecord(
       value,
-      ["kind", "ref", "mediaKind", "title", "subtitle", "imageUrl", "href"],
+      ["kind", "ref", "mediaSummary", "imageUrl", "href"],
       "SlateTargetOut.Media",
     );
     const ref = decodeResourceRefUri(
@@ -112,18 +99,14 @@ function decodeTarget(raw: unknown): SlateTarget {
     const href = assumeAppHref(
       asString(value.href, "SlateTargetOut.Media.href"),
     );
+    const mediaSummary = decodeMediaSummary(value.mediaSummary);
+    if (ref !== `media:${mediaSummary.mediaId}`) {
+      throw new TypeError("Slate media target identity mismatch");
+    }
     return {
       kind,
       ref,
-      mediaKind: asLiteral(
-        value.mediaKind,
-        MEDIA_KINDS,
-        "SlateTargetOut.Media.mediaKind",
-      ),
-      title: asString(value.title, "SlateTargetOut.Media.title"),
-      subtitle: decodePresence(value.subtitle, (subtitle) =>
-        asString(subtitle, "SlateTargetOut.Media.subtitle"),
-      ),
+      mediaSummary,
       imageUrl: decodePresence(value.imageUrl, (imageUrl) =>
         asString(imageUrl, "SlateTargetOut.Media.imageUrl"),
       ),
@@ -162,40 +145,19 @@ function decodeTarget(raw: unknown): SlateTarget {
 function decodeSlateItem(raw: unknown): SlateItem {
   const value = expectExactRecord(
     raw,
-    ["target", "publicationDate", "consumption", "readingTimeEstimate"],
+    ["target", "consumption"],
     "SlateItemOut",
   );
   const target = decodeTarget(value.target);
-  const publicationDate = decodePresence(value.publicationDate, (date) =>
-    decodePublicationDateOnly(date, "SlateItemOut.publicationDate"),
-  );
   const consumption = decodePresence(value.consumption, decodeConsumption);
-  const readingTimeEstimate = decodePresence(
-    value.readingTimeEstimate,
-    decodeReadingTimeEstimate,
-  );
   if (target.kind === "Podcast") {
-    if (
-      publicationDate.kind !== "Absent" ||
-      consumption.kind !== "Absent" ||
-      readingTimeEstimate.kind !== "Absent"
-    ) {
-      throw new Error("Invalid SlateItemOut.Podcast: document facts must be absent");
-    }
+    if (consumption.kind !== "Absent") throw new Error("Invalid SlateItemOut.Podcast: consumption must be absent");
   } else {
     if (consumption.kind !== "Present") {
       throw new Error("Invalid SlateItemOut.Media: consumption must be present");
     }
-    if (
-      readingTimeEstimate.kind === "Present" &&
-      target.mediaKind !== "web_article" &&
-      target.mediaKind !== "epub" &&
-      target.mediaKind !== "pdf"
-    ) {
-      throw new Error("Invalid SlateItemOut.Media: reading estimates require a document");
-    }
   }
-  return { target, publicationDate, consumption, readingTimeEstimate };
+  return { target, consumption };
 }
 
 export function decodeSlateSnapshot(raw: unknown): SlateSnapshot {
@@ -232,13 +194,13 @@ export function decodeQuickReadsEnvelope(raw: unknown): SlateSnapshot {
   for (const item of snapshot.items) {
     if (
       item.target.kind !== "Media" ||
-      (item.target.mediaKind !== "web_article" &&
-        item.target.mediaKind !== "epub" &&
-        item.target.mediaKind !== "pdf") ||
+      (item.target.mediaSummary.mediaKind !== "web_article" &&
+        item.target.mediaSummary.mediaKind !== "epub" &&
+        item.target.mediaSummary.mediaKind !== "pdf") ||
       item.consumption.kind !== "Present" ||
-      item.readingTimeEstimate.kind !== "Present" ||
-      item.readingTimeEstimate.value.remainingMinutes.kind !== "Present" ||
-      item.readingTimeEstimate.value.remainingMinutes.value.value <= 0
+      item.target.mediaSummary.duration.kind !== "Present" ||
+      item.target.mediaSummary.duration.value.estimate.remainingMinutes.kind !== "Present" ||
+      item.target.mediaSummary.duration.value.estimate.remainingMinutes.value.value <= 0
     ) {
       throw new Error(
         "Invalid quick read: requires a document with consumption and a positive remaining estimate",

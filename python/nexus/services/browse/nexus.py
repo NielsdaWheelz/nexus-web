@@ -2,31 +2,19 @@
 
 from __future__ import annotations
 
-from urllib.parse import urlsplit
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
-from nexus.schemas.browse import (
-    BrowseCandidate,
-    BrowseSource,
-    EpubCandidate,
-    EpubFacts,
-    InNexusResolution,
-    PdfCandidate,
-    PdfFacts,
-    VideoCandidate,
-    VideoFacts,
-    WebArticleCandidate,
-    WebArticleFacts,
-)
+from nexus.schemas.browse import BrowseCandidate, InNexusMediaResolution, OwnedMediaCandidate
+from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.presence import absent, present
 from nexus.services.browse.cursor import decode_search_cursor, encode_search_cursor
 from nexus.services.browse.models import BrowseKind, BrowseQuery
-from nexus.services.contributor_credits import load_contributor_credits_for_media
 from nexus.services.keyset_cursor import KeysetValueKind
+from nexus.services.media import list_collection_media_for_viewer_by_ids
 
 _PROVIDER_CONTRACT = "NexusVisibleMediaWebsearch"
 _MEDIA_KIND = {
@@ -65,14 +53,7 @@ def search(
                 title_hits AS (
                     SELECT
                         m.id,
-                        m.kind,
-                        m.title,
                         m.description,
-                        m.requested_url,
-                        m.canonical_source_url,
-                        m.provider,
-                        m.provider_id,
-                        m.page_count,
                         ts_rank_cd(
                             m.title_tsv,
                             websearch_to_tsquery('english', :query)
@@ -102,11 +83,16 @@ def search(
     )
     page_rows = rows[: query.limit]
     media_ids = [UUID(str(row["id"])) for row in page_rows]
-    credits = load_contributor_credits_for_media(db, media_ids)
-    items = [
+    summaries = {
+        item.id: item.summary
+        for item in list_collection_media_for_viewer_by_ids(
+            db, viewer_id=viewer_id, media_ids=media_ids
+        )
+    }
+    items: list[BrowseCandidate] = [
         _candidate(
             row,
-            contributors=credits.get(UUID(str(row["id"])), []),
+            summary=summaries[UUID(str(row["id"]))],
         )
         for row in page_rows
     ]
@@ -121,58 +107,14 @@ def search(
     return items, next_cursor
 
 
-def _candidate(row, *, contributors) -> BrowseCandidate:
+def _candidate(row, *, summary: MediaSummaryOut) -> OwnedMediaCandidate:
     media_id = UUID(str(row["id"]))
-    resolution = InNexusResolution(
-        href=f"/media/{media_id}",
-        action_subject_ref=f"media:{media_id}",
+    return OwnedMediaCandidate(
+        resolution=InNexusMediaResolution(
+            href=f"/media/{media_id}",
+            action_subject_ref=f"media:{media_id}",
+            media_summary=summary,
+        ),
+        description=absent() if row["description"] is None else present(str(row["description"])),
+        image=absent(),
     )
-    description = absent() if row["description"] is None else present(str(row["description"]))
-    common = {
-        "source": BrowseSource.Nexus,
-        "resolution": resolution,
-        "title": str(row["title"]),
-        "contributors": contributors,
-        "description": description,
-        "published_at": absent(),
-        "image": absent(),
-    }
-    kind = str(row["kind"])
-    if kind == "pdf":
-        page_count = row["page_count"]
-        return PdfCandidate(
-            **common,
-            kind_facts=PdfFacts(
-                page_count=absent() if page_count is None else present(int(page_count))
-            ),
-        )
-    if kind == "epub":
-        return EpubCandidate(
-            **common,
-            kind_facts=EpubFacts(ebook_ref=absent()),
-        )
-    if kind == "web_article":
-        source_url = row["canonical_source_url"] or row["requested_url"]
-        site_name = None
-        if source_url:
-            site_name = urlsplit(str(source_url)).hostname
-        return WebArticleCandidate(
-            **common,
-            kind_facts=WebArticleFacts(
-                site_name=absent() if site_name is None else present(site_name)
-            ),
-        )
-    if kind == "video":
-        video_ref = (
-            str(row["provider_id"])
-            if row["provider"] == "youtube" and row["provider_id"] is not None
-            else None
-        )
-        return VideoCandidate(
-            **common,
-            kind_facts=VideoFacts(
-                video_ref=absent() if video_ref is None else present(video_ref),
-                channel_title=absent(),
-            ),
-        )
-    raise RuntimeError(f"Unexpected Nexus Browse media kind: {kind}")

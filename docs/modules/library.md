@@ -237,8 +237,9 @@ episodes immediately resurface with their consumption state intact.
 
 ## reading-time projection and ordering
 
-`services/reading_time.py` owns the shared duration projection for library rows
-and resonance slates. it composes the stored-count relation from
+`services/reading_time.py` owns document estimates within the shared media
+summary used by library rows, lectern, author works, search, browse, episode
+lists, and resonance slates. it composes the stored-count relation from
 `media_document_metrics.py`, document quote-readiness from `capabilities.py`, and
 viewer-scoped current-position facts from `consumption/reader_cursor.py`.
 requests aggregate stored integers, never document text. estimates cover
@@ -251,11 +252,12 @@ unknown remaining time. consumption state and its high-water progress do not
 alter this calculation. moving backward increases remaining time; marking
 unread preserves the cursor.
 
-`schemas/reading_time.py` and `lib/media/readingTime.ts` own the shared estimate
-contract. every library entry carries `readingTimeEstimate: Presence`: a present
-estimate has positive total minutes and a presence-wrapped nonnegative remainder.
-display uses half-up 1/5/15-minute rounding, retaining exact zero. nested `media`
-continues to own consumption state and progress.
+`schemas/reading_time.py` and `lib/media/readingTime.ts` own the estimate
+contract. each stored-media entry requires `mediaSummary`, whose `duration`
+contains modality and a presence-wrapped estimate. present estimates have
+positive total minutes and a presence-wrapped nonnegative remainder. document
+display uses half-up 1/5/15-minute rounding, retaining exact zero. nested
+`media` continues to own operational consumption state and progress.
 
 `sort=remaining&direction=asc|desc` orders the full entry query by missing value
 last, raw remaining seconds in the requested direction, title, then existing
@@ -264,9 +266,10 @@ filtered, and never changes authored positions. cursor keys use finite
 `FloatOrNull` values and retain exact view/plan binding. cursor and content
 changes invalidate continuation through the existing collection revision.
 
-reading rows show known remaining minutes without a percentage; unknown time
-retains available progress. unread rows preserve remaining time and label a
-sole total estimate as total. audio formatting is unchanged.
+rows show original publication, author credits, and known remaining or total
+minutes. absent facts disappear; finished/unread never manufactures zero.
+publisher, edition date, and source appear only in metadata. `presentMedia`
+owns this identity across stored-media collection occurrences.
 
 ## Presentation: Default is presented as All
 
@@ -316,14 +319,13 @@ items / show finished.
   after each acknowledged write.
 - A mounted All pane reacts to every placement revision; a named/system pane
   reacts when its id is affected or the scope is `Unknown`. the existing
-  consumption store also owns `durationRevision`, advanced only by acknowledged
-  reader cursor saves and progress resets. an acknowledged teardown save still
-  publishes after its reader unmounts. every active view reconciles that
-  revision; restored views compare their captured revision on return. other
-  consumption advances reconcile only In progress, Unfinished, and Remaining
-  time views. ordinary views therefore retain loaded pagination during audio
-  heartbeats. reconciliation still replaces the first page when a relevant
-  revision changes; there is no second store or client-side duration calculation.
+  consumption store also owns `rowRevision`, advanced by accepted commands,
+  durable reader-cursor saves, and reading-activity installs. an acknowledged
+  teardown save still publishes after its reader unmounts. every active view
+  reconciles that revision; restored views compare it on return. audio
+  heartbeats advance only the broad consumption revision, so ordinary views
+  retain loaded pagination while In progress, Unfinished, and Remaining time
+  views reconcile. there is no second store or client-side duration calculation.
 - While requested and committed views differ, prior rows and row navigation
   remain available; continuation, reorder, and entry mutations do not. Reorder
   exists only for a complete, editable, non-default

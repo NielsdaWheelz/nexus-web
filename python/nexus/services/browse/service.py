@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import assert_never
+from typing import Literal, assert_never
 from uuid import UUID
 
 from llm_tools import WebSearchProvider
@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
+from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.browse import (
     BrowseCandidate,
@@ -20,7 +21,8 @@ from nexus.schemas.browse import (
     EpisodePreviewFacts,
     EpubPreview,
     EpubPreviewFacts,
-    InNexusResolution,
+    InNexusMediaResolution,
+    InNexusPodcastResolution,
     PodcastPreview,
     PodcastPreviewEpisodePage,
     PodcastPreviewFacts,
@@ -48,6 +50,7 @@ from nexus.services.browse.models import (
     single_credit,
     unseal_target,
 )
+from nexus.services.media import list_collection_media_for_viewer_by_ids
 from nexus.services.podcasts.episode_identity import (
     select_visible_episode_media_id_by_podcast_index_ref,
 )
@@ -64,6 +67,7 @@ async def search_browse(
 ) -> BrowsePage:
     match query.source:
         case BrowseSource.Nexus:
+            get_repeatable_read_db(db)
             items, next_cursor = await run_in_threadpool(
                 nexus.search,
                 db,
@@ -71,6 +75,7 @@ async def search_browse(
                 query=query,
             )
         case BrowseSource.ProjectGutenberg:
+            get_repeatable_read_db(db)
             items, next_cursor = await run_in_threadpool(
                 gutenberg.search,
                 db,
@@ -94,6 +99,10 @@ async def search_browse(
                 viewer_id=viewer_id,
                 query=query,
             )
+    if query.source not in (BrowseSource.Nexus, BrowseSource.ProjectGutenberg):
+        if db.in_transaction():
+            db.rollback()
+        get_repeatable_read_db(db)
     items = await run_in_threadpool(
         _resolve_owned,
         db,
@@ -124,16 +133,14 @@ def preview_browse(
         )
     match target:
         case ProjectGutenbergEpubTarget():
-            resolution = _preview_resolution(
-                db,
-                viewer_id=viewer_id,
-                handle=query.target,
-                target=target,
-            )
+            get_repeatable_read_db(db)
             book = gutenberg.preview(
                 db,
                 viewer_id=viewer_id,
                 ebook_ref=target.ebook_ref,
+            )
+            resolution = _preview_resolution(
+                db, viewer_id=viewer_id, handle=query.target, target=target
             )
             return EpubPreview(
                 target=query.target,
@@ -151,6 +158,7 @@ def preview_browse(
             )
         case BraveWebArticleTarget():
             article = brave.preview(target.canonical_url)
+            get_repeatable_read_db(db)
             resolution = _preview_resolution(
                 db,
                 viewer_id=viewer_id,
@@ -177,13 +185,14 @@ def preview_browse(
                 ),
             )
         case YouTubeVideoTarget():
+            video = youtube.preview(target.video_ref)
+            get_repeatable_read_db(db)
             resolution = _preview_resolution(
                 db,
                 viewer_id=viewer_id,
                 handle=query.target,
                 target=target,
             )
-            video = youtube.preview(target.video_ref)
             return VideoPreview(
                 target=query.target,
                 title=video.title,
@@ -202,12 +211,6 @@ def preview_browse(
                 ),
             )
         case PodcastIndexPodcastTarget():
-            resolution = _preview_resolution(
-                db,
-                viewer_id=viewer_id,
-                handle=query.target,
-                target=target,
-            )
             podcast = podcast_index.resolve_podcast(target.podcast_ref)
             episode_items, next_cursor = podcast_index.episode_page(
                 viewer_id=viewer_id,
@@ -215,6 +218,10 @@ def preview_browse(
                 podcast=podcast,
                 limit=query.limit,
                 cursor=query.cursor,
+            )
+            get_repeatable_read_db(db)
+            resolution = _preview_resolution(
+                db, viewer_id=viewer_id, handle=query.target, target=target
             )
             return PodcastPreview(
                 target=query.target,
@@ -240,15 +247,13 @@ def preview_browse(
                 ),
             )
         case PodcastIndexEpisodeTarget():
-            resolution = _preview_resolution(
-                db,
-                viewer_id=viewer_id,
-                handle=query.target,
-                target=target,
-            )
             episode = podcast_index.resolve_episode(
                 podcast_ref=target.podcast_ref,
                 episode_ref=target.episode_ref,
+            )
+            get_repeatable_read_db(db)
+            resolution = _preview_resolution(
+                db, viewer_id=viewer_id, handle=query.target, target=target
             )
             return EpisodePreview(
                 target=query.target,
@@ -292,16 +297,44 @@ def _resolve_owned(
     viewer_id: UUID,
     candidates: list[BrowseCandidate],
 ) -> list[BrowseCandidate]:
-    resolved: list[BrowseCandidate] = []
+    pending: list[tuple[BrowseCandidate, tuple[Literal["media", "podcast"], UUID] | None]] = []
     for candidate in candidates:
-        if not isinstance(candidate.resolution, PreviewResolution):
+        owned = (
+            _owned_resolution(
+                db, viewer_id=viewer_id, target=unseal_target(candidate.resolution.target)
+            )
+            if isinstance(candidate.resolution, PreviewResolution)
+            else None
+        )
+        pending.append((candidate, owned))
+    summaries = {
+        media.id: media.summary
+        for media in list_collection_media_for_viewer_by_ids(
+            db,
+            viewer_id=viewer_id,
+            media_ids=[
+                owned[1] for _, owned in pending if owned is not None and owned[0] == "media"
+            ],
+        )
+    }
+    resolved: list[BrowseCandidate] = []
+    for candidate, owned in pending:
+        if owned is None:
             resolved.append(candidate)
             continue
-        target = unseal_target(candidate.resolution.target)
-        resolution = _owned_resolution(db, viewer_id=viewer_id, target=target)
-        if resolution is None:
-            resolved.append(candidate)
-            continue
+        scheme, resource_id = owned
+        resolution = (
+            InNexusMediaResolution(
+                href=f"/media/{resource_id}",
+                action_subject_ref=f"media:{resource_id}",
+                media_summary=summaries[resource_id],
+            )
+            if scheme == "media"
+            else InNexusPodcastResolution(
+                href=f"/podcasts/{resource_id}",
+                action_subject_ref=f"podcast:{resource_id}",
+            )
+        )
         resolved.append(candidate.model_copy(update={"resolution": resolution}))
     return resolved
 
@@ -313,7 +346,7 @@ def _preview_resolution(
     handle: DiscoveryTargetHandle,
     target: DiscoveryTarget,
     equivalent_urls: tuple[str, ...] = (),
-) -> InNexusResolution | PreviewResolution:
+) -> InNexusMediaResolution | InNexusPodcastResolution | PreviewResolution:
     resolution = _owned_resolution(
         db,
         viewer_id=viewer_id,
@@ -322,7 +355,19 @@ def _preview_resolution(
     )
     if resolution is None:
         return PreviewResolution(target=handle)
-    return resolution
+    scheme, resource_id = resolution
+    if scheme == "podcast":
+        return InNexusPodcastResolution(
+            href=f"/podcasts/{resource_id}", action_subject_ref=f"podcast:{resource_id}"
+        )
+    summaries = list_collection_media_for_viewer_by_ids(
+        db, viewer_id=viewer_id, media_ids=[resource_id]
+    )
+    return InNexusMediaResolution(
+        href=f"/media/{resource_id}",
+        action_subject_ref=f"media:{resource_id}",
+        media_summary=summaries[0].summary,
+    )
 
 
 def _owned_resolution(
@@ -331,7 +376,7 @@ def _owned_resolution(
     viewer_id: UUID,
     target: DiscoveryTarget,
     equivalent_urls: tuple[str, ...] = (),
-) -> InNexusResolution | None:
+) -> tuple[Literal["media", "podcast"], UUID] | None:
     match target:
         case ProjectGutenbergEpubTarget():
             ebook_ref = target.ebook_ref
@@ -345,14 +390,7 @@ def _owned_resolution(
                 media_kind="epub",
                 urls=urls,
             )
-            return (
-                None
-                if media_id is None
-                else InNexusResolution(
-                    href=f"/media/{media_id}",
-                    action_subject_ref=f"media:{media_id}",
-                )
-            )
+            return None if media_id is None else ("media", UUID(str(media_id)))
         case BraveWebArticleTarget():
             media_id = _visible_media_by_urls(
                 db,
@@ -360,14 +398,7 @@ def _owned_resolution(
                 media_kind="web_article",
                 urls=(target.canonical_url, *equivalent_urls),
             )
-            return (
-                None
-                if media_id is None
-                else InNexusResolution(
-                    href=f"/media/{media_id}",
-                    action_subject_ref=f"media:{media_id}",
-                )
-            )
+            return None if media_id is None else ("media", UUID(str(media_id)))
         case YouTubeVideoTarget():
             media_id = db.scalar(
                 text(
@@ -383,14 +414,7 @@ def _owned_resolution(
                 ),
                 {"viewer_id": viewer_id, "video_ref": target.video_ref},
             )
-            return (
-                None
-                if media_id is None
-                else InNexusResolution(
-                    href=f"/media/{media_id}",
-                    action_subject_ref=f"media:{media_id}",
-                )
-            )
+            return None if media_id is None else ("media", UUID(str(media_id)))
         case PodcastIndexPodcastTarget():
             podcast_id = db.scalar(
                 text(
@@ -406,14 +430,7 @@ def _owned_resolution(
                 ),
                 {"viewer_id": viewer_id, "podcast_ref": target.podcast_ref},
             )
-            return (
-                None
-                if podcast_id is None
-                else InNexusResolution(
-                    href=f"/podcasts/{podcast_id}",
-                    action_subject_ref=f"podcast:{podcast_id}",
-                )
-            )
+            return None if podcast_id is None else ("podcast", UUID(str(podcast_id)))
         case PodcastIndexEpisodeTarget():
             media_id = select_visible_episode_media_id_by_podcast_index_ref(
                 db,
@@ -421,14 +438,7 @@ def _owned_resolution(
                 podcast_ref=target.podcast_ref,
                 episode_ref=target.episode_ref,
             )
-            return (
-                None
-                if media_id is None
-                else InNexusResolution(
-                    href=f"/media/{media_id}",
-                    action_subject_ref=f"media:{media_id}",
-                )
-            )
+            return None if media_id is None else ("media", UUID(str(media_id)))
         case _:
             assert_never(target)
 

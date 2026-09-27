@@ -66,6 +66,7 @@ from nexus.schemas.consumption_activity import (
     ExcludeActivityIn,
     RestoreActivityExclusionIn,
 )
+from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.presence import Absent, Present, absent, nullable_from_presence, present
 from nexus.schemas.reader import CursorWrite, ReaderCursorSnapshot
 from nexus.services.collection_revisions import (
@@ -171,9 +172,23 @@ def _lock_viewer(db: Session, viewer_id: UUID) -> None:
 
 def get_lectern(db: Session, viewer_id: UUID) -> LecternSnapshot:
     """Canonical Lectern snapshot for a viewer (visible rows only)."""
+    rows = _lectern_store.load_rows(db, viewer_id=viewer_id)
     return projection.build_snapshot(
-        db, viewer_id=viewer_id, rows=_lectern_store.load_rows(db, viewer_id=viewer_id)
+        db, viewer_id=viewer_id, rows=rows, summaries=_media_summaries(db, viewer_id, rows)
     )
+
+
+def _media_summaries(
+    db: Session, viewer_id: UUID, rows: list[LecternRow]
+) -> dict[UUID, MediaSummaryOut]:
+    from nexus.services.media import list_collection_media_for_viewer_by_ids
+
+    return {
+        media.id: media.summary
+        for media in list_collection_media_for_viewer_by_ids(
+            db, viewer_id=viewer_id, media_ids=[row.media_id for row in rows if row.visible]
+        )
+    }
 
 
 def lectern_has_capacity(db: Session, *, viewer_id: UUID) -> bool:
@@ -553,6 +568,7 @@ def _build_result(
     completion_handle: str | None,
 ) -> ConsumptionResult:
     rows = _lectern_store.load_rows(db, viewer_id=viewer_id)
+    summaries = _media_summaries(db, viewer_id, rows)
     resolved_next_id: UUID | None = None
     next_item: Absent | Present[LecternItemOut] = absent()
     if next_item_id is not None and isinstance(
@@ -563,7 +579,9 @@ def _build_result(
             command.next_capability
         ):
             resolved_next_id = next_item_id
-            next_item = present(projection.build_item(db, viewer_id=viewer_id, row=candidate))
+            next_item = present(
+                projection.build_item(db, viewer_id=viewer_id, row=candidate, summaries=summaries)
+            )
 
     progress_state: Absent | Present[MediaProgressState] = absent()
     if progress_media_id is not None:
@@ -596,7 +614,7 @@ def _build_result(
             if outcome["kind"] == "Removed"
             else ConsumptionStateOutcome(kind=cast(ConsumptionOutcomeKind, outcome["kind"]))
         ),
-        lectern=projection.build_snapshot(db, viewer_id=viewer_id, rows=rows),
+        lectern=projection.build_snapshot(db, viewer_id=viewer_id, rows=rows, summaries=summaries),
         next_item=next_item,
         progress_state=progress_state,
         completion_handle=present(completion_handle) if completion_handle else absent(),

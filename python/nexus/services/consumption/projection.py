@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from math import ceil
 from typing import cast
 from uuid import UUID
 
@@ -21,7 +22,6 @@ from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.models import MediaKind
 from nexus.schemas.consumption import (
     ChapterOut,
-    ConsumptionMediaKind,
     ConsumptionOut,
     ConsumptionStateValue,
     FooterAudioActivation,
@@ -32,12 +32,15 @@ from nexus.schemas.consumption import (
     OpenPaneActivation,
     PlaybackRateResolution,
     PlayerDescriptor,
+    PlayerDisplay,
     PodcastPlaybackPreference,
     ReadableActivation,
 )
 from nexus.schemas.consumption_activity import ActivityModality
 from nexus.schemas.media import MediaReadState, PlaybackSourceOut
+from nexus.schemas.media_summary import MediaDurationOut, MediaSummaryOut
 from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable, present
+from nexus.schemas.reading_time import ReadingTimeEstimateOut
 from nexus.services.consumption import _listening_store, state
 from nexus.services.consumption._lectern_store import LecternRow
 from nexus.services.consumption._listening_store import ListeningRow
@@ -71,15 +74,45 @@ def completion_modality_for_kind(kind: str) -> ActivityModality:
     return _COMPLETION_MODALITY[kind]
 
 
-def build_snapshot(db: Session, *, viewer_id: UUID, rows: list[LecternRow]) -> LecternSnapshot:
-    """Project the viewer's visible rows into the canonical snapshot."""
-    return LecternSnapshot(
-        items=_project(db, viewer_id=viewer_id, rows=[r for r in rows if r.visible])
+def listening_duration(
+    *, position_ms: int, listening_duration_ms: int | None, feed_duration_seconds: int | None
+) -> Absent | Present[MediaDurationOut]:
+    """Display media time at 1×, with the listening record before feed duration."""
+    duration_ms = (
+        listening_duration_ms
+        if listening_duration_ms is not None
+        else feed_duration_seconds * 1000
+        if feed_duration_seconds is not None
+        else None
+    )
+    if duration_ms is None or duration_ms <= 0:
+        return absent()
+    return present(
+        MediaDurationOut(
+            modality="Listen",
+            estimate=ReadingTimeEstimateOut(
+                total_minutes=ceil(duration_ms / 60_000),
+                remaining_minutes=present(ceil(max(0, duration_ms - position_ms) / 60_000)),
+            ),
+        )
     )
 
 
-def build_item(db: Session, *, viewer_id: UUID, row: LecternRow) -> LecternItemOut:
-    return _project(db, viewer_id=viewer_id, rows=[row])[0]
+def build_snapshot(
+    db: Session, *, viewer_id: UUID, rows: list[LecternRow], summaries: dict[UUID, MediaSummaryOut]
+) -> LecternSnapshot:
+    """Project the viewer's visible rows into the canonical snapshot."""
+    return LecternSnapshot(
+        items=_project(
+            db, viewer_id=viewer_id, rows=[r for r in rows if r.visible], summaries=summaries
+        )
+    )
+
+
+def build_item(
+    db: Session, *, viewer_id: UUID, row: LecternRow, summaries: dict[UUID, MediaSummaryOut]
+) -> LecternItemOut:
+    return _project(db, viewer_id=viewer_id, rows=[row], summaries=summaries)[0]
 
 
 def activation_kind(row: LecternRow) -> str:
@@ -103,7 +136,9 @@ def _stream_source(row: LecternRow) -> PlaybackSourceOut | None:
     return source if source is not None and source.stream_url else None
 
 
-def _project(db: Session, *, viewer_id: UUID, rows: list[LecternRow]) -> list[LecternItemOut]:
+def _project(
+    db: Session, *, viewer_id: UUID, rows: list[LecternRow], summaries: dict[UUID, MediaSummaryOut]
+) -> list[LecternItemOut]:
     if not rows:
         return []
     media_ids = [row.media_id for row in rows]
@@ -149,10 +184,7 @@ def _project(db: Session, *, viewer_id: UUID, rows: list[LecternRow]) -> list[Le
         items.append(
             LecternItemOut(
                 item_id=row.item_id,
-                media_id=row.media_id,
-                kind=cast(ConsumptionMediaKind, row.kind),
-                title=row.title[:_MAX_TITLE_CHARS],
-                subtitle=present(row.podcast_title) if row.podcast_title is not None else absent(),
+                media_summary=summaries[row.media_id],
                 href=f"/media/{row.media_id}",
                 added_at=row.added_at,
                 consumption=ConsumptionOut(
@@ -168,6 +200,20 @@ def _project(db: Session, *, viewer_id: UUID, rows: list[LecternRow]) -> list[Le
                     ),
                 ),
                 activation=activation,
+                player_display=(
+                    present(
+                        PlayerDisplay(
+                            title=row.title[:_MAX_TITLE_CHARS],
+                            subtitle=(
+                                present(row.podcast_title[:_MAX_TITLE_CHARS])
+                                if row.podcast_title is not None
+                                else absent()
+                            ),
+                        )
+                    )
+                    if isinstance(activation, FooterAudioActivation)
+                    else absent()
+                ),
             )
         )
     return items
@@ -301,7 +347,9 @@ def player_descriptors(
         result[media_id] = PlayerDescriptor(
             media_id=media_id,
             title=str(row["title"])[:_MAX_TITLE_CHARS],
-            subtitle=present(str(subtitle)) if subtitle is not None else absent(),
+            subtitle=present(str(subtitle)[:_MAX_TITLE_CHARS])
+            if subtitle is not None
+            else absent(),
             activation=_footer_audio(
                 source=source,
                 listening=listening.get(media_id),

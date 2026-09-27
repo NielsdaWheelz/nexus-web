@@ -307,15 +307,13 @@ def _list_item(
     listening = episode.listening_state
     return PodcastEpisodeListItemOut(
         id=episode.id,
-        kind="podcast_episode",
-        title=episode.title,
+        mediaSummary=episode.summary,
         canonical_source_url=(
             present(episode.canonical_source_url)
             if episode.canonical_source_url is not None
             else absent()
         ),
         offline_download_eligible=episode.offline_download_eligible,
-        processing_status=episode.processing_status,
         transcript_state=episode.transcript_state or "not_requested",
         transcript_coverage=episode.transcript_coverage or "none",
         listening_state=(
@@ -341,14 +339,7 @@ def _list_item(
             can_edit_authors=episode.capabilities.can_edit_authors,
             can_delete=episode.capabilities.can_delete,
         ),
-        contributors=episode.contributors,
         author_mode=episode.author_mode,
-        original_published_date=episode.original_published_date,
-        duration_seconds=(
-            present(int(row["duration_seconds"]))
-            if row["duration_seconds"] is not None
-            else absent()
-        ),
         has_show_notes=bool(row["has_show_notes"]),
         playerDescriptor=(
             present(PodcastEpisodeListPlayerDescriptorOut(media_id=episode.id))

@@ -210,9 +210,6 @@ def _hydrate_slate_items(
         db, viewer_id=viewer_id, media_ids=media_ids
     )
     consumption = projection.media_read_states(db, viewer_id=viewer_id, media_ids=media_ids)
-    estimates = reading_time.load_reading_time_estimates(
-        db, viewer_id=viewer_id, media_ids=media_ids
-    )
     podcast_targets = hydrate_compact_podcast_targets(
         db,
         viewer_id=viewer_id,
@@ -229,18 +226,14 @@ def _hydrate_slate_items(
         if ref.scheme == "media":
             media = media_targets[ref.id]
             consumed = consumption[ref.id]
-            estimate = estimates.get(ref.id)
             items.append(
                 SlateItemOut(
                     target=MediaSlateTargetOut(
                         ref=ref.uri,
-                        media_kind=media.media_kind,
-                        title=media.title,
-                        subtitle=media.subtitle,
+                        media_summary=media.summary,
                         image_url=media.image_url,
                         href=media.href,
                     ),
-                    publication_date=media.publication_date,
                     consumption=present(
                         ConsumptionOut(
                             state=state_values[consumed.state],
@@ -252,7 +245,6 @@ def _hydrate_slate_items(
                             progress_resettable=consumed.progress_resettable,
                         )
                     ),
-                    reading_time_estimate=present(estimate) if estimate is not None else absent(),
                 )
             )
         else:
@@ -266,9 +258,7 @@ def _hydrate_slate_items(
                         image_url=podcast.image_url,
                         href=podcast.href,
                     ),
-                    publication_date=absent(),
                     consumption=absent(),
-                    reading_time_estimate=absent(),
                 )
             )
     return items

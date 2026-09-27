@@ -17,6 +17,8 @@ interface ResourceRowProps {
   readonly title: ReactNode;
   readonly supporting?: ReactNode;
   readonly status?: ReactNode;
+  readonly separateStatus?: boolean;
+  readonly evidence?: ReactNode;
   readonly primaryControl?: ReactNode;
   readonly actions?: ReactNode;
   readonly expanded?: ReactNode;
@@ -34,6 +36,8 @@ export default function ResourceRow({
   title,
   supporting,
   status,
+  separateStatus = true,
+  evidence,
   primaryControl,
   actions,
   expanded,
@@ -59,10 +63,11 @@ export default function ResourceRow({
           </span>
         </ResourceActivation>
       </div>
-      {supporting || status ? (
+      {supporting || evidence || status ? (
         <div className={styles.secondary}>
           {supporting ? <div className={styles.supporting}>{supporting}</div> : null}
-          {supporting && status ? (
+          {evidence ? <div className={styles.evidence}>{evidence}</div> : null}
+          {supporting && status && separateStatus ? (
             <>
               <span className={styles.stateSeparator} aria-hidden="true">
                 ·

@@ -8,7 +8,7 @@ depends on it and never the other way round.
 
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
-from typing import Any, Literal, cast
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import text
@@ -49,7 +49,7 @@ from nexus.services.contributor_credits import (
 from nexus.services.keyset_cursor import KeysetValueKind
 from nexus.services.library_entries import library_media_ids_cte_sql
 from nexus.services.podcasts.playback_preferences import pause_shortening_mode_from_nullable
-from nexus.services.reading_time import load_reading_time_estimates, reading_time_rows_sql
+from nexus.services.reading_time import reading_time_rows_sql
 
 type EntrySort = Literal["canonical", "title", "creator", "published", "added", "remaining"]
 type EntryProjection = Literal["all-items", "unfiled", "in-progress"]
@@ -284,7 +284,6 @@ def _hydrate_entry_rows(
             media_ids=[m.id for m in media_by_id.values() if m.listening_state is None],
         )
     )
-    reading_time = load_reading_time_estimates(db, viewer_id=viewer_id, media_ids=media_ids)
     podcast_rows = _podcast_rows(db, viewer_id=viewer_id, podcast_ids=podcast_ids)
     contributors = load_contributor_credits_for_podcasts(db, podcast_ids)
 
@@ -298,21 +297,14 @@ def _hydrate_entry_rows(
             hydrated.append(
                 LibraryMediaListItemOut(
                     kind="media",
+                    media_summary=media.summary,
                     placement=_placement(row),
                     added_at=row["added_at"],
                     media=LibraryEntryMediaOut(
                         id=media.id,
-                        kind=cast(
-                            "Literal['web_article', 'epub', 'pdf', 'podcast_episode', 'video']",
-                            media.kind,
-                        ),
-                        title=media.title,
                         created_at=media.created_at,
-                        contributors=media.contributors,
                         author_mode=media.author_mode,
-                        original_published_date=media.original_published_date,
                         canonical_source_url=media.canonical_source_url,
-                        processing_status=media.processing_status,
                         read_state=media.read_state,
                         progress_fraction=media.progress_fraction,
                         progress_resettable=media.progress_resettable,
@@ -325,9 +317,6 @@ def _hydrate_entry_rows(
                             can_edit_authors=media.capabilities.can_edit_authors,
                             can_delete=media.capabilities.can_delete,
                         ),
-                    ),
-                    reading_time_estimate=(
-                        present(reading_time[media_id]) if media_id in reading_time else absent()
                     ),
                 )
             )

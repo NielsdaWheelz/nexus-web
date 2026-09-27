@@ -16,7 +16,7 @@ from nexus.schemas.browse import (
     EpubFacts,
     PreviewResolution,
 )
-from nexus.schemas.contributors import ContributorCreditOut
+from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.presence import absent, present
 from nexus.services.browse.cursor import decode_search_cursor, encode_search_cursor
 from nexus.services.browse.models import (

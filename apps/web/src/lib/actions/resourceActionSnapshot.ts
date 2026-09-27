@@ -50,6 +50,7 @@ export type ResourceActionCapability =
         | "RefreshSource"
         | "RetryMetadata"
         | "EditAuthors"
+        | "MediaMetadata"
         | "ResetProgress"
         | "LibrarySettings"
         | "DeleteLibrary"
@@ -271,6 +272,7 @@ function decodeResourceActionCapability(
     case "RefreshSource":
     case "RetryMetadata":
     case "EditAuthors":
+    case "MediaMetadata":
     case "ResetProgress":
     case "LibrarySettings":
     case "DeleteLibrary":

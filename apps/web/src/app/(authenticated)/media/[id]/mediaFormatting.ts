@@ -1,4 +1,4 @@
-import { groupContributorCredits } from "@/lib/contributors/formatting";
+import { groupContributorCredits, selectMediaAuthors } from "@/lib/contributors/formatting";
 import { tryParseContributorHandle } from "@/lib/contributors/handle";
 import { contributorAuthorHref } from "@/lib/contributors/routes";
 import type { ContributorCredit, MediaAuthorCredit } from "@/lib/contributors/types";
@@ -32,16 +32,11 @@ export function mapMediaAuthorCredits(
 export function buildMediaResourceHeader(media: {
   readonly contributors: readonly ContributorCredit[];
 }): PaneResourceHeaderPublication {
+  const authors = groupContributorCredits(selectMediaAuthors(media.contributors)).find(
+    (group) => group.role === "author",
+  );
   return {
     status: "Ready",
-    creditGroups: groupContributorCredits(media.contributors).map((group) =>
-      group.role === "author"
-        ? { kind: "Authors", credits: group.credits }
-        : {
-            kind: "Role",
-            label: group.label,
-            credits: group.credits,
-          },
-    ),
+    creditGroups: authors ? [{ kind: "Authors", credits: authors.credits }] : [],
   };
 }

@@ -13,7 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_content_credit_rows_sql, visible_media_ids_cte_sql
-from nexus.schemas.contributors import ContributorCreditOut
+from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.services.contributor_taxonomy import ContributorRole
 
 
