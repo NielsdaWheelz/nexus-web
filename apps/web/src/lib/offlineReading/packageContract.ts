@@ -297,7 +297,7 @@ export function decodeOfflineReaderDocument(raw: string): OfflineReaderDocument 
     "readerContractVersion", "mediaId", "mediaKind", "title",
     ...(kind === "Pdf" ? ["documentPath"] : ["navigation", "fragments"]),
   ], "reader document");
-  if (value.readerContractVersion !== 3) throw new TypeError("Unsupported reader contract");
+  if (value.readerContractVersion !== 4) throw new TypeError("Unsupported reader contract");
   const mediaId = canonicalUuid(value.mediaId, "mediaId");
   const title = string(value.title, "title");
   if (kind === "Pdf") {

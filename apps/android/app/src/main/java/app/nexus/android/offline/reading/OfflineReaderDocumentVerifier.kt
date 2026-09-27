@@ -156,6 +156,7 @@ internal object OfflineReaderDocumentVerifier {
         }
         val parents = mutableMapOf<String, String?>()
         val starts = mutableMapOf<String, Long>()
+        val startPoints = mutableMapOf<String, Pair<String, Long>>()
         val ends = mutableMapOf<String, Long>()
         fields.getValue("sections").requireArray().forEach { section ->
             val item = section.requireObject(setOf("section_id", "label", "parent_section_id", "target", "anchor_id", "extent", "source"))
@@ -168,6 +169,8 @@ internal object OfflineReaderDocumentVerifier {
             val targetFields = item.getValue("target").requireObject(setOf("fragment_id", "offset"))
             val target = point(item.getValue("target"))
             starts[identifier] = target
+            startPoints[identifier] = targetFields.getValue("fragment_id").requireString() to
+                targetFields.getValue("offset").requireLong()
             presence(item.getValue("extent"))?.let { extent ->
                 val range = extent.requireObject(setOf("start", "end"))
                 val startFields = range.getValue("start").requireObject(setOf("fragment_id", "offset"))
@@ -196,13 +199,20 @@ internal object OfflineReaderDocumentVerifier {
         val nodeIds = mutableSetOf<String>()
         val unresolvedNodes = mutableSetOf<String>()
         fun node(value: StrictJson) {
-            val item = value.requireObject(setOf("id", "label", "section_id", "children"))
+            val item = value.requireObject(setOf("id", "label", "target", "section_id", "children"))
             val id = item.getValue("id").requireString()
             require(nodeIds.add(id))
             item.getValue("label").requireString()
-            val section = presence(item.getValue("section_id"))
-            if (section == null) unresolvedNodes.add(id)
-            else require(section.requireString() in parents)
+            val target = presence(item.getValue("target"))?.let { value ->
+                point(value)
+                val fields = value.requireObject(setOf("fragment_id", "offset"))
+                fields.getValue("fragment_id").requireString() to
+                    fields.getValue("offset").requireLong()
+            }
+            if (target == null) unresolvedNodes.add(id)
+            presence(item.getValue("section_id"))?.let {
+                require(target != null && startPoints[it.requireString()] == target)
+            }
             item.getValue("children").requireArray().forEach(::node)
         }
         fields.getValue("toc_nodes").requireArray().forEach(::node)

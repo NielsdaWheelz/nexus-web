@@ -55,6 +55,7 @@ export interface ReaderPositionedSection {
 
 export interface ReaderDocumentStructure extends ReaderTextDocumentIndex {
   readonly sections: readonly ReaderPositionedSection[];
+  readonly steps: readonly ReaderPositionedSection[];
   readonly coverage: readonly {
     start: number;
     end: number;
@@ -119,6 +120,15 @@ export function buildReaderDocumentStructure(
     }
     return { section, start, extent, depth };
   });
+  const steps: ReaderPositionedSection[] = [];
+  for (const section of sections) {
+    const previous = steps.at(-1);
+    if (previous?.start === section.start) {
+      if (section.depth > previous.depth) steps[steps.length - 1] = section;
+    } else {
+      steps.push(section);
+    }
+  }
   const orderedBoundaries = [...boundaries].sort((left, right) => left - right);
   const coverage: ReaderDocumentStructure["coverage"][number][] = [];
   for (let index = 0; index + 1 < orderedBoundaries.length; index += 1) {
@@ -144,7 +154,30 @@ export function buildReaderDocumentStructure(
     }
     coverage.push({ start, end, sectionId: current ? present(current.section.section_id) : absent() });
   }
-  return { ...index, sections, coverage };
+  return { ...index, sections, steps, coverage };
+}
+
+export function readerStepAtPosition(
+  structure: ReaderDocumentStructure,
+  position: number,
+): Presence<ReaderPositionedSection> {
+  let current: ReaderPositionedSection | undefined;
+  for (const candidate of structure.steps) {
+    if (candidate.extent.kind === "Absent") continue;
+    const { start, end } = candidate.extent.value;
+    if (position < start || (position >= end && !(position === structure.length && position === end))) continue;
+    const candidateLength = end - start;
+    const currentLength = current?.extent.kind === "Present"
+      ? current.extent.value.end - current.extent.value.start
+      : Infinity;
+    if (!current || candidate.depth > current.depth ||
+        (candidate.depth === current.depth &&
+          (candidateLength < currentLength ||
+            (candidateLength === currentLength && candidate.section.section_id < current.section.section_id)))) {
+      current = candidate;
+    }
+  }
+  return current ? present(current) : absent();
 }
 
 export function readerSectionAtPosition(

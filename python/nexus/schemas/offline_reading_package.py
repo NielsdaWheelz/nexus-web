@@ -1,4 +1,4 @@
-"""Archive grammar V1 carrying the strict V3 reader document contract."""
+"""Archive grammar V1 carrying the strict V4 reader document contract."""
 
 from __future__ import annotations
 
@@ -24,8 +24,8 @@ from nexus.schemas.media import EpubFragmentOut, MediaNavigationOut, NavigationT
 from nexus.schemas.source_issues import MissingImage, UnresolvedNavigationTarget
 
 OFFLINE_READING_PACKAGE_SCHEMA_VERSION = 1
-OFFLINE_READING_READER_CONTRACT_VERSION = 3
-OFFLINE_READING_READER_BUNDLE_VERSION = 3
+OFFLINE_READING_READER_CONTRACT_VERSION = 4
+OFFLINE_READING_READER_BUNDLE_VERSION = 4
 
 # V1's single bounds owner. Other language implementations mirror these values.
 OFFLINE_READING_MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
@@ -241,8 +241,8 @@ class OfflineReadingEntry(OfflineReadingSchemaModel):
 
 class OfflineReadingManifest(OfflineReadingSchemaModel):
     package_schema_version: Literal[1]
-    reader_contract_version: Literal[3]
-    minimum_reader_bundle_version: Literal[3]
+    reader_contract_version: Literal[4]
+    minimum_reader_bundle_version: Literal[4]
     media_id: UUID
     media_kind: Literal["Pdf", "Epub", "WebArticle"]
     title: str = Field(min_length=1, max_length=OFFLINE_READING_MAX_TITLE_CODEPOINTS)
@@ -285,7 +285,7 @@ class OfflineReadingManifest(OfflineReadingSchemaModel):
 
 
 class OfflineReaderDocumentBase(OfflineReadingSchemaModel):
-    reader_contract_version: Literal[3]
+    reader_contract_version: Literal[4]
     media_id: UUID
     title: str = Field(min_length=1, max_length=OFFLINE_READING_MAX_TITLE_CODEPOINTS)
 
@@ -491,8 +491,16 @@ def _validate_navigation_fragments(
         if node.id in toc_ids:
             raise ValueError("navigation outline node identities must be unique")
         toc_ids.add(node.id)
-        if node.section_id.kind == "Present" and node.section_id.value not in sections:
-            raise ValueError("navigation outline must reference declared sections")
+        if node.target.kind == "Present":
+            point(node.target.value)
+        if node.section_id.kind == "Present":
+            section = sections.get(node.section_id.value)
+            if (
+                section is None
+                or node.target.kind != "Present"
+                or node.target.value != section.target
+            ):
+                raise ValueError("navigation outline section must share its exact target")
         pending.extend(node.children)
     for location in [*navigation.landmarks, *navigation.page_list]:
         if location.target.kind == "Present":
@@ -502,7 +510,7 @@ def _validate_navigation_fragments(
     pending = list(navigation.toc_nodes)
     while pending:
         node = pending.pop()
-        if node.section_id.kind == "Absent":
+        if node.target.kind == "Absent":
             unresolved_nodes.add(node.id)
         pending.extend(node.children)
     for location in [*navigation.landmarks, *navigation.page_list]:

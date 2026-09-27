@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, cast
@@ -99,7 +99,14 @@ class ReplaceSourceIssues:
     issues: tuple[SourceIssue, ...]
 
 
-type SourceIssueIntent = PreserveSourceIssues | ReplaceSourceIssues
+@dataclass(frozen=True)
+class ReconcileNavigationSourceIssues:
+    """Refresh navigation diagnostics while retaining an EPUB's published content."""
+
+
+type SourceIssueIntent = (
+    PreserveSourceIssues | ReplaceSourceIssues | ReconcileNavigationSourceIssues
+)
 
 
 @dataclass(frozen=True)
@@ -135,6 +142,25 @@ def read_publication_source_issues(
     if payload is None:
         raise ConflictError(ApiErrorCode.E_READER_CONTENT_CHANGED, "Reader publication changed")
     return SOURCE_ISSUES.validate_python(payload)
+
+
+def reconcile_navigation_source_issues(
+    existing: Sequence[SourceIssue],
+    navigation_issues: Sequence[UnresolvedNavigationTarget],
+) -> tuple[SourceIssue, ...]:
+    """Preserve image facts and unchanged ordering while replacing navigation facts."""
+    remaining = {issue.node_id: issue for issue in navigation_issues}
+    if len(remaining) != len(navigation_issues):
+        raise ValueError("navigation source issues repeat a node identity")
+    reconciled: list[SourceIssue] = []
+    for issue in existing:
+        if isinstance(issue, MissingImage):
+            reconciled.append(issue)
+        elif remaining.get(issue.node_id) == issue:
+            reconciled.append(issue)
+            del remaining[issue.node_id]
+    reconciled.extend(remaining[node_id] for node_id in sorted(remaining))
+    return tuple(reconciled)
 
 
 def read_ready_publication_generation(db: Session, *, media_id: UUID) -> int | None:
@@ -217,10 +243,17 @@ def replace_reader_publication[T](
     if (
         expected_kind == "epub"
         and publication is not None
-        and isinstance(issues, ReplaceSourceIssues)
+        and (isinstance(issues, ReplaceSourceIssues) or source_file is not None)
     ):
         raise ConflictError(
             ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Published EPUB content cannot be replaced."
+        )
+    if isinstance(issues, ReconcileNavigationSourceIssues) and (
+        expected_kind != "epub" or publication is None or source_file is not None
+    ):
+        raise ConflictError(
+            ApiErrorCode.E_REPAIR_NOT_ALLOWED,
+            "Navigation diagnostics require an existing EPUB without source replacement.",
         )
     if source_file is not None:
         media_file = db.get(MediaFile, media_id)
@@ -233,13 +266,32 @@ def replace_reader_publication[T](
         media_file.source_sha256 = source_file.source_sha256
     result = replace_projection(media)
     db.flush()
-    if isinstance(issues, ReplaceSourceIssues):
-        if len(issues.issues) > MAX_SOURCE_ISSUES:
+    replacement_issues: tuple[SourceIssue, ...] | None = None
+    if isinstance(issues, ReconcileNavigationSourceIssues):
+        assert publication is not None
+        navigation_issues = tuple(
+            UnresolvedNavigationTarget(node_id=row.node_id, href=row.href)
+            for row in db.execute(
+                text(
+                    "SELECT node_id, href FROM epub_toc_nodes WHERE media_id = :media_id"
+                    " AND resolution = 'Unresolved' AND href IS NOT NULL ORDER BY node_id"
+                ),
+                {"media_id": media_id},
+            )
+            if not (urlsplit(row.href).scheme or urlsplit(row.href).netloc)
+        )
+        replacement_issues = reconcile_navigation_source_issues(
+            SOURCE_ISSUES.validate_python(publication.source_issues), navigation_issues
+        )
+    elif isinstance(issues, ReplaceSourceIssues):
+        replacement_issues = issues.issues
+    if replacement_issues is not None:
+        if len(replacement_issues) > MAX_SOURCE_ISSUES:
             raise ApiError(
                 ApiErrorCode.E_RESOURCE_LIMIT, "Source diagnostics exceed the output limit"
             )
-        _validate_source_issues(db, media_id=media_id, issues=issues.issues)
-        payload = source_issues_payload(issues.issues)
+        _validate_source_issues(db, media_id=media_id, issues=replacement_issues)
+        payload = source_issues_payload(replacement_issues)
     else:
         payload = None
     if publication is None:

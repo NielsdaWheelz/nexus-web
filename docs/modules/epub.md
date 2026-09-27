@@ -64,9 +64,30 @@ the shared reader apparatus model with `epub_fragment_offsets` locators. Counts,
 fixture hashes, and per-source support status are owned by the reader apparatus
 manifest, not this module doc.
 
+## contents and sections
+
+the declared epub 3 toc or epub 2 ncx supplies publisher labels and destinations;
+other navigation lists stay separate. source headings can supply missing reading
+boundaries. one reconciled boundary may have several published toc labels, while a
+note or commentary target remains available in the full contents without becoming
+a routine section. source-only commentary headings receive independent contents
+targets beneath their evidenced notes collection. exact-heading destination repair
+requires a unique heading, an incompatible source target, and consistent neighboring
+publisher entries; ambiguous links retain their source
+destination. `epub_toc_nodes` stores the source href, effective target, resolution,
+and optional same-point section link. the compact reader controls use sections;
+the full contents uses all reachable toc targets.
+
+`reader_navigation_repair.py` inspects retained originals and existing fragments,
+then installs only corresponding navigation and apparatus metadata under a
+generation fence. it preserves fragment bytes, ids, assets, and reading offsets.
+stored source digest, package hrefs, canonical text, and source-anchor positions
+must agree before a repair can write.
+
 ## Bounded Parse
 
-`epub_ingest.py` parses each entry once. `container.xml`, the OPF, the NCX, the
+`epub_ingest.py` reads each archive entry once; staged XHTML is parsed in bounded
+passes to confirm cross-file note links before classification. `container.xml`, the OPF, the NCX, the
 EPUB 3 navigation document, and referenced SVG assets are parsed as XML with
 entity expansion and external resolution disabled; content documents (spine
 items) are parsed by the same recovering HTML parser that renders them, so

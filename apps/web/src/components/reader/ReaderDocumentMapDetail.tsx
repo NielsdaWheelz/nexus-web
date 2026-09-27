@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { absent, present, type Presence } from "@/lib/api/presence";
-import type { MediaNavigation } from "@/lib/media/readerNavigation";
+import type { MediaNavigation, ReaderNavigationTextPoint } from "@/lib/media/readerNavigation";
 import type {
   ReaderDocumentMapMarker,
   ReaderMapMarkerPresentation,
@@ -26,7 +26,7 @@ export default function ReaderDocumentMapDetail({
   currentOffset,
   visibleRange,
   destinations,
-  onNavigateSection,
+  onNavigatePoint,
   onActivateMarker,
   onRevealCurrent,
   onReturn,
@@ -36,7 +36,7 @@ export default function ReaderDocumentMapDetail({
   currentOffset: Presence<number>;
   visibleRange: Presence<ReaderDocumentOverviewRange>;
   destinations: readonly ReaderMapMarkerPresentation[];
-  onNavigateSection: (sectionId: string) => void;
+  onNavigatePoint: (point: ReaderNavigationTextPoint) => void;
   onActivateMarker: (marker: ReaderDocumentMapMarker) => void;
   onRevealCurrent: () => void;
   onReturn: Presence<() => void>;
@@ -96,7 +96,7 @@ export default function ReaderDocumentMapDetail({
             nodes={navigation.toc_nodes}
             sections={navigation.sections}
             activeSectionId={currentSection.kind === "Present" ? present(currentSection.value.section.section_id) : absent()}
-            onNavigate={onNavigateSection}
+            onNavigate={onNavigatePoint}
           />
           {navigation.sections.length === 0 ? <p className={styles.notice}>no sections in this document</p> : null}
         </div>

@@ -9,6 +9,7 @@ import ReaderSourceIssuesNotice from "@/components/reader/ReaderSourceIssuesNoti
 import { absent, present, type Presence } from "@/lib/api/presence";
 import { buildCanonicalCursor, validateCanonicalText, type CanonicalCursorResult } from "@/lib/highlights/canonicalCursor";
 import type { EpubFragmentContent } from "@/lib/media/epubFragment";
+import type { ReaderNavigationTextPoint } from "@/lib/media/readerNavigation";
 import type { Fragment } from "@/lib/media/transcriptView";
 import type {
   ReaderDocumentMapMarker,
@@ -682,6 +683,10 @@ function OfflineTextReader({ document, session, initialLocator, onSave }: {
       ? { kind: "Anchor", anchorId: section.anchor_id.value }
       : { kind: "Offset", offset: section.target.offset } }, "Preview", candidate);
   }
+  function jumpPoint(point: ReaderNavigationTextPoint) {
+    const candidate = origin ?? currentAnchorRef.current;
+    void navigate({ fragmentId: point.fragment_id, target: { kind: "Offset", offset: point.offset } }, "Preview", candidate);
+  }
   function revealCurrent() {
     const anchor = currentAnchorRef.current;
     if (anchor) void navigate({ fragmentId: anchor.body.id, target: anchor.target }, "Restore", null);
@@ -707,7 +712,7 @@ function OfflineTextReader({ document, session, initialLocator, onSave }: {
         currentOffset={current}
         visibleRange={visible}
         destinations={destinations}
-        onNavigateSection={jump}
+        onNavigatePoint={jumpPoint}
         onActivateMarker={(marker) => jump(marker.item_id)}
         onRevealCurrent={revealCurrent}
         onReturn={origin ? present(() => void navigate({ fragmentId: origin.body.id, target: origin.target }, "Return", origin)) : absent()}

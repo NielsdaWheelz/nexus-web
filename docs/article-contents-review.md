@@ -160,11 +160,9 @@ typography or models would be a different product promise.
 - missing article picker: the requested capability gap was repaired in shared
   instrument publication; the [spec](article-section-navigation-plan.md) records
   live verification.
-- [multiline heading labels](tickets/web-article-contents-truncates-multiline-headings.md):
-  `<h2>first<br>second</h2>` retains complete text but the navigation label is
-  `first`. fix at the structural/navigation owner, preserving canonical text
-  and targets. keep this as a separate narrow correction; it does not require
-  delaying pane-bar exposure or expanding that change into ingestion repair.
+- multiline heading labels: the chapter implementation now publishes the full
+  `<h2>first<br>second</h2>` label from the structural owner while preserving
+  canonical text and targets; see the [reader contract](modules/reader-implementation.md).
 - [empty contents contract](tickets/reader-empty-contents-availability-contract.md):
   the full inspector publishes even without toc nodes, unlike its prose spec.
   it also contains map controls; do not mechanically apply the compact

@@ -37,6 +37,7 @@ export interface ReaderNavigationSection {
 export interface ReaderNavigationTocNode {
   id: string;
   label: string;
+  target: Presence<ReaderNavigationTextPoint>;
   section_id: Presence<string>;
   children: ReaderNavigationTocNode[];
 }
@@ -202,9 +203,15 @@ function assertNavigationRelations(
     for (const node of nodes) {
       if (seenToc.has(node.id)) throw new TypeError(`${name}.toc_nodes contain duplicate ids`);
       seenToc.add(node.id);
-      if (node.section_id.kind === "Absent") unresolvedNodes.add(node.id);
-      if (node.section_id.kind === "Present" && !sections.has(node.section_id.value)) {
-        throw new TypeError(`${name}.toc_nodes target an absent section`);
+      if (node.target.kind === "Present") pointOffset(node.target.value);
+      else unresolvedNodes.add(node.id);
+      if (node.section_id.kind === "Present") {
+        const section = sections.get(node.section_id.value);
+        if (section === undefined || node.target.kind === "Absent" ||
+            section.target.fragment_id !== node.target.value.fragment_id ||
+            section.target.offset !== node.target.value.offset) {
+          throw new TypeError(`${name}.toc_nodes section link must share its present target`);
+        }
       }
       walkToc(node.children);
     }
@@ -295,10 +302,11 @@ function decodeNavigationSection(raw: unknown, name: string): ReaderNavigationSe
 }
 
 function decodeTocNode(raw: unknown, name: string): ReaderNavigationTocNode {
-  const value = expectExactRecord(raw, ["id", "label", "section_id", "children"], name);
+  const value = expectExactRecord(raw, ["id", "label", "target", "section_id", "children"], name);
   return {
     id: expectString(value.id, `${name}.id`),
     label: expectString(value.label, `${name}.label`),
+    target: decodePresence(value.target, (point) => decodeReaderNavigationTextPoint(point, `${name}.target.value`)),
     section_id: decodePresence(value.section_id, (id) => expectString(id, `${name}.section_id.value`)),
     children: expectArray(value.children, (child, index) => decodeTocNode(child, `${name}.children[${index}]`), `${name}.children`),
   };

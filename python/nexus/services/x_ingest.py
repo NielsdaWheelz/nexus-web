@@ -501,6 +501,7 @@ def _replace_thread_projection(
             )
         ],
         edges=[edge for prepared in prepared_fragments for edge in prepared.apparatus_edges],
+        note_groups=[],
     )
 
 
@@ -544,6 +545,7 @@ def _replace_post_projection(
             items=prepared.apparatus_items,
         ),
         edges=prepared.apparatus_edges,
+        note_groups=[],
     )
     bump_all_collection_families(
         db, families=(CollectionFamily.AuthorWorks, CollectionFamily.LibraryEntries)

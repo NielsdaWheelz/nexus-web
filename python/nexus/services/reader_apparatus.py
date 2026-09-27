@@ -12,7 +12,12 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
+from nexus.schemas.media import NavigationTextPointOut, NavigationTextRangeOut
 from nexus.schemas.reader_apparatus import (
+    NoteBodyRegion,
+    NoteGroupRegion,
+    NoteRegion,
+    NotesGroup,
     ReaderApparatusEdgeOut,
     ReaderApparatusItemOut,
     ReaderApparatusResponse,
@@ -77,6 +82,72 @@ def stable_token(value: str) -> str:
     """The one sanitizer every ``stable_key`` segment passes through."""
     token = re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-")
     return token[:96] or "item"
+
+
+def note_regions_from_publication(
+    items: list[dict[str, object]], note_groups: list[NotesGroup]
+) -> list[NoteRegion]:
+    """Combine structural groups with the existing exact note-body locators."""
+    regions: list[NoteRegion] = [
+        NoteGroupRegion(range=group.range, heading=group.heading, provenance=group.provenance)
+        for group in note_groups
+    ]
+    for item in items:
+        if item.get("kind") not in {"footnote", "endnote", "sidenote", "margin_note"}:
+            continue
+        if item.get("locator_status") != "exact":
+            continue
+        locator = _object_dict(item.get("locator"))
+        if locator.get("type") not in {"epub_fragment_offsets", "web_text_offsets"}:
+            continue
+        fragment_id = UUID(str(locator["fragment_id"]))
+        start = int(locator["start_offset"])
+        end = int(locator["end_offset"])
+        if start >= end:
+            continue
+        regions.append(
+            NoteBodyRegion(
+                range=NavigationTextRangeOut(
+                    start=NavigationTextPointOut(fragment_id=fragment_id, offset=start),
+                    end=NavigationTextPointOut(fragment_id=fragment_id, offset=end),
+                )
+            )
+        )
+    return regions
+
+
+def read_note_regions(db: Session, media_id: UUID) -> list[NoteRegion]:
+    """Read one publication's note evidence in the caller's transaction snapshot."""
+    state = (
+        db.execute(
+            text("SELECT id, note_groups FROM reader_apparatus_states WHERE media_id = :media_id"),
+            {"media_id": media_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if state is None:
+        raise ApiError(
+            ApiErrorCode.E_READER_APPARATUS_STATE_MISSING, "Reader apparatus state is missing"
+        )
+    raw_groups = state["note_groups"]
+    if not isinstance(raw_groups, list):
+        raise ApiError(ApiErrorCode.E_INTERNAL, "Reader note groups must be a list")
+    groups = [NotesGroup.model_validate(group) for group in raw_groups]
+    rows = (
+        db.execute(
+            text(
+                """
+            SELECT kind, locator, locator_status FROM reader_apparatus_items
+            WHERE state_id = :state_id AND kind IN ('footnote', 'endnote', 'sidenote', 'margin_note')
+            """
+            ),
+            {"state_id": state["id"]},
+        )
+        .mappings()
+        .all()
+    )
+    return note_regions_from_publication([dict(row) for row in rows], groups)
 
 
 def visible_reader_apparatus_item_ids(
@@ -223,6 +294,7 @@ def replace_media_apparatus(
     media_id: UUID,
     items: list[dict[str, object]] | None = None,
     edges: list[dict[str, object]] | None = None,
+    note_groups: list[NotesGroup],
     status: str | None = None,
 ) -> None:
     """Install one extraction's rows, keeping the id of every unchanged ``stable_key``.
@@ -254,13 +326,18 @@ def replace_media_apparatus(
     state_id = db.execute(
         text(
             """
-            INSERT INTO reader_apparatus_states (media_id, status)
-            VALUES (:media_id, :status)
-            ON CONFLICT (media_id) DO UPDATE SET status = EXCLUDED.status
+            INSERT INTO reader_apparatus_states (media_id, status, note_groups)
+            VALUES (:media_id, :status, :note_groups)
+            ON CONFLICT (media_id) DO UPDATE SET
+                status = EXCLUDED.status, note_groups = EXCLUDED.note_groups
             RETURNING id
             """
-        ),
-        {"media_id": media_id, "status": status},
+        ).bindparams(bindparam("note_groups", type_=JSONB)),
+        {
+            "media_id": media_id,
+            "status": status,
+            "note_groups": [group.model_dump(mode="json") for group in note_groups],
+        },
     ).scalar_one()
 
     ids_by_key: dict[str, UUID] = {}

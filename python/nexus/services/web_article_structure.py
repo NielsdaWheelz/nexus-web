@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from dataclasses import replace as dataclass_replace
 from typing import assert_never, cast
@@ -13,6 +14,7 @@ from lxml.html import HtmlElement, fragment_fromstring
 
 from nexus.logging import get_logger
 from nexus.schemas.presence import Presence, Present, absent, present
+from nexus.schemas.reader_apparatus import NoteRegion
 from nexus.services.canonicalize import (
     HEADING_TAGS,
     canonicalize_structure,
@@ -32,6 +34,7 @@ from nexus.services.document_embeds import (
 from nexus.services.fragment_blocks import FragmentBlockSpec
 from nexus.services.html_apparatus import extract_html_apparatus
 from nexus.services.html_tree import inner_html, serialize_html
+from nexus.services.reader_structure import DocumentPoint, NavigationNoteIndex
 from nexus.services.sanitize_html import sanitize_html
 from nexus.text import normalize_whitespace
 
@@ -55,6 +58,9 @@ class WebArticleIndexBlockSpec:
     depth: int | None = None
     ordinal: int | None = None
     container_end_offset: Presence[int] = field(default_factory=absent)
+    heading_label: str | None = None
+    heading_id: str | None = None
+    toc_parent_id: Presence[str] = field(default_factory=absent)
 
 
 @dataclass(frozen=True)
@@ -286,9 +292,24 @@ def build_web_article_index_blocks(
     html_sanitized: str,
     canonical_text: str,
     fragment_idx: int,
+    fragment_id: UUID | None = None,
+    note_regions: Sequence[NoteRegion] = (),
 ) -> list[WebArticleIndexBlockSpec]:
     """One block per non-blank canonical line: headings carry the outline."""
+    if note_regions and fragment_id is None:
+        raise ValueError("Web note-region classification requires a fragment identity")
     heading_by_start = dict(_headings(html_sanitized, canonical_text, fragment_idx))
+    note_index = NavigationNoteIndex(
+        [region for region in note_regions if region.range.start.fragment_id == fragment_id],
+        {fragment_id: fragment_idx} if fragment_id is not None else {},
+    )
+    routine_by_id = {
+        heading.section_id: note_index.is_routine(DocumentPoint(fragment_idx, start))
+        for start, heading in heading_by_start.items()
+    }
+    parent_by_id = {
+        heading.section_id: heading.parent_section_id for heading in heading_by_start.values()
+    }
     stack: list[tuple[int, str]] = []
     blocks: list[WebArticleIndexBlockSpec] = []
     for start, end, _text_value in _line_ranges(canonical_text):
@@ -308,7 +329,12 @@ def build_web_article_index_blocks(
             continue
         while stack and stack[-1][0] >= heading.level:
             stack.pop()
-        stack.append((heading.level, heading.label))
+        routine = routine_by_id[heading.section_id]
+        if routine:
+            stack.append((heading.level, heading.label))
+        parent = heading.parent_section_id
+        while isinstance(parent, Present) and not routine_by_id[parent.value]:
+            parent = parent_by_id[parent.value]
         blocks.append(
             WebArticleIndexBlockSpec(
                 block_idx=len(blocks),
@@ -317,13 +343,16 @@ def build_web_article_index_blocks(
                 end_offset=end,
                 heading_path=tuple(label for _level, label in stack),
                 heading_level=heading.level,
-                section_id=heading.section_id,
+                section_id=heading.section_id if routine else None,
                 anchor_id=heading.anchor_id,
                 depth=len(stack),
                 ordinal=heading.ordinal,
                 container_end_offset=heading.container_end_offset,
                 owns_container=heading.owns_container,
-                parent_section_id=heading.parent_section_id,
+                parent_section_id=parent if routine else absent(),
+                heading_label=heading.label,
+                heading_id=heading.section_id,
+                toc_parent_id=heading.parent_section_id,
             )
         )
     return blocks

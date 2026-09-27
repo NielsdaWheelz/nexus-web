@@ -441,6 +441,7 @@ def publish_pdf_extraction_plan(
         media_id=media_id,
         items=plan.apparatus.items,
         edges=plan.apparatus.edges,
+        note_groups=[],
         status=plan.apparatus.status,
     )
     return result

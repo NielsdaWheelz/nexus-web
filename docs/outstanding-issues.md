@@ -35,18 +35,19 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] reader / find · 2026-09-24 reader-inspector-controls · a supersession abort retires the find preview lease: [ticket](tickets/find-supersession-abort-retires-the-preview-lease.md).
 - [open] reader / find · 2026-09-24 reader-inspector-controls · web and transcript find keep a render frame budget: [ticket](tickets/web-and-transcript-find-render-budget.md).
 - [open] reader / inspector · 2026-09-24 reader-inspector-controls · reload open on Contents briefly shows Evidence: [ticket](tickets/reader-contents-publishes-after-navigation.md).
+- [open] reader / apparatus · 2026-09-26 reader chapter repair · newly inferred notes in preserved legacy html lack inline marker activation: [ticket](tickets/reader-repaired-note-markers-not-inline.md).
+- [open] epub / sections · 2026-09-26 chapter implementation · ambiguous pillow frontmatter headings still become routine stops: [ticket](tickets/epub-contents-union-overpromotes-source-headings.md).
+- [open] reader / production · 2026-09-26 chapter implementation · owner deferred production acceptance; affected originals and pending offline state remain unverified: [ticket](tickets/reader-chapter-production-correspondence-unverified.md).
 - [open] reader / navigation · 2026-09-24 reader-inspector-controls · document-map return drifts a line per round trip: [ticket](tickets/document-map-return-drifts-per-round-trip.md).
 - [open] reader / selection · 2026-09-24 reader-inspector-controls · retained selection geometry ignores a canonical reset: [ticket](tickets/retained-selection-geometry-ignores-canonical-reset.md).
 - [open] workspace / geometry · 2026-09-24 reader-inspector-controls · pdf inspector overflows the viewport at the pane minimum: [ticket](tickets/pdf-inspector-overflows-viewport-at-pane-minimum.md).
 - [open] workspace / rendering · 2026-09-24 reader-inspector-controls · PaneRuntimeFrame memo never bails out: [ticket](tickets/pane-runtime-frame-memo-never-bails-out.md).
 - [open] workspace / copy · 2026-09-24 reader-inspector-controls · secondary tab close label case differs from pane close: [ticket](tickets/secondary-tab-close-label-case.md).
-- [open] epub ingest · 2026-09-24 reader-inspector-controls · fragmentless nav hrefs duplicate contents: [ticket](tickets/epub-nav-without-fragments-duplicates-contents.md).
 - [open] epub ingest · 2026-09-26 fragment-only nav fix review · unsafe authored nav hrefs lack source issues: [ticket](tickets/epub-unsafe-nav-targets-have-no-source-issue.md).
 - [open] chat api · 2026-09-24 reader-inspector-controls · conversation read returns 500 without a generation catalog: [ticket](tickets/conversation-read-500s-without-generation-catalog.md).
 - [open] worker / indexing · 2026-09-24 reader-inspector-controls · a missing indexing credential is classified as a child defect: [ticket](tickets/indexing-without-credential-is-a-child-defect.md).
 - [open] android offline reading · 2026-09-24 reader-inspector-controls · back from the downloaded reader shows Not found: [ticket](tickets/android-back-from-downloaded-reader-shows-not-found.md).
 - [open] local development · 2026-09-24 reader-inspector-controls · worker overlay memory bound fails the lane check: [ticket](tickets/local-worker-overlay-memory-bound-fails-lane-check.md).
-- [open] reader / article navigation · 2026-09-25 article-contents review · headings containing a line break lose the remainder of their contents label: [ticket](tickets/web-article-contents-truncates-multiline-headings.md).
 - [open] reader / inspector contract · 2026-09-25 article-contents review · empty contents is published despite the documented toc-node availability condition: [ticket](tickets/reader-empty-contents-availability-contract.md).
 - [open] reader / epub routing · 2026-09-25 article-section-navigation acceptance · Return restores chapter IX while pane href retains the chapter XI `loc`: [ticket](tickets/epub-map-return-keeps-jump-loc.md).
 - [open] workspace / deep links · 2026-09-25 article-section-navigation acceptance · a full-page article deep link can revert to the restored EPUB pane during bootstrap: [ticket](tickets/workspace-deep-link-reverts-during-reader-jump.md).
