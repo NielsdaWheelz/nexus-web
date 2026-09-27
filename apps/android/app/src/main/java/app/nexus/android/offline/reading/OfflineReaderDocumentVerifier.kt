@@ -58,6 +58,7 @@ internal object OfflineReaderDocumentVerifier {
     }
 
     private data class FragmentCoordinate(val id: String, val index: Long, val length: Long)
+    private data class HtmlEvidence(val assets: Set<String>, val markers: Set<Long>)
 
     private fun verifyEpub(
         root: Map<String, StrictJson>,
@@ -65,6 +66,7 @@ internal object OfflineReaderDocumentVerifier {
     ) {
         val declaredPaths = manifest.entries.map { it.path }.toSet()
         val referencedAssets = mutableSetOf<String>()
+        val markersByFragment = mutableMapOf<String, Set<Long>>()
         var wordStart = 0L
         val fragments = root.getValue("fragments").requireArray().map { fragment ->
             val fields = fragment.requireObject(setOf(
@@ -88,12 +90,14 @@ internal object OfflineReaderDocumentVerifier {
             }
             require(paths == paths.sortedWith(compareByUtf8Path()) && paths.size == paths.toSet().size)
             require(paths.all { it.startsWith("assets/") && it in declaredPaths })
-            require(validateSanitizedHtml(fields.getValue("html_sanitized").requireString(), false) == paths.toSet())
+            val html = validateSanitizedHtml(fields.getValue("html_sanitized").requireString(), false)
+            require(html.assets == paths.toSet())
+            markersByFragment[identifier] = html.markers
             referencedAssets += paths
             FragmentCoordinate(identifier, index, length)
         }
         require(declaredPaths == referencedAssets + "reader.json")
-        verifyNavigation(root.getValue("navigation"), manifest, "epub", fragments)
+        verifyNavigation(root.getValue("navigation"), manifest, "epub", fragments, markersByFragment)
     }
 
     private fun verifyWeb(
@@ -109,10 +113,11 @@ internal object OfflineReaderDocumentVerifier {
             val index = fields.getValue("fragmentIdx").requireLong().also { require(it >= 0) }
             OffsetDateTime.parse(fields.getValue("createdAt").requireString())
             val canonicalText = fields.getValue("canonicalText").requireString()
-            require(validateSanitizedHtml(fields.getValue("htmlSanitized").requireString(), true).isEmpty())
+            val html = validateSanitizedHtml(fields.getValue("htmlSanitized").requireString(), true)
+            require(html.assets.isEmpty() && html.markers.isEmpty())
             FragmentCoordinate(identifier, index, canonicalText.codePointCount(0, canonicalText.length).toLong())
         }
-        verifyNavigation(root.getValue("navigation"), manifest, "web_article", fragments)
+        verifyNavigation(root.getValue("navigation"), manifest, "web_article", fragments, emptyMap())
     }
 
     private fun verifyNavigation(
@@ -120,9 +125,10 @@ internal object OfflineReaderDocumentVerifier {
         manifest: OfflineReadingManifest,
         kind: String,
         fragments: List<FragmentCoordinate>,
+        markersByFragment: Map<String, Set<Long>>,
     ) {
         val fields = value.requireObject(setOf(
-            "media_id", "kind", "generation", "fragments", "sections", "toc_nodes", "landmarks", "page_list",
+            "media_id", "kind", "generation", "source_issues", "fragments", "sections", "toc_nodes", "landmarks", "page_list",
         ))
         require(fields.getValue("media_id").requireString() == manifest.mediaId.toString())
         require(fields.getValue("kind").requireString() == kind)
@@ -188,22 +194,59 @@ internal object OfflineReaderDocumentVerifier {
             }
         }
         val nodeIds = mutableSetOf<String>()
+        val unresolvedNodes = mutableSetOf<String>()
         fun node(value: StrictJson) {
             val item = value.requireObject(setOf("id", "label", "section_id", "children"))
-            require(nodeIds.add(item.getValue("id").requireString()))
+            val id = item.getValue("id").requireString()
+            require(nodeIds.add(id))
             item.getValue("label").requireString()
-            presence(item.getValue("section_id"))?.let { require(it.requireString() in parents) }
+            val section = presence(item.getValue("section_id"))
+            if (section == null) unresolvedNodes.add(id)
+            else require(section.requireString() in parents)
             item.getValue("children").requireArray().forEach(::node)
         }
         fields.getValue("toc_nodes").requireArray().forEach(::node)
         listOf("landmarks", "page_list").forEach { name ->
             fields.getValue(name).requireArray().forEach { location ->
                 val item = location.requireObject(setOf("id", "label", "target"))
-                item.getValue("id").requireString()
+                val id = item.getValue("id").requireString()
+                require(nodeIds.add(id))
                 item.getValue("label").requireString()
-                presence(item.getValue("target"))?.let(::point)
+                val target = presence(item.getValue("target"))
+                if (target == null) unresolvedNodes.add(id) else point(target)
             }
         }
+        val issueKeys = mutableSetOf<String>()
+        val referencedMarkers = mutableMapOf<String, MutableSet<Long>>()
+        val issues = fields.getValue("source_issues").requireArray()
+        require(issues.size <= 10_000)
+        issues.forEach { issue ->
+            val objectValue = issue as? StrictJson.ObjectValue ?: error("source issue must be an object")
+            when (objectValue.fields["kind"]?.requireString()) {
+                "MissingImage" -> {
+                    val item = issue.requireObject(setOf("kind", "fragment_id", "marker_ordinal", "resource_path"))
+                    val fragmentId = requireUuid(item.getValue("fragment_id"))
+                    val ordinal = item.getValue("marker_ordinal").requireLong()
+                    require(ordinal >= 0 && ordinal in markersByFragment[fragmentId].orEmpty())
+                    val path = item.getValue("resource_path").requireString()
+                    requireSourcePackagePath(path)
+                    require(issueKeys.add("image:$fragmentId:$ordinal:$path"))
+                    referencedMarkers.getOrPut(fragmentId) { mutableSetOf() }.add(ordinal)
+                }
+                "UnresolvedNavigationTarget" -> {
+                    val item = issue.requireObject(setOf("kind", "node_id", "href"))
+                    val id = item.getValue("node_id").requireString()
+                    require(id.isNotEmpty() && id.codePointCount(0, id.length) <= 255)
+                    require(id in unresolvedNodes)
+                    requireLocalHref(item.getValue("href").requireString())
+                    require(issueKeys.add("navigation:$id"))
+                }
+                else -> error("source issue kind is invalid")
+            }
+        }
+        require(markersByFragment.all { (fragmentId, markers) ->
+            markers == referencedMarkers[fragmentId].orEmpty()
+        })
     }
 
     private fun presence(value: StrictJson): StrictJson? {
@@ -219,15 +262,28 @@ internal object OfflineReaderDocumentVerifier {
         require(UUID.fromString(it).toString() == it)
     }
 
-    private fun validateSanitizedHtml(html: String, webTextOnly: Boolean): Set<String> {
+    private fun validateSanitizedHtml(html: String, webTextOnly: Boolean): HtmlEvidence {
         val document = Jsoup.parseBodyFragment(html)
         require(document.childNodes().none(::forbiddenHtmlNode))
         val assets = mutableSetOf<String>()
+        val markers = mutableSetOf<Long>()
         document.body().getAllElements().drop(1).forEach { element ->
             val tag = element.normalName()
             require(tag !in EXECUTABLE_TAGS)
             require(!(webTextOnly && tag in SUBRESOURCE_TAGS))
             require(webTextOnly || tag !in SUBRESOURCE_TAGS - "img")
+            if (element.hasAttr("data-reader-source-warning")) {
+                require(!webTextOnly && tag in setOf("img", "span"))
+                val raw = element.attr("data-reader-source-warning")
+                require(Regex("0|[1-9][0-9]{0,4}").matches(raw))
+                val marker = raw.toLong()
+                require(marker < 10_000)
+                require(markers.add(marker))
+                if (tag == "span") {
+                    require(element.attr("role") == "img")
+                    require(element.attr("aria-label").startsWith("image unavailable"))
+                }
+            }
             element.attributes().forEach { attribute ->
                 val name = attribute.key.lowercase()
                 val value = attribute.value
@@ -238,13 +294,36 @@ internal object OfflineReaderDocumentVerifier {
                     tag == "a" && name == "href" && value.startsWith('#') -> Unit
                     !webTextOnly && tag == "img" && name == "src" -> {
                         requireSafePackagePath(value)
+                        require(value.startsWith("assets/"))
                         assets += value
+                    }
+                    !webTextOnly && tag == "img" && name == "srcset" -> {
+                        value.split(',').forEach { candidate ->
+                            val parts = candidate.trim().split(Regex("\\s+")).filter(String::isNotEmpty)
+                            require(parts.isNotEmpty())
+                            requireSafePackagePath(parts.first())
+                            require(parts.first().startsWith("assets/"))
+                            assets += parts.first()
+                        }
                     }
                     else -> error("offline HTML contains an undeclared URL")
                 }
             }
+            if (tag == "img") require(element.hasAttr("src") || element.hasAttr("srcset"))
         }
-        return assets
+        return HtmlEvidence(assets, markers)
+    }
+
+    private fun requireSourcePackagePath(path: String) {
+        require(path.isNotEmpty() && !path.startsWith('/') && '\\' !in path)
+        require(path.none { it.code < 32 || it.code == 127 })
+        require(path.split('/').all { it !in setOf("", ".", "..") })
+    }
+
+    private fun requireLocalHref(href: String) {
+        require(href.isNotEmpty() && !href.startsWith('/') && '\\' !in href)
+        require(!Regex("^[A-Za-z][A-Za-z0-9+.-]*:").containsMatchIn(href))
+        require(href.none { it.code < 32 || it.code == 127 })
     }
 
     private fun forbiddenHtmlNode(node: Node): Boolean {

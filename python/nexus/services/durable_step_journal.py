@@ -131,9 +131,7 @@ def checkpoint_step_state(
     """Lease-fenced durable write of one step record into the job payload."""
     return update_running_job_payload(
         db,
-        job_id=ctx.job_id,
-        worker_id=ctx.worker_id,
-        attempt_no=ctx.attempt_no,
+        context=ctx,
         payload=payload_with_step_state(job.payload, step_path=step_path, state=state),
     )
 

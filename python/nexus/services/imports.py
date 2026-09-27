@@ -44,6 +44,7 @@ from nexus.schemas.imports import (
     ImportListQuery,
     ImportPage,
     ImportReadiness,
+    ImportSourceIssues,
     ImportStageGroup,
     ImportState,
     ImportStateActive,
@@ -63,6 +64,7 @@ from nexus.schemas.imports import (
 )
 from nexus.schemas.media import MediaOut
 from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable, present
+from nexus.schemas.source_issues import SOURCE_ISSUES
 from nexus.services.collection_keyset import (
     SortKey,
     after_values,
@@ -156,6 +158,9 @@ WITH visible_media AS (
         m.processing_status::text AS processing_status,
         m.created_by_user_id = :viewer_id AS is_creator,
         m.updated_at AS media_updated_at,
+        rp.generation AS publication_generation,
+        rp.source_issues,
+        COALESCE(jsonb_array_length(rp.source_issues), 0) AS source_issue_count,
         msa.id AS attempt_id,
         msa.status AS attempt_status,
         msa.source_type,
@@ -198,6 +203,7 @@ WITH visible_media AS (
         END AS capacity_job_id
     FROM media m
     JOIN visible_media vm ON vm.media_id = m.id
+    LEFT JOIN reader_publications rp ON rp.media_id = m.id
     JOIN LATERAL (
         SELECT latest.*
         FROM media_source_attempts latest
@@ -388,6 +394,9 @@ WITH visible_media AS (
         GREATEST(r.session_updated_at, w.lifecycle_updated_at) AS updated_at,
         w.is_creator,
         w.processing_status,
+        COALESCE(w.source_issue_count, 0) AS source_issue_count,
+        w.publication_generation,
+        w.source_issues,
         w.attempt_id,
         w.attempt_status,
         w.source_type,
@@ -692,6 +701,16 @@ def read_import_detail(db: Session, *, viewer_id: UUID, ref: ParsedImportRef) ->
         item=_item(row, media=media, matched_event=absent()),
         readiness=readiness,
         history_coverage=history_coverage(db, owner=_history_owner(row)),
+        source_issues=(
+            absent()
+            if row["publication_generation"] is None
+            else present(
+                ImportSourceIssues(
+                    generation=int(row["publication_generation"]),
+                    issues=SOURCE_ISSUES.validate_python(row["source_issues"]),
+                )
+            )
+        ),
     )
 
 
@@ -930,4 +949,5 @@ def _item(
         capabilities=(
             _upload_capabilities(row) if media is None else _media_capabilities(row, media)
         ),
+        source_issue_count=int(row["source_issue_count"]),
     )

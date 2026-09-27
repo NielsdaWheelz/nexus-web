@@ -5,6 +5,7 @@ import PdfReader, {
 import TextDocumentReader from "@/components/reader/TextDocumentReader";
 import ReaderDocumentMapDetail from "@/components/reader/ReaderDocumentMapDetail";
 import ReaderDocumentMapOverviewRail from "@/components/reader/ReaderDocumentMapOverviewRail";
+import ReaderSourceIssuesNotice from "@/components/reader/ReaderSourceIssuesNotice";
 import { absent, present, type Presence } from "@/lib/api/presence";
 import { buildCanonicalCursor, validateCanonicalText, type CanonicalCursorResult } from "@/lib/highlights/canonicalCursor";
 import type { EpubFragmentContent } from "@/lib/media/epubFragment";
@@ -273,6 +274,9 @@ export default function OfflineDocumentReader({
 
   return (
     <div className={styles.documentReader}>
+      {document.kind === "Pdf" ? null : (
+        <ReaderSourceIssuesNotice issues={document.navigation.source_issues} navigation={document.navigation} readable />
+      )}
       {document.kind === "WebArticle" ? (
         <p className={styles.notice}>{OFFLINE_READING_COPY.textOnlyNotice}</p>
       ) : null}

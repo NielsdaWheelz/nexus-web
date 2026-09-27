@@ -1,6 +1,7 @@
 "use client";
 
 import { FeedbackNotice } from "@/components/feedback/Feedback";
+import ReaderSourceIssuesNotice from "@/components/reader/ReaderSourceIssuesNotice";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import PaneSection from "@/components/ui/PaneSection";
 import Pill from "@/components/ui/Pill";
@@ -70,7 +71,7 @@ export default function ImportInspector({
     return <PaneLoadingState label="Loading this import" announcement="Polite" />;
   }
 
-  const { item, readiness, historyCoverage } = detail.data;
+  const { item, readiness, historyCoverage, sourceIssues } = detail.data;
   const recovery =
     item.capabilities.recovery.kind === "Present"
       ? item.capabilities.recovery.value
@@ -95,15 +96,21 @@ export default function ImportInspector({
       <PaneSection title={item.title}>
         <p className={styles.inspectorState}>
           <Pill
-            tone={item.state.kind === "NeedsAttention" ? "warning" : "info"}
+            tone={item.state.kind === "NeedsAttention" || item.sourceIssueCount > 0 ? "warning" : "info"}
             size="sm"
           >
-            {importStateLabel(item.state)}
+            {importStateLabel(item)}
           </Pill>
           <span>{importConsequenceLine(item, readiness)}</span>
         </p>
         {matched === null ? null : <p className={styles.rowMatched}>{matched}</p>}
       </PaneSection>
+
+      {sourceIssues.kind === "Present" && sourceIssues.value.issues.length > 0 ? (
+        <PaneSection title="Source quality">
+          <ReaderSourceIssuesNotice issues={sourceIssues.value.issues} readable={readiness.canRead} />
+        </PaneSection>
+      ) : null}
 
       {recoveryLine === null ? null : (
         <PaneSection title="Recovery">

@@ -285,6 +285,8 @@
   --reader-border-subtle: #ece8df;
   --reader-accent: #7d5e35;
   --reader-accent-hover: #634a29;
+  --warning: #8a6618;
+  --warning-ink: #6c5013;
   color-scheme: light;
   background-color: var(--reader-bg);
   color: var(--reader-text);

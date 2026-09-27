@@ -1,5 +1,6 @@
 package app.nexus.android.offline.reading
 
+import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.security.keystore.UserNotAuthenticatedException
@@ -91,6 +92,9 @@ internal class OfflineReadingBindingSeal(
     }
 
     private fun requireKey(createIfMissing: Boolean): SecretKey {
+        if (Build.VERSION.SDK_INT < OFFLINE_READING_MINIMUM_SDK) {
+            throw OfflineReadingUnsupportedPlatformException()
+        }
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         val existing = keyStore.getKey(keyAlias, null) as? SecretKey
         if (existing != null) return existing

@@ -31,6 +31,7 @@ from nexus.schemas.offline_reading_package import (
 )
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.epub_read import rewrite_epub_fragment_links
+from nexus.services.image_placeholder import replace_image_with_placeholder
 from nexus.services.offline_reading_packages import (
     OFFLINE_READING_ZIP_MEDIA_TYPE,
     assemble_offline_reading_zip_from_files,
@@ -74,7 +75,15 @@ _INERT_EXTERNAL_ELEMENTS = frozenset(
 # projection strips exactly what that boundary refuses to accept.
 _URL_ATTRIBUTES = OFFLINE_READING_URL_ATTRIBUTES
 # Retain source anchors, visibility, and accessible labels without resource URLs.
-_RETAINED_IMAGE_ATTRIBUTES = ("alt", "title", "id", "name", "hidden", "aria-hidden")
+_RETAINED_IMAGE_ATTRIBUTES = (
+    "alt",
+    "title",
+    "id",
+    "name",
+    "hidden",
+    "aria-hidden",
+    "data-reader-source-warning",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -343,7 +352,7 @@ def _offline_html(raw: str) -> str:
             continue
         tag = element.tag.rsplit("}", 1)[-1].lower()
         if tag == "img":
-            _replace_image_with_placeholder(element)
+            replace_image_with_placeholder(element)
             continue
         if tag in _INERT_EXTERNAL_ELEMENTS or tag == "form":
             element.drop_tag()
@@ -360,23 +369,6 @@ def _offline_html(raw: str) -> str:
             ):
                 del element.attrib[attribute]
     return _inner_html(container)
-
-
-def _replace_image_with_placeholder(element) -> None:
-    """Expose absent image text without adding words to the source coordinate space."""
-    replacement = html.Element("span")
-    for name in ("id", "name", "hidden", "aria-hidden"):
-        if name in element.attrib:
-            replacement.set(name, element.attrib[name])
-    label = element.get("alt") or ""
-    if label:
-        replacement.set("role", "img")
-        replacement.set("aria-label", label)
-        decoration = etree.SubElement(replacement, "span")
-        decoration.set("aria-hidden", "true")
-        decoration.text = label
-    replacement.tail = element.tail
-    element.getparent().replace(element, replacement)
 
 
 def _offline_epub_html(
@@ -412,12 +404,30 @@ def _offline_epub_html(
             continue
         if tag == "img":
             source = element.get("src")
-            asset_key = _asset_key_from_url(source, media_id=media_id)
-            reference = asset_by_key.get(asset_key) if asset_key is not None else None
-            if reference is None:
-                _replace_image_with_placeholder(element)
+            srcset = element.get("srcset")
+            if not source and not srcset:
+                if element.get("data-reader-source-warning") is not None:
+                    raise ValueError("marked EPUB image has no surviving source")
+                replace_image_with_placeholder(element)
                 continue
-            package_path = f"assets/{reference.asset_key}"
+
+            def package_asset(url: str) -> str:
+                asset_key = _asset_key_from_url(url, media_id=media_id)
+                reference = asset_by_key.get(asset_key) if asset_key is not None else None
+                if reference is None:
+                    raise ValueError("published EPUB image has no declared local asset")
+                package_path = f"assets/{reference.asset_key}"
+                referenced[package_path] = reference
+                return package_path
+
+            package_source = package_asset(source) if source else None
+            package_candidates: list[str] = []
+            if srcset:
+                for candidate in srcset.split(","):
+                    tokens = candidate.strip().split()
+                    if not tokens:
+                        raise ValueError("published EPUB srcset has an empty candidate")
+                    package_candidates.append(" ".join((package_asset(tokens[0]), *tokens[1:])))
             # Preserve source anchors and accessible labels; drop executable/URL attributes.
             retained = {
                 name: element.attrib[name]
@@ -425,10 +435,12 @@ def _offline_epub_html(
                 if name in element.attrib
             }
             element.attrib.clear()
-            element.set("src", package_path)
+            if package_source is not None:
+                element.set("src", package_source)
+            if package_candidates:
+                element.set("srcset", ", ".join(package_candidates))
             for name, value in retained.items():
                 element.set(name, value)
-            referenced[package_path] = reference
             continue
         for attribute in tuple(element.attrib):
             name = attribute.rsplit("}", 1)[-1].lower()

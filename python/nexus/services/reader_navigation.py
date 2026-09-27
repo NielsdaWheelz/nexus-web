@@ -21,6 +21,10 @@ from nexus.schemas.media import (
 from nexus.schemas.presence import absent, presence_from_nullable, present
 from nexus.services.capabilities import is_document_status_ready
 from nexus.services.epub_read import read_epub_navigation
+from nexus.services.reader_publication import (
+    read_publication_generation,
+    read_publication_source_issues,
+)
 from nexus.services.reader_structure import DocumentPoint, SectionRangeInput, resolve_section_ends
 
 
@@ -44,9 +48,10 @@ def get_media_navigation_for_viewer(
         raise error
     if not is_document_status_ready(str(row.processing_status)) or row.generation is None:
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
-    return read_media_navigation(
-        db, media_id=media_id, kind=row.kind, generation=int(row.generation)
-    )
+    generation = read_publication_generation(db, media_id=media_id)
+    if generation is None:
+        raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
+    return read_media_navigation(db, media_id=media_id, kind=row.kind, generation=generation)
 
 
 def read_media_navigation(
@@ -156,6 +161,7 @@ def read_media_navigation(
         media_id=media_id,
         kind="web_article",
         generation=generation,
+        source_issues=read_publication_source_issues(db, media_id=media_id, generation=generation),
         fragments=fragments,
         sections=sections,
         toc_nodes=roots,

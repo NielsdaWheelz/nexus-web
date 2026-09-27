@@ -271,3 +271,18 @@ unexpected timeouts. See
 - [open] 2026-09-21 auth audit · default android debug origin disagrees with bff csrf configuration: [ticket](tickets/android-debug-origin-disagrees-with-bff-csrf-origin.md).
 - [open] 2026-09-21 auth audit · browser auth redirects have two owners with different handled results: [ticket](tickets/unauthenticated-api-redirect-has-two-owners.md).
 - [open] 2026-09-21 auth audit · sdk operation deadlines end before response bodies: [ticket](tickets/supabase-operation-deadline-ends-at-response-headers.md).
+
+- [open] 2026-09-26 processing review · 24 diagnosed imports still need individual owned recovery: [ticket](tickets/processing-backlog-needs-owned-recovery.md).
+- [open] 2026-09-26 processing review · repeated ancestor-text scans exhaust the joyce epub parse budget: [ticket](tickets/epub-apparatus-prefix-scans-exhaust-parse-budget.md).
+- [open] 2026-09-26 processing review · historical terminal codes prevent recovery after parser corrections: [ticket](tickets/processing-terminal-policy-blocks-corrected-parser-recovery.md).
+- [open] 2026-09-26 processing review · missing images currently abort four epub imports: [ticket](tickets/epub-missing-images-abort-readable-books.md).
+- [open] 2026-09-26 processing review · two stored keats publications need heading normalization before reindex: [ticket](tickets/old-web-publications-lack-index-heading-normalization.md).
+- [open] 2026-09-26 processing review · historical gutenberg epub retry retains the wrong source adapter: [ticket](tickets/gutenberg-failed-import-retains-obsolete-web-adapter.md).
+- [open] 2026-09-26 processing review · two historical note indexes still need owned recovery: [ticket](tickets/historical-note-index-failures-need-owned-recovery.md).
+- [open] 2026-09-26 processing review · source acceptance can commit before runnable work is durable: [ticket](tickets/source-acceptance-can-commit-without-enqueued-work.md).
+- [open] 2026-09-26 processing review · dead obligations can monopolize bounded reconciliation discovery: [ticket](tickets/ingest-reconciler-dead-rows-can-starve-new-work.md).
+- [open] 2026-09-26 processing review · transient storage errors are treated as permanent source loss: [ticket](tickets/storage-outage-is-misclassified-as-lost-source.md).
+- [open] 2026-09-26 processing review · superseded oracle sources retain three unfiled failed media rows: [ticket](tickets/superseded-oracle-seeds-retain-unfiled-failed-media.md).
+- [open] 2026-09-26 processing plan · publication lock upgrades can obstruct concurrent index settlement: [ticket](tickets/publication-lock-upgrade-can-block-index-settlement.md).
+- [open] 2026-09-26 processing plan · epub reprocessing can replace fragment identities beneath reader state: [ticket](tickets/epub-reprocessing-can-replace-reader-fragment-identity.md).
+- [open] 2026-09-26 processing implementation · artifact web acceptance can commit before its owning build result: [ticket](tickets/artifact-web-acceptance-commits-inside-build-transaction.md).

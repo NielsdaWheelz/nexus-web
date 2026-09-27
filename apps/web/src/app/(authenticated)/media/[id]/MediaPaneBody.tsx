@@ -29,6 +29,7 @@ import EvidencePaneSurface, {
 } from "@/components/reader/document-map/EvidencePaneSurface";
 import { activateResource } from "@/lib/resources/activation";
 import ReaderDocumentMapOverviewRail from "@/components/reader/ReaderDocumentMapOverviewRail";
+import ReaderSourceIssuesNotice from "@/components/reader/ReaderSourceIssuesNotice";
 import MobileReaderPositionRibbon from "@/components/reader/MobileReaderPositionRibbon";
 import LecternNextPrompt from "@/components/LecternNextPrompt";
 import { useLectern } from "@/lib/lectern/LecternProvider";
@@ -6970,6 +6971,9 @@ export default function MediaPaneBody() {
   });
   const readerBanners = (
     <>
+      {readerNavigation && readerNavigation.kind === media.kind ? (
+        <ReaderSourceIssuesNotice issues={readerNavigation.source_issues} navigation={readerNavigation} readable />
+      ) : null}
       {passageResolution.status === "ready" && passageResolution.data.kind === "Absent" ? (
         <FeedbackNotice
           content={{ tone: "Warning", title: "This passage is no longer available." }}

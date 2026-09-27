@@ -120,6 +120,7 @@ def extract_html_apparatus(
     items: list[dict[str, object]] = []
     edges: list[dict[str, object]] = []
     target_item_key_by_id: dict[str, str] = {}
+    ancestor_prefixes: dict[HtmlElement, str] = {}
     external_targets = external_targets or {}
 
     _extract_standalone_margin_notes(
@@ -145,7 +146,8 @@ def extract_html_apparatus(
         if target is None and external_target is None:
             continue
         classified = _classify(
-            element, _target_facts(element, target, external_target, document_href)
+            element,
+            _target_facts(element, target, external_target, document_href, ancestor_prefixes),
         )
         if classified is None:
             continue
@@ -257,18 +259,21 @@ def collect_html_apparatus_targets(
     ordinal = 0
     retained_utf8_bytes = 0
     backlink_count = 0
+    ancestor_prefixes: dict[HtmlElement, str] = {}
     for element in root.iter():
         if not isinstance(element, HtmlElement):
             continue
         target_id = (element.get("id") or element.get("name") or "").strip()
         if not target_id:
             continue
-        context = _target_context(element).semantic
+        context = _target_context(element, ancestor_prefixes).semantic
         if context not in {"note", "endnote", "bibliography"}:
             continue
         if context in {"note", "endnote"} and not _is_note_body_target(element):
             continue
-        if context == "bibliography" and not _is_bibliography_entry_target(element):
+        if context == "bibliography" and not _is_bibliography_entry_target(
+            element, ancestor_prefixes
+        ):
             continue
         body_text = _element_text(element)
         if not body_text:
@@ -453,11 +458,12 @@ def _target_facts(
     target: HtmlElement | None,
     external_target: Mapping[str, object] | None,
     document_href: str | None,
+    ancestor_prefixes: dict[HtmlElement, str],
 ) -> _TargetFacts:
     if target is not None:
         return _TargetFacts(
-            context=_target_context(target),
-            is_bibliography_entry=_is_bibliography_entry_target(target),
+            context=_target_context(target, ancestor_prefixes),
+            is_bibliography_entry=_is_bibliography_entry_target(target, ancestor_prefixes),
             has_backlink=_has_backlink(marker, target),
             method="html_semantic",
             confidence="exact",
@@ -515,7 +521,9 @@ def _classified(context: str | None, method: str, confidence: str) -> _Classifie
     return _Classified(kinds[0], kinds[1], kinds[2], method, confidence)
 
 
-def _target_context(target: HtmlElement) -> _TargetContext:
+def _target_context(
+    target: HtmlElement, ancestor_prefixes: dict[HtmlElement, str]
+) -> _TargetContext:
     """Walk the target's ancestry once, recording the first declared and loose hit."""
     semantic: str | None = None
     loose: str | None = None
@@ -539,7 +547,10 @@ def _target_context(target: HtmlElement) -> _TargetContext:
             elif tag in _BIBLIOGRAPHY_CONTAINER_TAGS or tokens & _BIBLIOGRAPHY_TOKENS:
                 loose = "bibliography"
             elif tag in {"aside", "section", "div", "ol", "ul"}:
-                head = _element_text(element).lower()[:80]
+                head = ancestor_prefixes.get(element)
+                if head is None:
+                    head = _element_text(element).lower()[:80]
+                    ancestor_prefixes[element] = head
                 if any(word in head for word in ("footnote", "endnote", "notes")):
                     loose = "note"
                 elif any(word in head for word in ("references", "bibliography")):
@@ -577,13 +588,15 @@ def _external_target_has_backlink(
     return f"{document_href}#{marker_id}" in {str(href) for href in backlinks}
 
 
-def _is_bibliography_entry_target(target: HtmlElement) -> bool:
+def _is_bibliography_entry_target(
+    target: HtmlElement, ancestor_prefixes: dict[HtmlElement, str]
+) -> bool:
     tag = str(target.tag).lower()
     if tag in {"ref", "li"} or _semantic_tokens(target) & {"biblioentry", "doc-biblioentry"}:
         return True
     if tag in {"section", "div", "ol", "ref-list", "ul"} | _BIBLIOGRAPHY_CONTAINER_TAGS:
         return False
-    return _target_context(target).semantic == "bibliography"
+    return _target_context(target, ancestor_prefixes).semantic == "bibliography"
 
 
 def _is_note_body_target(target: HtmlElement) -> bool:

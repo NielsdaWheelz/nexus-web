@@ -28,6 +28,7 @@ from nexus.services.epub_ingest import (
 from nexus.services.media_author_observation_seam import attach_author_observation
 from nexus.services.reader_publication import (
     ReaderPublicationSourceFile,
+    ReplaceSourceIssues,
     replace_reader_publication,
     superseded_reader_source_paths,
     unpublished_reader_source_paths,
@@ -134,6 +135,7 @@ def publish_epub_source(
         media_id=media_id,
         expected_kind="epub",
         replace_projection=replace_projection,
+        issues=ReplaceSourceIssues(issues=plan.source_issues),
         source_file=source_file,
     )
     return response, superseded_source_paths + old_storage_paths

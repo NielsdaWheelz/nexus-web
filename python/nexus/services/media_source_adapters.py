@@ -61,6 +61,7 @@ from nexus.services.podcasts.transcription import run_podcast_transcription_now
 from nexus.services.reader_apparatus import replace_media_apparatus
 from nexus.services.reader_publication import (
     ReaderPublicationSourceFile,
+    ReplaceSourceIssues,
     replace_reader_publication,
 )
 from nexus.services.remote_file_client import REMOTE_FILE_CONTENT_TYPES, fetch_binary_to_storage
@@ -698,6 +699,7 @@ def _publish_stored_html(
             db,
             media_id=media_id,
             expected_kind="web_article",
+            issues=ReplaceSourceIssues(issues=()),
             replace_projection=lambda media: _replace_stored_html_projection(
                 db=db,
                 media=media,

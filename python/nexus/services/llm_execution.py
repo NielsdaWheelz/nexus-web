@@ -322,9 +322,7 @@ class JobGenerationJournal:
     def _write_payload(self, db: Session, payload: dict[str, object], phase: str) -> None:
         if not update_running_job_payload(
             db,
-            job_id=self.context.job_id,
-            worker_id=self.context.worker_id,
-            attempt_no=self.context.attempt_no,
+            context=self.context,
             payload=payload,
         ):
             raise GenerationDispatchAborted(f"generation lost its claim {phase}")

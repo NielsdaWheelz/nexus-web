@@ -38,7 +38,7 @@ from nexus.services.media_processing_state import mark_media_failed_by_id
 from nexus.services.media_source_ingest import (
     build_intent_key,
     create_attempt,
-    enqueue_accepted_source_attempt,
+    enqueue_accepted_source_attempt_in_transaction,
 )
 from nexus.storage.client import StorageError, get_storage_client
 from nexus.storage.paths import build_source_artifact_storage_path
@@ -201,13 +201,14 @@ def accept_email_message(
         db.commit()
         return EmailAcceptance(media_id=media.id, outcome="accepted")
 
-    enqueue_accepted_source_attempt(
+    enqueue_accepted_source_attempt_in_transaction(
         db,
         media_id=media.id,
         attempt_id=attempt.id,
         actor_user_id=owner_user_id,
         request_id=request_id,
     )
+    db.commit()
     return EmailAcceptance(media_id=media.id, outcome="accepted")
 
 
