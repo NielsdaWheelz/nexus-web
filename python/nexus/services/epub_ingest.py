@@ -10,10 +10,12 @@ import json
 import math
 import posixpath
 import re
+import sqlite3
 import time
 import unicodedata
 import zipfile
 from collections.abc import Callable, Iterator
+from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from html.entities import name2codepoint
@@ -71,8 +73,11 @@ from nexus.services.fragment_blocks import (
     parse_fragment_blocks,
 )
 from nexus.services.html_apparatus import (
+    HtmlApparatusAmbiguousMarker,
     HtmlApparatusTargetLimitExceeded,
     attach_fragment_locators,
+    collect_html_apparatus_candidate_backlinks,
+    collect_html_apparatus_marker_backlinks,
     collect_html_apparatus_targets,
     confirm_html_apparatus_target_refs,
     derive_fragment_note_groups,
@@ -100,6 +105,7 @@ EPUB_XHTML_MAX_DECODED_BYTES = 16 * 1024 * 1024
 EPUB_APPARATUS_MAX_TARGETS = 10_000
 EPUB_APPARATUS_MAX_BACKLINKS = 10_000
 EPUB_APPARATUS_MAX_RETAINED_UTF8_BYTES = 8 * 1024 * 1024
+EPUB_APPARATUS_MAX_CANDIDATE_INDEX_PAGES = 16_384
 
 _XHTML_DECODED_BYTES_MESSAGE = "EPUB XHTML decoded bytes exceed the 16 MiB per-entry limit"
 
@@ -487,6 +493,8 @@ def _build_plan(
         return _resource_limit(
             f"EPUB apparatus exceeds its bounded index: {exc}", dimension=exc.dimension
         )
+    except HtmlApparatusAmbiguousMarker as exc:
+        return _error(ApiErrorCode.E_SOURCE_NOT_READABLE, str(exc))
     if not staged:
         return _error(
             ApiErrorCode.E_SOURCE_NOT_READABLE, "Zero renderable XHTML spine items after extraction"
@@ -586,8 +594,15 @@ def _build_plan(
             published = canonicalize_structure(retained.html_sanitized)
             if published.text != retained.canonical_text:
                 raise ValueError("Retained EPUB HTML disagrees with canonical text")
-            if canonical.anchors.keys() != published.anchors.keys():
-                raise ValueError("Retained EPUB anchors disagree with its source")
+            source_canonical_text = canonical.text
+            source_html_sanitized = html_sanitized
+            source_markers = {
+                str(item["stable_key"]): item
+                for item in apparatus_items
+                if item.get("kind") in {"footnote_ref", "endnote_ref", "bibliography_ref"}
+                and isinstance(item.get("source_ref"), dict)
+                and cast(dict[str, object], item["source_ref"]).get("target_ref")
+            }
             html_sanitized, apparatus_items, apparatus_edges = extract_html_apparatus(
                 retained.html_sanitized,
                 source_kind=f"epub:{chapter.spine_idx}",
@@ -595,6 +610,7 @@ def _build_plan(
                 external_targets=external_targets,
                 confirmed_target_refs=confirmed_target_refs,
                 source_ref=_chapter_source_ref(chapter),
+                verified_source_markers=source_markers,
             )
             prepare_apparatus_bodies(
                 apparatus_items, sanitize=sanitize_epub_chapter, media_kind="epub"
@@ -605,6 +621,16 @@ def _build_plan(
                 or canonical.anchors.keys() != published.anchors.keys()
             ):
                 raise ValueError("Retained EPUB apparatus marking changes published structure")
+            _verify_retained_epub_markers(
+                media_id=media_id,
+                fragment_id=retained.id,
+                source_markers=source_markers,
+                apparatus_items=apparatus_items,
+                source_canonical_text=source_canonical_text,
+                source_html_sanitized=source_html_sanitized,
+                retained_canonical_text=retained.canonical_text,
+                retained_html_sanitized=html_sanitized,
+            )
         rendered_text_bytes += utf8_byte_length(canonical.text)
         if rendered_text_bytes > EPUB_RENDERED_TEXT_MAX_BYTES:
             return _resource_limit(
@@ -1180,23 +1206,139 @@ def _decode_epub_text(raw: bytes) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
+def _verify_retained_epub_markers(
+    *,
+    media_id: UUID,
+    fragment_id: UUID,
+    source_markers: dict[str, dict[str, object]],
+    apparatus_items: list[dict[str, object]],
+    source_canonical_text: str,
+    source_html_sanitized: str,
+    retained_canonical_text: str,
+    retained_html_sanitized: str,
+) -> None:
+    """Require each repaired marker to denote the same local source occurrence."""
+    if not source_markers:
+        return
+    source_positions = {
+        str(item["stable_key"]): item["locator"]
+        for item in attach_fragment_locators(
+            media_id=media_id,
+            fragment_id=fragment_id,
+            media_kind="epub",
+            canonical_text=source_canonical_text,
+            items=list(source_markers.values()),
+            html_sanitized=source_html_sanitized,
+        )
+    }
+    retained_positions = {
+        str(item["stable_key"]): item["locator"]
+        for item in attach_fragment_locators(
+            media_id=media_id,
+            fragment_id=fragment_id,
+            media_kind="epub",
+            canonical_text=retained_canonical_text,
+            items=[item for item in apparatus_items if str(item["stable_key"]) in source_markers],
+            html_sanitized=retained_html_sanitized,
+        )
+    }
+    if source_positions.keys() != retained_positions.keys():
+        raise ValueError("Retained EPUB omits a verified source marker locator")
+    for key, source_locator in source_positions.items():
+        retained_locator = retained_positions[key]
+        if not isinstance(source_locator, dict) or not isinstance(retained_locator, dict):
+            raise ValueError("Retained EPUB marker locator disagrees with verified source")
+        if source_locator == retained_locator and source_canonical_text == retained_canonical_text:
+            continue
+        source_offsets = (
+            source_locator.get("start_offset"),
+            source_locator.get("end_offset"),
+        )
+        retained_offsets = (
+            retained_locator.get("start_offset"),
+            retained_locator.get("end_offset"),
+        )
+        if not all(isinstance(value, int) for value in (*source_offsets, *retained_offsets)):
+            raise ValueError("Retained EPUB marker locator disagrees with verified source")
+        source_start, source_end = cast(tuple[int, int], source_offsets)
+        retained_start, retained_end = cast(tuple[int, int], retained_offsets)
+        quote = source_canonical_text[source_start:source_end]
+        if (
+            not quote
+            or source_start < 0
+            or retained_start < 0
+            or source_end > len(source_canonical_text)
+            or retained_end > len(retained_canonical_text)
+            or quote != retained_canonical_text[retained_start:retained_end]
+        ):
+            raise ValueError("Retained EPUB marker locator disagrees with verified source")
+        left = (
+            source_canonical_text[source_start - 64 : source_end]
+            if source_start >= 64 and retained_start >= 64
+            else ""
+        )
+        right = (
+            source_canonical_text[source_start : source_end + 64]
+            if source_end + 64 <= len(source_canonical_text)
+            and retained_end + 64 <= len(retained_canonical_text)
+            else ""
+        )
+        if not (
+            (
+                left
+                and _occurs_once(source_canonical_text, left)
+                and _occurs_once(retained_canonical_text, left)
+                and left == retained_canonical_text[retained_start - 64 : retained_end]
+            )
+            or (
+                right
+                and _occurs_once(source_canonical_text, right)
+                and _occurs_once(retained_canonical_text, right)
+                and right == retained_canonical_text[retained_start : retained_end + 64]
+            )
+        ):
+            raise ValueError("Retained EPUB marker positions disagree with verified source")
+
+
+def _occurs_once(text: str, witness: str) -> bool:
+    first = text.find(witness)
+    return first >= 0 and text.find(witness, first + 1) < 0
+
+
+def _candidate_backlink_exists(
+    candidates: sqlite3.Connection, target_ref: str, marker_id: str, source_href: str
+) -> bool:
+    target_href = target_ref.partition("#")[0]
+    qualified = f"{source_href}#{marker_id}"
+    local = f"#{marker_id}" if target_href == source_href else qualified
+    return (
+        candidates.execute(
+            "SELECT 1 FROM backlinks WHERE target_ref = ? AND href IN (?, ?) LIMIT 1",
+            (target_ref, local, qualified),
+        ).fetchone()
+        is not None
+    )
+
+
 def _stage_epub_chapters(
     package: _Package,
     chapter_specs: list[_ChapterSpec],
     *,
     staging_directory: Path,
 ) -> tuple[list[tuple[_ChapterSpec, Path, list[_MissingImageRef]]], dict[str, dict[str, object]]]:
-    """Rewrite each readable spine item once and index its apparatus targets.
+    """Rewrite each readable spine item, then index reciprocal apparatus targets.
 
     Rewritten chapter HTML is spilled to the attempt directory so the later
-    marker pass reads exactly the package-relative links indexed here, while
-    only one chapter's HTML is retained at a time.
+    marker pass reads exactly the package-relative links indexed here.
     """
     staged: list[tuple[_ChapterSpec, Path, list[_MissingImageRef]]] = []
     targets: dict[str, dict[str, object]] = {}
     target_count = 0
     retained_utf8_bytes = 0
     backlink_count = 0
+    marker_backlinks: dict[str, set[str]] = {}
+    marker_count = 0
+    marker_bytes = 0
     for chapter in chapter_specs:
         try:
             # `zipfile` hands out at most the declared uncompressed size and fails
@@ -1214,13 +1356,67 @@ def _stage_epub_chapters(
         html_path = staging_directory / f"chapter-{chapter.spine_idx}.html"
         html_path.write_text(rewritten_html, encoding="utf-8")
         staged.append((chapter, html_path, missing_refs))
+        del rewritten_html
+    target_hrefs = {chapter.href for chapter, _path, _missing in staged}
+    with closing(sqlite3.connect(staging_directory / "apparatus-candidates.sqlite3")) as candidates:
+        candidates.execute("PRAGMA page_size = 4096")
+        candidates.execute("PRAGMA journal_mode = OFF")
+        candidates.execute(f"PRAGMA max_page_count = {EPUB_APPARATUS_MAX_CANDIDATE_INDEX_PAGES}")
+        candidates.execute(
+            "CREATE TABLE backlinks (target_ref TEXT NOT NULL, href TEXT NOT NULL, "
+            "PRIMARY KEY (target_ref, href)) WITHOUT ROWID"
+        )
+
+        def record_candidate(target_ref: str, hrefs: Iterator[str]) -> None:
+            try:
+                candidates.execute("DELETE FROM backlinks WHERE target_ref = ?", (target_ref,))
+                candidates.executemany(
+                    "INSERT OR IGNORE INTO backlinks (target_ref, href) VALUES (?, ?)",
+                    ((target_ref, href) for href in hrefs),
+                )
+            except sqlite3.OperationalError as exc:
+                pages = candidates.execute("PRAGMA page_count").fetchone()
+                if (
+                    str(exc) == "database or disk is full"
+                    and pages
+                    and pages[0] >= EPUB_APPARATUS_MAX_CANDIDATE_INDEX_PAGES
+                ):
+                    raise HtmlApparatusTargetLimitExceeded(
+                        "EPUB apparatus candidate index exceeded 64 MiB", dimension="Output"
+                    ) from exc
+                raise
+
+        for chapter, html_path, _missing in staged:
+            collect_html_apparatus_candidate_backlinks(
+                html_path.read_text(encoding="utf-8"),
+                document_href=chapter.href,
+                record_candidate=record_candidate,
+            )
+        candidates.commit()
+
+        def candidate_backlink_exists(target_ref: str, marker_id: str, source_href: str) -> bool:
+            return _candidate_backlink_exists(candidates, target_ref, marker_id, source_href)
+
+        for chapter, html_path, _missing in staged:
+            added, added_bytes = collect_html_apparatus_marker_backlinks(
+                html_path.read_text(encoding="utf-8"),
+                document_href=chapter.href,
+                target_hrefs=target_hrefs,
+                candidate_backlink_exists=candidate_backlink_exists,
+                marker_backlinks=marker_backlinks,
+                max_markers=EPUB_APPARATUS_MAX_BACKLINKS - marker_count,
+                max_retained_utf8_bytes=EPUB_APPARATUS_MAX_RETAINED_UTF8_BYTES - marker_bytes,
+            )
+            marker_count += added
+            marker_bytes += added_bytes
+    for chapter, html_path, _missing in staged:
         (
             chapter_targets,
             chapter_target_count,
             chapter_retained_utf8_bytes,
             chapter_backlink_count,
         ) = collect_html_apparatus_targets(
-            rewritten_html,
+            html_path.read_text(encoding="utf-8"),
             document_href=chapter.href,
             source_kind=f"epub:{chapter.spine_idx}",
             source_ref=_chapter_source_ref(chapter),
@@ -1228,8 +1424,8 @@ def _stage_epub_chapters(
             max_targets=EPUB_APPARATUS_MAX_TARGETS - target_count,
             max_backlinks=EPUB_APPARATUS_MAX_BACKLINKS - backlink_count,
             max_retained_utf8_bytes=(EPUB_APPARATUS_MAX_RETAINED_UTF8_BYTES - retained_utf8_bytes),
+            marker_backlinks=marker_backlinks,
         )
-        del rewritten_html
         targets.update(chapter_targets)
         target_count += chapter_target_count
         retained_utf8_bytes += chapter_retained_utf8_bytes

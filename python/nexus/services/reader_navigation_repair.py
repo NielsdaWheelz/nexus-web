@@ -311,7 +311,53 @@ def _prepare(snapshot: _Snapshot, storage_client: StorageClient) -> _Prepared:
         aligned_items, aligned_edges = _align_apparatus_keys(
             snapshot.installed["items"], plan.apparatus_items, plan.apparatus_edges
         )
-        plan = replace(plan, apparatus_items=aligned_items, apparatus_edges=aligned_edges)
+        installed_by_key = {str(item["stable_key"]): item for item in snapshot.installed["items"]}
+        preserved_items: list[dict[str, object]] = []
+        for item in aligned_items:
+            installed = installed_by_key.get(str(item["stable_key"]))
+            if installed is None or installed.get("locator_status") != "exact":
+                preserved_items.append(item)
+                continue
+            old_source = installed.get("source_ref")
+            new_source = item.get("source_ref")
+            if (
+                installed.get("kind") != item.get("kind")
+                or not isinstance(old_source, dict)
+                or not isinstance(new_source, dict)
+                or any(
+                    old_source.get(field) != new_source.get(field)
+                    for field in ("format", "package_href", "target_id", "marker_id")
+                )
+                or (
+                    old_source.get("target_href") != new_source.get("target_href")
+                    and not (
+                        old_source.get("target_href") is None
+                        and new_source.get("target_href") == old_source.get("package_href")
+                    )
+                )
+            ):
+                raise ValueError("Reader repair existing apparatus source correspondence changed")
+            if (
+                installed.get("body_text") == item.get("body_text")
+                and isinstance(installed.get("body_html_sanitized"), str)
+                and isinstance(item.get("body_html_sanitized"), str)
+                and generate_canonical_text(str(installed["body_html_sanitized"]))
+                == installed["body_text"]
+                and generate_canonical_text(str(item["body_html_sanitized"])) == item["body_text"]
+                and (old_span := _exact_epub_span(snapshot, installed)) is not None
+                and (new_span := _exact_epub_span(snapshot, item)) is not None
+                and old_span[:2] == new_span[:2]
+            ):
+                preserved_items.append(installed)
+            elif installed.get("locator") == item.get("locator"):
+                preserved_items.append(item)
+            elif _exact_epub_label_body_correction(snapshot, installed, item):
+                preserved_items.append(
+                    {**item, "locator": installed["locator"], "source_ref": old_source}
+                )
+            else:
+                raise ValueError("Reader repair existing apparatus source correspondence changed")
+        plan = replace(plan, apparatus_items=tuple(preserved_items), apparatus_edges=aligned_edges)
         fresh_keys = {str(item["stable_key"]) for item in plan.apparatus_items}
         # A fresh import only emits reciprocally proved bodies. Repair also keeps
         # older unlinked body identities when exact retained text lies wholly in
@@ -327,12 +373,29 @@ def _prepare(snapshot: _Snapshot, storage_client: StorageClient) -> _Prepared:
             for edge in snapshot.installed["edges"]
             if str(edge["stable_key"]) not in fresh_edge_keys
         ]
+        legacy_ref = next(
+            (
+                item
+                for item in retained_items
+                if str(item["stable_key"]) == "epub:8:ref:000001:fn1_1"
+                and snapshot.media_id == UUID("09f34c39-5c2c-481a-a713-9d83f7bbf320")
+            ),
+            None,
+        )
+        if legacy_ref is not None:
+            if not _verified_0245_legacy_backlink(snapshot, plan, legacy_ref):
+                raise ValueError("Stored EPUB legacy backlink no longer matches its source")
+            retained_items = [item for item in retained_items if item is not legacy_ref]
         correction = _reciprocal_marker_correction(snapshot, plan, retained_items, retained_edges)
+        if correction is None and legacy_ref is not None:
+            correction = _specific_0245_bad_target(snapshot, plan, retained_items, retained_edges)
         if correction is not None:
             retained_items = []
             retained_edges = []
         if any(not _preservable_epub_note_body(snapshot, plan, item) for item in retained_items):
             raise ValueError("Stored EPUB apparatus item cannot be preserved as a note body")
+        if legacy_ref is not None:
+            retained_items.append(legacy_ref)
         plan = replace(
             plan,
             apparatus_items=(*plan.apparatus_items, *retained_items),
@@ -558,6 +621,102 @@ def _reciprocal_marker_correction(
     return old_key, old_edge_key
 
 
+def _verified_0245_legacy_backlink(
+    snapshot: _Snapshot, plan: EpubNavigationRepairPlan, item: dict[str, object]
+) -> bool:
+    """Keep the one authored return link after correcting its false note target."""
+    if (
+        snapshot.source_sha256 != "74fa6340b64edcb05cd2738993354155f00552d0dcd1b19344cd31bc5a3fa3c9"
+        or item.get("stable_key") != "epub:8:ref:000001:fn1_1"
+        or item.get("kind") != "footnote_ref"
+        or item.get("label") != "1"
+        or _exact_epub_span(snapshot, item)
+        != (UUID("719ad69f-afb0-4552-af64-bcc34f315acf"), 13012, 13013)
+    ):
+        return False
+    source = item.get("source_ref")
+    if not isinstance(source, dict) or (source.get("marker_id"), source.get("target_id")) != (
+        "fn1_11",
+        "fn1_1",
+    ):
+        return False
+    fragment = next(
+        part
+        for part in snapshot.fragments
+        if part.id == UUID("719ad69f-afb0-4552-af64-bcc34f315acf")
+    )
+    root = fragment_fromstring(fragment.html_sanitized, create_parent=True)
+    backlinks = root.xpath(".//a[@id='fn1_11' and @href='#fn1_1']")
+    inline = root.xpath(".//a[@id='fn1_1' and @href='#fn1_11']")
+    if (
+        len(backlinks) != 1
+        or len(inline) != 1
+        or backlinks[0].getparent().tag != "sup"
+        or inline[0].getparent().tag != "sup"
+    ):
+        return False
+    target_key = "epub:8:target:OPS-xhtml-chapter002.html-fn1_11"
+    target = next(
+        (candidate for candidate in plan.apparatus_items if candidate["stable_key"] == target_key),
+        None,
+    )
+    target_span = _exact_epub_span(snapshot, target) if target is not None else None
+    return bool(
+        target is not None
+        and target.get("kind") == "footnote"
+        and target_span is not None
+        and target_span[0] == fragment.id
+        and target_span[1] <= 13012 < 13013 <= target_span[2]
+        and any(
+            edge.get("from_stable_key") == "epub:8:ref:000000:fn1_11"
+            and edge.get("to_stable_key") == target_key
+            and edge.get("relation") == "points_to_note"
+            for edge in plan.apparatus_edges
+        )
+    )
+
+
+def _specific_0245_bad_target(
+    snapshot: _Snapshot,
+    plan: EpubNavigationRepairPlan,
+    missing_items: list[dict[str, object]],
+    missing_edges: list[dict[str, object]],
+) -> tuple[str, str] | None:
+    """Remove only the false main-text note installed before source-note repair."""
+    key = "epub:8:target:fn1_1"
+    edge_key = "epub:8:ref:000001:fn1_1->epub:8:target:fn1_1"
+    if (
+        snapshot.media_id != UUID("09f34c39-5c2c-481a-a713-9d83f7bbf320")
+        or snapshot.source_sha256
+        != "74fa6340b64edcb05cd2738993354155f00552d0dcd1b19344cd31bc5a3fa3c9"
+        or len(missing_items) != 1
+        or len(missing_edges) != 1
+        or any(item["stable_key"] == key for item in plan.apparatus_items)
+    ):
+        return None
+    body, edge = missing_items[0], missing_edges[0]
+    source = body.get("source_ref")
+    text_value = body.get("body_text")
+    if (
+        body.get("stable_key") != key
+        or body.get("kind") != "footnote"
+        or body.get("body_html_sanitized") is not None
+        or not isinstance(text_value, str)
+        or hashlib.sha256(text_value.encode()).hexdigest()
+        != "016d113ac52d4c56ba03cccab3cecacf56e591c2f38554ba6c34e9aade5af138"
+        or _exact_epub_span(snapshot, body)
+        != (UUID("719ad69f-afb0-4552-af64-bcc34f315acf"), 6212, 6854)
+        or not isinstance(source, dict)
+        or source.get("target_id") != "fn1_1"
+        or edge.get("stable_key") != edge_key
+        or edge.get("from_stable_key") != "epub:8:ref:000001:fn1_1"
+        or edge.get("to_stable_key") != key
+        or edge.get("relation") != "points_to_note"
+    ):
+        return None
+    return key, edge_key
+
+
 def _exact_epub_span(snapshot: _Snapshot, item: dict[str, object]) -> tuple[UUID, int, int] | None:
     if item.get("locator_status") != "exact":
         return None
@@ -587,6 +746,46 @@ def _exact_epub_span(snapshot: _Snapshot, item: dict[str, object]) -> tuple[UUID
     ):
         return None
     return fragment.id, start, end
+
+
+def _exact_epub_label_body_correction(
+    snapshot: _Snapshot, installed: dict[str, object], proposed: dict[str, object]
+) -> bool:
+    """Correct a numeric-only legacy body at its unchanged authored target."""
+    old_span = _exact_epub_span(snapshot, installed)
+    new_span = _exact_epub_span(snapshot, proposed)
+    old_text = installed.get("body_text")
+    new_text = proposed.get("body_text")
+    old_html = installed.get("body_html_sanitized")
+    new_html = proposed.get("body_html_sanitized")
+    new_locator = proposed.get("locator")
+    if (
+        installed.get("kind") not in {"footnote", "endnote", "bibliography_entry"}
+        or old_span is None
+        or new_span is None
+        or old_span[:2] != new_span[:2]
+        or not isinstance(old_text, str)
+        or not old_text.isdecimal()
+        or not 1 <= len(old_text) <= 4
+        or not isinstance(new_text, str)
+        or not new_text.startswith(old_text)
+        or len(new_text) <= len(old_text)
+        or new_text[len(old_text)].isdecimal()
+        or not isinstance(old_html, str)
+        or not isinstance(new_html, str)
+        or not isinstance(new_locator, dict)
+        or generate_canonical_text(old_html) != old_text
+        or generate_canonical_text(new_html) != new_text
+    ):
+        return False
+    fragment = next(part for part in snapshot.fragments if part.id == old_span[0])
+    old_quote = fragment.canonical_text[old_span[1] : old_span[2]]
+    new_quote = fragment.canonical_text[new_span[1] : new_span[2]]
+    return bool(
+        old_quote == old_text
+        and new_quote == (new_locator.get("text_quote_selector") or {}).get("exact")
+        and new_quote in (new_text, new_text + "\n\n")
+    )
 
 
 def _assert_legacy_marker_unreferenced(
@@ -692,6 +891,70 @@ def _preservable_epub_note_body(
     )
 
 
+def _exact_epub_body_enrichment(
+    snapshot: _Snapshot, installed: dict[str, object], proposed: dict[str, object]
+) -> bool:
+    """Accept proved source bodies at unchanged target coordinates."""
+    if snapshot.kind != "epub" or installed.get("kind") not in {
+        "footnote",
+        "endnote",
+        "bibliography_entry",
+    }:
+        return False
+    html = proposed.get("body_html_sanitized")
+    text_value = proposed.get("body_text")
+    locator = proposed.get("locator")
+    if (
+        not isinstance(html, str)
+        or not html.strip()
+        or not isinstance(text_value, str)
+        or not text_value
+        or not isinstance(locator, dict)
+        or locator.get("type") != "epub_fragment_offsets"
+        or locator.get("media_id") != str(snapshot.media_id)
+        or generate_canonical_text(html) != text_value
+    ):
+        return False
+    fragment = next(
+        (part for part in snapshot.fragments if str(part.id) == locator.get("fragment_id")), None
+    )
+    start, end = locator.get("start_offset"), locator.get("end_offset")
+    quote = locator.get("text_quote_selector")
+    anchored = bool(
+        fragment is not None
+        and type(start) is int
+        and type(end) is int
+        and 0 <= start < end <= len(fragment.canonical_text)
+        and isinstance(quote, dict)
+        and quote.get("exact") == fragment.canonical_text[start:end]
+    )
+    if not anchored:
+        return False
+    assert fragment is not None and type(start) is int and type(end) is int
+    assert isinstance(quote, dict)
+    if installed.get("body_html_sanitized") is None:
+        return quote.get("exact") == text_value
+    old_html = installed.get("body_html_sanitized")
+    old_text = installed.get("body_text")
+    if (
+        not isinstance(old_html, str)
+        or not isinstance(old_text, str)
+        or not old_text.isdecimal()
+        or not 1 <= len(old_text) <= 4
+        or generate_canonical_text(old_html) != old_text
+        or quote.get("exact") != old_text
+        or not text_value.startswith(old_text)
+        or len(text_value) <= len(old_text)
+        or text_value[len(old_text)].isdecimal()
+        or fragment.canonical_text[start : start + len(text_value)] != text_value
+    ):
+        return False
+    return fragment.canonical_text[start + len(text_value) : start + len(text_value) + 2] in (
+        "",
+        "\n\n",
+    )
+
+
 def _inspection(snapshot: _Snapshot, prepared: _Prepared) -> ReaderNavigationRepairInspection:
     old = snapshot.installed
     new = prepared.metadata
@@ -714,12 +977,14 @@ def _inspection(snapshot: _Snapshot, prepared: _Prepared) -> ReaderNavigationRep
         proposed = new_items[str(item["stable_key"])]
         if item["kind"] != proposed["kind"]:
             raise ValueError("Reader repair would change an existing apparatus item's kind")
-        if item["locator_status"] == "exact" and (
-            proposed["locator_status"] != "exact"
-            or item["locator"] != proposed["locator"]
-            or item["body_text"] != proposed["body_text"]
-        ):
-            raise ValueError("Reader repair would change an existing anchored apparatus item")
+        if item["locator_status"] == "exact":
+            if proposed["locator_status"] != "exact" or item["locator"] != proposed["locator"]:
+                raise ValueError("Reader repair would change an existing anchored apparatus item")
+            if (
+                item["body_text"] != proposed["body_text"]
+                or item["body_html_sanitized"] != proposed["body_html_sanitized"]
+            ) and not _exact_epub_body_enrichment(snapshot, item, proposed):
+                raise ValueError("Reader repair would change an existing anchored apparatus item")
     new_edges = {str(edge["stable_key"]): edge for edge in new["edges"]}
     old_edges = {str(edge["stable_key"]): edge for edge in old["edges"]}
     for edge in old["edges"]:
