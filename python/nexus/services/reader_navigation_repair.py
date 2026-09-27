@@ -437,10 +437,20 @@ def _reciprocal_marker_correction(
         other_ref.get("source_ref"),
         old_body.get("source_ref"),
     )
-    if not all(isinstance(ref, dict) for ref in (source_a, source_b, old_source)):
+    if (
+        not isinstance(source_a, dict)
+        or not isinstance(source_b, dict)
+        or not isinstance(old_source, dict)
+    ):
         return None
-    assert isinstance(source_a, dict) and isinstance(source_b, dict)
-    assert isinstance(old_source, dict)
+    old_body_locator = old_body.get("locator")
+    old_body_quote = (
+        old_body_locator.get("text_quote_selector") if isinstance(old_body_locator, dict) else None
+    )
+    if not isinstance(old_body_quote, dict) or old_body.get("body_text") != old_body_quote.get(
+        "exact"
+    ):
+        return None
     marker_a, target_a = source_a.get("marker_id"), source_a.get("target_id")
     marker_b, target_b = source_b.get("marker_id"), source_b.get("target_id")
     if (
@@ -495,6 +505,8 @@ def _reciprocal_marker_correction(
             or body_span[0] != marker_span[0]
             or not body_span[1] <= marker_span[1] < marker_span[2] <= body_span[2]
             or body_span[2] - body_span[1] <= 1
+            or sum(char.isalnum() for char in fragment.canonical_text[body_span[1] : body_span[2]])
+            < 2
         ):
             return None
         bodies.append(body_span)
@@ -507,7 +519,12 @@ def _exact_epub_span(snapshot: _Snapshot, item: dict[str, object]) -> tuple[UUID
     if item.get("locator_status") != "exact":
         return None
     locator = item.get("locator")
-    if not isinstance(locator, dict) or locator.get("type") != "epub_fragment_offsets":
+    if (
+        not isinstance(locator, dict)
+        or locator.get("type") != "epub_fragment_offsets"
+        or locator.get("media_id") != str(snapshot.media_id)
+        or locator.get("media_kind") not in (None, "epub")
+    ):
         return None
     fragment = next(
         (part for part in snapshot.fragments if str(part.id) == locator.get("fragment_id")), None
