@@ -232,7 +232,7 @@ class _TocWalk:
 
     entries: Callable[[ET.Element], Iterator[_TocEntry]]
     nav_type: str
-    base_dir: str
+    base_href: str
     href_to_frag_idx: dict[str, int]
     media_id: UUID
     nodes: list[EpubStructureTocNode]
@@ -1412,7 +1412,7 @@ def _walk_toc(
     sibling_ids: dict[str, int] = {}
     for ordinal, (element, label, href, nav_id) in enumerate(walk.entries(parent)):
         canonical_href, fragment_idx = _resolve_nav_target(
-            href, walk.base_dir, walk.href_to_frag_idx
+            href, walk.base_href, walk.href_to_frag_idx
         )
         raw_id = _ensure_sibling_unique(_node_id_token(nav_id, href, label), sibling_ids)
         node_path = f"{parent_path}/{raw_id}" if parent_path else f"{walk.nav_type}/{raw_id}"
@@ -1477,7 +1477,7 @@ def _parse_epub3_nav(
             _TocWalk(
                 entries=_nav_entries,
                 nav_type=nav_type,
-                base_dir=posixpath.dirname(nav_href),
+                base_href=nav_href,
                 href_to_frag_idx=href_to_frag_idx,
                 media_id=media_id,
                 nodes=nodes,
@@ -1518,7 +1518,7 @@ def _parse_ncx_toc(
         _TocWalk(
             entries=_ncx_entries,
             nav_type="toc",
-            base_dir=posixpath.dirname(ncx_href),
+            base_href=ncx_href,
             href_to_frag_idx=href_to_frag_idx,
             media_id=media_id,
             nodes=nodes,
@@ -1529,14 +1529,18 @@ def _parse_ncx_toc(
 
 
 def _resolve_nav_target(
-    href: str | None, base_dir: str, href_to_frag_idx: dict[str, int]
+    href: str | None, base_href: str, href_to_frag_idx: dict[str, int]
 ) -> tuple[str | None, int | None]:
     if not href:
         return None, None
     parsed = urlparse(href)
     if parsed.scheme:
         return href, None
-    resolved_path = _resolve_epub_path(base_dir, parsed.path) if parsed.path else None
+    if parsed.netloc:
+        return None, None
+    resolved_path = (
+        _resolve_epub_path(posixpath.dirname(base_href), parsed.path) if parsed.path else base_href
+    )
     canonical_href = resolved_path
     if canonical_href and parsed.fragment:
         canonical_href = f"{canonical_href}#{parsed.fragment}"
