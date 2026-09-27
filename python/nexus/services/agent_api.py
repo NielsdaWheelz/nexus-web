@@ -181,6 +181,24 @@ def close_generation_api_admission(db: Session, *, generation_id: UUID) -> None:
         db.flush()
 
 
+def close_generation_api_admission_for_owner(db: Session, *, owner: LlmCallOwner) -> None:
+    """Close an owner's run bearer in the transaction that requests cancellation."""
+
+    db.execute(
+        update(GenerationApiCredential)
+        .where(
+            GenerationApiCredential.generation_id.in_(
+                select(LLMCall.id).where(
+                    LLMCall.owner_kind == owner.kind,
+                    LLMCall.owner_id == owner.id,
+                )
+            ),
+            GenerationApiCredential.closed_at.is_(None),
+        )
+        .values(closed_at=func.clock_timestamp())
+    )
+
+
 def authenticate_generation_api(
     db: Session, *, bearer: str, require_child: bool
 ) -> AgentApiAdmission:

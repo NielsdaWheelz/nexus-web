@@ -11,6 +11,7 @@ import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import aclosing
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Literal, Protocol, assert_never
 from uuid import UUID
 
@@ -259,6 +260,10 @@ class BackendChildLifecycle(Protocol):
 
     async def arm_child(self, child: BackendChildDispatch) -> None: ...
 
+    def set_codex_api_deadline(self, expires_at: datetime) -> None: ...
+
+    async def close_codex_api_admission(self) -> None: ...
+
     def take_codex_api_access(self) -> GenerationApiAccess: ...
 
     async def complete_child(
@@ -441,7 +446,10 @@ class _KernelAdapter:
         KernelFrame[BackendEvent, BackendTerminal, ProviderContinuationMaterial, ToolCallResolution]
     ]:
         async def bind(admission: GenerationAdmission) -> GenerationCommand:
-            del admission
+            admitted_at = datetime.fromisoformat(admission.admitted_at[:-1] + "+00:00")
+            self.lifecycle.set_codex_api_deadline(
+                admitted_at + timedelta(seconds=admission.runtime_deadline_seconds)
+            )
             await arm()
             command = generation_command_from_draft(
                 draft, api_access=self.lifecycle.take_codex_api_access()
@@ -465,7 +473,10 @@ class _KernelAdapter:
                     )
                     if read_task not in done:
                         await cancel_task
-                        await self.codex.cancel(draft.request_id)
+                        try:
+                            await self.lifecycle.close_codex_api_admission()
+                        finally:
+                            await self.codex.cancel(draft.request_id)
                         cancelled = True
                 try:
                     frame = await read_task

@@ -642,6 +642,19 @@ class _LedgerChildLifecycle:
         self.completed: BackendChildCompletion | None = None
         self.encoded: EncodedGenerationTerminal | None = None
         self._codex_api_access: GenerationApiAccess | None = None
+        self._codex_api_deadline: datetime | None = None
+
+    def set_codex_api_deadline(self, expires_at: datetime) -> None:
+        if expires_at.tzinfo is None or self._codex_api_deadline is not None:
+            raise AssertionError("Codex API deadline is absent, naive, or already set")
+        self._codex_api_deadline = expires_at
+
+    async def close_codex_api_admission(self) -> None:
+        from nexus.services.agent_api import close_generation_api_admission
+
+        with self._session_factory() as db, db.begin():
+            lock_generation_owner_in_current_transaction(db, self._request.owner)
+            close_generation_api_admission(db, generation_id=self._request.generation_id)
 
     async def arm_child(self, child: BackendChildDispatch) -> None:
         request = self._request
@@ -690,14 +703,15 @@ class _LedgerChildLifecycle:
                         issue_generation_api_credential_in_current_transaction,
                     )
 
+                    if self._codex_api_deadline is None:
+                        raise AssertionError("Codex API deadline was not supplied by admission")
                     token = issue_generation_api_credential_in_current_transaction(
                         db,
                         user_id=request.user_id,
                         owner=request.owner,
                         generation_id=request.generation_id,
                         job_context=request.journal.context,
-                        expires_at=datetime.now(UTC)
-                        + timedelta(seconds=request.spec.bounds.transport_deadline_seconds),
+                        expires_at=self._codex_api_deadline,
                     )
             else:
                 if state.dispatch_phase is not Uncertain:
