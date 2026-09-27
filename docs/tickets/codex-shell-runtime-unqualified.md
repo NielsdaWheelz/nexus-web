@@ -5,31 +5,34 @@ status: open · origin: 2026-09-26 owner-approved redesign · area: codex execut
 ## problem and evidence
 
 the owner approved subscription-backed native shell, disposable scratch and
-public internet under [the shell plan](../codex-shell-cutover-plan.md).
-the former frozen-mcp-only requirement is superseded, not proved. current
-code still rejects native tool-bearing work (`apps/codex_agent/host.py:1026`,
-`python/nexus/services/codex_generation_contract.py:183`) and has no generation
-http api, remote exec selection or separately isolated shell environment.
+public internet under [the shell plan](../codex-shell-cutover-plan.md). the
+implementation is staged on `c792536afe81fccb18707e0e3772ccaa8d10f671`, but the final artifact still needs
+complete live qualification. earlier nexus mcp receipts and codapt2's 0.153.1
+remote-shell example do not prove the final 0.157.1 boundary.
 
-enabling shell inside the current sandbox would expose enrolled auth reads:
-`apps/codex_agent/credential_state.py:196` links auth into native state; the host mounts it in
-`deploy/hetzner/docker-compose.yml:275`. pinned 0.157.1 source
-`codex-rs/protocol/src/permissions.rs:805` permits root reads under workspace
-write; its linux sandbox binds root read-only.
-`apps/codex_agent/sandbox_health.py:58` proves a write boundary, not credential-read
-exclusion. current egress permits only openai hosts
-(`apps/codex_agent/egress_policy.py:64`), not the newly approved public network.
-
-codapt2 `4f79e5a` demonstrates remote execution and shell http on 0.153.1.
-its structured projections use apis; earlier nexus mcp receipts do not prove
-0.157.1 remote shell plus strict json or the new authority/teardown boundary.
+on the isolated `nexus_shell_8e3` database and that exact api/worker source, a
+browser-authenticated note dossier build (`67b94b92-ecea-4000-9e9b-6d8ec9938a53`)
+completed as strict json with revision
+`26baf77a-88d9-4892-a103-ed7975cfc25c` and one grounded citation. its
+persisted user instruction first requested `nexus.note.create` for the exact
+marker `background effect probe: amber kestrel 4821`, but generation
+`6ed98892-cd3f-500f-9858-72007789eddc` recorded zero tool positions and
+created no note. this is an unproved background write journey, not evidence
+that the generation api refused a call. a stronger second instruction was
+admitted as build `0e04ed93-4e65-44bf-9f2a-d1f358033c79`, but its queue
+payload recorded `CapacityPaused(code=quota_unavailable)` at
+2026-09-27 05:36:18 utc and deferred it to 05:51:18; no generation was
+dispatched. it was canceled through the authenticated bff at 05:41:03.
+temporary nonsecret receipt: `/tmp/nexus-shell-cutover/background-dossier-receipt.jsonl`.
 
 ## prerequisite and acceptance
 
-implement the linked plan without local execution or metered-provider
-fallback. first prove native shell and strict json together on 0.157.1, with
-auth/control paths inaccessible. then qualify private api effects/replay,
+qualify the linked plan without local execution or metered-provider fallback.
+prove native shell and strict json together on 0.157.1, with auth/control paths
+inaccessible. then qualify private api effects/replay,
 account visibility, credential revocation, public/private network boundaries,
 detached-process teardown, auth refresh, every required model/effort and real
-nexus chat/background journeys on the final pins. keep current ineligibility
-until the replacement is proved; never bypass startup validation.
+nexus chat/background journeys on the final pins. never bypass startup validation.
+for the background write journey, observe a model-originated operation position,
+the created note, account effect listing, and authenticated undo on the same
+completed generation. a valid dossier revision alone does not establish it.
