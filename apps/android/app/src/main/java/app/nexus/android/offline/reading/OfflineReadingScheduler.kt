@@ -4,6 +4,7 @@ import android.app.job.JobInfo
 import android.app.job.JobScheduler
 import android.content.ComponentName
 import android.content.Context
+import android.os.Build
 import android.os.PersistableBundle
 import app.nexus.android.offline.NetworkPolicy
 import app.nexus.android.offline.OfflineNetworkPolicyStore
@@ -68,7 +69,9 @@ internal class OfflineReadingScheduler(
     }
 
     private fun buildJob(): JobInfo {
-        requireOfflineReadingSupported()
+        if (Build.VERSION.SDK_INT < OFFLINE_READING_MINIMUM_SDK) {
+            throw OfflineReadingUnsupportedPlatformException()
+        }
         val builder = JobInfo.Builder(
             OFFLINE_READING_JOB_ID,
             ComponentName(appContext, OfflineReadingTransferJobService::class.java),

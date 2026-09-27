@@ -1,5 +1,6 @@
 package app.nexus.android.offline.reading
 
+import java.io.DataInputStream
 import java.io.File
 import java.security.MessageDigest
 
@@ -37,7 +38,9 @@ internal class OfflineReadingInstalledPackageVerifier : OfflineReadingInstalledP
             require(document.mediaType == "application/pdf")
             require(document.path.lowercase().endsWith(".pdf"))
             require(File(directory, document.path).inputStream().use { input ->
-                input.readNBytes(5).contentEquals("%PDF-".toByteArray())
+                val header = ByteArray(5)
+                DataInputStream(input).readFully(header)
+                header.contentEquals("%PDF-".toByteArray())
             })
         } else {
             val assetVerifier = OfflineReadingPackageVerifier()
