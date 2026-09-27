@@ -1,7 +1,7 @@
 """Preserve source note bodies and enrich exact existing fragment targets.
 
-Revision ID: 0244
-Revises: 0243
+Revision ID: 0245
+Revises: 0244
 """
 
 from collections.abc import Sequence
@@ -10,8 +10,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.orm import Session
 
-revision: str = "0244"
-down_revision: str | Sequence[str] | None = "0243"
+revision: str = "0245"
+down_revision: str | Sequence[str] | None = "0244"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -35,7 +35,7 @@ def upgrade() -> None:
     )
     if missing_count:
         raise RuntimeError(
-            f"0244 blocked: {missing_count} apparatus media have no reader publication; "
+            f"0245 blocked: {missing_count} apparatus media have no reader publication; "
             f"sample media ids: {', '.join(str(media_id) for media_id in sample_ids)}. "
             "repair publication linkage and retry"
         )
@@ -54,5 +54,5 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     raise NotImplementedError(
-        "0244 requires restoring the previous application and database together"
+        "0245 requires restoring the previous application and database together"
     )
