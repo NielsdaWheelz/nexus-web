@@ -1,6 +1,6 @@
 # processing recovery
 
-status: implementation in progress; [isolated execution evidence](processing-recovery-execution.md); production acceptance `NOT_RUN`
+status: implementation merged; [isolated execution evidence](processing-recovery-execution.md); production acceptance `NOT_RUN`
 origin: 2026-09-26 owner approval of [the investigation](processing-failures-review.md)
 authority: this plan specifies implementation; the review retains evidence and the item inventory.
 

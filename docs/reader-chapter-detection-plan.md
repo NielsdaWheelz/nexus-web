@@ -1,6 +1,6 @@
 # reader section semantics
 
-status: local acceptance verified; production rollout deferred by owner
+status: local acceptance verified; combined production rollout approved, gates unverified
 origin: 2026-09-26 owner approval of [council research](reader-chapter-detection-council.md)
 authority: this plan owns implementation; the research retains sources and receipts.
 
