@@ -46,6 +46,7 @@ import {
 
 type EvidenceScope = "all" | "document";
 const NO_ANCHORS: AnchoredReaderRow[] = [];
+const BROWSE_PAGE_SIZE = 40;
 
 export interface EvidenceHighlightEditRequest {
   highlightId: string;
@@ -135,6 +136,7 @@ export default function EvidencePaneSurface({
   // editingHighlightId's single-editor rule for the folded link note).
   const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
   const [mode, setMode] = useState<"follow" | "browse">("follow");
+  const [browsePage, setBrowsePage] = useState(0);
   const listRef = useRef<HTMLDivElement | null>(null);
   const groupRefs = useRef(new Map<string, HTMLElement>());
   const browseAnchorRef = useRef<{ element: HTMLElement; top: number } | null>(null);
@@ -151,32 +153,6 @@ export default function EvidencePaneSurface({
     () => new Map((evidence?.source_targets ?? []).map((target) => [target.ref, target])),
     [evidence?.source_targets],
   );
-
-  const browse = useCallback((target?: EventTarget | null) => {
-    if (!following) return;
-    const list = listRef.current;
-    if (list) {
-      const row = target instanceof Element
-        ? target.closest<HTMLElement>("[data-evidence-item-id]")
-        : null;
-      const anchor = row ?? Array.from(
-        list.querySelectorAll<HTMLElement>("[data-evidence-item-id]"),
-      ).find((element) => element.getBoundingClientRect().bottom > list.getBoundingClientRect().top);
-      if (anchor) browseAnchorRef.current = { element: anchor, top: anchor.getBoundingClientRect().top };
-    }
-    setMode("browse");
-  }, [following]);
-
-  const resumeFollow = () => {
-    browseAnchorRef.current = null;
-    pendingRevealRef.current = null;
-    setRevealedItemId(null);
-    setBrowseInset(0);
-    setScope("all");
-    if (listRef.current) listRef.current.scrollTop = 0;
-    setMode("follow");
-  };
-
   const visiblePassageGroups = useMemo(
     () =>
       (evidence?.passage_groups ?? [])
@@ -189,6 +165,36 @@ export default function EvidencePaneSurface({
         .filter(({ items }) => items.length > 0),
     [evidence?.passage_groups, filters.filter, revealedItemId],
   );
+
+  const browse = useCallback((target?: EventTarget | null) => {
+    if (!following) return;
+    const list = listRef.current;
+    if (list) {
+      const row = target instanceof Element
+        ? target.closest<HTMLElement>("[data-evidence-item-id]")
+        : null;
+      const anchor = row ?? Array.from(
+        list.querySelectorAll<HTMLElement>("[data-evidence-item-id]"),
+      ).find((element) => element.getBoundingClientRect().bottom > list.getBoundingClientRect().top);
+      if (anchor) browseAnchorRef.current = { element: anchor, top: anchor.getBoundingClientRect().top };
+      const groupId = anchor?.closest<HTMLElement>("[data-evidence-group-id]")?.dataset.evidenceGroupId;
+      const index = visiblePassageGroups.findIndex(({ group }) => group.locus_ref === groupId);
+      if (index >= 0) setBrowsePage(Math.floor(index / BROWSE_PAGE_SIZE));
+    }
+    setMode("browse");
+  }, [following, visiblePassageGroups]);
+
+  const resumeFollow = () => {
+    browseAnchorRef.current = null;
+    pendingRevealRef.current = null;
+    setRevealedItemId(null);
+    setBrowseInset(0);
+    setScope("all");
+    setBrowsePage(0);
+    if (listRef.current) listRef.current.scrollTop = 0;
+    setMode("follow");
+  };
+
   const visibleDocumentItems = useMemo(
     () =>
       (evidence?.document_items ?? []).filter((item) =>
@@ -213,9 +219,17 @@ export default function EvidencePaneSurface({
     })), heights, 12,
   ), [projections, viewportState, listGeometry.top, heights]);
   const positionById = new Map(positions.map((position) => [position.id, position]));
+  const browsePageCount = Math.max(1, Math.ceil(visiblePassageGroups.length / BROWSE_PAGE_SIZE));
+  const effectiveBrowsePage = Math.min(browsePage, browsePageCount - 1);
   const displayedGroups = following
     ? visiblePassageGroups.filter(({ group }) => positionById.has(group.locus_ref))
-    : visiblePassageGroups;
+    : visiblePassageGroups.slice(effectiveBrowsePage * BROWSE_PAGE_SIZE, (effectiveBrowsePage + 1) * BROWSE_PAGE_SIZE);
+  const changeBrowsePage = (page: number) => {
+    browseAnchorRef.current = null;
+    pendingRevealRef.current = null;
+    setBrowsePage(page);
+    if (listRef.current) listRef.current.scrollTop = 0;
+  };
   const displayedGroupKey = displayedGroups.map(({ group }) => group.locus_ref).join("|");
   useLayoutEffect(() => {
     const list = listRef.current;
@@ -248,8 +262,10 @@ export default function EvidencePaneSurface({
     setMode("browse");
     setScope(evidence?.document_items.some((item) => item.id === activeItemId) ? "document" : "all");
     setRevealedItemId(activeItemId);
+    const index = visiblePassageGroups.findIndex(({ items }) => items.some((item) => item.id === activeItemId));
+    if (index >= 0) setBrowsePage(Math.floor(index / BROWSE_PAGE_SIZE));
     pendingRevealRef.current = activeItemId;
-  }, [activeItemId, followGeneration, browse, evidence?.document_items]);
+  }, [activeItemId, followGeneration, browse, evidence?.document_items, visiblePassageGroups]);
 
   useLayoutEffect(() => {
     const request = highlightEditRequest;
@@ -264,9 +280,11 @@ export default function EvidencePaneSurface({
     setMode("browse");
     setScope("all");
     setRevealedItemId(item.id);
+    const index = visiblePassageGroups.findIndex(({ items }) => items.some((candidate) => candidate.id === item.id));
+    if (index >= 0) setBrowsePage(Math.floor(index / BROWSE_PAGE_SIZE));
     setEditingHighlightId(request.highlightId);
     pendingRevealRef.current = item.id;
-  }, [browse, evidence, highlightEditRequest]);
+  }, [browse, evidence, highlightEditRequest, visiblePassageGroups]);
 
   useLayoutEffect(() => {
     const list = listRef.current;
@@ -437,6 +455,15 @@ export default function EvidencePaneSurface({
           </button>
         ) : null}
         {following && remainingCount > 0 ? <span className={styles.remaining}>{remainingCount} {remainingCount === 1 ? "item" : "items"} below</span> : null}
+        {!following && scope === "all" && browsePageCount > 1 ? (
+          <nav className={styles.browsePages} aria-label="Evidence pages">
+            <button type="button" disabled={effectiveBrowsePage === 0}
+              onClick={() => changeBrowsePage(effectiveBrowsePage - 1)}>earlier</button>
+            <span>{effectiveBrowsePage + 1} of {browsePageCount}</span>
+            <button type="button" disabled={effectiveBrowsePage >= browsePageCount - 1}
+              onClick={() => changeBrowsePage(effectiveBrowsePage + 1)}>later</button>
+          </nav>
+        ) : null}
       </div>
     </header>
   );
@@ -572,6 +599,7 @@ export default function EvidencePaneSurface({
         browse();
         setMode("browse");
         setScope(value);
+        setBrowsePage(0);
       }}
       variant="segmented"
       className={styles.root}
