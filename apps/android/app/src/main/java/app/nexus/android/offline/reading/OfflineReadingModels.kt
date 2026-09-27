@@ -281,7 +281,10 @@ internal sealed interface OfflineReadingBindingView {
 }
 
 internal sealed interface OfflineReadingAvailability {
-    data class Transfer(val state: ReadingTransferState) : OfflineReadingAvailability
+    data class Transfer(
+        val state: ReadingTransferState,
+        val recoveryProgress: NativeReaderProgressView? = null,
+    ) : OfflineReadingAvailability
 
     data class Ready(
         val sizeBytes: Long,

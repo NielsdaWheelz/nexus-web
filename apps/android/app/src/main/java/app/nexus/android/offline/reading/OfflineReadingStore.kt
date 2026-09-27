@@ -347,7 +347,21 @@ internal class OfflineReadingStore internal constructor(
     fun remove(mediaId: UUID): ReadingStoreSnapshot {
         val binding = requireBinding()
         val installed = readPackage(binding.bindingId, mediaId)
-            ?: return cancel(mediaId)
+            ?: run {
+                cancel(mediaId)
+                database.writableDatabase.transaction {
+                    execSQL(
+                        "DELETE FROM offline_reader_progress_pending WHERE binding_id = ? AND media_id = ?",
+                        arrayOf(binding.bindingId.toString(), mediaId.toString()),
+                    )
+                    execSQL(
+                        "DELETE FROM offline_reader_progress_baselines WHERE binding_id = ? AND media_id = ?",
+                        arrayOf(binding.bindingId.toString(), mediaId.toString()),
+                    )
+                }
+                notifySnapshotChanged()
+                return snapshot()
+            }
         val existing = readRemoval(installed.id)
         if (!existing) {
             database.writableDatabase.execSQL(
@@ -476,8 +490,9 @@ internal class OfflineReadingStore internal constructor(
     fun resolveReaderProgress(mediaId: UUID, useCanonical: Boolean): NativeReaderProgressView {
         val result = synchronized(this) {
             val binding = requireBinding()
-            check(readPackage(binding.bindingId, mediaId) != null) {
-                "offline reading package is required to resolve its progress"
+            check(readPackage(binding.bindingId, mediaId) != null ||
+                readTransfer(binding.bindingId, mediaId)?.state is ReadingTransferState.Failed) {
+                "offline reading package or failed transfer is required to resolve progress"
             }
             val baseline = readBaseline(binding.bindingId, mediaId)
                 ?: error("offline reading baseline is missing")
@@ -515,10 +530,49 @@ internal class OfflineReadingStore internal constructor(
         return result
     }
 
-    fun synchronizeReaderProgress(mediaId: UUID? = null) {
-        if (synchronized(this) { readBinding()?.authorizationRequired != false }) return
+    @Synchronized
+    fun discardChangedReaderProgress(mediaId: UUID): ReadingStoreSnapshot {
+        val binding = requireBinding()
+        val transfer = readTransfer(binding.bindingId, mediaId)
+            ?: error("offline reading transfer not found")
+        check(transfer.state is ReadingTransferState.Failed)
+        check(readPackage(binding.bindingId, mediaId) == null)
+        val pending = readPending(binding.bindingId, mediaId)
+            ?: error("offline reading progress not found")
+        check(pending.syncState == OfflineReaderSyncState.ContentChanged)
+        database.writableDatabase.execSQL(
+            "DELETE FROM offline_reader_progress_pending WHERE binding_id = ? AND media_id = ?",
+            arrayOf(binding.bindingId.toString(), mediaId.toString()),
+        )
+        notifySnapshotChanged()
+        return snapshot()
+    }
+
+    fun synchronizeReaderProgress(mediaId: UUID? = null): Boolean {
+        if (synchronized(this) { readBinding()?.authorizationRequired != false }) return false
         val network = appContext.getSystemService(ConnectivityManager::class.java).activeNetwork
-            ?: return
+            ?: return false
+        synchronized(this) {
+            val binding = readBinding() ?: return false
+            if (binding.authorizationRequired || bindingLocked || readAccountTransition() != null) return false
+            val mediaPredicate = if (mediaId == null) "" else " AND media_id = ?"
+            val args = mutableListOf<Any>(
+                OfflineReaderSyncState.Pending.name,
+                clock.instant().toString(),
+                binding.bindingId.toString(),
+                OfflineReaderSyncState.SourceUnavailable.name,
+            )
+            if (mediaId != null) args += mediaId.toString()
+            database.writableDatabase.execSQL(
+                """
+                UPDATE offline_reader_progress_pending
+                SET sync_state = ?, updated_at = ?
+                WHERE binding_id = ? AND sync_state = ?$mediaPredicate
+                """.trimIndent(),
+                args.toTypedArray(),
+            )
+            notifySnapshotChanged()
+        }
         progressSyncExecutor.execute {
             runCatching {
                 OfflineReaderProgressSynchronizer(
@@ -527,6 +581,7 @@ internal class OfflineReadingStore internal constructor(
                 ).synchronize(mediaId)
             }
         }
+        return true
     }
 
     fun logoutAndPurge(): ReadingStoreSnapshot {
@@ -1193,11 +1248,10 @@ internal class OfflineReadingStore internal constructor(
             SELECT pending.media_id, pending.reader_generation,
                    pending.base_server_revision, pending.locator_json
             FROM offline_reader_progress_pending AS pending
-            JOIN offline_reader_packages AS package
-              ON package.binding_id = pending.binding_id
-             AND package.media_id = pending.media_id
-             AND package.reader_generation = pending.reader_generation
-             AND package.reader_revision_key = pending.reader_revision_key
+            JOIN offline_reader_progress_baselines AS baseline
+              ON baseline.binding_id = pending.binding_id
+             AND baseline.media_id = pending.media_id
+             AND baseline.reader_generation = pending.reader_generation
             WHERE pending.binding_id = ? AND pending.sync_state = ?$mediaPredicate
             ORDER BY pending.updated_at, pending.id
             """.trimIndent(),
@@ -1896,7 +1950,13 @@ internal class OfflineReadingStore internal constructor(
                 transfer.mediaId,
                 transfer.requestedTitle,
                 transfer.requestedMediaKind,
-                OfflineReadingAvailability.Transfer(transfer.state),
+                OfflineReadingAvailability.Transfer(
+                    transfer.state,
+                    if (transfer.state is ReadingTransferState.Failed &&
+                        readPending(binding.bindingId, transfer.mediaId) != null &&
+                        readBaseline(binding.bindingId, transfer.mediaId) != null
+                    ) readProgress(binding.bindingId, transfer.mediaId) else null,
+                ),
             )
         }
     }

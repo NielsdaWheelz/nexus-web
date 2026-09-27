@@ -69,6 +69,7 @@ export type ReadingTransferState =
         | "UnsupportedPackage"
         | "RecoveryRequired"
         | "Server";
+      readonly recoveryProgress?: ReaderProgressView;
     };
 
 export type ReadingAvailability =
@@ -111,7 +112,7 @@ export type ReadingCommand =
       readonly mediaKind: "Pdf" | "Epub" | "WebArticle";
     })
   | (ReadingCommandBase & {
-      readonly kind: "Cancel" | "Retry" | "Remove" | "OpenReading" | "OpenDownloadedCopy";
+      readonly kind: "Cancel" | "Retry" | "Remove" | "OpenReading" | "OpenDownloadedCopy" | "SyncReaderProgress" | "DiscardChangedReaderProgress";
       readonly mediaId: string;
     })
   | (ReadingCommandBase & { readonly kind: "CloseReading"; readonly leaseId: string })
@@ -288,7 +289,13 @@ function availability(raw: unknown, name: string): ReadingAvailability {
       };
     }
     case "Failed": {
-      const value = expectExactRecord(raw, ["kind", "reason"], name);
+      const value = expectExactRecord(
+        raw,
+        raw !== null && typeof raw === "object" && "recoveryProgress" in raw
+          ? ["kind", "reason", "recoveryProgress"]
+          : ["kind", "reason"],
+        name,
+      );
       return {
         kind,
         reason: expectOneOf(
@@ -308,6 +315,9 @@ function availability(raw: unknown, name: string): ReadingAvailability {
           ] as const,
           `${name}.reason`,
         ),
+        ...(value.recoveryProgress === undefined ? {} : {
+          recoveryProgress: progressView(value.recoveryProgress, `${name}.recoveryProgress`),
+        }),
       };
     }
     case "Ready": {

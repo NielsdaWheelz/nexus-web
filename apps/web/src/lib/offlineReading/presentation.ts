@@ -29,7 +29,7 @@ export const OFFLINE_READING_COPY = {
   conflictDeviceChoice: "Keep this device's location",
   /** UI: pending Remove confirmation. */
   pendingRemoveConfirmation:
-    "Remove downloaded copy and discard this device's unsynced position.",
+    "Remove this copy and its local saved position. A sync already underway may still finish on Nexus.",
   removeConfirmation: "Remove this downloaded copy from this device.",
   removeConfirmationTitle: "Remove downloaded copy?",
   removeConfirmAction: "Remove downloaded copy",
@@ -186,6 +186,9 @@ export function offlineReadingAvailabilityCopy(
         ? `Restarting · network policy changed · attempt ${availability.attempt}`
         : `Restarting · interrupted · attempt ${availability.attempt}`;
     case "Failed":
+      if (availability.reason === "RecoveryRequired" || availability.reason === "UnsupportedPackage") {
+        return "Old reading copy needs a new download";
+      }
       return `Download failed · ${offlineReadingFailureCopy(availability.reason)}`;
     case "Ready":
       return `${formatOfflineReadingBytes(availability.sizeBytes)} · saved ${formatOfflineReadingDate(availability.installedAt)}`;

@@ -18,7 +18,7 @@ type ReadingRequest =
       readonly requestedTitle: string;
       readonly mediaKind: "Pdf" | "Epub" | "WebArticle";
     }
-  | { readonly kind: "Cancel" | "Retry" | "Remove" | "OpenReading" | "OpenDownloadedCopy"; readonly mediaId: string }
+  | { readonly kind: "Cancel" | "Retry" | "Remove" | "OpenReading" | "OpenDownloadedCopy" | "SyncReaderProgress" | "DiscardChangedReaderProgress"; readonly mediaId: string }
   | { readonly kind: "CloseReading"; readonly leaseId: string }
   | {
       readonly kind: "SaveReaderProgress";
@@ -149,6 +149,14 @@ export class OfflineReadingControllerRuntime {
 
   retry(mediaId: string): Promise<void> {
     return this.#accept({ kind: "Retry", mediaId });
+  }
+
+  syncReaderProgress(mediaId: string): Promise<void> {
+    return this.#accept({ kind: "SyncReaderProgress", mediaId });
+  }
+
+  discardChangedReaderProgress(mediaId: string): Promise<void> {
+    return this.#accept({ kind: "DiscardChangedReaderProgress", mediaId });
   }
 
   remove(mediaId: string): Promise<void> {
