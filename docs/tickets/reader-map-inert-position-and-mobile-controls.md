@@ -49,9 +49,10 @@ marker, and the cursor did not move. talkback 15 was enabled and its native
 touch/double-tap opened the pane. a dispatched linear swipe did not yield a
 stable accessibility hierarchy (`could not get idle state`); spoken output and
 linear focus order were not observed. this is bounded interaction evidence, not
-screen-reader acceptance. the final offline apk and navigation receipts are in
+screen-reader acceptance. these checks used the pre-rebase feature commit
+`16099bdd84f4a20c443b6f066f23bc2a2334056e`. its installed apk and navigation receipts are in
 [the reader verification](../reader-source-notes-verification.md).
-the same final installed artifact passed a post-freeze hosted compact touch
+the same installed artifact passed a post-freeze hosted compact touch
 check 3/3: complete ordered source bodies opened, dismissal focused the exact
 marker, and canonical cursor revision stayed unchanged. this still does not
 establish spoken announcements or linear assistive focus.
