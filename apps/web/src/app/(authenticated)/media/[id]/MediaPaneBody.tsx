@@ -96,6 +96,7 @@ import {
   type CanonicalCursorResult,
 } from "@/lib/highlights/canonicalCursor";
 import { escapeAttrValue } from "@/lib/highlights/escapeAttrValue";
+import { bindEpubSourceNoteReferences } from "@/lib/reader/bindEpubSourceNoteReferences";
 import { parseRawPdfQuads } from "@/lib/highlights/pdfTypes";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { selectionToOffsets } from "@/lib/highlights/selectionToOffsets";
@@ -3368,6 +3369,15 @@ export default function MediaPaneBody() {
     readerLayoutReady,
     textHighlightInitialLoading,
   ]);
+
+  useLayoutEffect(() => {
+    const root = contentRef.current;
+    const cursor = cursorRef.current;
+    if (!isEpub || !root || !cursor || !activeContent ||
+      !validateCanonicalText(cursor, activeContent.canonicalText)) return;
+    bindEpubSourceNoteReferences(root, cursor, activeContent.fragmentId,
+      readerEvidence?.passage_groups ?? []);
+  }, [isEpub, activeContent, renderedHtml, readerEvidence]);
 
   useEffect(() => {
     const textTarget = freshTextTarget ?? (
@@ -7523,6 +7533,7 @@ export default function MediaPaneBody() {
               onInternalLinkClick={
                 isEpub || media?.kind === "web_article"
                   ? (link) => {
+                      if (link.hasAttribute("data-reader-apparatus-item-id")) return false;
                       const target = resolveReaderInternalLinkTarget(link,
                         media?.kind === "web_article" ? activeContent?.fragmentId ?? null : null);
                       if (target.kind === "Absent") return false;
