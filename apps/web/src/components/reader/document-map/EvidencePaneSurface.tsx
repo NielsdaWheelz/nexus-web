@@ -384,6 +384,7 @@ export default function EvidencePaneSurface({
         if (editingHighlightId) {
           setEditingHighlightId(null);
           onHighlightEditClose(editingHighlightId);
+          highlightEditorRevealedItemRef.current = null;
         }
         const item = evidence?.passage_groups.flatMap((group) => group.items).find(
           (candidate) => isReaderEvidenceUserLink(candidate) && candidate.edge_id === id,
@@ -434,6 +435,7 @@ export default function EvidencePaneSurface({
       browse();
       if (id) {
         setEditingLinkId(null);
+        linkEditorRevealedItemRef.current = null;
         const item = evidence?.passage_groups.flatMap((group) => group.items).find(
           (candidate) => candidate.kind === "Highlight" && candidate.highlight_id === id,
         );
