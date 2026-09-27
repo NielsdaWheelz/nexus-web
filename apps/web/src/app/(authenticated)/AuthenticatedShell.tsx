@@ -54,12 +54,14 @@ export default function AuthenticatedShell({
   readerProfile,
   renderEnvironment,
   initialState,
+  persistInitialState,
   resources,
 }: {
   account: AuthenticatedAccount;
   readerProfile: ReaderProfile;
   renderEnvironment: RenderEnvironment;
   initialState: WorkspaceState;
+  persistInitialState: boolean;
   resources: DehydratedResources;
 }) {
   return (
@@ -76,6 +78,7 @@ export default function AuthenticatedShell({
                 <AuthenticatedWorkspace
                   accountId={account.accountId}
                   initialState={initialState}
+                  persistInitialState={persistInitialState}
                 />
               </ReaderProvider>
             </KeybindingsProvider>
@@ -89,9 +92,11 @@ export default function AuthenticatedShell({
 function AuthenticatedWorkspace({
   accountId,
   initialState,
+  persistInitialState,
 }: {
   accountId: string;
   initialState: WorkspaceState;
+  persistInitialState: boolean;
 }) {
   const { workspacePrimaryMetrics, probe } = useWorkspacePrimaryMetrics();
 
@@ -131,6 +136,7 @@ function AuthenticatedWorkspace({
         <WorkspaceStoreProvider
           workspacePrimaryMetrics={workspacePrimaryMetrics}
           initialState={initialState}
+          persistInitialState={persistInitialState}
         >
           <MobileViewportProvider>
             <MobileChromeProvider>

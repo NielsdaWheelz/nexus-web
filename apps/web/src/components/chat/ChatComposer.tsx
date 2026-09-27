@@ -52,6 +52,7 @@ import {
 } from "@/lib/conversations/chatAdmission";
 import {
   readRecoveredChatDrafts,
+  readOtherNewChatDrafts,
   type ChatSendCommand,
 } from "@/lib/conversations/chatDraftStore";
 import type { PendingTurnContext } from "@/lib/conversations/pendingTurnContext";
@@ -249,7 +250,17 @@ export default function ChatComposer({
     conversationId,
     view: { identity: viewIdentity, accountId },
   });
-  const recoveredDrafts = restored ? readRecoveredChatDrafts(accountId) : [];
+  const recoveredDrafts = restored
+    ? [
+        ...readRecoveredChatDrafts(accountId).map((text) => ({
+          text,
+          selection: null,
+        })),
+        ...(draftKey.kind === "NewConversation"
+          ? readOtherNewChatDrafts(accountId, activeDraftKey)
+          : []),
+      ]
+    : [];
   const [showCutoverNotice, setShowCutoverNotice] = useState(false);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   useEffect(() => {
@@ -723,24 +734,47 @@ export default function ChatComposer({
         ) : null}
         {recoveredDrafts.length > 0 ? (
           <details className={styles.recoveredDrafts}>
-            <summary>recovered unsent drafts ({recoveredDrafts.length})</summary>
+            <summary>saved unsent drafts ({recoveredDrafts.length})</summary>
             <p>copy any text you want to reuse.</p>
             <ol>
-              {recoveredDrafts.map((text, index) => (
+              {recoveredDrafts.map((draft, index) => (
                 <li key={index}>
                   <Textarea
                     aria-label={`recovered unsent draft ${index + 1}`}
                     readOnly
                     rows={3}
-                    value={text}
+                    value={draft.text}
                     onFocus={(event) => event.currentTarget.select()}
                   />
+                  {draft.selection?.kind === "Selected" ? (
+                    <p>
+                      saved choice: {draft.selection.selection.route === "CodexPersonal"
+                        ? draft.selection.selection.model
+                        : draft.selection.selection.model_ref} · {draft.selection.selection.reasoning}
+                    </p>
+                  ) : null}
+                  {draft.selection !== null ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={content !== "" || operation.kind !== "Absent" || recoveryConflict}
+                      onClick={() => {
+                        const current = store.getSnapshot();
+                        if (current.operation.kind !== "Absent" || current.text !== "") return;
+                        setContent(draft.text);
+                        setSelection(draft.selection);
+                        setCopyStatus(`draft ${index + 1} restored here`);
+                      }}
+                    >
+                      use draft here
+                    </Button>
+                  ) : null}
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={async () => {
                       try {
-                        await navigator.clipboard.writeText(text);
+                        await navigator.clipboard.writeText(draft.text);
                         setCopyStatus(`draft ${index + 1} copied`);
                       } catch {
                         setCopyStatus("copy failed. select the text and copy it manually.");

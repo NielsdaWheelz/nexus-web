@@ -166,6 +166,7 @@ export async function loadWorkspaceBootstrap(androidShell: boolean): Promise<{
   account: AuthenticatedAccount;
   readerProfile: ReaderProfile;
   initialState: WorkspaceState;
+  persistInitialState: boolean;
   resources: DehydratedResources;
 }> {
   const entryIntent = parseWorkspaceEntryIntent(
@@ -215,6 +216,17 @@ export async function loadWorkspaceBootstrap(androidShell: boolean): Promise<{
       break;
     }
   }
+  const restoredActive = restored && getWorkspacePrimaryPanes(restored).find(
+    (pane) => pane.id === restored.activePrimaryPaneId,
+  );
+  const initialActive = getWorkspacePrimaryPanes(initialState).find(
+    (pane) => pane.id === initialState.activePrimaryPaneId,
+  );
+  const persistInitialState = entryIntent.kind === "Navigate" && (
+    restoredActive?.id !== initialActive?.id ||
+    restoredActive?.currentVisit.id !== initialActive?.currentVisit.id ||
+    restoredActive?.currentVisit.href !== initialActive?.currentVisit.href
+  );
 
   // Wave 2 — seed the remaining restored visible panes, concurrent, deduped by resource. The
   // URL pane is pre-marked as seeded only when its wave-1 seed actually succeeded; if that seed
@@ -245,5 +257,5 @@ export async function loadWorkspaceBootstrap(androidShell: boolean): Promise<{
     }
   }
 
-  return { account, readerProfile, initialState, resources };
+  return { account, readerProfile, initialState, persistInitialState, resources };
 }

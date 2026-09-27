@@ -62,6 +62,24 @@ export function readRecoveredChatDrafts(
   return value;
 }
 
+export function readOtherNewChatDrafts(
+  accountId: AuthenticatedAccount["accountId"],
+  activeKey: string,
+): readonly { readonly text: string; readonly selection: SelectionDraft }[] {
+  const prefix = `${CHAT_DRAFT_STORAGE_PREFIX}${accountId}:new:`;
+  const drafts: { text: string; selection: SelectionDraft }[] = [];
+  for (let index = 0; index < window.sessionStorage.length; index += 1) {
+    const key = window.sessionStorage.key(index);
+    if (key === null || key === activeKey || !key.startsWith(prefix)) continue;
+    const raw = window.sessionStorage.getItem(key);
+    if (raw === null) continue;
+    const record = decodeChatDraftRecord(raw);
+    if (record.operation.kind === "Absent" && record.text !== "")
+      drafts.push({ text: record.text, selection: record.selection });
+  }
+  return drafts;
+}
+
 export function recoverPreviousChatDrafts(
   accountId: AuthenticatedAccount["accountId"],
 ): void {
