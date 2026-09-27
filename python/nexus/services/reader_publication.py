@@ -243,7 +243,7 @@ def replace_reader_publication[T](
     if (
         expected_kind == "epub"
         and publication is not None
-        and isinstance(issues, ReplaceSourceIssues)
+        and (isinstance(issues, ReplaceSourceIssues) or source_file is not None)
     ):
         raise ConflictError(
             ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Published EPUB content cannot be replaced."
