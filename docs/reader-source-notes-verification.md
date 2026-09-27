@@ -1,19 +1,45 @@
 # reader source notes and navigation: verification
 
-status: implemented in `feature/reader-source-notes`; final main integration in progress
+status: implemented; final integration verified with the limits below
 original base: `cfa27d6ce615bb4775e7784954f19dcdd8c8ebb1`
-rebased candidate: `42117aca9ea4bb914429daf8e90c2a4f022107ae` on
-`8cc5eef8e48fc5394240df4a57f0cab9410eaef2`; `./scripts/test` passed
+integrated code: `2d9668f19738516630ec0c41cefb03651eee69d0`, including main
+through `6f73ad3b4`; documentation-only completion follows this code commit
 date: 2026-09-26–27
+
+## final integration evidence
+
+| boundary | observed result |
+|---|---|
+| static and migration | `./scripts/test` passed with one canonical `0245` head. an isolated pgvector 15 database restored from the 0241 task backup upgraded through 0243, main's 0244 shared note links, then 0245 reader bodies. 20/20 checks passed: reader ids, keys, fragments, edges, saved cursor and publication issues survived; four exact bodies enriched and publication generation advanced once. receipt: `/tmp/nexus-reader-integration-migration-0245/receipt.json`. production publication preflight remains [open](tickets/reader-source-body-production-publication-preflight.md) |
+| source repair | exact retained pillow repair preserved all 1,142 item ids/keys, 571 edge ids/keys and 23 fragment byte sequences; all 571 bodies became rich, generation advanced 1→2, and a second inspect was unchanged. receipts: `/tmp/nexus-reader-integration-b/repair-*-1b.json`. the later main merge changed neither repair owner nor extractor |
+| hosted article | the final api and worker processed a normal authenticated capture into the 0245 database. it produced one resolved rich source reference and a distinct asset base. authored destination and backlink restored the origin within 1 px; the copied evidence marker opened the complete footnote, source excursion returned to the exact marker and focused it. ordinary scroll produced no repeated live announcement. `/tmp/nexus-reader-integration-final/web-2d.log` |
+| native pdf | the final worker processed a normal upload. authored destination, next/previous native actions and held return passed. find revealed the live selected text after pdf.js replaced its span during layout; first/next matches remained visible, input kept focus, and find return restored page geometry within 1 px. 25 successive matches across all three pages remained visible. `/tmp/nexus-reader-integration-final/pdf-2d.log` |
+| note editor | a highlight created through the authenticated api appeared alongside the source reference. the evidence editor saved a note through the shared note-body `PATCH` contract and retained it after reload; final body version was 4 with links version 1. the exact-head reader displayed the saved note beside the source reference. `/tmp/nexus-reader-integration-final/highlight-save-receipt.json` |
+| transcript | the final worker published normal ted captions; 16/16 desktop and 16/16 narrow browser checks passed: visible find, next/close/return, paused player and listening state unchanged, no detour cursor write, and immediate reload after adoption saved the visible fragment. `/tmp/nexus-reader-integration-final/transcript-2d-{desktop,mobile}.log` |
+| android offline | final debug apk sha256 `df2faeccf6aead2ecb651656db6d81da70ff2d1d2fe9bf13b730bf6b36e835c5` matched the installed package on emulator-5558. with no default network, the retained verified v4 pillow package opened; emulator touch events opened footnote 1 and returned from scroll 10756.190 to 10755.810, within 0.4 px. spoken output and linear focus remain unproved in the [accessibility ticket](tickets/reader-map-inert-position-and-mobile-controls.md) |
+
+the hosted checks used the exact `2d9668f19` api, worker and frontend against
+the ordered `0245` database. the android check used that tree's unchanged offline
+apk and an earlier, already verified v4 downloaded book. the actual firefox
+capture flow and full mixed-book matrix were verified on the earlier task tree;
+the final merge did not change their extraction owners. generic chat and dossier
+find are owner-approved [blocked checks](tickets/generic-pane-find-live-acceptance-blocked.md).
+the exact-head run also found and fixed a real article load race: the generic
+pane seed's intentionally empty web fragment list could overwrite the reader
+session's loaded list. the reader session now owns web fragments; transcript
+fragments remain owned by the pane seed. the red failure, green article reload,
+saved highlight note and both transcript widths were observed on the final stack.
+
+## earlier feature evidence
 
 the table and artifact receipts below belong to the pre-rebase feature commit
 `16099bdd84f4a20c443b6f066f23bc2a2334056e`. they establish the original
 implementation but do not establish live behavior on the rebased candidate.
 the rebase integrated the new `0243` migration, epub section semantics, source
 issues, offline package version 4, and pending-progress upgrade handling.
-focused live requalification passed on the task tree at `0244`. main then merged
-an independent reader-navigation implementation (`9e021e88d`); the final
-integrated tree requires its own static and focused live qualification.
+focused live requalification passed on the task tree at its then-canonical
+`0244`. main then merged independent reader-navigation, retained-epub, note
+writing and shared-note-graph changes. the final integration evidence is above.
 
 ## focused task-tree requalification
 

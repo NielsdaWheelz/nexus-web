@@ -57,6 +57,22 @@ check 3/3: complete ordered source bodies opened, dismissal focused the exact
 marker, and canonical cursor revision stayed unchanged. this still does not
 establish spoken announcements or linear assistive focus.
 
+2026-09-27 intermediate integrated debug apk sha256
+`2506cb69aa27304ef1eea3ee6df50626d3b5f516f0562ad4b12b07098b61b0f7`
+matched the installed emulator-5558 package. with no default network, emulator
+touch events opened a verified downloaded pillow footnote and returned within
+0.4 px. talkback bound as a spoken-feedback service; `uiautomator` exposed the
+visible marker as a focusable, clickable link. the emulator recorder has no
+audio option, and neither spoken output nor sequential focus traversal was
+observed. talkback was returned to its original disabled state. operator
+assistive-technology acceptance remains open.
+
+the final debug apk sha256
+`df2faeccf6aead2ecb651656db6d81da70ff2d1d2fe9bf13b730bf6b36e835c5`
+matched the installed package on the same emulator. no-network touch again
+opened the downloaded source note and returned within 0.4 px; accessibility
+was disabled as at baseline. spoken and linear focus checks remain open.
+
 proposed fix: perform and record the operator review; correct any defects at
 the owning control. cover the live and downloaded readers, named map disclosure,
 outline and coincident-member selection, current position, return,
