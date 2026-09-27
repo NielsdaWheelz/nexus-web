@@ -77,6 +77,7 @@ from nexus.services.html_apparatus import (
     confirm_html_apparatus_target_refs,
     derive_fragment_note_groups,
     extract_html_apparatus,
+    prepare_apparatus_bodies,
 )
 from nexus.services.html_tree import inner_html, parse_html_document
 from nexus.services.image_placeholder import replace_image_with_placeholder
@@ -499,6 +500,11 @@ def _build_plan(
                 external_targets=external_targets,
             )
         )
+    external_targets = {
+        key: target
+        for key, target in external_targets.items()
+        if target["extraction_method"] != "html_note_boundary" or key in confirmed_target_refs
+    }
     chapter_total = len(staged)
     record_progress(0, chapter_total, "Chapter")
 
@@ -521,6 +527,7 @@ def _build_plan(
             confirmed_target_refs=confirmed_target_refs,
             source_ref=_chapter_source_ref(chapter),
         )
+        prepare_apparatus_bodies(apparatus_items, sanitize=sanitize_epub_chapter, media_kind="epub")
         try:
             html_sanitized = sanitize_epub_chapter(html_with_apparatus)
         except (ValueError, LxmlError) as exc:
@@ -588,6 +595,9 @@ def _build_plan(
                 external_targets=external_targets,
                 confirmed_target_refs=confirmed_target_refs,
                 source_ref=_chapter_source_ref(chapter),
+            )
+            prepare_apparatus_bodies(
+                apparatus_items, sanitize=sanitize_epub_chapter, media_kind="epub"
             )
             canonical = canonicalize_structure(html_sanitized)
             if (

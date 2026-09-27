@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from dataclasses import replace as dataclass_replace
 from typing import assert_never, cast
+from urllib.parse import unquote, urldefrag
 from uuid import UUID
 
 from lxml.html import HtmlElement, fragment_fromstring
@@ -32,8 +33,12 @@ from nexus.services.document_embeds import (
     DocumentEmbedTargetTerminal,
 )
 from nexus.services.fragment_blocks import FragmentBlockSpec
-from nexus.services.html_apparatus import extract_html_apparatus
-from nexus.services.html_tree import inner_html, serialize_html
+from nexus.services.html_apparatus import (
+    collect_html_apparatus_targets,
+    extract_html_apparatus,
+    prepare_apparatus_bodies,
+)
+from nexus.services.html_tree import inner_html, parse_html_document, serialize_html
 from nexus.services.reader_structure import DocumentPoint, NavigationNoteIndex
 from nexus.services.sanitize_html import sanitize_html
 from nexus.text import normalize_whitespace
@@ -98,11 +103,32 @@ def prepare_web_article_fragment(
     *,
     html: str,
     base_url: str,
+    document_url: str,
     fragment_idx: int,
     extract_embeds: bool = False,
     embed_source_html: str | None = None,
 ) -> WebArticlePreparedFragment:
     """Embeds, then apparatus, then sanitize, anchor, canonicalize and index."""
+    document_url = urldefrag(document_url).url
+    if urldefrag(base_url).url != document_url:
+        source = parse_html_document(embed_source_html or html)
+        documents = [parse_html_document(html)]
+        if embed_source_html is not None:
+            documents.append(source)
+        source_ids = {
+            element.get("id")
+            for document in documents
+            for element in document.iter()
+            if element.get("id")
+        }
+        for document in documents:
+            for anchor in document.xpath('.//a[starts-with(@href, "#")]'):
+                href = anchor.get("href")
+                if unquote(href[1:]) in source_ids:
+                    anchor.set("href", document_url + href)
+        html = serialize_html(documents[0])
+        if embed_source_html is not None:
+            embed_source_html = serialize_html(source)
     detected_embeds: list[DetectedDocumentEmbed] = []
     extraction_failed = False
     if extract_embeds:
@@ -117,15 +143,54 @@ def prepare_web_article_fragment(
         except Exception:
             logger.warning("document_embed_extraction_failed", exc_info=True)
             extraction_failed = True
+    targets, _, _, _ = collect_html_apparatus_targets(
+        embed_source_html or html,
+        document_href=document_url,
+        source_kind=f"web:{fragment_idx}",
+        source_ref={"format": "html", "fragment_idx": fragment_idx, "document_href": document_url},
+        max_targets=10000,
+        max_backlinks=100000,
+        max_retained_utf8_bytes=WEB_ARTICLE_HTML_MAX_BYTES,
+    )
     html, apparatus_items, apparatus_edges = extract_html_apparatus(
         html,
         source_kind=f"web:{fragment_idx}",
-        source_ref={"format": "html", "fragment_idx": fragment_idx},
+        source_ref={"format": "html", "fragment_idx": fragment_idx, "document_href": document_url},
+        document_href=document_url,
+        external_targets=targets,
+    )
+    existing_keys = {str(item["stable_key"]) for item in apparatus_items}
+    referenced_keys = {str(edge["to_stable_key"]) for edge in apparatus_edges}
+    for target in targets.values():
+        if str(target["stable_key"]) in referenced_keys - existing_keys:
+            apparatus_items.append(
+                {
+                    key: value
+                    for key, value in target.items()
+                    if key
+                    in {
+                        "stable_key",
+                        "kind",
+                        "label",
+                        "body_text",
+                        "_body_html",
+                        "confidence",
+                        "extraction_method",
+                        "source_ref",
+                        "sort_key",
+                    }
+                }
+            )
+    prepare_apparatus_bodies(
+        apparatus_items,
+        sanitize=lambda body: sanitize_html(body, base_url, document_url=document_url),
+        media_kind="web_article",
     )
     html_sanitized = add_heading_anchors(
         sanitize_html(
             html,
             base_url,
+            document_url=document_url,
             allow_reader_apparatus_attrs=True,
             allow_document_embed_attrs=extract_embeds,
         ),

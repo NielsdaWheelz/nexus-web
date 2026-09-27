@@ -54,10 +54,6 @@ interface TranscriptContentPanelProps {
   contentRef: RefObject<HTMLDivElement | null>;
   segmentListRef: RefObject<HTMLDivElement | null>;
   findPresentation: TranscriptFindPresentation;
-  onFindMatchElement: (
-    key: PaneFindResultKey,
-    element: HTMLSpanElement | null,
-  ) => void;
   onSegmentSelect: (fragment: TranscriptFragment) => void;
   onSeek: (timestampMs: number | null | undefined) => void;
   onContentClick: (event: MouseEvent<HTMLDivElement>) => void;
@@ -173,7 +169,6 @@ export default function TranscriptContentPanel({
   contentRef,
   segmentListRef,
   findPresentation,
-  onFindMatchElement,
   onSegmentSelect,
   onSeek,
   onContentClick,
@@ -349,6 +344,7 @@ export default function TranscriptContentPanel({
                   } ${hasEvidence ? "hl-blue hl-evidence" : ""}`}
                   aria-current={isActive ? "true" : undefined}
                   aria-label={segmentLabel}
+                  data-transcript-fragment-id={entry.fragment.id}
                   data-active-highlight-ids={
                     hasEvidence ? (evidenceHighlightId ?? undefined) : undefined
                   }
@@ -369,7 +365,10 @@ export default function TranscriptContentPanel({
                       <span>{entry.fragment.speaker_label}</span>
                     ) : null}
                   </span>
-                  <span className={styles.segmentText}>
+                  <span
+                    className={styles.segmentText}
+                    data-transcript-fragment-text=""
+                  >
                     {textRuns.map((run, runIndex) => {
                       switch (run.kind) {
                         case "Text":
@@ -380,9 +379,6 @@ export default function TranscriptContentPanel({
                           return (
                             <span
                               key={run.key}
-                              ref={(element) =>
-                                onFindMatchElement(run.key, element)
-                              }
                               className={styles.transcriptFindMatch}
                               role="mark"
                             >
@@ -393,9 +389,6 @@ export default function TranscriptContentPanel({
                           return (
                             <span
                               key={run.key}
-                              ref={(element) =>
-                                onFindMatchElement(run.key, element)
-                              }
                               className={`${styles.transcriptFindMatch} ${styles.transcriptFindActiveMatch}`}
                               role="mark"
                               aria-current="true"

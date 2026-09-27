@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo, useRef } from "react";
+import { absent } from "@/lib/api/presence";
+import type { PdfReaderNavigationActions } from "@/components/PdfReader";
 import {
   createPaneFindResultKey,
   createPaneFindSourceKey,
@@ -9,8 +11,6 @@ import {
 } from "@/lib/panes/paneSearch";
 import type { PaneFindAdapter } from "@/lib/panes/usePaneFind";
 import { isAbortError } from "@/lib/errors";
-import { samePdfViewportPosition } from "@/components/pdfReaderRuntime";
-import type { ReaderNavigationPort } from "@/lib/reader/useReaderNavigation";
 import type {
   PdfFindError,
   PdfFindLocator,
@@ -18,7 +18,6 @@ import type {
   PdfFindScope,
   PdfRuntimeFindResult,
 } from "@/components/pdfPaneFind";
-
 const ENTIRE_PDF_SCOPE_ID = "EntirePdf";
 const PAGE_SCOPE_PREFIX = "Page:";
 
@@ -26,10 +25,6 @@ interface PdfFindOccurrence {
   readonly sessionId: number;
   readonly queryId: number;
   readonly locator: PdfFindLocator;
-}
-
-interface ActivePdfQuery {
-  readonly generation: number;
 }
 
 export interface PdfPaneFindAdapter extends PaneFindAdapter<PdfFindError> {
@@ -42,6 +37,8 @@ function throwAbort(message: string): never {
 
 function pdfFindErrorMessage(error: PdfFindError): string {
   switch (error.kind) {
+    case "OriginUnavailable":
+      return "Your reading position could not be captured.";
     case "TextUnavailable":
       return "Searchable text could not be extracted from this PDF. Retry does not perform OCR.";
     case "RuntimeUnavailable":
@@ -97,12 +94,12 @@ function createPdfFindAdapter({
   mediaId,
   runtime,
   getCurrentRuntime,
-  navigation,
+  navigationActions,
 }: {
   readonly mediaId: string;
   readonly runtime: PdfFindRuntime;
   readonly getCurrentRuntime: () => PdfFindRuntime | null;
-  readonly navigation: ReaderNavigationPort;
+  readonly navigationActions: PdfReaderNavigationActions;
 }): PdfPaneFindAdapter {
   const sourceKey = pdfFindSourceKey({ mediaId, runtime });
   let disposed = false;
@@ -110,7 +107,6 @@ function createPdfFindAdapter({
   let currentQueryId = 0;
   let nextRuntimeGeneration = 0;
   let preparedPageNumber: number | null = null;
-  let activeQuery: ActivePdfQuery | null = null;
   let occurrencesByKey = new Map<PaneFindResultKey, PdfFindOccurrence>();
 
   const assertCurrent = (requestSourceKey: PaneFindSourceKey) => {
@@ -127,12 +123,9 @@ function createPdfFindAdapter({
       throwAbort("PDF Find session was replaced.");
     }
   };
-  const settleNeutralQuery = (query: ActivePdfQuery) => {
-    if (activeQuery?.generation !== query.generation) return;
-    activeQuery = null;
-  };
   return {
     sourceKey,
+    returnNavigation: { kind: "ReaderOwned" },
     async prepare(request) {
       assertCurrent(request.sourceKey);
       if (request.signal.aborted) {
@@ -140,12 +133,9 @@ function createPdfFindAdapter({
       }
       currentSessionId = request.sessionId;
       currentQueryId = 0;
-      activeQuery = null;
       occurrencesByKey = new Map();
       runtime.clearPresentation();
-      const captured = runtime.captureViewportPosition();
-      preparedPageNumber =
-        captured.kind === "Captured" ? captured.value.pageNumber : null;
+      preparedPageNumber = runtime.currentPageNumber();
       return [
         {
           kind: "EntireResource",
@@ -175,16 +165,11 @@ function createPdfFindAdapter({
       });
       currentQueryId = request.queryId;
       occurrencesByKey = new Map();
-      const query = {
-        generation: nextRuntimeGeneration + 1,
-      };
-      nextRuntimeGeneration = query.generation;
-      activeQuery = query;
-
+      const generation = ++nextRuntimeGeneration;
       let result: PdfRuntimeFindResult;
       try {
         result = await runtime.search({
-          generation: query.generation,
+          generation,
           query: request.query,
           scope,
           matchCase: request.matchCase,
@@ -192,7 +177,6 @@ function createPdfFindAdapter({
           signal: request.signal,
         });
       } catch (error) {
-        settleNeutralQuery(query);
         if (
           request.signal.aborted ||
           getCurrentRuntime() !== runtime ||
@@ -206,36 +190,30 @@ function createPdfFindAdapter({
       assertSession(request.sessionId);
       if (
         request.signal.aborted ||
-        currentQueryId !== request.queryId ||
-        activeQuery?.generation !== query.generation
+        currentQueryId !== request.queryId
       ) {
-        settleNeutralQuery(query);
         throwAbort("PDF Find query was superseded.");
       }
-      if (result.generation !== query.generation) {
+      if (result.generation !== generation) {
         throw new Error("PDF Find runtime settled the wrong generation.");
       }
       switch (result.kind) {
         case "NoMatches":
-          settleNeutralQuery(query);
           return { kind: "NoMatches", completeness: "Complete" };
         case "TooManyMatches":
-          settleNeutralQuery(query);
           if (result.threshold !== 2_000) {
             throw new Error("PDF Find runtime returned an invalid match cap.");
           }
           return { kind: "TooManyMatches", threshold: 2_000 };
         case "TextUnavailable":
-          settleNeutralQuery(query);
-          return scope.kind === "Page"
+            return scope.kind === "Page"
             ? { kind: "NoMatches", completeness: "Complete" }
             : {
                 kind: "Failed",
                 error: { kind: "TextUnavailable", scope: "EntirePdf" },
               };
         case "RuntimeUnavailable":
-          settleNeutralQuery(query);
-          return {
+            return {
             kind: "Failed",
             error: { kind: "RuntimeUnavailable" },
           };
@@ -246,7 +224,6 @@ function createPdfFindAdapter({
           ) {
             throw new Error("PDF Find Ready requires 1..2000 occurrences.");
           }
-          activeQuery = null;
           const rows = result.occurrences.map(({ locator, snippet }) => {
             if (
               locator.kind !== "PdfTextMatch" ||
@@ -302,66 +279,26 @@ function createPdfFindAdapter({
     async preview(request) {
       assertCurrent(request.sourceKey);
       assertSession(request.sessionId);
-      if (request.signal.aborted) throwAbort("PDF Find preview was cancelled.");
+      if (request.signal.aborted) {
+        throwAbort("PDF Find preview was cancelled.");
+      }
       const occurrence = occurrencesByKey.get(request.key);
       if (
         !occurrence ||
         occurrence.sessionId !== request.sessionId ||
         occurrence.queryId !== request.queryId ||
         currentQueryId !== request.queryId
-      ) throw new Error("PDF Find preview requires a current result key.");
-      const result = await navigation.inspect(async (signal) => {
-        const before = runtime.captureViewportPosition();
-        if (before.kind === "Unavailable") {
-          return { kind: "Unavailable", reason: "CaptureUnavailable", displaced: false };
-        }
-        const displaced = () => {
-          const after = runtime.captureViewportPosition();
-          return after.kind === "Unavailable" ||
-            !samePdfViewportPosition(before.value, after.value);
-        };
-        const sourceChanged = () => {
-          const current = getCurrentRuntime();
-          return current !== null &&
-            pdfFindSourceKey({ mediaId, runtime: current }) !== sourceKey;
-        };
-        try {
-          await runtime.activate(occurrence.locator, signal);
-        } catch (error) {
-          if (sourceChanged()) {
-            return { kind: "Unavailable", reason: "SourceChanged", displaced: true };
-          }
-          if (signal.aborted || isAbortError(error)) {
-            return { kind: "Cancelled", displaced: displaced() };
-          }
-          if (getCurrentRuntime() !== runtime) {
-            return { kind: "Unavailable", reason: "PositioningFailed", displaced: displaced() };
-          }
-          console.error("PDF Find positioning failed:", error);
-          return { kind: "Unavailable", reason: "PositioningFailed", displaced: displaced() };
-        }
-        if (sourceChanged()) {
-          return { kind: "Unavailable", reason: "SourceChanged", displaced: true };
-        }
-        if (getCurrentRuntime() !== runtime) {
-          return { kind: "Unavailable", reason: "PositioningFailed", displaced: displaced() };
-        }
-        const after = runtime.captureViewportPosition();
-        if (after.kind === "Unavailable" ||
-          after.value.pageNumber !== occurrence.locator.pageNumber) {
-          return { kind: "Unavailable", reason: "PositioningFailed", displaced: displaced() };
-        }
-        if (samePdfViewportPosition(before.value, after.value)) {
-          return { kind: "Unchanged" };
-        }
-        return { kind: "Arrived" };
-      });
+      ) {
+        throw new Error("PDF Find preview requires a current result key.");
+      }
+      const outcome = await navigationActions.inspect({ kind: "Find", locator: occurrence.locator }, absent(), request.signal);
       assertCurrent(request.sourceKey);
-      if (request.signal.aborted || result.kind === "Cancelled") {
+      assertSession(request.sessionId);
+      if (request.signal.aborted || currentQueryId !== request.queryId || outcome.kind === "Cancelled") {
         throwAbort("PDF Find preview was cancelled.");
       }
-      if (result.kind === "Unavailable") {
-        return { kind: "Rejected", error: { kind: "RuntimeUnavailable" } };
+      if (outcome.kind === "Unavailable") {
+        return { kind: "Rejected", error: { kind: outcome.reason === "CaptureUnavailable" ? "OriginUnavailable" : "RuntimeUnavailable" } };
       }
       return { kind: "Previewed" };
     },
@@ -369,8 +306,6 @@ function createPdfFindAdapter({
       assertCurrent(request.sourceKey);
       assertSession(request.sessionId);
       runtime.clearPresentation();
-      const query = activeQuery;
-      if (query !== null) settleNeutralQuery(query);
     },
     errorMessage: pdfFindErrorMessage,
     dispose() {
@@ -379,7 +314,6 @@ function createPdfFindAdapter({
       currentQueryId = 0;
       nextRuntimeGeneration += 1;
       preparedPageNumber = null;
-      activeQuery = null;
       occurrencesByKey.clear();
       runtime.clearPresentation();
     },
@@ -389,11 +323,11 @@ function createPdfFindAdapter({
 export function usePdfPaneFind({
   mediaId,
   runtime,
-  navigation,
+  navigationActions,
 }: {
   readonly mediaId: string;
   readonly runtime: PdfFindRuntime | null;
-  readonly navigation: ReaderNavigationPort;
+  readonly navigationActions: PdfReaderNavigationActions;
 }): PdfPaneFindAdapter | null {
   const runtimeRef = useRef(runtime);
   runtimeRef.current = runtime;
@@ -405,8 +339,8 @@ export function usePdfPaneFind({
             mediaId,
             runtime,
             getCurrentRuntime: () => runtimeRef.current,
-            navigation,
+            navigationActions,
           }),
-    [mediaId, navigation, runtime],
+    [mediaId, navigationActions, runtime],
   );
 }

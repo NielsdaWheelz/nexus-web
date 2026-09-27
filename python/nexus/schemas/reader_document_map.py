@@ -163,12 +163,36 @@ class ReaderEvidenceHighlightOut(ReaderEvidenceItemBaseOut):
     is_owner: bool
 
 
+class ReaderSourceHtmlOut(BaseModel):
+    kind: Literal["Html"] = "Html"
+    html_sanitized: str
+    text: str
+    model_config = ConfigDict(extra="forbid")
+
+
+class ReaderSourceTextOut(BaseModel):
+    kind: Literal["Text"] = "Text"
+    text: str
+    model_config = ConfigDict(extra="forbid")
+
+
+class ReaderSourceUnavailableOut(BaseModel):
+    kind: Literal["Unavailable"] = "Unavailable"
+    model_config = ConfigDict(extra="forbid")
+
+
+SourceContent = Annotated[
+    ReaderSourceHtmlOut | ReaderSourceTextOut | ReaderSourceUnavailableOut,
+    Field(discriminator="kind"),
+]
+
+
 class ReaderEvidenceSourceTargetOut(BaseModel):
     ref: str
     stable_key: str
     apparatus_kind: ReaderApparatusItemKind
     label: Presence[str]
-    body: Presence[str]
+    content: SourceContent
     activation: ResourceActivationOut
     resolution: ReaderEvidenceResolutionOut
 
@@ -180,7 +204,8 @@ class ReaderEvidenceSourceReferenceOut(ReaderEvidenceItemBaseOut):
     stable_key: str
     apparatus_kind: ReaderApparatusItemKind
     confidence: ReaderApparatusConfidence
-    targets: list[ReaderEvidenceSourceTargetOut] = Field(default_factory=list)
+    target_refs: list[str]
+    marker_anchor_id: Presence[str]
 
 
 class ReaderEvidenceGeneratedCitationOut(ReaderEvidenceItemBaseOut):
@@ -239,6 +264,7 @@ class ReaderEvidenceCountsOut(BaseModel):
 
 class ReaderEvidenceOut(BaseModel):
     counts: ReaderEvidenceCountsOut
+    source_targets: list[ReaderEvidenceSourceTargetOut]
     passage_groups: list[ReaderEvidencePassageGroupOut] = Field(default_factory=list)
     document_items: list[ReaderEvidenceItemOut] = Field(default_factory=list)
 

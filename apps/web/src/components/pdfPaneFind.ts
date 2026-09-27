@@ -12,13 +12,13 @@ import type {
   PdfLinkServiceLike,
   PdfTextItemLike,
   PdfViewerLike,
-  PdfViewportPositionCapture,
 } from "@/components/pdfReaderRuntime";
 
 const PDF_FIND_MATCH_THRESHOLD = 2_000;
 export const PDF_FIND_STALL_TIMEOUT_MS = 30_000;
 export type PdfFindError =
   | { readonly kind: "TextUnavailable"; readonly scope: "EntirePdf" }
+  | { readonly kind: "OriginUnavailable" }
   | { readonly kind: "RuntimeUnavailable" };
 
 interface PdfFindSource {
@@ -72,7 +72,7 @@ export interface PdfFindRuntime {
   readonly source: PdfFindSource;
   search(request: PdfRuntimeFindRequest): Promise<PdfRuntimeFindResult>;
   activate(locator: PdfFindLocator, signal: AbortSignal): Promise<void>;
-  captureViewportPosition(): PdfViewportPositionCapture;
+  currentPageNumber(): number;
   clearPresentation(): void;
 }
 
@@ -84,8 +84,8 @@ interface CreatePdfFindRuntimeOptions {
     readonly pageNumber: number;
     readonly signal: AbortSignal;
   }) => Promise<void>;
-  readonly revealMatch: (element: HTMLElement) => Promise<void>;
-  readonly captureViewportPosition: () => PdfViewportPositionCapture;
+  readonly revealMatch: (element: HTMLElement, signal: AbortSignal) => Promise<void>;
+  readonly currentPageNumber: () => number;
 }
 
 interface PdfFindRuntimeBinding {
@@ -265,7 +265,7 @@ function createControllerClasses(viewerModule: PdfJsViewerLike) {
       matchIdx: -1,
     };
     private pendingScroll: PdfFindSelectionLike | null = null;
-    private pendingReveal: { resolve: () => void; reject: (error: unknown) => void } | null = null;
+    private pendingReveal: { resolve: () => void; reject: (error: unknown) => void; signal: AbortSignal } | null = null;
     private queryState: PdfFindEventState | null = null;
     private activationGeneration = 0;
     private activationAbortController: AbortController | null = null;
@@ -368,8 +368,9 @@ function createControllerClasses(viewerModule: PdfJsViewerLike) {
       }
       this.pendingScroll = null;
       const pendingReveal = this.pendingReveal;
-      this.pendingReveal = null;
-      void this.revealMatch(element).then(pendingReveal?.resolve, pendingReveal?.reject);
+      if (pendingReveal) {
+        void this.revealMatch(element, pendingReveal.signal).then(pendingReveal.resolve, pendingReveal.reject);
+      }
     }
 
     beginSearch(
@@ -504,11 +505,7 @@ function createControllerClasses(viewerModule: PdfJsViewerLike) {
       const activationGeneration = this.activationGeneration;
       const activationAbortController = new AbortController();
       this.activationAbortController = activationAbortController;
-      const handleAbort = () => {
-        activationAbortController.abort();
-        this.pendingReveal?.reject(abortError());
-        this.pendingReveal = null;
-      };
+      const handleAbort = () => activationAbortController.abort();
       signal.addEventListener("abort", handleAbort, { once: true });
       if (signal.aborted) {
         handleAbort();
@@ -522,7 +519,9 @@ function createControllerClasses(viewerModule: PdfJsViewerLike) {
       this.nexusSelection = next;
       this.pendingScroll = next;
       const revealed = new Promise<void>((resolve, reject) => {
-        this.pendingReveal = { resolve, reject };
+        this.pendingReveal = { resolve, reject, signal: activationAbortController.signal };
+        activationAbortController.signal.addEventListener("abort", () => reject(abortError()), { once: true });
+        if (activationAbortController.signal.aborted) reject(abortError());
       });
       void revealed.catch(() => undefined);
       try {
@@ -564,7 +563,7 @@ function createControllerClasses(viewerModule: PdfJsViewerLike) {
             revealed,
             new Promise<never>((_resolve, reject) => {
               timeout = setTimeout(
-                () => reject(new Error("PDF Find selected match did not become visible.")),
+                () => reject(new DOMException("PDF Find selected match did not become visible.", "TimeoutError")),
                 PDF_FIND_STALL_TIMEOUT_MS,
               );
             }),
@@ -589,6 +588,7 @@ function createControllerClasses(viewerModule: PdfJsViewerLike) {
       } finally {
         signal.removeEventListener("abort", handleAbort);
         if (this.activationGeneration === activationGeneration) {
+          this.pendingReveal = null;
           this.activationAbortController = null;
         }
       }
@@ -816,7 +816,7 @@ export function createPdfFindRuntime({
   eventBus,
   revealPage,
   revealMatch,
-  captureViewportPosition,
+  currentPageNumber,
 }: CreatePdfFindRuntimeOptions): PdfFindRuntimeBinding {
   const {
     NexusPdfFindLinkService,
@@ -994,11 +994,8 @@ export function createPdfFindRuntime({
               findController.activate(locator, commandSignal),
           });
         },
-        captureViewportPosition() {
-          if (documentLifetime !== lifetime) {
-            return { kind: "Unavailable" };
-          }
-          return captureViewportPosition();
+        currentPageNumber() {
+          return currentPageNumber();
         },
         clearPresentation() {
           if (documentLifetime !== lifetime) {

@@ -32,15 +32,17 @@ area · opened YYYY-MM-DD by <who> · P2
 
 - [open] android / offline-hosted handoff · 2026-09-26 reader navigation acceptance · shelf-to-hosted bootstrap can fail in mobile viewport and leave a late bridge reply; cold restart recovers: [ticket](tickets/android-offline-to-hosted-deep-link-transient-boundary.md).
 - [open] reader / accessibility · 2026-09-26 reader navigation acceptance · talkback exposed the held-position live region, but its spoken words could not be independently observed: [ticket](tickets/reader-navigation-talkback-spoken-announcement-unverified.md).
-- [open] worker / local development · 2026-09-26 reader navigation acceptance · the local worker image resolves its url-ingest script outside the image: [ticket](tickets/local-worker-image-misses-local-node-ingest-path.md).
 - [blocked] conversation and artifact find / live acceptance · 2026-09-26 reader navigation acceptance · the isolated generation catalog needs an unavailable codex host, so no ordinary chat or dossier exists: [ticket](tickets/generic-pane-find-live-acceptance-blocked.md).
 - [open] collection controls / live verification · 2026-09-25 pane-controls implementation · 26/30 live checks pass; search/podcast prerequisites and device/accessibility cases remain blocked or not run: [ticket](tickets/pane-controls-live-proof-blocked.md).
+- [open] podcast browse · 2026-09-26 reader acceptance · an unconfigured provider returns an internal error instead of the existing unavailable state: [ticket](tickets/podcast-browse-unconfigured-provider-returns-500.md).
+- [open] android offline reading · 2026-09-26 source-note implementation · downloaded readers lack packaged source-note bodies and evidence inspection: [ticket](tickets/offline-reader-lacks-source-apparatus-inspection.md).
 - [open] reader / find · 2026-09-24 reader-inspector-controls · epub find previews wait without a fragment-failure signal: [ticket](tickets/epub-find-preview-has-no-fragment-failure-signal.md).
 - [open] reader / find · 2026-09-24 reader-inspector-controls · web and transcript find keep a render frame budget: [ticket](tickets/web-and-transcript-find-render-budget.md).
 - [open] reader / inspector · 2026-09-24 reader-inspector-controls · reload open on Contents briefly shows Evidence: [ticket](tickets/reader-contents-publishes-after-navigation.md).
 - [open] reader / apparatus · 2026-09-26 reader chapter repair · newly inferred notes in preserved legacy html lack inline marker activation: [ticket](tickets/reader-repaired-note-markers-not-inline.md).
 - [open] epub / sections · 2026-09-26 chapter implementation · ambiguous pillow frontmatter headings still become routine stops: [ticket](tickets/epub-contents-union-overpromotes-source-headings.md).
 - [open] reader / production · 2026-09-27 release preflight · four exact ready books need source-byte proof and fenced 0243 repair before the deferred cutover: [ticket](tickets/reader-chapter-production-correspondence-unverified.md).
+- [open] reader / production migration · 2026-09-27 source-note integration review · confirm every apparatus media has a publication before applying 0245: [ticket](tickets/reader-source-body-production-publication-preflight.md).
 - [open] epub / historical repair · 2026-09-27 corpus census · 17 source/retained text or href mismatches need full retained-coordinate replay: [ticket](tickets/reader-epub-source-correspondence-drift.md).
 - [open] epub / target identity · 2026-09-27 corpus census · seven source-only anchors need relevance classification before repair: [ticket](tickets/reader-epub-source-only-anchors.md).
 - [open] epub / apparatus · 2026-09-27 corpus census · one old note body cannot be proved for preservation: [ticket](tickets/reader-epub-old-apparatus-body-unproved.md).
@@ -208,7 +210,7 @@ current execution cutover, then prove the backlog converges without new
 unexpected timeouts. See
 [docs/tickets/production-synapse-scan-statement-timeout-backlog.md](tickets/production-synapse-scan-statement-timeout-backlog.md).
 
-- [open] oi-069 · reader interaction · 2026-09-22 acceptance · implemented map controls await physical android/webview touch, screen-reader and downloaded-reader review: [ticket](tickets/reader-map-inert-position-and-mobile-controls.md).
+- [open] oi-069 · reader interaction · 2026-09-22 acceptance · bounded android touch passed; spoken screen-reader and downloaded-map operator review remain: [ticket](tickets/reader-map-inert-position-and-mobile-controls.md).
 - [open] oi-075 · epub ingest · 2026-09-12 source review · decoded reserved delimiters make stored source urls ambiguous: [ticket](tickets/epub-normalized-href-reserved-delimiters.md).
 - [open] oi-076 · import progress · 2026-09-12 source review · extraction progress calls spine files chapters: [ticket](tickets/epub-import-progress-counts-files-as-chapters.md).
 - [open] oi-078 · web build · 2026-09-12 offline artifact · css minifier warns on existing custom-highlight syntax: [ticket](tickets/offline-css-minifier-rejects-highlight-syntax.md).
@@ -263,7 +265,6 @@ unexpected timeouts. See
 - [open] 2026-09-21 cleanup audit · offline reading store retains unused construction modes: [ticket](tickets/cleanup-offline-reading-unused-construction-seams.md).
 - [open] highlight interaction · 2026-09-21 reader cleanup · hook keeps unused focus callbacks and hover metadata: [ticket](tickets/highlight-interaction-unused-api.md).
 - [deferred] 2026-09-23 firefox v1 · the signed unlisted build needs AMO credentials and the production origins: [ticket](tickets/extension-firefox-distribution-consent-is-undeclared.md).
-- [open] 2026-09-23 firefox v1 track b · readability absolutizes in-document links when `<base>` differs from the page url: [ticket](tickets/readability-absolutizes-fragment-links-under-base.md).
 - [open] 2026-09-23 firefox v1 track a · remove the browser-capture conversion command after its production run: [ticket](tickets/remove-browser-capture-conversion-command.md).
 - [open] 2026-09-21 auth audit · cookie settlement polls callbacks already awaited by the sdk: [ticket](tickets/auth-cookie-settlement-polls-an-awaited-sdk-callback.md).
 - [open] 2026-09-21 auth audit · one refresh can rotate the provider session twice: [ticket](tickets/auth-refresh-can-rotate-the-provider-session-twice.md).

@@ -123,7 +123,7 @@ COPY scripts/oracle ./scripts/oracle
 RUN chmod -R u=rwX,go=rX /app/node/ingest /app/apps/worker /app/apps/codex_agent /app/scripts/oracle \
     && node --version
 
-ENV NODE_ENV="production"
+ENV NODE_ENV="production" NODE_INGEST_SCRIPT="/app/node/ingest/ingest.mjs"
 
 USER nexus:nexus
 

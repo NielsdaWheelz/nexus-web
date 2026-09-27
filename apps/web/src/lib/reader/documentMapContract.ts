@@ -41,6 +41,7 @@ import type {
   ReaderEvidencePassageGroup,
   ReaderEvidenceResolution,
   ReaderEvidenceSourceKind,
+  ReaderEvidenceSourceContent,
   ReaderEvidenceSourceTarget,
 } from "./documentMap";
 
@@ -109,7 +110,7 @@ export function decodeReaderDocumentMapContract(
 function decodeEvidence(raw: unknown): ReaderEvidence {
   const value = expectExactRecord(
     raw,
-    ["counts", "passage_groups", "document_items"],
+    ["counts", "source_targets", "passage_groups", "document_items"],
     "Evidence",
   );
   const counts = expectExactRecord(
@@ -117,6 +118,37 @@ function decodeEvidence(raw: unknown): ReaderEvidence {
     ["highlights", "citations", "links", "synapses", "passages", "document"],
     "Evidence.counts",
   );
+  const sourceTargets = expectArray(
+    value.source_targets,
+    decodeSourceTarget,
+    "Evidence.source_targets",
+  );
+  const targetRefs = new Set<string>();
+  for (const target of sourceTargets) {
+    if (targetRefs.has(target.ref)) defect(`Duplicate source target ${target.ref}`);
+    targetRefs.add(target.ref);
+  }
+  const passageGroups = expectArray(
+    value.passage_groups,
+    decodePassageGroup,
+    "Evidence.passage_groups",
+  );
+  const documentItems = expectArray(
+    value.document_items,
+    decodeEvidenceItem,
+    "Evidence.document_items",
+  );
+  for (const item of [
+    ...passageGroups.flatMap((group) => group.items),
+    ...documentItems,
+  ]) {
+    if (item.kind !== "SourceReference") continue;
+    for (const ref of item.target_refs) {
+      if (!targetRefs.has(ref)) {
+        defect(`Source reference ${item.id} has no target ${ref}`);
+      }
+    }
+  }
   return {
     counts: {
       highlights: expectNonnegativeInteger(
@@ -141,16 +173,9 @@ function decodeEvidence(raw: unknown): ReaderEvidence {
         "Evidence.counts.document",
       ),
     },
-    passage_groups: expectArray(
-      value.passage_groups,
-      decodePassageGroup,
-      "Evidence.passage_groups",
-    ),
-    document_items: expectArray(
-      value.document_items,
-      decodeEvidenceItem,
-      "Evidence.document_items",
-    ),
+    source_targets: sourceTargets,
+    passage_groups: passageGroups,
+    document_items: documentItems,
   };
 }
 
@@ -301,7 +326,8 @@ function decodeEvidenceItem(raw: unknown, index: number): ReaderEvidenceItem {
           "stable_key",
           "apparatus_kind",
           "confidence",
-          "targets",
+          "marker_anchor_id",
+          "target_refs",
         ],
         name,
       );
@@ -318,10 +344,12 @@ function decodeEvidenceItem(raw: unknown, index: number): ReaderEvidenceItem {
           ["exact", "strong", "probable"] as const,
           `${name}.confidence`,
         ),
-        targets: expectArray(
-          item.targets,
-          decodeSourceTarget,
-          `${name}.targets`,
+        marker_anchor_id: decodeStringPresence(item.marker_anchor_id, `${name}.marker_anchor_id`),
+        target_refs: expectArray(
+          item.target_refs,
+          (ref, targetIndex) =>
+            expectResourceRef(ref, `${name}.target_refs[${targetIndex}]`),
+          `${name}.target_refs`,
         ),
       };
     }
@@ -445,7 +473,7 @@ function decodeSourceTarget(
       "stable_key",
       "apparatus_kind",
       "label",
-      "body",
+      "content",
       "activation",
       "resolution",
     ],
@@ -464,11 +492,44 @@ function decodeSourceTarget(
       `${name}.apparatus_kind`,
     ),
     label: decodeStringPresence(value.label, `${name}.label`),
-    body: decodeStringPresence(value.body, `${name}.body`),
+    content: decodeSourceContent(value.content, `${name}.content`),
     activation,
     actionSubject: evidenceActionSubject(ref, activation, name),
     resolution: decodeResolution(value.resolution, `${name}.resolution`),
   };
+}
+
+function decodeSourceContent(
+  raw: unknown,
+  name: string,
+): ReaderEvidenceSourceContent {
+  const value = expectRecord(raw, name);
+  switch (value.kind) {
+    case "Html": {
+      const content = expectExactRecord(
+        value,
+        ["kind", "html_sanitized", "text"],
+        name,
+      );
+      return {
+        kind: "Html",
+        html_sanitized: expectString(
+          content.html_sanitized,
+          `${name}.html_sanitized`,
+        ),
+        text: expectString(content.text, `${name}.text`),
+      };
+    }
+    case "Text": {
+      const content = expectExactRecord(value, ["kind", "text"], name);
+      return { kind: "Text", text: expectString(content.text, `${name}.text`) };
+    }
+    case "Unavailable":
+      expectExactRecord(value, ["kind"], name);
+      return { kind: "Unavailable" };
+    default:
+      return defect(`${name}.kind must be Html, Text, or Unavailable`);
+  }
 }
 
 function decodeAssociation(

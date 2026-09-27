@@ -20,8 +20,7 @@ import {
 } from "@/lib/panes/paneSearch";
 import type { PaneFindAdapter } from "@/lib/panes/usePaneFind";
 import { canonicalTextFind } from "@/lib/reader/canonicalTextFind";
-import { isElementInPaneView, nextReaderAnimationFrame, type ReaderScrollPositioner } from "@/lib/reader/paneScroll";
-import type { ReaderNavigationPort } from "@/lib/reader/useReaderNavigation";
+import type { ReaderTextFindNavigation } from "@/lib/reader/canonicalTextFindPresentation";
 import {
   mediaPaneFindErrorMessage,
   type MediaPaneFindError,
@@ -29,7 +28,6 @@ import {
 
 const ENTIRE_TRANSCRIPT_SCOPE_ID = "EntireTranscript";
 const CURRENT_CHAPTER_SCOPE_PREFIX = "CurrentChapter:";
-const RENDER_ATTEMPT_LIMIT = 48;
 
 export interface TranscriptFindSnapshotFragment {
   readonly id: string;
@@ -69,18 +67,13 @@ export interface TranscriptFindAdapter extends PaneFindAdapter<MediaPaneFindErro
 }
 
 interface CreateTranscriptFindAdapterInput {
+  readonly readerNavigation: ReaderTextFindNavigation;
   readonly snapshot: TranscriptFindSnapshot;
   readonly getCurrentSourceKey: () => PaneFindSourceKey | null;
   readonly getActiveFragmentId: () => string | null;
-  readonly setActiveFragmentId: (fragmentId: string | null) => void;
-  readonly getSegmentList: () => HTMLDivElement | null;
-  readonly getScrollOwner: () => HTMLDivElement | null;
-  readonly getMatchElement: (key: PaneFindResultKey) => HTMLSpanElement | null;
   readonly publishPresentation: (
     presentation: TranscriptFindPresentation,
   ) => void;
-  readonly navigation: ReaderNavigationPort;
-  readonly scrollPositioner: ReaderScrollPositioner;
 }
 
 function readableTranscriptState(
@@ -163,49 +156,6 @@ function throwIfAborted(signal: AbortSignal): void {
   }
 }
 
-async function waitForMatchElement({
-  key,
-  signal,
-  getCurrentSourceKey,
-  expectedSourceKey,
-  getSegmentList,
-  getScrollOwner,
-  getMatchElement,
-}: {
-  readonly key: PaneFindResultKey;
-  readonly signal: AbortSignal;
-  readonly getCurrentSourceKey: () => PaneFindSourceKey | null;
-  readonly expectedSourceKey: PaneFindSourceKey;
-  readonly getSegmentList: () => HTMLDivElement | null;
-  readonly getScrollOwner: () => HTMLDivElement | null;
-  readonly getMatchElement: (key: PaneFindResultKey) => HTMLSpanElement | null;
-}): Promise<{
-  readonly segmentList: HTMLDivElement;
-  readonly scrollOwner: HTMLDivElement;
-  readonly matchElement: HTMLSpanElement;
-}> {
-  for (let attempt = 0; attempt < RENDER_ATTEMPT_LIMIT; attempt += 1) {
-    throwIfAborted(signal);
-    if (getCurrentSourceKey() !== expectedSourceKey) {
-      throwAbort("Transcript Find source was replaced.");
-    }
-    const segmentList = getSegmentList();
-    const scrollOwner = getScrollOwner();
-    const matchElement = getMatchElement(key);
-    if (
-      segmentList &&
-      scrollOwner &&
-      matchElement?.isConnected &&
-      segmentList.contains(matchElement) &&
-      scrollOwner.contains(matchElement)
-    ) {
-      return { segmentList, scrollOwner, matchElement };
-    }
-    await nextReaderAnimationFrame(signal);
-  }
-  throw new Error("Transcript Find match element did not render.");
-}
-
 function fragmentChapter(
   snapshot: TranscriptFindSnapshot,
   fragment: TranscriptFindSnapshotFragment,
@@ -245,24 +195,17 @@ function fragmentIsInPreparedChapter(
 }
 
 export function createTranscriptFindAdapter({
+  readerNavigation,
   snapshot,
   getCurrentSourceKey,
   getActiveFragmentId,
-  setActiveFragmentId,
-  getSegmentList,
-  getScrollOwner,
-  getMatchElement,
   publishPresentation,
-  navigation,
-  scrollPositioner,
 }: CreateTranscriptFindAdapterInput): TranscriptFindAdapter {
   let currentSessionId = 0;
   let currentQueryId = 0;
   let preparedScope: PreparedChapterScope | null = null;
   let occurrencesByKey = new Map<PaneFindResultKey, TranscriptFindOccurrence>();
   let presentationOccurrences: TranscriptFindOccurrence[] = [];
-  let activePresentationKey: PaneFindResultKey | null = null;
-  let previewGeneration = 0;
 
   const assertCurrentSource = (sourceKey: PaneFindSourceKey) => {
     if (
@@ -290,20 +233,18 @@ export function createTranscriptFindAdapter({
       ),
       activeKey,
     });
-    activePresentationKey = activeKey;
   };
 
   return {
     sourceKey: snapshot.sourceKey,
+    returnNavigation: { kind: "ReaderOwned" },
     async prepare(request) {
       assertCurrentSource(request.sourceKey);
       throwIfAborted(request.signal);
       currentSessionId = request.sessionId;
       currentQueryId = 0;
-      previewGeneration += 1;
       occurrencesByKey = new Map();
       presentationOccurrences = [];
-      activePresentationKey = null;
       const activeFragmentId = getActiveFragmentId();
       const activeFragment =
         snapshot.fragments.find(
@@ -350,7 +291,6 @@ export function createTranscriptFindAdapter({
       currentQueryId = request.queryId;
       occurrencesByKey = new Map();
       presentationOccurrences = [];
-      activePresentationKey = null;
       const scopedChapter =
         request.scopeId === preparedScope?.id ? preparedScope : null;
       const scopedFragments = snapshot.fragments.filter(
@@ -426,91 +366,36 @@ export function createTranscriptFindAdapter({
       assertCurrentSession(request.sessionId);
       throwIfAborted(request.signal);
       const occurrence = occurrencesByKey.get(request.key);
-      if (
-        !occurrence ||
-        occurrence.sessionId !== request.sessionId ||
-        occurrence.queryId !== request.queryId ||
-        currentQueryId !== request.queryId
-      ) {
-        throw new Error(
-          "Transcript Find preview requires a current result key.",
-        );
+      if (!occurrence || occurrence.queryId !== currentQueryId) {
+        throw new Error("Transcript Find occurrence is no longer available.");
       }
-      const generation = ++previewGeneration;
-      const segmentList = getSegmentList();
-      const scrollOwner = getScrollOwner();
-      if (!segmentList || !scrollOwner) {
-        return {
-          kind: "Rejected",
-          error: { kind: "TargetUnavailable" },
-        };
-      }
-      const previous = {
-        activeFragmentId: getActiveFragmentId(),
-        scrollOwnerTop: scrollOwner.scrollTop,
-        activePresentationKey,
-      };
-      const outcome = await navigation.inspect(async (signal) => {
-        const moveSignal = AbortSignal.any([signal, request.signal]);
-        let displaced = previous.activeFragmentId !== occurrence.fragmentId;
-        try {
-          setActiveFragmentId(occurrence.fragmentId);
-          publishMatches(request.key);
-          await nextReaderAnimationFrame(moveSignal);
-          const rendered = await waitForMatchElement({
-            key: request.key,
-            signal: moveSignal,
-            getCurrentSourceKey,
-            expectedSourceKey: snapshot.sourceKey,
-            getSegmentList,
-            getScrollOwner,
-            getMatchElement,
-          });
-          if (generation !== previewGeneration) return { kind: "Cancelled", displaced };
-          if (moveSignal.aborted) return { kind: "Cancelled", displaced };
-          await scrollPositioner.run(({ reveal }) => {
-            reveal(rendered.scrollOwner, rendered.matchElement);
-          }, moveSignal);
-          if (generation !== previewGeneration) return { kind: "Cancelled", displaced: true };
-          displaced ||= rendered.scrollOwner.scrollTop !== previous.scrollOwnerTop;
-          if (moveSignal.aborted) return { kind: "Cancelled", displaced };
-          if (!isElementInPaneView(rendered.scrollOwner, rendered.matchElement)) {
-            return { kind: "Unavailable", reason: "TargetUnavailable", displaced };
-          }
-          return displaced ? { kind: "Arrived" } : { kind: "Unchanged" };
-        } catch (error) {
-          displaced ||= getScrollOwner()?.scrollTop !== previous.scrollOwnerTop;
-          if (moveSignal.aborted) return { kind: "Cancelled", displaced };
-          console.error("Transcript Find positioning failed:", error);
-          return { kind: "Unavailable", reason: "PositioningFailed", displaced };
-        }
-      });
-      if (generation !== previewGeneration) throwAbort("Transcript Find preview was superseded.");
-      if (outcome.kind === "Arrived" || outcome.kind === "Unchanged") return { kind: "Previewed" };
-      if (previous.activePresentationKey && occurrencesByKey.has(previous.activePresentationKey)) {
-        publishMatches(previous.activePresentationKey);
-      } else {
-        activePresentationKey = null;
-        publishPresentation({ kind: "Text" });
-      }
+      const outcome = await readerNavigation.inspect({
+        fragmentId: occurrence.fragmentId,
+        startOffset: occurrence.startCp,
+        endOffset: occurrence.endCp,
+      }, request.signal);
+      throwIfAborted(request.signal);
+      assertCurrentSource(request.sourceKey);
+      assertCurrentSession(request.sessionId);
       if (outcome.kind === "Cancelled") throwAbort("Transcript Find preview was cancelled.");
-      return { kind: "Rejected", error: { kind: "RequestUnavailable" } };
+      if (outcome.kind === "Unavailable") {
+        return { kind: "Rejected", error: { kind: outcome.reason === "CaptureUnavailable" ? "OriginUnavailable" : "RequestUnavailable" } };
+      }
+      publishMatches(request.key);
+      return { kind: "Previewed" };
     },
     async clearPresentation(request) {
       assertCurrentSource(request.sourceKey);
       assertCurrentSession(request.sessionId);
-      activePresentationKey = null;
       publishPresentation({ kind: "Text" });
     },
     errorMessage: mediaPaneFindErrorMessage,
     dispose() {
-      previewGeneration += 1;
       currentSessionId = 0;
       currentQueryId = 0;
       preparedScope = null;
       occurrencesByKey.clear();
       presentationOccurrences = [];
-      activePresentationKey = null;
       publishPresentation({ kind: "Text" });
     },
   };

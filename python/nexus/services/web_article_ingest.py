@@ -9,7 +9,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.config import Environment, get_settings
+from nexus.config import get_settings
 from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
@@ -32,7 +32,7 @@ from nexus.services.media_author_observation_seam import attach_author_observati
 from nexus.services.node_ingest import (
     IngestError,
     IngestResult,
-    local_node_ingest_command,
+    node_ingest_command,
     run_node_ingest,
 )
 from nexus.services.reader_apparatus import replace_media_apparatus
@@ -47,22 +47,6 @@ from nexus.services.web_article_structure import (
 )
 
 logger = get_logger(__name__)
-
-
-def run_web_article_node_ingest(
-    url: str,
-    *,
-    environment: Environment,
-) -> IngestResult | IngestError:
-    """Run the environment-owned Node composition for one accepted URL."""
-    return run_node_ingest(
-        url,
-        command=(
-            local_node_ingest_command()
-            if environment in {Environment.LOCAL, Environment.TEST}
-            else None
-        ),
-    )
 
 
 def materialize_web_article_source(
@@ -92,7 +76,9 @@ def materialize_web_article_source(
     finally:
         snapshot.close()
 
-    ingest_result = run_web_article_node_ingest(url, environment=get_settings().nexus_env)
+    ingest_result = run_node_ingest(
+        url, command=node_ingest_command(get_settings().node_ingest_script)
+    )
     if isinstance(ingest_result, IngestError):
         logger.warning(
             "node_ingest_failed",
@@ -124,19 +110,11 @@ def materialize_web_article_source(
             html=ingest_result.content_html,
             embed_source_html=ingest_result.source_html,
             base_url=ingest_result.base_url,
+            document_url=ingest_result.final_url,
             fragment_idx=0,
             extract_embeds=extract_embeds,
         )
-        source_apparatus = (
-            prepared
-            if ingest_result.source_html == ingest_result.content_html
-            else prepare_web_article_fragment(
-                html=ingest_result.source_html,
-                base_url=ingest_result.base_url,
-                fragment_idx=0,
-                extract_embeds=extract_embeds,
-            )
-        )
+        source_apparatus = prepared
     except Exception as exc:
         raise ApiError(ApiErrorCode.E_SANITIZATION_FAILED, f"Article prep failed: {exc}") from exc
 

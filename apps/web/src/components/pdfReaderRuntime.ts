@@ -5,27 +5,6 @@ export interface PdfTextItemLike {
   readonly hasEOL: boolean;
 }
 
-export interface PdfViewportPosition {
-  readonly pageNumber: number;
-  readonly zoom: number;
-  readonly pageTopDeltaPx: number;
-  readonly scrollLeft: number;
-}
-
-export type PdfViewportPositionCapture =
-  | { readonly kind: "Captured"; readonly value: PdfViewportPosition }
-  | { readonly kind: "Unavailable" };
-
-export function samePdfViewportPosition(
-  left: PdfViewportPosition,
-  right: PdfViewportPosition,
-): boolean {
-  return left.pageNumber === right.pageNumber &&
-    Math.abs(left.pageTopDeltaPx - right.pageTopDeltaPx) <= 1 &&
-    Math.abs(left.scrollLeft - right.scrollLeft) <= 1 &&
-    Math.abs(left.zoom - right.zoom) <= 0.01;
-}
-
 interface PdfMarkedContentLike {
   readonly type: string;
   readonly id?: string;
@@ -46,12 +25,18 @@ interface PdfPageLike {
   }): PdfViewportLike;
 }
 
+export type PdfDestinationArray = readonly [
+  number | { num: number; gen: number },
+  { name: string },
+  ...(number | null)[],
+];
+
 export interface PdfDocumentLike {
   readonly fingerprints: readonly (string | null)[];
   readonly numPages: number;
   getPage(pageNumber: number): Promise<PdfPageLike>;
-  getDestination(name: string): Promise<unknown[] | null>;
-  getPageIndex(reference: object): Promise<number>;
+  getDestination(name: string): Promise<PdfDestinationArray | null>;
+  getPageIndex(reference: { num: number; gen: number }): Promise<number>;
   destroy?: () => Promise<void> | void;
 }
 
@@ -83,6 +68,7 @@ export interface PdfJsLike {
 }
 
 interface PdfViewportLike {
+  convertToViewportPoint?(x: number, y: number): [number, number];
   width: number;
   height: number;
   scale?: number;
@@ -90,6 +76,10 @@ interface PdfViewportLike {
 }
 
 export interface PdfPageViewLike {
+  width?: number;
+  height?: number;
+  scale?: number;
+  rotation?: number;
   viewport?: PdfViewportLike;
   pdfPage?: {
     getViewport(params: { scale: number; rotation?: number }): PdfViewportLike;
@@ -108,8 +98,9 @@ export interface PdfLinkServiceLike {
   get page(): number;
   set page(value: number);
   readonly pagesCount: number;
-  goToDestination(destination: unknown): Promise<void>;
-  goToPage(page: number | string): void;
+  goToDestination(destination: string | PdfDestinationArray): Promise<void>;
+  goToPage(page: string | number): void;
+  setHash(hash: string): void;
   executeNamedAction(action: string): void;
 }
 
@@ -151,13 +142,19 @@ export interface PdfFindControllerLike {
 }
 
 export interface PdfViewerLike {
+  removePageBorders?: boolean;
   setDocument(doc: PdfDocumentLike | null): void;
   currentPageNumber: number;
+  pagesRotation: number;
+  pageLabelToPageNumber(label: string): number | null;
+  scrollPageIntoView(request: {
+    pageNumber: number;
+    destArray?: readonly unknown[];
+    allowNegativeOffset?: boolean;
+  }): void;
   currentScale?: number;
   currentScaleValue: string | number;
   pagesCount: number;
-  pageLabelToPageNumber?(label: string): number | null;
-  scrollPageIntoView(params: { pageNumber: number; destArray?: unknown[] }): void;
   update?: () => void;
   scrollMode?: number;
   getPageView?: (index: number) => PdfPageViewLike | undefined;

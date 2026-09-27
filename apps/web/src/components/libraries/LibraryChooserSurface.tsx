@@ -60,7 +60,9 @@ export default function LibraryChooserSurface({
 
   // The live anchor element, resolved each render, drives both positioning and
   // the dismiss refs (a pointerdown on the trigger must not read as "outside").
-  const anchorEl = desktopActive ? anchor() : null;
+  const focusAnchor = desktopActive ? anchor() : null;
+  const anchorEl = focusAnchor !== null && !(focusAnchor instanceof HTMLElement)
+    ? focusAnchor.element : focusAnchor;
   const anchorRef = useRef<HTMLElement | null>(null);
   anchorRef.current = anchorEl;
 

@@ -639,6 +639,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         OfflineMediaStore.get(this).onAppForeground()
+        OfflineReadingStore.get(this).synchronizeReaderProgress()
         webView.onResume()
         webView.resumeTimers()
         playerBridge.onResume()

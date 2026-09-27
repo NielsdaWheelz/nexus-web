@@ -219,7 +219,7 @@ def _show_notes(item: Any, base_url: str) -> tuple[str | None, str | None]:
     if not raw_show_notes:
         return None, None
     try:
-        sanitized_html = sanitize_html(raw_show_notes, base_url)
+        sanitized_html = sanitize_html(raw_show_notes, base_url, document_url=None)
     except ValueError:
         sanitized_html = ""
     html = _truncate_utf8(normalize_optional_text(sanitized_html), _SHOW_NOTES_HTML_MAX_BYTES)

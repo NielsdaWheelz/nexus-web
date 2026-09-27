@@ -1,13 +1,10 @@
 "use client";
 
 import {
-  useCallback,
   useLayoutEffect,
   useMemo,
   useRef,
-  type Dispatch,
   type RefObject,
-  type SetStateAction,
 } from "react";
 import {
   validateCanonicalText,
@@ -29,14 +26,11 @@ import {
   createCanonicalTextFindPresentationOwner,
   type CanonicalTextFindAdapter,
   type CanonicalTextFindPresentationOwner,
+  type ReaderTextFindNavigation,
 } from "@/lib/reader/canonicalTextFindPresentation";
-import { nextReaderAnimationFrame, type ReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import {
   findFirstVisibleCanonicalOffset,
-  isCanonicalTextAnchorVisible,
-  scrollToExactCanonicalTextAnchor,
 } from "@/lib/reader/canonicalTextAnchor";
-import type { ReaderNavigationPort } from "@/lib/reader/useReaderNavigation";
 import {
   mediaPaneFindErrorMessage,
   type MediaPaneFindError,
@@ -44,7 +38,6 @@ import {
 
 const ENTIRE_ARTICLE_SCOPE_ID = "EntireArticle";
 const CURRENT_SECTION_SCOPE_PREFIX = "CurrentSection:";
-const RENDER_ATTEMPT_LIMIT = 48;
 interface WebFindFragment {
   readonly id: string;
   readonly idx: number;
@@ -81,6 +74,7 @@ interface PreparedSectionScope {
 
 export interface WebFindAdapter
   extends CanonicalTextFindAdapter<MediaPaneFindError> {
+  resume(): void;
   invalidate(): void;
   dispose(): void;
 }
@@ -179,43 +173,19 @@ function createWebFindAdapter({
   snapshot,
   getCurrentSourceKey,
   getRenderedState,
-  showPreviewFragment,
-  inspect,
+  readerNavigation,
   presentation,
-  scrollPositioner,
 }: {
   readonly snapshot: WebFindSnapshot;
   readonly getCurrentSourceKey: () => PaneFindSourceKey | null;
   readonly getRenderedState: () => WebFindRenderedState | null;
-  readonly showPreviewFragment: (
-    fragmentId: string,
-    signal: AbortSignal,
-  ) => Promise<WebFindRenderedState>;
-  readonly inspect: ReaderNavigationPort["inspect"];
+  readonly readerNavigation: ReaderTextFindNavigation;
   readonly presentation: CanonicalTextFindPresentationOwner;
-  readonly scrollPositioner: ReaderScrollPositioner;
 }): WebFindAdapter {
   let preparedScopeBySession = new Map<number, PreparedSectionScope | null>();
   let occurrencesByKey = new Map<PaneFindResultKey, WebFindOccurrence>();
   let activeOccurrence: WebFindOccurrence | null = null;
-  let previewGeneration = 0;
   let disposed = false;
-  const positionExactAnchor = async (
-    rendered: WebFindRenderedState,
-    anchorCp: number,
-    signal: AbortSignal,
-  ): Promise<boolean> => {
-    let positioned = false;
-    await scrollPositioner.run((commands) => {
-      positioned = scrollToExactCanonicalTextAnchor(
-        commands,
-        rendered.viewport,
-        rendered.cursor,
-        anchorCp,
-      );
-    }, signal);
-    return positioned;
-  };
   const assertCurrent = (sourceKey: PaneFindSourceKey) => {
     if (
       disposed ||
@@ -237,7 +207,6 @@ function createWebFindAdapter({
     });
   };
   const invalidate = (): void => {
-    previewGeneration += 1;
     preparedScopeBySession.clear();
     occurrencesByKey.clear();
     activeOccurrence = null;
@@ -246,6 +215,7 @@ function createWebFindAdapter({
 
   return {
     sourceKey: snapshot.sourceKey,
+    returnNavigation: { kind: "ReaderOwned" },
     async prepare(request) {
       assertCurrent(request.sourceKey);
       throwIfAborted(request.signal);
@@ -381,70 +351,48 @@ function createWebFindAdapter({
         initialActiveKey: initial.key,
       };
     },
-    async preview(
-      request,
-    ): Promise<PaneFindPreviewReceipt<MediaPaneFindError>> {
+    async preview(request): Promise<PaneFindPreviewReceipt<MediaPaneFindError>> {
       assertCurrent(request.sourceKey);
       throwIfAborted(request.signal);
       const occurrence = occurrencesByKey.get(request.key);
-      if (!occurrence) {
-        throw new Error("Web Find occurrence is no longer available.");
+      if (!occurrence) throw new Error("Web Find occurrence is no longer available.");
+      const outcome = await readerNavigation.inspect({
+        fragmentId: occurrence.fragmentId,
+        startOffset: occurrence.startCp,
+        endOffset: occurrence.endCp,
+      }, request.signal);
+      throwIfAborted(request.signal);
+      assertCurrent(request.sourceKey);
+      if (outcome.kind === "Cancelled") {
+        throw new DOMException("Web Find preview was cancelled.", "AbortError");
       }
-      const generation = ++previewGeneration;
-      const before = getRenderedState();
-      const beforeTop = before?.viewport.scrollTop ?? null;
-      const outcome = await inspect(async (signal) => {
-        const moveSignal = AbortSignal.any([signal, request.signal]);
-        let displaced = before?.fragmentId !== occurrence.fragmentId;
-        try {
-          const rendered = await showPreviewFragment(occurrence.fragmentId, moveSignal);
-          if (generation !== previewGeneration) return { kind: "Cancelled", displaced };
-          assertCurrent(request.sourceKey);
-          assertRenderedFragment(snapshot, rendered);
-          if (moveSignal.aborted) return { kind: "Cancelled", displaced };
-          const positioned = await positionExactAnchor(rendered, occurrence.startCp, moveSignal);
-          if (generation !== previewGeneration) return { kind: "Cancelled", displaced: true };
-          displaced ||= rendered.viewport.scrollTop !== beforeTop;
-          if (!positioned || !isCanonicalTextAnchorVisible(rendered.viewport, rendered.cursor, occurrence.startCp)) {
-            return { kind: "Unavailable", reason: "TargetUnavailable", displaced };
-          }
-          if (moveSignal.aborted) return { kind: "Cancelled", displaced };
-          activeOccurrence = occurrence;
-          publishCurrentRanges(rendered);
-          return displaced ? { kind: "Arrived" } : { kind: "Unchanged" };
-        } catch (error) {
-          displaced ||= getRenderedState()?.viewport.scrollTop !== beforeTop;
-          if (moveSignal.aborted) {
-            return { kind: "Cancelled", displaced };
-          }
-          if (disposed || getCurrentSourceKey() !== snapshot.sourceKey) {
-            return { kind: "Unavailable", reason: "SourceChanged", displaced };
-          }
-          console.error("Web Find positioning failed:", error);
-          return { kind: "Unavailable", reason: "PositioningFailed", displaced };
-        }
-      });
-      if (generation !== previewGeneration) throw new DOMException("Web Find preview was superseded.", "AbortError");
-      if (outcome.kind === "Arrived" || outcome.kind === "Unchanged") {
-        return { kind: "Previewed" };
+      if (outcome.kind === "Unavailable") {
+        return { kind: "Rejected", error: { kind: outcome.reason === "CaptureUnavailable" ? "OriginUnavailable" : "RequestUnavailable" } };
       }
-      activeOccurrence = null;
-      presentation.clear();
-      if (outcome.kind === "Cancelled") throw new DOMException("Web Find preview was cancelled.", "AbortError");
-      return { kind: "Rejected", error: { kind: "RequestUnavailable" } };
+      const rendered = getRenderedState();
+      if (!rendered || rendered.fragmentId !== occurrence.fragmentId) {
+        throw new Error("Web Find navigation arrived without its rendered fragment.");
+      }
+      activeOccurrence = occurrence;
+      publishCurrentRanges(rendered);
+      return { kind: "Previewed" };
     },
     async clearPresentation(request) {
       assertCurrent(request.sourceKey);
+      activeOccurrence = null;
       presentation.clear();
     },
     errorMessage: mediaPaneFindErrorMessage,
     rebuildPresentation() {
       const rendered = getRenderedState();
-      if (!rendered || occurrencesByKey.size === 0) {
+      if (!rendered || activeOccurrence === null) {
         presentation.clear();
         return;
       }
       publishCurrentRanges(rendered);
+    },
+    resume() {
+      disposed = false;
     },
     invalidate,
     dispose() {
@@ -455,173 +403,46 @@ function createWebFindAdapter({
   };
 }
 
-async function waitForRenderedFragment({
-  fragmentId,
-  snapshot,
-  signal,
-  getRenderedState,
-}: {
-  readonly fragmentId: string;
-  readonly snapshot: WebFindSnapshot;
-  readonly signal: AbortSignal;
-  readonly getRenderedState: () => WebFindRenderedState | null;
-}): Promise<WebFindRenderedState> {
-  for (let attempt = 0; attempt < RENDER_ATTEMPT_LIMIT; attempt += 1) {
-    throwIfAborted(signal);
-    const rendered = getRenderedState();
-    if (rendered?.fragmentId === fragmentId) {
-      assertRenderedFragment(snapshot, rendered);
-      return rendered;
-    }
-    await nextReaderAnimationFrame(signal);
-  }
-  throw new Error("Web Find preview fragment did not render.");
-}
-
 export function useWebPaneFindCapability({
   source,
   renderedStateRef,
-  previewFragmentId,
-  setPreviewFragmentId,
-  navigation,
-  scrollPositioner,
+  readerNavigation,
 }: {
   readonly source: WebPaneFindSource;
   readonly renderedStateRef: RefObject<WebFindRenderedState | null>;
-  readonly previewFragmentId: string | null;
-  readonly setPreviewFragmentId: Dispatch<SetStateAction<string | null>>;
-  readonly navigation: ReaderNavigationPort;
-  readonly scrollPositioner: ReaderScrollPositioner;
+  readonly readerNavigation: ReaderTextFindNavigation;
 }): WebPaneFindCapability {
   const sourceMediaId = source.kind === "Available" ? source.mediaId : null;
   const sourceFragments = source.kind === "Available" ? source.fragments : null;
   const sourceSections = source.kind === "Available" ? source.sections : null;
   const sourceGeneration = source.kind === "Available" ? source.generation : null;
   const snapshot = useMemo(
-    () =>
-      sourceMediaId !== null &&
-      sourceFragments !== null &&
+    () => sourceMediaId !== null && sourceFragments !== null &&
       sourceSections !== null && sourceGeneration !== null
-        ? createWebFindSnapshot({
-            mediaId: sourceMediaId,
-            fragments: sourceFragments,
-            sections: sourceSections,
-            generation: sourceGeneration,
-          })
-        : null,
+      ? createWebFindSnapshot({
+          mediaId: sourceMediaId, fragments: sourceFragments,
+          sections: sourceSections, generation: sourceGeneration,
+        })
+      : null,
     [sourceFragments, sourceMediaId, sourceSections, sourceGeneration],
   );
-  const findSnapshotRef = useRef<WebFindSnapshot | null>(snapshot);
-  if (snapshot === null) {
-    findSnapshotRef.current = null;
-  } else if (
-    findSnapshotRef.current === null ||
-    (previewFragmentId === null &&
-      findSnapshotRef.current.sourceKey !== snapshot.sourceKey)
-  ) {
-    findSnapshotRef.current = snapshot;
-  }
-  const findSnapshot = findSnapshotRef.current;
-  const sourceKeyRef = useRef<PaneFindSourceKey | null>(
-    snapshot?.sourceKey ?? null,
-  );
+  const sourceKeyRef = useRef<PaneFindSourceKey | null>(null);
+  sourceKeyRef.current = snapshot?.sourceKey ?? null;
+  const navigationRef = useRef(readerNavigation);
+  navigationRef.current = readerNavigation;
+  const presentation = useMemo(() => createCanonicalTextFindPresentationOwner(), []);
+  const adapter = useMemo(() => snapshot === null ? null : createWebFindAdapter({
+    snapshot,
+    getCurrentSourceKey: () => sourceKeyRef.current,
+    getRenderedState: () => renderedStateRef.current,
+    readerNavigation: { inspect: (target, signal) => navigationRef.current.inspect(target, signal) },
+    presentation,
+  }), [presentation, renderedStateRef, snapshot]);
   useLayoutEffect(() => {
-    sourceKeyRef.current = snapshot?.sourceKey ?? null;
-  }, [snapshot?.sourceKey]);
-  const presentation = useMemo(
-    () => createCanonicalTextFindPresentationOwner(),
-    [],
-  );
-  const liveInputsRef = useRef({
-    renderedStateRef,
-    setPreviewFragmentId,
-  });
-  useLayoutEffect(() => {
-    liveInputsRef.current = {
-      renderedStateRef,
-      setPreviewFragmentId,
-    };
-  }, [renderedStateRef, setPreviewFragmentId]);
-  const getRenderedState = useCallback(
-    () => liveInputsRef.current.renderedStateRef.current,
-    [],
-  );
-  const clearPreviewFragment = useCallback(
-    () => liveInputsRef.current.setPreviewFragmentId(null),
-    [],
-  );
-  const showPreviewFragment = useCallback(
-    async (fragmentId: string, signal: AbortSignal) => {
-      if (findSnapshot === null) {
-        throw new DOMException("Web Find source was replaced.", "AbortError");
-      }
-      const current = getRenderedState();
-      if (current?.fragmentId === fragmentId) return current;
-      liveInputsRef.current.setPreviewFragmentId(fragmentId);
-      return waitForRenderedFragment({
-        fragmentId,
-        snapshot: findSnapshot,
-        signal,
-        getRenderedState,
-      });
-    },
-    [findSnapshot, getRenderedState],
-  );
-  const adapter = useMemo(
-    () =>
-      findSnapshot === null
-        ? null
-        : createWebFindAdapter({
-            snapshot: findSnapshot,
-            getCurrentSourceKey: () => sourceKeyRef.current,
-            getRenderedState,
-            showPreviewFragment,
-            inspect: navigation.inspect,
-            presentation,
-            scrollPositioner,
-          }),
-    [
-      getRenderedState,
-      presentation,
-      navigation.inspect,
-      scrollPositioner,
-      showPreviewFragment,
-      findSnapshot,
-    ],
-  );
-  const capability = useMemo<WebPaneFindCapability>(
-    () =>
-      adapter === null
-        ? { kind: "Unavailable" }
-        : { kind: "Available", adapter },
-    [adapter],
-  );
-  useLayoutEffect(() => {
-    if (
-      previewFragmentId !== null &&
-      (findSnapshot === null ||
-        snapshot === null ||
-        findSnapshot.sourceKey !== snapshot.sourceKey)
-    ) {
-      clearPreviewFragment();
-    }
-  }, [clearPreviewFragment, findSnapshot, previewFragmentId, snapshot]);
-  const mountedAdapterRef = useRef<WebFindAdapter | null>(null);
-  useLayoutEffect(() => {
-    if (adapter === null) return;
-    mountedAdapterRef.current = adapter;
-    clearPreviewFragment();
-    return () => {
-      adapter.invalidate();
-      if (mountedAdapterRef.current === adapter) {
-        mountedAdapterRef.current = null;
-      }
-      queueMicrotask(() => {
-        if (mountedAdapterRef.current !== adapter) {
-          adapter.dispose();
-        }
-      });
-    };
-  }, [adapter, clearPreviewFragment]);
-  return capability;
+    if (!adapter) return;
+    adapter.resume();
+    return () => adapter.dispose();
+  }, [adapter]);
+  return useMemo(() => adapter === null
+    ? { kind: "Unavailable" } : { kind: "Available", adapter }, [adapter]);
 }

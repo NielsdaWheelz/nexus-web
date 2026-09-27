@@ -1,7 +1,7 @@
 # reversible reader navigation
 
-status: implemented on `feature/reader-reversible-navigation`; final acceptance remains partial
-origin: 2026-09-26 owner approval of [the council review](reader-reversible-navigation-council.md)
+status: implemented; bounded acceptance and open checks in [verification](reader-source-notes-verification.md)
+origin: 2026-09-26 owner approval of the reader navigation direction
 authority: this implementation contract settles that review's proposed choices.
 
 ## goal, scope, final state
@@ -26,9 +26,9 @@ cross-device excursion sync, restart restoration of detours, new note previews,
 new offline capabilities/analytics, playback changes, new services/endpoints,
 database/native-wire changes, or permanent test infrastructure.
 
-new-ingest source-anchor preservation was included to satisfy n1's real article
-journey; stored-source repair remains in the separate source-notes package.
-retain the separate
+source-anchor preservation and stored-source repair belong to
+[source-notes package a](reader-source-notes-plan.md). arbitrary article-fragment
+parity cannot pass until its real ingestion journey passes. retain the separate
 [publication/cursor repair owner](tickets/web-publication-invalidates-saved-reader-cursors.md);
 this feature must expose unavailable origins without guessing replacements.
 
@@ -243,8 +243,7 @@ invariant.
 
 done requires n1–n6 and manual design/accessibility checks passing, review objections
 resolved, retired code/tests absent and module docs current. delete only tickets
-proven resolved: the five navigation tickets linked from the council, plus return
-drift/find-supersession when verified. outside-scope findings get individual tickets;
+proven resolved by the relevant live cases. outside-scope findings get individual tickets;
 blocked dependencies are never reported as passes.
 
 costs: explicit adoption adds an action, including first targeted entry; hiding
@@ -252,70 +251,3 @@ adds a disclosure step; one origin omits intermediate history; restart loses the
 detour; adoption retains position-based completion; inspection omits word-speed
 statistics; natural scrolling is not proven reading; deleting tests relinquishes
 ongoing regression detection. no additional product decision is pending.
-
-## execution, 2026-09-26
-
-baseline `47d7448c790e0eddac0378f41dceabf58577c322`; isolated auth,
-postgres/minio, api, web, worker and an identified android emulator. temporary
-probes and fixtures live under `/tmp/nexus-reader-navigation-live`, outside the
-repository. red probes exposed jump-progress writes, find ownership races,
-pdf link bypasses, and terminal capture failure; green/refactor replayed the
-same journeys. `./scripts/test` passes after the final web/python changes.
-
-| case | observed state |
-|---|---|
-| n1 | article, epub, pdf, transcript round trips pass. new normally uploaded article `01a0e0e4-bf52-7fb1-9459-3f181385677e` retains authored heading, named target, labelled container and same-document links; actual backlink returns, other backlink stays inspection. native pdf `XYZ`, `Fit`, `FitH`, `FitV`, `FitR` and null-coordinate links passed live geometry/focus checks; related variants were checked statically. generic conversation/artifact find is blocked and `NOT_RUN`: isolated codex host/catalog absent; [ticket](tickets/generic-pane-find-live-acceptance-blocked.md) |
-| n2 | held origin survived multi-hop, scroll, hide, timeout wait, inspector/find closure and background/foreground; compact action stayed reachable |
-| n3 | delayed/superseded moves, interruption, disconnect, responsive text reflow, pdf zoom/rotation and exact unchanged-layout return passed. normal same-source refresh advanced article generation 1→2; mounted inspection stayed on its loaded source, reload cleared it without a cursor write. changed-byte return remains unverified because the refreshed immutable source had the same bytes, while the saved cursor still references the removed fragment and prevents fresh rendering; [ticket](tickets/web-publication-invalidates-saved-reader-cursors.md) |
-| n4 | saved and empty-entry deep links, exact adoption, failed retry, reload, sequential continuation and terminal `finished` at progression 1 passed |
-| n5 | two sessions, accept/keep, pending save, failure/retry, revision ordering and duration-only activity with absent progress/word endpoints passed |
-| n6 | final apk sha256 `b13c1d0bf76e38f733f89b7633689abb475842d75aecb1e7894e34a2490e9256` installed byte-identically on emulator-5560 before and after an avd restart. fresh article authored note/backlink and explicit return pass within 0.381px, with no note destination pending; epub and pdf link/return/adopt/reopen pass on the same apk. reconnect cleared native pending rows; authenticated server holds exact article Opening at revision 1, epub note at revision 29 and pdf page 3 at revision 6. earlier apk `2cdaa371365b91ea623f86f4748dd1abb434acc663e9b0d836ec45a953cc0118` is superseded because its article `#` link bypassed inspection. final-apk spoken output remains [unverified](tickets/reader-navigation-talkback-spoken-announcement-unverified.md); first offline-to-hosted deep link had an [unexplained transient boundary](tickets/android-offline-to-hosted-deep-link-transient-boundary.md) |
-
-keyboard and narrow-layout checks pass. talkback's accessibility tree and action
-activation pass; spoken announcement output was not recorded. final acceptance,
-temporary-probe deletion and source repair remain open until the stated gaps are
-closed. the separate worker-image local url-ingest defect has its own
-[ticket](tickets/local-worker-image-misses-local-node-ingest-path.md).
-the temporary live receipts, probes and credentials used for this execution
-were task-owned and removed during release cleanup. the significant outcomes
-and limits are retained here and in the linked tickets. the blocked generic-find
-case needs a fresh isolated environment when its codex host exists.
-
-## rebased integration, 2026-09-26
-
-product commit `215f6e6dc3429581d91f2cbf4f4c7adfeeb50ddf` rebases the change onto
-`3029201f9a89bdc06390e8d1986978c38f11aa4c`. `./scripts/test`, android
-kotlin compilation, and pr checks pass. the isolated database advanced normally
-from schema `0241` to `0243` after a verified task-owned backup. restarted api,
-web and worker used the rebased source. focused hosted journeys passed: article
-section return `932 → 1889 → 932` px, epub cross-fragment return to `695` px,
-and keyboard-activated native pdf link return `1 → 1602 → 1` px. the first
-android download retry failed because the task web restart omitted its public
-origin and rejected the token post before the api; setting
-`APP_PUBLIC_URL=http://localhost:3009` restored normal authenticated writes.
-this was test-stack configuration, not product behavior.
-
-the rebased debug apk sha256
-`d5f3d2403d9f4d483d7130cafb0bbcd63caa5cde7e441c9c849f837a11a80b0d`
-matched the installed bytes on task emulator-5560 before and after smoke. normal
-hosted downloads installed article, epub and pdf bundle v4. in airplane mode,
-the authored article's real `#call-one` pointer held the opening; its backlink
-returned within `0.381` px, and an explicit return also worked. epub's real
-cross-chapter backlink returned to the second chapter at `1406.857` px exactly;
-a native pdf annotation returned page 3 → 1 → 3 → 1, ending at scroll top `0`.
-no detour locator entered native pending progress. after reconnect, article
-opening offset `503` and epub second-chapter offset `2074` cleared from pending
-and matched authenticated hosted state at revisions `2` and `29`; pdf remained
-synced at revision `6`. the physical phone was untouched.
-
-the earlier apk and browser receipts above belong to the pre-rebase tree. they
-establish the red/green/refactor path, not proof for the integrated commit.
-generic conversation/artifact find remains `NOT_RUN` by owner direction; a
-separate codex host is required. changed-byte return and spoken talkback output
-remain unverified. the observed offline-to-hosted bootstrap failure remains
-[open](tickets/android-offline-to-hosted-deep-link-transient-boundary.md).
-the plan's literal complete-acceptance condition is therefore unmet at merge.
-the owner requested merge and cleanup with that gate recorded as blocked.
-deleting the temporary probes relinquishes immediate replay; the reader
-journeys were verified on the identified rebased browser and android builds
-before deletion.

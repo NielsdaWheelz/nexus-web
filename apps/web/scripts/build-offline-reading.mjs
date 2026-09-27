@@ -11,6 +11,7 @@ import {
   assertPdfJsRuntimeClosure,
   copyPdfJsRuntime,
   declaredPdfJsRuntimePaths,
+  PDF_JS_RUNTIME_FILES,
 } from "./copy-pdfjs.mjs";
 
 const webDir = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -86,11 +87,9 @@ assertPdfJsRuntimeClosure(packagedPdfJsDir, "the packaged offline shelf");
 // which is stronger than scanning third-party sources for URL-shaped strings
 // (their comments legitimately cite spec and project URLs). Every non-pdf.js
 // emitted text asset gets the strict scan below.
-const runtimeFileNames = new Map([
-  ["pdf.mjs", "legacy/build/pdf.mjs"],
-  ["pdf.worker.min.mjs", "legacy/build/pdf.worker.min.mjs"],
-  ["pdf_viewer.mjs", "legacy/web/pdf_viewer.mjs"],
-]);
+const runtimeFileNames = new Map(
+  PDF_JS_RUNTIME_FILES.map(([source, target]) => [target, source]),
+);
 for (const relativePath of filesUnder(packagedPdfJsDir)) {
   const sourcePath = runtimeFileNames.get(relativePath) ?? relativePath;
   if (sha256(join(packagedPdfJsDir, relativePath)) !== sha256(join(pdfJsDir, sourcePath))) {

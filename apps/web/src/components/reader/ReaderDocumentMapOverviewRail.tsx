@@ -113,7 +113,7 @@ export default function ReaderDocumentMapOverviewRail({
     if (!track) return;
     const measure = () => {
       const height = track.getBoundingClientRect().height;
-      if (height === 0) {
+      if (height <= 0 || track.getClientRects().length === 0) {
         setMeasurement(null);
         return;
       }
@@ -463,7 +463,7 @@ export default function ReaderDocumentMapOverviewRail({
                 tabIndex={index === rovingGroupIndex ? 0 : -1}
                 aria-label={groupName(group, scope.label)}
                 aria-describedby={previewOpen ? popupId : undefined}
-                aria-expanded={group.members.length > 1 ? chooserOpen : undefined}
+                aria-expanded={chooserOpen}
                 aria-controls={chooserOpen ? popupId : undefined}
                 onPointerEnter={() => {
                   hoveredGroupIdRef.current = group.id;
@@ -538,9 +538,7 @@ export default function ReaderDocumentMapOverviewRail({
                 }}
                 onKeyDown={(event) => handleKeyDown(event, index)}
                 onClick={() => {
-                  if (group.members.length === 1) {
-                    activate(group.members[0]!, group);
-                  } else if (chooserOpen) {
+                  if (chooserOpen) {
                     closePopup(group, "toggle");
                   } else {
                     setPopup({ kind: "Chooser", groupId: group.id });
@@ -554,7 +552,7 @@ export default function ReaderDocumentMapOverviewRail({
                   anchor={popupAnchor}
                   mode={previewOpen ? "Preview" : "Chooser"}
                   id={popupId}
-                  label={group.members.length === 1 ? "destination preview" : `${group.members.length} destinations`}
+                  label={group.members.length === 1 ? "destination" : `${group.members.length} destinations`}
                   onDismiss={(reason) => closePopup(group, reason)}
                 >
                   {previewOpen ? (
@@ -576,6 +574,7 @@ export default function ReaderDocumentMapOverviewRail({
                         <li key={destinationKey(destination)}>
                           <button
                             type="button"
+                            aria-label={`go to passage: ${destinationName(destination, scope.label)}`}
                             onFocus={() => {
                               const id = destinationKey(destination);
                               focusedDestinationIdRef.current = id;
@@ -585,6 +584,7 @@ export default function ReaderDocumentMapOverviewRail({
                             onClick={() => activate(destination, group)}
                           >
                             <DestinationContent destination={destination} scopeLabel={scope.label} />
+                            <span className={styles.goToPassage}>go to passage</span>
                           </button>
                         </li>
                       ))}

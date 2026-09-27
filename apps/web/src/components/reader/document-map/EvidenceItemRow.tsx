@@ -10,6 +10,7 @@ import {
 import { type FeedbackContent } from "@/components/feedback/Feedback";
 import HighlightResourceActionMenu from "@/components/highlights/HighlightResourceActionMenu";
 import HighlightNoteEditor from "@/components/notes/HighlightNoteEditor";
+import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHandoff";
 import ContextEdgeMenu from "@/components/resources/ContextEdgeMenu";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import MachineText from "@/components/ui/MachineText";
@@ -38,11 +39,13 @@ import type {
   ReaderEvidenceObject,
   ReaderEvidencePassageGroup,
   ReaderEvidenceSourceTarget,
+  ReaderEvidenceSourceActivation,
   ReaderEvidenceUserEdge,
 } from "@/lib/reader/documentMap";
-import { anchoredRowForEvidenceItem } from "@/lib/reader/marginItems";
+import { anchoredRowForEvidenceItem } from "@/lib/reader/evidencePlacement";
 import type { AnchoredReaderRow } from "../useAnchoredReaderProjection";
 import styles from "./EvidencePaneSurface.module.css";
+import SourceNoteContent from "./SourceNoteContent";
 
 function evidenceActionErrorMessage(
   error: ApiError,
@@ -68,6 +71,8 @@ function evidenceActionErrorMessage(
 export interface EvidenceHighlightActions {
   onNoteSaved: (highlightId: string, note: HighlightLinkedNoteBlock) => void;
   onNoteDetached: (highlightId: string, noteBlockId: string) => void;
+  onEditAccepted: (noteRef: string, hasPending: () => boolean) => void;
+  onMutationStarted: (noteRef: string) => MountedEditorMutationLease | null;
   onOpenNoteLink: (
     href: string,
     disposition: WorkspaceTargetDisposition,
@@ -92,7 +97,7 @@ type ActivateEvidenceObject = (
   disposition: WorkspaceTargetDisposition,
 ) => void;
 type ActivateEvidenceSourceTarget = (
-  target: ReaderEvidenceSourceTarget,
+  target: ReaderEvidenceSourceActivation,
   disposition: WorkspaceTargetDisposition,
 ) => void;
 
@@ -106,6 +111,11 @@ export interface EvidenceRowActions {
   onEditHighlight: (highlightId: string | null) => void;
   onActivateObject: ActivateEvidenceObject;
   onActivateSourceTarget: ActivateEvidenceSourceTarget;
+  onOpenSourceLink: (
+    href: string,
+    disposition: WorkspaceTargetDisposition,
+    opener: ReaderEvidenceSourceActivation,
+  ) => void;
   onHoverItem: (item: ReaderEvidenceItem | null) => void;
   onDismissSynapse: (edgeId: string) => Promise<void>;
 }
@@ -117,9 +127,13 @@ export function EvidenceItemRow({
   hovered,
   disclosureOpen,
   editing,
+  highlightRecoveryOwnerKey,
   highlightActions,
   linkActions,
   rowActions,
+  sourceTargets,
+  sourceExpansionRequest,
+  onBrowse,
 }: {
   item: ReaderEvidenceItem;
   group: ReaderEvidencePassageGroup | null;
@@ -127,9 +141,13 @@ export function EvidenceItemRow({
   hovered: boolean;
   disclosureOpen: boolean;
   editing: boolean;
+  highlightRecoveryOwnerKey?: string;
   highlightActions: EvidenceHighlightActions;
   linkActions: EvidenceLinkActions;
   rowActions: EvidenceRowActions;
+  sourceTargets: ReadonlyMap<string, ReaderEvidenceSourceTarget>;
+  sourceExpansionRequest: number | null;
+  onBrowse: () => void;
 }) {
   const removableLink = isReaderEvidenceUserLink(item) ? item : null;
   // Link notes are a capability of neutral top-level Links only. A user stance
@@ -176,7 +194,7 @@ export function EvidenceItemRow({
   }, [editingNoteId, noteLoadSerial]);
   const relationshipCount =
     item.associations.length +
-    (item.kind === "SourceReference" ? item.targets.length : 0);
+    (item.kind === "SourceReference" ? item.target_refs.length : 0);
   const highlight =
     item.kind === "Highlight" ? evidenceHighlightRow(item, group) : null;
   const linkedNote =
@@ -217,14 +235,40 @@ export function EvidenceItemRow({
             >
               {item.rationale}
             </MachineText>
-          ) : item.excerpt.kind === "Present" ? (
+          ) : item.kind !== "SourceReference" && item.excerpt.kind === "Present" ? (
             <p className={styles.itemExcerpt}>{item.excerpt.value}</p>
           ) : null}
           {item.kind === "Highlight" && linkedNote && !editing ? (
             <p className={styles.notePreview}>{linkedNote.body_text}</p>
           ) : null}
           {item.kind === "SourceReference" ? (
-            <SourceTargetPreview item={item} />
+            <>
+              {item.target_refs.length > 1 ? (
+                <span className={styles.kindLabel}>
+                  {item.target_refs.length} references
+                </span>
+              ) : null}
+              {item.target_refs.length === 0 ? (
+                <p className={styles.sourcePreview}>Note text unavailable.</p>
+              ) : item.target_refs.map((ref) => {
+                const target = sourceTargets.get(ref);
+                if (!target) {
+                  // justify-defect: the transport decoder guarantees every target ref resolves.
+                  throw new Error(`Source reference ${item.id} has no target ${ref}`);
+                }
+                return (
+                  <SourceTargetRow
+                    key={ref}
+                    target={target}
+                    occurrenceItemId={item.id}
+                    expansionRequest={sourceExpansionRequest}
+                    onBrowse={onBrowse}
+                    onActivate={rowActions.onActivateSourceTarget}
+                    onOpenLink={rowActions.onOpenSourceLink}
+                  />
+                );
+              })}
+            </>
           ) : null}
         </div>
         <div className={styles.itemActions}>
@@ -319,9 +363,16 @@ export function EvidenceItemRow({
             ) : <p role="status">Loading note…</p>
           ) : (
           <HighlightNoteEditor
-            target={{ kind: "highlight", id: item.highlight_id, ownerKey: `highlight:${item.highlight_id}` }}
+            target={{
+              kind: "highlight",
+              id: item.highlight_id,
+              ownerKey: `highlight:${item.highlight_id}`,
+              recoveryOwnerKey: highlightRecoveryOwnerKey,
+            }}
             note={linkedHighlightNoteId ? loadedNote : null}
             editable
+            onEditAccepted={highlightActions.onEditAccepted}
+            onMutationStarted={highlightActions.onMutationStarted}
             onSaved={(highlightId, saved) => {
               setLoadedNote(saved);
               highlightActions.onNoteSaved(highlightId, saved);
@@ -369,15 +420,6 @@ export function EvidenceItemRow({
                   onRemoveUserEdge={linkActions.onRemoveUserEdge}
                 />
               ))}
-              {item.kind === "SourceReference"
-                ? item.targets.map((target) => (
-                    <SourceTargetRow
-                      key={target.ref}
-                      target={target}
-                      onActivate={rowActions.onActivateSourceTarget}
-                    />
-                  ))
-                : null}
             </div>
           ) : null}
         </div>
@@ -565,57 +607,65 @@ function ObjectOpenButton({
   );
 }
 
-function SourceTargetPreview({
-  item,
-}: {
-  item: Extract<ReaderEvidenceItem, { kind: "SourceReference" }>;
-}) {
-  const body = item.targets.find(
-    (target) => target.body.kind === "Present",
-  )?.body;
-  return body?.kind === "Present" ? (
-    <p className={styles.sourceBody}>{body.value}</p>
-  ) : null;
-}
-
 function SourceTargetRow({
   target,
+  occurrenceItemId,
+  expansionRequest,
+  onBrowse,
   onActivate,
+  onOpenLink,
 }: {
   target: ReaderEvidenceSourceTarget;
+  occurrenceItemId: string;
+  expansionRequest: number | null;
+  onBrowse: () => void;
   onActivate: ActivateEvidenceSourceTarget;
+  onOpenLink: EvidenceRowActions["onOpenSourceLink"];
 }) {
   const label =
     target.label.kind === "Present"
       ? target.label.value
       : kindLabel(target.apparatus_kind);
+  const title =
+    target.label.kind === "Present"
+      ? `${kindLabel(target.apparatus_kind)} ${label}`
+      : label;
   return (
-    <div className={styles.relationshipRow}>
-      <span className={styles.relationshipKind}>Source target</span>
-      <button
-        type="button"
-        className={styles.objectButton}
-        disabled={target.activation.kind === "none"}
-        onClick={(event) =>
-          onActivate(target, workspaceTargetClickIntent(event).disposition)
-        }
-      >
-        <span>{label}</span>
-        {target.resolution.kind === "Resolved" ? (
-          <LocateFixed size={12} aria-hidden="true" />
-        ) : (
-          <ExternalLink size={12} aria-hidden="true" />
-        )}
-      </button>
-      <EvidenceObjectActions
-        actionSubject={target.actionSubject}
+    <section className={styles.sourceNote} aria-label={title}>
+      <div className={styles.sourceHeading}>
+        <span className={styles.kindLabel}>{title}</span>
+        <EvidenceObjectActions
+          actionSubject={target.actionSubject}
+          label={label}
+          relationship={{ kind: "None" }}
+        />
+      </div>
+      <SourceNoteContent
+        content={target.content}
         label={label}
-        relationship={{ kind: "None" }}
+        expansionRequest={expansionRequest}
+        onBrowse={onBrowse}
+        onOpenLink={(href, disposition) =>
+          onOpenLink(href, disposition, { occurrenceItemId, targetRef: target.ref })
+        }
       />
-      {target.body.kind === "Present" ? (
-        <p className={styles.relationshipExcerpt}>{target.body.value}</p>
+      {target.activation.kind !== "none" ? (
+        <button
+          type="button"
+          className={styles.disclosureButton}
+          onClick={(event) => {
+            onBrowse();
+            onActivate(
+              { occurrenceItemId, targetRef: target.ref },
+              workspaceTargetClickIntent(event).disposition,
+            );
+          }}
+        >
+          <LocateFixed size={12} aria-hidden="true" />
+          View in source
+        </button>
       ) : null}
-    </div>
+    </section>
   );
 }
 
@@ -677,7 +727,9 @@ function itemKindLabel(item: ReaderEvidenceItem): string {
     case "Highlight":
       return "Highlight";
     case "SourceReference":
-      return "Source reference";
+      return item.apparatus_kind === "bibliography_ref" || item.apparatus_kind === "bibliography_entry"
+        ? "Source citation"
+        : "Source note";
     case "GeneratedCitation":
       return "Cited by";
     case "Link":

@@ -664,6 +664,7 @@ def _publish_stored_html(
             html=content_html,
             embed_source_html=embed_source_html,
             base_url=base_url,
+            document_url=packet.url if packet is not None else base_url,
             fragment_idx=0,
             extract_embeds=extract_embeds,
         )

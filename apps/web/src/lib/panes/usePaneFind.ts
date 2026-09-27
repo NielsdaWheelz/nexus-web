@@ -74,7 +74,12 @@ export interface PaneFindAdapter<TError> {
     request: PaneFindPreviewRequest,
   ): Promise<PaneFindPreviewReceipt<TError>>;
   clearPresentation(request: PaneFindSessionRequest): Promise<void>;
-  returnToReadingPosition?(request: PaneFindSessionRequest): Promise<void>;
+  readonly returnNavigation:
+    | { readonly kind: "ReaderOwned" }
+    | {
+        readonly kind: "FindOwned";
+        returnToReadingPosition(request: PaneFindSessionRequest): Promise<void>;
+      };
   errorMessage(error: TError): string;
 }
 
@@ -480,9 +485,7 @@ export function usePaneFind<TError>({
               .then((receipt) => {
                 const settlement = settlePreviewAttempt({
                   generation: previewGeneration,
-                  capturedOrigin:
-                    receipt.kind === "Previewed" &&
-                    sourceAdapter.returnToReadingPosition !== undefined,
+                  capturedOrigin: receipt.kind === "Previewed" && sourceAdapter.returnNavigation.kind === "FindOwned",
                 });
                 if (settlement.kind === "Current" && settlement.reprepare) {
                   startPreparation({
@@ -612,9 +615,7 @@ export function usePaneFind<TError>({
         });
         const settlement = settlePreviewAttempt({
           generation: previewGeneration,
-          capturedOrigin:
-            receipt.kind === "Previewed" &&
-            sourceAdapter.returnToReadingPosition !== undefined,
+          capturedOrigin: receipt.kind === "Previewed" && sourceAdapter.returnNavigation.kind === "FindOwned",
         });
         if (settlement.kind === "Current" && settlement.reprepare) {
           startPreparation({
@@ -769,7 +770,8 @@ export function usePaneFind<TError>({
   const onReturn = useCallback(() => {
     const current = preparedRef.current;
     if (
-      !sourceAdapter?.returnToReadingPosition ||
+      !sourceAdapter ||
+      sourceAdapter.returnNavigation.kind !== "FindOwned" ||
       current.kind !== "Ready" ||
       !returnAvailable ||
       returnInFlightRef.current
@@ -791,7 +793,7 @@ export function usePaneFind<TError>({
     const abort = new AbortController();
     returnAbortRef.current = abort;
     const { session } = current;
-    void sourceAdapter
+    void sourceAdapter.returnNavigation
       .returnToReadingPosition({
         sessionId: session.sessionId,
         sourceKey: session.sourceKey,

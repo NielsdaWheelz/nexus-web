@@ -1,12 +1,15 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type KeyboardEvent,
-  type PointerEvent,
+  type RefObject,
+  type CSSProperties,
 } from "react";
 import { LocateFixed } from "lucide-react";
 import {
@@ -20,6 +23,7 @@ import type {
   ReaderEvidenceItem,
   ReaderEvidenceObject,
   ReaderEvidencePassageGroup,
+  ReaderEvidenceSourceActivation,
   ReaderEvidenceSourceTarget,
   ReaderEvidenceUserEdge,
 } from "@/lib/reader/documentMap";
@@ -29,6 +33,8 @@ import {
   evidenceItemPassesFilters,
   type EvidenceFilters,
 } from "@/lib/reader/useEvidenceFilters";
+import { anchoredRowForEvidenceItem, placeEvidenceGroups } from "@/lib/reader/evidencePlacement";
+import { useAnchoredReaderProjection, type AnchoredReaderRow } from "../useAnchoredReaderProjection";
 import styles from "./EvidencePaneSurface.module.css";
 import {
   AssociationDisclosure,
@@ -38,7 +44,14 @@ import {
   type EvidenceRowActions,
 } from "./EvidenceItemRow";
 
-type EvidenceScope = "passages" | "document";
+type EvidenceScope = "all" | "document";
+const NO_ANCHORS: AnchoredReaderRow[] = [];
+
+export interface EvidenceHighlightEditRequest {
+  highlightId: string;
+  requestId: number;
+  recoveryOwnerKey?: string;
+}
 
 /** One closed projection for the always-published Media Evidence surface. */
 export type EvidencePaneProjection =
@@ -53,9 +66,16 @@ export type EvidencePaneProjection =
 
 interface EvidencePaneSurfaceProps {
   projection: EvidencePaneProjection;
+  placement: {
+    contentRef: RefObject<HTMLElement | null>;
+    measureKey: string | number;
+    enabled: boolean;
+  };
   filters: EvidenceFilters;
   activeItemId: string | null;
   followGeneration: number;
+  highlightEditRequest: EvidenceHighlightEditRequest | null;
+  onHighlightEditClose: (highlightId: string) => void;
   hoveredItemId: string | null;
   highlightActions: EvidenceHighlightActions;
   onActivatePassage: (group: ReaderEvidencePassageGroup) => boolean;
@@ -64,8 +84,13 @@ interface EvidencePaneSurfaceProps {
     disposition: WorkspaceTargetDisposition,
   ) => void;
   onActivateSourceTarget: (
-    target: ReaderEvidenceSourceTarget,
+    activation: ReaderEvidenceSourceActivation,
     disposition: WorkspaceTargetDisposition,
+  ) => void;
+  onOpenSourceLink: (
+    href: string,
+    disposition: WorkspaceTargetDisposition,
+    opener: ReaderEvidenceSourceActivation,
   ) => void;
   onHoverItem: (item: ReaderEvidenceItem | null) => void;
   onDismissSynapse: (edgeId: string) => Promise<void>;
@@ -79,14 +104,18 @@ interface EvidencePaneSurfaceProps {
 
 export default function EvidencePaneSurface({
   projection,
+  placement,
   filters,
   activeItemId,
   followGeneration,
+  highlightEditRequest,
+  onHighlightEditClose,
   hoveredItemId,
   highlightActions,
   onActivatePassage,
   onActivateObject,
   onActivateSourceTarget,
+  onOpenSourceLink,
   onHoverItem,
   onDismissSynapse,
   onRemoveUserEdge,
@@ -95,7 +124,7 @@ export default function EvidencePaneSurface({
   const evidence = projection.kind === "Ready" ? projection.evidence : null;
   const aggregateStatus =
     projection.kind === "Ready" ? projection.aggregateStatus : null;
-  const [scope, setScope] = useState<EvidenceScope>("passages");
+  const [scope, setScope] = useState<EvidenceScope>("all");
   const [openDisclosureIds, setOpenDisclosureIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -105,8 +134,48 @@ export default function EvidencePaneSurface({
   // The one open link-note editor, keyed by the Link's edge id (mirrors
   // editingHighlightId's single-editor rule for the folded link note).
   const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
-  const [followPaused, setFollowPaused] = useState(false);
+  const [mode, setMode] = useState<"follow" | "browse">("follow");
   const listRef = useRef<HTMLDivElement | null>(null);
+  const groupRefs = useRef(new Map<string, HTMLElement>());
+  const browseAnchorRef = useRef<{ element: HTMLElement; top: number } | null>(null);
+  const pendingRevealRef = useRef<string | null>(null);
+  const lastActivationRef = useRef<{ itemId: string; generation: number } | null>(null);
+  const lastHighlightEditRef = useRef<EvidenceHighlightEditRequest | null>(null);
+  const [revealedItemId, setRevealedItemId] = useState<string | null>(null);
+  const [browseInset, setBrowseInset] = useState(0);
+  const [heights, setHeights] = useState(new Map<string, number>());
+  const [listGeometry, setListGeometry] = useState({ top: 0, height: 0 });
+  const [remainingCount, setRemainingCount] = useState(0);
+  const following = placement.enabled && mode === "follow" && scope === "all";
+  const sourceTargets = useMemo(
+    () => new Map((evidence?.source_targets ?? []).map((target) => [target.ref, target])),
+    [evidence?.source_targets],
+  );
+
+  const browse = useCallback((target?: EventTarget | null) => {
+    if (!following) return;
+    const list = listRef.current;
+    if (list) {
+      const row = target instanceof Element
+        ? target.closest<HTMLElement>("[data-evidence-item-id]")
+        : null;
+      const anchor = row ?? Array.from(
+        list.querySelectorAll<HTMLElement>("[data-evidence-item-id]"),
+      ).find((element) => element.getBoundingClientRect().bottom > list.getBoundingClientRect().top);
+      if (anchor) browseAnchorRef.current = { element: anchor, top: anchor.getBoundingClientRect().top };
+    }
+    setMode("browse");
+  }, [following]);
+
+  const resumeFollow = () => {
+    browseAnchorRef.current = null;
+    pendingRevealRef.current = null;
+    setRevealedItemId(null);
+    setBrowseInset(0);
+    setScope("all");
+    if (listRef.current) listRef.current.scrollTop = 0;
+    setMode("follow");
+  };
 
   const visiblePassageGroups = useMemo(
     () =>
@@ -114,34 +183,124 @@ export default function EvidencePaneSurface({
         .map((group) => ({
           group,
           items: group.items.filter((item) =>
-            evidenceItemPassesFilters(item, filters.filter),
+            evidenceItemPassesFilters(item, filters.filter) || item.id === revealedItemId,
           ),
         }))
         .filter(({ items }) => items.length > 0),
-    [evidence?.passage_groups, filters.filter],
+    [evidence?.passage_groups, filters.filter, revealedItemId],
   );
   const visibleDocumentItems = useMemo(
     () =>
       (evidence?.document_items ?? []).filter((item) =>
-        evidenceItemPassesFilters(item, filters.filter),
+        evidenceItemPassesFilters(item, filters.filter) || item.id === revealedItemId,
       ),
-    [evidence?.document_items, filters.filter],
+    [evidence?.document_items, filters.filter, revealedItemId],
   );
-  const resolvedGroups = visiblePassageGroups.filter(
-    ({ group }) => group.resolution.kind === "Resolved",
-  );
-  const unavailableGroups = visiblePassageGroups.filter(
-    ({ group }) => group.resolution.kind === "Unavailable",
-  );
+  const anchorRows = useMemo(() => visiblePassageGroups.flatMap(({ group, items }) => {
+    const first = items[0];
+    const anchor = first ? anchoredRowForEvidenceItem(group, first) : null;
+    return anchor ? [{ ...anchor, id: group.locus_ref }] : [];
+  }), [visiblePassageGroups]);
+  const { projections, viewportState } = useAnchoredReaderProjection({
+    contentRef: placement.contentRef,
+    rows: following ? anchorRows : NO_ANCHORS,
+    measureKey: placement.measureKey,
+  });
+  const positions = useMemo(() => placeEvidenceGroups(
+    projections.map(({ row, rect }) => ({
+      id: row.id,
+      desiredTop: rect.top - viewportState.scrollTop + viewportState.top - listGeometry.top,
+    })), heights, 12,
+  ), [projections, viewportState, listGeometry.top, heights]);
+  const positionById = new Map(positions.map((position) => [position.id, position]));
+  const displayedGroups = following
+    ? visiblePassageGroups.filter(({ group }) => positionById.has(group.locus_ref))
+    : visiblePassageGroups;
+  const displayedGroupKey = displayedGroups.map(({ group }) => group.locus_ref).join("|");
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const measure = () => {
+      const rect = list.getBoundingClientRect();
+      setListGeometry((previous) => previous.top === rect.top && previous.height === list.clientHeight
+        ? previous : { top: rect.top, height: list.clientHeight });
+      const next = new Map<string, number>();
+      for (const [id, element] of groupRefs.current) next.set(id, element.getBoundingClientRect().height);
+      setHeights((previous) => previous.size === next.size &&
+        Array.from(next).every(([id, height]) => previous.get(id) === height) ? previous : next);
+      setRemainingCount(following ? Array.from(
+        list.querySelectorAll<HTMLElement>("[data-evidence-item-id]"),
+      ).filter((element) => element.getBoundingClientRect().bottom > rect.bottom + 1).length : 0);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(list);
+    for (const element of groupRefs.current.values()) observer.observe(element);
+    return () => observer.disconnect();
+  }, [displayedGroupKey, scope, placement.measureKey, following, positions]);
+
+  useLayoutEffect(() => {
+    if (!activeItemId || followGeneration === 0) return;
+    if (lastActivationRef.current?.itemId === activeItemId &&
+      lastActivationRef.current.generation === followGeneration) return;
+    lastActivationRef.current = { itemId: activeItemId, generation: followGeneration };
+    browse();
+    setMode("browse");
+    setScope(evidence?.document_items.some((item) => item.id === activeItemId) ? "document" : "all");
+    setRevealedItemId(activeItemId);
+    pendingRevealRef.current = activeItemId;
+  }, [activeItemId, followGeneration, browse, evidence?.document_items]);
+
+  useLayoutEffect(() => {
+    const request = highlightEditRequest;
+    if (!request || !evidence ||
+        (lastHighlightEditRef.current?.highlightId === request.highlightId &&
+         lastHighlightEditRef.current.requestId === request.requestId)) return;
+    const item = [...evidence.passage_groups.flatMap((group) => group.items), ...evidence.document_items]
+      .find((candidate) => candidate.kind === "Highlight" && candidate.highlight_id === request.highlightId);
+    if (!item) return;
+    lastHighlightEditRef.current = request;
+    browse();
+    setMode("browse");
+    setScope("all");
+    setRevealedItemId(item.id);
+    setEditingHighlightId(request.highlightId);
+    pendingRevealRef.current = item.id;
+  }, [browse, evidence, highlightEditRequest]);
+
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    const anchor = browseAnchorRef.current;
+    if (!list || mode !== "browse") return;
+    if (anchor?.element.isConnected) {
+      const desired = list.scrollTop + anchor.element.getBoundingClientRect().top - anchor.top;
+      if (desired < 0) {
+        setBrowseInset((previous) => previous - desired);
+        return;
+      }
+      list.scrollTop = desired;
+    }
+    browseAnchorRef.current = null;
+    const revealId = pendingRevealRef.current;
+    if (!revealId) return;
+    const row = list.querySelector<HTMLElement>(`[data-evidence-item-id="${CSS.escape(revealId)}"]`);
+    if (!row) return;
+    const listRect = list.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    if (rowRect.top < listRect.top || rowRect.bottom > listRect.bottom) {
+      list.scrollTop += rowRect.top - listRect.top;
+    }
+    pendingRevealRef.current = null;
+  }, [mode, browseInset, revealedItemId, scope, listGeometry.height, followGeneration, editingHighlightId, evidence]);
   const currentScopeHasRows =
-    scope === "passages"
-      ? visiblePassageGroups.length > 0
+    scope === "all"
+      ? visiblePassageGroups.length > 0 || visibleDocumentItems.length > 0
       : visibleDocumentItems.length > 0;
   const currentScopeFactCount = evidence
-    ? scope === "passages"
+    ? scope === "all"
       ? evidence.passage_groups.reduce(
           (count, group) => count + group.items.length,
-          0,
+          evidence.document_items.length,
         )
       : evidence.document_items.length
     : 0;
@@ -176,33 +335,22 @@ export default function EvidencePaneSurface({
   };
 
   useEffect(() => {
-    if (!activeItemId || followPaused) return;
-    listRef.current
-      ?.querySelector<HTMLElement>(
-        `[data-evidence-item-id="${CSS.escape(activeItemId)}"]`,
-      )
-      ?.scrollIntoView({ block: "nearest" });
-  }, [activeItemId, followGeneration, followPaused, scope]);
-
-  useEffect(() => {
-    if (!activeItemId || followGeneration === 0) return;
-    setScope("passages");
-    setFollowPaused(false);
-  }, [activeItemId, followGeneration]);
-
-  useEffect(() => {
-    if (!editingHighlightId || !evidence) return;
+    if (!editingHighlightId || (evidence === null && projection.kind !== "Empty")) return;
     const exists = [
-      ...evidence.passage_groups.flatMap((group) => group.items),
-      ...evidence.document_items,
+      ...(evidence?.passage_groups.flatMap((group) => group.items) ?? []),
+      ...(evidence?.document_items ?? []),
     ].some(
       (item) =>
         item.kind === "Highlight" && item.highlight_id === editingHighlightId,
     );
-    if (!exists) setEditingHighlightId(null);
-  }, [editingHighlightId, evidence]);
+    if (!exists) {
+      setEditingHighlightId(null);
+      onHighlightEditClose(editingHighlightId);
+    }
+  }, [editingHighlightId, evidence, onHighlightEditClose, projection.kind]);
 
   const toggleDisclosure = (id: string) => {
+    browse();
     setOpenDisclosureIds((previous) => {
       const next = new Set(previous);
       if (next.has(id)) next.delete(id);
@@ -213,37 +361,35 @@ export default function EvidencePaneSurface({
 
   const rowActions: EvidenceRowActions = {
     onToggleDisclosure: toggleDisclosure,
-    onEditHighlight: setEditingHighlightId,
+    onEditHighlight: (id) => {
+      browse();
+      if (editingHighlightId && editingHighlightId !== id) {
+        onHighlightEditClose(editingHighlightId);
+      }
+      setEditingHighlightId(id);
+    },
     onActivateObject,
     onActivateSourceTarget,
+    onOpenSourceLink,
     onHoverItem,
     onDismissSynapse,
   };
 
-  const pauseFollow = () => setFollowPaused(true);
-  const handleListPointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    if (event.target === event.currentTarget) pauseFollow();
-  };
   const handleListKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (
-      event.target === event.currentTarget &&
-      MANUAL_SCROLL_KEYS.has(event.key)
-    ) {
-      pauseFollow();
-    }
+    if (MANUAL_SCROLL_KEYS.has(event.key)) browse(event.target);
   };
 
   const header = (
     <header className={styles.header}>
-      <h2 className={styles.title}>Highlights &amp; citations</h2>
+      <h2 className={styles.title}>Evidence</h2>
       <TabsList aria-label="By location" className={styles.scopeTabs}>
         <TabsTrigger
-          id="evidence-scope-passages"
-          value="passages"
-          aria-controls="evidence-panel-passages"
+          id="evidence-scope-all"
+          value="all"
+          aria-controls="evidence-panel-all"
         >
-          Passages{" "}
-          <span className={styles.count}>{evidence?.counts.passages ?? 0}</span>
+          All evidence{" "}
+          <span className={styles.count}>{totalFacts}</span>
         </TabsTrigger>
         <TabsTrigger
           id="evidence-scope-document"
@@ -280,21 +426,42 @@ export default function EvidencePaneSurface({
           Synapses {evidence?.counts.synapses ?? 0}
         </Chip>
       </div>
-      {followPaused && activeItemId ? (
-        <button
-          type="button"
-          className={styles.followButton}
-          onClick={() => {
-            setScope("passages");
-            setFollowPaused(false);
-          }}
-        >
-          <LocateFixed size={13} aria-hidden="true" />
-          Return to current passage
-        </button>
-      ) : null}
+      <div className={styles.viewControls}>
+        {following ? (
+          <button type="button" className={styles.followButton} onClick={() => browse()}>
+            all items
+          </button>
+        ) : placement.enabled ? (
+          <button type="button" className={styles.followButton} onClick={resumeFollow}>
+            <LocateFixed size={13} aria-hidden="true" /> follow text
+          </button>
+        ) : null}
+        {following && remainingCount > 0 ? <span className={styles.remaining}>{remainingCount} {remainingCount === 1 ? "item" : "items"} below</span> : null}
+      </div>
     </header>
   );
+
+  const documentRows = visibleDocumentItems.map((item) => (
+    <EvidenceItemRow
+      key={item.id}
+      item={item}
+      group={null}
+      sourceTargets={sourceTargets}
+      sourceExpansionRequest={revealedItemId === item.id ? followGeneration : null}
+      onBrowse={browse}
+      active={activeItemId === item.id}
+      hovered={hoveredItemId === item.id}
+      disclosureOpen={openDisclosureIds.has(`item:${item.id}`)}
+      editing={item.kind === "Highlight" && editingHighlightId === item.highlight_id}
+      highlightRecoveryOwnerKey={
+        item.kind === "Highlight" && highlightEditRequest?.highlightId === item.highlight_id
+          ? highlightEditRequest.recoveryOwnerKey : undefined
+      }
+      highlightActions={highlightActions}
+      linkActions={linkActions}
+      rowActions={rowActions}
+    />
+  ));
 
   let content;
   if (projection.kind === "Processing") {
@@ -317,7 +484,7 @@ export default function EvidencePaneSurface({
       <FeedbackNotice
         content={{
           tone: "Neutral",
-          title: "No highlights, citations, links, or Synapses in this document.",
+          title: "No reader evidence in this document.",
         }}
         announcement="None"
       />
@@ -327,15 +494,14 @@ export default function EvidencePaneSurface({
       <FeedbackNotice
         content={{
           tone: "Neutral",
-          title:
-            scope === "passages"
-              ? "No items attached to passages."
-              : "No items attached to the whole document.",
+          title: scope === "all"
+            ? "No evidence in this document."
+            : "No whole-document evidence in this document.",
         }}
         announcement="None"
       />
     );
-  } else if (!anyFilterEnabled || !currentScopeHasRows) {
+  } else if ((!anyFilterEnabled && revealedItemId === null) || !currentScopeHasRows) {
     content = (
       <div className={styles.filteredEmpty}>
         <FeedbackNotice
@@ -351,73 +517,47 @@ export default function EvidencePaneSurface({
         </button>
       </div>
     );
-  } else if (scope === "passages") {
+  } else if (scope === "all") {
     content = (
-      <>
-        {resolvedGroups.map(({ group, items }) => (
+      <div className={styles.passageList} style={{ paddingTop: following ? 0 : browseInset, paddingBottom: following ? 0 : listGeometry.height }}>
+        {following && displayedGroups.length === 0 ? <p className={styles.noCurrentEvidence}>no evidence beside this passage</p> : null}
+        {displayedGroups.map(({ group, items }) => (
           <PassageGroup
             key={group.locus_ref}
             group={group}
             items={items}
+            containerRef={(element) => {
+              if (element) groupRefs.current.set(group.locus_ref, element);
+              else groupRefs.current.delete(group.locus_ref);
+            }}
+            style={following ? { marginTop: positionById.get(group.locus_ref)?.gapBefore ?? 0 } : undefined}
+            sourceTargets={sourceTargets}
+            sourceExpandedId={revealedItemId}
+            sourceExpansionRequest={followGeneration}
+            onBrowse={browse}
             activeItemId={activeItemId}
             hoveredItemId={hoveredItemId}
             openDisclosureIds={openDisclosureIds}
             editingHighlightId={editingHighlightId}
+            highlightEditRequest={highlightEditRequest}
             highlightActions={highlightActions}
-            onActivate={() => {
-              if (onActivatePassage(group)) setFollowPaused(false);
-            }}
+            onActivate={() => { browse(); onActivatePassage(group); }}
             linkActions={linkActions}
             rowActions={rowActions}
           />
         ))}
-        {unavailableGroups.length > 0 ? (
-          <section
-            className={styles.attention}
-            aria-labelledby="evidence-needs-attention"
-          >
-            <h3 id="evidence-needs-attention" className={styles.sectionHeading}>
-              Needs attention
-            </h3>
-            {unavailableGroups.map(({ group, items }) => (
-              <PassageGroup
-                key={group.locus_ref}
-                group={group}
-                items={items}
-                activeItemId={activeItemId}
-                hoveredItemId={hoveredItemId}
-                openDisclosureIds={openDisclosureIds}
-                editingHighlightId={editingHighlightId}
-                highlightActions={highlightActions}
-                onActivate={() => {}}
-                linkActions={linkActions}
-                rowActions={rowActions}
-              />
-            ))}
+        {!following && documentRows.length > 0 ? (
+          <section className={styles.documentList} aria-label="Whole-document evidence">
+            <h3 className={styles.sectionHeading}>Whole document</h3>
+            {documentRows}
           </section>
         ) : null}
-      </>
+      </div>
     );
   } else {
     content = (
       <div className={styles.documentList}>
-        {visibleDocumentItems.map((item) => (
-          <EvidenceItemRow
-            key={item.id}
-            item={item}
-            group={null}
-            active={activeItemId === item.id}
-            hovered={hoveredItemId === item.id}
-            disclosureOpen={openDisclosureIds.has(`item:${item.id}`)}
-            editing={
-              item.kind === "Highlight" &&
-              editingHighlightId === item.highlight_id
-            }
-            highlightActions={highlightActions}
-            linkActions={linkActions}
-            rowActions={rowActions}
-          />
-        ))}
+        {documentRows}
       </div>
     );
   }
@@ -426,15 +566,18 @@ export default function EvidencePaneSurface({
     <Tabs
       value={scope}
       onValueChange={(value) => {
-        if (value !== "passages" && value !== "document") {
+        if (value !== "all" && value !== "document") {
           throw new Error(`Unsupported Evidence scope: ${value}`);
         }
+        browse();
+        setMode("browse");
         setScope(value);
       }}
       variant="segmented"
       className={styles.root}
       role="group"
-      aria-label="Highlights, citations, links, and synapses"
+      aria-label="Evidence"
+      data-evidence-mode={following ? "follow" : "browse"}
     >
       {header}
       {aggregateStatus === "partial" ? (
@@ -444,23 +587,25 @@ export default function EvidencePaneSurface({
         />
       ) : null}
       <TabsContent
-        id="evidence-panel-passages"
-        value="passages"
-        aria-labelledby="evidence-scope-passages"
+        id="evidence-panel-all"
+        value="all"
+        aria-labelledby="evidence-scope-all"
         className={styles.tabPanel}
       >
         <div
-          ref={scope === "passages" ? listRef : undefined}
+          ref={scope === "all" ? listRef : undefined}
           className={styles.list}
           role="group"
-          aria-label="Passage items"
+          aria-label="All evidence"
           tabIndex={0}
-          onWheel={pauseFollow}
-          onTouchMove={pauseFollow}
-          onPointerDown={handleListPointerDown}
-          onKeyDown={handleListKeyDown}
+          onWheelCapture={(event) => browse(event.target)}
+          onTouchMoveCapture={(event) => browse(event.target)}
+          onPointerDownCapture={(event) => browse(event.target)}
+          onFocusCapture={(event) => browse(event.target)}
+          onKeyDownCapture={handleListKeyDown}
+          onScroll={(event) => { if (event.currentTarget.scrollTop !== 0) browse(); }}
         >
-          {scope === "passages" ? content : null}
+          {scope === "all" ? content : null}
         </div>
       </TabsContent>
       <TabsContent
@@ -475,10 +620,12 @@ export default function EvidencePaneSurface({
           role="group"
           aria-label="Whole-document items"
           tabIndex={0}
-          onWheel={pauseFollow}
-          onTouchMove={pauseFollow}
-          onPointerDown={handleListPointerDown}
-          onKeyDown={handleListKeyDown}
+          onWheelCapture={(event) => browse(event.target)}
+          onTouchMoveCapture={(event) => browse(event.target)}
+          onPointerDownCapture={(event) => browse(event.target)}
+          onFocusCapture={(event) => browse(event.target)}
+          onKeyDownCapture={handleListKeyDown}
+          onScroll={(event) => { if (event.currentTarget.scrollTop !== 0) browse(); }}
         >
           {scope === "document" ? content : null}
         </div>
@@ -490,10 +637,17 @@ export default function EvidencePaneSurface({
 function PassageGroup({
   group,
   items,
+  containerRef,
+  style,
+  sourceTargets,
+  sourceExpandedId,
+  sourceExpansionRequest,
+  onBrowse,
   activeItemId,
   hoveredItemId,
   openDisclosureIds,
   editingHighlightId,
+  highlightEditRequest,
   highlightActions,
   onActivate,
   linkActions,
@@ -501,10 +655,17 @@ function PassageGroup({
 }: {
   group: ReaderEvidencePassageGroup;
   items: ReaderEvidenceItem[];
+  containerRef: (element: HTMLElement | null) => void;
+  style: CSSProperties | undefined;
+  sourceTargets: ReadonlyMap<string, ReaderEvidenceSourceTarget>;
+  sourceExpandedId: string | null;
+  sourceExpansionRequest: number;
+  onBrowse: () => void;
   activeItemId: string | null;
   hoveredItemId: string | null;
   openDisclosureIds: Set<string>;
   editingHighlightId: string | null;
+  highlightEditRequest: EvidenceHighlightEditRequest | null;
   highlightActions: EvidenceHighlightActions;
   onActivate: () => void;
   linkActions: EvidenceLinkActions;
@@ -518,7 +679,8 @@ function PassageGroup({
       : "Passage";
   const groupDisclosureId = `group:${group.locus_ref}`;
   return (
-    <section className={styles.group} data-active={active ? "true" : undefined}>
+    <section ref={containerRef} style={style} className={styles.group}
+      data-evidence-group-id={group.locus_ref} data-active={active ? "true" : undefined}>
       <div className={styles.groupHeader}>
         <div className={styles.groupTarget}>
           <span className={styles.groupKicker}>
@@ -551,12 +713,19 @@ function PassageGroup({
             key={item.id}
             item={item}
             group={group}
+            sourceTargets={sourceTargets}
+            sourceExpansionRequest={sourceExpandedId === item.id ? sourceExpansionRequest : null}
+            onBrowse={onBrowse}
             active={activeItemId === item.id}
             hovered={hoveredItemId === item.id}
             disclosureOpen={openDisclosureIds.has(`item:${item.id}`)}
             editing={
               item.kind === "Highlight" &&
               editingHighlightId === item.highlight_id
+            }
+            highlightRecoveryOwnerKey={
+              item.kind === "Highlight" && highlightEditRequest?.highlightId === item.highlight_id
+                ? highlightEditRequest.recoveryOwnerKey : undefined
             }
             highlightActions={highlightActions}
             linkActions={linkActions}

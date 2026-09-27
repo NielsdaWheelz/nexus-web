@@ -1,11 +1,11 @@
 export type MediaPaneFindError =
-  | { readonly kind: "TargetUnavailable" }
+  | { readonly kind: "OriginUnavailable" }
   | { readonly kind: "RequestUnavailable" };
 
 export function mediaPaneFindErrorMessage(error: MediaPaneFindError): string {
   switch (error.kind) {
-    case "TargetUnavailable":
-      return "Find target unavailable. Retry.";
+    case "OriginUnavailable":
+      return "Reading position is unavailable.";
     case "RequestUnavailable":
       return "Find request unavailable. Retry.";
   }

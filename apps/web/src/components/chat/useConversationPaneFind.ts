@@ -233,14 +233,17 @@ function createConversationFindAdapter({
         getScrollHandle()?.clearFindPresentation();
       }
     },
-    async returnToReadingPosition(request) {
-      assertCurrent(request.sourceKey);
-      throwIfAborted(request.signal);
-      if (!origin) return;
-      const savedOrigin = origin;
-      highlightOwner.clear();
-      scrollHandle().restoreReadingPosition(savedOrigin);
-      origin = null;
+    returnNavigation: {
+      kind: "FindOwned",
+      async returnToReadingPosition(request) {
+        assertCurrent(request.sourceKey);
+        throwIfAborted(request.signal);
+        if (!origin) return;
+        const savedOrigin = origin;
+        highlightOwner.clear();
+        scrollHandle().restoreReadingPosition(savedOrigin);
+        origin = null;
+      },
     },
     errorMessage: conversationFindErrorMessage,
     invalidate,

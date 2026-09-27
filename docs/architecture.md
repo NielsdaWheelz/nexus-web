@@ -1023,7 +1023,7 @@ resource activation plus an optional reader-internal focus target.
 linked-items policy, Forks, and default surface order; the committed TypeScript
 projection must agree with the backend. Every eligible resource implies Dossier.
 `useResourceInspector` composes one stable publication and inspector action per
-pane from route-owned Contents, Highlights & citations, Context, Forks, and
+pane from route-owned Contents, Evidence, Context, Forks, and
 Connections bodies plus the shared Dossier body. Selecting that action validates the requested surface
 against its route-owned publication and, when attached to the workspace host,
 synchronously reasserts the same publication before requesting its surface, so
@@ -1258,7 +1258,7 @@ through byte-size-checked storage helpers. EPUB assets are not in Next Image
 selection becomes a stored highlight with a precomputed
 `exact`/`prefix`/`suffix` triple (a 64-codepoint context window) that doubles as
 the canonical quote shown to chat. PDF highlights may have empty `exact` (no
-text-layer match) — a first-class geometry-only state that Highlights & citations
+text-layer match) — a first-class geometry-only state that Evidence
 renders with an explicit placeholder. The current highlight
 contract lives in [`modules/highlight.md`](modules/highlight.md). Highlight-note
 persistence has one strict request wire: `note_block_id`,
@@ -1287,12 +1287,11 @@ rows are addressed as `reader_apparatus_item:<uuid>` resources and can be
 searched, opened, linked, read, and cited through the same resource activation
 and graph-citation spine as other explicit resource targets. Web/EPUB
 apparatus is extracted before sanitization removes semantic attributes. PDF
-apparatus is capability-gated: native `cite.*` links can be `ready` when
-deterministic reference targets are materialized, marker-only native-link rows
-remain `partial`, synthetic legal-footnote support is narrow, and unsupported
-scholarly/literary PDFs deliberately emit empty apparatus rather than inferring
-from raw layout text. Replacement reconciles rows by `(media_id, stable_key)` so
-surviving resource refs and their graph edges remain stable across refresh.
+  apparatus is capability-gated: native `cite.*` links can be `ready` when
+  deterministic reference targets are materialized, marker-only native-link rows
+  remain `partial`, and unsupported scholarly/literary PDFs emit empty apparatus
+  rather than inferring from raw layout text. Replacement preserves proven
+  occurrence identities and rejects ambiguous changes to referenced items.
 
 **Frontend** (`components/reader/*`, `PdfReader.tsx`, `HtmlRenderer.tsx`,
 `lib/reader/*`, `lib/highlights/*`): `HtmlRenderer` is the only
@@ -1301,15 +1300,15 @@ annotation transforms, and applies the bounded media `h1`-to-`h2` projection
 beneath the resource heading. Inline
 highlight rendering remains separate for text selection. Media publishes one
 shared **Resource Inspector** whose tabs are `Contents` when
-available, `Highlights & citations`, and `Dossier`. Contents and Highlights &
+available, `Evidence`, and `Dossier`. Contents and Highlights &
 citations retain their internal **Document Map** semantics:
-Highlights & citations is a target-centered aggregate of highlights, source references,
+Evidence is a target-centered aggregate of highlights, source references,
 generated citations, links, and Synapses, separated into passage and
-whole-document scopes with typed one-hop associations. `MarginRail` is the
-wide-reader spatial presenter for the same filtered passage facts. The desktop
-overview rail receives aggregate marker positions plus the semantic viewport
-range; it performs no scroll discovery or position math and has no
-opener. The shared inspector action opens the
+  whole-document scopes with typed one-hop associations. the evidence pane
+  aligns these facts with the visible source and owns complete note content;
+  its browse mode retains the full inventory. the narrow desktop overview bar
+  shows aggregate marker positions and previews and navigates only on explicit
+  activation. the shared inspector action opens the
 same `resource-inspector` publication on desktop and in the workspace mobile
 sheet.
 The contract is
@@ -2029,7 +2028,7 @@ they open over Resume and never become panes.
   the inner NexusControl without moving that wrapper. Every
   eligible resource pane publishes one
   `resource-inspector` secondary group through `useResourceInspector`: Media
-  (`Contents | Highlights & citations | Dossier`), Conversation
+  (`Contents | Evidence | Dossier`), Conversation
   (`Context | Forks | Dossier`), Library
   (`Members | Connections | Dossier` when the viewer can administer it, else
   `Connections | Dossier`), and Podcast/Author/Page/Note

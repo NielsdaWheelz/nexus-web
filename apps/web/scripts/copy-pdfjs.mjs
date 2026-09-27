@@ -26,8 +26,9 @@ const webDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const sourceDir = join(webDir, "node_modules", "pdfjs-dist");
 const expectedVersion = "5.7.284";
 
-/** Single files copied verbatim from `pdfjs-dist` into the runtime root. */
-const RUNTIME_FILES = [
+/** Upstream's legacy build supports the packaged Android WebView as well as
+ * hosted browsers. Keep core, worker, and viewer on the same build and version. */
+export const PDF_JS_RUNTIME_FILES = [
   ["legacy/build/pdf.mjs", "pdf.mjs"],
   ["legacy/build/pdf.worker.min.mjs", "pdf.worker.min.mjs"],
   ["legacy/web/pdf_viewer.mjs", "pdf_viewer.mjs"],
@@ -117,7 +118,7 @@ export function copyPdfJsRuntime(targetDir) {
   // non-directory entries are unlinked without traversing outside this root.
   removeGeneratedEntry(targetDir);
   mkdirSync(targetDir);
-  for (const [from, to] of RUNTIME_FILES) {
+  for (const [from, to] of PDF_JS_RUNTIME_FILES) {
     copyFileSync(join(sourceDir, from), join(targetDir, to));
   }
   for (const directory of RUNTIME_DIRECTORIES) {

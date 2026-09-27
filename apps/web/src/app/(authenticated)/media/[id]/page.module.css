@@ -249,30 +249,6 @@
   margin: 0;
 }
 
-.apparatusPreview {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.apparatusPreviewMeta {
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-  text-transform: capitalize;
-}
-
-.apparatusPreviewBody {
-  display: -webkit-box;
-  overflow: hidden;
-  color: var(--ink);
-  font-size: var(--text-sm);
-  line-height: var(--leading-snug);
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 5;
-  line-clamp: 5;
-}
-
 /* Reader themes intentionally keep literal palette tokens scoped to the reader. */
 .readerThemeLight {
   --reader-bg: #faf8f3;

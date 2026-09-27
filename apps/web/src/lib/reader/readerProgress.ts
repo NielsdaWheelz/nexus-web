@@ -130,7 +130,7 @@ export type ReaderProgressEvent =
   | { type: "save_failed" }
   | { type: "revalidated"; snapshot: ReaderCursorSnapshot }
   | { type: "remote_applied" }
-  | { type: "remote_kept_inspecting" }
+  | { type: "remote_acknowledged" }
   | { type: "canonical_snapshot_installed"; snapshot: ReaderCursorSnapshot }
   | { type: "reset" };
 
@@ -306,6 +306,14 @@ export function reduceReaderProgress(
     case "revalidated":
       return reduceRevalidated(state, event.snapshot);
 
+    case "remote_acknowledged":
+      if (state.remote.status !== "candidate") return state;
+      return {
+        ...state,
+        authority: { status: "ready", snapshot: state.remote.snapshot },
+        remote: { status: "none" },
+      };
+
     case "remote_applied":
       if (state.remote.status !== "candidate") {
         return state;
@@ -313,14 +321,6 @@ export function reduceReaderProgress(
       return {
         authority: { status: "ready", snapshot: state.remote.snapshot },
         local: { status: "clean" },
-        remote: { status: "none" },
-      };
-
-    case "remote_kept_inspecting":
-      if (state.remote.status !== "candidate" || state.local.status !== "clean") return state;
-      return {
-        authority: { status: "ready", snapshot: state.remote.snapshot },
-        local: state.local,
         remote: { status: "none" },
       };
 

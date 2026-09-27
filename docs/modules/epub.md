@@ -50,22 +50,20 @@ current fragment witness, then scans one fragment at a time in spine order. it r
 ordered occurrence locators and plain-text snippets, stops at match 2,001, and
 uses no global search index.
 
-cross-fragment results render through an ephemeral preview override. the
-shared reader navigation owner holds the departure and fences progress during
-inspection. closing find, scrolling, or selecting does not adopt a preview.
-**continue reading here** explicitly commits the rendered fragment and its
-exact locator; **back to your spot** restores the captured passage and
-placement. terminal fragment-load failure ends find with a typed unavailable
-result rather than leaving it pending.
+cross-fragment results use the shared reader navigation owner. inspection keeps
+one captured origin, fences progress and completion, and never changes the
+reading spot until explicit **continue reading here**. return restores the
+origin's passage and viewport placement.
 
 ## Reader Apparatus
 
-EPUB reader apparatus extraction happens while `epub_ingest.py` still has access
-to raw XHTML semantics such as `epub:type`, DPUB-ARIA roles, element ids, and
-package hrefs. Exact `noteref -> footnote/endnote` relations are normalized into
-the shared reader apparatus model with `epub_fragment_offsets` locators. Counts,
-fixture hashes, and per-source support status are owned by the reader apparatus
-manifest, not this module doc.
+epub reader apparatus extraction happens while `epub_ingest.py` still has raw
+xhtml semantics such as `epub:type`, roles, ids, reciprocal links and package
+hrefs. declared note relations and bounded, reciprocal untyped note groups
+become shared apparatus items with `epub_fragment_offsets` locators. supported
+sanitized note structure is retained; unavailable bodies remain explicit.
+anonymous occurrence refresh preserves identity only with unique exact
+correspondence. ambiguous changes to referenced items reject publication.
 
 ## contents and sections
 

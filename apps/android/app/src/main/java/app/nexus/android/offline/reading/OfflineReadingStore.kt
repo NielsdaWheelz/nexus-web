@@ -122,13 +122,6 @@ internal class OfflineReadingStore internal constructor(
     private val progressSyncExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "NexusOfflineReaderProgressSync").apply { isDaemon = true }
     }
-    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
-        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
-            if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
-                synchronizeReaderProgress()
-            }
-        }
-    }
     @Volatile private var bindingLocked = reconcileOnInit
     @Volatile private var reconciliationComplete = !reconcileOnInit
     private var reconciliationRunning = false
@@ -137,11 +130,18 @@ internal class OfflineReadingStore internal constructor(
     private var reconciliationAllowsLiveRunner = false
     private val reconciliationCallbacks =
         mutableListOf<(OfflineReadingReconciliationOutcome) -> Unit>()
+    private val progressNetworkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+            if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+                synchronizeReaderProgress()
+            }
+        }
+    }
 
     init {
         rootDirectory.mkdirs()
         if (reconcileOnInit) requestReconciliation()
-        connectivity.registerDefaultNetworkCallback(networkCallback)
+        connectivity.registerDefaultNetworkCallback(progressNetworkCallback)
     }
 
     fun bindAccountAfterExternalPurge(accountId: UUID): ReadingStoreSnapshot {
@@ -194,7 +194,7 @@ internal class OfflineReadingStore internal constructor(
                 val current = readBinding()
                 require(targetAccountId != null && current?.accountId == targetAccountId)
                 clearRemoteAuthorizationFence(current)
-                return snapshot()
+                return@synchronized
             }
             require(transition.targetAccountId == targetAccountId)
             readBinding()?.let { binding ->
@@ -567,6 +567,9 @@ internal class OfflineReadingStore internal constructor(
             }
         ) return false
         val network = connectivity.activeNetwork ?: return false
+        if (connectivity.getNetworkCapabilities(network)
+                ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) != true
+        ) return false
         synchronized(this) {
             val binding = readBinding() ?: return false
             if (!reconciliationComplete || binding.authorizationRequired ||

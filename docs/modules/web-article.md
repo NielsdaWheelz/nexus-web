@@ -27,7 +27,7 @@ by provenance.
   its input so longer related-content cards cannot outscore the page body;
   absent, multiple, or unreadable main landmarks fall back to the whole
   document. A source-shape-specific pre-extraction for Wikisource proofread
-  pages (`.mw-parser-output > .prp-pages-output`) keeps page-body text ahead of
+  pages (`.mw-parser-output .prp-pages-output`) keeps page-body text ahead of
   reference sections before the normal Python source-normalization path.
 
 Routes stay transport-only. X URLs fail closed through `x_ingest.py`; they do
@@ -38,8 +38,8 @@ timeout, and post-unavailable failures surface as their mapped API error and a
 `x_provider_failure` warning log.
 
 A browser article capture is one immutable packet (`schemas/extension_capture.py`:
-`url`, `base_url`, `title`, readable `content_html`, bounded embed-evidence
-`source_html`, and `Presence` metadata), uploaded and verified through the
+`url`, `base_url`, `title`, readable `content_html`, bounded embed and note
+evidence in `source_html`, and `Presence` metadata), uploaded and verified through the
 upload-session lifecycle and referenced only by the attempt's
 `source_payload.storage_path`. `media_source_adapters._run_browser_article_capture`
 decodes that packet with the same strict model, composes
@@ -58,6 +58,12 @@ stdin. it returns protocol version 1 with a success or modeled source failure
 on stdout; invalid invocation and unexpected defects use stderr and a nonzero
 exit. success preserves final/base url, raw source html, readable html, and
 bounded article metadata. the python adapter owns the outer 40-second timeout.
+`NODE_INGEST_SCRIPT` declares the absolute script path. its default is the
+checkout's `node/ingest/ingest.mjs`; the worker image bakes
+`/app/node/ingest/ingest.mjs`. node is resolved on the runtime's own path.
+deployment environment does not choose the filesystem layout.
+`document_url` identifies the actual page and its authored fragment targets;
+`base_url` resolves relative assets and external links, including authored `<base>`.
 
 acquisition admits http(s) urls without credentials or control characters,
 removes fragments, and caps urls at 2048 utf-8 bytes. every redirect gets fresh

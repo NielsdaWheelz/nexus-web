@@ -42,10 +42,11 @@ def sanitize_html(
     html: str,
     base_url: str,
     *,
+    document_url: str | None,
     allow_reader_apparatus_attrs: bool = False,
     allow_document_embed_attrs: bool = False,
 ) -> str:
-    """Sanitize extracted article HTML into the stored fragment shape."""
+    """Resolve assets against base_url; only document_url identifies local links."""
     if not html or not html.strip():
         return ""
     try:
@@ -55,11 +56,13 @@ def sanitize_html(
     body = doc.body
     if body is None:
         return ""
+    document_url = urldefrag(document_url).url if document_url is not None else None
     for child in list(body):
         if isinstance(child, HtmlElement):
             _sanitize_element(
                 child,
                 base_url,
+                document_url=document_url,
                 allow_reader_apparatus_attrs=allow_reader_apparatus_attrs,
                 allow_document_embed_attrs=allow_document_embed_attrs,
             )
@@ -71,6 +74,7 @@ def _sanitize_element(
     element: HtmlElement,
     base_url: str,
     *,
+    document_url: str | None,
     allow_reader_apparatus_attrs: bool,
     allow_document_embed_attrs: bool,
 ) -> None:
@@ -79,6 +83,7 @@ def _sanitize_element(
             _sanitize_element(
                 child,
                 base_url,
+                document_url=document_url,
                 allow_reader_apparatus_attrs=allow_reader_apparatus_attrs,
                 allow_document_embed_attrs=allow_document_embed_attrs,
             )
@@ -110,12 +115,12 @@ def _sanitize_element(
             del element.attrib[attr]
 
     if tag == "a":
-        _sanitize_link(element, base_url)
+        _sanitize_link(element, base_url, document_url)
     elif tag == "img":
         _sanitize_image(element, base_url)
 
 
-def _sanitize_link(element: HtmlElement, base_url: str) -> None:
+def _sanitize_link(element: HtmlElement, base_url: str, document_url: str | None) -> None:
     href = element.get("href", "")
     if not href:
         return
@@ -124,7 +129,7 @@ def _sanitize_link(element: HtmlElement, base_url: str) -> None:
         del element.attrib["href"]
         return
     source_url, fragment = urldefrag(absolute_url)
-    if href.startswith("#") or (fragment and source_url == urldefrag(base_url).url):
+    if document_url is not None and source_url == document_url and "#" in href:
         element.set("href", f"#{fragment}")
         return
     element.set("href", absolute_url)

@@ -121,18 +121,13 @@ animation owner.
 
 ### reversible inspection
 
-Pane Find is inspection, not navigation or reading intent. The first exact
-preview captures one immutable origin; later previews reuse it, Close leaves
-the discovered passage visible, and **Go back to reading position** restores
-and retires it. Preview and Return do not write progress, activity, completion,
-playback, URL, or pane history. This separation lets a reader explore evidence
-without corrupting the answer to “where was I reading?”
-
-For EPUBs, the same principle requires two section identities: committed
-navigation state and an ephemeral rendered preview. Search may change only the
-latter. Genuine reader input is the adoption boundary, and its triggering
-capture is suppressed so previewing a final section cannot accidentally finish
-the book.
+find, contents, native links, source notes, home/end and scrollbar seeks are
+inspection. the first move holds one exact origin; later moves reuse it. closing
+a tool leaves the discovered passage visible. return restores the semantic
+passage and viewport placement; explicit **continue reading here** adopts the
+settled position. input and waiting never adopt. inspection cannot write
+progress or completion; hosted activity may record genuine duration without
+progress or word endpoints. one owner makes these rules independent of format.
 
 ### global reader profile
 
@@ -365,14 +360,10 @@ workspace to guess reader semantics from URL shape; instead the reader
 replaces its own address and the workspace's Back/Forward stays about panes,
 not passages.
 
-contents, notes, highlights, find, explicit targets, and seeks share one
-inspection origin without adding pane history or a reader history stack.
-capture precedes movement; a failed later jump rolls back to its immediate
-departure while retaining the first origin. inspection does not write progress.
-scroll, selection, and inspector closure retain the origin. only verified
-return, explicit **continue reading here**, authoritative reset, or visit exit
-ends inspection; source replacement makes an old origin unavailable. the
-reserved status stays reachable outside prose and has no timeout.
+reader excursions retain one exact departure for return, without pane history
+or a reader history stack. successful arrival holds the first origin; failure
+restores the immediate departure. explicit adoption, source replacement and
+successful return retire it. inspector dismissal leaves it available.
 
 ### epub request surface
 

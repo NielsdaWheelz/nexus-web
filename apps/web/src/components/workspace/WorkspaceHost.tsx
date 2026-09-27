@@ -671,7 +671,7 @@ function WorkspaceHost() {
     pendingResponsivePaneSearchDelivery,
     setPendingResponsivePaneSearchDelivery,
   ] = useState<PendingResponsivePaneSearchDelivery | null>(null);
-  const secondaryReturnFocusByPaneIdRef = useRef<Map<string, HTMLElement>>(
+  const secondaryReturnFocusByPaneIdRef = useRef<Map<string, HTMLElement | { element: HTMLElement; preventScroll: true }>>(
     new Map(),
   );
   const { primaryPaneOrder, primaryPanesById } = state;
@@ -1086,6 +1086,8 @@ function WorkspaceHost() {
       }
       if (returnFocusTo?.isConnected) {
         secondaryReturnFocusByPaneIdRef.current.set(paneId, returnFocusTo);
+      } else if ("element" in (secondaryReturnFocusByPaneIdRef.current.get(paneId) ?? {})) {
+        secondaryReturnFocusByPaneIdRef.current.delete(paneId);
       }
       const pane = panesRef.current.find(
         (candidate) => candidate.paneId === paneId,
@@ -1112,8 +1114,8 @@ function WorkspaceHost() {
 
   const handleCloseTransientSecondarySurface = useCallback(
     (paneId: string, routeKey: string) => {
-      const opener =
-        secondaryReturnFocusByPaneIdRef.current.get(paneId) ?? null;
+      const stored = secondaryReturnFocusByPaneIdRef.current.get(paneId);
+      const opener = stored && "element" in stored ? stored.element : stored ?? null;
       setTransientSecondaryActivationByPaneId((current) => {
         if (current.get(paneId)?.routeKey !== routeKey) {
           return current;
@@ -1176,7 +1178,7 @@ function WorkspaceHost() {
   );
 
   const handleCloseSecondaryPane = useCallback(
-    (secondaryPaneId: string) => {
+    (secondaryPaneId: string, focusAfterClose?: HTMLElement | null) => {
       const pane = panesRef.current.find(
         (item) => item.secondaryPane?.id === secondaryPaneId,
       );
@@ -1185,17 +1187,22 @@ function WorkspaceHost() {
       // pane's chrome focus target (computed while the map entry still exists, so
       // the fallback is never starved). Mobile return-focus is owned by the
       // MobileSheet, so this only drives desktop.
-      const opener = pane
-        ? (secondaryReturnFocusByPaneIdRef.current.get(pane.paneId) ?? null)
-        : null;
+      const stored = pane ? secondaryReturnFocusByPaneIdRef.current.get(pane.paneId) : null;
+      const opener = stored && "element" in stored ? stored.element : stored ?? null;
+      const destination = focusAfterClose?.isConnected ? focusAfterClose : null;
       const focusTarget =
         !isMobile && pane
-          ? opener?.isConnected
+          ? destination ?? (opener?.isConnected
             ? opener
-            : findPaneChromeFocusTarget(pane.paneId)
+            : findPaneChromeFocusTarget(pane.paneId))
           : null;
+      if (isMobile && pane && destination) {
+        // The sheet's existing return-focus owner restores this destination
+        // after the modal layer releases the reader.
+        secondaryReturnFocusByPaneIdRef.current.set(pane.paneId, { element: destination, preventScroll: true });
+      }
       closeSecondaryPane(secondaryPaneId);
-      if (pane) {
+      if (pane && (!isMobile || !destination)) {
         secondaryReturnFocusByPaneIdRef.current.delete(pane.paneId);
       }
       if (focusTarget) {

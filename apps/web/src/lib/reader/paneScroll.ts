@@ -82,29 +82,13 @@ export interface ReaderScrollCommands {
 }
 
 export interface ReaderScrollPositioner {
+  /** Abort ends the final layout wait; the caller reports its cancellation outcome. */
   run(
     operation: (
       commands: ReaderScrollCommands,
     ) => void | Promise<void>,
     signal?: AbortSignal,
   ): Promise<void>;
-}
-
-export function nextReaderAnimationFrame(signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return Promise.reject(new DOMException("Reader positioning cancelled.", "AbortError"));
-  return new Promise((resolve, reject) => {
-    const onAbort = () => {
-      window.cancelAnimationFrame(frame);
-      signal.removeEventListener("abort", onAbort);
-      reject(new DOMException("Reader positioning cancelled.", "AbortError"));
-    };
-    const frame = window.requestAnimationFrame(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    });
-    signal.addEventListener("abort", onAbort, { once: true });
-    if (signal.aborted) onAbort();
-  });
 }
 
 const readerScrollCommands: ReaderScrollCommands = {
@@ -139,9 +123,20 @@ const readerScrollCommands: ReaderScrollCommands = {
   },
 };
 
-function nextLayoutSample(): Promise<void> {
+function nextLayoutSample(signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve();
   return new Promise((resolve) => {
-    window.requestAnimationFrame(() => resolve());
+    const finish = () => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    };
+    const onAbort = () => {
+      window.cancelAnimationFrame(frame);
+      finish();
+    };
+    const frame = window.requestAnimationFrame(finish);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
   });
 }
 
@@ -154,7 +149,7 @@ export function useReaderScrollPositioner(): ReaderScrollPositioner {
         await operation(readerScrollCommands);
       } finally {
         try {
-          await (signal ? nextReaderAnimationFrame(signal) : nextLayoutSample());
+          await nextLayoutSample(signal);
         } finally {
           release();
         }

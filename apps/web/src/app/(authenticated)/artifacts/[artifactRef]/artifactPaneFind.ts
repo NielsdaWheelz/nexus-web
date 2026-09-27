@@ -220,16 +220,19 @@ export function createArtifactPaneFindAdapter(
         signal: request.signal,
       });
     },
-    async returnToReadingPosition(request) {
-      assertCurrentSource(request.sourceKey, "Return");
-      assertCurrentSession(request.sessionId, "Return");
-      const returned = await capability.returnToReadingPosition({
-        sessionId: request.sessionId,
-        signal: request.signal,
-      });
-      if (returned.kind === "Rejected") {
-        throw new Error("Artifact Find reading origin is unavailable.");
-      }
+    returnNavigation: {
+      kind: "FindOwned",
+      async returnToReadingPosition(request) {
+        assertCurrentSource(request.sourceKey, "Return");
+        assertCurrentSession(request.sessionId, "Return");
+        const returned = await capability.returnToReadingPosition({
+          sessionId: request.sessionId,
+          signal: request.signal,
+        });
+        if (returned.kind === "Rejected") {
+          throw new Error("Artifact Find reading origin is unavailable.");
+        }
+      },
     },
     errorMessage(error) {
       switch (error.kind) {
