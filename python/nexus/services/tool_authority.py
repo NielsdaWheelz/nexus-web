@@ -283,6 +283,14 @@ class ToolAuthority:
         def prepare(db: Session) -> ToolPositionRecord:
             with db.begin():
                 generation, _spec, _job = self.lock_in_current_transaction(db)
+                if transport_kind == "GenerationApi":
+                    from nexus.services.agent_api import (
+                        require_generation_api_admission_in_current_transaction,
+                    )
+
+                    require_generation_api_admission_in_current_transaction(
+                        db, generation_id=self.generation_id
+                    )
                 lookup = select(LLMToolPosition).where(
                     LLMToolPosition.generation_id == self.generation_id,
                     LLMToolPosition.transport_kind == transport_kind,

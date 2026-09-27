@@ -48,6 +48,7 @@ from nexus.schemas.llm import CapacityPaused
 from nexus.schemas.presence import absent, present
 from nexus.services import durable_step_journal as step_journal
 from nexus.services import run_kit
+from nexus.services.agent_api import close_generation_api_admission_for_owner
 from nexus.services.artifacts import subjects
 from nexus.services.artifacts.collect import (
     AggregateDependenciesPending,
@@ -1097,6 +1098,7 @@ def cancel_build(db: Session, *, build_id: UUID, actor_user_id: UUID) -> None:
         if existing in ("revision", "failure"):
             db.commit()
             return False
+        close_generation_api_admission_for_owner(db, owner=owner)
         if existing == "cancellation":
             db.commit()
             return True

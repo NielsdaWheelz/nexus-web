@@ -199,6 +199,22 @@ def close_generation_api_admission_for_owner(db: Session, *, owner: LlmCallOwner
     )
 
 
+def require_generation_api_admission_in_current_transaction(
+    db: Session, *, generation_id: UUID
+) -> None:
+    """Recheck the bearer under the generation owner lock before a new position."""
+
+    credential = db.get(GenerationApiCredential, generation_id)
+    now = db.scalar(func.clock_timestamp())
+    if (
+        credential is None
+        or credential.closed_at is not None
+        or not isinstance(now, datetime)
+        or credential.expires_at <= now
+    ):
+        raise ToolAuthorityRefused("generation API admission closed before position allocation")
+
+
 def authenticate_generation_api(
     db: Session, *, bearer: str, require_child: bool
 ) -> AgentApiAdmission:
