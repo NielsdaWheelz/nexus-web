@@ -63,6 +63,10 @@ persistence repairs. the isolated linux arm64 stack uses database
   metadata and ipv6-mapped database connections failed. this was a sandbox
   probe without a model turn, not full lifecycle qualification. receipt sha256
   `f73992473d2e58648ad59d131045765006e3550cfe3ab0637fe38d17efa9c97a`.
+- a detached child started inside that namespace; normal `ExecServer.stop`
+  left zero marked processes and removed scratch. this is not a host-death or
+  restart proof. receipt sha256
+  `ecd1d07e0afee216498015c6159ec37a1d5f2bc4d9822606fe1e754074fab1ff`.
 
 ## unqualified
 

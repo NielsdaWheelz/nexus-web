@@ -29,7 +29,11 @@ the arm64 host's actual bubblewrap command passed public https, a small pypi
 wheel download, scratch write/removal, credential/control/source path absence,
 and direct database, metadata and ipv6-mapped database denials. receipt sha256
 `f73992473d2e58648ad59d131045765006e3550cfe3ab0637fe38d17efa9c97a`.
-it used no model turn and does not prove detached-child or host-death teardown.
+it used no model turn. a separate synthetic child detached inside the same
+namespace; normal `ExecServer.stop` left zero marked processes and removed
+scratch (receipt sha256
+`ecd1d07e0afee216498015c6159ec37a1d5f2bc4d9822606fe1e754074fab1ff`).
+host-container death and restart remain unproved.
 
 a note dossier completed strict json with a citation on `c792536af`, but did
 not make its requested `nexus.note.create` call. a second build was quota
