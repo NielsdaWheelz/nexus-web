@@ -279,11 +279,25 @@ export class ChatDraftStore {
     accountId: AuthenticatedAccount["accountId"],
   ): void => {
     const source = this.getSnapshot();
-    if (source.operation.kind !== "Absent" || source.text === "") return;
+    if (
+      source.operation.kind !== "Absent" ||
+      (source.text === "" && source.selection.kind === "Uninitialized")
+    ) return;
     const destination = path.getSnapshot();
     if (destination.operation.kind === "Absent" && destination.text === "") {
-      path.write(source);
-    } else {
+      path.write({
+        ...source,
+        selection: source.selection.kind === "Uninitialized"
+          ? destination.selection
+          : source.selection,
+      });
+    } else if (
+      destination.operation.kind === "Absent" &&
+      source.text === "" &&
+      source.selection.kind !== "Uninitialized"
+    ) {
+      path.write({ ...destination, selection: source.selection });
+    } else if (source.text !== "") {
       window.sessionStorage.setItem(
         RECOVERED_DRAFTS_PREFIX + accountId,
         JSON.stringify([...readRecoveredChatDrafts(accountId), source.text]),
