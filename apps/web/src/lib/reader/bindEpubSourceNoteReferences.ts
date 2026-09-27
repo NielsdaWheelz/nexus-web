@@ -30,17 +30,17 @@ export function bindEpubSourceNoteReferences(
     if (!(marker instanceof HTMLAnchorElement) || !root.contains(marker) ||
       marker.hasAttribute("data-reader-apparatus-item-id") ||
       (item.marker_anchor_id.kind === "Present" && item.marker_anchor_id.value !== marker.id)) continue;
-    // Every canonical character in the link must belong to this locator, and
-    // every source span in the locator must belong to the same link.
-    let matchesFullLink = true;
-    for (let offset = 0; offset < cursor.length; offset += 1) {
+    // Every span in the locator belongs to this link. Its neighboring
+    // canonical characters must be outside the link, so a partial label fails.
+    let matchesFullLink = !cursor.provenance[locator.start_offset - 1]?.spans.some(
+      (span) => marker.contains(span.node),
+    ) && !cursor.provenance[locator.end_offset]?.spans.some(
+      (span) => marker.contains(span.node),
+    );
+    for (let offset = locator.start_offset; matchesFullLink && offset < locator.end_offset; offset += 1) {
       const spans = cursor.provenance[offset]?.spans ?? [];
-      const inLink = spans.some((span) => marker.contains(span.node));
-      if ((offset >= locator.start_offset && offset < locator.end_offset)
-        ? !spans.length || spans.some((span) => !marker.contains(span.node))
-        : inLink) {
+      if (!spans.length || spans.some((span) => !marker.contains(span.node))) {
         matchesFullLink = false;
-        break;
       }
     }
     if (!matchesFullLink) continue;

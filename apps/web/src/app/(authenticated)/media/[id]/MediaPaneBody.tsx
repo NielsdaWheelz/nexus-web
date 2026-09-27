@@ -3377,7 +3377,8 @@ export default function MediaPaneBody() {
       !validateCanonicalText(cursor, activeContent.canonicalText)) return;
     bindEpubSourceNoteReferences(root, cursor, activeContent.fragmentId,
       readerEvidence?.passage_groups ?? []);
-  }, [isEpub, activeContent, renderedHtml, readerEvidence]);
+  }, [isEpub, activeContent, activeTextPublicationKey, renderedHtml,
+    readerEvidence, textHighlightInitialLoading]);
 
   useEffect(() => {
     const textTarget = freshTextTarget ?? (
