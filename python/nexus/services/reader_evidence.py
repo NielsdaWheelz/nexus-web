@@ -46,7 +46,7 @@ from nexus.schemas.reader_document_map import (
     ReaderEvidenceUnavailableOut,
     ReaderEvidenceUnavailableReason,
 )
-from nexus.schemas.resource_graph import ConnectionEndpointOut
+from nexus.schemas.resource_graph import ConnectionEndpointOut, ConnectionLinkNoteOut
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.reader_connections import ReaderConnectionRow
 from nexus.services.reader_evidence_markers import build_markers
@@ -490,6 +490,17 @@ def _add_remaining_connections(
                 role=row.connection.kind,
                 origin=row.connection.origin,
                 object=related,
+                link_note=(
+                    ConnectionLinkNoteOut(
+                        ref=row.connection.link_note.ref,
+                        note_block_id=row.connection.link_note.note_block_id,
+                        preview=row.connection.link_note.preview,
+                    )
+                    if row.connection.origin == "user"
+                    and row.connection.kind == "context"
+                    and row.connection.link_note is not None
+                    else None
+                ),
             ),
         )
 

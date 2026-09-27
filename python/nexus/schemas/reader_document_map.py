@@ -20,7 +20,7 @@ from nexus.schemas.reader_apparatus import (
     ReaderApparatusConfidence,
     ReaderApparatusItemKind,
 )
-from nexus.schemas.resource_graph import EdgeKind, EdgeOrigin
+from nexus.schemas.resource_graph import ConnectionLinkNoteOut, EdgeKind, EdgeOrigin
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import MediaRetrievalLocator
 
@@ -195,6 +195,7 @@ class ReaderEvidenceLinkOut(ReaderEvidenceItemBaseOut):
     role: EdgeKind
     origin: EdgeOrigin
     object: ReaderEvidenceObjectOut
+    link_note: ConnectionLinkNoteOut | None
 
 
 class ReaderEvidenceSynapseOut(ReaderEvidenceItemBaseOut):

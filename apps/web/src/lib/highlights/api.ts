@@ -130,6 +130,7 @@ export async function saveHighlightNote(
   createBlockId: string,
   bodyPmJson: Record<string, unknown>,
   clientMutationId: string,
+  expectedBody: { kind: "absent" } | { kind: "version"; version: number },
 ): Promise<HighlightLinkedNoteBlock> {
   const response = await apiFetch<unknown>(
     `/api/highlights/${highlightId}/note`,
@@ -138,6 +139,7 @@ export async function saveHighlightNote(
       body: JSON.stringify({
         note_block_id: noteBlockId ?? createBlockId,
         client_mutation_id: clientMutationId,
+        expected_body: expectedBody,
         body_pm_json: bodyPmJson,
       }),
     },
@@ -147,20 +149,6 @@ export async function saveHighlightNote(
     decodeHighlightNoteEnvelope,
     "Highlight note",
   );
-}
-
-export async function deleteHighlightNote(
-  highlightId: string,
-  noteBlockId: string,
-  clientMutationId: string,
-): Promise<void> {
-  const params = new URLSearchParams({
-    note_block_id: noteBlockId,
-    client_mutation_id: clientMutationId,
-  });
-  await apiFetch(`/api/highlights/${highlightId}/note?${params.toString()}`, {
-    method: "DELETE",
-  });
 }
 
 export function patchHighlightLinkedNoteBlock<
@@ -180,6 +168,13 @@ export function patchHighlightLinkedNoteBlock<
     const existingIndex = linkedNoteBlocks.findIndex(
       (noteBlock) => noteBlock.note_block_id === linkedNoteBlock.note_block_id,
     );
+    if (
+      existingIndex >= 0 &&
+      linkedNoteBlocks[existingIndex].version_by_lane.body >
+        linkedNoteBlock.version_by_lane.body
+    ) {
+      return highlight;
+    }
     const nextLinkedNoteBlocks =
       existingIndex >= 0
         ? linkedNoteBlocks.map((noteBlock, index) =>
@@ -199,9 +194,10 @@ export function patchHighlightLinkedNoteBlock<
 
 export function removeHighlightLinkedNoteBlock<
   T extends { id: string; linked_note_blocks?: HighlightLinkedNoteBlock[] },
->(highlights: T[], noteBlockId: string): T[] {
+>(highlights: T[], highlightId: string, noteBlockId: string): T[] {
   let changed = false;
   const nextHighlights = highlights.map((highlight) => {
+    if (highlight.id !== highlightId) return highlight;
     const linkedNoteBlocks = highlight.linked_note_blocks ?? [];
     const nextLinkedNoteBlocks = linkedNoteBlocks.filter(
       (noteBlock) => noteBlock.note_block_id !== noteBlockId,

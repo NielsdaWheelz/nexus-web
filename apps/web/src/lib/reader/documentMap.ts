@@ -191,6 +191,7 @@ export interface ReaderEvidenceLink extends ReaderEvidenceItemBase {
   role: EdgeKind;
   origin: EdgeOrigin;
   object: ReaderEvidenceObject;
+  link_note: { ref: string; note_block_id: string; preview: string | null } | null;
 }
 
 /** Explicit user-authored graph facts that the Evidence presenter may remove.

@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from nexus.schemas.resource_items import validate_note_body_pm_json
+from nexus.schemas.resource_items import ExpectedNoteBody, validate_note_body_pm_json
 
 HIGHLIGHT_COLORS = Literal["yellow", "green", "blue", "pink", "purple"]
 
@@ -48,6 +48,7 @@ class LinkedNoteBlockRef(BaseModel):
     note_block_id: UUID
     body_pm_json: dict[str, object]
     body_text: str
+    version_by_lane: dict[str, int]
 
 
 class TypedHighlightOut(BaseModel):
@@ -137,6 +138,7 @@ class UpdateHighlightRequest(BaseModel):
 class SetHighlightNoteRequest(BaseModel):
     note_block_id: UUID
     client_mutation_id: str = Field(min_length=1, max_length=120)
+    expected_body: ExpectedNoteBody
     body_pm_json: dict[str, Any]
 
     model_config = ConfigDict(extra="forbid")

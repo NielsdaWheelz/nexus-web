@@ -73,16 +73,8 @@ interface EvidencePaneSurfaceProps {
    * association. The caller dispatches context to Link DELETE and stances to
    * stance DELETE from the typed role; generated associations never qualify. */
   onRemoveUserEdge: (edge: ReaderEvidenceUserEdge) => Promise<void>;
-  /** Add/edit the one ordinary note folded onto a neutral (context) Link — mirrors
-   * `links.ts` `putLinkNote(linkId, {noteBlockId, bodyPmJson})`. */
-  onSaveLinkNote: (
-    linkId: string,
-    noteBlockId: string,
-    bodyPmJson: Record<string, unknown>,
-  ) => Promise<{ note_block_id: string }>;
-  /** Remove the Link's note; mirrors `links.ts` `deleteLinkNote(linkId)`. The Link
-   * itself is preserved. */
-  onDeleteLinkNote: (linkId: string) => Promise<void>;
+  /** Refresh the evidence projection after a committed link-note change. */
+  onLinkNoteChanged: () => void;
 }
 
 export default function EvidencePaneSurface({
@@ -98,8 +90,7 @@ export default function EvidencePaneSurface({
   onHoverItem,
   onDismissSynapse,
   onRemoveUserEdge,
-  onSaveLinkNote,
-  onDeleteLinkNote,
+  onLinkNoteChanged,
 }: EvidencePaneSurfaceProps) {
   const evidence = projection.kind === "Ready" ? projection.evidence : null;
   const aggregateStatus =
@@ -181,8 +172,7 @@ export default function EvidencePaneSurface({
     editingLinkId,
     onRemoveUserEdge,
     onEditLink: setEditingLinkId,
-    onSaveLinkNote,
-    onDeleteLinkNote,
+    onLinkNoteChanged,
   };
 
   useEffect(() => {
