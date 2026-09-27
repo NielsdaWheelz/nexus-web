@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections import Counter
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -10,7 +9,7 @@ from typing import Literal, cast
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from lxml.html import Element, HtmlElement, fragment_fromstring
+from lxml.html import fragment_fromstring
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session, defer, sessionmaker
 
@@ -361,105 +360,6 @@ def delete_reader_publication(db: Session, *, media_id: UUID) -> None:
     if publication is not None:
         db.delete(publication)
         db.flush()
-
-
-def normalize_stored_web_publication(
-    db: Session, *, media_id: UUID, expected_generation: int, expected_index_revision: int
-) -> int:
-    """Repair stored heading ids without changing canonical coordinates or issue facts.
-
-    The caller requests reindex in this transaction after the returned generation.
-    """
-    from nexus.services.canonicalize import generate_canonical_text
-    from nexus.services.html_tree import inner_html
-    from nexus.services.web_article_structure import add_heading_anchors
-
-    def replace_projection(_media: Media) -> None:
-        current_generation = read_publication_generation(db, media_id=media_id)
-        if current_generation != expected_generation:
-            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Reader publication changed")
-        revision = db.scalar(
-            text(
-                "SELECT revision FROM content_index_states WHERE owner_kind = 'media' AND owner_id = :media_id"
-            ),
-            {"media_id": media_id},
-        )
-        if revision is None or int(revision) != expected_index_revision:
-            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Content index revision changed")
-        rows = (
-            db.execute(
-                text(
-                    "SELECT id, idx, canonical_text, html_sanitized FROM fragments WHERE media_id = :media_id ORDER BY idx"
-                ),
-                {"media_id": media_id},
-            )
-            .mappings()
-            .all()
-        )
-        if not rows:
-            raise ConflictError(ApiErrorCode.E_REPAIR_NOT_ALLOWED, "No stored web fragments")
-        for row in rows:
-            old_html = str(row["html_sanitized"])
-            root = fragment_fromstring(old_html, create_parent=True)
-            for heading in root.iter():
-                if not isinstance(heading, HtmlElement) or heading.tag not in {
-                    "h1",
-                    "h2",
-                    "h3",
-                    "h4",
-                    "h5",
-                    "h6",
-                }:
-                    continue
-                authored_id = heading.get("id")
-                if authored_id and not authored_id.startswith(
-                    f"nexus-web-heading-{int(row['idx'])}-"
-                ):
-                    anchor = Element("span")
-                    anchor.set("id", authored_id)
-                    heading.addprevious(anchor)
-                    del heading.attrib["id"]
-            new_html = add_heading_anchors(inner_html(root), fragment_idx=int(row["idx"]))
-            if add_heading_anchors(new_html, fragment_idx=int(row["idx"])) != new_html:
-                raise ConflictError(
-                    ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Normalization is not stable"
-                )
-            if generate_canonical_text(new_html) != row["canonical_text"]:
-                raise ConflictError(
-                    ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Normalization changed canonical text"
-                )
-            old_root = fragment_fromstring(old_html, create_parent=True)
-            new_root = fragment_fromstring(new_html, create_parent=True)
-            for attribute in ("id", "name"):
-                old_values = [
-                    value
-                    for value in old_root.xpath(f".//*[@{attribute}]/@{attribute}")
-                    if isinstance(value, str)
-                ]
-                new_values = [
-                    value
-                    for value in new_root.xpath(f".//*[@{attribute}]/@{attribute}")
-                    if isinstance(value, str)
-                ]
-                if not Counter(old_values) <= Counter(new_values):
-                    raise ConflictError(
-                        ApiErrorCode.E_REPAIR_NOT_ALLOWED,
-                        "Normalization removed an authored target",
-                    )
-            if new_html != old_html:
-                db.execute(
-                    text("UPDATE fragments SET html_sanitized = :html WHERE id = :fragment_id"),
-                    {"html": new_html, "fragment_id": row["id"]},
-                )
-
-    replace_reader_publication(
-        db,
-        media_id=media_id,
-        expected_kind="web_article",
-        replace_projection=replace_projection,
-        issues=PreserveSourceIssues(),
-    )
-    return expected_generation + 1
 
 
 def capture_current[T](

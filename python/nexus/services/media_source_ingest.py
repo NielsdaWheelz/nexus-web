@@ -45,7 +45,6 @@ from nexus.jobs.queue import (
 )
 from nexus.logging import get_logger
 from nexus.schemas.import_history import (
-    CorrectSourceTypeRecovery,
     RepairSourceRecovery,
     ReprocessSourceRecovery,
     RetrySourceRecovery,
@@ -1514,125 +1513,6 @@ def reprocess_retained_epub(
         return receipt
 
     return admit_serializable(db, "reprocess_retained_epub", admit)
-
-
-def correct_source_type(
-    db: Session,
-    *,
-    media_id: UUID,
-    expected_attempt_id: UUID,
-    expected_source_type: str,
-    mutation_id: str,
-) -> SourceRetryAdmission:
-    """Correct one failed web URL whose current URL classifier selects remote epub."""
-    scope = f"operator_correct_source_type:{media_id}"
-    request_bytes = canonical_json_bytes(
-        {
-            "expected_attempt_id": str(expected_attempt_id),
-            "expected_source_type": expected_source_type,
-        }
-    )
-
-    def admit() -> SourceRetryAdmission:
-        creator_id = db.scalar(select(Media.created_by_user_id).where(Media.id == media_id))
-        if creator_id is None:
-            raise ConflictError(ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Media has no creator identity.")
-        replay = lookup_replay(
-            db,
-            viewer_id=creator_id,
-            scope=scope,
-            client_mutation_id=mutation_id,
-            request_bytes=request_bytes,
-        )
-        if replay is not None:
-            db.rollback()
-            return SourceRetryAdmission.model_validate(replay)
-        media = db.scalar(select(Media).where(Media.id == media_id).with_for_update(key_share=True))
-        attempt = _lock_latest_attempt(db, media_id)
-        if media is None or attempt is None or attempt.id != expected_attempt_id:
-            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Inspected source changed.")
-        if attempt.source_type != expected_source_type:
-            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Inspected source type changed.")
-        if (
-            media.created_by_user_id != creator_id
-            or media.kind != MediaKind.web_article.value
-            or media.processing_status != ProcessingStatus.failed
-            or attempt.status != FAILED
-            or attempt.source_type != source_types.GENERIC_WEB_URL
-        ):
-            raise ConflictError(
-                ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Source type correction is not eligible."
-            )
-        _require_unpublished_document(db, media_id, require_no_file=True)
-        url = attempt.requested_url
-        if not url:
-            raise ConflictError(ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Source has no URL.")
-        spec = url_source_spec(url)
-        if spec.source_type != source_types.REMOTE_EPUB_URL:
-            raise ConflictError(
-                ApiErrorCode.E_REPAIR_NOT_ALLOWED, "URL is not a remote epub source."
-            )
-        media.kind = MediaKind.epub.value
-        media.canonical_source_url = spec.canonical_source_url
-        new_attempt = create_attempt(
-            db,
-            media=media,
-            viewer_id=creator_id,
-            source_type=spec.source_type,
-            intent_key=_action_intent_key(
-                "operator_correct_type", media_id=media_id, previous_attempt_id=attempt.id
-            ),
-            requested_url=url,
-            canonical_source_url=spec.canonical_source_url,
-            provider=spec.provider,
-            provider_target_ref=spec.provider_target_ref,
-            source_payload={
-                **dict(attempt.source_payload or {}),
-                "kind": spec.kind,
-                **spec.source_payload,
-            },
-            request_id=None,
-            idempotency_key=None,
-            status=ACCEPTED,
-        )
-        mark_source_queued(db, media)
-        bump_all_media_fact_collections(db)
-        job_id = enqueue_accepted_source_attempt_in_transaction(
-            db,
-            media_id=media_id,
-            attempt_id=new_attempt.id,
-            actor_user_id=creator_id,
-            request_id=None,
-        )
-        _record_event(
-            db,
-            media_id=media_id,
-            attempt=attempt,
-            facts=SourceRecoveryAccepted(
-                source_attempt_id=attempt.id,
-                recovery=CorrectSourceTypeRecovery(
-                    new_source_attempt_id=new_attempt.id, source_type=spec.source_type
-                ),
-            ),
-            failure_code=absent(),
-        )
-        receipt = SourceRetryAdmission(
-            media_id=media_id,
-            source_attempt_id=new_attempt.id,
-            job_id=job_id,
-        )
-        record_replay(
-            db,
-            viewer_id=creator_id,
-            scope=scope,
-            client_mutation_id=mutation_id,
-            request_bytes=request_bytes,
-            response_json=receipt.model_dump(mode="json"),
-        )
-        db.commit()
-        return receipt
-
-    return admit_serializable(db, "correct_source_type", admit)
 
 
 def repair_dead_source_execution(
