@@ -63,6 +63,8 @@ RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
         "uix_media_x_provider_id",
         "uq_daily_page_bindings_user_date",
         "uq_daily_page_bindings_user_page",
+        "uq_resource_grants_person",
+        "uq_resource_grants_link",
     }
 )
 

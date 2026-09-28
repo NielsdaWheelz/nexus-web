@@ -20,68 +20,11 @@ export type CanonicalResourceRef = string & {
   readonly [canonicalResourceRefBrand]: true;
 };
 
-declare const nexusHrefBrand: unique symbol;
-export type NexusHref = string & { readonly [nexusHrefBrand]: true };
-
+/** A resource to grant, or a pane route that can only be copied (href is its pathname). */
 export type ShareTarget =
-  | { kind: "Resource"; ref: CanonicalResourceRef }
-  | { kind: "Route"; href: NexusHref; label: string };
+  { kind: "Resource"; ref: CanonicalResourceRef } | { kind: "Route"; href: string; label: string };
 
 export interface ShareOpenOptions {
   returnFocusTo: ReturnFocusTarget;
   returnFocusFallback: Presence<ReturnFocusTarget>;
-}
-
-export interface ShareUserProjection {
-  userHandle: string;
-  email: string | null;
-  displayName: string | null;
-}
-
-export const AUDIENCE_UNAVAILABLE_REASONS = [
-  "UnsupportedSubject",
-  "Deleting",
-  "InsufficientAuthority",
-  "HighlightUnresolved",
-  "EntitlementRequired",
-  "ProjectionNotReady",
-  "ProjectionUnsupported",
-] as const;
-
-export type AudienceUnavailableReason =
-  (typeof AUDIENCE_UNAVAILABLE_REASONS)[number];
-
-export type AudienceAvailability =
-  | { kind: "Available" }
-  | { kind: "Unavailable"; reason: AudienceUnavailableReason };
-
-export type OwnedShare =
-  | {
-      kind: "User";
-      handle: string;
-      user: ShareUserProjection;
-    }
-  | {
-      kind: "Link";
-      handle: string;
-      publicHref: string;
-    };
-
-export interface ReceivedUserShare {
-  kind: "ReceivedUser";
-  handle: string;
-  sharedBy: ShareUserProjection;
-  subject: CanonicalResourceRef;
-}
-
-export interface ShareSnapshot {
-  subject: CanonicalResourceRef;
-  sharing: ShareMode;
-  authenticatedHref: string;
-  creationAvailability: {
-    user: AudienceAvailability;
-    link: AudienceAvailability;
-  };
-  shares: OwnedShare[];
-  receivedAccess: ReceivedUserShare[];
 }

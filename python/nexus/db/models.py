@@ -2799,10 +2799,9 @@ class AuthHandoffCode(Base):
 class ResourceGrant(Base):
     """One active user or bearer-link path to an exact ResourceRef subject.
 
-    Branch consistency is owned by ``services.resource_grants``. The database
-    stores the two nullable audience shapes without a business CHECK so trusted
-    row-shape drift defects in the typed owner rather than becoming a second
-    policy implementation.
+    Owned by ``services.resource_grants``. The database enforces the row shape:
+    the subject is a media or a highlight, exactly one of ``grantee_user_id`` and
+    ``share_token`` is set, and a creator holds one grant per subject and audience.
     """
 
     __tablename__ = "resource_grants"

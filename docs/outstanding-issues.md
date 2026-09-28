@@ -30,6 +30,12 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
+- [open] resource sharing / production migration · 2026-09-28 resource-sharing reauthoring · run 0249's malformed/duplicate `resource_grants` count read-only against production before deploy: [ticket](tickets/resource-grants-0249-production-preflight.md).
+- [open] resource sharing / sealed handles · 2026-09-28 resource-sharing reauthoring · the public `nxps1_`/`nxpa1_` codec re-derives `sealed_handles`' key schedule byte for byte: [ticket](tickets/public-handle-kdf-duplicates-sealed-handles.md).
+- [deferred] resource sharing / sealed handles · 2026-09-28 resource-sharing reauthoring · owner call: keep `nxps1_`/`nxpa1_` byte-stable across deploys, or scope them to the open tab: [ticket](tickets/public-sealed-handle-codec-stability-decision.md).
+- [deferred] resource sharing / public reader · 2026-09-28 resource-sharing reauthoring · owner call: public PDF bytes keep streaming through the api, or move to signed storage urls: [ticket](tickets/public-pdf-signed-url-decision.md).
+- [open] resource sharing / public reader web · 2026-09-28 resource-sharing review · `/s` article and transcript views re-check an anchor ordinal the server guarantees: [ticket](tickets/public-reader-dead-anchor-ordinal-guard.md).
+- [open] resource sharing / share overlay web · 2026-09-28 resource-sharing review · the Native and X bearer-link triggers stay enabled while another change is in flight: [ticket](tickets/share-overlay-bearer-warning-triggers-ignore-busy.md).
 - [open] web / python comments · 2026-09-28 pr-06 library placement · 25 code comments cite deleted `docs/cutovers/` files as rule owners: [ticket](tickets/code-comments-cite-deleted-cutovers.md).
 - [open] ingest-imports web · 2026-09-28 pr-06 library placement · Add Content still rereads and decides settlement-unknown placement writes and publishes the bus by hand, where the overlay now resends: [ticket](tickets/add-content-placement-unknown-machine.md).
 - [open] typed wire / resource graph · 2026-09-28 typed-wire foundation · `ResourceActivationOut` is camelCase on routes and snake_case in the chat SSE frame; the wire dump will reject the first route typed with it: [ticket](tickets/resource-activation-has-two-wire-casings.md).

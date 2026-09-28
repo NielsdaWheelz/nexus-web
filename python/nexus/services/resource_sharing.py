@@ -1,193 +1,155 @@
-"""Authenticated Share snapshot and mutation projection owner."""
+"""The Share overlay's snapshot and create command. One ordered availability check serves both
+audiences, first failing reason first; create re-runs it under the subject's row locks."""
 
 from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
 from nexus.config import get_settings
-from nexus.db.models import Highlight, MediaTeardownIntent, User
-from nexus.errors import ApiError, ApiErrorCode, NotFoundError
+from nexus.db.models import Highlight, MediaTeardownIntent, ResourceGrant, User
+from nexus.db.retries import retry_serializable
+from nexus.db.session import transaction
+from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.schemas.presence import absent, presence_from_nullable, present
 from nexus.schemas.resource_sharing import (
-    AudienceAvailabilityOut,
     AudienceAvailableOut,
     AudienceUnavailableOut,
+    AudienceUnavailableReason,
     CreateResourceShareOut,
-    GrantCreationAvailabilityOut,
+    CreationAvailabilityOut,
     LinkAudienceIn,
     LinkShareOut,
-    OwnedShareOut,
     ReceivedUserShareOut,
     ResourceShareSnapshotOut,
+    ShareMembersOut,
     ShareUserOut,
     UserAudienceIn,
     UserShareOut,
 )
-from nexus.services import resource_grants
+from nexus.services import public_resource_sharing, resource_grants
 from nexus.services.billing_entitlements import get_effective_entitlements
-from nexus.services.public_resource_sharing import (
-    Available as ProjectionAvailable,
-)
-from nexus.services.public_resource_sharing import (
-    ProjectionNotReady,
-    ProjectionUnsupported,
-    highlight_target_available,
-    link_projection_availability,
-)
+from nexus.services.library_governance import library_out, lock_library_for_member
+from nexus.services.locator_resolver import resolve_highlight_reader_target
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.resolve import resolve_refs
 from nexus.services.resource_items.capabilities import capability_for_ref
 from nexus.services.resource_items.routing import route_for_ref
-from nexus.services.sealed_handles import InvalidSealedHandle, seal_user, unseal_user
+from nexus.services.sealed_handles import (
+    InvalidSealedHandle,
+    seal_resource_grant,
+    seal_user,
+    unseal_user,
+)
 
 
-def _absolute_href(path: str) -> str:
-    return f"{get_settings().app_public_url.rstrip('/')}{path}"
+def _href(path: str) -> str:
+    return get_settings().app_public_url.rstrip("/") + path
 
 
-def _user_out(user: User) -> ShareUserOut:
+def _user(user: User) -> ShareUserOut:
     return ShareUserOut(
         user_handle=seal_user(user.id),
-        email=user.email,
-        display_name=user.display_name,
+        email=presence_from_nullable(user.email),
+        display_name=presence_from_nullable(user.display_name),
     )
 
 
-def _availability(
-    db: Session,
-    *,
-    viewer_user_id: UUID,
-    subject: ResourceRef,
-    link: bool,
-    check_entitlement: bool = True,
-    check_link_projection: bool = True,
-) -> AudienceAvailabilityOut:
-    mode = capability_for_ref(subject).sharing
-    if mode not in {"ResourceGrants", "HighlightGrants"}:
-        return AudienceUnavailableOut(reason="UnsupportedSubject")
+def _owned(grant: ResourceGrant, grantee: User | None) -> UserShareOut | LinkShareOut:
+    handle = seal_resource_grant(grant.id)
+    if grantee is None:
+        return LinkShareOut(handle=handle, public_href=_href(f"/s#share={grant.share_token}"))
+    return UserShareOut(handle=handle, user=_user(grantee))
 
-    parent_media_id = subject.id
-    highlight_owner_id: UUID | None = None
+
+def _unavailable(
+    db: Session, viewer_id: UUID, subject: ResourceRef, *, lock: bool
+) -> AudienceUnavailableReason | None:
+    """Why the viewer may not grant the subject to anyone now, or None."""
+    if capability_for_ref(subject).sharing not in {"ResourceGrants", "HighlightGrants"}:
+        return "UnsupportedSubject"
+    if lock:
+        resource_grants.lock_subject(db, subject)
+    media_id, owner_id = subject.id, viewer_id
     if subject.scheme == "highlight":
-        row = db.execute(
-            select(Highlight.anchor_media_id, Highlight.user_id).where(Highlight.id == subject.id)
-        ).one_or_none()
+        owned_by = select(Highlight.anchor_media_id, Highlight.user_id)
+        row = db.execute(owned_by.where(Highlight.id == subject.id)).one_or_none()
         if row is None:
-            return AudienceUnavailableOut(reason="InsufficientAuthority")
-        parent_media_id = row.anchor_media_id
-        highlight_owner_id = row.user_id
-
-    if db.scalar(
-        select(MediaTeardownIntent.media_id).where(MediaTeardownIntent.media_id == parent_media_id)
+            return "InsufficientAuthority"
+        media_id, owner_id = row
+    if db.scalar(select(exists().where(MediaTeardownIntent.media_id == media_id))):
+        return "Deleting"
+    if owner_id != viewer_id or not can_read_media(
+        db, viewer_id, media_id, include_tearing_down=True
     ):
-        return AudienceUnavailableOut(reason="Deleting")
-    if highlight_owner_id is not None and highlight_owner_id != viewer_user_id:
-        return AudienceUnavailableOut(reason="InsufficientAuthority")
-    if not can_read_media(
-        db,
-        viewer_user_id,
-        parent_media_id,
-        include_tearing_down=True,
+        return "InsufficientAuthority"
+    if subject.scheme == "highlight" and not resolve_highlight_reader_target(
+        db, highlight_id=subject.id
     ):
-        return AudienceUnavailableOut(reason="InsufficientAuthority")
-    if subject.scheme == "highlight" and not highlight_target_available(
-        db,
-        highlight_id=subject.id,
-    ):
-        return AudienceUnavailableOut(reason="HighlightUnresolved")
-    if check_entitlement and not get_effective_entitlements(db, viewer_user_id).can_share:
-        return AudienceUnavailableOut(reason="EntitlementRequired")
-    if link and check_link_projection:
-        projection = link_projection_availability(db, subject=subject)
-        if isinstance(projection, ProjectionNotReady):
-            return AudienceUnavailableOut(reason="ProjectionNotReady")
-        if isinstance(projection, ProjectionUnsupported):
-            return AudienceUnavailableOut(reason="ProjectionUnsupported")
-        if not isinstance(projection, ProjectionAvailable):
-            raise AssertionError("unknown public projection availability")
-    return AudienceAvailableOut()
-
-
-def _owned_share(
-    db: Session,
-    grant: resource_grants.ResourceGrantRecord,
-) -> OwnedShareOut:
-    if isinstance(grant.audience, resource_grants.UserGrantAudience):
-        user = db.get(User, grant.audience.user_id)
-        if user is None:
-            raise AssertionError("resource grant references a missing recipient")
-        return UserShareOut(handle=grant.handle, user=_user_out(user))
-    if grant.share_token is None:
-        raise AssertionError("link resource grant is missing its token")
-    return LinkShareOut(
-        handle=grant.handle,
-        public_href=_absolute_href(f"/s#share={grant.share_token}"),
-    )
+        return "HighlightUnresolved"
+    return None
 
 
 def get_share_snapshot(
-    db: Session,
-    *,
-    viewer_user_id: UUID,
-    subject: ResourceRef,
+    db: Session, *, viewer_user_id: UUID, subject: ResourceRef
 ) -> ResourceShareSnapshotOut:
-    mode = capability_for_ref(subject).sharing
-    resolved = resolve_refs(db, viewer_id=viewer_user_id, refs=[subject])[0]
-    if resolved.missing:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
-    route = route_for_ref(db, viewer_id=viewer_user_id, ref=subject, missing=False)
+    route = None
+    if not resolve_refs(db, viewer_id=viewer_user_id, refs=[subject])[0].missing:
+        route = route_for_ref(db, viewer_id=viewer_user_id, ref=subject, missing=False)
     if route is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
-
-    owned: list[OwnedShareOut] = []
-    received: list[ReceivedUserShareOut] = []
-    if mode in {"ResourceGrants", "HighlightGrants"}:
-        for grant in resource_grants.list_creator_grants(
-            db,
-            creator_id=viewer_user_id,
-            subject=subject,
-        ):
-            owned.append(_owned_share(db, grant))
-        for grant in resource_grants.list_received_grants(
-            db,
-            recipient_id=viewer_user_id,
-            snapshot_subject=subject,
-        ):
-            creator = db.get(User, grant.creator_id)
-            if creator is None:
-                raise AssertionError("resource grant references a missing creator")
-            received.append(
-                ReceivedUserShareOut(
-                    handle=grant.handle,
-                    shared_by=_user_out(creator),
-                    subject=grant.subject.uri,
-                )
-            )
-
+    mode = capability_for_ref(subject).sharing
+    user = _unavailable(db, viewer_user_id, subject, lock=False)
+    if user is None and not get_effective_entitlements(db, viewer_user_id).can_share:
+        user = "EntitlementRequired"
+    link = user or public_resource_sharing.link_readiness(db, subject)
+    members = absent()
+    if mode == "LibraryMembership":
+        library = library_out(
+            lock_library_for_member(db, viewer_user_id, subject.id, lock=False),
+            viewer_id=viewer_user_id,
+        )
+        if not library.is_default and library.system_key is None:
+            members = present(ShareMembersOut(can_manage=library.can_manage_members))
+    # Only media and highlights have grant rows, so other subjects list none.
+    owned = resource_grants.creator_grants(db, creator_id=viewer_user_id, subject=subject)
+    received = resource_grants.received_grants(db, recipient_id=viewer_user_id, subject=subject)
     return ResourceShareSnapshotOut(
-        subject=subject.uri,
         sharing=mode,
-        authenticated_href=_absolute_href(route),
-        creation_availability=GrantCreationAvailabilityOut(
-            user=_availability(
-                db,
-                viewer_user_id=viewer_user_id,
-                subject=subject,
-                link=False,
-            ),
-            link=_availability(
-                db,
-                viewer_user_id=viewer_user_id,
-                subject=subject,
-                link=True,
-            ),
+        authenticated_href=_href(route),
+        creation_availability=CreationAvailabilityOut(
+            user=AudienceUnavailableOut(reason=user) if user else AudienceAvailableOut(),
+            link=AudienceUnavailableOut(reason=link) if link else AudienceAvailableOut(),
         ),
-        shares=owned,
-        received_access=received,
+        shares=[_owned(grant, grantee) for grant, grantee in owned],
+        received_access=[
+            ReceivedUserShareOut(
+                handle=seal_resource_grant(grant.id),
+                shared_by=_user(creator),
+                subject=f"{grant.subject_scheme}:{grant.subject_id}",
+            )
+            for grant, creator in received
+        ],
+        members=members,
     )
+
+
+def _grantee(db: Session, viewer_id: UUID, handle: str) -> User:
+    """The user a person grant names: someone other than the viewer who still exists."""
+    try:
+        grantee = db.get(User, unseal_user(handle))
+    except InvalidSealedHandle as exc:
+        raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found") from exc
+    if grantee is None:
+        raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found")
+    if grantee.id == viewer_id:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Cannot share a resource with yourself"
+        )
+    return grantee
 
 
 def create_share(
@@ -197,34 +159,33 @@ def create_share(
     subject: ResourceRef,
     audience: UserAudienceIn | LinkAudienceIn,
 ) -> CreateResourceShareOut:
-    selected = _availability(
-        db,
-        viewer_user_id=viewer_user_id,
-        subject=subject,
-        link=isinstance(audience, LinkAudienceIn),
-        check_entitlement=False,
-        check_link_projection=False,
-    )
-    if isinstance(selected, AudienceUnavailableOut):
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, f"Share unavailable: {selected.reason}")
+    """Grant the subject, or return the viewer's existing grant for that audience."""
 
-    if isinstance(audience, UserAudienceIn):
-        try:
-            recipient_id = unseal_user(audience.user_handle)
-        except InvalidSealedHandle as exc:
-            raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found") from exc
-        grant_audience: resource_grants.GrantAudience = resource_grants.UserGrantAudience(
-            user_id=recipient_id
-        )
-    else:
-        grant_audience = resource_grants.LinkGrantAudience()
-    result = resource_grants.create_grant(
-        db,
-        viewer_user_id=viewer_user_id,
-        subject=subject,
-        audience=grant_audience,
-    )
-    return CreateResourceShareOut(
-        share=_owned_share(db, result.grant),
-        created=result.created,
-    )
+    def attempt() -> CreateResourceShareOut:
+        with transaction(db):
+            reason = _unavailable(db, viewer_user_id, subject, lock=True)
+            if reason is not None:
+                raise InvalidRequestError(
+                    ApiErrorCode.E_INVALID_REQUEST, f"Share unavailable: {reason}"
+                )
+            grantee = None
+            if isinstance(audience, UserAudienceIn):
+                grantee = _grantee(db, viewer_user_id, audience.user_handle)
+            grantee_id = grantee.id if grantee else None
+            grant = resource_grants.find_grant(
+                db, creator_id=viewer_user_id, subject=subject, grantee_id=grantee_id
+            )
+            if grant is not None:
+                return CreateResourceShareOut(share=_owned(grant, grantee), created=False)
+            if not get_effective_entitlements(db, viewer_user_id).can_share:
+                raise ApiError(ApiErrorCode.E_BILLING_REQUIRED, "Sharing requires an eligible plan")
+            if grantee is None and (reason := public_resource_sharing.link_readiness(db, subject)):
+                raise InvalidRequestError(
+                    ApiErrorCode.E_INVALID_REQUEST, f"Share unavailable: {reason}"
+                )
+            grant = resource_grants.insert_grant(
+                db, creator_id=viewer_user_id, subject=subject, grantee_id=grantee_id
+            )
+            return CreateResourceShareOut(share=_owned(grant, grantee), created=True)
+
+    return retry_serializable(db, "create_resource_grant", attempt)

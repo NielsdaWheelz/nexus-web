@@ -1,125 +1,82 @@
+/* One column of sections, each a heading with its controls; secondary lines are faint notes. */
+
 .panel {
   display: grid;
-  width: min(36rem, calc(100vw - 3rem));
-  max-height: min(72vh, 46rem);
   gap: var(--space-4);
+  max-height: min(72vh, 46rem);
   overflow-y: auto;
-}
-
-.mobileHeader,
-.sectionHeading,
-.row,
-.actions,
-.confirm,
-.feedback {
-  display: flex;
-  align-items: center;
-}
-
-.mobileHeader,
-.sectionHeading,
-.row {
-  justify-content: space-between;
-}
-
-.mobileHeader {
-  margin-bottom: var(--space-3);
-}
-
-.mobileHeader h2,
-.sectionHeading h3,
-.sectionHeading p,
-.intro,
-.audienceDisclosure,
-.empty,
-.availability,
-.warning p,
-.rights {
-  margin: 0;
-}
-
-.mobileHeader h2,
-.sectionHeading h3 {
-  font-size: var(--text-sm);
-  font-weight: var(--weight-semibold);
-}
-
-.intro,
-.sectionHeading p,
-.audienceDisclosure,
-.empty,
-.availability,
-.rights {
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
-  line-height: var(--leading-relaxed);
 }
 
 .section {
   display: grid;
   gap: var(--space-3);
-  border-top: 1px solid var(--edge-subtle);
   padding-top: var(--space-4);
+  border-top: 1px solid var(--edge-subtle);
 }
 
-.sectionHeading {
-  gap: var(--space-4);
+.mobileHeader,
+.heading,
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
 }
 
-.sectionHeading > div:first-child {
+.heading > div {
   display: grid;
-  min-width: 0;
   gap: var(--space-1);
+  min-width: 0;
+}
+
+.mobileHeader h2,
+.heading h3 {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.note {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  line-height: var(--leading-relaxed);
 }
 
 .actions,
 .confirm {
+  display: flex;
   flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
   gap: var(--space-2);
 }
 
+/* A question takes its own line: under a row's label, or under the link's actions. */
+.confirm {
+  flex-basis: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  font-size: var(--text-sm);
+}
+
 .state {
   flex: none;
+  padding: 3px var(--space-2);
   border: 1px solid var(--edge);
   border-radius: var(--radius-full);
-  padding: 3px var(--space-2);
   color: var(--ink-faint);
   font-size: var(--text-xs);
 }
 
-.error,
-.warning {
-  display: grid;
-  gap: var(--space-2);
-  border: 1px solid var(--danger);
-  border-radius: var(--radius-lg);
-  padding: var(--space-3);
-  font-size: var(--text-sm);
-}
-
-.error {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  color: var(--danger);
-}
-
-.warning {
-  border-color: var(--edge);
-  background: var(--surface-2);
-}
-
-.rows {
-  display: grid;
-  gap: var(--space-2);
-}
-
 .row {
+  flex-wrap: wrap;
   min-height: 44px;
-  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
   background: var(--surface-2);
-  padding: var(--space-2) var(--space-3);
   font-size: var(--text-sm);
 }
 
@@ -128,27 +85,24 @@
   overflow-wrap: anywhere;
 }
 
-.rights {
-  padding-top: var(--space-1);
-}
-
+/* The sheet neither pads nor scrolls its content, so the panel does both. */
 @media (max-width: 768px) {
-  .panel {
-    width: auto;
-    max-height: calc(100dvh - 9rem - var(--viewport-safe-bottom));
+  .mobileHeader {
+    padding: 0 var(--space-4) var(--space-3);
   }
 
-  .sectionHeading {
-    align-items: flex-start;
+  .panel {
+    max-height: none;
+    min-height: 0;
+    padding: 0 var(--space-4) var(--space-4);
+  }
+
+  .heading {
     flex-direction: column;
+    align-items: flex-start;
   }
 
   .actions {
     justify-content: flex-start;
-  }
-
-  .row {
-    align-items: flex-start;
-    flex-direction: column;
   }
 }
