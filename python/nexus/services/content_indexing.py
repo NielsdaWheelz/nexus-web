@@ -135,7 +135,7 @@ class MediaContentReindexWork:
 
 @dataclass(frozen=True)
 class PlannedContentChunk:
-    parts: tuple[tuple[IndexableBlock, int, int, int], ...]
+    first_block: IndexableBlock
     text: str
     locator: dict[str, object]
     embedding_f32: bytes
@@ -716,7 +716,7 @@ def _plan_batch(
             raise ValueError("Embedding dimensions do not match configured dimensions")
         planned.append(
             PlannedContentChunk(
-                parts=tuple(parts),
+                first_block=parts[0][0],
                 text=chunk_text,
                 locator=_chunk_locator(parts, chunk_text),
                 embedding_f32=array("f", [float(value) for value in embedding]).tobytes(),
@@ -728,17 +728,9 @@ def _plan_batch(
 def _write_spool_record(spool: BinaryIO, chunk: PlannedContentChunk, *, written_bytes: int) -> int:
     """Append one JSONL record, holding the document to its size envelope."""
     record = {
+        "block_idx": chunk.first_block.block_idx,
         "embedding_f32": base64.b64encode(chunk.embedding_f32).decode("ascii"),
         "locator": chunk.locator,
-        "parts": [
-            {
-                "block_idx": block.block_idx,
-                "end_offset": end_offset,
-                "start_offset": start_offset,
-                "token_count": token_count,
-            }
-            for block, start_offset, end_offset, token_count in chunk.parts
-        ],
         "text": chunk.text,
     }
     encoded = (json.dumps(record, separators=(",", ":")) + "\n").encode("utf-8")
@@ -760,15 +752,7 @@ def _plan_chunks(plan: ContentIndexPlan | SpooledContentIndexPlan) -> Iterator[P
         for line in spool:
             record: dict[str, Any] = json.loads(line)
             yield PlannedContentChunk(
-                parts=tuple(
-                    (
-                        plan.blocks[part["block_idx"]],
-                        part["start_offset"],
-                        part["end_offset"],
-                        part["token_count"],
-                    )
-                    for part in record["parts"]
-                ),
+                first_block=plan.blocks[record["block_idx"]],
                 text=record["text"],
                 locator=record["locator"],
                 embedding_f32=base64.b64decode(record["embedding_f32"]),
@@ -852,29 +836,25 @@ def publish_content_index(
     replace_content_index_materialization(db, owner=plan.owner)
     owner_params = {"owner_kind": plan.owner.kind, "owner_id": plan.owner.id}
 
-    block_ids: list[UUID] = []
     for block in plan.blocks:
-        block_ids.append(
-            db.execute(
-                text(
-                    """
-                    INSERT INTO content_blocks (owner_kind, owner_id, block_idx, block_kind,
-                        canonical_text, heading_path, locator, created_at)
-                    VALUES (:owner_kind, :owner_id, :block_idx, :block_kind, :canonical_text,
-                        CAST(:heading_path AS jsonb), CAST(:locator AS jsonb), :now)
-                    RETURNING id
-                    """
-                ),
-                {
-                    **owner_params,
-                    "block_idx": block.block_idx,
-                    "block_kind": block.block_kind,
-                    "canonical_text": block.canonical_text,
-                    "heading_path": json.dumps(list(block.heading_path)),
-                    "locator": json.dumps(block.locator),
-                    "now": now,
-                },
-            ).scalar_one()
+        db.execute(
+            text(
+                """
+                INSERT INTO content_blocks (owner_kind, owner_id, block_idx, block_kind,
+                    canonical_text, heading_path, locator, created_at)
+                VALUES (:owner_kind, :owner_id, :block_idx, :block_kind, :canonical_text,
+                    CAST(:heading_path AS jsonb), CAST(:locator AS jsonb), :now)
+                """
+            ),
+            {
+                **owner_params,
+                "block_idx": block.block_idx,
+                "block_kind": block.block_kind,
+                "canonical_text": block.canonical_text,
+                "heading_path": json.dumps(list(block.heading_path)),
+                "locator": json.dumps(block.locator),
+                "now": now,
+            },
         )
 
     chunks = iter(_plan_chunks(plan))
@@ -886,26 +866,19 @@ def publish_content_index(
     published = 0
     for chunk_idx, chunk in enumerate(chain((first_chunk,), chunks)):
         published += 1
-        first_block, first_start, _, _ = chunk.parts[0]
-        last_block, _, last_end, _ = chunk.parts[-1]
+        first_block = chunk.first_block
         span_id = db.execute(
             text(
                 """
-                INSERT INTO evidence_spans (owner_kind, owner_id, start_block_id, end_block_id,
-                    start_block_offset, end_block_offset, span_text, selector, citation_label,
-                    resolver_kind, created_at)
-                VALUES (:owner_kind, :owner_id, :start_block_id, :end_block_id,
-                    :start_block_offset, :end_offset, :span_text, CAST(:selector AS jsonb),
+                INSERT INTO evidence_spans (owner_kind, owner_id, span_text, selector,
+                    citation_label, resolver_kind, created_at)
+                VALUES (:owner_kind, :owner_id, :span_text, CAST(:selector AS jsonb),
                     :citation_label, :resolver_kind, :now)
                 RETURNING id
                 """
             ),
             {
                 **owner_params,
-                "start_block_id": block_ids[first_block.block_idx],
-                "end_block_id": block_ids[last_block.block_idx],
-                "start_block_offset": first_start,
-                "end_offset": last_end,
                 "span_text": chunk.text,
                 "selector": json.dumps(chunk.locator),
                 "citation_label": (
@@ -1161,21 +1134,12 @@ def _lock_index_revision(db: Session, media_id: UUID) -> int | None:
     return None if row is None else int(row)
 
 
-def _reindex_payload(
-    *, media_id: UUID, revision: int, reason: str, request_id: str | None
-) -> dict[str, object]:
-    return {
-        "media_id": str(media_id),
-        "revision": revision,
-        "reason": reason,
-        "request_id": (
-            {"kind": "Absent"} if request_id is None else {"kind": "Present", "value": request_id}
-        ),
-    }
+def _reindex_payload(*, media_id: UUID, revision: int, reason: str) -> dict[str, object]:
+    return {"media_id": str(media_id), "revision": revision, "reason": reason}
 
 
 def request_media_content_reindex(
-    db: Session, *, media_id: UUID, reason: str, request_id: str | None
+    db: Session, *, media_id: UUID, reason: str
 ) -> MediaContentReindexIntent:
     """Raise the index revision and leave exactly one waiting job for it."""
     if not isinstance(reason, str) or reason not in MEDIA_CONTENT_REINDEX_REASONS:
@@ -1219,9 +1183,7 @@ def request_media_content_reindex(
     )
 
     definition = get_default_registry()[MEDIA_CONTENT_REINDEX_JOB_KIND]
-    payload = _reindex_payload(
-        media_id=media_id, revision=revision, reason=reason, request_id=request_id
-    )
+    payload = _reindex_payload(media_id=media_id, revision=revision, reason=reason)
     jobs = lock_jobs_for_payload(
         db,
         kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
@@ -1254,7 +1216,7 @@ def request_media_content_reindex(
 
 
 def ensure_media_content_reindex_job(
-    db: Session, *, media_id: UUID, reason: str, request_id: str | None
+    db: Session, *, media_id: UUID, reason: str
 ) -> MediaContentReindexIntent:
     """Ensure the current revision owns a queue row, without raising it."""
     if not isinstance(reason, str) or reason not in MEDIA_CONTENT_REINDEX_REASONS:
@@ -1294,9 +1256,7 @@ def ensure_media_content_reindex_job(
     inserted = enqueue_job(
         db,
         kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
-        payload=_reindex_payload(
-            media_id=media_id, revision=revision, reason=reason, request_id=request_id
-        ),
+        payload=_reindex_payload(media_id=media_id, revision=revision, reason=reason),
         max_attempts=definition.max_attempts,
     )
     _record_index_event(

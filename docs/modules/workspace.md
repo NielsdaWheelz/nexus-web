@@ -369,9 +369,7 @@ href or mount identity.
 
 Learn is one of the named Adopt workflows. It preserves the source reader and
 opens `/artifacts/artifact:<id>` as a standalone resource pane after its durable
-Highlight-to-Idea command succeeds. Artifact revision navigation is in-place:
-`?revision=artifact_revision:<id>` changes the viewed revision without changing
-the pane's Artifact resource identity or creating a duplicate pane.
+Highlight-to-Idea command succeeds.
 
 Pane Find movement is inspection, not pane navigation. reader Find consumes the
 shared mounted-reader navigation owner: its origin survives closing Find and

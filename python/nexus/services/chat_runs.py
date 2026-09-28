@@ -33,7 +33,6 @@ from nexus.jobs.queue import (
     current_dead_job_for_payload,
     enqueue_job,
     lock_chat_generation_admission_in_current_transaction,
-    requeue_dead_job,
 )
 from nexus.schemas.chat_reader_selection import ReaderSelectionInput
 from nexus.schemas.conversation import (
@@ -103,7 +102,6 @@ from nexus.services.generation_catalog import (
     CatalogDefinitionStaleError,
     GenerationCatalogRefreshError,
     GenerationCatalogService,
-    GenerationCatalogSnapshot,
     GenerationSelectionUnavailableError,
     InvalidGenerationSelectionError,
     ResolvedCatalogPair,
@@ -115,7 +113,6 @@ from nexus.services.generation_spec import (
     GenerationSpec,
     ProviderApiSelection,
 )
-from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.resource_graph.context import (
     add_context_ref_without_commit,
     list_context_refs,
@@ -282,11 +279,10 @@ async def repeat_assistant_response(
     if not isinstance(receipt.outcome, AcceptedChatAdmission):
         raise AssertionError("candidate admission has a rejected receipt")
     run_id = receipt.outcome.run_id
-    snapshot = await catalog.read_chat()
 
     def read() -> ChatRunResponse:
         with get_session_factory()() as db:
-            return read_chat_run_response(db, viewer_id, run_id, catalog_snapshot=snapshot)
+            return read_chat_run_response(db, viewer_id, run_id)
 
     return await run_in_threadpool(read)
 
@@ -489,7 +485,6 @@ def _admit_send(
             ApiErrorCode.E_MESSAGE_TOO_LONG,
             f"Message exceeds {MAX_MESSAGE_CONTENT_LENGTH} character limit",
         )
-    get_rate_limiter().check_rpm_limit(viewer_id)
 
     conversation, parent_message, branch_anchor = _resolve_destination(db, viewer_id, destination)
     branch_anchor_kind, branch_anchor_payload = branch_anchor_for_message(
@@ -745,7 +740,6 @@ def _assert_repeat_eligible(
     if error_code is not None and rerun_eligibility(
         error_code=error_code,
         run_status=source_run.status,
-        selection_selectable=True,
     ):
         return
     raise ApiError(ApiErrorCode.E_RETRY_NOT_ALLOWED, "This assistant outcome cannot be rerun")
@@ -940,7 +934,7 @@ def _freeze_admission(
         db.add(turn_context)
     persist_prompt_assembly(db, run=run, assembly=assembly)
     persist_attached_citations(db, run, assembly.attached_citations)
-    return spec, run_selection_out(run, pair=pair, observed_at=datetime.now(UTC))
+    return spec, run_selection_out(run)
 
 
 # =============================================================================
@@ -964,14 +958,13 @@ def get_chat_run(
     *,
     viewer_id: UUID,
     run_id: UUID,
-    catalog_snapshot: GenerationCatalogSnapshot,
 ) -> ChatRunResponse:
     run = get_run_for_owner(db, viewer_id, run_id)
     return build_chat_run_response(
         db,
         viewer_id,
         run,
-        run_selection=run_selection_out(run, catalog_snapshot=catalog_snapshot),
+        run_selection=run_selection_out(run),
     )
 
 
@@ -981,7 +974,6 @@ def list_chat_runs_for_conversation(
     viewer_id: UUID,
     conversation_id: UUID,
     status: CHAT_RUN_STATUS_FILTER,
-    catalog_snapshot: GenerationCatalogSnapshot,
 ) -> list[ChatRunResponse]:
     conversation = db.get(Conversation, conversation_id)
     if conversation is None or conversation.owner_user_id != viewer_id:
@@ -1006,7 +998,7 @@ def list_chat_runs_for_conversation(
             db,
             viewer_id,
             run,
-            run_selection=run_selection_out(run, catalog_snapshot=catalog_snapshot),
+            run_selection=run_selection_out(run),
         )
         for run in runs
     ]
@@ -1017,11 +1009,11 @@ def cancel_chat_run(
     *,
     viewer_id: UUID,
     run_id: UUID,
-    catalog_snapshot: GenerationCatalogSnapshot,
 ) -> ChatRunResponse:
-    """Stamp the cancellation and wake a suspended job so the worker folds it."""
+    """Record stop intent and fold only proven local dead-job states."""
 
     from nexus.services.agent_api import close_generation_api_admission_for_owner
+    from nexus.services.chat_run_worker import settle_cancelled_dead_chat_run
     from nexus.services.llm_ledger import LlmCallOwner, lock_generation_owner_in_current_transaction
 
     owned = get_run_for_owner(db, viewer_id, run_id)
@@ -1033,8 +1025,9 @@ def cancel_chat_run(
         raise AssertionError("owned chat run disappeared before cancellation")
     if run.status in TERMINAL_RUN_STATUSES:
         db.rollback()
-        return read_chat_run_response(db, viewer_id, run_id, catalog_snapshot=catalog_snapshot)
-    if run.cancel_requested_at is None:
+        return read_chat_run_response(db, viewer_id, run_id)
+    first_request = run.cancel_requested_at is None
+    if first_request:
         run.cancel_requested_at = datetime.now(UTC)
         run.updated_at = datetime.now(UTC)
     close_generation_api_admission_for_owner(db, owner=owner)
@@ -1043,7 +1036,7 @@ def cancel_chat_run(
         kind="chat_run",
         expected_payload_match={"run_id": str(run.id)},
     )
-    if dead_job is not None and not requeue_dead_job(db, job_id=dead_job.id):
-        raise AssertionError("suspended chat job changed while locked")
+    if dead_job is not None:
+        settle_cancelled_dead_chat_run(db, run=run, job=dead_job)
     db.commit()
-    return read_chat_run_response(db, viewer_id, run_id, catalog_snapshot=catalog_snapshot)
+    return read_chat_run_response(db, viewer_id, run_id)

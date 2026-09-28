@@ -19,40 +19,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/artifact-revisions/{artifact_revision_ref}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Dossier Revision */
-        get: operations["get_dossier_revision_artifact_revisions__artifact_revision_ref__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/artifact-revisions/{artifact_revision_ref}/make-current": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Make Dossier Revision Current */
-        post: operations["make_dossier_revision_current_artifact_revisions__artifact_revision_ref__make_current_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/artifacts/dossiers/learn": {
         parameters: {
             query?: never;
@@ -132,23 +98,6 @@ export interface paths {
         put?: never;
         /** Regenerate Dossier */
         post: operations["regenerate_dossier_artifacts__artifact_ref__builds_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/artifacts/{artifact_ref}/revisions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Dossier Revisions */
-        get: operations["list_dossier_revisions_artifacts__artifact_ref__revisions_get"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -241,74 +190,6 @@ export interface paths {
         put?: never;
         /** Consume Auth Handoff Code Route */
         post: operations["consume_auth_handoff_code_route_auth_handoff_codes_consume_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/billing/account": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Billing Account */
-        get: operations["get_billing_account_billing_account_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/billing/checkout": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Create Checkout Session */
-        post: operations["create_checkout_session_billing_checkout_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/billing/portal": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Create Customer Portal Session */
-        post: operations["create_customer_portal_session_billing_portal_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/billing/stripe/webhook": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Process Stripe Webhook */
-        post: operations["process_stripe_webhook_billing_stripe_webhook_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2257,7 +2138,7 @@ export interface paths {
         put?: never;
         /**
          * Request Media Transcript
-         * @description Admit or forecast an explicit transcript request for supported Media.
+         * @description Admit an explicit transcript request for supported Media; 202 iff it enqueued work.
          */
         post: operations["request_media_transcript_media__media_id__transcript_request_post"];
         delete?: never;
@@ -2417,7 +2298,7 @@ export interface paths {
         };
         /**
          * Get Offline Reading Package
-         * @description Consume one package token and transfer one verified immutable ZIP.
+         * @description Verify one package token and transfer one verified immutable ZIP.
          *
          *     The handler is async so the request can observe its own client disconnect
          *     while assembly runs; every blocking database call stays on a worker thread.
@@ -2768,40 +2649,6 @@ export interface paths {
         };
         /** Get Public Resource Share File */
         get: operations["get_public_resource_share_file_public_resource_share_file_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/public/resource-share/fragments": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Public Resource Share Fragments */
-        get: operations["get_public_resource_share_fragments_public_resource_share_fragments_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/public/resource-share/navigation": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Public Resource Share Navigation */
-        get: operations["get_public_resource_share_navigation_public_resource_share_navigation_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3297,26 +3144,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/telemetry/web-vitals": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Post Web Vital
-         * @description Record one Core Web Vital sample as a ``rum.web_vital`` structlog line.
-         */
-        post: operations["post_web_vital_telemetry_web_vitals_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/users/search": {
         parameters: {
             query?: never;
@@ -3406,7 +3233,7 @@ export interface paths {
         put?: never;
         /**
          * Transcribe Walknote Audio
-         * @description Entitlement-gated, 10 MB-bounded Deepgram transcription.
+         * @description 10 MB-bounded Deepgram transcription.
          */
         post: operations["transcribe_walknote_audio_walknotes_transcribe_audio_post"];
         delete?: never;
@@ -3437,6 +3264,14 @@ export interface components {
              * @enum {string}
              */
             kind: "absent";
+        };
+        /** AbsentLibraryPlacementRelationOut */
+        AbsentLibraryPlacementRelationOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Absent";
         };
         /** ActiveExclusionOut */
         ActiveExclusionOut: {
@@ -3657,6 +3492,27 @@ export interface components {
             /** Suffix */
             suffix?: string | null;
         };
+        /** AudienceAvailableOut */
+        AudienceAvailableOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Available";
+        };
+        /** AudienceUnavailableOut */
+        AudienceUnavailableOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Unavailable";
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "UnsupportedSubject" | "Deleting" | "InsufficientAuthority" | "HighlightUnresolved" | "ProjectionNotReady" | "ProjectionUnsupported";
+        };
         /** AutomaticMediaAuthorsRequest */
         AutomaticMediaAuthorsRequest: {
             /** Clientmutationid */
@@ -3667,81 +3523,26 @@ export interface components {
              */
             mode: "automatic";
         };
-        /** BillingAccountOut */
-        BillingAccountOut: {
-            /** Billing Enabled */
-            billing_enabled: boolean;
+        /** AvailableLibraryPlacementAvailabilityOut */
+        AvailableLibraryPlacementAvailabilityOut: {
             /**
-             * Billing Plan Tier
+             * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            billing_plan_tier: "free" | "plus" | "ai_plus" | "ai_pro";
-            /** Billing Status */
-            billing_status: string;
-            /** Can Manage Billing */
-            can_manage_billing: boolean;
-            /** Can Share */
-            can_share: boolean;
-            /** Can Transcribe */
-            can_transcribe: boolean;
-            /** Cancel At Period End */
-            cancel_at_period_end: boolean;
-            /** Entitlement Expires At */
-            entitlement_expires_at: string | null;
+            kind: "Available";
+        };
+        /** BlockedLibraryPlacementAvailabilityOut */
+        BlockedLibraryPlacementAvailabilityOut: {
             /**
-             * Entitlement Plan Tier
+             * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            entitlement_plan_tier: "free" | "plus" | "ai_plus" | "ai_pro";
+            kind: "Blocked";
             /**
-             * Entitlement Source
+             * Reason
              * @enum {string}
              */
-            entitlement_source: "free" | "subscription" | "internal_grant";
-            /** Subscription Current Period End */
-            subscription_current_period_end: string | null;
-            /** Subscription Current Period Start */
-            subscription_current_period_start: string | null;
-            transcription_usage: components["schemas"]["BillingUsageBucketOut"];
-        };
-        /** BillingCheckoutRequest */
-        BillingCheckoutRequest: {
-            /**
-             * Plan Tier
-             * @enum {string}
-             */
-            plan_tier: "plus" | "ai_plus" | "ai_pro";
-        };
-        /** BillingSessionOut */
-        BillingSessionOut: {
-            /** Url */
-            url: string;
-        };
-        /** BillingUsageBucketOut */
-        BillingUsageBucketOut: {
-            /** Limit */
-            limit: number | null;
-            /**
-             * Period End
-             * Format: date-time
-             */
-            period_end: string;
-            /**
-             * Period Start
-             * Format: date-time
-             */
-            period_start: string;
-            /** Remaining */
-            remaining: number | null;
-            /** Reserved */
-            reserved: number;
-            /** Used */
-            used: number;
-        };
-        /** BillingWebhookOut */
-        BillingWebhookOut: {
-            /** Processed */
-            processed: boolean;
+            reason: "RequiresAdmin" | "RequiresSubscription" | "SystemManaged" | "Inherited";
         };
         /** Body_transcribe_walknote_audio_walknotes_transcribe_audio_post */
         Body_transcribe_walknote_audio_walknotes_transcribe_audio_post: {
@@ -3781,6 +3582,37 @@ export interface components {
              * Format: date-time
              */
             at: string;
+        };
+        /**
+         * CapacityPaused
+         * @description A parked Codex capacity refusal, rendered by the dossier surface.
+         */
+        CapacityPaused: {
+            /**
+             * Code
+             * @default quota_unavailable
+             * @constant
+             */
+            code: "quota_unavailable";
+            /** Explanation */
+            explanation: string;
+            /**
+             * Kind
+             * @default CapacityPaused
+             * @constant
+             */
+            kind: "CapacityPaused";
+            /**
+             * Last Checked
+             * Format: date-time
+             */
+            last_checked: string;
+            /**
+             * Next Check At
+             * Format: date-time
+             */
+            next_check_at: string;
+            reset_at: components["schemas"]["Presence_datetime_"];
         };
         /** ChatPublicationWarning */
         ChatPublicationWarning: {
@@ -3824,57 +3656,6 @@ export interface components {
             /** Text */
             text: string;
         };
-        /** ChatRunCitationIndexEventPayload */
-        ChatRunCitationIndexEventPayload: {
-            /**
-             * Assistant Message Id
-             * Format: uuid
-             */
-            assistant_message_id: string;
-            /** Citations */
-            citations: components["schemas"]["ChatRunCitationIndexItem"][];
-        };
-        /** ChatRunCitationIndexItem */
-        ChatRunCitationIndexItem: {
-            citation: components["schemas"]["CitationOut"];
-            /**
-             * Citation Edge Id
-             * Format: uuid
-             */
-            citation_edge_id: string;
-        };
-        /**
-         * ChatRunContextRefAddedEventPayload
-         * @description Strict SSE payload for a citation-materialized context edge (ContextRefOut shape).
-         */
-        ChatRunContextRefAddedEventPayload: {
-            activation: components["schemas"]["ResourceActivationOut"];
-            /** Citation Edge Id */
-            citation_edge_id: string | null;
-            /**
-             * Conversation Id
-             * Format: uuid
-             */
-            conversation_id: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Label */
-            label: string;
-            /** Missing */
-            missing: boolean;
-            /** Resource Ref */
-            resource_ref: string;
-            /** Summary */
-            summary: string;
-        };
         /**
          * ChatRunCreateRequest
          * @description Request schema for creating a durable chat run.
@@ -3914,6 +3695,15 @@ export interface components {
             usage: {
                 [key: string]: unknown;
             } | null;
+        };
+        /**
+         * ChatRunExecutionOut
+         * @description The queue phase and the run's durable stop intent in one observation.
+         */
+        ChatRunExecutionOut: {
+            /** Cancel Requested */
+            cancel_requested: boolean;
+            phase: components["schemas"]["DurableExecutionPhase"];
         };
         /** ChatRunMetaEventPayload */
         ChatRunMetaEventPayload: {
@@ -3965,11 +3755,11 @@ export interface components {
         CitationOut: {
             activation: components["schemas"]["ResourceActivationOut"];
             /** Deep Link */
-            deep_link?: string | null;
+            deep_link: string | null;
             /** Locator */
-            locator?: (components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"]) | null;
+            locator: (components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"]) | null;
             /** Media Id */
-            media_id?: string | null;
+            media_id: string | null;
             /** Ordinal */
             ordinal: number;
             /**
@@ -3977,21 +3767,21 @@ export interface components {
              * @enum {string}
              */
             role: "context" | "supports" | "contradicts";
-            snapshot?: components["schemas"]["CitationSnapshot"] | null;
+            snapshot: components["schemas"]["CitationSnapshot"] | null;
             target_ref: components["schemas"]["CitationTargetRef"];
         };
         /** CitationSnapshot */
         CitationSnapshot: {
             /** Excerpt */
-            excerpt?: string | null;
+            excerpt: string | null;
             /** Result Type */
-            result_type?: string | null;
+            result_type: string | null;
             /** Section Label */
-            section_label?: string | null;
+            section_label: string | null;
             /** Summary Md */
-            summary_md?: string | null;
+            summary_md: string | null;
             /** Title */
-            title?: string | null;
+            title: string | null;
         };
         /** CitationTargetRef */
         CitationTargetRef: {
@@ -4041,6 +3831,21 @@ export interface components {
              * @enum {string}
              */
             route: "CodexPersonal";
+        };
+        /** CollectionDossierCoverageOut */
+        CollectionDossierCoverageOut: {
+            /** Included */
+            included: string[];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "contributor" | "library" | "podcast";
+            /** Omitted */
+            omitted: [
+                string,
+                components["schemas"]["MediaDisposition"]
+            ][];
         };
         /** CompletionStatsSectionOut */
         CompletionStatsSectionOut: {
@@ -4168,6 +3973,24 @@ export interface components {
              */
             kind: "contributor_handle";
         };
+        /** ContributorInputManifestV1 */
+        ContributorInputManifestV1: {
+            /** Contributor Handle */
+            contributor_handle: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "contributor";
+            /**
+             * Version
+             * @default v1
+             * @constant
+             */
+            version: "v1";
+            /** Works */
+            works: components["schemas"]["MediaManifestEntry"][];
+        };
         /** ContributorRenameRequest */
         ContributorRenameRequest: {
             /** Clientmutationid */
@@ -4220,6 +4043,49 @@ export interface components {
              * @enum {string}
              */
             type: "artifact";
+        };
+        /** ConversationComplete */
+        ConversationComplete: {
+            /**
+             * Kind
+             * @default Complete
+             * @constant
+             */
+            kind: "Complete";
+        };
+        /** ConversationDossierCoverageOut */
+        ConversationDossierCoverageOut: {
+            /** Context Refs */
+            context_refs: string[];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "conversation";
+            /** Message Refs */
+            message_refs: string[];
+        };
+        /** ConversationInputManifestV1 */
+        ConversationInputManifestV1: {
+            completeness: components["schemas"]["ConversationComplete"];
+            /** Context Refs */
+            context_refs: string[];
+            /** Conversation Ref */
+            conversation_ref: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "conversation";
+            /** Message Refs */
+            message_refs: string[];
+            topology_fingerprint: components["schemas"]["Presence_str_"];
+            /**
+             * Version
+             * @default v1
+             * @constant
+             */
+            version: "v1";
         };
         /** CreateConversationRequest */
         CreateConversationRequest: {
@@ -4297,6 +4163,13 @@ export interface components {
             /** Quads */
             quads: components["schemas"]["PdfQuadIn"][];
         };
+        /** CreateResourceShareOut */
+        CreateResourceShareOut: {
+            /** Created */
+            created: boolean;
+            /** Share */
+            share: components["schemas"]["UserShareOut"] | components["schemas"]["LinkShareOut"];
+        };
         /** CreateResourceShareRequest */
         CreateResourceShareRequest: {
             /** Audience */
@@ -4317,6 +4190,13 @@ export interface components {
             library_ids?: string[];
             /** Size Bytes */
             size_bytes: number;
+        };
+        /** CreationAvailabilityOut */
+        CreationAvailabilityOut: {
+            /** Link */
+            link: components["schemas"]["AudienceAvailableOut"] | components["schemas"]["AudienceUnavailableOut"];
+            /** User */
+            user: components["schemas"]["AudienceAvailableOut"] | components["schemas"]["AudienceUnavailableOut"];
         };
         /**
          * CursorWrite
@@ -4350,21 +4230,79 @@ export interface components {
         Data_ActivitySessionPageOut_: {
             data: components["schemas"]["ActivitySessionPageOut"];
         };
-        /** Data[BillingAccountOut] */
-        Data_BillingAccountOut_: {
-            data: components["schemas"]["BillingAccountOut"];
-        };
-        /** Data[BillingSessionOut] */
-        Data_BillingSessionOut_: {
-            data: components["schemas"]["BillingSessionOut"];
-        };
-        /** Data[BillingWebhookOut] */
-        Data_BillingWebhookOut_: {
-            data: components["schemas"]["BillingWebhookOut"];
+        /** Data[Annotated[Union[LearnDossierOpenedOut, LearnDossierBuildAcceptedOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
+        Data_Annotated_Union_LearnDossierOpenedOut__LearnDossierBuildAcceptedOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
+            /** Data */
+            data: components["schemas"]["LearnDossierOpenedOut"] | components["schemas"]["LearnDossierBuildAcceptedOut"];
         };
         /** Data[ConsumptionStatsOut] */
         Data_ConsumptionStatsOut_: {
             data: components["schemas"]["ConsumptionStatsOut"];
+        };
+        /** Data[CreateResourceShareOut] */
+        Data_CreateResourceShareOut_: {
+            data: components["schemas"]["CreateResourceShareOut"];
+        };
+        /** Data[DossierBuildCreatedOut] */
+        Data_DossierBuildCreatedOut_: {
+            data: components["schemas"]["DossierBuildCreatedOut"];
+        };
+        /** Data[DossierHeadOut] */
+        Data_DossierHeadOut_: {
+            data: components["schemas"]["DossierHeadOut"];
+        };
+        /** Data[LibraryEntryRemovalOut] */
+        Data_LibraryEntryRemovalOut_: {
+            data: components["schemas"]["LibraryEntryRemovalOut"];
+        };
+        /** Data[LibraryOut] */
+        Data_LibraryOut_: {
+            data: components["schemas"]["LibraryOut"];
+        };
+        /** Data[NexusHistoryOut] */
+        Data_NexusHistoryOut_: {
+            data: components["schemas"]["NexusHistoryOut"];
+        };
+        /** Data[NexusSelectionRecordOut] */
+        Data_NexusSelectionRecordOut_: {
+            data: components["schemas"]["NexusSelectionRecordOut"];
+        };
+        /** Data[PodcastEpisodeQueryTranscriptForecastOut] */
+        Data_PodcastEpisodeQueryTranscriptForecastOut_: {
+            data: components["schemas"]["PodcastEpisodeQueryTranscriptForecastOut"];
+        };
+        /** Data[PodcastEpisodeQueryTranscriptRequestOut] */
+        Data_PodcastEpisodeQueryTranscriptRequestOut_: {
+            data: components["schemas"]["PodcastEpisodeQueryTranscriptRequestOut"];
+        };
+        /** Data[PodcastPlacementAdditionOut] */
+        Data_PodcastPlacementAdditionOut_: {
+            data: components["schemas"]["PodcastPlacementAdditionOut"];
+        };
+        /** Data[PodcastPlacementRemovalOut] */
+        Data_PodcastPlacementRemovalOut_: {
+            data: components["schemas"]["PodcastPlacementRemovalOut"];
+        };
+        /** Data[PublicSectionOut] */
+        Data_PublicSectionOut_: {
+            data: components["schemas"]["PublicSectionOut"];
+        };
+        /** Data[PublicShareOut] */
+        Data_PublicShareOut_: {
+            data: components["schemas"]["PublicShareOut"];
+        };
+        /** Data[ResourceShareSnapshotOut] */
+        Data_ResourceShareSnapshotOut_: {
+            data: components["schemas"]["ResourceShareSnapshotOut"];
+        };
+        /** Data[TranscriptRequestOut] */
+        Data_TranscriptRequestOut_: {
+            data: components["schemas"]["TranscriptRequestOut"];
+        };
+        /** Data[list[LibraryPlacementOptionOut]] */
+        Data_list_LibraryPlacementOptionOut__: {
+            /** Data */
+            data: components["schemas"]["LibraryPlacementOptionOut"][];
         };
         /** DeviceActivityOut */
         DeviceActivityOut: {
@@ -4384,6 +4322,14 @@ export interface components {
             /** Label */
             label: string;
         };
+        /** DirectLibraryPlacementRelationOut */
+        DirectLibraryPlacementRelationOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Direct";
+        };
         /** DirectNaturalEndOrigin */
         DirectNaturalEndOrigin: {
             /**
@@ -4393,14 +4339,163 @@ export interface components {
             kind: "Direct";
         };
         /**
+         * DossierBuildAdmittedGenerationOut
+         * @description Read-only facts of the build's latest admitted generation.
+         *
+         *     The frozen selection and its dispatch-time disclosure come from the ledger,
+         *     never from mutable policy. No control, credential, price, or current
+         *     catalog state crosses here.
+         */
+        DossierBuildAdmittedGenerationOut: {
+            display_at_dispatch: components["schemas"]["SelectionPresentation"];
+            /** Selection */
+            selection: components["schemas"]["CodexPersonalSelection"] | components["schemas"]["ProviderApiSelection"];
+            /** Tool Plan */
+            tool_plan: components["schemas"]["DossierBuildNoModelToolsOut"] | components["schemas"]["DossierBuildExactModelToolsOut"] | components["schemas"]["DossierBuildCodexShellOut"];
+            /** Tool Positions */
+            tool_positions: number;
+        };
+        /** DossierBuildCodexShellOut */
+        DossierBuildCodexShellOut: {
+            /**
+             * Effect Mode
+             * @default AdditiveWrites
+             * @constant
+             */
+            effect_mode: "AdditiveWrites";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "CodexShell";
+            /** Plan Id */
+            plan_id: string;
+            /** Plan Revision */
+            plan_revision: string;
+        };
+        /** DossierBuildCreatedOut */
+        DossierBuildCreatedOut: {
+            /** Artifact Ref */
+            artifact_ref: string;
+            /** Build Handle */
+            build_handle: string;
+            /** Created */
+            created: boolean;
+        };
+        /** DossierBuildExactModelToolsOut */
+        DossierBuildExactModelToolsOut: {
+            /**
+             * Effect Mode
+             * @enum {string}
+             */
+            effect_mode: "ReadOnly" | "AdditiveWrites";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ExactModelTools";
+            /** Plan Id */
+            plan_id: string;
+            /** Plan Revision */
+            plan_revision: string;
+        };
+        /**
+         * DossierBuildExecution
+         * @description Advisory-only queue liveness; never a persisted event, never a failure.
+         */
+        DossierBuildExecution: {
+            phase: components["schemas"]["DurableExecutionPhase"];
+        };
+        /**
          * DossierBuildFailureCode
          * @description The only codes that become an ``artifact_build_failures`` row.
          * @enum {string}
          */
         DossierBuildFailureCode: "NoSourceMaterial" | "InputsChanged" | "DependencyProjectionFailed" | "ContextTooLarge" | "Auth" | "Quota" | "Timeout" | "OutputLimit" | "InvalidOutput" | "PolicyViolation" | "RuntimeUnavailable" | "CapacityUnavailable" | "DocumentValidationFailed" | "CitationValidationFailed";
+        /** DossierBuildNoModelToolsOut */
+        DossierBuildNoModelToolsOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "NoModelTools";
+        };
+        /**
+         * DossierBuildSummary
+         * @description One attempt's identity and its execution or terminal facts.
+         *
+         *     Serves both ``DossierHeadOut.active_build`` (only ``execution`` Present) and
+         *     ``.latest_unsuccessful_build`` (exactly one of ``failure``/``cancellation``).
+         *     ``requester_user_id`` is Absent once user teardown nulls the attribution.
+         */
+        DossierBuildSummary: {
+            admitted_generation: components["schemas"]["Presence_DossierBuildAdmittedGenerationOut_"];
+            cancellation: components["schemas"]["Presence_CancelledEventPayload_"];
+            capacity_pause: components["schemas"]["Presence_CapacityPaused_"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            execution: components["schemas"]["Presence_DossierBuildExecution_"];
+            failure: components["schemas"]["Presence_FailedEventPayload_"];
+            /** Handle */
+            handle: string;
+            instruction: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____"];
+            requester_user_id: components["schemas"]["Presence_UUID_"];
+        };
         /** DossierGenerateRequest */
         DossierGenerateRequest: {
             instruction: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____"];
+        };
+        /**
+         * DossierHeadOut
+         * @description The dossier surface for one subject.
+         *
+         *     ``artifact_id`` Absent is the never-generated state: the head read never
+         *     inserts a head row. ``media_abstract`` is Present only for the Media subject.
+         */
+        DossierHeadOut: {
+            active_build: components["schemas"]["Presence_DossierBuildSummary_"];
+            artifact_id: components["schemas"]["Presence_UUID_"];
+            artifact_ref: components["schemas"]["Presence_str_"];
+            current_revision: components["schemas"]["Presence_DossierRevisionOut_"];
+            freshness: components["schemas"]["Presence_Literal__Current____Stale___"];
+            identity: components["schemas"]["Presence_Annotated_Union_ResourceDossierIdentityOut__IdeaDossierIdentityOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+            latest_unsuccessful_build: components["schemas"]["Presence_DossierBuildSummary_"];
+            media_abstract: components["schemas"]["Presence_Annotated_Union_MediaAbstractBuildingOut__MediaAbstractReadyOut__MediaAbstractStaleOut__MediaAbstractFailedOut__MediaAbstractNotAvailableOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+        };
+        /**
+         * DossierRevisionOut
+         * @description The head's one immutable, citation-bearing revision.
+         *
+         *     ``input_manifest`` is the typed, binding-owned coverage source: coverage is
+         *     derived from it rather than duplicated as a separate count. ``instruction``
+         *     is hoisted from the originating build for display.
+         */
+        DossierRevisionOut: {
+            /** Citations */
+            citations: components["schemas"]["CitationOut"][];
+            /** Content Html */
+            content_html: string;
+            /** Content Text */
+            content_text: string;
+            /** Coverage */
+            coverage: components["schemas"]["MediaDossierCoverageOut"] | components["schemas"]["ConversationDossierCoverageOut"] | components["schemas"]["CollectionDossierCoverageOut"] | components["schemas"]["PageDossierCoverageOut"] | components["schemas"]["NoteDossierCoverageOut"] | components["schemas"]["IdeaDossierCoverageOut"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            creator_user_id: components["schemas"]["Presence_UUID_"];
+            /** Input Manifest */
+            input_manifest: components["schemas"]["MediaInputManifestV1"] | components["schemas"]["ConversationInputManifestV1"] | components["schemas"]["LibraryInputManifestV1"] | components["schemas"]["PodcastInputManifestV1"] | components["schemas"]["ContributorInputManifestV1"] | components["schemas"]["PageInputManifestV1"] | components["schemas"]["NoteInputManifestV1"] | components["schemas"]["IdeaInputManifestV1"];
+            instruction: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____"];
+            model_name: components["schemas"]["Presence_str_"];
+            model_provider: components["schemas"]["Presence_str_"];
+            /** Revision Ref */
+            revision_ref: string;
+            total_tokens: components["schemas"]["Presence_int_"];
         };
         /**
          * DurableExecutionOut
@@ -4535,6 +4630,11 @@ export interface components {
             kind: "EpubTextOffsets";
             /** Start Offset */
             start_offset: number;
+        };
+        /** EvidenceOmission */
+        EvidenceOmission: {
+            /** Evidence Ref */
+            evidence_ref: string;
         };
         /** ExcludeActivityIn */
         ExcludeActivityIn: {
@@ -4696,20 +4796,89 @@ export interface components {
             /** Y4 */
             y4: number;
         };
-        /** Ineligible */
-        Ineligible: {
-            /**
-             * Code
-             * @enum {string}
-             */
-            code: "unsupported_capability" | "selection_not_configured";
-            /** Explanation */
-            explanation: string;
+        /** IdeaDossierCoverageOut */
+        IdeaDossierCoverageOut: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "Ineligible";
+            kind: "idea";
+            /** Nexus Source Count */
+            nexus_source_count: number;
+            /** Omitted Sources */
+            omitted_sources: [
+                string,
+                string
+            ][];
+            /** Seed Count */
+            seed_count: number;
+            /** Web Source Count */
+            web_source_count: number;
+        };
+        /** IdeaDossierIdentityOut */
+        IdeaDossierIdentityOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Idea";
+            /** Title */
+            title: string;
+        };
+        /** IdeaIncludedSource */
+        IdeaIncludedSource: {
+            /** Content Fingerprint */
+            content_fingerprint: string;
+            /** Ref */
+            ref: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "seed" | "nexus" | "web";
+        };
+        /** IdeaInputManifestV1 */
+        IdeaInputManifestV1: {
+            /** Idea Subject Id */
+            idea_subject_id: string;
+            /** Included Seed Refs */
+            included_seed_refs: string[];
+            /** Included Sources */
+            included_sources: components["schemas"]["IdeaIncludedSource"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "idea";
+            /** Nexus Query Fingerprints */
+            nexus_query_fingerprints: string[];
+            /** Omitted Sources */
+            omitted_sources: components["schemas"]["IdeaOmittedSource"][];
+            /**
+             * Version
+             * @default v1
+             * @constant
+             */
+            version: "v1";
+            /** Web Query Fingerprints */
+            web_query_fingerprints: string[];
+        };
+        /** IdeaOmittedSource */
+        IdeaOmittedSource: {
+            /** Locator */
+            locator: string;
+            /** Reason */
+            reason: string;
+        };
+        /** InheritedLibraryPlacementRelationOut */
+        InheritedLibraryPlacementRelationOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Inherited";
+            /** Provenance */
+            provenance: components["schemas"]["LibraryIdentityOut"][];
         };
         /** InsertNoteSurfaceCommand */
         InsertNoteSurfaceCommand: {
@@ -4772,6 +4941,28 @@ export interface components {
              */
             kind: "Last";
         };
+        /** LearnDossierBuildAcceptedOut */
+        LearnDossierBuildAcceptedOut: {
+            /** Artifact Ref */
+            artifact_ref: string;
+            /** Build Handle */
+            build_handle: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "BuildAccepted";
+        };
+        /** LearnDossierOpenedOut */
+        LearnDossierOpenedOut: {
+            /** Artifact Ref */
+            artifact_ref: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Opened";
+        };
         /** LearnDossierRequest */
         LearnDossierRequest: {
             /** Highlight Ref */
@@ -4794,6 +4985,98 @@ export interface components {
         LibraryEntryOrderRequest: {
             /** Entry Ids */
             entry_ids: string[];
+        };
+        /** LibraryEntryRemovalOut */
+        LibraryEntryRemovalOut: {
+            /** Libraryentriescollectionrevision */
+            libraryEntriesCollectionRevision: number;
+        };
+        /** LibraryIdentityOut */
+        LibraryIdentityOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+        };
+        /** LibraryInputManifestV1 */
+        LibraryInputManifestV1: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "library";
+            /** Library Ref */
+            library_ref: string;
+            /** Media */
+            media: components["schemas"]["MediaManifestEntry"][];
+            /**
+             * Version
+             * @default v1
+             * @constant
+             */
+            version: "v1";
+        };
+        /** LibraryLibraryPlacementDestinationOut */
+        LibraryLibraryPlacementDestinationOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Library";
+            library: components["schemas"]["LibraryIdentityOut"];
+        };
+        /** LibraryOut */
+        LibraryOut: {
+            /** Candelete */
+            canDelete: boolean;
+            /** Caneditentries */
+            canEditEntries: boolean;
+            /** Canmanagemembers */
+            canManageMembers: boolean;
+            /** Canrename */
+            canRename: boolean;
+            /** Cantransferownership */
+            canTransferOwnership: boolean;
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Isdefault */
+            isDefault: boolean;
+            /** Name */
+            name: string;
+            /** Owneruserhandle */
+            ownerUserHandle: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "admin" | "member";
+            /** Systemkey */
+            systemKey: string | null;
+            /**
+             * Updatedat
+             * Format: date-time
+             */
+            updatedAt: string;
+        };
+        /** LibraryPlacementOptionOut */
+        LibraryPlacementOptionOut: {
+            /** Availability */
+            availability: components["schemas"]["AvailableLibraryPlacementAvailabilityOut"] | components["schemas"]["BlockedLibraryPlacementAvailabilityOut"];
+            /** Destination */
+            destination: components["schemas"]["SavedInNexusLibraryPlacementDestinationOut"] | components["schemas"]["LibraryLibraryPlacementDestinationOut"];
+            /** Relation */
+            relation: components["schemas"]["AbsentLibraryPlacementRelationOut"] | components["schemas"]["DirectLibraryPlacementRelationOut"] | components["schemas"]["InheritedLibraryPlacementRelationOut"];
         };
         /** LinkAudienceIn */
         LinkAudienceIn: {
@@ -4901,6 +5184,18 @@ export interface components {
             /** Ref */
             ref: string;
         };
+        /** LinkShareOut */
+        LinkShareOut: {
+            /** Handle */
+            handle: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Link";
+            /** Publichref */
+            publicHref: string;
+        };
         /** ListeningActivityBatchIn */
         ListeningActivityBatchIn: {
             /**
@@ -4987,6 +5282,53 @@ export interface components {
              */
             mode: "manual";
         };
+        /** MediaAbstractBuildingOut */
+        MediaAbstractBuildingOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Building";
+        };
+        /** MediaAbstractFailedOut */
+        MediaAbstractFailedOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Failed";
+        };
+        /** MediaAbstractNotAvailableOut */
+        MediaAbstractNotAvailableOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "NotAvailable";
+        };
+        /** MediaAbstractReadyOut */
+        MediaAbstractReadyOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Ready";
+            /** Summary Md */
+            summary_md: string;
+        };
+        /**
+         * MediaAbstractStaleOut
+         * @description A summary exists, but not for the media's current content fingerprint.
+         */
+        MediaAbstractStaleOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Stale";
+            /** Summary Md */
+            summary_md: string;
+        };
         /** MediaActivityBreakdownOut */
         MediaActivityBreakdownOut: {
             /** Otheractivems */
@@ -5015,6 +5357,23 @@ export interface components {
             title: string;
             /** Total */
             total: number;
+        };
+        /**
+         * MediaDisposition
+         * @enum {string}
+         */
+        MediaDisposition: "Included" | "OmittedNoReadyUnit" | "OmittedBudget" | "OmittedNotAudienceVisible" | "OmittedProjectionFailed";
+        /** MediaDossierCoverageOut */
+        MediaDossierCoverageOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "media";
+            /** Offered Claim Count */
+            offered_claim_count: number;
+            /** Omitted Evidence Refs */
+            omitted_evidence_refs: string[];
         };
         /** MediaDurationOut */
         MediaDurationOut: {
@@ -5195,6 +5554,28 @@ export interface components {
             start_offset: number;
             text_quote: components["schemas"]["MediaEvidenceTextQuoteOut"];
         };
+        /** MediaInputManifestV1 */
+        MediaInputManifestV1: {
+            /** Content Fingerprint */
+            content_fingerprint: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "media";
+            /** Media Ref */
+            media_ref: string;
+            /** Offered Claim Count */
+            offered_claim_count: number;
+            /** Omitted Evidence */
+            omitted_evidence: components["schemas"]["EvidenceOmission"][];
+            /**
+             * Version
+             * @default v1
+             * @constant
+             */
+            version: "v1";
+        };
         /**
          * MediaKind
          * @description Types of media that can be ingested.
@@ -5205,6 +5586,14 @@ export interface components {
         MediaLibrariesRequest: {
             /** Library Ids */
             library_ids?: string[];
+        };
+        /** MediaManifestEntry */
+        MediaManifestEntry: {
+            /** Content Fingerprint */
+            content_fingerprint: string;
+            disposition: components["schemas"]["MediaDisposition"];
+            /** Media Ref */
+            media_ref: string;
         };
         /** MediaSummaryOut */
         MediaSummaryOut: {
@@ -5303,9 +5692,45 @@ export interface components {
              */
             kind: "New";
         };
+        /** NexusHistoryOut */
+        NexusHistoryOut: {
+            /** Frecency By Href */
+            frecency_by_href: {
+                [key: string]: number;
+            };
+            /** Recent */
+            recent: components["schemas"]["NexusHistoryRecentOut"][];
+        };
+        /** NexusHistoryRecentOut */
+        NexusHistoryRecentOut: {
+            /** Label Snapshot */
+            label_snapshot: string;
+            /**
+             * Last Used At
+             * Format: date-time
+             */
+            last_used_at: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "Static" | "Workspace" | "Recent" | "Oracle" | "Search" | "Ai";
+            /** Target Href */
+            target_href: string;
+        };
+        /** NexusSelectionRecordOut */
+        NexusSelectionRecordOut: {
+            /**
+             * Last Used At
+             * Format: date-time
+             */
+            last_used_at: string;
+            /** Use Count */
+            use_count: number;
+        };
         /**
          * NexusSelectionRecordRequest
-         * @description POST body for one accepted internal Nexus selection.
+         * @description One accepted internal Nexus selection. The stored label is cut to 120 characters.
          */
         NexusSelectionRecordRequest: {
             /** Client Mutation Id */
@@ -5344,6 +5769,39 @@ export interface components {
              */
             type: "note_block_offsets";
         };
+        /** NoteDossierCoverageOut */
+        NoteDossierCoverageOut: {
+            /** Body Present */
+            body_present: boolean;
+            /** Connection Refs */
+            connection_refs: string[];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "note";
+        };
+        /** NoteInputManifestV1 */
+        NoteInputManifestV1: {
+            body_fingerprint: components["schemas"]["Presence_str_"];
+            /** Connection Refs */
+            connection_refs: string[];
+            /** Input Fingerprint */
+            input_fingerprint: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "note";
+            /** Note Ref */
+            note_ref: string;
+            /**
+             * Version
+             * @default v1
+             * @constant
+             */
+            version: "v1";
+        };
         /** OfflineReaderWrite */
         OfflineReaderWrite: {
             /** Baserevision */
@@ -5352,28 +5810,6 @@ export interface components {
             expectedReaderGeneration: number;
             /** Locator */
             locator: components["schemas"]["PdfReaderResumeState"] | components["schemas"]["WebReaderResumeState"] | components["schemas"]["TranscriptReaderResumeState"] | components["schemas"]["EpubReaderResumeState"];
-        };
-        /** OperatorActionRequired */
-        OperatorActionRequired: {
-            /** Action */
-            action: string;
-            /**
-             * Code
-             * @enum {string}
-             */
-            code: "catalog_refresh_failed" | "codex_host_unavailable" | "credential_unavailable" | "required_tool_unavailable";
-            /** Explanation */
-            explanation: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "OperatorActionRequired";
-            /**
-             * Last Checked
-             * Format: date-time
-             */
-            last_checked: string;
         };
         /** OracleBindEventPayload */
         OracleBindEventPayload: {
@@ -5456,34 +5892,6 @@ export interface components {
             /** Year */
             year?: string | null;
         };
-        /**
-         * OracleReadingPassageOut
-         * @description One persisted citation in a reading.
-         *
-         *     ``citation`` is the read-model CitationOut when the persisted citation edge
-         *     resolves to a live shared reader/note locator. Resolved public-domain anchors
-         *     render the same chip path as user content; unresolved or span-less targets
-         *     carry ``None`` and remain typographic only.
-         */
-        OracleReadingPassageOut: {
-            /** Attribution Text */
-            attribution_text: string;
-            citation?: components["schemas"]["CitationOut"] | null;
-            /** Deep Link */
-            deep_link?: string | null;
-            /** Exact Snippet */
-            exact_snippet: string;
-            /** Locator Label */
-            locator_label: string;
-            /** Marginalia Text */
-            marginalia_text: string;
-            phase: components["schemas"]["OracleReadingPhase"];
-            source_kind: components["schemas"]["OracleReadingSourceKind"];
-        };
-        /** @enum {string} */
-        OracleReadingPhase: "descent" | "ordeal" | "ascent";
-        /** @enum {string} */
-        OracleReadingSourceKind: "user_media" | "public_domain";
         /** OracleTextEventPayload */
         OracleTextEventPayload: {
             /** Text */
@@ -5502,6 +5910,40 @@ export interface components {
             note_id: string;
             /** Parent Index */
             parent_index?: number | null;
+        };
+        /** PageDossierCoverageOut */
+        PageDossierCoverageOut: {
+            /** Block Refs */
+            block_refs: string[];
+            /** Connection Refs */
+            connection_refs: string[];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "page";
+        };
+        /** PageInputManifestV1 */
+        PageInputManifestV1: {
+            /** Block Refs */
+            block_refs: string[];
+            /** Connection Refs */
+            connection_refs: string[];
+            /** Input Fingerprint */
+            input_fingerprint: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "page";
+            /** Page Ref */
+            page_ref: string;
+            /**
+             * Version
+             * @default v1
+             * @constant
+             */
+            version: "v1";
         };
         /** PasteOutlineSurfaceCommand */
         PasteOutlineSurfaceCommand: {
@@ -5678,11 +6120,27 @@ export interface components {
             /** Target */
             target: string;
         };
+        /** PodcastEpisodeQueryTranscriptForecastOut */
+        PodcastEpisodeQueryTranscriptForecastOut: {
+            /** Eligiblecount */
+            eligibleCount: number;
+            /** Selectionfingerprint */
+            selectionFingerprint: string;
+        };
         /** PodcastEpisodeQueryTranscriptRequest */
         PodcastEpisodeQueryTranscriptRequest: {
             /** Selectionfingerprint */
             selectionFingerprint: string;
             target: components["schemas"]["PodcastEpisodeQueryTranscriptTarget"];
+        };
+        /** PodcastEpisodeQueryTranscriptRequestOut */
+        PodcastEpisodeQueryTranscriptRequestOut: {
+            /** Collectionrevision */
+            collectionRevision: number;
+            /** Matchedcount */
+            matchedCount: number;
+            /** Queuedcount */
+            queuedCount: number;
         };
         /** PodcastEpisodeQueryTranscriptTarget */
         PodcastEpisodeQueryTranscriptTarget: {
@@ -5713,6 +6171,44 @@ export interface components {
              * @enum {string}
              */
             state: "all" | "unplayed" | "in_progress" | "played";
+        };
+        /** PodcastInputManifestV1 */
+        PodcastInputManifestV1: {
+            /** Episodes */
+            episodes: components["schemas"]["MediaManifestEntry"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "podcast";
+            /** Podcast Ref */
+            podcast_ref: string;
+            /**
+             * Version
+             * @default v1
+             * @constant
+             */
+            version: "v1";
+        };
+        /** PodcastPlacementAdditionOut */
+        PodcastPlacementAdditionOut: {
+            /** Libraryentriescollectionrevision */
+            libraryEntriesCollectionRevision: number;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "Added" | "AlreadyPresent";
+        };
+        /** PodcastPlacementRemovalOut */
+        PodcastPlacementRemovalOut: {
+            /** Libraryentriescollectionrevision */
+            libraryEntriesCollectionRevision: number;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "Removed" | "AlreadyAbsent";
         };
         /** PodcastRefreshLibraryScope */
         PodcastRefreshLibraryScope: {
@@ -5804,6 +6300,8 @@ export interface components {
         /** @enum {string} */
         PodcastSyncStatus: "Pending" | "Running" | "Complete" | "SourceLimited" | "Failed";
         Presence_ActivitySessionOut_: components["schemas"]["Absent"] | components["schemas"]["Present_ActivitySessionOut_"];
+        Presence_Annotated_Union_MediaAbstractBuildingOut__MediaAbstractReadyOut__MediaAbstractStaleOut__MediaAbstractFailedOut__MediaAbstractNotAvailableOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_Union_MediaAbstractBuildingOut__MediaAbstractReadyOut__MediaAbstractStaleOut__MediaAbstractFailedOut__MediaAbstractNotAvailableOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+        Presence_Annotated_Union_ResourceDossierIdentityOut__IdeaDossierIdentityOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_Union_ResourceDossierIdentityOut__IdeaDossierIdentityOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
         Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____"];
         Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____"];
         Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____"];
@@ -5815,13 +6313,25 @@ export interface components {
         Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1___MaxLen_max_length_200_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1___MaxLen_max_length_200_____"];
         Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__"];
         Presence_Annotated_str__StringConstraints__AfterValidator__: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__StringConstraints__AfterValidator__"];
+        Presence_CancelledEventPayload_: components["schemas"]["Absent"] | components["schemas"]["Present_CancelledEventPayload_"];
+        Presence_CapacityPaused_: components["schemas"]["Absent"] | components["schemas"]["Present_CapacityPaused_"];
         Presence_ChatPublicationWarning_: components["schemas"]["Absent"] | components["schemas"]["Present_ChatPublicationWarning_"];
+        Presence_DossierBuildAdmittedGenerationOut_: components["schemas"]["Absent"] | components["schemas"]["Present_DossierBuildAdmittedGenerationOut_"];
+        Presence_DossierBuildExecution_: components["schemas"]["Absent"] | components["schemas"]["Present_DossierBuildExecution_"];
+        Presence_DossierBuildSummary_: components["schemas"]["Absent"] | components["schemas"]["Present_DossierBuildSummary_"];
+        Presence_DossierRevisionOut_: components["schemas"]["Absent"] | components["schemas"]["Present_DossierRevisionOut_"];
+        Presence_FailedEventPayload_: components["schemas"]["Absent"] | components["schemas"]["Present_FailedEventPayload_"];
+        Presence_Literal__Current____Stale___: components["schemas"]["Absent"] | components["schemas"]["Present_Literal__Current____Stale___"];
         Presence_Literal__Off____Natural___: components["schemas"]["Absent"] | components["schemas"]["Present_Literal__Off____Natural___"];
         Presence_MediaDurationOut_: components["schemas"]["Absent"] | components["schemas"]["Present_MediaDurationOut_"];
         Presence_PodcastReplacementConfirmation_: components["schemas"]["Absent"] | components["schemas"]["Present_PodcastReplacementConfirmation_"];
+        Presence_PublicHighlightOut_: components["schemas"]["Absent"] | components["schemas"]["Present_PublicHighlightOut_"];
         Presence_ReaderSelectionInput_: components["schemas"]["Absent"] | components["schemas"]["Present_ReaderSelectionInput_"];
         Presence_ReaderTimeRange_: components["schemas"]["Absent"] | components["schemas"]["Present_ReaderTimeRange_"];
+        Presence_ShareMembersOut_: components["schemas"]["Absent"] | components["schemas"]["Present_ShareMembersOut_"];
         Presence_UUID_: components["schemas"]["Absent"] | components["schemas"]["Present_UUID_"];
+        Presence_datetime_: components["schemas"]["Absent"] | components["schemas"]["Present_datetime_"];
+        Presence_int_: components["schemas"]["Absent"] | components["schemas"]["Present_int_"];
         Presence_str_: components["schemas"]["Absent"] | components["schemas"]["Present_str_"];
         /** Present[ActivitySessionOut] */
         Present_ActivitySessionOut_: {
@@ -5831,6 +6341,26 @@ export interface components {
              */
             kind: "Present";
             value: components["schemas"]["ActivitySessionOut"];
+        };
+        /** Present[Annotated[Union[MediaAbstractBuildingOut, MediaAbstractReadyOut, MediaAbstractStaleOut, MediaAbstractFailedOut, MediaAbstractNotAvailableOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
+        Present_Annotated_Union_MediaAbstractBuildingOut__MediaAbstractReadyOut__MediaAbstractStaleOut__MediaAbstractFailedOut__MediaAbstractNotAvailableOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /** Value */
+            value: components["schemas"]["MediaAbstractBuildingOut"] | components["schemas"]["MediaAbstractReadyOut"] | components["schemas"]["MediaAbstractStaleOut"] | components["schemas"]["MediaAbstractFailedOut"] | components["schemas"]["MediaAbstractNotAvailableOut"];
+        };
+        /** Present[Annotated[Union[ResourceDossierIdentityOut, IdeaDossierIdentityOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
+        Present_Annotated_Union_ResourceDossierIdentityOut__IdeaDossierIdentityOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /** Value */
+            value: components["schemas"]["ResourceDossierIdentityOut"] | components["schemas"]["IdeaDossierIdentityOut"];
         };
         /** Present[Annotated[float, FieldInfo(annotation=NoneType, required=True, metadata=[Ge(ge=0), Le(le=1)])]] */
         Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____: {
@@ -5942,6 +6472,24 @@ export interface components {
             /** Value */
             value: string;
         };
+        /** Present[CancelledEventPayload] */
+        Present_CancelledEventPayload_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["CancelledEventPayload"];
+        };
+        /** Present[CapacityPaused] */
+        Present_CapacityPaused_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["CapacityPaused"];
+        };
         /** Present[ChatPublicationWarning] */
         Present_ChatPublicationWarning_: {
             /**
@@ -5950,6 +6498,64 @@ export interface components {
              */
             kind: "Present";
             value: components["schemas"]["ChatPublicationWarning"];
+        };
+        /** Present[DossierBuildAdmittedGenerationOut] */
+        Present_DossierBuildAdmittedGenerationOut_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["DossierBuildAdmittedGenerationOut"];
+        };
+        /** Present[DossierBuildExecution] */
+        Present_DossierBuildExecution_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["DossierBuildExecution"];
+        };
+        /** Present[DossierBuildSummary] */
+        Present_DossierBuildSummary_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["DossierBuildSummary"];
+        };
+        /** Present[DossierRevisionOut] */
+        Present_DossierRevisionOut_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["DossierRevisionOut"];
+        };
+        /** Present[FailedEventPayload] */
+        Present_FailedEventPayload_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["FailedEventPayload"];
+        };
+        /** Present[Literal['Current', 'Stale']] */
+        Present_Literal__Current____Stale___: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /**
+             * Value
+             * @enum {string}
+             */
+            value: "Current" | "Stale";
         };
         /** Present[Literal['Off', 'Natural']] */
         Present_Literal__Off____Natural___: {
@@ -5982,6 +6588,15 @@ export interface components {
             kind: "Present";
             value: components["schemas"]["PodcastReplacementConfirmation"];
         };
+        /** Present[PublicHighlightOut] */
+        Present_PublicHighlightOut_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["PublicHighlightOut"];
+        };
         /** Present[ReaderSelectionInput] */
         Present_ReaderSelectionInput_: {
             /**
@@ -6000,6 +6615,15 @@ export interface components {
             kind: "Present";
             value: components["schemas"]["ReaderTimeRange"];
         };
+        /** Present[ShareMembersOut] */
+        Present_ShareMembersOut_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["ShareMembersOut"];
+        };
         /** Present[UUID] */
         Present_UUID_: {
             /**
@@ -6012,6 +6636,29 @@ export interface components {
              * Format: uuid
              */
             value: string;
+        };
+        /** Present[datetime] */
+        Present_datetime_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /**
+             * Value
+             * Format: date-time
+             */
+            value: string;
+        };
+        /** Present[int] */
+        Present_int_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /** Value */
+            value: number;
         };
         /** Present[str] */
         Present_str_: {
@@ -6061,6 +6708,128 @@ export interface components {
              * @enum {string}
              */
             route: "ProviderApi";
+        };
+        /** PublicArticleReaderOut */
+        PublicArticleReaderOut: {
+            /** Fragments */
+            fragments: components["schemas"]["PublicFragmentOut"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Article";
+        };
+        /** PublicEpubReaderOut */
+        PublicEpubReaderOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Epub";
+            /** Sections */
+            sections: components["schemas"]["PublicSectionEntryOut"][];
+        };
+        /** PublicFragmentOut */
+        PublicFragmentOut: {
+            /** Canonical Text */
+            canonical_text: string;
+            /** Html Sanitized */
+            html_sanitized: string;
+            /** Ordinal */
+            ordinal: number;
+        };
+        /** PublicHighlightOut */
+        PublicHighlightOut: {
+            /** Anchor */
+            anchor: components["schemas"]["PublicTextAnchorOut"] | components["schemas"]["PublicPdfAnchorOut"];
+            /**
+             * Color
+             * @enum {string}
+             */
+            color: "yellow" | "green" | "blue" | "pink" | "purple";
+            quote: components["schemas"]["Presence_str_"];
+        };
+        /** PublicPdfAnchorOut */
+        PublicPdfAnchorOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Pdf";
+            /** Page Number */
+            page_number: number;
+            /** Quads */
+            quads: components["schemas"]["HighlightTargetPdfQuadOut"][];
+        };
+        /** PublicPdfReaderOut */
+        PublicPdfReaderOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Pdf";
+        };
+        /** PublicSectionEntryOut */
+        PublicSectionEntryOut: {
+            /** Depth */
+            depth: number;
+            /** Label */
+            label: string;
+            /** Ordinal */
+            ordinal: number;
+            /** Section Handle */
+            section_handle: string;
+        };
+        /** PublicSectionOut */
+        PublicSectionOut: {
+            /** Canonical Text */
+            canonical_text: string;
+            /** Html Sanitized */
+            html_sanitized: string;
+        };
+        /** PublicSegmentOut */
+        PublicSegmentOut: {
+            /** Canonical Text */
+            canonical_text: string;
+            /** Ordinal */
+            ordinal: number;
+            speaker: components["schemas"]["Presence_str_"];
+            start_ms: components["schemas"]["Presence_int_"];
+        };
+        /** PublicShareOut */
+        PublicShareOut: {
+            /** Bylines */
+            bylines: string[];
+            highlight: components["schemas"]["Presence_PublicHighlightOut_"];
+            /** Reader */
+            reader: components["schemas"]["PublicArticleReaderOut"] | components["schemas"]["PublicTranscriptReaderOut"] | components["schemas"]["PublicEpubReaderOut"] | components["schemas"]["PublicPdfReaderOut"];
+            source_url: components["schemas"]["Presence_str_"];
+            /** Title */
+            title: string;
+        };
+        /** PublicTextAnchorOut */
+        PublicTextAnchorOut: {
+            /** End Offset */
+            end_offset: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Text";
+            /** Ordinal */
+            ordinal: number;
+            /** Start Offset */
+            start_offset: number;
+        };
+        /** PublicTranscriptReaderOut */
+        PublicTranscriptReaderOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Transcript";
+            /** Segments */
+            segments: components["schemas"]["PublicSegmentOut"][];
         };
         /** PutLinkNoteRequest */
         PutLinkNoteRequest: {
@@ -6210,6 +6979,20 @@ export interface components {
             /** Totalminutes */
             totalMinutes: number;
         };
+        /** ReceivedUserShareOut */
+        ReceivedUserShareOut: {
+            /** Handle */
+            handle: string;
+            /**
+             * Kind
+             * @default ReceivedUser
+             * @constant
+             */
+            kind: "ReceivedUser";
+            sharedBy: components["schemas"]["ShareUserOut"];
+            /** Subject */
+            subject: string;
+        };
         /** RelinkSurfaceCommand */
         RelinkSurfaceCommand: {
             /** Destination Ref */
@@ -6315,16 +7098,16 @@ export interface components {
         /** ResourceActivationOut */
         ResourceActivationOut: {
             /** Href */
-            href?: string | null;
+            href: string | null;
             /**
              * Kind
              * @enum {string}
              */
             kind: "route" | "external" | "none";
-            /** Resource Ref */
-            resource_ref: string;
-            /** Unresolved Reason */
-            unresolved_reason?: string | null;
+            /** Resourceref */
+            resourceRef: string;
+            /** Unresolvedreason */
+            unresolvedReason: string | null;
         };
         /** ResourceBodyMutationRequest */
         ResourceBodyMutationRequest: {
@@ -6336,6 +7119,17 @@ export interface components {
             };
             /** Client Mutation Id */
             client_mutation_id: string;
+        };
+        /** ResourceDossierIdentityOut */
+        ResourceDossierIdentityOut: {
+            activation: components["schemas"]["ResourceActivationOut"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Resource";
+            /** Title */
+            title: string;
         };
         /** ResourceLaneVersionIn */
         ResourceLaneVersionIn: {
@@ -6369,6 +7163,22 @@ export interface components {
             kind: "resource_ref";
             /** Ref */
             ref: string;
+        };
+        /** ResourceShareSnapshotOut */
+        ResourceShareSnapshotOut: {
+            /** Authenticatedhref */
+            authenticatedHref: string;
+            creationAvailability: components["schemas"]["CreationAvailabilityOut"];
+            members: components["schemas"]["Presence_ShareMembersOut_"];
+            /** Receivedaccess */
+            receivedAccess: components["schemas"]["ReceivedUserShareOut"][];
+            /** Shares */
+            shares: (components["schemas"]["UserShareOut"] | components["schemas"]["LinkShareOut"])[];
+            /**
+             * Sharing
+             * @enum {string}
+             */
+            sharing: "None" | "CopyOnly" | "ResourceGrants" | "HighlightGrants" | "LibraryMembership";
         };
         /** ResourceSurfaceCommandRequest */
         ResourceSurfaceCommandRequest: {
@@ -6498,16 +7308,7 @@ export interface components {
         RunSelectionOut: {
             /** Catalog Definition Revision */
             catalog_definition_revision: string;
-            /** Current State */
-            current_state: components["schemas"]["Selectable"] | components["schemas"]["Ineligible"] | components["schemas"]["OperatorActionRequired"] | components["schemas"]["TemporarilyUnavailable"];
-            /**
-             * Current State Observed At
-             * Format: date-time
-             */
-            current_state_observed_at: string;
             display_at_dispatch: components["schemas"]["SelectionPresentation"];
-            /** Rerun Eligibility */
-            rerun_eligibility: boolean;
             /** Selection */
             selection: components["schemas"]["CodexPersonalSelection"] | components["schemas"]["ProviderApiSelection"];
             /** Source Catalog Definition Revision */
@@ -6517,6 +7318,14 @@ export interface components {
              * @enum {string}
              */
             tool_authority: "ReadOnly" | "AdditiveWrites";
+        };
+        /** SavedInNexusLibraryPlacementDestinationOut */
+        SavedInNexusLibraryPlacementDestinationOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "SavedInNexus";
         };
         /**
          * SearchPageInfo
@@ -7186,14 +7995,6 @@ export interface components {
             /** Url */
             url: string;
         };
-        /** Selectable */
-        Selectable: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Selectable";
-        };
         /** SelectionPresentation */
         SelectionPresentation: {
             /** Billing */
@@ -7310,6 +8111,18 @@ export interface components {
             /** Origin */
             origin: components["schemas"]["DirectNaturalEndOrigin"] | components["schemas"]["LecternNaturalEndOrigin"];
             terminalListening: components["schemas"]["TerminalListeningIn"];
+        };
+        /** ShareMembersOut */
+        ShareMembersOut: {
+            /** Canmanage */
+            canManage: boolean;
+        };
+        /** ShareUserOut */
+        ShareUserOut: {
+            displayName: components["schemas"]["Presence_str_"];
+            email: components["schemas"]["Presence_str_"];
+            /** Userhandle */
+            userHandle: string;
         };
         /**
          * SourceRepairRequest
@@ -7439,28 +8252,6 @@ export interface components {
             /** Ref */
             ref: string;
         };
-        /** TemporarilyUnavailable */
-        TemporarilyUnavailable: {
-            /** Action */
-            action: string;
-            /**
-             * Code
-             * @enum {string}
-             */
-            code: "catalog_refresh_failed" | "codex_host_unavailable" | "credential_unavailable" | "required_tool_unavailable";
-            /** Explanation */
-            explanation: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "TemporarilyUnavailable";
-            /**
-             * Last Checked
-             * Format: date-time
-             */
-            last_checked: string;
-        };
         /** TerminalListeningIn */
         TerminalListeningIn: {
             durationMs: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____"];
@@ -7483,13 +8274,35 @@ export interface components {
             target: components["schemas"]["ReaderFragmentTarget"];
             text: components["schemas"]["ReaderQuoteContext"];
         };
+        /** TranscriptRequestOut */
+        TranscriptRequestOut: {
+            /** Media Id */
+            media_id: string;
+            /**
+             * Processing Status
+             * @enum {string}
+             */
+            processing_status: "pending" | "extracting" | "ready_for_reading" | "failed" | "suspended";
+            /** Request Enqueued */
+            request_enqueued: boolean;
+            /**
+             * Request Reason
+             * @enum {string}
+             */
+            request_reason: "episode_open" | "search" | "highlight" | "quote" | "background_warming" | "operator_requeue";
+            /**
+             * Transcript Coverage
+             * @enum {string}
+             */
+            transcript_coverage: "none" | "partial" | "full";
+            /**
+             * Transcript State
+             * @enum {string}
+             */
+            transcript_state: "not_requested" | "queued" | "running" | "ready" | "partial" | "unavailable" | "failed_provider";
+        };
         /** TranscriptRequestRequest */
         TranscriptRequestRequest: {
-            /**
-             * Dry Run
-             * @default false
-             */
-            dry_run: boolean;
             /**
              * Reason
              * @default episode_open
@@ -7678,6 +8491,17 @@ export interface components {
             /** Userhandle */
             userHandle: string;
         };
+        /** UserShareOut */
+        UserShareOut: {
+            /** Handle */
+            handle: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "User";
+            user: components["schemas"]["ShareUserOut"];
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -7789,30 +8613,6 @@ export interface components {
             start_offset: number;
         };
         /**
-         * WebVitalRequest
-         * @description One Core Web Vital sample reported by the browser.
-         */
-        WebVitalRequest: {
-            /** Href */
-            href: string;
-            /** Id */
-            id: string;
-            /**
-             * Name
-             * @enum {string}
-             */
-            name: "LCP" | "INP" | "CLS" | "TTFB";
-            /** Nav Id */
-            nav_id: string;
-            /**
-             * Rating
-             * @enum {string}
-             */
-            rating: "good" | "needs-improvement" | "poor";
-            /** Value */
-            value: number;
-        };
-        /**
          * WorkspaceSessionPutRequest
          * @description PUT body for a per-device workspace session.
          */
@@ -7862,68 +8662,6 @@ export interface operations {
             };
         };
     };
-    get_dossier_revision_artifact_revisions__artifact_revision_ref__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                artifact_revision_ref: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    make_dossier_revision_current_artifact_revisions__artifact_revision_ref__make_current_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                artifact_revision_ref: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     learn_dossier_artifacts_dossiers_learn_post: {
         parameters: {
             query?: never;
@@ -7945,9 +8683,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_Annotated_Union_LearnDossierOpenedOut__LearnDossierBuildAcceptedOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
                 };
             };
             /** @description Validation Error */
@@ -7979,9 +8715,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_DossierHeadOut_"];
                 };
             };
             /** @description Validation Error */
@@ -8019,9 +8753,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_DossierBuildCreatedOut_"];
                 };
             };
             /** @description Validation Error */
@@ -8052,9 +8784,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_DossierHeadOut_"];
                 };
             };
             /** @description Validation Error */
@@ -8091,42 +8821,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_dossier_revisions_artifacts__artifact_ref__revisions_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                artifact_ref: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_DossierBuildCreatedOut_"];
                 };
             };
             /** @description Validation Error */
@@ -8303,110 +8998,6 @@ export interface operations {
             };
         };
     };
-    get_billing_account_billing_account_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_BillingAccountOut_"];
-                };
-            };
-        };
-    };
-    create_checkout_session_billing_checkout_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["BillingCheckoutRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_BillingSessionOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_customer_portal_session_billing_portal_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_BillingSessionOut_"];
-                };
-            };
-        };
-    };
-    process_stripe_webhook_billing_stripe_webhook_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "stripe-signature"?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_BillingWebhookOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     browse_content_browse_get: {
         parameters: {
             query?: never;
@@ -8494,6 +9085,7 @@ export interface operations {
                 status?: "active" | "queued" | "running" | "complete" | "error" | "cancelled";
             };
             header?: {
+                "X-Nexus-Chat-Contract"?: string | null;
                 "X-Nexus-Tool-Projection"?: string | null;
             };
             path?: never;
@@ -8528,6 +9120,7 @@ export interface operations {
             query?: never;
             header?: {
                 "Idempotency-Key"?: string | null;
+                "X-Nexus-Chat-Contract"?: string | null;
                 "X-Nexus-Tool-Projection"?: string | null;
             };
             path?: never;
@@ -8565,6 +9158,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
+                "X-Nexus-Chat-Contract"?: string | null;
                 "X-Nexus-Tool-Projection"?: string | null;
             };
             path: {
@@ -8600,6 +9194,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
+                "X-Nexus-Chat-Contract"?: string | null;
                 "X-Nexus-Tool-Projection"?: string | null;
             };
             path: {
@@ -9074,6 +9669,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
+                "X-Nexus-Chat-Contract"?: string | null;
                 "X-Nexus-Tool-Projection"?: string | null;
             };
             path: {
@@ -9280,6 +9876,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
+                "X-Nexus-Chat-Contract"?: string | null;
                 "X-Nexus-Tool-Projection"?: string | null;
             };
             path: {
@@ -9316,6 +9913,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
+                "X-Nexus-Chat-Contract"?: string | null;
                 "X-Nexus-Tool-Projection"?: string | null;
             };
             path: {
@@ -10305,9 +10903,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_LibraryOut_"];
                 };
             };
             /** @description Validation Error */
@@ -10860,9 +11456,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_PodcastPlacementAdditionOut_"];
                 };
             };
             /** @description Validation Error */
@@ -10894,9 +11488,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_PodcastPlacementRemovalOut_"];
                 };
             };
             /** @description Validation Error */
@@ -11098,9 +11690,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_NexusHistoryOut_"];
                 };
             };
             /** @description Validation Error */
@@ -11133,9 +11723,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_NexusSelectionRecordOut_"];
                 };
             };
             /** @description Validation Error */
@@ -11399,9 +11987,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_PodcastEpisodeQueryTranscriptForecastOut_"];
                 };
             };
             /** @description Validation Error */
@@ -11434,9 +12020,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_PodcastEpisodeQueryTranscriptRequestOut_"];
                 };
             };
             /** @description Validation Error */
@@ -11975,9 +12559,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_list_LibraryPlacementOptionOut__"];
                 };
             };
             /** @description Validation Error */
@@ -12042,9 +12624,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_LibraryEntryRemovalOut_"];
                 };
             };
             /** @description Validation Error */
@@ -12594,9 +13174,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_LibraryEntryRemovalOut_"];
                 };
             };
             /** @description Validation Error */
@@ -12631,7 +13209,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["Data_TranscriptRequestOut_"];
                 };
             };
             /** @description Validation Error */
@@ -12650,6 +13228,7 @@ export interface operations {
             query?: never;
             header?: {
                 "Idempotency-Key"?: string | null;
+                "X-Nexus-Chat-Contract"?: string | null;
                 "X-Nexus-Tool-Projection"?: string | null;
             };
             path: {
@@ -12690,6 +13269,7 @@ export interface operations {
             query?: never;
             header?: {
                 "Idempotency-Key"?: string | null;
+                "X-Nexus-Chat-Contract"?: string | null;
                 "X-Nexus-Tool-Projection"?: string | null;
             };
             path: {
@@ -13628,9 +14208,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_list_LibraryPlacementOptionOut__"];
                 };
             };
             /** @description Validation Error */
@@ -13648,7 +14226,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Nexus-Share-Token"?: string | null;
+                "X-Nexus-Share-Token"?: string;
             };
             path?: never;
             cookie?: never;
@@ -13661,9 +14239,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_PublicShareOut_"];
                 };
             };
             /** @description Validation Error */
@@ -13681,7 +14257,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Nexus-Share-Token"?: string | null;
+                "X-Nexus-Share-Token"?: string;
             };
             path: {
                 asset_handle: string;
@@ -13714,7 +14290,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Nexus-Share-Token"?: string | null;
+                "X-Nexus-Share-Token"?: string;
                 Range?: string | null;
             };
             path?: never;
@@ -13742,77 +14318,11 @@ export interface operations {
             };
         };
     };
-    get_public_resource_share_fragments_public_resource_share_fragments_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Nexus-Share-Token"?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_public_resource_share_navigation_public_resource_share_navigation_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Nexus-Share-Token"?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_public_resource_share_section_public_resource_share_sections__section_handle__get: {
         parameters: {
             query?: never;
             header?: {
-                "X-Nexus-Share-Token"?: string | null;
+                "X-Nexus-Share-Token"?: string;
             };
             path: {
                 section_handle: string;
@@ -13827,9 +14337,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_PublicSectionOut_"];
                 };
             };
             /** @description Validation Error */
@@ -14289,9 +14797,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ResourceShareSnapshotOut_"];
                 };
             };
             /** @description Validation Error */
@@ -14326,9 +14832,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_CreateResourceShareOut_"];
                 };
             };
             /** @description Validation Error */
@@ -14565,9 +15069,10 @@ export interface operations {
                 after?: number | null;
             };
             header?: {
+                "X-Nexus-Chat-Contract"?: string | null;
+                "X-Nexus-Tool-Projection"?: string | null;
                 "Last-Event-ID"?: string | null;
                 "X-Nexus-SSE-Attempt"?: string | null;
-                "X-Nexus-Tool-Projection"?: string | null;
             };
             path: {
                 run_id: string;
@@ -14801,41 +15306,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ClientDefectRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_web_vital_telemetry_web_vitals_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WebVitalRequest"];
             };
         };
         responses: {

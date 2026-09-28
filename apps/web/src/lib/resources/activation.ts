@@ -1,3 +1,4 @@
+import type { Schema } from "@/lib/api/wire";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import {
   expectExactRecord,
@@ -10,17 +11,9 @@ import type {
   WorkspaceTargetDisposition,
 } from "@/lib/workspace/targetActivation";
 
-interface ResourceActivationBase {
-  resourceRef: string;
-  unresolvedReason: string | null;
-}
-
-export type ResourceActivation =
-  | (ResourceActivationBase & {
-      kind: "route" | "external";
-      href: string;
-    })
-  | (ResourceActivationBase & { kind: "none"; href: null });
+/** The typed dossier head emits it as generated; the decoders below serve the
+ * untyped routes and SSE frames that still send either key casing. */
+export type ResourceActivation = Schema<"ResourceActivationOut">;
 
 const SNAKE_CASE_KEYS = {
   resourceRef: "resource_ref",

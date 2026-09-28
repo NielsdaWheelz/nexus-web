@@ -1,8 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { isApiError, isChatReloadRequired, type ApiError } from "@/lib/api/client";
 import { undoToolCall } from "@/lib/conversations/toolCallUndo";
 import type { MessageToolCall } from "@/lib/conversations/types";
+import ChatReloadNotice from "./ChatReloadNotice";
 import styles from "./MessageRow.module.css";
 
 function truncate(value: string, max = 80): string {
@@ -88,13 +91,27 @@ export default function AssistantWriteTrail({
       ),
   );
   const [busy, setBusy] = useState<Set<string>>(() => new Set());
+  const [reloadRequestId, setReloadRequestId] = useState<string | null>(null);
+  const [undoFailure, setUndoFailure] = useState<ApiError | null>(null);
+  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
+  if (asyncDefect !== null) throw asyncDefect.error;
   if (writes.length === 0) return null;
+  const undoUnconfirmed = undoFailure !== null &&
+    (undoFailure.status === 0 || undoFailure.status >= 500);
 
   const undo = async (toolCallId: string) => {
     setBusy((previous) => new Set(previous).add(toolCallId));
     try {
       await undoToolCall(conversationId, toolCallId);
       setReverted((previous) => new Set(previous).add(toolCallId));
+    } catch (error) {
+      if (isChatReloadRequired(error)) {
+        setReloadRequestId(error.requestId ?? "");
+      } else if (isApiError(error)) {
+        setUndoFailure(error);
+      } else {
+        setAsyncDefect({ error });
+      }
     } finally {
       setBusy((previous) => {
         const next = new Set(previous);
@@ -105,7 +122,29 @@ export default function AssistantWriteTrail({
   };
 
   return (
-    <div className={styles.writeTrail} role="list" aria-label="Assistant actions">
+    <>
+      {reloadRequestId !== null ? (
+        <ChatReloadNotice
+          requestId={reloadRequestId || undefined}
+          message="This tab is using an older chat or tool contract. Reload to check this write before undoing it."
+        />
+      ) : undoFailure !== null ? (
+        <FeedbackNotice
+          announcement="Assertive"
+          content={{
+            tone: "Warning",
+            title: undoUnconfirmed
+              ? "Undo status unconfirmed"
+              : "Undo unavailable",
+            message: undoUnconfirmed
+              ? "Reload the conversation to check this write before trying again."
+              : "The undo request was rejected. Reload to check the current write state.",
+            requestId: undoFailure.requestId,
+          }}
+          actions={[{ label: "Reload conversation", onClick: () => window.location.reload() }]}
+        />
+      ) : null}
+      <div className={styles.writeTrail} role="list" aria-label="Assistant actions">
       {writes.map((tool) => {
         const id = tool.id as string;
         const { kicker, target, detail } = describeWrite(tool);
@@ -136,7 +175,7 @@ export default function AssistantWriteTrail({
               <button
                 type="button"
                 className={styles.writeUndo}
-                disabled={busy.has(id)}
+                disabled={busy.has(id) || reloadRequestId !== null || undoFailure !== null}
                 onClick={() => void undo(id)}
                 aria-label={`Undo: ${kicker} ${target}`}
               >
@@ -146,6 +185,7 @@ export default function AssistantWriteTrail({
           </div>
         );
       })}
-    </div>
+      </div>
+    </>
   );
 }

@@ -50,7 +50,6 @@ _PACKAGE_ASSEMBLY_WORK_DEADLINE_SECONDS = 540
 # thread and temp-disk cost proportional to a constant instead of to the number
 # of requests one account can open.
 PACKAGE_ASSEMBLY_MAX_CONCURRENCY = 2
-PACKAGE_ASSEMBLY_BUSY_RETRY_AFTER_SECONDS = 30
 _assembly_slots = BoundedSemaphore(PACKAGE_ASSEMBLY_MAX_CONCURRENCY)
 
 
@@ -111,7 +110,7 @@ async def get_offline_reading_package(
     media_id: UUID,
     db: Annotated[Session, Depends(get_db)],
 ) -> FileResponse:
-    """Consume one package token and transfer one verified immutable ZIP.
+    """Verify one package token and transfer one verified immutable ZIP.
 
     The handler is async so the request can observe its own client disconnect
     while assembly runs; every blocking database call stays on a worker thread.
@@ -128,7 +127,7 @@ async def get_offline_reading_package(
     )
     await run_in_threadpool(_authorize_current_publication, db, token=token, media_id=media_id)
 
-    assembled = await _assemble_one_package(request, token=token, media_id=media_id)
+    assembled = await _assemble_one_package(request, media_id=media_id)
     try:
         if assembled.artifact.reader_generation != token.reader_generation:
             raise ApiError(
@@ -174,32 +173,21 @@ def _authorize_current_publication(
             "Reader content changed before package transfer",
         )
     # Visibility/generation are now captured values. Release the request
-    # transaction before the durable JTI write or any object-store I/O.
+    # transaction before any object-store I/O.
     db.rollback()
     db.close()
 
 
-async def _assemble_one_package(
-    request: Request,
-    *,
-    token: VerifiedOfflineReadingPackageToken,
-    media_id: UUID,
-) -> _AssembledPackage:
-    """Claim the token and assemble one package inside its bounded envelope.
-
-    Admission precedes the one-use claim: a request this process has no capacity
-    to serve is retryable with the token its caller already holds.
-    """
+async def _assemble_one_package(request: Request, *, media_id: UUID) -> _AssembledPackage:
+    """Assemble one package inside its bounded envelope."""
     if not _assembly_slots.acquire(blocking=False):
         raise ApiError(
             ApiErrorCode.E_OFFLINE_READING_PACKAGE_BUSY,
             "Offline reading package assembly is at capacity",
-            retry_after_seconds=PACKAGE_ASSEMBLY_BUSY_RETRY_AFTER_SECONDS,
         )
     slot_held_here = True
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="offline-reading-package")
     try:
-        await run_in_threadpool(stream_tokens.claim_offline_reading_package_token, token)
         descriptor, path = tempfile.mkstemp(prefix="nexus-offline-reading-", suffix=".zip")
         os.close(descriptor)
         cancelled = Event()

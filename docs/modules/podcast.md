@@ -13,11 +13,9 @@ transcript chunk indexing is owned by `content_indexing`.
 Backend owners live under `python/nexus/services/podcasts/*`, the media-level
 `python/nexus/services/transcripts/*`, the YouTube transcript owner
 `python/nexus/services/youtube_transcripts.py`, and the egress helpers under
-`python/nexus/services/net/*`. Transcript admission, reservation settlement,
-and terminal failure are separate owners in `podcasts/transcription_usage.py`,
-`podcasts/transcription_reservation_settlement.py`, and
-`podcasts/transcription_failure.py`; none imports the provider adapter on the
-background supervisor path. Frontend pane composition lives under
+`python/nexus/services/net/*`. Terminal transcript failure lives in
+`podcasts/transcription_failure.py`, which does not import the provider adapter
+on the background supervisor path. Frontend pane composition lives under
 `apps/web/src/app/(authenticated)/podcasts/*`; reusable Podcast contracts and
 controllers live under `apps/web/src/lib/podcasts/*`, and reusable presentation
 lives under `apps/web/src/components/podcasts/*`.
@@ -204,8 +202,8 @@ the direct stream against the new epoch. It does not poll or treat a globally re
 Add, Subscribe, live sync, and backfill store RSS sidecar references but never
 fetch or publish transcript content. Only explicit canonical Transcribe enters
 this boundary. Episode Transcribe first tries a valid publisher sidecar through
-`safe_get`; if unavailable it applies entitlement/quota admission and runs
-Deepgram. Both paths normalize segments and call the current transcript writer.
+`safe_get`; if it yields no segments the worker runs Deepgram. Both paths
+normalize segments and call the current transcript writer.
 Transcript chunks flow into the shared `content_chunks` index through
 `podcast_reindex_semantic_job`: it builds the immutable snapshot with
 `content_indexing.build_transcript_indexable_blocks` and publishes it through
@@ -215,31 +213,35 @@ records exactly `Publisher`, `Imported`, or `Generated` while transcript state
 is Ready/Partial and is absent otherwise.
 
 The public transcript request service is a media-kind dispatcher; one private
-Podcast Episode owner holds sidecar/readable/inflight/quota/fresh-admission
-precedence. Current transcript lifecycle persistence, artifact publication, and
+Podcast Episode owner, `_admit_episode_transcript`, holds readable → inflight →
+enqueue precedence. A readable transcript answers with semantic repair; inflight
+work (transcript `queued | running` or job `pending | running`) writes nothing;
+otherwise admission resets the job, marks the transcript `queued`, and creates
+one durable source attempt. Admission does not look at the sidecar: the worker
+alone orders sidecar before Deepgram, on every run including requeues.
+Current transcript lifecycle persistence, artifact publication, and
 semantic-job admission have separate owners under `services/transcripts/`.
-Semantic repair is zero-cost indexing work: it serializes on Media, inventories
-the canonical queue, never invalidates collection rows, and a repeat against a
-live repair job is a no-op.
+Semantic repair is indexing work: it serializes on Media, inventories the
+canonical queue, never invalidates collection rows, and a repeat against a live
+repair job is a no-op.
 
 Single-Episode and fingerprinted query admission share that private owner but
-have different transaction boundaries: a single quota rejection writes nothing,
-while a query admits every selected Episode or none. Each
-request locks Media before mutable admission decisions, and source ingest binds
-the accepted attempt plus durable job inside the caller-owned transaction.
-Enqueue defects propagate and roll the transaction back; there is no failed
-enqueue response and no fallback state.
-If a publisher sidecar cannot produce segments, generated-fallback admission
-returns `Admitted | RejectedQuota` through the source fence. Rejected quota
-writes no transcript work state; the worker then publishes terminal
-source/transcript failure under its next exact fence without charging usage.
-Generated fallback and operator requeue reserve usage and reset the execution
-job without deleting current segments/fragments or downgrading readable
-transcript state. The prior current projection survives until the fenced
-transcript writer replaces it atomically; the requeue publishes one shared
-media-fact revision, not an additional Podcast-only bump.
+have different transaction boundaries: a query admits every selected Episode or
+none, and a stale fingerprint writes nothing. The batch forecast only counts
+and fingerprints the eligible selection. Each request locks Media before
+mutable admission decisions, and source ingest binds the accepted attempt plus
+durable job inside the caller-owned transaction. Enqueue defects propagate and
+roll the transaction back; there is no failed enqueue response and no fallback
+state.
+`reset_podcast_transcription_job` is the one writer that puts the Episode's job
+row back to `pending`; explicit admission and operator requeue (retry, refresh,
+system repair) call it under a conflicting media lock. Requeue resets the
+execution job without deleting current segments/fragments or downgrading
+readable transcript state. The prior current projection survives until the
+fenced transcript writer replaces it atomically; the requeue publishes one
+shared media-fact revision, not an additional Podcast-only bump.
 `transcripts/request_reason.py` owns the exact internal request discriminant.
-Durable source attempts, transcription ledgers, semantic-job payloads, and
+Durable source attempts, transcription jobs, semantic-job payloads, and
 terminal results must carry one canonical value; missing or unknown values are
 defects, never aliases for `episode_open` or `operator_requeue`. Semantic jobs
 carry only `media_id` and `request_reason`; unused requester/request identities
@@ -252,8 +254,9 @@ counts its processing attempt, but does not publish a second unchanged
 `PodcastTranscriptionCompleted`; typed failures raise and never serialize dead
 nullable result fields.
 Terminal Podcast failure settles the source attempt once, then publishes Media,
-transcription-job, quota-release, and transcript-state failure through the one
-Podcast failure owner in `podcasts/transcription_failure.py`. The source
+transcription-job, and transcript-state failure (`unavailable` for
+`E_TRANSCRIPT_UNAVAILABLE`, else `failed_provider`) through the one Podcast
+failure owner in `podcasts/transcription_failure.py`. The source
 transaction is owned by `source_attempt_failures.py`, and the queue supervisor
 only dispatches to that typed owner. That same transaction advances the canonical shared
 media-fact collection family set once; it does not layer a second Episode-row

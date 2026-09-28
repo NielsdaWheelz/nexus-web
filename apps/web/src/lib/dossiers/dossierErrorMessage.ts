@@ -3,20 +3,17 @@
 //   - `dossierBuildFailureMessage`: the async failure vocabulary surfaced from
 //     the head's `latest_unsuccessful_build` or a replayed `Failed` stream event.
 //   - `dossierApiErrorMessage`: the synchronous A9 API error union returned by
-//     Generate/Cancel/Make-current/read (invalid subject, masked not-found,
-//     generation-in-progress, invalid instruction, revision-not-found /
-//     not-owned, build-not-active).
+//     Generate/Cancel/read (invalid subject, masked not-found,
+//     generation-in-progress, invalid instruction, build-not-active).
 //
 // The A9 errors are keyed by their dedicated `ApiError.code`; no legacy error
 // aliases are accepted at this hard-cut boundary.
 import { isApiError } from "@/lib/api/client";
-import type {
-  DossierBuildFailureCode,
-  DossierErrorInfo,
-} from "@/lib/dossiers/dossierControllerTypes";
+import type { Schema } from "@/lib/api/wire";
+import type { DossierErrorInfo } from "@/lib/dossiers/dossierControllerTypes";
 
 export function dossierBuildFailureMessage(
-  code: DossierBuildFailureCode,
+  code: Schema<"DossierBuildFailureCode">,
 ): string {
   switch (code) {
     case "NoSourceMaterial":
@@ -58,7 +55,6 @@ export const DOSSIER_API_ERROR_CODES = [
   "E_DOSSIER_GENERATION_IN_PROGRESS",
   "E_DOSSIER_BUILD_NOT_ACTIVE",
   "E_DOSSIER_NOT_FOUND",
-  "E_DOSSIER_REVISION_NOT_FOUND",
   "E_DOSSIER_INVALID_SUBJECT",
   "E_DOSSIER_INVALID_INSTRUCTION",
 ] as const;
@@ -79,8 +75,6 @@ function dossierExpectedApiErrorMessage(code: DossierApiErrorCode): string {
       return "This generation already finished.";
     case "E_DOSSIER_NOT_FOUND":
       return "This dossier is no longer available.";
-    case "E_DOSSIER_REVISION_NOT_FOUND":
-      return "That revision is no longer available.";
     case "E_DOSSIER_INVALID_SUBJECT":
       return "This item can't have a dossier.";
     case "E_DOSSIER_INVALID_INSTRUCTION":

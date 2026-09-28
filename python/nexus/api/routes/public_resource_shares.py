@@ -1,188 +1,81 @@
-"""Anonymous resource-share reads, reachable only through the trusted BFF."""
+"""The anonymous share reader's routes, reachable only through the web BFF.
 
-from __future__ import annotations
+The token travels only in the X-Nexus-Share-Token header and authorizes before
+any handle or Range is read. app.py's middleware stamps the public security
+headers on every response under this prefix, errors included.
+"""
 
-from typing import Annotated, Never
-from urllib.parse import quote
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, Header, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from nexus.db.session import get_db
 from nexus.errors import ApiErrorCode
-from nexus.public_resource_security import apply_public_resource_share_headers
-from nexus.responses import error_response, ok
+from nexus.responses import Data, error_response
+from nexus.schemas.public_resource_sharing import PublicSectionOut, PublicShareOut
 from nexus.services import public_resource_sharing
+from nexus.services.media_file_access import parse_single_byte_range
+from nexus.storage.client import get_storage_client
 
 router = APIRouter(prefix="/public/resource-share", tags=["public-resource-sharing"])
-
-
-def _token(value: str | None) -> str:
-    return value or ""
-
-
-def _query_items(request: Request) -> list[tuple[str, str]]:
-    return list(request.query_params.multi_items())
-
-
-def _raise_validation(exc: public_resource_sharing.PublicRequestValidation) -> Never:
-    raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
-def _apply_public_headers(response: Response) -> None:
-    apply_public_resource_share_headers(response)
+DbDep = Annotated[Session, Depends(get_db)]
+ShareToken = Annotated[str, Header(alias="X-Nexus-Share-Token")]
 
 
 @router.get("")
-def get_public_resource_share(
-    request: Request,
-    response: Response,
-    db: Annotated[Session, Depends(get_db)],
-    share_token: Annotated[str | None, Header(alias="X-Nexus-Share-Token")] = None,
-) -> dict:
-    try:
-        result = public_resource_sharing.get_public_bootstrap(
-            db,
-            raw_token=_token(share_token),
-            query_items=_query_items(request),
-        )
-    except public_resource_sharing.PublicRequestValidation as exc:
-        _raise_validation(exc)
-    _apply_public_headers(response)
-    return ok(result)
-
-
-@router.get("/fragments")
-def get_public_resource_share_fragments(
-    request: Request,
-    response: Response,
-    db: Annotated[Session, Depends(get_db)],
-    share_token: Annotated[str | None, Header(alias="X-Nexus-Share-Token")] = None,
-) -> dict:
-    try:
-        result = public_resource_sharing.get_public_fragments(
-            db,
-            raw_token=_token(share_token),
-            query_items=_query_items(request),
-        )
-    except public_resource_sharing.PublicRequestValidation as exc:
-        _raise_validation(exc)
-    _apply_public_headers(response)
-    return ok(result)
-
-
-@router.get("/navigation")
-def get_public_resource_share_navigation(
-    request: Request,
-    response: Response,
-    db: Annotated[Session, Depends(get_db)],
-    share_token: Annotated[str | None, Header(alias="X-Nexus-Share-Token")] = None,
-) -> dict:
-    try:
-        result = public_resource_sharing.get_public_navigation(
-            db,
-            raw_token=_token(share_token),
-            query_items=_query_items(request),
-        )
-    except public_resource_sharing.PublicRequestValidation as exc:
-        _raise_validation(exc)
-    _apply_public_headers(response)
-    return ok(result)
+def get_public_resource_share(db: DbDep, share_token: ShareToken = "") -> Data[PublicShareOut]:
+    return Data(data=public_resource_sharing.read_share(db, share_token))
 
 
 @router.get("/sections/{section_handle}")
 def get_public_resource_share_section(
-    section_handle: str,
-    request: Request,
-    response: Response,
-    db: Annotated[Session, Depends(get_db)],
-    share_token: Annotated[str | None, Header(alias="X-Nexus-Share-Token")] = None,
-) -> dict:
-    try:
-        result = public_resource_sharing.get_public_section(
-            db,
-            raw_token=_token(share_token),
-            raw_section_handle=section_handle,
-            query_items=_query_items(request),
-        )
-    except public_resource_sharing.PublicRequestValidation as exc:
-        _raise_validation(exc)
-    _apply_public_headers(response)
-    return ok(result)
+    section_handle: str, db: DbDep, share_token: ShareToken = ""
+) -> Data[PublicSectionOut]:
+    return Data(data=public_resource_sharing.read_section(db, share_token, section_handle))
 
 
 @router.get("/assets/{asset_handle}")
 def get_public_resource_share_asset(
-    asset_handle: str,
-    request: Request,
-    db: Annotated[Session, Depends(get_db)],
-    share_token: Annotated[str | None, Header(alias="X-Nexus-Share-Token")] = None,
+    asset_handle: str, db: DbDep, share_token: ShareToken = ""
 ) -> Response:
-    try:
-        result = public_resource_sharing.get_public_asset(
-            db,
-            raw_token=_token(share_token),
-            raw_asset_handle=asset_handle,
-            query_items=_query_items(request),
-        )
-    except public_resource_sharing.PublicRequestValidation as exc:
-        _raise_validation(exc)
-    response = Response(
-        content=result.data,
-        media_type=result.content_type,
-        headers={
-            "Content-Length": str(len(result.data)),
-        },
-    )
-    apply_public_resource_share_headers(response)
-    return response
+    data, content_type = public_resource_sharing.read_asset(db, share_token, asset_handle)
+    return Response(data, media_type=content_type)
 
 
 @router.get("/file")
 def get_public_resource_share_file(
-    request: Request,
-    db: Annotated[Session, Depends(get_db)],
-    share_token: Annotated[str | None, Header(alias="X-Nexus-Share-Token")] = None,
+    db: DbDep,
+    share_token: ShareToken = "",
     range_header: Annotated[str | None, Header(alias="Range")] = None,
 ) -> Response:
+    source = public_resource_sharing.pdf_source(db, share_token)
+    size = source.size_bytes
+    headers = {"Accept-Ranges": "bytes", "Content-Disposition": 'inline; filename="document.pdf"'}
+    if range_header is None:
+        return StreamingResponse(
+            get_storage_client().stream_object(source.storage_path),
+            media_type="application/pdf",
+            headers={**headers, "Content-Length": str(size)},
+        )
     try:
-        result = public_resource_sharing.get_public_pdf_file(
-            db,
-            raw_token=_token(share_token),
-            raw_range=range_header,
-            query_items=_query_items(request),
-        )
-    except public_resource_sharing.PublicRequestValidation as exc:
-        _raise_validation(exc)
-    except public_resource_sharing.PublicRangeNotSatisfiable as exc:
-        response = JSONResponse(
+        byte_range = parse_single_byte_range(range_header, size_bytes=size)
+    except ValueError:
+        return JSONResponse(
+            error_response(ApiErrorCode.E_INVALID_REQUEST, "Requested range is not satisfiable"),
             status_code=416,
-            content=error_response(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "Requested range is not satisfiable",
-            ),
-            headers={
-                "Accept-Ranges": "bytes",
-                "Content-Range": f"bytes */{exc.size_bytes}",
-            },
+            headers={"Accept-Ranges": "bytes", "Content-Range": f"bytes */{size}"},
         )
-        apply_public_resource_share_headers(response)
-        return response
-    headers = {
-        "Accept-Ranges": "bytes",
-        "Content-Length": str(result.content_length),
-        "Content-Disposition": (
-            f"inline; filename=\"document.pdf\"; filename*=UTF-8''{quote(result.filename, safe='')}"
+    return StreamingResponse(
+        get_storage_client().stream_object_range(
+            source.storage_path, start=byte_range.start, end_inclusive=byte_range.end
         ),
-    }
-    if result.content_range is not None:
-        headers["Content-Range"] = result.content_range
-    response = StreamingResponse(
-        result.chunks,
-        status_code=result.status_code,
+        status_code=206,
         media_type="application/pdf",
-        headers=headers,
+        headers={
+            **headers,
+            "Content-Length": str(byte_range.length),
+            "Content-Range": f"bytes {byte_range.start}-{byte_range.end}/{size}",
+        },
     )
-    apply_public_resource_share_headers(response)
-    return response

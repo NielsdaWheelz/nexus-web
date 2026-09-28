@@ -132,7 +132,6 @@ def replace_document_embed_artifact(
     source_attempt_id: UUID,
     occurrences: Sequence[DocumentEmbedArtifactOccurrence],
     extraction_failed: bool,
-    request_id: str | None,
     locked_existing_target_media_ids: frozenset[UUID],
 ) -> list[tuple[UUID, UUID]]:
     """Replace one media's embed rows, accepting each pending child source.
@@ -164,7 +163,6 @@ def replace_document_embed_artifact(
                     parent_media_id=media_id,
                     document_embed_key=occurrence.occurrence_key,
                     library_ids=library_ids,
-                    request_id=request_id,
                 )
             except InvalidRequestError as exc:
                 resolution_status = "failed"

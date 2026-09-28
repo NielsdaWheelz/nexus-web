@@ -165,22 +165,10 @@ async def lifespan(app: FastAPI):
     app.state.generation_catalog_service = build_generation_catalog_service(
         settings, tool_runtime=app.state.tool_runtime
     )
-    if settings.nexus_env in (Environment.STAGING, Environment.PROD):
-        await app.state.generation_catalog_service.startup()
-
     logger.info(
         "app_lifespan_started",
         web_search_provider="brave" if settings.brave_search_api_key else None,
     )
-
-    # Initialize Postgres-backed rate limiter runtime state.
-    from nexus.services.rate_limit import RateLimiter, set_rate_limiter
-
-    rate_limiter = RateLimiter(
-        session_factory=get_session_factory(),
-        rpm_limit=settings.rate_limit_rpm,
-    )
-    set_rate_limiter(rate_limiter)
 
     yield
 

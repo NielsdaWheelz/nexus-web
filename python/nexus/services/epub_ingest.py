@@ -174,7 +174,6 @@ class _ManifestItem:
 class _SpineItem:
     idref: str
     itemref_id: str | None
-    linear: bool
 
 
 @dataclass(frozen=True)
@@ -183,8 +182,6 @@ class _ChapterSpec:
     manifest_id: str
     itemref_id: str | None
     href: str
-    media_type: str
-    linear: bool
 
 
 @dataclass
@@ -872,11 +869,6 @@ def publish_epub_extraction_plan(
                 media_id=media_id,
                 fragment_id=fragment.id,
                 package_href=spec.chapter.href,
-                manifest_item_id=spec.chapter.manifest_id,
-                spine_itemref_id=spec.chapter.itemref_id,
-                media_type=spec.chapter.media_type,
-                linear=spec.chapter.linear,
-                reading_order=spec.chapter.spine_idx,
                 created_at=plan.now,
             )
         )
@@ -1082,7 +1074,6 @@ def _parse_spine(opf: ET.Element) -> list[_SpineItem]:
         _SpineItem(
             idref=itemref.get("idref", ""),
             itemref_id=itemref.get("id") or None,
-            linear=itemref.get("linear", "yes").lower() != "no",
         )
         for itemref in opf.findall(".//opf:spine/opf:itemref", _NS)
         if itemref.get("idref", "")
@@ -1212,8 +1203,6 @@ def _collect_readable_chapters(
                 manifest_id=spine_item.idref,
                 itemref_id=spine_item.itemref_id,
                 href=entry.href,
-                media_type=entry.media_type,
-                linear=spine_item.linear,
             )
         )
     return chapters

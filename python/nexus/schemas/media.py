@@ -194,7 +194,6 @@ class PodcastEpisodeChapterOut(BaseModel):
 class SourceStageProgress(_Strict):
     kind: Literal["Stage"] = "Stage"
     stage: Literal["Validate", "Extract", "Finalize"]
-    run_count: int = Field(ge=0)
     updated_at: datetime
 
 
@@ -204,7 +203,6 @@ class SourceCountedProgress(_Strict):
     completed: int = Field(ge=0)
     total: int = Field(gt=0)
     unit: Literal["Page", "Chapter"]
-    run_count: int = Field(ge=0)
     updated_at: datetime
 
 
@@ -506,18 +504,20 @@ TranscriptRequestReason = Literal[
 
 class TranscriptRequestRequest(_Strict):
     reason: TranscriptRequestReason = "episode_open"
-    dry_run: bool = False
 
 
-class TranscriptRequestResponse(BaseModel):
+TranscriptState = Literal[
+    "not_requested", "queued", "running", "ready", "partial", "unavailable", "failed_provider"
+]
+TranscriptCoverage = Literal["none", "partial", "full"]
+
+
+class TranscriptRequestOut(BaseModel):
     media_id: str
     processing_status: MediaProcessingStatus
-    transcript_state: str
-    transcript_coverage: str
+    transcript_state: TranscriptState
+    transcript_coverage: TranscriptCoverage
     request_reason: TranscriptRequestReason
-    required_minutes: int
-    remaining_minutes: int | None = None
-    fits_budget: bool
     request_enqueued: bool
 
 

@@ -25,7 +25,7 @@ import { ArrowUp, RotateCcw, Square } from "lucide-react";
 import {
   isApiError,
   isSameSystemApiDefect,
-  isToolProjectionReloadRequired,
+  isChatReloadRequired,
   type ApiError,
 } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -34,6 +34,7 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import { absent, type Presence } from "@/lib/api/presence";
+import type { ChatRunExecution } from "@/lib/api/executionAdvisory";
 import type { ReaderSelectionInput } from "@/lib/api/sse/requests";
 import { buildChatRunBody } from "@/lib/conversations/chatRunBody";
 import type { ChatDraftKey } from "@/lib/conversations/chatDraftKey";
@@ -62,7 +63,7 @@ import BranchComposerHeader from "@/components/chat/BranchComposerHeader";
 import GenerationSelectionPicker from "@/components/chat/GenerationSelectionPicker";
 import { useGenerationCatalog } from "@/components/chat/useGenerationCatalog";
 import QuotedPassageCard from "@/components/chat/QuotedPassageCard";
-import ToolProjectionReloadNotice from "@/components/chat/ToolProjectionReloadNotice";
+import ChatReloadNotice from "@/components/chat/ChatReloadNotice";
 import { useChatDraft } from "@/components/chat/useChatDraft";
 import Button from "@/components/ui/Button";
 import Textarea from "@/components/ui/Textarea";
@@ -125,6 +126,7 @@ interface ChatComposerProps {
   sendCapability: ChatSendCapability;
   /** Active run that can be semantically cancelled without closing the SSE tail. */
   activeRunId?: string | null;
+  activeRunExecution?: ChatRunExecution | null;
   /** Backend cancel action for the active run. */
   onCancelRun?: () => Promise<void> | void;
   /** Conversation-owned stale contract state from reads, tails, or mutations. */
@@ -211,6 +213,7 @@ export default function ChatComposer({
   onActivateSource,
   sendCapability,
   activeRunId = null,
+  activeRunExecution = null,
   onCancelRun,
   projectionReloadRequestId: inheritedProjectionReloadRequestId = null,
 }: ChatComposerProps) {
@@ -446,7 +449,7 @@ export default function ChatComposer({
       } catch (err) {
         if (!isCurrent()) return;
         if (handleUnauthenticatedApiError(err)) return;
-        if (isToolProjectionReloadRequired(err)) {
+        if (isChatReloadRequired(err)) {
           setLocalProjectionReloadRequestId(err.requestId ?? "");
           return;
         }
@@ -527,7 +530,7 @@ export default function ChatComposer({
       } catch (err) {
         if (!isCurrent()) return;
         if (handleUnauthenticatedApiError(err)) return;
-        if (isToolProjectionReloadRequired(err)) {
+        if (isChatReloadRequired(err)) {
           setLocalProjectionReloadRequestId(err.requestId ?? "");
           return;
         }
@@ -662,7 +665,7 @@ export default function ChatComposer({
       await onCancelRun();
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
-      if (isToolProjectionReloadRequired(err)) {
+      if (isChatReloadRequired(err)) {
         setLocalProjectionReloadRequestId(err.requestId ?? "");
         return;
       }
@@ -803,8 +806,9 @@ export default function ChatComposer({
         ) : null}
         {projectionReloadRequired ? (
           <div className={styles.composerError}>
-            <ToolProjectionReloadNotice
+            <ChatReloadNotice
               requestId={projectionReloadRequestId || undefined}
+              message="This tab is using an older chat or tool contract. Your draft and accepted commands are saved. Reload to read the same run."
             />
           </div>
         ) : null}
@@ -950,8 +954,9 @@ export default function ChatComposer({
               className={styles.sendButton}
               iconOnly
               loading={cancelling}
+              disabled={activeRunExecution?.cancel_requested ?? false}
               onClick={handleCancelRun}
-              aria-label={cancelling ? "Stopping response" : "Stop response"}
+              aria-label={activeRunExecution?.cancel_requested ? "Stop requested" : cancelling ? "Requesting stop" : "Stop response"}
             >
               <Square size={16} aria-hidden="true" />
             </Button>
@@ -970,6 +975,21 @@ export default function ChatComposer({
             </Button>
           )}
         </div>
+        {activeRunExecution ? (
+          <p className={styles.composerWarning} role="status" aria-live="polite">
+            {activeRunExecution.cancel_requested
+              ? activeRunExecution.phase === "Suspended"
+                ? "Stop requested; outcome unconfirmed."
+                : "Stop requested."
+              : activeRunExecution.phase === "Suspended"
+                ? "Response paused. Your draft remains editable."
+                : activeRunExecution.phase === "Recovering"
+                  ? "Recovering response."
+                  : activeRunExecution.phase === "Queued"
+                    ? "Response queued."
+                    : "Response running."}
+          </p>
+        ) : null}
         {catalog !== null && catalogError !== null ? (
           <div className={styles.composerWarning} role="status">
             Model availability could not be refreshed.{" "}

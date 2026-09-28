@@ -156,7 +156,6 @@ function createOutcome(code: string): UploadSessionOutcome | null {
       return { kind: "Superseded" };
     case "E_IDEMPOTENCY_CONFLICT":
       return { kind: "IntentChanged" };
-    case "E_UPLOAD_VERIFICATION_IN_PROGRESS":
     case "E_SIGN_UPLOAD_FAILED":
       return { kind: "Unresolved" };
     default:
@@ -189,7 +188,6 @@ function retryOutcome(code: string): UploadSessionOutcome | null {
       return { kind: "IntentChanged" };
     case "E_RESOURCE_CONFLICT":
       return { kind: "Conflicted" };
-    case "E_UPLOAD_VERIFICATION_IN_PROGRESS":
     case "E_SIGN_UPLOAD_FAILED":
       return { kind: "Unresolved" };
     default:
@@ -206,7 +204,6 @@ function confirmOutcome(code: string): UploadSessionOutcome | null {
     case "E_UPLOAD_SESSION_NOT_FOUND":
     case "E_UPLOAD_GENERATION_STALE":
       return { kind: "Superseded" };
-    case "E_UPLOAD_VERIFICATION_IN_PROGRESS":
     case "E_STORAGE_ERROR":
       return { kind: "Unresolved" };
     case "E_STORAGE_MISSING":

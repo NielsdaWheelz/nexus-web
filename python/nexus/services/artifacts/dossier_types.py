@@ -10,7 +10,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError
 from nexus.schemas.presence import Presence
 
 
@@ -132,11 +132,6 @@ class WebResearchNotConfigured(ApiError):
 class BuildNotActive(ConflictError):
     def __init__(self, message: str = "This dossier build is no longer active") -> None:
         super().__init__(ApiErrorCode.E_DOSSIER_BUILD_NOT_ACTIVE, message)
-
-
-class RevisionNotFound(NotFoundError):
-    def __init__(self, message: str = "Dossier revision not found") -> None:
-        super().__init__(ApiErrorCode.E_DOSSIER_REVISION_NOT_FOUND, message)
 
 
 class InvalidSubjectLocator(InvalidRequestError):

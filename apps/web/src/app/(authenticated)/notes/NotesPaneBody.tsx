@@ -43,7 +43,7 @@ import {
   updatedTitleSortOptionOf,
   updatedTitleViewForSortOption,
 } from "@/lib/collections/updatedTitleIndexView";
-import { PROGRAMMATIC_NEXUS_TARGET_ACTIVATION } from "@/lib/nexus/dispatch";
+import { PROGRAMMATIC_NEXUS_TARGET_ACTIVATION } from "@/lib/nexus/model";
 import {
   loadNotePages,
   type NotePageSummary,

@@ -4,21 +4,14 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ChatRun, LLMModelTurnContinuation, LLMToolPosition
+from nexus.db.models import ChatRun
 from nexus.db.session import get_session_factory
-from nexus.jobs.queue import (
-    JobExecutionContext,
-    JobRow,
-    RescheduleRequested,
-    get_job,
-    requeue_dead_job,
-)
+from nexus.jobs.queue import JobExecutionContext, JobRow, RescheduleRequested, get_job
 from nexus.logging import get_logger
-from nexus.services.chat_run_worker import execute_chat_run
-from nexus.services.durable_step_journal import Uncertain, read_step_states, stable_generation_id
+from nexus.services.chat_run_worker import execute_chat_run, settle_cancelled_dead_chat_run
 from nexus.services.llm_execution import ExecutionRuntime
 from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
@@ -52,50 +45,32 @@ def chat_run(run_id: str, *, context: JobExecutionContext) -> RescheduleRequeste
 
 
 def record_dead_lettered_chat_run(db: Session, job: JobRow) -> None:
-    """Suspend the run, or requeue the same job to fold a prior cancellation."""
+    """Settle a prior stop only if the dead job has locally conclusive evidence."""
 
     raw_run_id = job.payload.get("run_id")
     if raw_run_id is None:
         raise ValueError("chat_run dead-letter payload is missing run_id")
     run_id = UUID(str(raw_run_id))
-    run = db.execute(
-        select(ChatRun.status, ChatRun.cancel_requested_at, ChatRun.generation_spec).where(
-            ChatRun.id == run_id
-        )
-    ).one_or_none()
-    requeued_for_cancellation = bool(
-        run is not None
-        and run.status in {"queued", "running"}
-        and run.cancel_requested_at is not None
+
+    # The queue owns the job lock before this projection. Never block on a lock
+    # taken earlier by cancel (admission -> owner -> run -> job): cancel will
+    # inspect this dead job after the projection commits.
+    owner_locked = db.scalar(
+        text("SELECT pg_try_advisory_xact_lock(hashtextextended(:owner_key, 0))"),
+        {"owner_key": f"chat_run:{run_id}"},
     )
-    if requeued_for_cancellation and run is not None:
-        step_path = "generation/1"
-        state = read_step_states(job).get(step_path)
-        if state is not None and state.generation_id != stable_generation_id(run_id, step_path):
-            requeued_for_cancellation = False
-        elif state is not None and state.dispatch_phase is Uncertain:
-            selection = run.generation_spec.get("selection")
-            if not isinstance(selection, dict) or selection.get("route") != "ProviderApi":
-                requeued_for_cancellation = False
-            else:
-                pending = db.scalar(
-                    select(func.count())
-                    .select_from(LLMModelTurnContinuation)
-                    .where(LLMModelTurnContinuation.generation_id == state.generation_id)
-                )
-                unfinished_tool = db.scalar(
-                    select(LLMToolPosition.id)
-                    .where(
-                        LLMToolPosition.generation_id == state.generation_id,
-                        LLMToolPosition.replay_status != "Completed",
-                    )
-                    .limit(1)
-                )
-                requeued_for_cancellation = pending == 1 and unfinished_tool is None
-    if requeued_for_cancellation and not requeue_dead_job(db, job_id=job.id):
-        raise AssertionError("cancelled chat job changed during dead-letter handling")
+    settled = False
+    if owner_locked:
+        run = db.scalar(
+            select(ChatRun)
+            .where(ChatRun.id == run_id)
+            .execution_options(populate_existing=True)
+            .with_for_update(skip_locked=True)
+        )
+        if run is not None and run.status in {"queued", "running"} and run.cancel_requested_at:
+            settled = settle_cancelled_dead_chat_run(db, run=run, job=job)
     logger.warning(
-        "chat_run_cancel_requeued" if requeued_for_cancellation else "chat_run_suspended",
+        "chat_run_cancel_settled" if settled else "chat_run_suspended",
         run_id=str(run_id),
         job_id=str(job.id),
         attempts=job.attempts,

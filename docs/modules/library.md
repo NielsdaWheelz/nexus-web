@@ -68,8 +68,7 @@ and exposes one authorized **Manage members** activation into that tab.
 placement is a separate top-level `Libraries…` resource relationship action
 backed by `LibraryEntryEditor`; it never appears inside Share. Library entries
 are organization references rather than access-grant provenance. See
-[resource-sharing.md](resource-sharing.md) and
-[library-placement-resource-action-hard-cutover.md](../cutovers/library-placement-resource-action-hard-cutover.md).
+[resource-sharing.md](resource-sharing.md).
 
 The admin member and pending-invitation reads return exact
 `{data, page: {nextCursor: Presence<string>}}` envelopes. Members traverse
@@ -82,10 +81,15 @@ boundary.
 
 Library entry mutations are commands, not refreshed read models. Media add and
 reorder are bodyless commands. Media removal and idempotent Podcast placement
-add/removal return typed `libraryEntriesCollectionRevision`; the placement
-editor reconciles the canonical resource-action snapshot before reading the
-authoritative placement inventory. Agent filing receives only
-inserted/already-present truth for Undo and never hydrates an entry payload.
+add/removal return typed `libraryEntriesCollectionRevision`. After a
+successful write the placement editor reconciles the subject's action snapshot
+and rereads the placement inventory. Every placement write is idempotent, so a
+transport failure is retried by resending the write; because that write may
+have committed, it also reconciles the snapshot. A refused write rereads the
+inventory and offers no retry, and a missing target ends the editor. An idle
+editor rereads when the placement bus publishes a change made after its read.
+Agent filing receives only inserted/already-present truth for Undo and never
+hydrates an entry payload.
 
 ## System libraries
 
@@ -474,13 +478,13 @@ keyed by the Library subject and Library audience, so membership is the read and
 generation boundary. The binding collects direct entries, expands Podcast
 entries to Episodes, intersects all Media with audience visibility, and records
 typed coverage/freshness in the revision manifest. Generate, Regenerate,
-history, Make current, provenance, and retry use the same API and surface as
-every other eligible resource.
+provenance, and retry use the same API and surface as every other eligible
+resource.
 
 Dossier citations are `resource_edges` sourced from
-`artifact_revision:<id>`, never a Library-owned citation table. Promotion
-repoints only the stable `artifact:<id>` head; historical revision content and
-citations remain immutable.
+`artifact_revision:<id>`, never a Library-owned citation table. A successful
+regenerate repoints the stable `artifact:<id>` head and deletes the replaced
+revision with its citation edges.
 
 The current revision body is one accepted semantic `content_html` article plus
 its derived `content_text`. Library search/chat consume the text projection;

@@ -116,7 +116,6 @@ const INTERNAL_ROUTE_IDS = new Set([
   "search",
   "settings",
   "settingsAccount",
-  "settingsBilling",
   "settingsReader",
   "settingsAppearance",
   "settingsLocalVault",

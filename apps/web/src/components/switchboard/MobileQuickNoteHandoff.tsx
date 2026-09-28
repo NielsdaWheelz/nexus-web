@@ -15,7 +15,7 @@ import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import type {
   MaterializedNexusTarget,
   NexusDispatchOutcome,
-} from "@/lib/nexus/dispatch";
+} from "@/lib/nexus/model";
 import {
   DAILY_DRAFT_HANDOFF_CLAIM_EVENT,
   DailyDraftStorageError,
@@ -30,7 +30,7 @@ import {
 } from "@/lib/resourceSurface/dailySurfacePersistence";
 import { isRecord } from "@/lib/validation";
 import { useWorkspaceStore } from "@/lib/workspace/store";
-import styles from "./switchboard.module.css";
+import styles from "@/components/nexus/Nexus.module.css";
 
 type MaterializedDailyPageTarget = Extract<
   MaterializedNexusTarget,

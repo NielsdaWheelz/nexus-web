@@ -74,7 +74,7 @@ Three durable task modules own all teardown/lifecycle storage deletion
   idempotent and failure retries.
 - **`storage_object_cleanup.py`** — the browser-direct-upload backstop. Every
   in-process object write (`media_source_ingest.py`, `email_ingest_service.py`,
-  `epub_ingest.py`) and each verification-token-fenced candidate copy in
+  `epub_ingest.py`) and each candidate copy (fenced by a fresh candidate id) in
   `media_upload_sessions.py` first locks its owner and reserves at most one
   nonterminal `StorageObjectCleanupJob` per `(owner, storagePath)` before the bounded
   external call: `Armed` -> `Retained` (a short post-write transaction rechecks

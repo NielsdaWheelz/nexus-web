@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
 import GenerationSelectionPicker from "@/components/chat/GenerationSelectionPicker";
 import { useGenerationCatalog } from "@/components/chat/useGenerationCatalog";
@@ -20,7 +20,6 @@ interface CandidateGenerationPickerProps {
   readonly operation: "Rerun" | "Regenerate";
   readonly runSelection: RunSelectionOut;
   readonly disabled?: boolean;
-  readonly openRequestVersion?: number;
   readonly onConfirm: (
     selection: GenerationSelectionSpec,
     catalogDefinitionRevision: string,
@@ -31,7 +30,6 @@ export default function CandidateGenerationPicker({
   operation,
   runSelection,
   disabled = false,
-  openRequestVersion = 0,
   onConfirm,
 }: CandidateGenerationPickerProps) {
   const [open, setOpen] = useState(false);
@@ -42,19 +40,10 @@ export default function CandidateGenerationPicker({
   });
   const pickerRef = useRef<HTMLDivElement>(null);
   const focusOnOpenRef = useRef(false);
-  const appliedOpenRequestRef = useRef(openRequestVersion);
   const { catalog, loading, error, retry } = useGenerationCatalog({
     enabled: open,
   });
   const actionLabel = `${operation} with a different model`;
-
-  useEffect(() => {
-    if (appliedOpenRequestRef.current === openRequestVersion) return;
-    appliedOpenRequestRef.current = openRequestVersion;
-    setDraft({ kind: "Selected", selection: runSelection.selection });
-    focusOnOpenRef.current = true;
-    setOpen(true);
-  }, [openRequestVersion, runSelection.selection]);
 
   useLayoutEffect(() => {
     if (!open || catalog === null || !focusOnOpenRef.current) return;

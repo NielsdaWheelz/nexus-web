@@ -1223,13 +1223,7 @@ export function WorkspaceStoreProvider({
         const pending = current.get(paneId);
         if (
           pending?.routeKey !== routeKey ||
-          pending.activation.kind !== activation.kind ||
-          pending.activation.surfaceId !== activation.surfaceId ||
-          (
-            pending.activation.kind === "DossierRevision" &&
-            activation.kind === "DossierRevision" &&
-            pending.activation.revisionRef !== activation.revisionRef
-          )
+          pending.activation.surfaceId !== activation.surfaceId
         ) {
           return current;
         }

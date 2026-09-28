@@ -2,11 +2,13 @@
 """Converge the Hetzner backend onto one immutable CI candidate, in one pass.
 
     PYTHONPATH=python python3 deploy/hetzner/release.py <source-sha>
+    PYTHONPATH=python python3 deploy/hetzner/release.py <source-sha> \
+      --model-cutover-snapshot <reviewed-json>  # crossing 0246
     PYTHONPATH=python python3 deploy/hetzner/release.py --check [<source-sha>]
 
 The flow is linear and idempotent; after any failure, fix the cause and rerun:
 
-    preflight -> inputs -> images -> backup -> migrate -> convert captures
+    preflight -> inputs -> images -> stop -> cutover census -> backup -> migrate -> convert captures
               -> up -> caddy -> health -> isolation -> current pointer
 
 `--check` runs preflight and the read-only proofs against the SHA the host
@@ -54,6 +56,7 @@ CODEX_AGENT_HOST = "nexus-codex-agent-host"
 CODEX_PRIVATE_NETWORK = "nexus_codex_private"
 CODEX_PRIVATE_BRIDGE_IP = "172.30.0.1"
 BACKUP_STATE_ROOT = "/var/backups/nexus/r2"
+PRE_MODEL_HISTORY_CUTOVER_REVISIONS = frozenset(f"{number:04d}" for number in range(236, 246))
 
 # Declared host inputs: the isolation contract lives in these files, and the
 # release installs them before it converges anything.
@@ -377,6 +380,24 @@ def prove_ancestry(candidate: CandidateManifest, current: str) -> None:
         raise Failure(f"database revision {current} does not descend from {head}: {proof}")
 
 
+def prove_model_cutover_snapshot(
+    candidate: CandidateManifest, starting_revision: str, reviewed: dict[str, Any]
+) -> None:
+    actual = json.loads(
+        compose(
+            candidate,
+            "run --rm --no-deps --no-TTY api"
+            " /app/.venv/bin/python -m nexus.model_cutover_preflight --snapshot",
+            timeout=180,
+        )
+    )
+    if not isinstance(actual, dict) or actual.get("schema_revision") != starting_revision:
+        raise Failure("0246 database revision changed after release preflight")
+    if reviewed != actual:
+        raise Failure("0246 database identities changed since the reviewed census")
+    note("0246 database identities match the reviewed census")
+
+
 def backup(candidate: CandidateManifest, starting_revision: str) -> None:
     note("backing up the database to private R2")
     identity = psql(
@@ -586,7 +607,7 @@ def assert_isolation() -> None:
 # ---------------------------------------------------------------------------
 
 
-def release(source_sha: str, workspace: Path) -> None:
+def release(source_sha: str, workspace: Path, model_cutover_snapshot: Path | None) -> None:
     candidate = preflight(source_sha, workspace, deploying=True)
     install_host_inputs()
     pull_image(candidate, candidate.images.api)
@@ -595,6 +616,24 @@ def release(source_sha: str, workspace: Path) -> None:
     starting_revision = database_revision()
     if starting_revision:
         prove_ancestry(candidate, starting_revision)
+    crossing_model_cutover = (
+        starting_revision in PRE_MODEL_HISTORY_CUTOVER_REVISIONS
+        and candidate.expected_database_revision not in PRE_MODEL_HISTORY_CUTOVER_REVISIONS
+    )
+    reviewed_cutover_snapshot: dict[str, Any] | None = None
+    if crossing_model_cutover:
+        if model_cutover_snapshot is None:
+            raise Failure("0246 requires --model-cutover-snapshot with a reviewed database census")
+        try:
+            parsed_snapshot = json.loads(model_cutover_snapshot.read_text())
+        except (OSError, ValueError) as error:
+            raise Failure(f"cannot read the reviewed 0246 database census: {error}") from error
+        if (
+            not isinstance(parsed_snapshot, dict)
+            or parsed_snapshot.get("schema_revision") != starting_revision
+        ):
+            raise Failure("reviewed 0246 database census has the wrong starting revision")
+        reviewed_cutover_snapshot = parsed_snapshot
     note(
         f"stopping the writers at revision {starting_revision or '(none)'};"
         " the API is down from here until `up` succeeds"
@@ -631,6 +670,8 @@ def release(source_sha: str, workspace: Path) -> None:
                 " repair their publication or stale apparatus before releasing"
             )
         note("0245 publication preflight: zero apparatus media without a reader publication")
+    if reviewed_cutover_snapshot is not None:
+        prove_model_cutover_snapshot(candidate, starting_revision, reviewed_cutover_snapshot)
     if starting_revision:
         backup(candidate, starting_revision)
     elif psql("SELECT count(*) FROM pg_tables WHERE schemaname = 'public'") != "0":
@@ -684,17 +725,24 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="run preflight and the read-only proofs against the recorded release",
     )
+    parser.add_argument(
+        "--model-cutover-snapshot",
+        type=Path,
+        help="reviewed read-only census required when the release crosses migration 0246",
+    )
     arguments = parser.parse_args(argv)
     source_sha: str | None = arguments.source_sha
     if source_sha is not None and SHA.fullmatch(source_sha) is None:
         parser.error("source SHA must be 40 lowercase hex characters")
     if not arguments.check and source_sha is None:
         parser.error("a release requires its source SHA")
+    if arguments.check and arguments.model_cutover_snapshot is not None:
+        parser.error("--model-cutover-snapshot is only used during release")
     with tempfile.TemporaryDirectory(prefix="nexus-release.") as temporary:
         if arguments.check:
             check(source_sha, Path(temporary))
         else:
-            release(str(source_sha), Path(temporary))
+            release(str(source_sha), Path(temporary), arguments.model_cutover_snapshot)
     return 0
 
 

@@ -50,7 +50,7 @@ from nexus.services.html_apparatus import attach_fragment_locators, derive_fragm
 from nexus.services.media_author_observation_seam import attach_author_observation
 from nexus.services.media_deletion import delete_document_storage_objects
 from nexus.services.media_fact_revisions import bump_all_media_fact_collections
-from nexus.services.media_processing_state import begin_extraction
+from nexus.services.media_processing_state import mark_extracting
 from nexus.services.media_source_ingest import (
     enqueue_accepted_source_attempt_in_transaction,
     reusable_embedded_source_media_ids,
@@ -131,9 +131,7 @@ def run_source_adapter(
     if source_type in source_types.LOCAL_FILE_SOURCE_TYPES:
         return _run_existing_file(session_factory, media_id, fence)
     if source_type == source_types.PODCAST_EPISODE_TRANSCRIPT:
-        return _run_podcast_transcript(
-            session_factory, media_id, attempt, actor_user_id, request_id, fence
-        )
+        return _run_podcast_transcript(session_factory, media_id, attempt, fence)
     raise ApiError(ApiErrorCode.E_INVALID_KIND, f"Unsupported source attempt type: {source_type}")
 
 
@@ -157,7 +155,7 @@ def _begin_source_extraction(
                 f"{label} requires {'/'.join(sorted(expected_kinds))} media.",
             )
         changed = media.processing_status != ProcessingStatus.extracting
-        begin_extraction(db, media)
+        mark_extracting(db, media)
         if changed:
             bump_all_media_fact_collections(db)
         return media.kind
@@ -285,8 +283,6 @@ def _run_podcast_transcript(
     session_factory: sessionmaker[Session],
     media_id: UUID,
     attempt: MediaSourceAttempt,
-    actor_user_id: UUID,
-    request_id: str | None,
     fence: SourcePublicationFence,
 ) -> dict[str, object]:
     request_reason = require_transcript_request_reason(
@@ -300,11 +296,7 @@ def _run_podcast_transcript(
         label="podcast_transcript_extraction",
     )
     completed = run_podcast_transcription_now(
-        session_factory,
-        media_id=media_id,
-        requested_by_user_id=actor_user_id,
-        request_id=request_id,
-        publication_fence=fence,
+        session_factory, media_id=media_id, publication_fence=fence
     )
     return {
         "status": completed.status,
@@ -408,7 +400,7 @@ def _run_existing_file(
             raise InvalidRequestError(
                 ApiErrorCode.E_STORAGE_MISSING, "Source file metadata missing."
             )
-        begin_extraction(db, media)
+        mark_extracting(db, media)
         bump_all_media_fact_collections(db)
         return (
             media.kind,
@@ -762,7 +754,6 @@ def _replace_stored_html_projection(
                 fragment_id=fragment.id, document_embeds=prepared.document_embeds
             ),
             extraction_failed=prepared.document_embed_extraction_failed,
-            request_id=request_id,
             locked_existing_target_media_ids=frozenset(locked_embed_media_ids),
         )
         for child_media_id, child_attempt_id in queued_children:

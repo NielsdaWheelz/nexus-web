@@ -24,7 +24,7 @@ import {
   type SearchCitationEventData,
   type WebCitationEventData,
 } from "@/lib/api/sse/citations";
-import type { DurableExecution } from "@/lib/api/executionAdvisory";
+import type { ChatRunExecution } from "@/lib/api/executionAdvisory";
 import { absent, present } from "@/lib/api/presence";
 import type {
   SSECitationIndexEvent,
@@ -100,7 +100,8 @@ export type MessageUpdateAction =
   | {
       type: "apply_execution_advisory";
       assistantId: string;
-      execution: DurableExecution;
+      runId: string;
+      execution: ChatRunExecution;
     }
   | {
       type: "finalize_done";
@@ -432,20 +433,58 @@ function finalizeDone(
   });
 }
 
+function preserveAcceptedStop(
+  previous: ConversationMessage | undefined,
+  next: ConversationMessage,
+): ConversationMessage {
+  const previousRun = previous?.trust_trail?.run;
+  const nextTrail = next.trust_trail;
+  const nextRun = nextTrail?.run;
+  if (
+    previous?.status !== "pending" || next.status !== "pending" ||
+    nextTrail === null ||
+    previousRun?.run_id !== nextRun?.run_id ||
+    previousRun?.execution.kind !== "Present" ||
+    !previousRun.execution.value.cancel_requested ||
+    nextRun?.execution.kind !== "Present" ||
+    nextRun.execution.value.cancel_requested
+  ) {
+    return next;
+  }
+  return {
+    ...next,
+    trust_trail: {
+      ...nextTrail,
+      run: { ...nextRun, execution: previousRun.execution },
+    },
+  };
+}
+
+function preserveAcceptedStops(
+  previous: ConversationMessage[],
+  next: ConversationMessage[],
+): ConversationMessage[] {
+  const byId = new Map(previous.map((message) => [message.id, message]));
+  return next.map((message) => preserveAcceptedStop(byId.get(message.id), message));
+}
+
 function applyExecutionAdvisory(
   state: ConversationMessage[],
   assistantId: string,
-  execution: DurableExecution,
+  runId: string,
+  execution: ChatRunExecution,
 ): ConversationMessage[] {
   return state.map((message) => {
     if (
       message.id !== assistantId ||
+      message.status !== "pending" ||
       message.trust_trail === null ||
-      message.trust_trail.run === null
+      message.trust_trail.run === null ||
+      message.trust_trail.run.run_id !== runId
     ) {
       return message;
     }
-    return {
+    return preserveAcceptedStop(message, {
       ...message,
       trust_trail: {
         ...message.trust_trail,
@@ -454,7 +493,7 @@ function applyExecutionAdvisory(
           execution: present(execution),
         },
       },
-    };
+    });
   });
 }
 
@@ -464,7 +503,7 @@ export function messageUpdateReducer(
 ): ConversationMessage[] {
   switch (action.type) {
     case "set_all":
-      return action.messages;
+      return preserveAcceptedStops(state, action.messages);
     case "seed_optimistic":
       return [action.user, action.assistant];
     case "swap_meta_ids":
@@ -493,12 +532,16 @@ export function messageUpdateReducer(
       return applyExecutionAdvisory(
         state,
         action.assistantId,
+        action.runId,
         action.execution,
       );
     case "finalize_done":
       return finalizeDone(state, action.assistantId, action.status, action.delta);
     case "merge_run_pair":
-      return selectedPathAfterRun(state, action.run, [...action.idsToReplace]);
+      return preserveAcceptedStops(
+        state,
+        selectedPathAfterRun(state, action.run, [...action.idsToReplace]),
+      );
     case "remove_subtree": {
       const removedIds = new Set([action.rootMessageId]);
       let changed = true;

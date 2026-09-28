@@ -52,7 +52,7 @@ PODCAST_EPISODE_STATES = frozenset({"all", "unplayed", "in_progress", "played"})
 PODCAST_EPISODE_SORT_OPTIONS = frozenset({"newest", "oldest", "duration_asc", "duration_desc"})
 _TRANSCRIPT_ELIGIBLE_SQL = """
     AND COALESCE(mts.transcript_state, 'not_requested')
-        IN ('not_requested', 'failed_provider', 'failed_quota')
+        IN ('not_requested', 'failed_provider')
 """
 
 

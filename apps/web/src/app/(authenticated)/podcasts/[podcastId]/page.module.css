@@ -71,17 +71,7 @@
   font-size: var(--text-xs);
 }
 
-.transcriptRequestHint {
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
-}
-
 .transcriptStatus {
   color: var(--ink-faint);
-  font-size: var(--text-xs);
-}
-
-.transcriptQuotaWarning {
-  color: var(--danger);
   font-size: var(--text-xs);
 }

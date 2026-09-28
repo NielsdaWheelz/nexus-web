@@ -5406,7 +5406,7 @@ export default function MediaPaneBody() {
           feedback.resolve(feedbackKey);
           activatePaneTarget({
             target: {
-              href: artifactPaneHref(outcome.artifactRef),
+              href: artifactPaneHref(outcome.artifact_ref),
               labelHint: "Lesson",
             },
             disposition: { kind: "Adopt" },

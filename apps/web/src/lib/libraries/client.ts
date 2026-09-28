@@ -2,6 +2,7 @@
 
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { librariesResource } from "@/lib/api/resource";
+import type { ApiJson } from "@/lib/api/wire";
 import {
   decodeCollectionPage,
   decodeCollectionRevision,
@@ -129,16 +130,18 @@ export async function createLibrary({
   name: string;
   signal?: AbortSignal;
 }): Promise<MemberLibrary> {
-  const response = await apiFetch<unknown>("/api/libraries", {
-    method: "POST",
-    body: JSON.stringify({ library_id: libraryId, name }),
-    signal,
-  });
-  return expectLibraryOutEnvelopeForId(
-    response,
-    libraryId,
-    "create Library response",
+  const response = await apiFetch<ApiJson<"/libraries", "post">>(
+    "/api/libraries",
+    {
+      method: "POST",
+      body: JSON.stringify({ library_id: libraryId, name }),
+      signal,
+    },
   );
+  // A new library is a new row in an open Libraries index or placement editor,
+  // and both reread on an Unknown change.
+  publishLibraryPlacementChange("Unknown");
+  return response.data;
 }
 
 export async function getMemberLibrary(

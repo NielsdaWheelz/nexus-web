@@ -18,8 +18,8 @@ export const revalidate = 0;
 // Denied: the internal trust lane, unauthenticated operational and schema
 // endpoints, the SSE streams the browser opens directly against the stream
 // origin with a minted token, and every lane whose callers authenticate
-// themselves against FastAPI (Stripe's signed webhook, the offline-reading
-// package token, share tokens, the extension token, public plate bytes). The
+// themselves against FastAPI (the offline-reading package token, share
+// tokens, the extension token, public plate bytes). The
 // explicit route files under those prefixes are the only doors into them.
 const DENIED_FIRST_SEGMENTS: ReadonlySet<string> = new Set([
   "agent-api",
@@ -37,7 +37,6 @@ const DENIED_FIRST_SEGMENTS: ReadonlySet<string> = new Set([
   "version",
 ]);
 const DENIED_PREFIXES = [
-  "billing/stripe/webhook",
   "offline-reading/packages",
   "oracle/plates",
 ];

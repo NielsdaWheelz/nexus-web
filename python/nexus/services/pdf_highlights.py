@@ -1,4 +1,4 @@
-"""PDF highlight create/list/update: geometry, duplicates, and write-time matching."""
+"""PDF highlight create/list/update: geometry, duplicates, and quote context."""
 
 from uuid import UUID, uuid4
 
@@ -102,7 +102,7 @@ def create_pdf_highlight_in_txn(
             )
         return existing
 
-    match = _write_time_match(db, media, page_number, exact)
+    prefix, suffix = _quote_context(db, media, page_number, exact)
     _lock_duplicate_selection(db, viewer_id, media_id, canonical)
     if _find_duplicate_pdf_anchor(db, viewer_id, media_id, canonical) is not None:
         raise ApiError(ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Duplicate PDF highlight")
@@ -114,8 +114,8 @@ def create_pdf_highlight_in_txn(
         anchor_media_id=media_id,
         color=color,
         exact=exact,
-        prefix=match["prefix"],
-        suffix=match["suffix"],
+        prefix=prefix,
+        suffix=suffix,
     )
     db.add(highlight)
     db.flush()
@@ -126,9 +126,6 @@ def create_pdf_highlight_in_txn(
             page_number=canonical.page_number,
             sort_top=canonical.sort_top,
             sort_left=canonical.sort_left,
-            plain_text_match_status=match["match_status"],
-            plain_text_start_offset=match["start_offset"],
-            plain_text_end_offset=match["end_offset"],
             rect_count=canonical.rect_count,
         )
     )
@@ -212,7 +209,7 @@ def update_pdf_highlight_bounds(
     ):
         return project_highlight(highlight, viewer_id)
 
-    match = _write_time_match(db, media, canonical.page_number, bounds.exact)
+    prefix, suffix = _quote_context(db, media, canonical.page_number, bounds.exact)
     _lock_duplicate_selection(db, viewer_id, media.id, canonical)
     if (
         _find_duplicate_pdf_anchor(
@@ -224,16 +221,12 @@ def update_pdf_highlight_bounds(
 
     highlight.color = effective_color
     highlight.exact = bounds.exact
-    highlight.prefix = match["prefix"]
-    highlight.suffix = match["suffix"]
+    highlight.prefix, highlight.suffix = prefix, suffix
     highlight.updated_at = func.now()
     anchor.page_number = canonical.page_number
     anchor.sort_top = canonical.sort_top
     anchor.sort_left = canonical.sort_left
     anchor.rect_count = canonical.rect_count
-    anchor.plain_text_match_status = match["match_status"]
-    anchor.plain_text_start_offset = match["start_offset"]
-    anchor.plain_text_end_offset = match["end_offset"]
     db.execute(delete(HighlightPdfQuad).where(HighlightPdfQuad.highlight_id == highlight.id))
     _write_quads(db, highlight.id, canonical)
     db.flush()
@@ -284,19 +277,12 @@ def _write_quads(db: Session, highlight_id: UUID, canonical: CanonicalGeometry) 
         )
 
 
-def _write_time_match(db: Session, media: Media, page_number: int, exact: str) -> dict:
-    """Locate the selection in `media.plain_text` and record what was found.
-
-    `pending` until quote text is ready, then `empty_exact`, `unique` with
-    absolute offsets and 64 codepoints of context either side, `ambiguous`, or
-    `no_match`. The search is page-local when the page has a text span.
-    """
+def _quote_context(db: Session, media: Media, page_number: int, exact: str) -> tuple[str, str]:
+    """64 codepoints of `media.plain_text` either side of `exact` when it occurs once on
+    its page (in the whole text when the page has no span); ("", "") otherwise."""
     plain_text = media.plain_text
-    if plain_text is None or not is_pdf_quote_text_ready(db, media.id):
-        return _match("pending")
-    if not exact:
-        return _match("empty_exact")
-
+    if plain_text is None or not exact or not is_pdf_quote_text_ready(db, media.id):
+        return "", ""
     span = (
         db.query(PdfPageTextSpan)
         .filter(
@@ -307,31 +293,15 @@ def _write_time_match(db: Session, media: Media, page_number: int, exact: str) -
     )
     base = span.start_offset if span is not None else 0
     haystack = plain_text[span.start_offset : span.end_offset] if span is not None else plain_text
-
     first = haystack.find(exact)
-    if first == -1:
-        return _match("no_match")
-    if haystack.find(exact, first + 1) != -1:
-        return _match("ambiguous")
+    if first == -1 or haystack.find(exact, first + 1) != -1:
+        return "", ""
     start = base + first
     end = start + len(exact)
-    return {
-        "match_status": "unique",
-        "start_offset": start,
-        "end_offset": end,
-        "prefix": plain_text[max(0, start - PREFIX_SUFFIX_WINDOW) : start],
-        "suffix": plain_text[end : min(len(plain_text), end + PREFIX_SUFFIX_WINDOW)],
-    }
-
-
-def _match(status: str) -> dict:
-    return {
-        "match_status": status,
-        "start_offset": None,
-        "end_offset": None,
-        "prefix": "",
-        "suffix": "",
-    }
+    return (
+        plain_text[max(0, start - PREFIX_SUFFIX_WINDOW) : start],
+        plain_text[end : end + PREFIX_SUFFIX_WINDOW],
+    )
 
 
 def _stored_quads_match(

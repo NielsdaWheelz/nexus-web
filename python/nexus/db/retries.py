@@ -22,9 +22,8 @@ from nexus.db.session import use_read_committed, use_serializable
 # replay-memo constraint, the reader profile's first-PATCH insert (spec
 # reader-profile-persistence-hard-cutover.md §6), the consumption
 # ensure-membership insert (spec lectern-player-lifecycle-hard-cutover.md §5.3),
-# Nexus history's first query-href aggregate insert, and the Link mutation's
-# first inserts — passage-anchor identity, canonical neutral-Link pair, directed
-# stance pair, and client-minted Highlight id (spec
+# and the Link mutation's first inserts — passage-anchor identity, canonical
+# neutral-Link pair, directed stance pair, and client-minted Highlight id (spec
 # universal-link-authoring-hard-cutover.md, Graph Shapes) — plus the daily Page
 # binding's first-capture date/Page assignment all retry the whole operation on
 # a first-sight race.
@@ -58,13 +57,13 @@ RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
         "uq_artifact_idea_subjects_owner_key",
         "artifact_idea_resolutions_pkey",
         "uq_artifact_idea_seeds_pair",
-        "uq_artifact_learn_requests_user_key",
-        "uq_nexus_usages_user_query_href",
         "uq_media_summaries_media",
         "uix_media_canonical_url",
         "uix_media_x_provider_id",
         "uq_daily_page_bindings_user_date",
         "uq_daily_page_bindings_user_page",
+        "uq_resource_grants_person",
+        "uq_resource_grants_link",
     }
 )
 

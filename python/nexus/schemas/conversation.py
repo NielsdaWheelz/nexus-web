@@ -23,7 +23,7 @@ from pydantic import (
 from nexus.schemas.chat_reader_selection import ReaderSelectionInput, ReaderSelectionOut
 from nexus.schemas.citation import CitationOut, CitationRole, CitationTargetRef
 from nexus.schemas.collection_page import CollectionRevision
-from nexus.schemas.execution import DurableExecutionOut
+from nexus.schemas.execution import ChatRunExecutionOut
 from nexus.schemas.llm import ExpectedChatFailure, RunSelectionOut
 from nexus.schemas.machine_authorship import MachineAuthorshipOut
 from nexus.schemas.presence import Absent, Presence, Present, absent, present
@@ -491,7 +491,6 @@ class TrustPromptAssemblyOut(BaseModel):
     input_budget_tokens: int
     estimated_input_tokens: int
     included_message_ids: list[str]
-    included_retrieval_ids: list[str]
     included_context_refs: list[dict[str, Any]]
     dropped_items: list[dict[str, Any]]
 
@@ -507,7 +506,7 @@ class TrustRunOut(BaseModel):
     support_id: Presence[str]
     publication_warning: Presence[ChatPublicationWarning]
     failure: ExpectedChatFailure | None = None
-    execution: Presence[DurableExecutionOut]
+    execution: Presence[ChatRunExecutionOut]
     final_chars: int | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
@@ -787,7 +786,6 @@ ChatDestination = Annotated[
 
 
 ChatAdmissionRejectionCode = Literal[
-    "E_RATE_LIMITED",
     "E_MESSAGE_TOO_LONG",
     "E_CATALOG_DEFINITION_STALE",
     "E_INVALID_GENERATION_SELECTION",
@@ -805,7 +803,6 @@ ChatAdmissionRejectionCode = Literal[
     "E_READER_SELECTION_GEOMETRY_ONLY",
     "E_READER_SELECTION_TOO_LARGE",
     "E_CONVERSATION_NO_LONGER_EMPTY",
-    "E_BILLING_REQUIRED",
     "E_GENERATION_CONTEXT_TOO_LARGE",
 ]
 
@@ -890,8 +887,7 @@ class ChatRunOut(BaseModel):
     support_id: Presence[str]
     publication_warning: Presence[ChatPublicationWarning]
     failure: ExpectedChatFailure | None = None
-    execution: Presence[DurableExecutionOut]
-    cancel_requested_at: datetime | None = None
+    execution: Presence[ChatRunExecutionOut]
     started_at: datetime | None = None
     completed_at: datetime | None = None
     error_code: str | None = None

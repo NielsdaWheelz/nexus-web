@@ -34,7 +34,6 @@ STREAM_TOKEN_SIGNING_KEY=<base64-encoded-32-byte-key>
 STREAM_BASE_URL=https://api.example.com
 
 # Keep paid/provider-gated features off until credentials are present.
-BILLING_ENABLED=false
 PODCASTS_ENABLED=false
 
 # Required by staging/prod config for browse providers.
@@ -66,13 +65,6 @@ GENERATION_CONTINUATION_ENCRYPTION_KEY=<base64-encoded-distinct-32-byte-key>
 NEXUS_FABLE_RETENTION_ACCEPTED_AT=2026-08-31T00:00:00Z
 
 # BRAVE_SEARCH_API_KEY=
-
-# Stripe, required only if BILLING_ENABLED=true.
-# STRIPE_SECRET_KEY=
-# STRIPE_WEBHOOK_SECRET=
-# STRIPE_PLUS_PRICE_ID=
-# STRIPE_AI_PLUS_PRICE_ID=
-# STRIPE_AI_PRO_PRICE_ID=
 
 # Post Room: private email ingest address (Cloudflare Email Worker).
 # Set EMAIL_INGEST_ENABLED=true once DNS MX + Email Routing + worker are deployed.

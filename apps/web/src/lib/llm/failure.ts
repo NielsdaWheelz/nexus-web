@@ -31,7 +31,7 @@ function unsupportedChatFailure(failure: never): never {
  * run/message has no representable stored failure code. */
 const GENERIC_DEFECT_MESSAGE: ChatFailureMessage = {
   title: "Something went wrong",
-  body: "This response couldn't be completed. Please try again in a new message.",
+  body: "This response could not complete. Keep any support reference shown below for repair.",
 };
 
 export function chatFailureMessage(

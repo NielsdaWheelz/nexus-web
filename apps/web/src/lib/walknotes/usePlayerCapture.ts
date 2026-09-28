@@ -7,7 +7,6 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { useBillingAccount } from "@/lib/billing/useBillingAccount";
 import { transcribeAudio } from "@/lib/walknotes/transcribeAudio";
 import { useVoiceRecorder } from "@/lib/walknotes/useVoiceRecorder";
 import { useWalknoteSession } from "@/lib/walknotes/walknoteSession";
@@ -17,11 +16,6 @@ const HOLD_THRESHOLD_MS = 500;
 export interface PlayerCaptureSnapshot {
   readonly mediaId: string;
   readonly positionMs: number;
-}
-
-interface HeldCapture {
-  readonly kind: "Held";
-  readonly snapshot: PlayerCaptureSnapshot;
 }
 
 interface PendingCapture {
@@ -36,7 +30,7 @@ interface VoiceCapture {
   finishRequested: boolean;
 }
 
-type ActiveCapture = PendingCapture | HeldCapture | VoiceCapture;
+type ActiveCapture = PendingCapture | VoiceCapture;
 
 export interface PlayerCaptureController {
   readonly waypointCount: number;
@@ -62,7 +56,6 @@ export interface PlayerCaptureController {
  * subscribes the surface root to playback cadence.
  */
 export function usePlayerCapture(): PlayerCaptureController {
-  const { account } = useBillingAccount();
   const session = useWalknoteSession();
   const recorder = useVoiceRecorder();
   const [isRecording, setIsRecording] = useState(false);
@@ -70,10 +63,8 @@ export function usePlayerCapture(): PlayerCaptureController {
   const [announcement, setAnnouncement] = useState("");
   const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeCaptureRef = useRef<ActiveCapture | null>(null);
-  const canTranscribeRef = useRef(account?.can_transcribe ?? false);
   const sessionRef = useRef(session);
   const recorderRef = useRef(recorder);
-  canTranscribeRef.current = account?.can_transcribe ?? false;
   sessionRef.current = session;
   recorderRef.current = recorder;
 
@@ -149,14 +140,6 @@ export function usePlayerCapture(): PlayerCaptureController {
         if (activeCaptureRef.current !== capture) {
           return;
         }
-        if (!canTranscribeRef.current) {
-          activeCaptureRef.current = {
-            kind: "Held",
-            snapshot: capture.snapshot,
-          };
-          return;
-        }
-
         const waypointId = sessionRef.current.addWaypoint(
           capture.snapshot.mediaId,
           capture.snapshot.positionMs,
@@ -203,7 +186,7 @@ export function usePlayerCapture(): PlayerCaptureController {
     if (capture === null) {
       return;
     }
-    if (capture.kind === "Pending" || capture.kind === "Held") {
+    if (capture.kind === "Pending") {
       activeCaptureRef.current = null;
       sessionRef.current.addWaypoint(
         capture.snapshot.mediaId,
@@ -235,7 +218,7 @@ export function usePlayerCapture(): PlayerCaptureController {
     if (capture === null) {
       return;
     }
-    if (capture.kind === "Pending" || capture.kind === "Held") {
+    if (capture.kind === "Pending") {
       activeCaptureRef.current = null;
       return;
     }

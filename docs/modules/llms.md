@@ -33,8 +33,8 @@ Primary owners:
 - `codex_generation_*`: private Codex transport adapter;
 - `provider_generation_*`: ProviderRuntime adapter and continuation loop;
 - `llm_execution.py` and `llm_ledger.py`: parent/child/tool lifecycle and replay;
-- `tool_authority.py` and `tool_runtime/`: the canonical Provider API tool
-  executor and frozen authority;
+- `tool_authority.py` and `tool_runtime/`: frozen provider-function and codex
+  generation-api operation authority, domain handlers, and effect positions;
 - `apps/codex_agent/`: isolated subscription-backed Codex host.
 
 queue ownership is documented in [jobs.md](jobs.md).
@@ -83,22 +83,30 @@ resolves one of:
 - `LibraryDossierRead`;
 - `IdeaDossierRead`.
 
-chat uses `ExactModelTools` with `AdditiveWrites` and
+on provider api chat, `ExactModelTools` grants `AdditiveWrites` over
 `ChatAdmittedContext`: `web.search`, five nexus reads, and five owner-gated
-additive writes. the prompt requires user-directed actions; existing scope,
-limits, receipts, and undo govern execution. the two dossier plans grant
-only the five Nexus reads over their exact frozen evidence scope. metadata
-enrichment publishes `web.search`, `web.read`, `nexus.document.search`, and
-`nexus.resource.read` through `MetadataRead`. no background plan grants a
-write. the remaining background operations publish no model-tool
-schema. Idea host research remains a separate bounded,
-durable three-search preparation plan.
+additive writes. the two dossier plans grant only the five nexus reads over
+their exact frozen evidence scope when used as provider functions. metadata
+enrichment's provider-function plan publishes `web.search`, `web.read`,
+`nexus.document.search`, and `nexus.resource.read`. other background
+provider-function plans publish no model-tool schema. idea host research
+remains a separate bounded, durable three-search preparation plan.
 
-Provider API function proposals reach the canonical `GenerationToolExecutor`,
-authority checks, receipts, evidence, citations, trust, and Undo. The sole tool-position grammar is
+codex uses `CodexShell` authority instead: one release-owned api plan gives
+every codex generation, including background helpers, the same twelve
+account-wide read, search, and additive-write operations. prompt instructions
+guide use but do not narrow the grant. the private generation api checks the
+run-bound credential and active job, binds idempotent effect positions, and
+uses the same domain handlers, receipts, and undo. native shell and
+public-network effects are outside that ledger. see
+[the shell authority contract](../codex-shell-cutover-plan.md).
+
+provider api function proposals reach the canonical `GenerationToolExecutor`,
+authority checks, receipts, evidence, citations, trust, and undo. the provider-function tool-position grammar is
 `generation/{generation_seq}/tool/{n}`, with a one-based ordinal monotonic
 across the parent generation. An API model/tool/model loop never restarts it at
-a child call. Codex admits no model tools.
+a child call. codex calls the generation api from its native shell; its http
+positions bind the native child and idempotency key before effects.
 
 Untrusted tool arguments or output cannot widen the frozen plan, principal,
 scope, limits, or effect authority. There is no tool-shaped text parser,
@@ -106,30 +114,17 @@ provider-native Web search, alternate executor, or transport fallback.
 
 ## Backend composition
 
-implementation status: the following describes the current text-only codex
-runtime. the approved replacement is the [subscription shell plan](../codex-shell-cutover-plan.md):
-disposable execution and a private generation api. its implementation and
-qualification are pending; the current rejection remains until then.
-
-Codex Personal uses one private UDS command/NDJSON stream. The adapter binds the
-catalog-validated native model key before dispatch and supplies no model tools.
-Frozen tool-bearing Codex specs fail before host slot admission. Empty native execution
-environments remove shell and patch before effects; the host rejects unexpected
-native events. Full Linux and browser-to-worker qualification remains open.
-The host has no database credential,
-application secret, generation API key, product data mount, or TCP listener. It
-owns one private per-generation root and native app-server process group, and
-deletes them only after the pinned runtime exits. It launches the exact
-`openai-codex-cli-bin==0.157.1` executable over a private Unix socket and
-checks the running version before admission.
-
-The Codex catalog records the library's frozen-MCP capability as a source fact,
-but Nexus does not project it into tool-bearing route capabilities. Pinned
-Codex exposes additional resource helpers whenever MCP is present, so the
-current host cannot enforce the exact frozen model-visible tool set. The
-tool-bearing Codex Chat seed and three background policies remain ineligible;
-startup fails for the background policies until the approved shell runtime
-is implemented and qualified. see the [runtime ticket](../tickets/codex-shell-runtime-unqualified.md).
+codex personal uses the isolated subscription host and its private unix-socket
+control protocol. each generation gets a disposable remote execution sandbox
+with scratch and public internet. the authenticated account app-server stays
+outside it; ordinary shell/filesystem calls run inside it, and a run-bound
+bearer reaches only the private generation api. the host pins and checks its
+native app-server and exec-server at `openai-codex-cli-bin==0.157.1`. it
+publishes final answer text only after filtering bearer material; structured
+final output passes host schema validation. cancellation closes api admission,
+interrupts native work, and drains the sandbox before terminal settlement.
+the model-visible native tool set is not an exact nexus grant. remaining live
+qualification is tracked in the [runtime ticket](../tickets/codex-shell-runtime-unqualified.md).
 
 Provider API execution uses `ProviderRuntime` with the selected configured
 credential. Each independently accepted provider call is a child model turn.
@@ -173,9 +168,12 @@ effects.
 `POST /chat-runs`, rerun, and regenerate carry an explicit selection and
 `catalog_definition_revision`. requests reject the retired `tool_authority`
 field. policy owns new tool authority.
-Chat history, SSE meta, and trust projections expose the same immutable
-selection and frozen authority, including historical read-only facts, plus safe
-execution disclosure. they never expose
+chat history, sse meta, and trust projections expose immutable dispatch
+selection and frozen authority derived from the saved generation spec, plus
+safe execution disclosure. saved run/tree/active-path and cancel reads do not
+need a live model catalog; current availability is checked for new admission.
+historical authority is a description of what was frozen at dispatch, not an
+exact native tool list. these projections never expose
 credentials, dispatch aliases, continuation bytes, or a generation default.
 
 The hard-cut migration deletes the complete legacy Chat aggregate and all

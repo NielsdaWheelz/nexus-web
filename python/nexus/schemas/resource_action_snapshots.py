@@ -112,7 +112,6 @@ SimpleResourceActionCapabilityKind = Literal[
     "EditNoteBody",
     "RenameContributor",
     "RegenerateArtifact",
-    "MakeArtifactRevisionCurrent",
     "RemoveMedia",
     "LibraryPlacement",
     "OfflineAudio",
@@ -222,7 +221,6 @@ class TranscriptResourceActionCapabilityOut(BaseModel):
         "Ready",
         "Partial",
         "Unavailable",
-        "FailedQuota",
         "FailedProvider",
     ]
     coverage: Literal["None", "Partial", "Full"]

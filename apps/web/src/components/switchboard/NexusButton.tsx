@@ -1,220 +1,107 @@
 "use client";
 
-import {
-  useCallback,
-  useLayoutEffect,
-  useRef,
-  type PointerEvent as ReactPointerEvent,
-} from "react";
+// The mobile Nexus trigger: a tap opens the switchboard inside the gesture; a horizontal
+// touch swipe switches to the adjacent tab instead (left: next, right: previous).
+import { useLayoutEffect, useRef, type PointerEvent, type RefObject } from "react";
 import { flushSync } from "react-dom";
 import AsterismMark from "@/components/AsterismMark";
 import { useMobileViewport } from "@/lib/mobileViewport/MobileViewportProvider";
-import {
-  useMobileChrome,
-  useMobileChromeSurface,
-} from "@/lib/workspace/mobileChrome";
-import {
-  beginNexusPerformance,
-  NEXUS_OPEN_PERFORMANCE,
-} from "@/lib/nexus/performance";
+import { useMobileChrome, useMobileChromeSurface } from "@/lib/workspace/mobileChrome";
 import type { WorkspaceAdjacentPaneDirection } from "@/lib/workspace/store";
-import styles from "./switchboard.module.css";
+import styles from "@/components/nexus/Nexus.module.css";
 
-const TOUCH_MOVEMENT_SLOP_PX = 8;
-const TOUCH_HORIZONTAL_LOCK_RATIO = 1.5;
-const TOUCH_COMMIT_DISPLACEMENT_PX = 20;
+const SLOP_PX = 8;
+const HORIZONTAL_LOCK_RATIO = 1.5;
+const COMMIT_PX = 20;
 
-type TouchPointerAxisState = "Idle" | "Tracking" | "Locked" | "Yielded";
-
-interface TouchPointerOrigin {
-  readonly x: number;
-  readonly y: number;
-}
+/** Idle, or a touch being tracked: Tracking until it leaves the slop, then Locked (horizontal) or Yielded. */
+type Swipe = { readonly phase: "Tracking" | "Locked" | "Yielded"; readonly pointerId: number; readonly x: number; readonly y: number } | null;
 
 export default function NexusButton({
+  buttonRef,
   paneCount,
-  switchboardOpen,
+  open,
   onOpen,
-  onActivateAdjacentPane,
-  onButtonNodeChange,
+  onSwipe,
 }: {
+  buttonRef: RefObject<HTMLButtonElement | null>;
   paneCount: number;
-  switchboardOpen: boolean;
-  onOpen: (opener: HTMLButtonElement) => void;
-  onActivateAdjacentPane: (input: {
-    readonly direction: WorkspaceAdjacentPaneDirection;
-  }) => void;
-  onButtonNodeChange?: (node: HTMLButtonElement | null) => void;
+  open: boolean;
+  onOpen(): void;
+  onSwipe(input: { readonly direction: WorkspaceAdjacentPaneDirection }): void;
 }) {
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const setButtonRef = useCallback(
-    (node: HTMLButtonElement | null) => {
-      buttonRef.current = node;
-      onButtonNodeChange?.(node);
-    },
-    [onButtonNodeChange],
-  );
+  const swipe = useRef<Swipe>(null);
+  const suppressClick = useRef(false);
   const mobileViewport = useMobileViewport();
   const { motionPhase } = useMobileChrome();
-  const motionInert =
-    motionPhase.kind !== "Visible" && motionPhase.kind !== "Pinned";
-  const axisStateRef = useRef<TouchPointerAxisState>("Idle");
-  const pointerIdRef = useRef<number | null>(null);
-  const originRef = useRef<TouchPointerOrigin | null>(null);
-  const suppressNextPointerClickRef = useRef(false);
-  const mountedRef = useRef(false);
-  const operabilityRef = useRef({ switchboardOpen, motionInert });
-  const resetTrackedPointer = useCallback(() => {
-    axisStateRef.current = "Idle";
-    pointerIdRef.current = null;
-    originRef.current = null;
-  }, []);
-  const isButtonOperable = useCallback(() => {
-    const operability = operabilityRef.current;
-    return (
-      mountedRef.current &&
-      !operability.switchboardOpen &&
-      !operability.motionInert
-    );
-  }, []);
+  const inert = open || (motionPhase.kind !== "Visible" && motionPhase.kind !== "Pinned");
   useMobileChromeSurface(buttonRef, "NexusControl", true);
   useLayoutEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      resetTrackedPointer();
-    };
-  }, [resetTrackedPointer]);
-  useLayoutEffect(() => {
-    operabilityRef.current = { switchboardOpen, motionInert };
-    if (switchboardOpen || motionInert) {
-      if (axisStateRef.current !== "Idle") {
-        suppressNextPointerClickRef.current = true;
-      }
-      resetTrackedPointer();
-    }
-  }, [motionInert, resetTrackedPointer, switchboardOpen]);
+    if (!inert) return;
+    if (swipe.current) suppressClick.current = true;
+    swipe.current = null;
+  }, [inert]);
   useLayoutEffect(() => {
     const element = wrapperRef.current;
-    if (switchboardOpen || !element) return;
+    if (open || !element) return;
     return mobileViewport.registerBottomSurface("Nexus", element);
-  }, [mobileViewport, switchboardOpen]);
+  }, [mobileViewport, open]);
 
-  const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (axisStateRef.current !== "Idle") {
-      suppressNextPointerClickRef.current = true;
-      resetTrackedPointer();
-      return;
-    }
-    suppressNextPointerClickRef.current = false;
-    if (
-      !event.isPrimary ||
-      event.pointerType !== "touch" ||
-      !isButtonOperable()
-    ) {
-      return;
-    }
-
-    axisStateRef.current = "Tracking";
-    pointerIdRef.current = event.pointerId;
-    originRef.current = { x: event.clientX, y: event.clientY };
-    event.currentTarget.setPointerCapture(event.pointerId);
+  const tracked = (event: PointerEvent) => (swipe.current?.pointerId === event.pointerId ? swipe.current : null);
+  const cancel = (event: PointerEvent) => {
+    if (tracked(event)) swipe.current = null;
   };
 
-  const handlePointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    const axisState = axisStateRef.current;
-    if (axisState === "Idle" || pointerIdRef.current !== event.pointerId)
-      return;
-    const origin = originRef.current;
-    if (!origin) return;
-
-    const displacement = {
-      dx: event.clientX - origin.x,
-      dy: event.clientY - origin.y,
-    };
-    if (
-      axisState !== "Tracking" ||
-      Math.hypot(displacement.dx, displacement.dy) < TOUCH_MOVEMENT_SLOP_PX
-    ) {
-      return;
-    }
-
-    suppressNextPointerClickRef.current = true;
-    axisStateRef.current =
-      Math.abs(displacement.dx) >=
-      TOUCH_HORIZONTAL_LOCK_RATIO * Math.abs(displacement.dy)
-        ? "Locked"
-        : "Yielded";
-  };
-
-  const handlePointerUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    const axisState = axisStateRef.current;
-    if (axisState === "Idle" || pointerIdRef.current !== event.pointerId)
-      return;
-    const origin = originRef.current;
-    const displacement = origin
-      ? {
-          dx: event.clientX - origin.x,
-          dy: event.clientY - origin.y,
-        }
-      : null;
-    const direction: WorkspaceAdjacentPaneDirection | null =
-      axisState === "Locked" &&
-      displacement !== null &&
-      Math.abs(displacement.dx) >= TOUCH_COMMIT_DISPLACEMENT_PX
-        ? displacement.dx < 0
-          ? "Next"
-          : "Previous"
-        : null;
-
-    resetTrackedPointer();
-    if (direction === null || !isButtonOperable()) return;
-    onActivateAdjacentPane({ direction });
-  };
-
-  const cancelTrackedPointer = (
-    event: ReactPointerEvent<HTMLButtonElement>,
-  ) => {
-    if (
-      axisStateRef.current === "Idle" ||
-      pointerIdRef.current !== event.pointerId
-    ) {
-      return;
-    }
-    resetTrackedPointer();
-  };
-
-  const label =
-    paneCount === 1 ? "Open Nexus, 1 tab" : `Open Nexus, ${paneCount} tabs`;
   return (
-    <div
-      ref={wrapperRef}
-      className={styles.nexusWrapper}
-    >
+    <div ref={wrapperRef} className={styles.nexusWrapper}>
       <button
-        ref={setButtonRef}
-        data-nexus-return-focus
+        ref={buttonRef}
         type="button"
         className={styles.nexusButton}
-        aria-label={label}
+        aria-label={paneCount === 1 ? "Open Nexus, 1 tab" : `Open Nexus, ${paneCount} tabs`}
         aria-haspopup="dialog"
-        aria-hidden={motionInert || switchboardOpen || undefined}
-        inert={motionInert || switchboardOpen || undefined}
-        data-switchboard-open={switchboardOpen || undefined}
+        aria-hidden={inert || undefined}
+        inert={inert || undefined}
+        data-switchboard-open={open || undefined}
         data-mobile-chrome-phase={motionPhase.kind}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={cancelTrackedPointer}
-        onLostPointerCapture={cancelTrackedPointer}
-        onClick={(event) => {
-          if (event.detail > 0 && suppressNextPointerClickRef.current) {
-            suppressNextPointerClickRef.current = false;
+        onPointerDown={(event) => {
+          if (swipe.current) {
+            suppressClick.current = true;
+            swipe.current = null;
             return;
           }
-          beginNexusPerformance(NEXUS_OPEN_PERFORMANCE);
-          flushSync(() => onOpen(event.currentTarget));
+          suppressClick.current = false;
+          if (!event.isPrimary || event.pointerType !== "touch" || inert) return;
+          swipe.current = { phase: "Tracking", pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={(event) => {
+          const current = tracked(event);
+          if (current?.phase !== "Tracking") return;
+          const dx = event.clientX - current.x;
+          const dy = event.clientY - current.y;
+          if (Math.hypot(dx, dy) < SLOP_PX) return;
+          suppressClick.current = true;
+          swipe.current = { ...current, phase: Math.abs(dx) >= HORIZONTAL_LOCK_RATIO * Math.abs(dy) ? "Locked" : "Yielded" };
+        }}
+        onPointerUp={(event) => {
+          const current = tracked(event);
+          if (!current) return;
+          swipe.current = null;
+          const dx = event.clientX - current.x;
+          if (current.phase === "Locked" && Math.abs(dx) >= COMMIT_PX && !inert) {
+            onSwipe({ direction: dx < 0 ? "Next" : "Previous" });
+          }
+        }}
+        onPointerCancel={cancel}
+        onLostPointerCapture={cancel}
+        onClick={(event) => {
+          if (event.detail > 0 && suppressClick.current) {
+            suppressClick.current = false;
+            return;
+          }
+          flushSync(onOpen);
         }}
       >
         <span className={styles.nexusFace}>

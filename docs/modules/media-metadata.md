@@ -63,8 +63,7 @@ request cannot install into a newer overlay session.
 
 author works sort oldest first by default on `media.original_published_date`.
 podcasts and catalogue-only gutenberg works have unknown publication dates and
-sort last in either date direction. the gutenberg `issued` date remains a
-provider release fact; it never substitutes for the work's publication date.
+sort last in either date direction. the gutenberg mirror stores no date.
 
 the forward-only `0229` migration requires maintenance, drained publication work,
 and stopped old api/workers. it drops the mixed old date without copying it and

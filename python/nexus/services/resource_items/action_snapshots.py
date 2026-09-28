@@ -128,7 +128,6 @@ _TranscriptActionState = Literal[
     "Ready",
     "Partial",
     "Unavailable",
-    "FailedQuota",
     "FailedProvider",
 ]
 _TranscriptActionCoverage = Literal["None", "Partial", "Full"]
@@ -140,7 +139,6 @@ _TRANSCRIPT_ACTION_STATE: dict[str | None, _TranscriptActionState] = {
     "ready": "Ready",
     "partial": "Partial",
     "unavailable": "Unavailable",
-    "failed_quota": "FailedQuota",
     "failed_provider": "FailedProvider",
 }
 _TRANSCRIPT_ACTION_COVERAGE: dict[str | None, _TranscriptActionCoverage] = {
@@ -246,8 +244,8 @@ class _ResolvedFacts:
     visible_conversation_ids: set[UUID]
     message_action: dict[UUID, conversations.MessageActionFacts]
     highlight_action: dict[UUID, highlights.HighlightActionFacts]
-    artifact_action: dict[UUID, artifact_engine.ArtifactActionFacts]
-    artifact_revision_action: dict[UUID, artifact_engine.ArtifactActionFacts]
+    artifact_has_active_build: dict[UUID, bool]
+    visible_artifact_revision_ids: set[UUID]
     visible_evidence_span_ids: set[UUID]
     visible_content_chunk_ids: set[UUID]
     visible_fragment_ids: set[UUID]
@@ -275,7 +273,7 @@ class _ResolvedFacts:
                 media_ids=media_ids,
             )
         }
-        artifact_candidates, artifact_revision_candidates = (
+        artifact_candidates, artifact_revision_subjects = (
             artifact_engine.artifact_action_candidates(
                 db,
                 viewer_id=viewer_id,
@@ -284,12 +282,12 @@ class _ResolvedFacts:
             )
         )
         artifact_subject_refs = {
-            candidate.subject_ref.uri: candidate.subject_ref
-            for candidate in (
-                *artifact_candidates.values(),
-                *artifact_revision_candidates.values(),
+            subject_ref.uri: subject_ref
+            for subject_ref in (
+                *(candidate.subject_ref for candidate in artifact_candidates.values()),
+                *artifact_revision_subjects.values(),
             )
-            if candidate.subject_ref is not None
+            if subject_ref is not None
         }
         nested_library_ids = [
             ref.id for ref in artifact_subject_refs.values() if ref.scheme == "library"
@@ -328,21 +326,18 @@ class _ResolvedFacts:
             or (ref.scheme == "conversation" and ref.id in visible_conversation_ids)
         )
 
-        def candidate_visible(candidate: artifact_engine.ArtifactActionCandidate) -> bool:
-            return (
-                candidate.subject_ref is None
-                or candidate.subject_ref.uri in visible_artifact_subject_uris
-            )
+        def candidate_visible(subject_ref: ResourceRef | None) -> bool:
+            return subject_ref is None or subject_ref.uri in visible_artifact_subject_uris
 
-        artifact_action = {
-            artifact_id: candidate.facts
+        artifact_has_active_build = {
+            artifact_id: candidate.has_active_build
             for artifact_id, candidate in artifact_candidates.items()
-            if candidate_visible(candidate)
+            if candidate_visible(candidate.subject_ref)
         }
-        artifact_revision_action = {
-            revision_id: candidate.facts
-            for revision_id, candidate in artifact_revision_candidates.items()
-            if candidate_visible(candidate)
+        visible_artifact_revision_ids = {
+            revision_id
+            for revision_id, subject_ref in artifact_revision_subjects.items()
+            if candidate_visible(subject_ref)
         }
         return cls(
             media=media,
@@ -370,8 +365,8 @@ class _ResolvedFacts:
             highlight_action=highlights.highlight_action_facts(
                 db, viewer_id=viewer_id, highlight_ids=ids("highlight")
             ),
-            artifact_action=artifact_action,
-            artifact_revision_action=artifact_revision_action,
+            artifact_has_active_build=artifact_has_active_build,
+            visible_artifact_revision_ids=visible_artifact_revision_ids,
             visible_evidence_span_ids=visible_evidence_span_ids(
                 db, viewer_id=viewer_id, evidence_span_ids=ids("evidence_span")
             ),
@@ -408,9 +403,9 @@ class _ResolvedFacts:
         if scheme == "reader_apparatus_item":
             return ref.id in self.visible_reader_apparatus_item_ids
         if scheme == "artifact":
-            return ref.id in self.artifact_action
+            return ref.id in self.artifact_has_active_build
         if scheme == "artifact_revision":
-            return ref.id in self.artifact_revision_action
+            return ref.id in self.visible_artifact_revision_ids
         # justify-defect: callers only pass batched-visibility schemes here.
         raise AssertionError(f"{scheme} is not a batched-visibility scheme")
 
@@ -519,7 +514,7 @@ def _capabilities_for_ref(
     elif ref.scheme == "artifact":
         _extend_artifact(ref, facts=facts, capabilities=capabilities)
     elif ref.scheme == "artifact_revision":
-        _extend_artifact_revision(ref, facts=facts, capabilities=capabilities)
+        pass
     elif ref.scheme == "external_snapshot":
         pass
     elif ref.scheme == "contributor":
@@ -740,26 +735,15 @@ def _extend_artifact(
     facts: _ResolvedFacts,
     capabilities: list[ResourceActionCapabilityOut],
 ) -> None:
-    action = facts.artifact_action.get(ref.id)
-    if action is None:
+    has_active_build = facts.artifact_has_active_build.get(ref.id)
+    if has_active_build is None:
         return
     capabilities.append(
         _simple(
             "RegenerateArtifact",
-            _blocked("Processing") if action.has_active_build else _available(),
+            _blocked("Processing") if has_active_build else _available(),
         )
     )
-
-
-def _extend_artifact_revision(
-    ref: ResourceRef,
-    *,
-    facts: _ResolvedFacts,
-    capabilities: list[ResourceActionCapabilityOut],
-) -> None:
-    action = facts.artifact_revision_action.get(ref.id)
-    if action is not None and action.is_current_revision is False:
-        capabilities.append(_simple("MakeArtifactRevisionCurrent"))
 
 
 __all__ = ["resolve_action_snapshots"]

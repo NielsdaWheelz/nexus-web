@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Search } from "lucide-react";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import { absent } from "@/lib/api/presence";
@@ -85,8 +85,6 @@ export default function AssistantMessage({
   const trustRun = message.trust_trail?.run;
   const failure = trustRun?.failure ?? null;
   const supportId = trustRun?.support_id ?? absent();
-  const [replacementOpenRequestVersion, setReplacementOpenRequestVersion] =
-    useState(0);
   const isTerminalFailure =
     message.status === "error" || message.status === "cancelled";
   const showFailureCard = isTerminalFailure;
@@ -94,13 +92,25 @@ export default function AssistantMessage({
   // dropped; any terminal status — including a rehydrated `complete` — replaces
   // it (§10), so gate on non-terminal, not merely non-failure.
   const isTerminal = isTerminalFailure || message.status === "complete";
-  const executionPhase =
-    trustRun?.execution.kind === "Present"
-      ? trustRun.execution.value.phase
-      : null;
+  const execution = trustRun?.execution.kind === "Present"
+    ? trustRun.execution.value : null;
+  const executionPhase = execution?.phase ?? null;
   const showSuspendedCard = !isTerminal && executionPhase === "Suspended";
   const showReconnectCard =
     connectionRecovery !== undefined && !isTerminal && !showSuspendedCard;
+  const runStatus = execution?.cancel_requested
+    ? executionPhase === "Suspended"
+      ? "Stop requested; outcome unconfirmed."
+      : "Stop requested."
+    : executionPhase === "Suspended"
+      ? "Response paused."
+    : executionPhase === "Recovering"
+      ? "Recovering response."
+      : executionPhase === "Queued"
+        ? "Response queued."
+        : executionPhase === "Running"
+          ? "Response running."
+          : null;
 
   const {
     answerRef,
@@ -118,16 +128,6 @@ export default function AssistantMessage({
     scheme: "message",
     id: message.id,
   });
-  const rerunNeedsReplacement =
-    isTerminalFailure &&
-    message.can_rerun &&
-    trustRun?.run_selection !== undefined &&
-    !trustRun.run_selection.rerun_eligibility;
-  const rerunFromFailureCard = rerunNeedsReplacement
-    ? () =>
-        setReplacementOpenRequestVersion((currentVersion) => currentVersion + 1)
-    : onRerun;
-
   return (
     <div
       className={styles.message}
@@ -139,9 +139,14 @@ export default function AssistantMessage({
       onKeyUp={captureSelection}
     >
       {message.status === "pending" &&
+      (executionPhase === "Queued" || executionPhase === "Running") &&
       !showReconnectCard &&
-      !showSuspendedCard ? (
+      !showSuspendedCard &&
+      !execution?.cancel_requested ? (
         <StreamingGutterCue />
+      ) : null}
+      {!isTerminal && !showSuspendedCard && runStatus ? (
+        <p>{runStatus}</p>
       ) : null}
       {showSuspendedCard ? null : <ToolActivity toolCalls={toolCalls} />}
       {renderAssistantBody ? (
@@ -187,16 +192,24 @@ export default function AssistantMessage({
           failure={failure}
           supportId={supportId}
           canRerun={message.can_rerun}
-          onRerun={rerunFromFailureCard}
+          onRerun={onRerun}
           rerunning={rerunning}
         />
-      ) : showSuspendedCard ? (
-        <ChatFailureCard mode="suspended" />
       ) : showReconnectCard && connectionRecovery ? (
         <ChatFailureCard
           mode="reconnect"
           recovery={connectionRecovery}
           onReconnect={() => onReconnectAssistant(message.id)}
+        />
+      ) : showSuspendedCard ? (
+        <ChatFailureCard
+          mode="suspended"
+          stopRequested={execution?.cancel_requested ?? false}
+          onCheckStatus={connectionRecovery &&
+            (connectionRecovery.kind !== "Failed" || connectionRecovery.retryable)
+            ? () => onReconnectAssistant(message.id)
+            : undefined}
+          checking={connectionRecovery?.kind === "Reconnecting"}
         />
       ) : null}
       {message.status !== "pending" ? (
@@ -208,7 +221,6 @@ export default function AssistantMessage({
               operation={isTerminalFailure ? "Rerun" : "Regenerate"}
               runSelection={trustRun.run_selection}
               disabled={rerunning}
-              openRequestVersion={replacementOpenRequestVersion}
               onConfirm={(selection, catalogDefinitionRevision) => {
                 if (isTerminalFailure) {
                   return onRerunWithSelection(

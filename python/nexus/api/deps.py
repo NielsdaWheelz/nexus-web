@@ -7,18 +7,29 @@ from fastapi import Header, Request
 
 from nexus.auth.bearer import parse_bearer_token
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.logging import set_stream_jti
 from nexus.services import stream_tokens
 from nexus.services.generation_catalog import GenerationCatalogService
 from nexus.services.tool_runtime.declarations import BROWSER_TOOL_PROJECTION_REVISION
 
 TOOL_PROJECTION_HEADER = "X-Nexus-Tool-Projection"
+CHAT_CONTRACT_HEADER = "X-Nexus-Chat-Contract"
+CHAT_CONTRACT_REVISION = "1"
+
+
+def require_chat_contract_revision(
+    revision: Annotated[str | None, Header(alias=CHAT_CONTRACT_HEADER)] = None,
+) -> None:
+    if revision != CHAT_CONTRACT_REVISION:
+        raise ApiError(
+            ApiErrorCode.E_CHAT_CONTRACT_RELOAD_REQUIRED,
+            "Reload Nexus to continue",
+        )
 
 
 def require_tool_projection_revision(
     revision: Annotated[str | None, Header(alias=TOOL_PROJECTION_HEADER)] = None,
 ) -> None:
-    """Reject stale same-system Chat clients before auth, reads, or mutation."""
+    """Reject stale tool clients after HTTP middleware authentication."""
 
     if revision != BROWSER_TOOL_PROJECTION_REVISION:
         raise ApiError(
@@ -38,9 +49,7 @@ def get_stream_viewer(request: Request) -> UUID:
         raise ApiError(
             ApiErrorCode.E_STREAM_TOKEN_INVALID, "Missing or invalid Authorization header"
         )
-    verified = stream_tokens.verify_stream_token(token)
-    set_stream_jti(verified.jti)
-    return verified.user_id
+    return stream_tokens.verify_stream_token(token)
 
 
 def get_generation_catalog_service(request: Request) -> GenerationCatalogService:

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { TOOL_PROJECTION_HEADER } from "./client";
+import { CHAT_CONTRACT_HEADER, CHAT_CONTRACT_REVISION, TOOL_PROJECTION_HEADER } from "./client";
 import { TOOL_PROJECTION_REVISION } from "@/lib/conversations/toolContractProjection";
 import {
   sseClientDirect,
@@ -69,7 +69,7 @@ export async function openGenerationRunStream<TEvent>(
     },
     requestHeaders:
       kind === "chat-runs"
-        ? { [TOOL_PROJECTION_HEADER]: TOOL_PROJECTION_REVISION }
+        ? { [TOOL_PROJECTION_HEADER]: TOOL_PROJECTION_REVISION, [CHAT_CONTRACT_HEADER]: CHAT_CONTRACT_REVISION }
         : undefined,
   });
 }

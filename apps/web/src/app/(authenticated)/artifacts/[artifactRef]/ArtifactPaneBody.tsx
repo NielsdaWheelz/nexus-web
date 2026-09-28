@@ -22,15 +22,12 @@ import {
   useDossierSelector,
   type DossierControllerStore,
 } from "@/lib/dossiers/dossierControllerStore";
-import { artifactPaneHref } from "@/lib/dossiers/generationAdapter";
 import {
   requirePaneRuntime,
   usePaneParam,
   usePaneIsActive,
   usePaneReturnReady,
-  usePaneRouter,
   usePaneRuntime,
-  usePaneSearchParams,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import type { PaneRuntimeContextValue } from "@/lib/panes/paneRuntime";
@@ -252,8 +249,6 @@ export default function ArtifactPaneBody() {
   );
   const isPaneActive = usePaneIsActive();
   const activatePaneTarget = paneRuntime.activateTarget;
-  const router = usePaneRouter();
-  const searchParams = usePaneSearchParams();
   const store = useArtifactDossierStore(artifactRef);
   const state = useDossierSelector(store, (snapshot) => snapshot);
   const identity =
@@ -267,15 +262,10 @@ export default function ArtifactPaneBody() {
   const [findCapability, setFindCapability] =
     useState<DossierDocumentFindCapability | null>(null);
   const displayedRevisionRef =
-    state.head.kind !== "Ready"
-      ? null
-      : state.revisionSelection.kind === "Historical"
-        ? state.historicalRevision.kind === "Ready"
-          ? state.historicalRevision.revision.revisionRef
-          : null
-        : state.head.ready.currentRevision.kind === "Present"
-          ? state.head.ready.currentRevision.value.revisionRef
-          : null;
+    state.head.kind === "Ready" &&
+    state.head.ready.current_revision.kind === "Present"
+      ? state.head.ready.current_revision.value.revision_ref
+      : null;
   const exactFindCapability =
     findCapability?.revisionRef === displayedRevisionRef
       ? findCapability
@@ -284,24 +274,6 @@ export default function ArtifactPaneBody() {
   const paneActiveRef = useRef(isPaneActive);
   findCapabilityRef.current = exactFindCapability;
   paneActiveRef.current = isPaneActive;
-
-  const revisionRef = searchParams.get("revision");
-  useEffect(() => {
-    if (revisionRef) store.selectHistorical(revisionRef);
-    else store.selectCurrent();
-  }, [revisionRef, store]);
-
-  const canonicalHref = artifactPaneHref(artifactRef);
-  const selectRevision = useCallback(
-    (nextRevisionRef: string | null) => {
-      const href =
-        nextRevisionRef === null
-          ? canonicalHref
-          : `${canonicalHref}?revision=${encodeURIComponent(nextRevisionRef)}`;
-      router.replace(href, { labelHint: title ?? "Dossier" });
-    },
-    [canonicalHref, router, title],
-  );
 
   const actionSubject = useMemo(
     () => ({
@@ -388,7 +360,6 @@ export default function ArtifactPaneBody() {
         store={store}
         onViewMediaEvidence={viewMediaEvidence}
         onCitationActivate={activateCitation}
-        onRevisionSelect={selectRevision}
         onFindCapabilityChange={handleFindCapabilityChange}
         onFindRequested={handleFindRequested}
       />

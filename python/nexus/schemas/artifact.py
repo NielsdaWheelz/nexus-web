@@ -1,8 +1,8 @@
 """Wire schemas for the universal dossier: head, builds, revisions, events.
 
 The seven public Resource subjects and the internal user-owned Idea subject
-share one read/build/event contract. Every key set here is decoded key-exact by
-``apps/web/src/lib/dossiers``; owned absence is the repository ``Presence[T]``
+share one read/build/event contract. The web reads these as generated types
+(docs/local-rules/typed-wire.md); owned absence is the repository ``Presence[T]``
 encoding, never ``null``.
 """
 
@@ -185,17 +185,15 @@ DossierCoverageOut = Annotated[
 ]
 
 
-class _DossierRevisionFacts(ArtifactSchemaModel):
-    """The facts both revision reads carry.
+class DossierRevisionOut(ArtifactSchemaModel):
+    """The head's one immutable, citation-bearing revision.
 
     ``input_manifest`` is the typed, binding-owned coverage source: coverage is
     derived from it rather than duplicated as a separate count. ``instruction``
     is hoisted from the originating build for display.
     """
 
-    revision_id: UUID
     revision_ref: str
-    is_current: bool
     input_manifest: InputManifestV1
     coverage: DossierCoverageOut
     instruction: Presence[_InstructionText]
@@ -204,23 +202,9 @@ class _DossierRevisionFacts(ArtifactSchemaModel):
     model_name: Presence[str]
     total_tokens: Presence[int]
     created_at: datetime
-    promoted_at: Presence[datetime]
-
-
-class DossierRevisionOut(_DossierRevisionFacts):
-    """One immutable, citation-bearing revision, standalone or as the head's current."""
-
-    artifact_id: UUID
-    artifact_ref: str
     content_html: str
     content_text: str
     citations: list[CitationOut]
-
-
-class DossierRevisionSummaryOut(_DossierRevisionFacts):
-    """One history entry: no body — fetch the single revision for that."""
-
-    citation_count: int = Field(ge=0)
 
 
 class MediaAbstractBuildingOut(ArtifactSchemaModel):
@@ -248,7 +232,7 @@ class MediaAbstractNotAvailableOut(ArtifactSchemaModel):
 
 
 # The Media dossier's subordinate Media Intelligence display: compact, current
-# only, no Generate control and no history of its own.
+# only, no Generate control of its own.
 MediaAbstractOut = Annotated[
     MediaAbstractBuildingOut
     | MediaAbstractReadyOut
@@ -279,9 +263,8 @@ DossierIdentityOut = Annotated[
 class DossierHeadOut(ArtifactSchemaModel):
     """The dossier surface for one subject.
 
-    Every field Absent with ``revision_count`` zero is the legitimate "never
-    generated" state: the head read never inserts a head row. ``media_abstract``
-    is Present only for the Media subject.
+    ``artifact_id`` Absent is the never-generated state: the head read never
+    inserts a head row. ``media_abstract`` is Present only for the Media subject.
     """
 
     artifact_id: Presence[UUID]
@@ -291,7 +274,6 @@ class DossierHeadOut(ArtifactSchemaModel):
     freshness: Presence[DossierFreshness]
     active_build: Presence[DossierBuildSummary]
     latest_unsuccessful_build: Presence[DossierBuildSummary]
-    revision_count: int = Field(ge=0)
     media_abstract: Presence[MediaAbstractOut]
 
 

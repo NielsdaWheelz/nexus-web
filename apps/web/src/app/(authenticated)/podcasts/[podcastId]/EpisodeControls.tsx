@@ -19,9 +19,6 @@ interface EpisodeTranscriptControls {
   transcriptReasonByMediaId: EpisodeTranscriptController[
     "transcriptReasonByMediaId"
   ];
-  transcriptRequestForecastByMediaId: EpisodeTranscriptController[
-    "transcriptRequestForecastByMediaId"
-  ];
   requestingTranscriptMediaIds: Pick<
     EpisodeTranscriptController["requestingTranscriptMediaIds"],
     "ids"
@@ -42,40 +39,25 @@ interface EpisodeControlsProps {
   episode: PodcastEpisodeMedia;
   showNotesExpanded: boolean;
   transcript: EpisodeTranscriptControls;
-  transcriptionAllowed: boolean;
 }
 
 /**
  * Pane-owned controls for one episode row, rendered in the row's expanded
  * region beneath the presenter-driven chrome. Owns only what the episode
  * presenter cannot emit: expanded show notes and the transcript request form
- * (reason + submit + quota hint + provisioning status). Stable commands live
+ * (reason + submit + provisioning status). Stable commands live
  * in the row ActionMenu.
  */
 export default function EpisodeControls({
   episode,
   showNotesExpanded,
   transcript,
-  transcriptionAllowed,
 }: EpisodeControlsProps) {
-  const canRequestTranscript =
-    transcriptionAllowed && canRequestTranscriptForEpisode(episode);
+  const canRequestTranscript = canRequestTranscriptForEpisode(episode);
   const transcriptProvisioningInProgress =
     shouldPollTranscriptProvisioningForEpisode(episode);
   const transcriptReason =
     transcript.transcriptReasonByMediaId[episode.id] ?? "search";
-  const transcriptRequestForecast =
-    transcript.transcriptRequestForecastByMediaId[episode.id];
-  const forecastForSelectedReason =
-    transcriptRequestForecast &&
-    transcriptRequestForecast.reason === transcriptReason
-      ? transcriptRequestForecast
-      : null;
-  const transcriptRequestDisabled =
-    transcript.requestingTranscriptMediaIds.ids.has(episode.id) ||
-    (forecastForSelectedReason
-      ? !forecastForSelectedReason.fits_budget
-      : false);
   const showNotesText = episode.description_text?.trim() ?? "";
 
   return (
@@ -113,7 +95,7 @@ export default function EpisodeControls({
               variant="secondary"
               size="sm"
               aria-label={`Submit transcript request for ${episode.mediaSummary.title}`}
-              disabled={transcriptRequestDisabled}
+              disabled={transcript.requestingTranscriptMediaIds.ids.has(episode.id)}
               onClick={() =>
                 void transcript.handleRequestTranscript(episode.id)
               }
@@ -122,25 +104,6 @@ export default function EpisodeControls({
                 ? "Requesting..."
                 : "Request transcript"}
             </Button>
-            {forecastForSelectedReason && (
-              <span className={styles.transcriptRequestHint}>
-                {forecastForSelectedReason.source === "request"
-                  ? forecastForSelectedReason.request_enqueued
-                    ? "queued"
-                    : "acknowledged"
-                  : "estimate"}{" "}
-                · {forecastForSelectedReason.required_minutes} min · remaining{" "}
-                {forecastForSelectedReason.remaining_minutes == null
-                  ? "unlimited"
-                  : `${forecastForSelectedReason.remaining_minutes} min`}
-              </span>
-            )}
-            {forecastForSelectedReason &&
-              !forecastForSelectedReason.fits_budget && (
-                <span className={styles.transcriptQuotaWarning}>
-                  Not enough monthly transcription quota for this request.
-                </span>
-              )}
           </>
         )}
       {!canRequestTranscript && transcriptProvisioningInProgress && (

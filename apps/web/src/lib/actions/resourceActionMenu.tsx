@@ -71,7 +71,6 @@ import type { ActionSelectDetail } from "@/lib/ui/actionDescriptor";
 import {
   createDossierBuild,
   learnDossierFromHighlight,
-  makeDossierRevisionCurrent,
 } from "@/lib/dossiers/generationAdapter";
 import { requestHighlightActionIntent } from "@/lib/highlights/actionIntent";
 import {
@@ -659,34 +658,9 @@ export function resourceActionDescriptors({
               activate(activation, ports);
               return;
             }
-            const path = `/api/media/${id()}/transcript/request` as const;
-            const forecast = await apiFetch<{
-              data: {
-                required_minutes: number;
-                remaining_minutes: number | null;
-                fits_budget: boolean;
-              };
-            }>(path, {
+            await apiFetch(`/api/media/${id()}/transcript/request`, {
               method: "POST",
-              body: JSON.stringify({ reason: "episode_open", dry_run: true }),
-            });
-            if (!forecast.data.fits_budget) {
-              ports.feedback.publish({
-                kind: "Hud",
-                content: {
-                  tone: "Danger",
-                  title: "Transcript quota is exhausted",
-                  message:
-                    forecast.data.remaining_minutes === null
-                      ? undefined
-                      : `${forecast.data.remaining_minutes} minutes remain; this transcript needs ${forecast.data.required_minutes}.`,
-                },
-              });
-              return;
-            }
-            await apiFetch(path, {
-              method: "POST",
-              body: JSON.stringify({ reason: "episode_open", dry_run: false }),
+              body: JSON.stringify({ reason: "episode_open" }),
             });
           },
           {
@@ -724,10 +698,7 @@ export function resourceActionDescriptors({
                 returnFocusFallback: present(() =>
                   findPaneLandmarkFocusTarget(ports.activePaneId),
                 ),
-                mutation: ports.createOverlayMutationBoundary(
-                  ref,
-                  "RelationshipAction.LibraryPlacement",
-                ),
+                reconcileActions: () => ports.reconcile(subjectScope),
               },
             });
           },
@@ -1008,7 +979,7 @@ export function resourceActionDescriptors({
             ports.workspace.activateWorkspaceTarget({
               originPaneId: ports.activePaneId,
               target: {
-                href: `/artifacts/${encodeURIComponent(outcome.artifactRef)}`,
+                href: `/artifacts/${encodeURIComponent(outcome.artifact_ref)}`,
                 labelHint: "Dossier",
               },
               disposition: { kind: "Follow" },
@@ -1029,15 +1000,6 @@ export function resourceActionDescriptors({
             });
           },
           { reconcile: subjectScope },
-        );
-      case "MakeArtifactRevisionCurrent":
-        return make(
-          capability,
-          "ResourceOperation.ArtifactRevision.MakeCurrent",
-          async () => {
-            await makeDossierRevisionCurrent(ref);
-          },
-          { reconcile: allScope },
         );
       case "HighlightNote":
         return make(

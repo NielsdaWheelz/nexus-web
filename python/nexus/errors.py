@@ -34,11 +34,7 @@ class ApiErrorCode(str, Enum):
     E_OWNER_REQUIRED = ("E_OWNER_REQUIRED", 403)
     E_OWNER_EXIT_FORBIDDEN = ("E_OWNER_EXIT_FORBIDDEN", 403)
 
-    # Billing entitlement errors
-    E_BILLING_REQUIRED = ("E_BILLING_REQUIRED", 402)
-
-    # Billing availability errors
-    E_BILLING_DISABLED = ("E_BILLING_DISABLED", 503)
+    # Configuration availability errors
     E_DOSSIER_WEB_RESEARCH_NOT_CONFIGURED = ("E_DOSSIER_WEB_RESEARCH_NOT_CONFIGURED", 503)
 
     # Not found errors
@@ -50,7 +46,6 @@ class ApiErrorCode(str, Enum):
     E_USER_NOT_FOUND = ("E_USER_NOT_FOUND", 404)
     E_INVITE_NOT_FOUND = ("E_INVITE_NOT_FOUND", 404)
     E_DOSSIER_NOT_FOUND = ("E_DOSSIER_NOT_FOUND", 404)
-    E_DOSSIER_REVISION_NOT_FOUND = ("E_DOSSIER_REVISION_NOT_FOUND", 404)
     E_UPLOAD_SESSION_NOT_FOUND = ("E_UPLOAD_SESSION_NOT_FOUND", 404)
     E_IMPORT_NOT_FOUND = ("E_IMPORT_NOT_FOUND", 404)
 
@@ -68,7 +63,6 @@ class ApiErrorCode(str, Enum):
     E_INVALID_CURSOR = ("E_INVALID_CURSOR", 400)
     E_INVALID_BROWSE_QUERY = ("E_INVALID_BROWSE_QUERY", 400)
     E_INVALID_DISCOVERY_TARGET = ("E_INVALID_DISCOVERY_TARGET", 400)
-    E_STRIPE_WEBHOOK_INVALID = ("E_STRIPE_WEBHOOK_INVALID", 400)
     E_BRANCH_PATH_INVALID = ("E_BRANCH_PATH_INVALID", 400)
     E_BRANCH_ANCHOR_INVALID = ("E_BRANCH_ANCHOR_INVALID", 400)
     E_DOSSIER_INVALID_SUBJECT = ("E_DOSSIER_INVALID_SUBJECT", 400)
@@ -97,13 +91,13 @@ class ApiErrorCode(str, Enum):
     E_COLLECTION_CHANGED = ("E_COLLECTION_CHANGED", 409)
     E_SELECTION_CHANGED = ("E_SELECTION_CHANGED", 409)
     E_TOOL_PROJECTION_RELOAD_REQUIRED = ("E_TOOL_PROJECTION_RELOAD_REQUIRED", 409)
+    E_CHAT_CONTRACT_RELOAD_REQUIRED = ("E_CHAT_CONTRACT_RELOAD_REQUIRED", 409)
     E_PODCAST_REPLACES_EPISODES = ("E_PODCAST_REPLACES_EPISODES", 409)
     E_PODCAST_EPISODE_IDENTITY_CONFLICT = ("E_PODCAST_EPISODE_IDENTITY_CONFLICT", 409)
     E_PODCAST_SUBSCRIPTION_REQUIRED = ("E_PODCAST_SUBSCRIPTION_REQUIRED", 409)
     E_IDEMPOTENCY_CONFLICT = ("E_IDEMPOTENCY_CONFLICT", 409)
     E_UPLOAD_GENERATION_STALE = ("E_UPLOAD_GENERATION_STALE", 409)
     E_UPLOAD_ALREADY_PUBLISHED = ("E_UPLOAD_ALREADY_PUBLISHED", 409)
-    E_UPLOAD_VERIFICATION_IN_PROGRESS = ("E_UPLOAD_VERIFICATION_IN_PROGRESS", 409)
     E_UPLOAD_INTENT_MISMATCH = ("E_UPLOAD_INTENT_MISMATCH", 409)
 
     # Highlight errors
@@ -115,7 +109,7 @@ class ApiErrorCode(str, Enum):
     # LLM errors
     E_APP_SEARCH_FAILED = ("E_APP_SEARCH_FAILED", 500)  # Required in-app retrieval failed
     E_MESSAGE_TOO_LONG = ("E_MESSAGE_TOO_LONG", 400)  # Message exceeds 20,000 char limit
-    E_RATE_LIMITED = ("E_RATE_LIMITED", 429)  # Per-user rate limit exceeded
+    E_RATE_LIMITED = ("E_RATE_LIMITED", 429)  # SSE listener capacity exhausted (db/listen.py)
     E_IDEMPOTENCY_KEY_REPLAY_MISMATCH = (
         "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH",
         409,
@@ -143,14 +137,8 @@ class ApiErrorCode(str, Enum):
 
     # Streaming errors
     E_CLIENT_DISCONNECT = ("E_CLIENT_DISCONNECT", 499)  # stream aborted by client
-    E_RATE_LIMITER_UNAVAILABLE = ("E_RATE_LIMITER_UNAVAILABLE", 503)  # budget system down
     E_STREAM_TOKEN_EXPIRED = ("E_STREAM_TOKEN_EXPIRED", 401)  # token past expiry
-    E_STREAM_TOKEN_REPLAYED = ("E_STREAM_TOKEN_REPLAYED", 401)  # jti already used
     E_STREAM_TOKEN_INVALID = ("E_STREAM_TOKEN_INVALID", 401)  # signature or claims failed
-    E_PODCAST_QUOTA_EXCEEDED = (
-        "E_PODCAST_QUOTA_EXCEEDED",
-        429,
-    )  # monthly transcription quota exceeded
 
     # EPUB errors
     E_RETRY_INVALID_STATE = ("E_RETRY_INVALID_STATE", 409)
@@ -160,7 +148,6 @@ class ApiErrorCode(str, Enum):
         "E_REGENERATION_NOT_ALLOWED",
         409,
     )  # completed answer not regeneratable
-    E_CHAPTER_NOT_FOUND = ("E_CHAPTER_NOT_FOUND", 404)
     E_ARCHIVE_UNSAFE = ("E_ARCHIVE_UNSAFE", 400)
     E_EPUB_FIND_SOURCE_CHANGED = ("E_EPUB_FIND_SOURCE_CHANGED", 409)
 
@@ -234,7 +221,6 @@ class ApiErrorCode(str, Enum):
     E_SIGN_DOWNLOAD_FAILED = ("E_SIGN_DOWNLOAD_FAILED", 500)
     E_STORAGE_ERROR = ("E_STORAGE_ERROR", 500)
     E_SANITIZATION_FAILED = ("E_SANITIZATION_FAILED", 500)
-    E_BILLING_NOT_CONFIGURED = ("E_BILLING_NOT_CONFIGURED", 500)
 
 
 def exception_error_detail(
@@ -268,12 +254,10 @@ class ApiError(Exception):
         code: ApiErrorCode,
         message: str,
         *,
-        retry_after_seconds: int | None = None,
         details: dict[str, Any] | None = None,
     ):
         self.code = code
         self.message = message
-        self.retry_after_seconds = retry_after_seconds
         self.details = details
         self.status_code = code.status
         super().__init__(message)

@@ -158,7 +158,6 @@ def accept_email_message(
             "subject": subject,
             "edition_published_date": edition_date.model_dump(),
         },
-        request_id=request_id,
         idempotency_key=None,
         status="accepted",
     )

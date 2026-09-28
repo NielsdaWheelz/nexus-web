@@ -10,7 +10,6 @@ import {
   FilePenLine,
   GitFork,
   Highlighter,
-  History,
   Info,
   Library,
   Link2,
@@ -236,11 +235,6 @@ export const RESOURCE_ACTION_CATALOG = {
   "ResourceOperation.Artifact.Regenerate": {
     label: "Regenerate",
     icon: Sparkles,
-    group: "CreateTransform",
-  },
-  "ResourceOperation.ArtifactRevision.MakeCurrent": {
-    label: "Make current",
-    icon: History,
     group: "CreateTransform",
   },
   "ResourceAction.Share": {

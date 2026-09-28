@@ -75,6 +75,7 @@ from provider_runtime.types import CancelSignal
 from pydantic import ValidationError
 from starlette.types import Receive, Scope, Send
 
+from nexus.logging import get_logger
 from nexus.services.codex_generation_contract import (
     MAX_ADMISSION_BODY_BYTES,
     MAX_COMMAND_BODY_BYTES,
@@ -116,6 +117,7 @@ _GENERATION_API_URL = "http://172.30.0.4:8000/agent-api"
 _SYNTHESIS_TEXT_RUN_BYTES = 32 * 1024
 _CATALOG_DEADLINE_SECONDS = 90.0
 _GENERATION_ADMISSION_START_GRACE_SECONDS = 15.0
+logger = get_logger(__name__)
 CODEX_AGENT_HOST_REQUEST_DRAIN_SECONDS = 10.0
 CODEX_AGENT_HOST_TEARDOWN_DEADLINE_SECONDS = 30.0
 _EXIT_MARGIN_SECONDS = 5.0
@@ -897,6 +899,26 @@ class _StreamBudget:
         self._bytes += len(line)
 
 
+def _record_turn_failure(
+    error: Exception,
+    cause_code: str,
+    stage: str,
+    command: GenerationCommand,
+    versions: RuntimeVersions,
+) -> None:
+    # Exception text can include prompts or credentials. The class and owned
+    # codes are enough to correlate the first host failure with its child.
+    logger.error(
+        "codex_host.turn_failure",
+        exception_class=type(error).__name__,
+        cause_code=cause_code,
+        stage=stage,
+        generation_id=str(command.request_id),
+        child_seq=1,
+        native_revision=versions.native,
+    )
+
+
 async def _run_turn(
     command: GenerationCommand,
     accepted_at: str,
@@ -1050,7 +1072,10 @@ async def _run_turn(
                     accepted_at=accepted_at,
                     versions=versions,
                 )
-    except CredentialStateUnavailable:
+    except CredentialStateUnavailable as error:
+        _record_turn_failure(
+            error, "credential_state_unavailable", failure_stage, command, versions
+        )
         terminal = _failed_terminal(
             "credential_unavailable",
             stage=failure_stage,
@@ -1060,6 +1085,7 @@ async def _run_turn(
             versions=versions,
         )
     except TurnNotStarted as error:
+        _record_turn_failure(error, error.code, failure_stage, command, versions)
         terminal = _turn_not_started_terminal(
             error,
             stage=failure_stage,
@@ -1068,6 +1094,7 @@ async def _run_turn(
             versions=versions,
         )
     except AgentRuntimeError as error:
+        _record_turn_failure(error, error.code, failure_stage, command, versions)
         terminal = _failed_terminal(
             _runtime_error_kind(error),
             stage=failure_stage,
@@ -1077,6 +1104,7 @@ async def _run_turn(
             versions=versions,
         )
     except AgentRuntimeDefect as error:
+        _record_turn_failure(error, error.code, failure_stage, command, versions)
         terminal = _failed_terminal(
             "runtime_defect",
             stage=failure_stage,
@@ -1085,7 +1113,8 @@ async def _run_turn(
             accepted_at=accepted_at,
             versions=versions,
         )
-    except Exception:
+    except Exception as error:
+        _record_turn_failure(error, "unexpected_failure", failure_stage, command, versions)
         terminal = _failed_terminal(
             "runtime_defect",
             stage=failure_stage,
@@ -1108,7 +1137,14 @@ async def _run_turn(
                         operation.runtime_close_timeout_seconds,
                         runtime_close_unproven=runtime_close_unproven,
                     )
-                except Exception:
+                except Exception as error:
+                    _record_turn_failure(
+                        error,
+                        "client_teardown_unproven",
+                        "runtime_close",
+                        command,
+                        versions,
+                    )
                     if control.reason != "policy_violation":
                         terminal = _failed_terminal(
                             "runtime_defect",
@@ -1124,7 +1160,14 @@ async def _run_turn(
                     await exec_server.stop()
                 except asyncio.CancelledError:
                     cleanup_cancelled = True
-                except Exception:
+                except Exception as error:
+                    _record_turn_failure(
+                        error,
+                        "execution_teardown_unproven",
+                        "execution_stop",
+                        command,
+                        versions,
+                    )
                     runtime_close_unproven.set()
                     terminal = _failed_terminal(
                         "runtime_defect",
@@ -1139,7 +1182,14 @@ async def _run_turn(
                     await native_server.stop()
                 except asyncio.CancelledError:
                     cleanup_cancelled = True
-                except Exception:
+                except Exception as error:
+                    _record_turn_failure(
+                        error,
+                        "native_teardown_unproven",
+                        "native_stop",
+                        command,
+                        versions,
+                    )
                     runtime_close_unproven.set()
                     terminal = _failed_terminal(
                         "runtime_defect",
@@ -1159,7 +1209,14 @@ async def _run_turn(
                 credential_file,
                 expected_identity=credential_identity,
             )
-        except CredentialStateUnavailable:
+        except CredentialStateUnavailable as error:
+            _record_turn_failure(
+                error,
+                "credential_state_unavailable",
+                "credential_sync",
+                command,
+                versions,
+            )
             credential_sync_failed = True
             terminal = _failed_terminal(
                 "runtime_defect",

@@ -343,12 +343,7 @@ def _dynamic_routes_for_refs(
             },
         ).all()
         routes.update(
-            {
-                f"artifact_revision:{row[0]}": (
-                    f"/artifacts/artifact:{row[1]}?revision=artifact_revision:{row[0]}"
-                )
-                for row in rows
-            }
+            {f"artifact_revision:{row[0]}": f"/artifacts/artifact:{row[1]}" for row in rows}
         )
 
     oracle_targets: dict[UUID, ResourceRef] = {}
