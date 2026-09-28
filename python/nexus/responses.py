@@ -5,6 +5,10 @@ All API responses use a consistent envelope:
 - Error: { "error": { "code": "E_...", "message": "...", "request_id": "..." } }
 
 The request_id is included in error responses for debugging and support.
+
+A typed route returns ``Data[XOut]`` or ``DataPage[XOut, PageOut]`` and FastAPI
+serializes it by alias; ``ok``/``ok_page``/``success_response`` serve the routes
+not yet typed (docs/local-rules/typed-wire.md).
 """
 
 from collections.abc import Sequence
@@ -22,6 +26,19 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger, get_request_id
 
 logger = get_logger(__name__)
+
+
+class Data[T](BaseModel):
+    """``{"data": T}``: the success envelope of a typed JSON route."""
+
+    data: T
+
+
+class DataPage[T, P](BaseModel):
+    """``{"data": [T], "page": P}``: the envelope of a typed page route."""
+
+    data: list[T]
+    page: P
 
 
 def success_response(data: Any) -> dict[str, Any]:

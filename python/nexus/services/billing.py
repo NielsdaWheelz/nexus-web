@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.models import BillingAccount, StripeWebhookEvent
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.schemas.billing import BillingAccountOut, BillingUsageBucketOut
+from nexus.schemas.billing import BillingAccountOut, BillingUsageBucketOut, BillingWebhookOut
 from nexus.services.billing_entitlements import (
     ACTIVE_SUBSCRIPTION_STATUSES,
     get_effective_entitlements,
@@ -143,10 +143,12 @@ def create_customer_portal_session(db: Session, user_id: UUID) -> str:
     return str(session["url"])
 
 
-def process_stripe_webhook(db: Session, raw_body: bytes, signature: str | None) -> dict[str, bool]:
+def process_stripe_webhook(
+    db: Session, raw_body: bytes, signature: str | None
+) -> BillingWebhookOut:
     settings = get_settings()
     if not settings.billing_enabled:
-        return {"processed": False}
+        return BillingWebhookOut(processed=False)
     if not settings.stripe_webhook_secret:
         raise ApiError(ApiErrorCode.E_BILLING_NOT_CONFIGURED, "Stripe webhooks are not configured")
     if not signature:
@@ -163,7 +165,7 @@ def process_stripe_webhook(db: Session, raw_body: bytes, signature: str | None) 
         select(StripeWebhookEvent).where(StripeWebhookEvent.stripe_event_id == event_id)
     )
     if existing is not None:
-        return {"processed": False}
+        return BillingWebhookOut(processed=False)
 
     obj = event["data"]["object"]
     if hasattr(obj, "to_dict_recursive"):
@@ -181,7 +183,7 @@ def process_stripe_webhook(db: Session, raw_body: bytes, signature: str | None) 
 
     db.add(StripeWebhookEvent(stripe_event_id=event_id, event_type=event_type))
     db.commit()
-    return {"processed": True}
+    return BillingWebhookOut(processed=True)
 
 
 def get_transcription_usage(

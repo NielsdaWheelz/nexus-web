@@ -262,12 +262,14 @@ def create_app() -> FastAPI:
             content=error_response(code, "Invalid request body"),
         )
 
-    # Include API routes (must be before middleware for correct ordering)
-    # Use router factory to avoid import-time settings loading. The factory owns
-    # every router, including the browser-callable SSE streams and the BFF
-    # stream-token mint.
-    api_router = create_api_router()
-    app.include_router(api_router)
+    # Include API routes (must be before middleware for correct ordering). The
+    # factory owns every router, including the browser-callable SSE streams and
+    # the BFF stream-token mint.
+    app.include_router(
+        create_api_router(
+            podcasts=settings.podcasts_enabled, email_ingest=settings.email_ingest_enabled
+        )
+    )
 
     # Add auth middleware (runs on all requests except public paths)
     verifier = create_token_verifier()

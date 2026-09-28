@@ -51,6 +51,13 @@ shellcheck "${shell_files[@]}"
   bun run build:offline-reading
   bun run build:extension
   bun run lint:css-tokens
+  wire="$(mktemp)"
+  trap 'rm -f "$wire"' EXIT
+  bun run gen:wire "$wire"
+  cmp -s "$wire" src/lib/api/wire.gen.ts || {
+    echo "error: src/lib/api/wire.gen.ts is stale; run: cd apps/web && bun run gen:wire" >&2
+    exit 1
+  }
   bun run lint
   bun run typecheck
 )

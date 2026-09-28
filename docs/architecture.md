@@ -288,7 +288,8 @@ deviation from a rule is explicit, see [`rules/overrides.md`](rules/overrides.md
    publishes its measured phase as `nexus_auth`.
 6. The **route handler** (`api/routes/*`) is transport-only: pull the `Viewer` and
    a DB `Session` via `Depends`, call exactly one **service** function, return
-   `success_response(...)` or raise an `ApiError`. Handlers are plain `def`, so
+   its response model (`Data[XOut]`, per `docs/local-rules/typed-wire.md`) or
+   raise an `ApiError`. Handlers are plain `def`, so
    FastAPI runs the blocking ORM work in a threadpool (never blocking the loop).
 7. The **service** holds the business logic, returns plain data.
 8. On the way out, `RequestDbSessionMiddleware` **releases the pooled DB

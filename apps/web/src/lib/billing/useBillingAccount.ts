@@ -4,38 +4,9 @@ import { useCallback, useState } from "react";
 import { billingAccountResource } from "@/lib/api/resource";
 import { useResource } from "@/lib/api/useResource";
 import type { ApiError } from "@/lib/api/client";
+import type { ApiJson, Schema } from "@/lib/api/wire";
 
-export type BillingPlanTier = "free" | "plus" | "ai_plus" | "ai_pro";
-type BillingEntitlementSource = "free" | "subscription" | "internal_grant";
-
-interface BillingUsageSnapshot {
-  used: number;
-  reserved: number;
-  limit: number | null;
-  remaining: number | null;
-  period_start: string;
-  period_end: string;
-}
-
-interface BillingAccount {
-  billing_enabled: boolean;
-  billing_plan_tier: BillingPlanTier;
-  billing_status: string;
-  subscription_current_period_start: string | null;
-  subscription_current_period_end: string | null;
-  cancel_at_period_end: boolean;
-  can_manage_billing: boolean;
-  entitlement_plan_tier: BillingPlanTier;
-  entitlement_source: BillingEntitlementSource;
-  entitlement_expires_at: string | null;
-  can_share: boolean;
-  can_transcribe: boolean;
-  transcription_usage: BillingUsageSnapshot;
-}
-
-interface BillingAccountResponse {
-  data: BillingAccount;
-}
+export type BillingPlanTier = Schema<"BillingAccountOut">["billing_plan_tier"];
 
 function billingAccountErrorMessage(error: ApiError): string {
   switch (error.code) {
@@ -59,7 +30,7 @@ function billingAccountErrorMessage(error: ApiError): string {
 export function useBillingAccount(options?: { claimSeed?: boolean }) {
   const [reloadVersion, setReloadVersion] = useState(0);
   const accountResource = useResource<
-    BillingAccountResponse,
+    ApiJson<"/billing/account", "get">,
     { refreshVersion: number }
   >({
     descriptor: billingAccountResource,

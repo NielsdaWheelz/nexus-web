@@ -6,6 +6,7 @@ import {
   isApiError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
+import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   FeedbackNotice,
@@ -24,12 +25,6 @@ import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
-
-interface CheckoutResponse {
-  data: {
-    url: string;
-  };
-}
 
 const PLAN_SEQUENCE: BillingPlanTier[] = ["free", "plus", "ai_plus", "ai_pro"];
 const BILLING_DISABLED_MESSAGE =
@@ -162,13 +157,10 @@ function formatDateRange(
   return parts.join(" - ");
 }
 
-function statusSummary(account: {
-  billing_plan_tier: BillingPlanTier;
-  billing_status: string;
-  cancel_at_period_end: boolean;
-  subscription_current_period_end: string | null;
-  entitlement_source: string;
-}, display: RenderEnvironment): string {
+function statusSummary(
+  account: Schema<"BillingAccountOut">,
+  display: RenderEnvironment,
+): string {
   if (account.entitlement_source === "internal_grant") {
     return "Internal access grant.";
   }
@@ -286,10 +278,10 @@ export default function SettingsBillingPaneBody() {
       setCheckoutBusy(planTier);
       setActionError(null);
       try {
-        const response = await apiFetch<CheckoutResponse>("/api/billing/checkout", {
-          method: "POST",
-          body: JSON.stringify({ plan_tier: planTier }),
-        });
+        const response = await apiFetch<ApiJson<"/billing/checkout", "post">>(
+          "/api/billing/checkout",
+          { method: "POST", body: JSON.stringify({ plan_tier: planTier }) },
+        );
         window.location.assign(response.data.url);
       } catch (checkoutError) {
         if (handleUnauthenticatedApiError(checkoutError)) return;
@@ -313,7 +305,7 @@ export default function SettingsBillingPaneBody() {
     setPortalBusy(true);
     setActionError(null);
     try {
-      const response = await apiFetch<CheckoutResponse>("/api/billing/portal", {
+      const response = await apiFetch<ApiJson<"/billing/portal", "post">>("/api/billing/portal", {
         method: "POST",
       });
       window.location.assign(response.data.url);

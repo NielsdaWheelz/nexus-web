@@ -1,8 +1,7 @@
 """API route definitions.
 
-Uses a factory pattern to avoid import-time settings loading.
-This allows tests to import modules without requiring all environment
-variables to be configured upfront.
+The factory takes its two deployment toggles as arguments: the app passes its
+settings, and ``nexus.wire_schema`` passes True for both to describe every route.
 """
 
 from fastapi import APIRouter
@@ -52,15 +51,10 @@ from nexus.api.routes.telemetry import router as telemetry_router
 from nexus.api.routes.users import router as users_router
 from nexus.api.routes.vault import router as vault_router
 from nexus.api.routes.walknotes import router as walknotes_router
-from nexus.config import get_settings
 
 
-def create_api_router() -> APIRouter:
-    """Create and configure the API router.
-
-    Returns:
-        Configured APIRouter with all routes registered.
-    """
+def create_api_router(*, podcasts: bool, email_ingest: bool) -> APIRouter:
+    """Every API route, with the podcast and email-ingest routers when enabled."""
     api_router = APIRouter()
     api_router.include_router(operational_router)
     api_router.include_router(me_router)
@@ -112,10 +106,9 @@ def create_api_router() -> APIRouter:
     # /media/{id}/listening-state paths on listening_state_router above.
     api_router.include_router(lectern_router)
     api_router.include_router(consumption_activity_router)
-    settings = get_settings()
-    if settings.podcasts_enabled:
+    if podcasts:
         api_router.include_router(podcasts_router)
-    if settings.email_ingest_enabled:
+    if email_ingest:
         from nexus.api.routes.email_ingest import router as email_ingest_router
 
         api_router.include_router(email_ingest_router)
