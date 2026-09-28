@@ -4198,6 +4198,14 @@ export interface components {
         Data_LibraryOut_: {
             data: components["schemas"]["LibraryOut"];
         };
+        /** Data[NexusHistoryOut] */
+        Data_NexusHistoryOut_: {
+            data: components["schemas"]["NexusHistoryOut"];
+        };
+        /** Data[NexusSelectionRecordOut] */
+        Data_NexusSelectionRecordOut_: {
+            data: components["schemas"]["NexusSelectionRecordOut"];
+        };
         /** Data[PodcastPlacementAdditionOut] */
         Data_PodcastPlacementAdditionOut_: {
             data: components["schemas"]["PodcastPlacementAdditionOut"];
@@ -5203,9 +5211,45 @@ export interface components {
              */
             kind: "New";
         };
+        /** NexusHistoryOut */
+        NexusHistoryOut: {
+            /** Frecency By Href */
+            frecency_by_href: {
+                [key: string]: number;
+            };
+            /** Recent */
+            recent: components["schemas"]["NexusHistoryRecentOut"][];
+        };
+        /** NexusHistoryRecentOut */
+        NexusHistoryRecentOut: {
+            /** Label Snapshot */
+            label_snapshot: string;
+            /**
+             * Last Used At
+             * Format: date-time
+             */
+            last_used_at: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "Static" | "Workspace" | "Recent" | "Oracle" | "Search" | "Ai";
+            /** Target Href */
+            target_href: string;
+        };
+        /** NexusSelectionRecordOut */
+        NexusSelectionRecordOut: {
+            /**
+             * Last Used At
+             * Format: date-time
+             */
+            last_used_at: string;
+            /** Use Count */
+            use_count: number;
+        };
         /**
          * NexusSelectionRecordRequest
-         * @description POST body for one accepted internal Nexus selection.
+         * @description One accepted internal Nexus selection. The stored label is cut to 120 characters.
          */
         NexusSelectionRecordRequest: {
             /** Client Mutation Id */
@@ -11188,9 +11232,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_NexusHistoryOut_"];
                 };
             };
             /** @description Validation Error */
@@ -11223,9 +11265,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_NexusSelectionRecordOut_"];
                 };
             };
             /** @description Validation Error */

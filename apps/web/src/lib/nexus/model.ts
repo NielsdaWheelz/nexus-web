@@ -1,98 +1,18 @@
+// The Nexus vocabulary: what a row is, where it leads, and which page the launcher shows.
 import type { ComponentType } from "react";
-import type { Presence } from "@/lib/api/presence";
+import type { FeedbackContent } from "@/components/feedback/Feedback";
+import type { Schema } from "@/lib/api/wire";
 import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
-import type { ResourceActivation } from "@/lib/resources/activation";
-import type { CanonicalResourceRef, ShareTarget } from "@/lib/sharing/types";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import type { PaneNavigationModality } from "@/lib/workspace/paneReturnMemento";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 
-export type NexusIcon = ComponentType<{
-  size?: number;
-  "aria-hidden"?: boolean | "true" | "false";
-}>;
+export type NexusIcon = ComponentType<{ size?: number; "aria-hidden"?: boolean | "true" | "false" }>;
+export type NexusCommandId = `Nexus.Quick.${"Note" | "Page" | "Chat" | "Library" | "Import"}`;
 
-export type NexusCommandId =
-  | "Nexus.Quick.Note"
-  | "Nexus.Quick.Page"
-  | "Nexus.Quick.Chat"
-  | "Nexus.Quick.Library"
-  | "Nexus.Quick.Import";
-
-export type NexusEntryKey =
-  | { readonly kind: "Pane"; readonly paneId: string }
-  | { readonly kind: "PaneSearch" }
-  | {
-      readonly kind: "Destination";
-      readonly destinationId: string;
-    }
-  | {
-      readonly kind: "Resource";
-      readonly occurrenceRef: string;
-    }
-  | {
-      readonly kind: "QuickAction";
-      readonly actionId: NexusCommandId;
-    }
-  | {
-      readonly kind: "ImportUrl";
-      readonly normalizedUrl: string;
-    }
-  | {
-      readonly kind: "Intent";
-      readonly id:
-        | "Ask"
-        | "ChooseBrowse"
-        | "Browse.WebArticle"
-        | "Browse.Podcast"
-        | "Browse.Video"
-        | "Browse.Epub";
-    }
-  | { readonly kind: "ManageTabs" }
-  | {
-      readonly kind: "Continuation";
-      readonly id: "Ask" | "AddToToday" | "Browse" | "Create" | "SeeAll";
-    };
-
-export function nexusEntryKeyValue(key: NexusEntryKey): string {
-  switch (key.kind) {
-    case "Pane":
-      return `Pane:${key.paneId}`;
-    case "PaneSearch":
-      return "PaneSearch";
-    case "Destination":
-      return `Destination:${key.destinationId}`;
-    case "Resource":
-      return `Resource:${key.occurrenceRef}`;
-    case "QuickAction":
-      return `QuickAction:${key.actionId}`;
-    case "ImportUrl":
-      return `ImportUrl:${key.normalizedUrl}`;
-    case "Intent":
-      return `Intent:${key.id}`;
-    case "ManageTabs":
-      return "ManageTabs";
-    case "Continuation":
-      return `Continuation:${key.id}`;
-  }
-}
-
-export type NexusRankTier =
-  | "ExplicitIntent"
-  | "Exact"
-  | "PrefixOrToken"
-  | "CurrentContext"
-  | "FuzzyOrSynonym"
-  | "MetadataOrFullText";
-
-export type NexusHistorySource =
-  | "Static"
-  | "Workspace"
-  | "Recent"
-  | "Oracle"
-  | "Search"
-  | "Ai";
+export type NexusHistorySource = Schema<"NexusSelectionRecordRequest">["source"];
+export type NexusRecent = Schema<"NexusHistoryRecentOut">;
 
 export interface AddSeed {
   readonly kind: "Content";
@@ -101,14 +21,7 @@ export interface AddSeed {
   readonly initialUrlDraft?: string;
 }
 
-export interface NexusTargetActivation {
-  readonly disposition: WorkspaceTargetDisposition;
-  readonly modality: PaneNavigationModality;
-}
-
-export type DailyPageLocator =
-  | { readonly kind: "Today" }
-  | { readonly kind: "LocalDate"; readonly value: string };
+export type DailyPageLocator = { readonly kind: "Today" } | { readonly kind: "LocalDate"; readonly value: string };
 
 export type MaterializedOpenDailyPageTarget = {
   readonly kind: "OpenDailyPage";
@@ -123,26 +36,10 @@ export type MaterializedOpenDailyPageTarget = {
       };
 };
 
+/** Every navigation is an InternalHref; the rest open a tab, Today, the player, or a page. */
 export type NexusTarget =
-  | {
-      readonly kind: "InternalHref";
-      readonly href: string;
-      readonly labelHint?: string;
-    }
-  | {
-      readonly kind: "ResourceOpen";
-      readonly activation: ResourceActivation;
-      readonly labelHint?: string;
-    }
-  | { readonly kind: "ResourceShare"; readonly subject: ResourceActionSubject }
-  | { readonly kind: "ResourceChat"; readonly ref: CanonicalResourceRef }
-  | { readonly kind: "Ask"; readonly text: string }
-  | { readonly kind: "NewConversation"; readonly initialDraft: string }
-  | { readonly kind: "Share"; readonly target: ShareTarget }
-  | { readonly kind: "CopyExternalLink"; readonly href: string }
+  | { readonly kind: "InternalHref"; readonly href: string; readonly labelHint?: string }
   | { readonly kind: "PaneOpen"; readonly paneId: string }
-  | { readonly kind: "PaneClose"; readonly paneId: string }
-  | { readonly kind: "PaneSearch" }
   | {
       readonly kind: "OpenDailyPage";
       readonly date: DailyPageLocator;
@@ -150,258 +47,114 @@ export type NexusTarget =
         | { readonly kind: "View" }
         | { readonly kind: "AppendNote"; readonly initialText: string };
     }
+  | { readonly kind: "ResumeCurrentPlayback" }
   | { readonly kind: "OpenAdd"; readonly seed: AddSeed }
   | { readonly kind: "CreatePage"; readonly titleDraft: string }
   | { readonly kind: "CreateLibrary"; readonly nameDraft: string }
   | { readonly kind: "ChooseCreate"; readonly initialDraft: string }
   | { readonly kind: "ChooseBrowse"; readonly query: string }
-  | {
-      readonly kind: "Browse";
-      readonly query: string;
-      readonly browseKind: "WebArticle" | "Podcast" | "Video" | "Epub";
-    }
-  | { readonly kind: "ResumeCurrentPlayback" }
   | { readonly kind: "ManageTabs" };
 
-export type NexusActionAvailability =
+export type MaterializedNexusTarget =
+  | Exclude<NexusTarget, { kind: "OpenDailyPage" }>
+  | MaterializedOpenDailyPageTarget;
+
+export interface NexusTargetActivation {
+  readonly disposition: WorkspaceTargetDisposition;
+  readonly modality: PaneNavigationModality;
+}
+
+export const PROGRAMMATIC_NEXUS_TARGET_ACTIVATION: NexusTargetActivation = {
+  disposition: { kind: "Follow" },
+  modality: "Programmatic",
+};
+
+export type RetainedTarget = Extract<MaterializedNexusTarget, { kind: "InternalHref" | "OpenDailyPage" }>;
+
+export type NexusDispatchOutcome =
+  | { readonly kind: "Accepted" }
+  | { readonly kind: "DailyPageAccepted"; readonly activationId: string; readonly localDate: string }
+  | { readonly kind: "Rejected"; readonly target: RetainedTarget }
+  | { readonly kind: "Restricted" };
+
+export type NexusAction =
   | { readonly kind: "Available"; readonly target: NexusTarget }
   | { readonly kind: "Unavailable"; readonly reason: string };
 
-export interface NexusAction {
-  readonly id: string;
+export type NexusRankTier = "ExplicitIntent" | "Exact" | "PrefixOrToken" | "CurrentContext" | "FuzzyOrSynonym" | "MetadataOrFullText";
+
+export interface NexusRow {
+  /** "Pane:<id>", "Destination:<id>", "Resource:<ref>", "QuickAction:<id>", …: identity and last tie-break. */
+  readonly key: string;
   readonly label: string;
   readonly icon: NexusIcon;
-  readonly activation:
-    | { readonly kind: "Standard" }
-    | { readonly kind: "DailyTextHandoff" };
-  readonly availability: NexusActionAvailability;
+  readonly type?: string;
+  readonly detail?: string;
+  readonly state?: "Current" | "Open" | "Minimized";
+  readonly snippet?: readonly EmphasisSegment[];
+  readonly shortcut?: string;
+  readonly parent?: { readonly key: string; readonly label: string };
+  readonly action: NexusAction;
+  readonly menu?:
+    | { readonly kind: "Resource"; readonly subject: ResourceActionSubject }
+    | { readonly kind: "Tab"; readonly paneId: string };
+  /** Present iff an accepted selection of this row is remembered in Nexus history. */
+  readonly source?: NexusHistorySource;
+  readonly rank: { readonly tier: NexusRankTier; readonly score: number; readonly frecency: number };
 }
-
-export interface NexusEntry {
-  readonly key: NexusEntryKey;
-  /** Typed observability provenance. Never infer this from display copy. */
-  readonly historySource: NexusHistorySource;
-  readonly label: string;
-  readonly shortcutHint?: string;
-  readonly typeLabel?: string;
-  readonly metadata?: string;
-  readonly snippetSegments?: readonly EmphasisSegment[];
-  readonly icon: NexusIcon;
-  readonly openState?: "Active" | "Open" | "Minimized";
-  /**
-   * Canonical presentation ownership. The parent may be an actionable entry
-   * in this projection or a non-actionable grouping identity.
-   */
-  readonly parent?: {
-    readonly key: NexusEntryKey;
-    readonly label: string;
-  };
-  readonly primaryAction: NexusAction;
-  readonly secondaryActions: readonly NexusAction[];
-  /**
-   * When present, this entry is a canonical resource. Its overflow/secondary
-   * menu is the ONE canonical resource dropdown for `actionSubject` (rendered
-   * via `ResourceActionMenu` / the shared catalog projection), NOT a private
-   * NexusAction array. Resource entries carry only their resource identity plus
-   * primary activation; their secondary resource actions come from the shared
-   * planner, so `secondaryActions` stays empty for them.
-   */
-  readonly actionSubject?: ResourceActionSubject;
-  readonly rank: {
-    readonly tier: NexusRankTier;
-    readonly score: number;
-    readonly frecency: number;
-  };
-}
-
-/** The one fact copy for an entry's workspace-pane open state. */
-export function nexusOpenStateLabel(
-  state: NexusEntry["openState"],
-): string | undefined {
-  switch (state) {
-    case undefined:
-      return undefined;
-    case "Active":
-      return "Current";
-    case "Open":
-      return "Open";
-    case "Minimized":
-      return "Minimized";
-  }
-}
-
-/**
- * A Nexus entry exposes a secondary/overflow menu when it either carries local
- * NexusAction secondaries (panes, continuations) or is a canonical resource
- * (its overflow is the shared resource dropdown for `actionSubject`).
- */
-export function nexusEntryHasSecondaryActions(entry: NexusEntry): boolean {
-  return entry.secondaryActions.length > 0 || entry.actionSubject !== undefined;
-}
-
-/** The two retrieval sources a Nexus find fans out to, and can fail on. */
-export type NexusSource = "Openables" | "Owned";
-
-export function nexusSourceFailureCopy(source: NexusSource): string {
-  switch (source) {
-    case "Openables":
-      return "Couldn’t search your resources.";
-    case "Owned":
-      return "Couldn’t search inside your library.";
-  }
-}
-
-export interface NexusActionsRequest {
-  readonly requestId: number;
-  /** Exact entry/action snapshot captured when Nexus.Open was pressed. */
-  readonly entry: NexusEntry;
-}
-
-export interface NexusCommand {
-  readonly id: NexusCommandId;
-  readonly label: string;
-  readonly aliases: readonly string[];
-  readonly keywords: readonly string[];
-  readonly category: "Create" | "Acquire";
-  readonly icon: NexusIcon;
-  readonly activation: NexusAction["activation"];
-  readonly shortcut:
-    | { readonly kind: "None" }
-    | {
-        readonly kind: "Keybinding";
-        readonly actionId: NexusCommandId;
-      };
-  target(input: { readonly argument: string }): NexusTarget;
-}
-
-export type NexusSurface = "Desktop" | "Mobile";
-
-export type NexusSectionId =
-  | "Open"
-  | "Continue"
-  | "Recent"
-  | "QuickActions"
-  | "Places"
-  | "Results";
 
 export interface NexusGroup {
-  readonly id: NexusSectionId;
+  readonly id: "Open" | "Continue" | "Recent" | "QuickActions" | "Places" | "Results";
   readonly label: string;
-  readonly entries: readonly NexusEntry[];
+  readonly rows: readonly NexusRow[];
 }
 
-export interface NexusProjection {
-  readonly surface: NexusSurface;
-  readonly groups: readonly NexusGroup[];
-  readonly activeKey: NexusEntryKey | null;
-}
+export type NexusSource = "Openables" | "Owned";
 
-export interface NexusFeedbackContent {
-  readonly tone: "Neutral" | "Info" | "Success" | "Warning" | "Danger";
-  readonly title: string;
-  readonly message?: string;
-  readonly requestId?: string;
+export interface NexusPane {
+  readonly id: string;
+  readonly href: string;
+  readonly visibility: "visible" | "minimized";
+  readonly label: string;
+  readonly current: boolean;
 }
-
-export type FrozenNexusTarget =
-  | Exclude<NexusTarget, { kind: "OpenDailyPage" }>
-  | MaterializedOpenDailyPageTarget;
 
 export type ReplayableSubmitState =
   | { readonly kind: "Ready" }
   | { readonly kind: "Running" }
-  | {
-      readonly kind: "Retryable";
-      readonly content: NexusFeedbackContent;
-    };
+  | { readonly kind: "Retryable"; readonly content: FeedbackContent };
 
-export type CommittedWorkflow =
-  | { readonly kind: "Page"; readonly replayId: string }
-  | { readonly kind: "Library"; readonly replayId: string }
-  | { readonly kind: "Import"; readonly replayId: string };
+export type TodayAppend = { readonly kind: "Available" } | { readonly kind: "Unavailable"; readonly reason: string };
 
-export type RetainedNexusTarget =
-  | Extract<NexusTarget, { kind: "InternalHref" }>
-  | MaterializedOpenDailyPageTarget;
-
-export function retainedNexusTargetLabel(target: RetainedNexusTarget): string {
-  switch (target.kind) {
-    case "InternalHref":
-      return target.labelHint ?? target.href;
-    case "OpenDailyPage":
-      return target.entry.kind === "AppendNote" ? "Quick Note" : "Today";
-  }
-}
-
-export type NexusReturnPoint = {
-  readonly kind: "Root";
-  readonly query: string;
-  readonly activeKey: NexusEntryKey | null;
-};
-
-export type RetainedActivationSource =
-  | "Result"
-  | "Place"
-  | "QuickAction"
-  | "Page"
-  | "Chat"
-  | "Library"
-  | "Import";
-
-export interface RetainedActivation {
-  readonly target: RetainedNexusTarget;
+/** A navigation the tab limit refused, kept so the user can make room and retry it. */
+export interface Retained {
+  readonly target: RetainedTarget;
   readonly activation: NexusTargetActivation;
-  readonly source: RetainedActivationSource;
-  readonly completion: Presence<CommittedWorkflow>;
-  readonly returnTo: NexusReturnPoint;
+  readonly completion: "Destination" | "Page" | "Library" | "Import";
 }
-
-export type ManageTabsOrigin =
-  | { readonly kind: "Direct" }
-  | { readonly kind: "Recovery"; readonly retained: RetainedActivation };
 
 export type NexusPage =
   | { readonly kind: "Root" }
-  | {
-      readonly kind: "CommandFailed";
-      readonly content: NexusFeedbackContent;
-      readonly target: FrozenNexusTarget;
-      readonly activation: NexusTargetActivation;
-    }
-  | {
-      readonly kind: "OperationBlocked";
-      readonly title: string;
-      readonly message?: string;
-      readonly manualValue?: string;
-      readonly retry: {
-        readonly target: Extract<NexusTarget, { kind: "CopyExternalLink" }>;
-        readonly activation: NexusTargetActivation;
-      } | null;
-    }
-  | { readonly kind: "EntryActions"; readonly entry: NexusEntry }
-  | { readonly kind: "ChooseCreate"; readonly initialDraft: string }
+  | { readonly kind: "ChooseCreate"; readonly draft: string }
   | { readonly kind: "ChooseBrowse"; readonly query: string }
-  | { readonly kind: "ManageTabs"; readonly origin: ManageTabsOrigin }
   | {
       readonly kind: "CreatePage";
-      readonly titleDraft: string;
       readonly pageId: string;
-      readonly submit: ReplayableSubmitState;
+      readonly title: string;
       readonly activation: NexusTargetActivation;
+      readonly submit: ReplayableSubmitState;
     }
   | {
       readonly kind: "CreateLibrary";
-      readonly nameDraft: string;
       readonly libraryId: string;
+      readonly name: string;
+      readonly activation: NexusTargetActivation;
       readonly submit: ReplayableSubmitState;
-      readonly activation: NexusTargetActivation;
     }
-  | {
-      readonly kind: "Add";
-      readonly sessionId: string;
-      readonly activation: NexusTargetActivation;
-    }
-  | { readonly kind: "ActivationBlocked"; readonly retained: RetainedActivation };
+  | { readonly kind: "Add"; readonly sessionId: string; readonly activation: NexusTargetActivation }
+  | { readonly kind: "Blocked"; readonly retained: Retained }
+  | { readonly kind: "ManageTabs"; readonly retained: Retained | null; readonly restoreBlocked: string | null }
+  | { readonly kind: "Restricted" };
 
 export type NexusOpenIntent =
   | { readonly kind: "Root" }

@@ -1,139 +1,253 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+// The desktop palette: a modal combobox whose popup is a two-column grid (row, ⋯ menu).
+// DOM focus stays in the input; the active cell is virtual (aria-activedescendant).
+import { MoreHorizontal } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import {
-  nexusEntryHasSecondaryActions,
-  nexusEntryKeyValue,
-  type NexusEntry,
-} from "@/lib/nexus/model";
+import Input from "@/components/ui/Input";
+import type { NexusRow } from "@/lib/nexus/model";
+import { rowFacts } from "@/lib/nexus/rows";
 import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
-import {
-  ModalLayerProvider,
-  modalBackdropProjection,
-} from "@/lib/ui/useModalLayer";
-import DesktopNexusInput from "./DesktopNexusInput";
-import DesktopNexusResults from "./DesktopNexusResults";
-import type {
-  DesktopNexusActionsOpener,
-  DesktopNexusCell,
-  DesktopNexusController,
-  DesktopNexusModality,
-} from "./types";
-import styles from "./desktopNexus.module.css";
+import { ModalLayerProvider, modalBackdropProjection } from "@/lib/ui/useModalLayer";
+import { NexusRowBody, NexusRowMenu, NexusSourceFailures, useNexusRowMenus } from "../NexusRow";
+import NexusPages from "../NexusPages";
+import type { NexusController } from "../useNexusController";
+import styles from "../Nexus.module.css";
 
-export default function DesktopNexus({
-  controller,
-}: {
-  controller: DesktopNexusController;
-}) {
+type Cell = "Primary" | "Actions";
+const GRID_ID = "desktop-nexus-results";
+
+function cellId(key: string, cell: Cell): string {
+  return `desktop-nexus-${cell.toLowerCase()}-${encodeURIComponent(key)}`;
+}
+
+function count(n: number, noun: string): string {
+  return `${n} ${n === 1 ? noun : `${noun}s`}`;
+}
+
+export default function DesktopNexus({ controller }: { controller: NexusController }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const actionsOpenersRef = useRef(new Map<string, DesktopNexusActionsOpener>());
-  const openMenuKeyRef = useRef<string | null>(null);
-  const handledActionsRequestRef = useRef<number | null>(null);
-  const [activeCell, setActiveCell] = useState<DesktopNexusCell>("Primary");
+  const gridRef = useRef<HTMLDivElement>(null);
+  const composing = useRef(false);
+  const openMenuKey = useRef<string | null>(null);
+  const [cell, setCell] = useState<Cell>("Primary");
+  const registerMenu = useNexusRowMenus(controller.menuRequest);
   const overlay = useDialogOverlay({
     ref: panelRef,
     active: controller.open,
     onDismiss: controller.escape,
-    initialFocus: (container) => {
-      if (controller.workflow) {
-        return container.querySelector<HTMLElement>(
-          "[data-nexus-workflow-initial-focus]",
-        );
-      }
-      return container.querySelector<HTMLElement>('input[role="combobox"]');
-    },
-    skipReturnFocus: controller.shouldSuppressReturnFocusOnClose,
+    initialFocus: controller.initialFocus,
+    skipReturnFocus: controller.suppressReturnFocus,
     focusKey: controller.focusKey,
     layerScope: "nexus",
   });
-
-  const registerActionsOpener = useCallback(
-    (key: string, opener: DesktopNexusActionsOpener | null) => {
-      if (opener) actionsOpenersRef.current.set(key, opener);
-      else actionsOpenersRef.current.delete(key);
-    },
-    [],
-  );
-  const openActions = useCallback(
-    (entry: NexusEntry, modality: DesktopNexusModality) => {
-      const opener = actionsOpenersRef.current.get(
-        nexusEntryKeyValue(entry.key),
-      );
-      if (!opener) return;
-      controller.setActiveEntry(entry.key);
-      setActiveCell("Actions");
-      opener(entry, modality);
-    },
-    [controller],
-  );
-  const onActionMenuOpenChange = useCallback(
-    (key: string, open: boolean) => {
-      if (open) {
-        openMenuKeyRef.current = key;
-        setActiveCell("Actions");
-        return;
-      }
-      if (openMenuKeyRef.current !== key) return;
-      openMenuKeyRef.current = null;
-      requestAnimationFrame(() => inputRef.current?.focus());
-    },
-    [],
-  );
+  const rows = controller.groups.flatMap((group) => group.rows);
+  const index = rows.findIndex((row) => row.key === controller.activeKey);
+  const active = rows[index];
+  const activeCell = active?.menu ? cell : "Primary";
 
   useEffect(() => {
-    if (!controller.open) {
-      openMenuKeyRef.current = null;
-      setActiveCell("Primary");
-    }
+    if (controller.open) return;
+    openMenuKey.current = null;
+    setCell("Primary");
   }, [controller.open]);
-
   useEffect(() => {
-    if (activeCell !== "Actions") return;
-    const activeKey = controller.projection.activeKey
-      ? nexusEntryKeyValue(controller.projection.activeKey)
-      : null;
-    const activeEntry = controller.projection.groups
-      .flatMap((group) => group.entries)
-      .find((entry) => nexusEntryKeyValue(entry.key) === activeKey);
-    if (!activeEntry || !nexusEntryHasSecondaryActions(activeEntry)) {
-      setActiveCell("Primary");
-    }
-  }, [activeCell, controller.projection]);
+    gridRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+  }, [controller.activeKey]);
 
-  useEffect(() => {
-    const request = controller.actionsRequest;
-    if (
-      !controller.open ||
-      controller.workflow ||
-      !request ||
-      handledActionsRequestRef.current === request.requestId
-    ) {
-      return;
-    }
-    const opener = actionsOpenersRef.current.get(
-      nexusEntryKeyValue(request.entry.key),
-    );
-    if (!opener) return;
-    handledActionsRequestRef.current = request.requestId;
-    openActions(request.entry, "Keyboard");
-  }, [controller.actionsRequest, controller.open, controller.workflow, openActions]);
-
-  if (controller.projection.surface !== "Desktop") {
-    throw new Error("DesktopNexus requires a Desktop projection");
-  }
   if (!controller.open) return null;
+
+  const select = (row: NexusRow, next: Cell) => {
+    controller.setActive(row.key);
+    setCell(next);
+  };
+  const menuOpenChange = (key: string, open: boolean) => {
+    if (open) {
+      openMenuKey.current = key;
+      setCell("Actions");
+    } else if (openMenuKey.current === key) {
+      openMenuKey.current = null;
+      requestAnimationFrame(() => inputRef.current?.focus());
+    }
+  };
+  const typed = controller.query.trim().length > 0;
+  const sized = (id: string) => controller.groups.find((group) => group.id === id)?.rows.length ?? 0;
+  const status = typed
+    ? `${count(sized("Results"), "result")}. ${count(sized("QuickActions"), "query action")}.`
+    : `${count(rows.length, "item")} in ${count(controller.groups.length, "section")}`;
+
+  const root = (
+    <>
+      <h2 className="sr-only">Nexus</h2>
+      <label className={styles.inputRow}>
+        <span className="sr-only">Find anything…</span>
+        <Input
+          ref={inputRef}
+          variant="bare"
+          role="combobox"
+          aria-label="Find anything…"
+          aria-autocomplete="list"
+          aria-haspopup="grid"
+          aria-controls={GRID_ID}
+          aria-expanded="true"
+          aria-activedescendant={active ? cellId(active.key, activeCell) : undefined}
+          className={styles.input}
+          value={controller.query}
+          placeholder="Find anything…"
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
+          onChange={(event) => {
+            setCell("Primary");
+            controller.setQuery(event.currentTarget.value);
+          }}
+          onCompositionStart={() => {
+            composing.current = true;
+          }}
+          onCompositionEnd={() => {
+            composing.current = false;
+          }}
+          onKeyDown={(event) => {
+            if (composing.current || event.nativeEvent.isComposing || event.keyCode === 229) {
+              // The modal's document-level Escape owner must not see an IME key.
+              event.stopPropagation();
+              return;
+            }
+            if ((event.key === "ArrowDown" || event.key === "ArrowUp") && rows.length > 0) {
+              event.preventDefault();
+              const down = event.key === "ArrowDown";
+              const next = rows[index < 0 ? (down ? 0 : rows.length - 1) : Math.max(0, Math.min(rows.length - 1, index + (down ? 1 : -1)))]!;
+              controller.setActive(next.key);
+              if (!next.menu) setCell("Primary");
+            } else if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && active?.menu) {
+              event.preventDefault();
+              setCell(event.key === "ArrowRight" ? "Actions" : "Primary");
+            } else if (event.key === "Enter" && active) {
+              event.preventDefault();
+              if (activeCell === "Actions") controller.openMenu(active.key);
+              else {
+                controller.activate(
+                  active.action,
+                  { disposition: { kind: event.shiftKey ? "Fork" : "Follow" }, modality: "Keyboard" },
+                  null,
+                  active,
+                );
+              }
+            } else if (event.key === "Escape") {
+              event.preventDefault();
+              setCell("Primary");
+              if (controller.query) controller.setQuery("");
+              else controller.escape();
+            }
+          }}
+        />
+      </label>
+      <NexusSourceFailures failures={controller.failures} retry={controller.retry} />
+      <div
+        ref={gridRef}
+        id={GRID_ID}
+        role="grid"
+        aria-label={typed ? "Find results" : "Nexus options"}
+        aria-colcount={2}
+        aria-busy={controller.busy || undefined}
+        className={styles.grid}
+      >
+        {controller.groups.map((group) => (
+          <div key={group.id} role="rowgroup" aria-labelledby={`desktop-nexus-section-${group.id}`} className={styles.group}>
+            <div role="row" className={styles.headingRow}>
+              <div role="gridcell" aria-colspan={2}>
+                <h3 id={`desktop-nexus-section-${group.id}`}>{group.label}</h3>
+              </div>
+            </div>
+            {group.rows.map((row) => {
+              const selected = row.key === controller.activeKey;
+              const snippet = row.snippet?.map((segment) => segment.text).join("");
+              const reason = row.action.kind === "Unavailable" ? row.action.reason : undefined;
+              return (
+                <div
+                  key={row.key}
+                  role="row"
+                  aria-selected={selected}
+                  className={styles.gridRow}
+                  data-selected={selected || undefined}
+                  data-nested={row.parent ? true : undefined}
+                >
+                  <div
+                    id={cellId(row.key, "Primary")}
+                    role="gridcell"
+                    aria-label={[row.label, row.shortcut, rowFacts(row, true), snippet, reason].filter(Boolean).join(". ")}
+                    aria-disabled={reason ? true : undefined}
+                    className={styles.primaryCell}
+                    data-virtual-active={(selected && activeCell === "Primary") || undefined}
+                    onPointerMove={() => select(row, "Primary")}
+                    onClick={(event) => {
+                      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey) return;
+                      select(row, "Primary");
+                      controller.activate(
+                        row.action,
+                        { disposition: { kind: event.shiftKey ? "Fork" : "Follow" }, modality: "Pointer" },
+                        null,
+                        row,
+                      );
+                    }}
+                  >
+                    <NexusRowBody row={row} desktop />
+                  </div>
+                  <div
+                    id={cellId(row.key, "Actions")}
+                    role="gridcell"
+                    aria-label={row.menu ? `Actions for ${row.label}. Shortcut ${controller.openShortcut}` : undefined}
+                    className={styles.actionsCell}
+                    data-virtual-active={(selected && activeCell === "Actions") || undefined}
+                  >
+                    <NexusRowMenu
+                      row={row}
+                      closePane={controller.closePane}
+                      menuProps={{
+                        label: `Actions for ${row.label}`,
+                        align: "end",
+                        triggerAttributes: { tabIndex: -1 },
+                        triggerRef: registerMenu(row.key),
+                        onOpenChange: (open) => menuOpenChange(row.key, open),
+                        renderTrigger: (trigger) => (
+                          <button
+                            {...trigger}
+                            type="button"
+                            className={styles.actionsButton}
+                            onPointerMove={() => select(row, "Actions")}
+                            onKeyDown={(event) => {
+                              select(row, "Actions");
+                              trigger.onKeyDown(event);
+                            }}
+                            onClick={(event) => {
+                              select(row, "Actions");
+                              trigger.onClick(event);
+                            }}
+                          >
+                            <kbd aria-hidden="true">{controller.openShortcut}</kbd>
+                            <MoreHorizontal size={16} aria-hidden="true" />
+                          </button>
+                        ),
+                      }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+      <div className="sr-only" aria-live="polite" aria-atomic="true">
+        {[controller.announcement, controller.busy ? "Searching…" : status].filter(Boolean).join(" ")}
+      </div>
+    </>
+  );
 
   return createPortal(
     <ModalLayerProvider token={overlay.layerToken}>
-      <div
-        className={styles.backdrop}
-        {...modalBackdropProjection(overlay.isTopmost)}
-        role="presentation"
-        onClick={controller.escape}
-      >
+      <div className={styles.backdrop} {...modalBackdropProjection(overlay.isTopmost)} role="presentation" onClick={controller.escape}>
         <div
           ref={panelRef}
           role="dialog"
@@ -141,26 +255,12 @@ export default function DesktopNexus({
           className={styles.surface}
           onClick={(event) => event.stopPropagation()}
         >
-          {controller.workflow ? (
-            controller.workflow
+          {controller.page.kind === "Root" ? (
+            root
           ) : (
-            <>
-              <h2 className="sr-only">Nexus</h2>
-              <DesktopNexusInput
-                controller={controller}
-                inputRef={inputRef}
-                activeCell={activeCell}
-                setActiveCell={setActiveCell}
-                openActions={openActions}
-              />
-              <DesktopNexusResults
-                controller={controller}
-                activeCell={activeCell}
-                setActiveCell={setActiveCell}
-                registerActionsOpener={registerActionsOpener}
-                onActionMenuOpenChange={onActionMenuOpenChange}
-              />
-            </>
+            <div className={styles.workflow}>
+              <NexusPages controller={controller} mobile={false} />
+            </div>
           )}
         </div>
       </div>
