@@ -99,12 +99,6 @@ row has one pointer Actions button backed by the shared `ActionMenu`. Mobile
 keeps a sibling action button and 48 px targets. Renderers never infer command,
 ranking, target, or workflow meaning from copy or identifiers.
 
-Desktop Nexus publishes named user-timing measures at input-ready, local rows
-committed, accepted pane paint, and first usable provider rows. The benchmark
-reports its sample size and p95 separately for warm and cold runs; it never
-labels a warmed provider loop as cold. The p95 gates are respectively under
-50 ms, 50 ms, 100 ms, and 250 ms.
-
 ## Ownership
 
 | Concern                                                           | Owner                                                                                                             |

@@ -6,7 +6,6 @@ import Nexus from "@/components/nexus/Nexus";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
 import LecternMutationNotice from "@/components/LecternMutationNotice";
-import { WebVitalsReporter } from "@/components/workspace/WebVitalsReporter";
 import LocalVaultAutoSync from "./LocalVaultAutoSync";
 import DownloadsSurface from "@/components/offlineMedia/DownloadsSurface";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -70,7 +69,6 @@ export default function AuthenticatedShell({
         <UnauthenticatedApiBoundary>
           <ActivityCaptureLifecycle accountId={account.accountId} />
           <LocalVaultAutoSync />
-          <WebVitalsReporter />
           <ResourceCacheProvider value={resources}>
             <KeybindingsProvider>
               <ReaderProvider initialProfile={readerProfile}>

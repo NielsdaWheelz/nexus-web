@@ -7,10 +7,8 @@ import {
 } from "@/components/feedback/Feedback";
 import type { ManageTabsOrigin } from "@/lib/nexus/model";
 import { retainedNexusTargetLabel } from "@/lib/nexus/model";
-import type {
-  NexusManagedClosedPane,
-  NexusManagedPane,
-} from "./useNexusController";
+import type { NexusPane } from "@/lib/nexus/results";
+import type { NexusManagedClosedPane } from "./useNexusController";
 import styles from "./Nexus.module.css";
 
 export default function ManageTabsPage({
@@ -27,7 +25,7 @@ export default function ManageTabsPage({
   teachAdjacentSwipe,
 }: {
   readonly origin: ManageTabsOrigin;
-  readonly panes: readonly NexusManagedPane[];
+  readonly panes: readonly NexusPane[];
   readonly recentlyClosed: readonly NexusManagedClosedPane[];
   readonly onBack: () => void;
   readonly onOpen: (paneId: string) => void;
