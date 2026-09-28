@@ -25,6 +25,10 @@ changed → changed → unchanged in 1.31 seconds. old ref uuid and published
 content/state hashes stayed fixed; one false body and edge were removed; four
 items and two correct edges remain. altered quote, edge, reciprocal href, and
 an injected dependent all rejected without persisted writes.
+that earlier clone proof covers the first false body and edge only. pr #398's
+0245 clone left this publication unchanged because a second historical backlink
+is misclassified; its separate decision is recorded in
+[the row 232 ticket](reader-epub-row232-backlink-classification.md).
 
 prerequisite: the release candidate must include the proved correction and
 pass the full ready-epub census. after production repair, remove this temporary

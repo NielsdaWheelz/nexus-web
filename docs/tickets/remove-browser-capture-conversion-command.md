@@ -24,13 +24,19 @@ accepts packet inputs only. retain verified database/source backups and the
 legacy blobs through rollback. do not interpret deployment as permission to
 resume normal processing before conversion finishes.
 
-source-confirmed deployment gap: `deploy/hetzner/release.py:578-580` calls
-`migrate(candidate)` then `start(candidate)` with no conversion step. the
-ordinary `deploy.sh` cannot currently hold this boundary. before production,
-provide the one-shot conversion between those operations (or an explicit
-operator sequence preserving the same stopped-writer boundary); do not run the
-ordinary release and convert afterward. acceptance includes proving no affected
-service resumes until conversion succeeds and a second run has no work.
+the original deployment gap was `deploy/hetzner/release.py` calling
+`migrate(candidate)` then `start(candidate)` with no conversion step. acceptance
+requires proving no affected service resumes until conversion succeeds and a
+second run has no work.
+
+2026-09-27 update: release branch `c5453b733` now runs the candidate-image
+conversion twice after migration and before restarting writers, refusing a
+nonzero pending count or any second-pass work. a read-only production count at
+revision 0241 found zero `browser_article_capture` attempts. the live stopped-
+writer conversion and zero-work second pass still need release proof; remove
+this temporary slot with the command after that proof.
+on the restored 0244 clone, two ordinary CLI conversion passes both returned
+success with empty output and zero pending attempts.
 
 fix, in order:
 
