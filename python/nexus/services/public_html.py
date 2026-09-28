@@ -1,4 +1,4 @@
-"""The closed sanitizer for anonymously shared article and EPUB HTML."""
+"""The closed HTML policy for anonymously shared article and EPUB fragments."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import re
 from collections.abc import Callable
 from urllib.parse import urlparse
 
-from lxml.html import HtmlElement, fragment_fromstring
+from lxml.html import fragment_fromstring
 
 from nexus.services.html_tree import inner_html
 
@@ -24,8 +24,6 @@ _TAG_ATTRIBUTES = {
     "a": frozenset({"href"}),
     "blockquote": frozenset({"cite"}),
     "q": frozenset({"cite"}),
-    # src is admitted only long enough for _sanitize_image to translate an
-    # exact private EPUB asset path into an inert public handle, then removed.
     "img": frozenset({"alt", "title", "width", "height", "src"}),
     "ol": frozenset({"start", "reversed", "type"}),
     "li": frozenset({"value"}),
@@ -34,28 +32,19 @@ _TAG_ATTRIBUTES = {
 }
 _MEDIA_ASSET_RE = re.compile(
     r"^/api/media/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
-    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/assets/(?P<asset_key>[A-Za-z0-9_./-]+)$"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/assets/([A-Za-z0-9_./-]+)$"
 )
-_PUBLIC_ASSET_HANDLE_RE = re.compile(r"^nxpa1_[A-Za-z0-9_-]{48}$")
 
 
-def sanitize_public_article_html(raw_html: str) -> str:
-    return _sanitize(raw_html, asset_handle_for_key=None)
-
-
-def sanitize_public_epub_html(
-    raw_html: str,
-    *,
-    asset_handle_for_key: Callable[[str], str | None],
+def sanitize_public_html(
+    raw_html: str, asset_handle_for_key: Callable[[str], str | None] | None = None
 ) -> str:
-    return _sanitize(raw_html, asset_handle_for_key=asset_handle_for_key)
+    """Keep only allowlisted tags and attributes; external links open referrer-free in a new tab.
 
-
-def _sanitize(
-    raw_html: str,
-    *,
-    asset_handle_for_key: Callable[[str], str | None] | None,
-) -> str:
+    Every image loses its source. An EPUB image whose source is exactly a private
+    asset path the caller can hand out gets that handle as
+    `data-nexus-public-asset-handle` instead.
+    """
     root = fragment_fromstring(raw_html, create_parent=True)
     for element in list(root.iterdescendants()):
         if not isinstance(element.tag, str):
@@ -68,59 +57,30 @@ def _sanitize(
         if tag not in _ALLOWED_TAGS:
             element.drop_tag()
             continue
-
         allowed = _GLOBAL_ATTRIBUTES | _TAG_ATTRIBUTES.get(tag, frozenset())
         for attr in list(element.attrib):
-            normalized = attr.lower().rsplit("}", 1)[-1]
-            if normalized.startswith("on") or normalized not in allowed:
+            name = attr.lower().rsplit("}", 1)[-1]
+            if name.startswith("on") or name not in allowed:
                 del element.attrib[attr]
 
-        if tag == "a":
-            _sanitize_link(element)
+        if tag == "a" and (href := element.get("href")) is not None:
+            parsed = urlparse(href)
+            if (
+                parsed.scheme.lower() in {"http", "https"}
+                and parsed.hostname
+                and parsed.username is None
+                and parsed.password is None
+            ):
+                element.set("target", "_blank")
+                element.set("rel", "noopener noreferrer")
+                element.set("referrerpolicy", "no-referrer")
+            elif href:
+                del element.attrib["href"]
         elif tag == "img":
-            _sanitize_image(element, asset_handle_for_key=asset_handle_for_key)
-
+            src = element.get("src")
+            for attr in ("src", "srcset", "sizes", "loading", "fetchpriority"):
+                element.attrib.pop(attr, None)
+            match = _MEDIA_ASSET_RE.fullmatch(src or "")
+            if match and asset_handle_for_key and (handle := asset_handle_for_key(match[1])):
+                element.set("data-nexus-public-asset-handle", handle)
     return inner_html(root)
-
-
-def _sanitize_link(element: HtmlElement) -> None:
-    href = element.get("href")
-    if href is None:
-        return
-    if href.startswith("#"):
-        element.attrib.pop("href", None)
-        return
-    parsed = urlparse(href)
-    if not parsed.scheme:
-        if href:
-            element.attrib.pop("href", None)
-        return
-    if (
-        parsed.scheme.lower() not in {"http", "https"}
-        or parsed.username is not None
-        or parsed.password is not None
-        or not parsed.hostname
-    ):
-        element.attrib.pop("href", None)
-        return
-    element.set("target", "_blank")
-    element.set("rel", "noopener noreferrer")
-    element.set("referrerpolicy", "no-referrer")
-
-
-def _sanitize_image(
-    element: HtmlElement,
-    *,
-    asset_handle_for_key: Callable[[str], str | None] | None,
-) -> None:
-    raw_src = element.get("src")
-    for attr in ("src", "srcset", "sizes", "loading", "fetchpriority"):
-        element.attrib.pop(attr, None)
-    if raw_src is None or asset_handle_for_key is None:
-        return
-    match = _MEDIA_ASSET_RE.fullmatch(raw_src)
-    if match is None:
-        return
-    handle = asset_handle_for_key(match.group("asset_key"))
-    if handle is not None and _PUBLIC_ASSET_HANDLE_RE.fullmatch(handle):
-        element.set("data-nexus-public-asset-handle", handle)

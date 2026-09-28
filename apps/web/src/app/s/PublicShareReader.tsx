@@ -1,187 +1,120 @@
 "use client";
 
-import {
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
-import {
-  PDF_WORKER_SRC,
-  loadPdfJs,
-  loadPdfJsViewer,
-  type PdfDocumentLike,
-  type PdfDocumentLoadingTaskLike,
-  type PdfEventBusLike,
-} from "@/components/pdfReaderRuntime";
-import {
-  publicPdfSource,
-  readAllPublicFragments,
-  readAllPublicNavigation,
-  readPublicAsset,
-  readPublicSection,
-  readPublicShareBootstrap,
-} from "@/lib/sharing/publicClient";
-import {
-  parsePublicShareFragment,
-  type PublicFragmentPage,
-  type PublicHighlight,
-  type PublicNavigationPage,
-  type PublicSection,
-  type PublicShareBootstrap,
-} from "@/lib/sharing/publicContract";
-import {
-  clearExactPublicTextHighlight,
-  focusPublicHighlightTarget,
-  installExactPublicTextHighlight,
-  installPublicPdfHighlightOverlay,
-} from "@/lib/sharing/publicHighlightRendering";
+import type { ApiJson, Schema } from "@/lib/api/wire";
+import { formatClock } from "@/lib/formatClock";
+import { applyHighlightsToHtml } from "@/lib/highlights/applySegments";
+import PublicPdf from "./PublicPdf";
 import styles from "./publicShare.module.css";
 
-type ReaderData =
-  | { kind: "ArticleOrTranscript"; page: PublicFragmentPage }
-  | { kind: "Epub"; navigation: PublicNavigationPage }
-  | { kind: "Pdf" };
+type Share = Schema<"PublicShareOut">;
+type Section = Schema<"PublicSectionEntryOut">;
+/** The shared highlight's text anchor: codepoint offsets into the canonical text of `ordinal`. */
+type Mark = Schema<"PublicTextAnchorOut"> & { color: Schema<"PublicHighlightOut">["color"] };
 
-type ViewState =
-  | { status: "Resolving" }
-  | { status: "Unavailable" }
-  | {
-      status: "Ready";
-      token: string;
-      bootstrap: PublicShareBootstrap;
-      readerData: ReaderData;
-    };
+/**
+ * The token lives in the URL fragment, so the page request never carries it. It travels only
+ * in this header, on requests that send no credentials, skip every cache, and refuse redirects.
+ */
+function publicFetch(path: string, token: string, signal: AbortSignal): Promise<Response> {
+  return fetch(`/api/public/resource-share${path}`, {
+    headers: { "X-Nexus-Share-Token": token },
+    credentials: "omit",
+    cache: "no-store",
+    redirect: "error",
+    signal,
+  });
+}
 
+function focusTarget(element: HTMLElement | null) {
+  element?.scrollIntoView({ behavior: "smooth", block: "center" });
+  element?.focus({ preventScroll: true });
+}
+
+const HIGHLIGHT_UNAVAILABLE = (
+  <p className={styles.note} role="status">
+    Highlight unavailable.
+  </p>
+);
+
+/** The anonymous reader for `/s#share=<token>`; a hash change opens the new link in place. */
 export default function PublicShareReader() {
-  const [state, setState] = useState<ViewState>({ status: "Resolving" });
+  const [state, setState] = useState<"Resolving" | "Unavailable" | { token: string; share: Share }>(
+    "Resolving",
+  );
 
   useEffect(() => {
-    let activeController: AbortController | null = null;
-    let generation = 0;
-    let disposed = false;
-
-    const resolveFragment = async () => {
-      activeController?.abort();
-      const controller = new AbortController();
-      activeController = controller;
-      const requestGeneration = ++generation;
-      setState({ status: "Resolving" });
-      const token = parsePublicShareFragment(window.location.hash);
-      if (!token) {
-        if (!disposed && requestGeneration === generation) {
-          setState({ status: "Unavailable" });
-        }
-        return;
-      }
+    let controller = new AbortController();
+    const resolve = async () => {
+      controller.abort();
+      controller = new AbortController();
+      const { signal } = controller;
+      const token = /^#share=(nxshr1_[A-Za-z0-9_-]{43})$/.exec(window.location.hash)?.[1];
+      setState(token ? "Resolving" : "Unavailable");
+      if (!token) return;
       try {
-        const bootstrap = await readPublicShareBootstrap(
-          token,
-          controller.signal
-        );
-        let readerData: ReaderData;
-        switch (bootstrap.reader.kind) {
-          case "Article":
-          case "Transcript":
-            readerData = {
-              kind: "ArticleOrTranscript",
-              page: await readAllPublicFragments(token, controller.signal),
-            };
-            break;
-          case "Epub":
-            readerData = {
-              kind: "Epub",
-              navigation: await readAllPublicNavigation(
-                token,
-                controller.signal
-              ),
-            };
-            break;
-          case "Pdf":
-            readerData = { kind: "Pdf" };
-            break;
-          default:
-            bootstrap.reader satisfies never;
-            throw new Error("Unsupported public reader");
-        }
-        if (
-          disposed ||
-          controller.signal.aborted ||
-          requestGeneration !== generation
-        ) {
-          return;
-        }
-        setState({ status: "Ready", token, bootstrap, readerData });
+        const response = await publicFetch("", token, signal);
+        if (!response.ok) throw new Error(`public share responded ${response.status}`);
+        const body = (await response.json()) as ApiJson<"/public/resource-share", "get">;
+        if (!signal.aborted) setState({ token, share: body.data });
       } catch (error) {
-        if (
-          controller.signal.aborted ||
-          disposed ||
-          requestGeneration !== generation
-        ) {
-          return;
-        }
+        if (signal.aborted) return;
         console.error("public_share_resolution_failed", {
           reason: error instanceof Error ? error.name : "UnknownError",
         });
-        setState({ status: "Unavailable" });
+        setState("Unavailable");
       }
     };
-
-    void resolveFragment();
-    window.addEventListener("hashchange", resolveFragment);
+    void resolve();
+    window.addEventListener("hashchange", resolve);
     return () => {
-      disposed = true;
-      generation += 1;
-      activeController?.abort();
-      window.removeEventListener("hashchange", resolveFragment);
+      controller.abort();
+      window.removeEventListener("hashchange", resolve);
     };
   }, []);
 
-  // The tab names what the page is showing, in every state.
-  const documentTitle =
-    state.status === "Resolving"
-      ? "Shared reading · Nexus"
-      : state.status === "Unavailable"
-        ? "Share unavailable · Nexus"
-        : `${state.bootstrap.media.title} · Nexus`;
-
-  if (state.status === "Resolving") {
-    return (
-      <PublicShell title={documentTitle}>
-        <StatusCard>Opening shared reading…</StatusCard>
-      </PublicShell>
-    );
-  }
-  if (state.status === "Unavailable") {
-    return (
-      <PublicShell title={documentTitle}>
-        <StatusCard>
-          <h1>Share unavailable</h1>
-          <p>This link is invalid, revoked, or no longer readable.</p>
-        </StatusCard>
-      </PublicShell>
-    );
-  }
-
-  const highlight =
-    state.bootstrap.subject.kind === "Highlight"
-      ? state.bootstrap.subject.highlight
-      : null;
+  const ready = typeof state === "object" ? state : null;
+  const title =
+    ready?.share.title ?? (state === "Resolving" ? "Shared reading" : "Share unavailable");
   return (
-    <PublicShell title={documentTitle}>
+    <div className={styles.shell}>
+      {/* The route emits no metadata title, so this is the document's only one. */}
+      <title>{`${title} · Nexus`}</title>
+      {ready ? (
+        <SharedDocument token={ready.token} share={ready.share} />
+      ) : (
+        <main className={styles.header} role="status">
+          <div className={styles.brand}>Nexus</div>
+          {state === "Resolving" ? (
+            <p>Opening shared reading…</p>
+          ) : (
+            <>
+              <h1>Share unavailable</h1>
+              <p>This link is invalid, revoked, or no longer readable.</p>
+            </>
+          )}
+        </main>
+      )}
+    </div>
+  );
+}
+
+function SharedDocument({ token, share }: { token: string; share: Share }) {
+  const highlight = share.highlight.kind === "Present" ? share.highlight.value : null;
+  const mark =
+    highlight?.anchor.kind === "Text" ? { ...highlight.anchor, color: highlight.color } : null;
+  const markAt = (ordinal: number) => (mark?.ordinal === ordinal ? mark : null);
+  const { reader } = share;
+  return (
+    <>
       <header className={styles.header}>
         <div className={styles.brand}>Nexus</div>
-        <h1>{state.bootstrap.media.title}</h1>
-        {state.bootstrap.media.bylines.length > 0 ? (
-          <p className={styles.bylines}>
-            {state.bootstrap.media.bylines.join(", ")}
-          </p>
-        ) : null}
-        {state.bootstrap.media.sourceUrl.kind === "Present" ? (
+        <h1>{share.title}</h1>
+        {share.bylines.length > 0 ? <p>{share.bylines.join(", ")}</p> : null}
+        {share.source_url.kind === "Present" ? (
           <a
-            className={styles.sourceLink}
-            href={state.bootstrap.media.sourceUrl.value}
+            href={share.source_url.value}
             target="_blank"
             rel="noopener noreferrer"
             referrerPolicy="no-referrer"
@@ -190,496 +123,207 @@ export default function PublicShareReader() {
           </a>
         ) : null}
       </header>
-      {highlight ? <HighlightCallout highlight={highlight} /> : null}
       <main className={styles.reader}>
-        {state.readerData.kind === "ArticleOrTranscript" ? (
-          <PublicFragments
-            page={state.readerData.page}
-            highlight={highlight}
-          />
-        ) : state.readerData.kind === "Epub" ? (
-          <PublicEpub
-            token={state.token}
-            navigation={state.readerData.navigation}
-            highlight={highlight}
-          />
+        {highlight ? (
+          <aside className={styles.callout} aria-label="Shared highlight">
+            <span>Shared highlight</span>
+            {highlight.quote.kind === "Present" ? (
+              <blockquote>{highlight.quote.value}</blockquote>
+            ) : (
+              <p>The highlighted area is shown in the document below.</p>
+            )}
+          </aside>
+        ) : null}
+        {reader.kind === "Article" ? (
+          <article className={styles.column}>
+            {mark && !reader.fragments.some((f) => f.ordinal === mark.ordinal)
+              ? HIGHLIGHT_UNAVAILABLE
+              : null}
+            {reader.fragments.map((fragment) => (
+              <MarkedHtml
+                key={fragment.ordinal}
+                html={fragment.html_sanitized}
+                text={fragment.canonical_text}
+                mark={markAt(fragment.ordinal)}
+              />
+            ))}
+          </article>
+        ) : reader.kind === "Transcript" ? (
+          <div className={styles.column}>
+            {mark && !reader.segments.some((s) => s.ordinal === mark.ordinal)
+              ? HIGHLIGHT_UNAVAILABLE
+              : null}
+            <ol className={styles.transcript}>
+              {reader.segments.map((segment) => (
+                <Segment key={segment.ordinal} segment={segment} mark={markAt(segment.ordinal)} />
+              ))}
+            </ol>
+          </div>
+        ) : reader.kind === "Epub" ? (
+          <PublicEpub token={token} sections={reader.sections} mark={mark} />
         ) : (
-          <PublicPdf token={state.token} highlight={highlight} />
+          <PublicPdf token={token} highlight={highlight} />
         )}
       </main>
       <footer className={styles.footer}>
         Read-only shared view. No Nexus account is required.
       </footer>
-    </PublicShell>
+    </>
   );
 }
 
-function PublicShell({
-  title,
-  children,
-}: {
-  title: string;
-  children: ReactNode;
-}) {
+function Segment({ segment, mark }: { segment: Schema<"PublicSegmentOut">; mark: Mark | null }) {
+  const chars = Array.from(segment.canonical_text);
   return (
-    <div className={styles.shell}>
-      {/* The route emits no metadata title, so this rendered element is the
-          document's only one and React re-asserts it on every commit. */}
-      <title>{title}</title>
-      {children}
-    </div>
-  );
-}
-
-function StatusCard({ children }: { children: ReactNode }) {
-  return (
-    <main className={styles.statusCard} role="status">
-      {children}
-    </main>
-  );
-}
-
-function HighlightCallout({ highlight }: { highlight: PublicHighlight }) {
-  return (
-    <aside
-      className={styles.highlightCallout}
-      data-highlight-color={highlight.color.toLowerCase()}
-      aria-label="Shared highlight"
+    <li
+      className={mark ? styles.target : undefined}
+      tabIndex={mark ? -1 : undefined}
+      ref={mark ? focusTarget : undefined}
     >
-      <span className={styles.highlightLabel}>Shared highlight</span>
-      {highlight.quote.kind === "Present" ? (
-        <blockquote>{highlight.quote.value}</blockquote>
-      ) : (
-        <p>The highlighted area is shown in the document below.</p>
-      )}
-    </aside>
+      <span className={styles.meta}>
+        {segment.start_ms.kind === "Present" ? formatClock(segment.start_ms.value / 1000) : null}
+        {segment.speaker.kind === "Present" ? ` · ${segment.speaker.value}` : null}
+      </span>
+      <p>
+        {mark ? (
+          <>
+            {chars.slice(0, mark.start_offset).join("")}
+            <mark className={`hl-${mark.color}`}>
+              {chars.slice(mark.start_offset, mark.end_offset).join("")}
+            </mark>
+            {chars.slice(mark.end_offset).join("")}
+          </>
+        ) : (
+          segment.canonical_text
+        )}
+      </p>
+    </li>
   );
 }
 
-function PublicFragments({
-  page,
-  highlight,
-}: {
-  page: PublicFragmentPage;
-  highlight: PublicHighlight | null;
-}) {
-  if (page.kind === "ArticleFragments") {
-    const anchor =
-      highlight?.anchor.kind === "ArticleText" ? highlight.anchor : null;
-    const targetOrdinal = anchor?.fragmentOrdinal ?? null;
-    const hasTarget =
-      anchor !== null &&
-      page.items.some((fragment) => fragment.ordinal === targetOrdinal);
-    return (
-      <article className={styles.article}>
-        {anchor && !hasTarget ? <HighlightUnavailable /> : null}
-        {page.items.map((fragment) => {
-          const isTarget = fragment.ordinal === targetOrdinal;
-          return (
-            <section key={fragment.ordinal}>
-              <PublicHtmlWithAssets
-                html={fragment.htmlSanitized}
-                canonicalText={fragment.canonicalText}
-                startOffset={isTarget ? anchor?.startOffset : undefined}
-                endOffset={isTarget ? anchor?.endOffset : undefined}
-                expectedText={
-                  isTarget && highlight?.quote.kind === "Present"
-                    ? highlight.quote.value
-                    : undefined
-                }
-              />
-            </section>
-          );
-        })}
-      </article>
-    );
-  }
-
-  const anchor =
-    highlight?.anchor.kind === "TranscriptText" ? highlight.anchor : null;
-  const targetOrdinal = anchor?.segmentOrdinal ?? null;
-  const hasTarget =
-    anchor !== null &&
-    page.items.some((segment) => segment.ordinal === targetOrdinal);
-  return (
-    <ol className={styles.transcript}>
-      {anchor && !hasTarget ? <HighlightUnavailable /> : null}
-      {page.items.map((segment) => {
-        const isTarget = segment.ordinal === targetOrdinal;
-        const exactText =
-          isTarget && anchor && highlight?.quote.kind === "Present"
-            ? highlightText(
-                segment.canonicalText,
-                anchor.startOffset,
-                anchor.endOffset,
-                highlight.quote.value
-              )
-            : null;
-        const isExactTarget = isTarget && exactText !== null;
-        return (
-          <li
-            key={segment.ordinal}
-            data-public-highlight-target={
-              isExactTarget ? "true" : undefined
-            }
-            className={isExactTarget ? styles.targetSection : undefined}
-            tabIndex={isExactTarget ? -1 : undefined}
-            ref={(element) => {
-              if (element && isExactTarget) {
-                focusPublicHighlightTarget(element);
-              }
-            }}
-          >
-            <div className={styles.segmentMeta}>
-              {segment.timeRange.kind === "Present"
-                ? formatTimestamp(segment.timeRange.value.startMs)
-                : null}
-              {segment.speaker.kind === "Present"
-                ? ` · ${segment.speaker.value}`
-                : null}
-            </div>
-            <p>{exactText ?? segment.canonicalText}</p>
-            {isTarget && !isExactTarget ? <HighlightUnavailable /> : null}
-          </li>
-        );
-      })}
-    </ol>
+function PublicEpub(props: { token: string; sections: Section[]; mark: Mark | null }) {
+  const { token, sections, mark } = props;
+  const [selected, setSelected] = useState(
+    () => sections.find((section) => section.ordinal === mark?.ordinal) ?? sections[0],
   );
-}
-
-function PublicEpub({
-  token,
-  navigation,
-  highlight,
-}: {
-  token: string;
-  navigation: PublicNavigationPage;
-  highlight: PublicHighlight | null;
-}) {
-  const highlightedHandle =
-    highlight?.anchor.kind === "EpubText"
-      ? highlight.anchor.sectionHandle
-      : null;
-  const [selectedHandle, setSelectedHandle] = useState(
-    highlightedHandle ?? navigation.items[0]?.sectionHandle ?? null
-  );
-  const [section, setSection] = useState<PublicSection | null>(null);
-  const [unavailable, setUnavailable] = useState(false);
+  // The loaded body names its section, so a body never renders under another selection.
+  const [loaded, setLoaded] = useState<{
+    section: Section;
+    body: Schema<"PublicSectionOut"> | null;
+  } | null>(null);
 
   useEffect(() => {
-    if (!selectedHandle) return;
     const controller = new AbortController();
-    setSection(null);
-    setUnavailable(false);
-    readPublicSection(token, selectedHandle, controller.signal)
-      .then(setSection)
-      .catch(() => {
-        if (!controller.signal.aborted) setUnavailable(true);
+    void publicFetch(`/sections/${selected.section_handle}`, token, controller.signal)
+      .then(async (response) => {
+        type Json = ApiJson<"/public/resource-share/sections/{section_handle}", "get">;
+        return response.ok ? ((await response.json()) as Json).data : null;
+      })
+      .catch(() => null)
+      .then((body) => {
+        if (!controller.signal.aborted) setLoaded({ section: selected, body });
       });
     return () => controller.abort();
-  }, [selectedHandle, token]);
+  }, [selected, token]);
 
-  if (navigation.items.length === 0 || !selectedHandle) {
-    return <p className={styles.empty}>This book has no readable sections.</p>;
-  }
   return (
-    <div className={styles.epubLayout}>
-      <nav className={styles.toc} aria-label="Book contents">
-        {navigation.items.map((item) => (
+    <div className={styles.epub}>
+      <nav aria-label="Book contents">
+        {sections.map((section) => (
           <button
-            key={item.sectionHandle}
+            key={section.section_handle}
             type="button"
-            aria-current={
-              item.sectionHandle === selectedHandle ? "location" : undefined
-            }
-            style={{ paddingInlineStart: `${12 + item.depth * 12}px` }}
-            onClick={() => setSelectedHandle(item.sectionHandle)}
+            aria-current={section === selected ? "location" : undefined}
+            style={{ paddingInlineStart: `${12 + section.depth * 12}px` }}
+            onClick={() => setSelected(section)}
           >
-            {item.label || `Section ${item.ordinal + 1}`}
+            {section.label || `Section ${section.ordinal + 1}`}
           </button>
         ))}
       </nav>
-      <article className={styles.epubSection}>
-        {unavailable ? (
-          <p className={styles.empty}>Section unavailable.</p>
-        ) : section ? (
-          <PublicHtmlWithAssets
-            key={section.sectionHandle}
-            token={token}
-            html={section.htmlSanitized}
-            canonicalText={section.canonicalText}
-            startOffset={
-              section.sectionHandle === highlightedHandle &&
-              highlight?.anchor.kind === "EpubText"
-                ? highlight.anchor.startOffset
-                : undefined
-            }
-            endOffset={
-              section.sectionHandle === highlightedHandle &&
-              highlight?.anchor.kind === "EpubText"
-                ? highlight.anchor.endOffset
-                : undefined
-            }
-            expectedText={
-              section.sectionHandle === highlightedHandle &&
-              highlight?.quote.kind === "Present"
-                ? highlight.quote.value
-                : undefined
-            }
-          />
+      <article className={styles.column}>
+        {loaded?.section !== selected ? (
+          <p className={styles.note}>Loading section…</p>
+        ) : loaded.body === null ? (
+          <p className={styles.note}>Section unavailable.</p>
         ) : (
-          <p className={styles.empty}>Loading section…</p>
+          <MarkedHtml
+            key={selected.section_handle}
+            token={token}
+            html={loaded.body.html_sanitized}
+            text={loaded.body.canonical_text}
+            mark={mark?.ordinal === selected.ordinal ? mark : null}
+          />
         )}
       </article>
     </div>
   );
 }
 
-function PublicHtmlWithAssets({
-  token,
-  html,
-  canonicalText,
-  startOffset,
-  endOffset,
-  expectedText,
-}: {
-  token?: string;
-  html: string;
-  canonicalText: string;
-  startOffset?: number;
-  endOffset?: number;
-  expectedText?: string;
-}) {
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const [highlightUnavailable, setHighlightUnavailable] = useState(false);
+/**
+ * Sanitized HTML with the shared highlight marked by the reader's own applyHighlightsToHtml,
+ * scrolled to and focused. With a token, EPUB images load by handle as blob URLs.
+ */
+function MarkedHtml(props: { html: string; text: string; mark: Mark | null; token?: string }) {
+  const { html, text, mark, token } = props;
+  const rootRef = useRef<HTMLElement>(null);
+  const marked = useMemo(
+    () =>
+      mark &&
+      applyHighlightsToHtml(html, text, [
+        {
+          id: "shared",
+          start_offset: mark.start_offset,
+          end_offset: mark.end_offset,
+          color: mark.color,
+          created_at: "",
+        },
+      ]),
+    [html, mark, text],
+  );
+  const markedOk = marked !== null && marked.failedIds.length === 0;
+  const rendered = markedOk ? marked.html : html;
+
+  useEffect(() => {
+    if (!markedOk || !rootRef.current) return;
+    rootRef.current.querySelector("[data-active-highlight-ids]")?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+    rootRef.current.focus({ preventScroll: true });
+  }, [markedOk, rendered]);
 
   useEffect(() => {
     const root = rootRef.current;
     if (!root || !token) return;
     const controller = new AbortController();
     const objectUrls: string[] = [];
-    for (const image of root.querySelectorAll<HTMLImageElement>(
-      "img[data-nexus-public-asset-handle]"
-    )) {
-      const handle = image.dataset.nexusPublicAssetHandle;
-      if (!handle) continue;
-      void readPublicAsset(token, handle, controller.signal)
+    const images = root.querySelectorAll<HTMLImageElement>("img[data-nexus-public-asset-handle]");
+    for (const image of images) {
+      void publicFetch(`/assets/${image.dataset.nexusPublicAssetHandle}`, token, controller.signal)
+        .then((response) => (response.ok ? response.blob() : null))
         .then((blob) => {
-          if (controller.signal.aborted) return;
-          const objectUrl = URL.createObjectURL(blob);
-          objectUrls.push(objectUrl);
-          image.src = objectUrl;
+          if (!blob || controller.signal.aborted) return;
+          const url = URL.createObjectURL(blob);
+          objectUrls.push(url);
+          image.src = url;
         })
-        .catch(() => {
-          image.removeAttribute("src");
-        });
+        .catch(() => undefined);
     }
     return () => {
       controller.abort();
-      for (const objectUrl of objectUrls) URL.revokeObjectURL(objectUrl);
+      for (const url of objectUrls) URL.revokeObjectURL(url);
     };
-  }, [html, token]);
-
-  useEffect(() => {
-    const root = rootRef.current;
-    if (
-      !root ||
-      startOffset === undefined ||
-      endOffset === undefined ||
-      expectedText === undefined
-    ) {
-      setHighlightUnavailable(false);
-      return;
-    }
-    const mark = installExactPublicTextHighlight(root, {
-      canonicalText,
-      startOffset,
-      endOffset,
-      expectedText,
-    });
-    setHighlightUnavailable(mark === null);
-    if (mark) focusPublicHighlightTarget(mark);
-    return () => {
-      clearExactPublicTextHighlight(root);
-    };
-  }, [canonicalText, endOffset, expectedText, html, startOffset]);
+  }, [rendered, token]);
 
   return (
-    <>
-      <div ref={rootRef}>
-        <HtmlRenderer htmlSanitized={html} headingLevelOffset={1} />
-      </div>
-      {highlightUnavailable ? <HighlightUnavailable /> : null}
-    </>
+    <section
+      ref={rootRef}
+      className={markedOk ? styles.target : undefined}
+      tabIndex={markedOk ? -1 : undefined}
+    >
+      <HtmlRenderer htmlSanitized={rendered} headingLevelOffset={1} />
+      {marked !== null && !markedOk ? HIGHLIGHT_UNAVAILABLE : null}
+    </section>
   );
-}
-
-function PublicPdf({
-  token,
-  highlight,
-}: {
-  token: string;
-  highlight: PublicHighlight | null;
-}) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const viewerRef = useRef<HTMLDivElement | null>(null);
-  const [error, setError] = useState(false);
-  const [highlightUnavailable, setHighlightUnavailable] = useState(false);
-
-  useEffect(() => {
-    const container = containerRef.current;
-    const viewerElement = viewerRef.current;
-    if (!container || !viewerElement) return;
-    let disposed = false;
-    let doc: PdfDocumentLike | null = null;
-    let task: PdfDocumentLoadingTaskLike | null = null;
-    let eventBus: PdfEventBusLike | null = null;
-    let focusTarget: ((event: unknown) => void) | null = null;
-    let paintTarget: ((event: unknown) => void) | null = null;
-    setError(false);
-    setHighlightUnavailable(false);
-
-    void (async () => {
-      try {
-        const [pdfJs, pdfViewer] = await Promise.all([
-          loadPdfJs(),
-          loadPdfJsViewer(),
-        ]);
-        if (disposed) return;
-        pdfJs.GlobalWorkerOptions.workerSrc = PDF_WORKER_SRC;
-        eventBus = new pdfViewer.EventBus();
-        const linkService = new pdfViewer.PDFLinkService({
-          eventBus,
-          externalLinkTarget: pdfViewer.LinkTarget?.BLANK ?? null,
-          externalLinkRel: "noopener noreferrer",
-        });
-        const viewer = new pdfViewer.PDFViewer({
-          container,
-          viewer: viewerElement,
-          eventBus,
-          linkService,
-          textLayerMode: 1,
-          enableAutoLinking: false,
-        });
-        linkService.setViewer(viewer);
-        task = pdfJs.getDocument(publicPdfSource(token));
-        doc = await task.promise;
-        if (disposed) return;
-        const pdfHighlight =
-          highlight?.anchor.kind === "PdfGeometry"
-            ? { anchor: highlight.anchor, color: highlight.color }
-            : null;
-        const pdfAnchor = pdfHighlight?.anchor ?? null;
-        const pdfHighlightColor = pdfHighlight?.color ?? null;
-        const targetPage = pdfAnchor?.pageNumber ?? 1;
-        if (targetPage > doc.numPages) {
-          setHighlightUnavailable(pdfAnchor !== null);
-          return;
-        }
-        focusTarget = () => {
-          viewer.currentScaleValue = "page-width";
-          viewer.currentPageNumber = targetPage;
-        };
-        paintTarget = (event: unknown) => {
-          if (
-            !pdfAnchor ||
-            !pdfHighlightColor ||
-            !isPageRenderedEvent(event, targetPage)
-          )
-            return;
-          const pageElement = viewerElement.querySelector<HTMLElement>(
-            `.page[data-page-number="${targetPage}"]`
-          );
-          const marker =
-            pageElement &&
-            installPublicPdfHighlightOverlay({
-              pageElement,
-              pageView: viewer.getPageView?.(targetPage - 1),
-              quads: pdfAnchor.quads,
-              color: pdfHighlightColor,
-              classes: {
-                layer: styles.pdfHighlightLayer,
-                rect: styles.pdfHighlightRect,
-              },
-            });
-          setHighlightUnavailable(marker === null);
-          if (marker) focusPublicHighlightTarget(marker);
-        };
-        eventBus.on("pagesloaded", focusTarget);
-        eventBus.on("pagerendered", paintTarget);
-        linkService.setDocument(doc, null);
-        viewer.setDocument(doc);
-      } catch (cause) {
-        if (!disposed) {
-          console.error("public_share_pdf_load_failed", cause);
-          setError(true);
-        }
-      }
-    })();
-
-    return () => {
-      disposed = true;
-      if (eventBus && focusTarget) eventBus.off("pagesloaded", focusTarget);
-      if (eventBus && paintTarget) eventBus.off("pagerendered", paintTarget);
-      task?.destroy?.();
-      void doc?.destroy?.();
-    };
-  }, [highlight, token]);
-
-  if (error) {
-    return <p className={styles.empty}>PDF unavailable.</p>;
-  }
-  return (
-    <>
-      {highlightUnavailable ? <HighlightUnavailable /> : null}
-      <div className={styles.pdfFrame}>
-        <div ref={containerRef} className={styles.pdfContainer}>
-          <div ref={viewerRef} className={`pdfViewer ${styles.pdfViewer}`} />
-        </div>
-      </div>
-    </>
-  );
-}
-
-function HighlightUnavailable() {
-  return (
-    <p className={styles.highlightUnavailable} role="status">
-      Highlight unavailable.
-    </p>
-  );
-}
-
-function highlightText(
-  text: string,
-  start: number,
-  end: number,
-  expectedText: string
-): ReactNode | null {
-  const codepoints = Array.from(text);
-  if (start < 0 || end <= start || end > codepoints.length) return null;
-  const selectedText = codepoints.slice(start, end).join("");
-  if (!selectedText || selectedText !== expectedText) return null;
-  return (
-    <>
-      {codepoints.slice(0, start).join("")}
-      <mark>{selectedText}</mark>
-      {codepoints.slice(end).join("")}
-    </>
-  );
-}
-
-function isPageRenderedEvent(event: unknown, targetPage: number): boolean {
-  return (
-    typeof event === "object" &&
-    event !== null &&
-    "pageNumber" in event &&
-    event.pageNumber === targetPage
-  );
-}
-
-function formatTimestamp(milliseconds: number): string {
-  const seconds = Math.floor(milliseconds / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const remainder = seconds % 60;
-  return `${minutes}:${remainder.toString().padStart(2, "0")}`;
 }
