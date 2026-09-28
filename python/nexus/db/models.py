@@ -92,7 +92,6 @@ class TranscriptState(str, PyEnum):
     ready = "ready"
     partial = "partial"
     unavailable = "unavailable"
-    failed_quota = "failed_quota"
     failed_provider = "failed_provider"
 
 
@@ -2393,122 +2392,6 @@ class ChatRunEvent(Base):
     )
 
     run: Mapped["ChatRun"] = relationship("ChatRun", back_populates="events")
-
-
-class BillingAccount(Base):
-    """Current Stripe subscription snapshot for one user."""
-
-    __tablename__ = "billing_accounts"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    stripe_customer_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    stripe_subscription_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    stripe_price_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    plan_tier: Mapped[str] = mapped_column(Text, nullable=False, server_default="free")
-    subscription_status: Mapped[str | None] = mapped_column(Text, nullable=True)
-    current_period_start: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True),
-        nullable=True,
-    )
-    current_period_end: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True),
-        nullable=True,
-    )
-    cancel_at_period_end: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        server_default="false",
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-
-class BillingEntitlementOverride(Base):
-    """Internal unpaid entitlement grant for one user."""
-
-    __tablename__ = "billing_entitlement_overrides"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
-    plan_tier: Mapped[str] = mapped_column(Text, nullable=False)
-    transcription_quota_mode: Mapped[str] = mapped_column(
-        Text,
-        nullable=False,
-        server_default="plan",
-    )
-    transcription_minutes_limit_monthly: Mapped[int | None] = mapped_column(
-        Integer,
-        nullable=True,
-    )
-    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    reason: Mapped[str] = mapped_column(Text, nullable=False)
-    created_by_user_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=True,
-    )
-    updated_by_user_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=True,
-    )
-    created_by_label: Mapped[str | None] = mapped_column(Text, nullable=True)
-    updated_by_label: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-
-class StripeWebhookEvent(Base):
-    """Processed Stripe webhook event id for idempotency."""
-
-    __tablename__ = "stripe_webhook_events"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    stripe_event_id: Mapped[str] = mapped_column(Text, nullable=False)
-    event_type: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
 
 
 class ExtensionSession(Base):

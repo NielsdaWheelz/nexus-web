@@ -110,7 +110,7 @@ scaffolding.
              OpenAI API (embeddings); Deepgram (transcription),
              Brave (Browse + agent research), Podcast Index, YouTube Data API
              plus YouTube transcript/caption egress,
-             Stripe (billing), Cloudflare R2.
+             Cloudflare R2.
 ```
 
 **The one rule that explains the shape:** the browser holds no tokens and never
@@ -148,7 +148,7 @@ dependencies.
 
 Managed/external: **Cloudflare R2** (object storage; MinIO locally), **Supabase**
 (hosted Auth only — JWT issuance/JWKS/OAuth; _no_ Supabase Database or Storage),
-and the generation/search/podcast/billing services above. The frontend is
+and the generation/search/podcast services above. The frontend is
 served by Vercel.
 
 Key topology facts (details: [`deployment.md`](../deployment.md),
@@ -370,9 +370,8 @@ hashes, fingerprints, or supersession chains.
 The tables group into these domains:
 
 **Identity / auth / sessions** — `users` (PK = Supabase `sub`),
-`billing_accounts`, `billing_entitlement_overrides`,
-`stripe_webhook_events`, `extension_sessions`, `auth_handoff_codes`,
-`reader_profiles`, `workspace_sessions`, `nexus_usages`. LLM access
+`extension_sessions`, `auth_handoff_codes`, `reader_profiles`,
+`workspace_sessions`, `nexus_usages`. LLM access
 runs on platform credentials only — there is no per-user key table.
 
 **Media / ingestion** — `media` (the central readable entity; PDF `plain_text`
@@ -533,8 +532,7 @@ durable history-traversal fence), `podcast_episodes` (PK = `media_id`),
 `podcast_listening_states` (position/duration/nullable established episode rate +
 `write_revision`/`reset_epoch` heartbeat fencing plus heartbeat-only
 `last_engaged_at`; operational `updated_at` is not engagement),
-`podcast_transcription_jobs`,
-`podcast_transcription_usage_daily`, `podcast_transcript_segments`. Named
+`podcast_transcription_jobs`, `podcast_transcript_segments`. Named
 Podcast placement is only `library_entries(podcast_id)`; Default/All is virtual
 and stores no Podcast entry.
 
@@ -799,7 +797,7 @@ Other identity surfaces:
   PKCE-bound (`challenge = sha256(verifier)`), 90s TTL, consumed with an atomic
   `DELETE ... RETURNING`.
 
-### 7.5 Generation credentials, billing & entitlements
+### 7.5 Generation credentials & rate limiting
 
 - **Generation credential**: only the isolated Codex host can read the exact
   enrolled `codex-personal` ChatGPT `auth.json`, mounted read-write solely for
@@ -809,15 +807,6 @@ Other identity surfaces:
   by `GENERATION_API_PROVIDERS`; `services/llm_credentials.py` projects that
   exact configured set into ProviderRuntime and keeps the OpenAI embedding key
   in its separate narrow credential. See [modules/llms.md](modules/llms.md).
-- **Billing** (`services/billing.py`): Stripe is the system of record;
-  `billing_accounts` is a per-user snapshot synced by idempotent webhooks (deduped
-  via `stripe_webhook_events`). Tiers: `free | plus | ai_plus | ai_pro`.
-- **Entitlements** (`services/billing_entitlements.py`): derived from the effective
-  billing plan for sharing and transcription. Generation uses operator-owned
-  subscription/API credentials and has no product entitlement or token quota.
-  **Internal overrides** (`billing_entitlement_overrides`, CLI-managed via
-  `ops/entitlement_overrides.py`) can raise a plan upward and grant unlimited
-  transcription, with a full audit trail.
 
 ### 7.6 Search, retrieval & the embedding pipeline
 
@@ -1110,7 +1099,7 @@ capability-owned:
   failure, and warning transitions. Source retry policy remains singular in
   `media_source_ingest.py`.
 - `source_attempt_failures.py`: the terminal source-attempt transaction across
-  attempt, Media, transcript, Podcast job, reservation, and revisions;
+  attempt, Media, transcript, Podcast job, and revisions;
   `media_processing_state.mark_media_failed_by_id` is its Media failure-field
   writer.
 
@@ -1616,47 +1605,40 @@ The live path keeps current episodes fresh while the backfill walks history in
 fenced, retryable steps, and either path may continue when the other fails.
 Both paths ingest metadata, stable aliases, chapters, playback URLs, and RSS
 transcript references only. They never fetch or publish a transcript. Explicit
-Episode Transcribe prefers a publisher sidecar, then the quota-gated Deepgram
-path; explicit Video Transcribe uses the YouTube caption provider. Current
-transcript origin is exactly `Publisher | Imported | Generated`.
+Episode Transcribe publishes the publisher sidecar when it yields segments, else
+generates with Deepgram; explicit Video Transcribe uses the YouTube caption
+provider. Current transcript origin is exactly `Publisher | Imported | Generated`.
 `services/podcasts/transcription.py::request_media_transcript_for_viewer` owns
-authorization, one typed media snapshot, and strict media-kind dispatch only.
-`_request_podcast_episode_transcript` owns the Episode precedence machine:
-publisher sidecar, readable transcript, inflight work, quota rejection, then
-fresh generated admission. A dry-run does not create `media_transcript_states`,
-create/reset a transcription job, reserve usage, or bump collection revisions. Transcript work state is materialized only after the
-dry-run return boundary. Explicit admission and durable source requeue both use
-the same transcript-job reset owner; no caller carries a second job upsert.
-Forecast, explicit admission, and durable source requeue derive and reserve
-quota through one typed transcript-budget owner. A quota rejection writes
-nothing: it does not materialize transcript work state or bump collection
-revisions. A fingerprinted episode
-query is one atomic admission transaction: Media rows lock in deterministic
-selection order, and any stale selection, quota rejection, or enqueue defect
-rolls back every episode's state, reservation, source attempt, queue job, and
-collection revision. Repeated inflight admission likewise writes nothing;
-Podcast collection revisions advance only when the request changes
+authorization, one locked media snapshot, and strict media-kind dispatch only.
+`_admit_episode_transcript` owns the Episode precedence: a readable transcript
+answers with semantic repair; inflight work (transcript `queued | running` or job
+`pending | running`) answers and writes nothing; otherwise admission materializes
+transcript state, resets the job, marks the transcript `queued`, and creates one
+durable transcript source attempt. The media row lock keeps at most one queued job
+per Episode. Podcast collection revisions advance only when the request changes
 viewer-visible transcript work state.
-The request path locks and reads its media/job/transcript inputs once through
-the typed `_TranscriptRequestMedia` snapshot. Publisher-sidecar forecast and
-admission then live in `_request_rss_podcast_transcript`: they reserve zero
-generated minutes and create one durable transcript source attempt.
+`reset_podcast_transcription_job` is the one writer that puts the Episode's job
+row back to `pending`. Explicit admission and durable source requeue (retry,
+refresh, system repair) both call it while holding a conflicting media lock; no
+caller carries a second job upsert. A requeue never touches the current
+projection: existing segments, fragments, and readable transcript state remain
+authoritative until `transcripts/current.py` atomically installs their
+replacement.
+The batch forecast counts and fingerprints the eligible selection as a pure
+read. A fingerprinted episode query is one atomic admission transaction: Media
+rows lock in deterministic selection order, and a stale selection or enqueue
+defect rolls back every episode's state, source attempt, queue job, and
+collection revision.
 `media_source_ingest.enqueue_podcast_episode_transcript_source_attempt` binds
 the accepted attempt to its durable job inside the transcript caller's current
 transaction; it never commits or converts an enqueue defect into durable failed
 state. That source-attempt owner publishes the all-viewer media-fact revision
 exactly once; the outer transcript controller does not publish a second
 revision for the same accepted attempt.
-Publisher-sidecar fallback admission returns the discriminated domain result
-`Admitted | RejectedQuota` from its fenced publication phase. A quota rejection
-returns rather than raising inside the phase, so the worker raises the typed
-error and publishes terminal source/transcript failure in the next fenced phase.
-Generated-fallback and operator-requeue admission mutate only the generated
-budget reservation and transcription job. Existing current
-segments, fragments, and readable transcript state remain authoritative until
-`transcripts/current.py` atomically installs their replacement; admission never
-deletes or downgrades the current projection and publishes no duplicate
-collection revision.
+The worker, `run_podcast_transcription_now`, owns the sidecar-then-Deepgram
+order for every run, requeues included: a present sidecar is fetched first and
+its segments publish in one fenced phase; otherwise `_begin_generated_run` marks
+the job and transcript running under the same fence before any Deepgram call.
 `transcripts/request_reason.py` is the sole internal request-reason owner.
 Validated API values and exact durable source/job values enter that type once;
 missing, whitespace-altered, or unknown same-system discriminants defect rather
@@ -1671,26 +1653,23 @@ unchanged revision. The acquisition operation returns only
 `PodcastTranscriptionCompleted`; every modeled failure raises its typed error,
 so no nullable skipped/failed result fields or downstream variant guard exist.
 Podcast source failure likewise has one terminal publication: the source owner
-settles the attempt, while the Podcast failure owner atomically settles Media,
-the transcription job, reserved usage, transcript state, and one shared
-media-fact revision. `media_fact_revisions.bump_all_media_fact_collections`
-owns the exact `AuthorWorks | LibraryEntries | PodcastEpisodes` family set.
-Podcast budget admission lives in `podcasts/transcription_usage.py`; reservation
-release/commit lives in the supervisor-safe
-`podcasts/transcription_reservation_settlement.py`. Neither terminal owner
-imports provider adapters.
+settles the attempt, while `podcasts/transcription_failure.py` atomically settles
+Media, the transcription job, transcript state (`unavailable` for
+`E_TRANSCRIPT_UNAVAILABLE`, else `failed_provider`), and one shared media-fact
+revision. `media_fact_revisions.bump_all_media_fact_collections` owns the exact
+`AuthorWorks | LibraryEntries | PodcastEpisodes` family set. The failure owner
+imports no provider adapter.
 `services/transcripts/state.py` is the sole persistence owner for
 `media_transcript_states`; `current.py` owns artifact publication, while
 `semantic.py` owns every semantic-job payload plus lock-and-job-inventory repair
-admission. Readable-transcript repair costs zero generated minutes, never bumps
-collection revisions because `semantic_status` is not a collection-row fact,
-and treats a live pending/running/retryable semantic job as idempotent instead
-of dispatching duplicate work. Database enqueue defects propagate and roll back;
+admission. Readable-transcript repair never bumps collection revisions because
+`semantic_status` is not a collection-row fact, and treats a live
+pending/running/retryable semantic job as idempotent instead of dispatching
+duplicate work. Database enqueue defects propagate and roll back;
 there is no transcript `enqueue_failed` runtime or persisted audit outcome.
-Canonical YouTube Video caption forecast and import live in
-`_request_youtube_video_transcript`. It crosses the provider boundary with no
-database transaction open, reauthorizes before atomic `Imported` transcript
-publication, and advances `LibraryEntries` only; Video import never invalidates
+Canonical YouTube Video caption import lives in `_import_youtube_captions`. It
+crosses the provider boundary with no database transaction open, reauthorizes
+before atomic `Imported` transcript publication, and advances `LibraryEntries` only; Video import never invalidates
 `PodcastEpisodes`.
 
 The canonical Podcast detail pane observes those two independent owners through
@@ -2110,7 +2089,7 @@ they open over Resume and never become panes.
   actions; the SSE client mints a fresh stream token per connect.
 - **Surfaces** (`components/*`, `app/(authenticated)/**/*PaneBody.tsx`): reader,
   chat, player, notes editor, Nexus, search, contributors, libraries/
-  items, billing/settings — all rendered as pane bodies. UI primitives live in
+  items, settings — all rendered as pane bodies. UI primitives live in
   `components/ui/*`; cross-cutting hooks in `lib/ui/*`; theming via a `nx-theme`
   cookie; keybindings in `lib/keybindings.ts`; Android-shell adaptation in
   `lib/androidShell.ts`.
@@ -2221,7 +2200,7 @@ make targets. Major groups: app/env, database + pool, Supabase
 Auth (issuer/JWKS/audiences), internal secret, encryption key, Codex host
 settings, the narrow OpenAI embedding key,
 Brave Browse/chat search, streaming (token signing key + base URL + CORS),
-podcasts, browse providers, worker schedules, and Stripe. Worker lanes are
+podcasts, browse providers, and worker schedules. Worker lanes are
 Compose-owned rather than stored in the merged production env.
 The automated check starts no application services and reads no credentials.
 
@@ -2320,7 +2299,7 @@ The things most likely to bite you, distilled:
 | Libraries / contributors / notes                                  | `python/nexus/services/{library_governance,library_entries,library_invitations,contributors,notes}.py`                                                                                                 |
 | Resource grants / public sharing                                  | [`modules/resource-sharing.md`](modules/resource-sharing.md), `python/nexus/services/{resource_grants,resource_sharing,public_resource_sharing}.py`, `apps/web/src/{components,lib}/sharing/`, `apps/web/src/app/s/` |
 | Podcasts / playback                                               | `python/nexus/services/podcasts/`, `python/nexus/services/consumption/`, `python/nexus/api/routes/{lectern,listening_state}.py`                                                                        |
-| Auth / billing / stream tokens                                    | `python/nexus/services/{billing,billing_entitlements,stream_tokens}.py`, `python/nexus/auth/`                                                                                                          |
+| Auth / stream tokens                                              | `python/nexus/services/stream_tokens.py`                                  , `python/nexus/auth/`                                                                                                          |
 | Frontend BFF / auth / SSE                                         | `apps/web/src/lib/{api,auth,supabase}/`                                                                                                                                                                |
 | Workspace / panes / mobile viewport                               | `apps/web/src/lib/{workspace,panes,mobileViewport}/`, `apps/web/src/components/workspace/`                                                                                                             |
 | Desktop Nexus / mobile Nexus task                                 | `apps/web/src/components/{nexus,switchboard}/`, `apps/web/src/lib/{nexus,switchboard}/`                                                                                                                |

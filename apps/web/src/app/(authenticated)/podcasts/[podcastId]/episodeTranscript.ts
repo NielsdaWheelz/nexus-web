@@ -1,7 +1,7 @@
 /**
  * Episode + transcript types, constants, and pure-state helpers shared by
- * the podcast-detail pane. Owns the transcript request/forecast/batch
- * payload shapes and the polling / can-request / progress / summary helpers.
+ * the podcast-detail pane. Owns the episode payload decoder and the
+ * polling / can-request helpers.
  */
 
 import { decodePresence, type Presence } from "@/lib/api/presence";
@@ -232,26 +232,6 @@ export function decodePodcastEpisodeMedia(raw: unknown): PodcastEpisodeMedia {
   };
 }
 
-export interface TranscriptRequestResult {
-  media_id: string;
-  processing_status: string;
-  transcript_state: TranscriptState;
-  transcript_coverage: TranscriptCoverage;
-  required_minutes: number;
-  remaining_minutes: number | null;
-  fits_budget: boolean;
-  request_enqueued: boolean;
-}
-
-export interface TranscriptRequestForecastState {
-  required_minutes: number;
-  remaining_minutes: number | null;
-  fits_budget: boolean;
-  request_enqueued: boolean;
-  reason: TranscriptRequestReason;
-  source: "forecast" | "request";
-}
-
 export function canRequestTranscriptForEpisode(
   episode: PodcastEpisodeMedia,
 ): boolean {
@@ -262,19 +242,4 @@ export function shouldPollTranscriptProvisioningForEpisode(
   episode: PodcastEpisodeMedia,
 ): boolean {
   return shouldPollTranscriptProvisioning(episode.transcript_state);
-}
-
-export function toTranscriptForecastState(
-  response: TranscriptRequestResult,
-  reason: TranscriptRequestReason,
-  source: "forecast" | "request",
-): TranscriptRequestForecastState {
-  return {
-    required_minutes: response.required_minutes,
-    remaining_minutes: response.remaining_minutes,
-    fits_budget: response.fits_budget,
-    request_enqueued: response.request_enqueued,
-    reason,
-    source,
-  };
 }

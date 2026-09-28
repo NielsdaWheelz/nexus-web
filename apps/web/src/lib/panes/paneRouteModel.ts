@@ -432,20 +432,6 @@ export const PANE_ROUTE_MODELS = [
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
-    id: "settingsBilling",
-    header: {
-      kind: "Section",
-      destinationId: "settings",
-      context: "Destination",
-    },
-    pattern: ["settings", "billing"],
-    defaultLabel: "Billing",
-    labelMode: "static",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
     id: "settingsReader",
     header: {
       kind: "Section",

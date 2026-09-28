@@ -13,7 +13,7 @@ from nexus.config import get_settings
 from nexus.db.models import Highlight, MediaTeardownIntent, ResourceGrant, User
 from nexus.db.retries import retry_serializable
 from nexus.db.session import transaction
-from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.presence import absent, presence_from_nullable, present
 from nexus.schemas.resource_sharing import (
     AudienceAvailableOut,
@@ -31,7 +31,6 @@ from nexus.schemas.resource_sharing import (
     UserShareOut,
 )
 from nexus.services import public_resource_sharing, resource_grants
-from nexus.services.billing_entitlements import get_effective_entitlements
 from nexus.services.library_governance import library_out, lock_library_for_member
 from nexus.services.locator_resolver import resolve_highlight_reader_target
 from nexus.services.resource_graph.refs import ResourceRef
@@ -103,8 +102,6 @@ def get_share_snapshot(
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
     mode = capability_for_ref(subject).sharing
     user = _unavailable(db, viewer_user_id, subject, lock=False)
-    if user is None and not get_effective_entitlements(db, viewer_user_id).can_share:
-        user = "EntitlementRequired"
     link = user or public_resource_sharing.link_readiness(db, subject)
     members = absent()
     if mode == "LibraryMembership":
@@ -177,8 +174,6 @@ def create_share(
             )
             if grant is not None:
                 return CreateResourceShareOut(share=_owned(grant, grantee), created=False)
-            if not get_effective_entitlements(db, viewer_user_id).can_share:
-                raise ApiError(ApiErrorCode.E_BILLING_REQUIRED, "Sharing requires an eligible plan")
             if grantee is None and (reason := public_resource_sharing.link_readiness(db, subject)):
                 raise InvalidRequestError(
                     ApiErrorCode.E_INVALID_REQUEST, f"Share unavailable: {reason}"

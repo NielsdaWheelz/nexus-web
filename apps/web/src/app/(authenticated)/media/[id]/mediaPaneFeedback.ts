@@ -112,15 +112,6 @@ export function mediaPaneErrorMessage(
         message: "The saved item can’t be used for this action.",
         requestId,
       };
-    case "E_PODCAST_QUOTA_EXCEEDED":
-    case "E_BILLING_REQUIRED":
-    case "E_BILLING_DISABLED":
-      return {
-        tone: "Danger",
-        title,
-        message: "This action isn’t available for the current account.",
-        requestId,
-      };
     default:
       throw error;
   }

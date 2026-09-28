@@ -305,9 +305,6 @@ class PodcastEpisodeQueryTranscriptTarget(BaseModel):
 
 class PodcastEpisodeQueryTranscriptForecastOut(BaseModel):
     eligible_count: int = Field(ge=0)
-    required_minutes: int = Field(ge=0)
-    remaining_minutes: Presence[int]
-    fits_budget: bool
     selection_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
 
     model_config = _CAMEL

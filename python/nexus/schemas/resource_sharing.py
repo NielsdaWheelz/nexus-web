@@ -14,7 +14,6 @@ AudienceUnavailableReason = Literal[
     "Deleting",
     "InsufficientAuthority",
     "HighlightUnresolved",
-    "EntitlementRequired",
     "ProjectionNotReady",
     "ProjectionUnsupported",
 ]

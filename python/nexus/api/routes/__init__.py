@@ -10,7 +10,6 @@ from nexus.api.routes.agent_api import router as agent_api_router
 from nexus.api.routes.agent_api import user_router as generation_effects_router
 from nexus.api.routes.atlas import router as atlas_router
 from nexus.api.routes.auth_handoff_codes import router as auth_handoff_codes_router
-from nexus.api.routes.billing import router as billing_router
 from nexus.api.routes.browse import router as browse_router
 from nexus.api.routes.chat_reader_selections import router as chat_reader_selections_router
 from nexus.api.routes.chat_runs import router as chat_runs_router
@@ -89,7 +88,6 @@ def create_api_router(*, podcasts: bool, email_ingest: bool) -> APIRouter:
     api_router.include_router(resource_graph_router)
     api_router.include_router(synapse_router)
     api_router.include_router(highlights_router)
-    api_router.include_router(billing_router)
     api_router.include_router(conversations_router)
     api_router.include_router(conversation_context_router)
     api_router.include_router(conversation_branches_router)

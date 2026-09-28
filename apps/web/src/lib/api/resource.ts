@@ -251,10 +251,3 @@ export const settingsAccountResource: ResourceDescriptor<NoResourceParams> = {
   serverPath: () => "/me",
   clientPath: () => "/api/me",
 };
-
-export const billingAccountResource: ResourceDescriptor<RefreshableResourceParams> =
-  {
-    cacheKey: ({ refreshVersion }) => `billing-account:${refreshVersion}`,
-    serverPath: () => "/billing/account",
-    clientPath: () => "/api/billing/account",
-  };

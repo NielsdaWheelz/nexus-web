@@ -54,12 +54,6 @@ export interface TranscriptChapter {
   image_url?: string | null;
 }
 
-export interface TranscriptRequestForecast {
-  requiredMinutes: number;
-  remainingMinutes: number | null;
-  fitsBudget: boolean;
-}
-
 export interface Fragment {
   id: string;
   media_id: string;

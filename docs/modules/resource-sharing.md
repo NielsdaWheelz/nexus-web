@@ -26,10 +26,10 @@ when a dedupe repoint moved the grant's subject while it waited.
 
 `services/resource_sharing.py` serves the Share overlay: one ordered
 availability check (mode, highlight present, not deleting, highlight owner,
-media readable, highlight resolvable; then entitlement; then, for links, public
-readiness) whose first failing reason wins. The create command re-runs it under
-the subject's row locks, returns an existing grant before billing (402
-`E_BILLING_REQUIRED` gates only new grants), and inserts under SERIALIZABLE.
+media readable, highlight resolvable; then, for links, public readiness) whose
+first failing reason wins. The create command re-runs it under the subject's row
+locks, returns an existing grant for the same audience, and inserts under
+SERIALIZABLE.
 Library subjects carry `members` (can the viewer manage them) from
 `library_governance.library_out`.
 

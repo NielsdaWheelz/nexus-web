@@ -1,7 +1,7 @@
 // Names for FastAPI's wire types (docs/local-rules/typed-wire.md).
 import type { components, paths } from "./wire.gen";
 
-/** A component schema of the API, e.g. `Schema<"BillingAccountOut">`. */
+/** A component schema of the API, e.g. `Schema<"TranscriptRequestOut">`. */
 export type Schema<Name extends keyof components["schemas"]> =
   components["schemas"][Name];
 
@@ -23,7 +23,8 @@ type JsonMethod<Path extends keyof paths> = {
 
 /**
  * The JSON body, envelope included, of the operation's success response (the one
- * 200, 201 or 202 FastAPI declares), e.g. `ApiJson<"/billing/account", "get">`.
+ * 200, 201 or 202 FastAPI declares), e.g.
+ * `ApiJson<"/media/transcript/forecasts", "post">`.
  * A method without such a body does not type-check.
  */
 export type ApiJson<

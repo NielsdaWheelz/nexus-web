@@ -36,7 +36,6 @@ interface PodcastEpisodeListProps {
   error: FeedbackContent | null;
   episodeStateFilter: EpisodeStateFilter;
   transcript: EpisodeTranscriptController;
-  transcriptionAllowed: boolean;
   expandedShowNotesMediaIds: StringIdSet;
   matchingEpisodeCount: number;
   markAllAsPlayedBusy: boolean;
@@ -53,7 +52,6 @@ export default function PodcastEpisodeList({
   error,
   episodeStateFilter,
   transcript,
-  transcriptionAllowed,
   expandedShowNotesMediaIds,
   matchingEpisodeCount,
   markAllAsPlayedBusy,
@@ -118,7 +116,6 @@ export default function PodcastEpisodeList({
           episode={episode}
           showNotesExpanded={showNotesExpanded}
           transcript={transcript}
-          transcriptionAllowed={transcriptionAllowed}
         />
       );
       return panels;
@@ -141,7 +138,6 @@ export default function PodcastEpisodeList({
               disabled:
                 localFilterActive ||
                 transcript.batchTranscriptBusy ||
-                !transcriptionAllowed ||
                 matchingEpisodeCount === 0,
               disabledReason: localFilterActive
                 ? localFilterDisabledReason
@@ -150,7 +146,6 @@ export default function PodcastEpisodeList({
                 if (
                   localFilterActive ||
                   transcript.batchTranscriptBusy ||
-                  !transcriptionAllowed ||
                   matchingEpisodeCount === 0
                 ) {
                   return;

@@ -196,74 +196,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/billing/account": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Billing Account */
-        get: operations["get_billing_account_billing_account_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/billing/checkout": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Create Checkout Session */
-        post: operations["create_checkout_session_billing_checkout_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/billing/portal": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Create Customer Portal Session */
-        post: operations["create_customer_portal_session_billing_portal_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/billing/stripe/webhook": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Process Stripe Webhook */
-        post: operations["process_stripe_webhook_billing_stripe_webhook_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/browse": {
         parameters: {
             query?: never;
@@ -2212,7 +2144,7 @@ export interface paths {
         put?: never;
         /**
          * Request Media Transcript
-         * @description Admit or forecast an explicit transcript request for supported Media.
+         * @description Admit an explicit transcript request for supported Media; 202 iff it enqueued work.
          */
         post: operations["request_media_transcript_media__media_id__transcript_request_post"];
         delete?: never;
@@ -3307,7 +3239,7 @@ export interface paths {
         put?: never;
         /**
          * Transcribe Walknote Audio
-         * @description Entitlement-gated, 10 MB-bounded Deepgram transcription.
+         * @description 10 MB-bounded Deepgram transcription.
          */
         post: operations["transcribe_walknote_audio_walknotes_transcribe_audio_post"];
         delete?: never;
@@ -3447,7 +3379,7 @@ export interface components {
              * Reason
              * @enum {string}
              */
-            reason: "UnsupportedSubject" | "Deleting" | "InsufficientAuthority" | "HighlightUnresolved" | "EntitlementRequired" | "ProjectionNotReady" | "ProjectionUnsupported";
+            reason: "UnsupportedSubject" | "Deleting" | "InsufficientAuthority" | "HighlightUnresolved" | "ProjectionNotReady" | "ProjectionUnsupported";
         };
         /** AutomaticMediaAuthorsRequest */
         AutomaticMediaAuthorsRequest: {
@@ -3466,82 +3398,6 @@ export interface components {
              * @enum {string}
              */
             kind: "Available";
-        };
-        /** BillingAccountOut */
-        BillingAccountOut: {
-            /** Billing Enabled */
-            billing_enabled: boolean;
-            /**
-             * Billing Plan Tier
-             * @enum {string}
-             */
-            billing_plan_tier: "free" | "plus" | "ai_plus" | "ai_pro";
-            /** Billing Status */
-            billing_status: string;
-            /** Can Manage Billing */
-            can_manage_billing: boolean;
-            /** Can Share */
-            can_share: boolean;
-            /** Can Transcribe */
-            can_transcribe: boolean;
-            /** Cancel At Period End */
-            cancel_at_period_end: boolean;
-            /** Entitlement Expires At */
-            entitlement_expires_at: string | null;
-            /**
-             * Entitlement Plan Tier
-             * @enum {string}
-             */
-            entitlement_plan_tier: "free" | "plus" | "ai_plus" | "ai_pro";
-            /**
-             * Entitlement Source
-             * @enum {string}
-             */
-            entitlement_source: "free" | "subscription" | "internal_grant";
-            /** Subscription Current Period End */
-            subscription_current_period_end: string | null;
-            /** Subscription Current Period Start */
-            subscription_current_period_start: string | null;
-            transcription_usage: components["schemas"]["BillingUsageBucketOut"];
-        };
-        /** BillingCheckoutRequest */
-        BillingCheckoutRequest: {
-            /**
-             * Plan Tier
-             * @enum {string}
-             */
-            plan_tier: "plus" | "ai_plus" | "ai_pro";
-        };
-        /** BillingSessionOut */
-        BillingSessionOut: {
-            /** Url */
-            url: string;
-        };
-        /** BillingUsageBucketOut */
-        BillingUsageBucketOut: {
-            /** Limit */
-            limit: number | null;
-            /**
-             * Period End
-             * Format: date-time
-             */
-            period_end: string;
-            /**
-             * Period Start
-             * Format: date-time
-             */
-            period_start: string;
-            /** Remaining */
-            remaining: number | null;
-            /** Reserved */
-            reserved: number;
-            /** Used */
-            used: number;
-        };
-        /** BillingWebhookOut */
-        BillingWebhookOut: {
-            /** Processed */
-            processed: boolean;
         };
         /** BlockedLibraryPlacementAvailabilityOut */
         BlockedLibraryPlacementAvailabilityOut: {
@@ -4193,18 +4049,6 @@ export interface components {
             /** Data */
             data: components["schemas"]["LearnDossierOpenedOut"] | components["schemas"]["LearnDossierBuildAcceptedOut"];
         };
-        /** Data[BillingAccountOut] */
-        Data_BillingAccountOut_: {
-            data: components["schemas"]["BillingAccountOut"];
-        };
-        /** Data[BillingSessionOut] */
-        Data_BillingSessionOut_: {
-            data: components["schemas"]["BillingSessionOut"];
-        };
-        /** Data[BillingWebhookOut] */
-        Data_BillingWebhookOut_: {
-            data: components["schemas"]["BillingWebhookOut"];
-        };
         /** Data[CreateResourceShareOut] */
         Data_CreateResourceShareOut_: {
             data: components["schemas"]["CreateResourceShareOut"];
@@ -4233,6 +4077,14 @@ export interface components {
         Data_NexusSelectionRecordOut_: {
             data: components["schemas"]["NexusSelectionRecordOut"];
         };
+        /** Data[PodcastEpisodeQueryTranscriptForecastOut] */
+        Data_PodcastEpisodeQueryTranscriptForecastOut_: {
+            data: components["schemas"]["PodcastEpisodeQueryTranscriptForecastOut"];
+        };
+        /** Data[PodcastEpisodeQueryTranscriptRequestOut] */
+        Data_PodcastEpisodeQueryTranscriptRequestOut_: {
+            data: components["schemas"]["PodcastEpisodeQueryTranscriptRequestOut"];
+        };
         /** Data[PodcastPlacementAdditionOut] */
         Data_PodcastPlacementAdditionOut_: {
             data: components["schemas"]["PodcastPlacementAdditionOut"];
@@ -4252,6 +4104,10 @@ export interface components {
         /** Data[ResourceShareSnapshotOut] */
         Data_ResourceShareSnapshotOut_: {
             data: components["schemas"]["ResourceShareSnapshotOut"];
+        };
+        /** Data[TranscriptRequestOut] */
+        Data_TranscriptRequestOut_: {
+            data: components["schemas"]["TranscriptRequestOut"];
         };
         /** Data[list[LibraryPlacementOptionOut]] */
         Data_list_LibraryPlacementOptionOut__: {
@@ -6013,11 +5869,27 @@ export interface components {
             /** Target */
             target: string;
         };
+        /** PodcastEpisodeQueryTranscriptForecastOut */
+        PodcastEpisodeQueryTranscriptForecastOut: {
+            /** Eligiblecount */
+            eligibleCount: number;
+            /** Selectionfingerprint */
+            selectionFingerprint: string;
+        };
         /** PodcastEpisodeQueryTranscriptRequest */
         PodcastEpisodeQueryTranscriptRequest: {
             /** Selectionfingerprint */
             selectionFingerprint: string;
             target: components["schemas"]["PodcastEpisodeQueryTranscriptTarget"];
+        };
+        /** PodcastEpisodeQueryTranscriptRequestOut */
+        PodcastEpisodeQueryTranscriptRequestOut: {
+            /** Collectionrevision */
+            collectionRevision: number;
+            /** Matchedcount */
+            matchedCount: number;
+            /** Queuedcount */
+            queuedCount: number;
         };
         /** PodcastEpisodeQueryTranscriptTarget */
         PodcastEpisodeQueryTranscriptTarget: {
@@ -8131,13 +8003,35 @@ export interface components {
             target: components["schemas"]["ReaderFragmentTarget"];
             text: components["schemas"]["ReaderQuoteContext"];
         };
+        /** TranscriptRequestOut */
+        TranscriptRequestOut: {
+            /** Media Id */
+            media_id: string;
+            /**
+             * Processing Status
+             * @enum {string}
+             */
+            processing_status: "pending" | "extracting" | "ready_for_reading" | "failed" | "suspended";
+            /** Request Enqueued */
+            request_enqueued: boolean;
+            /**
+             * Request Reason
+             * @enum {string}
+             */
+            request_reason: "episode_open" | "search" | "highlight" | "quote" | "background_warming" | "operator_requeue";
+            /**
+             * Transcript Coverage
+             * @enum {string}
+             */
+            transcript_coverage: "none" | "partial" | "full";
+            /**
+             * Transcript State
+             * @enum {string}
+             */
+            transcript_state: "not_requested" | "queued" | "running" | "ready" | "partial" | "unavailable" | "failed_provider";
+        };
         /** TranscriptRequestRequest */
         TranscriptRequestRequest: {
-            /**
-             * Dry Run
-             * @default false
-             */
-            dry_run: boolean;
             /**
              * Reason
              * @default episode_open
@@ -8820,110 +8714,6 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_billing_account_billing_account_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_BillingAccountOut_"];
-                };
-            };
-        };
-    };
-    create_checkout_session_billing_checkout_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["BillingCheckoutRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_BillingSessionOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_customer_portal_session_billing_portal_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_BillingSessionOut_"];
-                };
-            };
-        };
-    };
-    process_stripe_webhook_billing_stripe_webhook_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "stripe-signature"?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_BillingWebhookOut_"];
                 };
             };
             /** @description Validation Error */
@@ -11932,9 +11722,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_PodcastEpisodeQueryTranscriptForecastOut_"];
                 };
             };
             /** @description Validation Error */
@@ -11967,9 +11755,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_PodcastEpisodeQueryTranscriptRequestOut_"];
                 };
             };
             /** @description Validation Error */
@@ -13158,7 +12944,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["Data_TranscriptRequestOut_"];
                 };
             };
             /** @description Validation Error */

@@ -131,9 +131,7 @@ def run_source_adapter(
     if source_type in source_types.LOCAL_FILE_SOURCE_TYPES:
         return _run_existing_file(session_factory, media_id, fence)
     if source_type == source_types.PODCAST_EPISODE_TRANSCRIPT:
-        return _run_podcast_transcript(
-            session_factory, media_id, attempt, actor_user_id, request_id, fence
-        )
+        return _run_podcast_transcript(session_factory, media_id, attempt, fence)
     raise ApiError(ApiErrorCode.E_INVALID_KIND, f"Unsupported source attempt type: {source_type}")
 
 
@@ -285,8 +283,6 @@ def _run_podcast_transcript(
     session_factory: sessionmaker[Session],
     media_id: UUID,
     attempt: MediaSourceAttempt,
-    actor_user_id: UUID,
-    request_id: str | None,
     fence: SourcePublicationFence,
 ) -> dict[str, object]:
     request_reason = require_transcript_request_reason(
@@ -300,11 +296,7 @@ def _run_podcast_transcript(
         label="podcast_transcript_extraction",
     )
     completed = run_podcast_transcription_now(
-        session_factory,
-        media_id=media_id,
-        requested_by_user_id=actor_user_id,
-        request_id=request_id,
-        publication_fence=fence,
+        session_factory, media_id=media_id, publication_fence=fence
     )
     return {
         "status": completed.status,

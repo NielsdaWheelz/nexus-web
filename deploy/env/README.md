@@ -94,7 +94,7 @@ is `deploy/hetzner/deploy.sh <source-sha>`.
 - `SUPABASE_AUTH_ADMIN_KEY` is local development bootstrap state. It is never
   production config.
 - `X_API_BEARER_TOKEN`, platform LLM keys, stream signing material, R2
-  credentials, database credentials, and billing credentials are VPS-only.
+  credentials, and database credentials are VPS-only.
 - Real env files, temporary merged files, provider tokens, and canonical
   published config contain secrets. Never commit, print, or copy them into
   release state.

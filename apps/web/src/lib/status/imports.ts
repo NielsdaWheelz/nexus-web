@@ -69,9 +69,9 @@ export const IMPORT_FAILURE_COPY: Readonly<
   },
   E_BILLING_REQUIRED: {
     reason: "Billing required",
-    title: "Import needs billing set up.",
-    explanation: "This import isn’t available on the current plan.",
-    recovery: "None",
+    title: "Import needed a paid plan.",
+    explanation: "This failure was recorded during an earlier import attempt.",
+    recovery: "SameSource",
   },
   E_CAPTURE_TOO_LARGE: {
     reason: "Capture too large",
@@ -183,10 +183,9 @@ export const IMPORT_FAILURE_COPY: Readonly<
   },
   E_PODCAST_QUOTA_EXCEEDED: {
     reason: "Podcast allowance used up",
-    title: "Import allowance reached.",
-    explanation:
-      "This source can’t be imported right now because an import allowance was used up.",
-    recovery: "None",
+    title: "Import hit a transcription allowance.",
+    explanation: "This failure was recorded during an earlier import attempt.",
+    recovery: "SameSource",
   },
   E_REPAIR_NOT_ALLOWED: {
     reason: "Repair no longer offered",

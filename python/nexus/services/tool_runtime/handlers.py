@@ -686,7 +686,6 @@ def _write_refusal(exc: BaseException, *, tool_id: str) -> Never:
             tool_id == "nexus.library.add"
             and exc.code
             in {
-                ApiErrorCode.E_BILLING_REQUIRED,
                 ApiErrorCode.E_MEDIA_DELETING,
                 ApiErrorCode.E_PODCAST_SUBSCRIPTION_REQUIRED,
             }
