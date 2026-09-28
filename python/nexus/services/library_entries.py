@@ -26,7 +26,7 @@ from nexus.auth.permissions import (
 from nexus.db.errors import TransactionRestart
 from nexus.db.retries import retry_read_committed
 from nexus.db.session import transaction
-from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
+from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.library import (
     AbsentLibraryPlacementRelationOut,
     AvailableLibraryPlacementAvailabilityOut,
@@ -46,7 +46,6 @@ from nexus.schemas.library import (
     SavedInNexusLibraryPlacementDestinationOut,
 )
 from nexus.services import library_governance as governance
-from nexus.services.billing_entitlements import get_effective_entitlements
 from nexus.services.collection_revisions import (
     ENTRY_VISIBILITY_FAMILIES,
     CollectionFamily,
@@ -567,32 +566,6 @@ def podcast_ids_in_libraries_for_viewer(
     return {UUID(str(row[0])) for row in rows}
 
 
-def _require_share_entitlement_for_access_increase(
-    db: Session, *, actor_user_id: UUID, library_id: UUID
-) -> None:
-    """Gate a write that increases access to an already-shared library.
-
-    Deliberately narrower than the invitation gate: filing into a library nobody
-    else can reach increases no one's access and stays free.
-    """
-    increases_access = bool(
-        db.execute(
-            text("""
-                SELECT EXISTS (
-                    SELECT 1 FROM memberships
-                    WHERE library_id = :library_id AND user_id != :actor_user_id
-                    UNION ALL
-                    SELECT 1 FROM library_invitations
-                    WHERE library_id = :library_id AND status = 'pending'
-                )
-            """),
-            {"actor_user_id": actor_user_id, "library_id": library_id},
-        ).scalar_one()
-    )
-    if increases_access and not get_effective_entitlements(db, actor_user_id).can_share:
-        raise ApiError(ApiErrorCode.E_BILLING_REQUIRED, "Sharing requires Plus.")
-
-
 # ---------------------------------------------------------------------------
 # Placement inventory
 # ---------------------------------------------------------------------------
@@ -736,10 +709,6 @@ def ensure_media_in_library_in_current_transaction(
     ):
         clear_user_media_deletion(db, viewer_id, media_id)
         return False
-    if not ctx.is_default and not entry_exists(db, library_id, target):
-        _require_share_entitlement_for_access_increase(
-            db, actor_user_id=viewer_id, library_id=library_id
-        )
     inserted = ensure_entry(db, library_id, target)
     clear_user_media_deletion(db, viewer_id, media_id)
     _bump_entry_visibility_revisions(db)
@@ -884,10 +853,6 @@ def _add_media_to_resolved_libraries(
             db, library_id, podcast_target(parent_podcast_id)
         ):
             continue
-        if not entry_exists(db, library_id, target):
-            _require_share_entitlement_for_access_increase(
-                db, actor_user_id=viewer_id, library_id=library_id
-            )
         ensure_entry(db, library_id, target)
     clear_user_media_deletion(db, viewer_id, media_id)
 
@@ -1076,9 +1041,6 @@ def place_podcast_in_named_libraries_in_current_transaction(
     for library_id in targets:
         if entry_exists(db, library_id, target):
             continue
-        _require_share_entitlement_for_access_increase(
-            db, actor_user_id=viewer_id, library_id=library_id
-        )
         db.execute(
             text("""
                 INSERT INTO library_entries (library_id, media_id, podcast_id, position)

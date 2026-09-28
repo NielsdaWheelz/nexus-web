@@ -146,8 +146,7 @@ _TERMINAL_SOURCE_FAILURE_CODES = frozenset(
     E_SSRF_BLOCKED E_INVALID_FILE_TYPE E_INVALID_CONTENT_TYPE E_FILE_TOO_LARGE
     E_CAPTURE_TOO_LARGE E_ARCHIVE_UNSAFE E_INVALID_REQUEST E_PDF_PASSWORD_REQUIRED
     E_TRANSCRIPT_UNAVAILABLE E_X_POST_UNAVAILABLE E_X_PROVIDER_CREDITS_DEPLETED
-    E_X_PROVIDER_AUTH_REJECTED E_PODCAST_QUOTA_EXCEEDED E_BILLING_REQUIRED
-    E_REPAIR_NOT_ALLOWED""".split()
+    E_X_PROVIDER_AUTH_REJECTED E_REPAIR_NOT_ALLOWED""".split()
 )
 _RESTRICTION_MESSAGES: dict[SourceRecoveryRestriction, str] = {
     "NotOwner": "Only the creator can retry source content.",
@@ -1118,27 +1117,22 @@ def enqueue_accepted_source_attempt_in_transaction(
     return job.id
 
 
-def _admit_requeued_transcript(
-    db: Session, media: Media, attempt: MediaSourceAttempt, actor_user_id: UUID
-) -> None:
-    """A transcript requeue re-enters the podcast quota admission; nothing else does."""
+def _reset_requeued_transcript_job(db: Session, media: Media, attempt: MediaSourceAttempt) -> None:
+    """Reset the episode's transcription job for a transcript requeue.
+
+    Other source types have no job row.
+    """
     if attempt.source_type != source_types.PODCAST_EPISODE_TRANSCRIPT:
         return
-    from nexus.services.podcasts.transcription import (
-        PodcastTranscriptionRejectedQuota,
-        admit_generated_podcast_transcription_for_source_attempt,
-    )
+    from nexus.services.podcasts.transcription import reset_podcast_transcription_job
 
-    admission = admit_generated_podcast_transcription_for_source_attempt(
+    reset_podcast_transcription_job(
         db,
         media_id=media.id,
-        requested_by_user_id=actor_user_id,
         request_reason=require_transcript_request_reason(
             dict(attempt.source_payload or {}).get("request_reason")
         ),
     )
-    if isinstance(admission, PodcastTranscriptionRejectedQuota):
-        raise admission.error
 
 
 def _verify_source_storage(db: Session, *, media_id: UUID, attempt_id: UUID) -> None:
@@ -1330,7 +1324,7 @@ def retry_source_for_viewer(
                 "retry", media_id=media.id, previous_attempt_id=attempt.id
             ),
         )
-        _admit_requeued_transcript(db, media, retry_attempt, viewer_id)
+        _reset_requeued_transcript_job(db, media, retry_attempt)
         mark_extracting(db, media)
         bump_all_media_fact_collections(db)
         job_id = enqueue_accepted_source_attempt_in_transaction(
@@ -1763,7 +1757,7 @@ def refresh_source_for_viewer(
                 "refresh", media_id=media.id, previous_attempt_id=attempt.id
             ),
         )
-        _admit_requeued_transcript(db, media, refresh_attempt, viewer_id)
+        _reset_requeued_transcript_job(db, media, refresh_attempt)
         mark_extracting(db, media)
         bump_all_media_fact_collections(db)
         enqueue_accepted_source_attempt_in_transaction(
@@ -1880,7 +1874,7 @@ def repair_source_for_system_media(
         **dict(repair_attempt.source_payload or {}),
         "system_repair_reason": reason,
     }
-    _admit_requeued_transcript(db, media, repair_attempt, actor_user_id)
+    _reset_requeued_transcript_job(db, media, repair_attempt)
     mark_extracting(db, media)
     bump_all_media_fact_collections(db)
     enqueue_accepted_source_attempt_in_transaction(

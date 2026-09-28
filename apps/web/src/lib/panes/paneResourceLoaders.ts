@@ -1,6 +1,5 @@
 import {
   AUTHOR_WORKS_LIMIT,
-  billingAccountResource,
   contributorResource,
   contributorWorksResource,
   conversationsInitialResource,
@@ -259,10 +258,5 @@ export const paneResourceLoaders: Partial<
   settingsAccount: {
     cacheKey: () => settingsAccountResource.cacheKey({}),
     load: (request) => request(settingsAccountResource, {}),
-  },
-
-  settingsBilling: {
-    cacheKey: () => billingAccountResource.cacheKey({ refreshVersion: 0 }),
-    load: (request) => request(billingAccountResource, { refreshVersion: 0 }),
   },
 };

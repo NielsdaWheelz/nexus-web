@@ -128,7 +128,6 @@ _TranscriptActionState = Literal[
     "Ready",
     "Partial",
     "Unavailable",
-    "FailedQuota",
     "FailedProvider",
 ]
 _TranscriptActionCoverage = Literal["None", "Partial", "Full"]
@@ -140,7 +139,6 @@ _TRANSCRIPT_ACTION_STATE: dict[str | None, _TranscriptActionState] = {
     "ready": "Ready",
     "partial": "Partial",
     "unavailable": "Unavailable",
-    "failed_quota": "FailedQuota",
     "failed_provider": "FailedProvider",
 }
 _TRANSCRIPT_ACTION_COVERAGE: dict[str | None, _TranscriptActionCoverage] = {

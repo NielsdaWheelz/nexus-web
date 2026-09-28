@@ -203,24 +203,8 @@ class Settings(BaseSettings):
     )
     podcast_refresh_due_limit: int = Field(default=100, alias="PODCAST_REFRESH_DUE_LIMIT", ge=1)
 
-    # Billing / Stripe settings
+    # Public web origin: share links and the stream CORS check.
     app_public_url: str = Field(default="http://localhost:3000", alias="APP_PUBLIC_URL")
-    billing_enabled: bool = Field(default=True, alias="BILLING_ENABLED")
-    stripe_secret_key: str | None = Field(default=None, alias="STRIPE_SECRET_KEY")
-    stripe_webhook_secret: str | None = Field(default=None, alias="STRIPE_WEBHOOK_SECRET")
-    stripe_plus_price_id: str | None = Field(default=None, alias="STRIPE_PLUS_PRICE_ID")
-    stripe_ai_plus_price_id: str | None = Field(default=None, alias="STRIPE_AI_PLUS_PRICE_ID")
-    stripe_ai_pro_price_id: str | None = Field(default=None, alias="STRIPE_AI_PRO_PRICE_ID")
-    billing_ai_plus_transcription_minutes_monthly: int = Field(
-        default=300,
-        alias="BILLING_AI_PLUS_TRANSCRIPTION_MINUTES_MONTHLY",
-        ge=0,
-    )
-    billing_ai_pro_transcription_minutes_monthly: int = Field(
-        default=1200,
-        alias="BILLING_AI_PRO_TRANSCRIPTION_MINUTES_MONTHLY",
-        ge=0,
-    )
 
     # Ingest recovery guardrails
     ingest_reconcile_schedule_seconds: int = Field(
@@ -438,7 +422,7 @@ class Settings(BaseSettings):
     # Post Room: private email ingest address (Cloudflare Email Worker → HMAC-signed POST).
     # EMAIL_INGEST_ENABLED gates route registration; when false the endpoint is absent
     # entirely (no live public POST target in CI/local). Required keys are validated
-    # only in staging/prod when the flag is true (mirrors the billing block).
+    # only in staging/prod when the flag is true.
     email_ingest_enabled: bool = Field(default=False, alias="EMAIL_INGEST_ENABLED")
     email_ingest_hmac_secret: str | None = Field(default=None, alias="EMAIL_INGEST_HMAC_SECRET")
     email_ingest_address_slug: str | None = Field(default=None, alias="EMAIL_INGEST_ADDRESS_SLUG")
@@ -469,7 +453,6 @@ class Settings(BaseSettings):
         self._validate_deployed_storage()
         self._validate_storage_lifecycle()
         self._validate_transcript_embedding_dimensions()
-        self._validate_billing_credentials()
         self._validate_email_credentials()
         self._validate_podcast_credentials()
         self._validate_deployed_browse_provider()
@@ -562,28 +545,6 @@ class Settings(BaseSettings):
             raise ValueError(
                 "TRANSCRIPT_EMBEDDING_DIMENSIONS must equal "
                 f"{TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS} to match the pgvector schema."
-            )
-
-    def _validate_billing_credentials(self) -> None:
-        if self.nexus_env not in (Environment.STAGING, Environment.PROD):
-            return
-        if not self.billing_enabled:
-            return
-        missing_billing: list[str] = []
-        if not self.stripe_secret_key:
-            missing_billing.append("STRIPE_SECRET_KEY")
-        if not self.stripe_webhook_secret:
-            missing_billing.append("STRIPE_WEBHOOK_SECRET")
-        if not self.stripe_plus_price_id:
-            missing_billing.append("STRIPE_PLUS_PRICE_ID")
-        if not self.stripe_ai_plus_price_id:
-            missing_billing.append("STRIPE_AI_PLUS_PRICE_ID")
-        if not self.stripe_ai_pro_price_id:
-            missing_billing.append("STRIPE_AI_PRO_PRICE_ID")
-        if missing_billing:
-            raise ValueError(
-                "Billing is enabled but required Stripe settings are missing: "
-                f"{', '.join(missing_billing)}"
             )
 
     def _validate_email_credentials(self) -> None:

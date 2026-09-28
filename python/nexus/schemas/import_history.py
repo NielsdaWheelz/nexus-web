@@ -56,7 +56,7 @@ FailureOrigin = Literal["Execution", "Domain"]
 
 _OWNER_FAILURE_CODES = Literal[
     "E_ARCHIVE_UNSAFE",
-    "E_BILLING_REQUIRED",
+    "E_BILLING_REQUIRED",  # Historical import failures recorded before billing was deleted.
     "E_CAPTURE_TOO_LARGE",
     "E_FORBIDDEN",
     "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH",
@@ -73,7 +73,7 @@ _OWNER_FAILURE_CODES = Literal[
     "E_PDF_PASSWORD_REQUIRED",
     "E_PDF_TEXT_UNAVAILABLE",
     "E_PODCAST_PROVIDER_UNAVAILABLE",
-    "E_PODCAST_QUOTA_EXCEEDED",
+    "E_PODCAST_QUOTA_EXCEEDED",  # Historical import failures recorded before billing was deleted.
     "E_REPAIR_NOT_ALLOWED",
     "E_RESOURCE_CONFLICT",
     "E_RESOURCE_LIMIT",

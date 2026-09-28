@@ -3,13 +3,10 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
-from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.responses import success_response
-from nexus.services.billing_entitlements import get_effective_entitlements
 from nexus.services.podcasts.deepgram_adapter import get_deepgram_client
 
 router = APIRouter(tags=["walknotes"])
@@ -22,15 +19,8 @@ async def transcribe_walknote_audio(
     audio: Annotated[UploadFile, File()],
     content_type: Annotated[str, Form()],
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Entitlement-gated, 10 MB-bounded Deepgram transcription."""
-    if not get_effective_entitlements(db, viewer.user_id).can_transcribe:
-        raise ApiError(
-            ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED,
-            "Transcription entitlement required for voice notes.",
-        )
-
+    """10 MB-bounded Deepgram transcription."""
     audio_bytes = await audio.read()
     if len(audio_bytes) > _MAX_AUDIO_BYTES:
         raise ApiError(

@@ -18,7 +18,7 @@ calibration (chat tools, 2026-09-21): a spec that describes the current structur
 
 verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, one alembic head) plus one named manual check per module. there are no automated tests; that is a known, accepted trade.
 
-wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the routes it rewrites and deletes their web decoders. the generated `apps/web/src/lib/api/wire.gen.ts` is excluded from line counts and targets. untyped JSON routes: 153 of 213 operations (2026-09-28; 25 typed, 23 without a body, 12 binary or SSE).
+wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the routes it rewrites and deletes their web decoders. the generated `apps/web/src/lib/api/wire.gen.ts` is excluded from line counts and targets. untyped JSON routes: 150 of 209 operations (2026-09-28; 24 typed, 23 without a body, 12 binary or SSE).
 
 ## inventory and targets
 
@@ -51,7 +51,7 @@ wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the 
 | authors (contributors, credits, taxonomy, author pane) | 6.0k | 2k | reauthor | python first pass landed (size/contributors-py): 3.2k→2.0k, −39%; web 4.0k open |
 | offline-android (delivery, packages, downloads, two kotlin stores) | 17.6k | 8k | one store | open |
 | vault (export/sync/watch CLI + pane) | 1.9k | 0–1k | deferred by owner 2026-09-21; keep and reauthor: keep at 1k or delete | open |
-| billing-settings (billing, entitlements, quota, 7 settings panes) | 4.4k | 2k | keep, reauthor | open |
+| settings (6 settings panes; was billing-settings) | 4.4k | 2k | keep, reauthor | billing, entitlements and the transcription quota deleted 2026-09-27 (Stripe, plan tiers, grants, minute ledger, billing pane): 4.4k→3.0k, −33%; settings panes open |
 | auth-extension (auth, users, sessions, extension 2.8k of which 2.3k vendored Readability) | 4.7k | 2k | deferred by owner 2026-09-21; keep and reauthor extension; keep auth | capture routing 351→334 lines: one permission/classification owner fixes denied inspection and duplicate prompts; postgres rate limiter and stream-token jti claims deleted (cleanup/delete-rate-limiter, mig 0248): tokens are stateless signed JWTs, stream_tokens.py 276→192; auth and the remaining extension remain open |
 | substrate: resource graph (refs, edges, citations) | 5.2k | 2k | reauthor | first pass landed (size/resource-graph-py): 6.6k→4.9k, −25%; two blocks await the action-menu rewrite |
 | substrate: action menu (snapshot→menu→runtime/cache) | 11.4k | 1.5k | one catalog + one menu | catalog/environment/menu/runtime core: 3,265→2,168 lines and 104,151→70,217 bytes; direct capability-to-command projection replaces intent/plan/dispatch layers. cache, mutation leases, editor handoff and remaining substrate stay open |
@@ -67,12 +67,13 @@ wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the 
 ## sequencing
 
 - landing now: `size/bundle`, `size/dawn`, `size/deploy`, this plan.
-- next: migrations squash (after the 0231–0236 production deploy), then reauthoring in size order: reader, ingest+imports, chat, search/browse/nexus, player, workspace substrate, dossiers, podcasts, offline-android, library, api substrate, ui primitives, consumption, generation, reader apparatus, oracle/atlas, notes, action-menu substrate, chat tools, synapse, authors, resource sharing, resource graph, jobs, media core, library sharing, auth, billing, codex host.
+- next: migrations squash (after the 0231–0236 production deploy), then reauthoring in size order: reader, ingest+imports, chat, search/browse/nexus, player, workspace substrate, dossiers, podcasts, offline-android, library, api substrate, ui primitives, consumption, generation, reader apparatus, oracle/atlas, notes, action-menu substrate, chat tools, synapse, authors, resource sharing, resource graph, jobs, media core, library sharing, auth, settings, codex host.
 - at most three modules in flight at once, each in its own worktree and PR; a module PR is not landed while another PR touches the same files.
 
 ## decision log
 
 - 2026-09-27 · owner: dossiers keep only the latest revision; revision history, Make current and the learn tables are deleted.
+- 2026-09-27 · owner: delete billing, stripe, entitlements and the transcription quota; every account holds every capability (supersedes "kept and rewritten" for billing, quota and entitlements only). keep multi-user libraries and sharing, email ingest and the imports history timeline.
 - 2026-09-27 · owner: delete the postgres rate limiter and the stream-token jti replay table. stream and package tokens stay short-lived signed JWTs without one-use claims; the SSE LISTEN cap (429 `E_RATE_LIMITED`) stays.
 - 2026-09-21 · owner: target 50–100k; "reauthor to target" approved for everything; kill dawn write; oracle/atlas, x/email/arxiv ingest, reading slate, walknotes, vault, extension deferred (keep, reauthor).
 - 2026-09-18 · owner: fork graph kept; System appearance dropped; see `docs/outstanding-issues.md` history for the rest.

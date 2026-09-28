@@ -67,7 +67,7 @@ export type GenerationSelectionState =
   | Extract<GenerationReadiness, { readonly kind: "OperatorActionRequired" }>
   | Extract<GenerationReadiness, { readonly kind: "TemporarilyUnavailable" }>;
 
-export type BillingDisclosure =
+type BillingDisclosure =
   | { readonly kind: "Subscription"; readonly label: "Codex subscription" }
   | { readonly kind: "MeteredApi"; readonly label: "Metered API" };
 

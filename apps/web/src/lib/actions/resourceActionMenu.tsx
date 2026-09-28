@@ -658,34 +658,9 @@ export function resourceActionDescriptors({
               activate(activation, ports);
               return;
             }
-            const path = `/api/media/${id()}/transcript/request` as const;
-            const forecast = await apiFetch<{
-              data: {
-                required_minutes: number;
-                remaining_minutes: number | null;
-                fits_budget: boolean;
-              };
-            }>(path, {
+            await apiFetch(`/api/media/${id()}/transcript/request`, {
               method: "POST",
-              body: JSON.stringify({ reason: "episode_open", dry_run: true }),
-            });
-            if (!forecast.data.fits_budget) {
-              ports.feedback.publish({
-                kind: "Hud",
-                content: {
-                  tone: "Danger",
-                  title: "Transcript quota is exhausted",
-                  message:
-                    forecast.data.remaining_minutes === null
-                      ? undefined
-                      : `${forecast.data.remaining_minutes} minutes remain; this transcript needs ${forecast.data.required_minutes}.`,
-                },
-              });
-              return;
-            }
-            await apiFetch(path, {
-              method: "POST",
-              body: JSON.stringify({ reason: "episode_open", dry_run: false }),
+              body: JSON.stringify({ reason: "episode_open" }),
             });
           },
           {

@@ -49,8 +49,8 @@ its wire types are generated from FastAPI's OpenAPI schema, so tsc catches drift
 - `apps/web/src/lib/api/wire.ts` exports `Schema<"XOut">` (a component schema)
   and `ApiJson<"/path/{param}", "get">` (the success JSON body, envelope
   included; a method without one does not type-check). write
-  `apiFetch<ApiJson<"/billing/account", "get">>("/api/billing/account")` and
-  read typed fields. an untyped route's `ApiJson` is `{[key: string]: unknown}`
+  `apiFetch<ApiJson<"/media/transcript/forecasts", "post">>("/api/media/transcript/forecasts", init)`
+  and read typed fields. an untyped route's `ApiJson` is `{[key: string]: unknown}`
   (`unknown` for one that returns a raw `Response`): type the route first.
 - no hand decoder or hand-written interface for same-deploy FastAPI JSON.
   strict runtime decoding stays only where versions drift: the android bridge,

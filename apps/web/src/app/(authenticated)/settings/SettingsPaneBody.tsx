@@ -19,11 +19,6 @@ const SETTINGS_ITEMS: {
       "Manage your email, display name, calendar time zone, and password.",
   },
   {
-    href: "/settings/billing",
-    title: "Billing",
-    description: "Manage your plan, usage, and Stripe subscription.",
-  },
-  {
     href: "/settings/appearance",
     title: "Appearance",
     description: "Study, Press, or follow your operating system.",

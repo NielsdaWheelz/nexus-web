@@ -221,7 +221,6 @@ class TranscriptResourceActionCapabilityOut(BaseModel):
         "Ready",
         "Partial",
         "Unavailable",
-        "FailedQuota",
         "FailedProvider",
     ]
     coverage: Literal["None", "Partial", "Full"]

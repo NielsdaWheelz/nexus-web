@@ -47,7 +47,6 @@ const UNAVAILABLE: Record<Schema<"AudienceUnavailableOut">["reason"], string> = 
   InsufficientAuthority: "You can copy the link, but you cannot grant access.",
   HighlightUnresolved:
     "This highlight cannot be opened at its exact location, so it cannot be shared.",
-  EntitlementRequired: "Your current plan does not include access sharing.",
   ProjectionNotReady: "The public reader is still being prepared.",
   ProjectionUnsupported: "A public link is not available for this format.",
 };
@@ -76,7 +75,6 @@ function feedbackFor(error: unknown, title: string, mutation: boolean): Feedback
   const transport = apiTransportFeedback(error, title);
   if (transport) return transport;
   const known = new Map([
-    ["E_BILLING_REQUIRED", "Your current plan doesn’t allow this share."],
     ["E_USER_NOT_FOUND", "This person is no longer available to share with."],
     ["E_FORBIDDEN", mutation ? title : "You don’t have access to these sharing options."],
     ["E_NOT_FOUND", title],

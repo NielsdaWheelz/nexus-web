@@ -47,7 +47,6 @@ import {
   type EpisodeSort,
   type EpisodeStateFilter,
 } from "@/lib/podcasts/episodeView";
-import { useBillingAccount } from "@/lib/billing/useBillingAccount";
 import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import { pluralize } from "@/lib/text/pluralize";
 import { useStringIdSet } from "@/lib/useStringIdSet";
@@ -258,7 +257,6 @@ export default function PodcastDetailPaneBody() {
   );
   const isPaneActive = usePaneIsActive();
   const activateTarget = paneRuntime.activateTarget;
-  const { account: billingAccount } = useBillingAccount();
   const committedSnapshotRef = useRef<PodcastDetailSnapshot | null>(null);
   const refreshFallbackSnapshotRef =
     useRef<PodcastDetailSnapshot | null>(null);
@@ -395,7 +393,6 @@ export default function PodcastDetailPaneBody() {
       }),
     [clearAllVisitData, podcastId, setDetail],
   );
-  const transcriptionAllowed = billingAccount?.can_transcribe === true;
 
   useSetPaneLabel(detail?.podcast.title ?? (loading ? null : "Podcast"));
 
@@ -486,12 +483,10 @@ export default function PodcastDetailPaneBody() {
     selection: { state: (view ?? CANONICAL_PODCAST_EPISODE_VIEW).state },
     episodes,
     setEpisodes,
-    transcriptionAllowed,
     setError,
     reload,
     onMutationCommitted: clearAllVisitData,
   });
-  const { resetForecasts } = transcript;
 
   const fetchPodcastDetail = useCallback(
     async (signal?: AbortSignal): Promise<PodcastDetailLoadResult> => {
@@ -573,13 +568,8 @@ export default function PodcastDetailPaneBody() {
       setController(snapshot);
       setChainEpoch((epoch) => epoch + 1);
       clearExpandedShowNotesMediaIds();
-      resetForecasts();
     },
-    [
-      clearExpandedShowNotesMediaIds,
-      episodeQueryIdentity,
-      resetForecasts,
-    ],
+    [clearExpandedShowNotesMediaIds, episodeQueryIdentity],
   );
 
   const podcastDetailResource = useResource<PodcastDetailLoadResult>({
@@ -1430,7 +1420,6 @@ export default function PodcastDetailPaneBody() {
           error={error}
           episodeStateFilter={view.state}
           transcript={transcript}
-          transcriptionAllowed={transcriptionAllowed}
           expandedShowNotesMediaIds={expandedShowNotesMediaIds}
           matchingEpisodeCount={episodes.length}
           markAllAsPlayedBusy={markAllAsPlayedBusy}

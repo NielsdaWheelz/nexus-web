@@ -41,7 +41,6 @@ PUBLIC_PATHS = {
     "/docs",
     "/redoc",
     "/openapi.json",
-    "/billing/stripe/webhook",
     "/ingest/email",
 }
 # Paths that require the X-Nexus-Internal trust signal but no Bearer token,

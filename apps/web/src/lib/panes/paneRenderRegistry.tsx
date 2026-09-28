@@ -40,7 +40,6 @@ const PANE_LOADERS: Record<PaneRouteId, PaneLoader> = {
   stats: () => import("@/app/(authenticated)/stats/StatsPaneBody"),
   settings: () => import("@/app/(authenticated)/settings/SettingsPaneBody"),
   settingsAccount: () => import("@/app/(authenticated)/settings/account/SettingsAccountPaneBody"),
-  settingsBilling: () => import("@/app/(authenticated)/settings/billing/SettingsBillingPaneBody"),
   settingsReader: () => import("@/app/(authenticated)/settings/reader/SettingsReaderPaneBody"),
   settingsAppearance: () =>
     import("@/app/(authenticated)/settings/appearance/SettingsAppearancePaneBody"),

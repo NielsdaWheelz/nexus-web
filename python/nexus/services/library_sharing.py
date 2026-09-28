@@ -18,7 +18,6 @@ from sqlalchemy.orm import Session
 from nexus.db.retries import retry_serializable
 from nexus.db.session import transaction
 from nexus.errors import (
-    ApiError,
     ApiErrorCode,
     ConflictError,
     ForbiddenError,
@@ -353,8 +352,7 @@ def create_library_invite(
     invitee: UserLibraryInvitee,
     role: LibraryRole,
 ) -> LibraryInvitationOut:
-    """Invite one existing user to a mutable library. Admin-only; entitlement-gated."""
-    from nexus.services.billing_entitlements import get_effective_entitlements
+    """Invite one existing user to a mutable library. Admin-only."""
 
     def attempt() -> LibraryInvitationOut:
         with transaction(db):
@@ -396,8 +394,6 @@ def create_library_invite(
                 raise ConflictError(
                     ApiErrorCode.E_INVITE_ALREADY_EXISTS, "Pending invitation already exists"
                 )
-            if not get_effective_entitlements(db, viewer_id).can_share:
-                raise ApiError(ApiErrorCode.E_BILLING_REQUIRED, "Sharing requires an eligible plan")
 
             try:
                 created = (

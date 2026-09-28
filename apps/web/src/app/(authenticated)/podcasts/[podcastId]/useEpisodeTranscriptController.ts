@@ -7,6 +7,7 @@ import {
   isApiError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
+import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
@@ -14,11 +15,8 @@ import { useStringIdSet } from "@/lib/useStringIdSet";
 import {
   TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS,
   shouldPollTranscriptProvisioningForEpisode,
-  toTranscriptForecastState,
   type PodcastEpisodeMedia,
   type TranscriptRequestReason,
-  type TranscriptRequestForecastState,
-  type TranscriptRequestResult,
 } from "./episodeTranscript";
 
 interface UseEpisodeTranscriptControllerArgs {
@@ -28,7 +26,6 @@ interface UseEpisodeTranscriptControllerArgs {
   };
   episodes: PodcastEpisodeMedia[];
   setEpisodes: Dispatch<SetStateAction<PodcastEpisodeMedia[]>>;
-  transcriptionAllowed: boolean;
   setError: (feedback: FeedbackContent | null) => void;
   reload: () => void;
   onMutationCommitted: () => void;
@@ -73,21 +70,6 @@ function transcriptRequestErrorMessage(
         message: "This episode is still preparing. Wait for it to settle, then retry.",
         requestId,
       };
-    case "E_PODCAST_QUOTA_EXCEEDED":
-      return {
-        tone: "Danger",
-        title,
-        message: "There isn’t enough transcription quota for this request.",
-        requestId,
-      };
-    case "E_BILLING_REQUIRED":
-    case "E_BILLING_DISABLED":
-      return {
-        tone: "Danger",
-        title,
-        message: "Transcription isn’t available on this account. Review billing settings.",
-        requestId,
-      };
     case "E_INVALID_KIND":
       if (operation !== "Episode") throw error;
       return {
@@ -126,17 +108,15 @@ function transcriptRequestErrorMessage(
 
 /**
  * Owns the episode-transcript subsystem for the podcast-detail pane: per-episode
- * forecast/reason/request state, the provisioning poll, and the batch + single
- * transcript-request handlers. Forecasts run only when the corresponding
- * command is invoked. It reads/writes the pane's `episodes` list and reports
- * failures through `setError`; a successful batch request triggers `reload`.
+ * reason/request state, the provisioning poll, and the batch + single
+ * transcript-request handlers. It reads/writes the pane's `episodes` list and
+ * reports failures through `setError`; a successful request triggers `reload`.
  */
 export function useEpisodeTranscriptController({
   podcastId,
   selection,
   episodes,
   setEpisodes,
-  transcriptionAllowed,
   setError,
   reload,
   onMutationCommitted,
@@ -148,10 +128,6 @@ export function useEpisodeTranscriptController({
   >(null);
   const expandedTranscriptMediaIds = useStringIdSet();
   const requestingTranscriptMediaIds = useStringIdSet();
-  const [
-    transcriptRequestForecastByMediaId,
-    setTranscriptRequestForecastByMediaId,
-  ] = useState<Record<string, TranscriptRequestForecastState>>({});
   const [transcriptReasonByMediaId, setTranscriptReasonByMediaId] = useState<
     Record<string, TranscriptRequestReason>
   >({});
@@ -166,16 +142,7 @@ export function useEpisodeTranscriptController({
     [setError],
   );
 
-  // Reset per-episode forecast state when the underlying episode set is
-  // replaced (route change / reload). The pane clears `episodes` then refills it.
-  const resetForecasts = useCallback(() => {
-    setTranscriptRequestForecastByMediaId({});
-  }, []);
-
   const handleBatchTranscriptRequest = useCallback(async () => {
-    if (!transcriptionAllowed) {
-      return;
-    }
     setBatchTranscriptBusy(true);
     setError(null);
     try {
@@ -185,31 +152,16 @@ export function useEpisodeTranscriptController({
         selection,
         reason: "search" as const,
       };
-      const forecast = await apiFetch<{
-        data: {
-          eligibleCount: number;
-          requiredMinutes: number;
-          remainingMinutes:
-            | { kind: "Absent" }
-            | { kind: "Present"; value: number };
-          fitsBudget: boolean;
-          selectionFingerprint: string;
-        };
-      }>("/api/media/transcript/forecasts", {
+      const forecast = await apiFetch<
+        ApiJson<"/media/transcript/forecasts", "post">
+      >("/api/media/transcript/forecasts", {
         method: "POST",
         body: JSON.stringify(target),
       });
-      const remaining =
-        forecast.data.remainingMinutes.kind === "Present"
-          ? forecast.data.remainingMinutes.value
-          : null;
       if (
         !window.confirm(
           [
             `Eligible episodes: ${forecast.data.eligibleCount}`,
-            `Estimated minutes: ${forecast.data.requiredMinutes}`,
-            `Remaining quota: ${remaining ?? "unlimited"}`,
-            `Fits budget: ${forecast.data.fitsBudget ? "yes" : "no"}`,
             "",
             "Submit batch transcript request?",
           ].join("\n"),
@@ -217,9 +169,9 @@ export function useEpisodeTranscriptController({
       ) {
         return;
       }
-      const response = await apiFetch<{
-        data: { matchedCount: number; queuedCount: number };
-      }>("/api/media/transcript/request/batch", {
+      const response = await apiFetch<
+        ApiJson<"/media/transcript/request/batch", "post">
+      >("/api/media/transcript/request/batch", {
         method: "POST",
         body: JSON.stringify({
           target,
@@ -236,28 +188,7 @@ export function useEpisodeTranscriptController({
     } finally {
       setBatchTranscriptBusy(false);
     }
-  }, [
-    podcastId,
-    reportRequestError,
-    reload,
-    selection,
-    setError,
-    transcriptionAllowed,
-  ]);
-
-  const fetchTranscriptForecast = useCallback(
-    async (mediaId: string, reason: TranscriptRequestReason) => {
-      const response = await apiFetch<{ data: TranscriptRequestResult }>(
-        `/api/media/${mediaId}/transcript/request`,
-        {
-          method: "POST",
-          body: JSON.stringify({ reason, dry_run: true }),
-        },
-      );
-      return response.data;
-    },
-    [],
-  );
+  }, [podcastId, reportRequestError, reload, selection, setError]);
 
   const provisioningEpisodeIds = useMemo(
     () =>
@@ -283,35 +214,12 @@ export function useEpisodeTranscriptController({
       requestingTranscriptMediaIds.add(mediaId);
       setError(null);
       try {
-        let forecast = transcriptRequestForecastByMediaId[mediaId];
-        if (!forecast || forecast.reason !== reason) {
-          const payload = await fetchTranscriptForecast(mediaId, reason);
-          const nextForecast = toTranscriptForecastState(
-            payload,
-            reason,
-            "forecast",
-          );
-          forecast = nextForecast;
-          setTranscriptRequestForecastByMediaId((prev) => ({
-            ...prev,
-            [mediaId]: nextForecast,
-          }));
-        }
-
-        if (!forecast || !forecast.fits_budget) {
-          return;
-        }
-
-        const response = await apiFetch<{ data: TranscriptRequestResult }>(
-          `/api/media/${mediaId}/transcript/request`,
-          {
-            method: "POST",
-            body: JSON.stringify({
-              reason,
-              dry_run: false,
-            }),
-          },
-        );
+        const response = await apiFetch<
+          ApiJson<"/media/{media_id}/transcript/request", "post">
+        >(`/api/media/${mediaId}/transcript/request`, {
+          method: "POST",
+          body: JSON.stringify({ reason }),
+        });
         const payload = response.data;
         setEpisodes((prev) =>
           prev.map((episode) =>
@@ -324,10 +232,6 @@ export function useEpisodeTranscriptController({
               : episode,
           ),
         );
-        setTranscriptRequestForecastByMediaId((prev) => ({
-          ...prev,
-          [mediaId]: toTranscriptForecastState(payload, reason, "request"),
-        }));
         onMutationCommitted();
         reload();
       } catch (requestError) {
@@ -338,7 +242,6 @@ export function useEpisodeTranscriptController({
       }
     },
     [
-      fetchTranscriptForecast,
       onMutationCommitted,
       reload,
       reportRequestError,
@@ -346,7 +249,6 @@ export function useEpisodeTranscriptController({
       setEpisodes,
       setError,
       transcriptReasonByMediaId,
-      transcriptRequestForecastByMediaId,
     ],
   );
 
@@ -357,11 +259,9 @@ export function useEpisodeTranscriptController({
     batchTranscriptSummary,
     expandedTranscriptMediaIds,
     requestingTranscriptMediaIds,
-    transcriptRequestForecastByMediaId,
     transcriptReasonByMediaId,
     setTranscriptReasonByMediaId,
     handleBatchTranscriptRequest,
     handleRequestTranscript,
-    resetForecasts,
   };
 }
