@@ -27,7 +27,9 @@ OFFLINE_READING_PACKAGE_SCHEMA_VERSION = 1
 OFFLINE_READING_READER_CONTRACT_VERSION = 4
 OFFLINE_READING_READER_BUNDLE_VERSION = 4
 
-# V1's single bounds owner. Other language implementations mirror these values.
+# V1's bounds owner. Other language implementations mirror these values, except
+# the manifest.json byte bound: python writes the manifest and never parses one,
+# so android alone states and enforces that bound.
 OFFLINE_READING_MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
 OFFLINE_READING_MAX_EXPANDED_BYTES = 512 * 1024 * 1024
 OFFLINE_READING_MAX_ENTRY_BYTES = 512 * 1024 * 1024
@@ -35,7 +37,6 @@ OFFLINE_READING_MAX_ENTRIES = 4096
 OFFLINE_READING_MAX_PATH_BYTES = 512
 OFFLINE_READING_MAX_TITLE_CODEPOINTS = 512
 OFFLINE_READING_MAX_MEDIA_TYPE_BYTES = 127
-OFFLINE_READING_MAX_MANIFEST_JSON_BYTES = 4 * 1024 * 1024
 # Canonical EPUB rendering is already bounded at 64 MiB. Keeping the sole
 # materialized JSON member at the same ceiling prevents one package request
 # from exceeding the API container while object members remain file-streamed.
@@ -609,15 +610,6 @@ def _validate_sanitized_html(value: str, *, web_text_only: bool) -> tuple[set[st
             if tag == "img" and "src" not in element.attrib and "srcset" not in element.attrib:
                 raise ValueError("offline image has no declared source")
     return referenced_assets, warning_markers
-
-
-def parse_offline_reading_manifest(payload: bytes) -> OfflineReadingManifest:
-    value = _parse_strict_json_object(
-        payload,
-        maximum_bytes=OFFLINE_READING_MAX_MANIFEST_JSON_BYTES,
-        name="manifest.json",
-    )
-    return OfflineReadingManifest.model_validate(value, by_alias=True, by_name=False)
 
 
 def parse_offline_reader_document(payload: bytes) -> OfflineReaderDocument:

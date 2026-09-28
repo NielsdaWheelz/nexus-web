@@ -80,7 +80,6 @@ class WebArticlePreparedFragment:
     html_sanitized: str
     canonical_text: str
     fragment_blocks: list[FragmentBlockSpec]
-    index_blocks: list[WebArticleIndexBlockSpec]
     apparatus_items: list[dict[str, object]]
     apparatus_edges: list[dict[str, object]]
     document_embeds: list[WebArticleDocumentEmbed]
@@ -203,7 +202,6 @@ def prepare_web_article_fragment(
             html_sanitized=html_sanitized,
             canonical_text=canonical_text,
             fragment_blocks=[FragmentBlockSpec(0, 0, 0)],
-            index_blocks=[],
             apparatus_items=[],
             apparatus_edges=[],
             document_embeds=document_embeds,
@@ -219,11 +217,6 @@ def prepare_web_article_fragment(
             )
         ]
         or [FragmentBlockSpec(0, 0, 0)],
-        index_blocks=build_web_article_index_blocks(
-            html_sanitized=html_sanitized,
-            canonical_text=canonical_text,
-            fragment_idx=fragment_idx,
-        ),
         apparatus_items=apparatus_items,
         apparatus_edges=apparatus_edges,
         document_embeds=document_embeds,
@@ -359,16 +352,14 @@ def build_web_article_index_blocks(
     html_sanitized: str,
     canonical_text: str,
     fragment_idx: int,
-    fragment_id: UUID | None = None,
-    note_regions: Sequence[NoteRegion] = (),
+    fragment_id: UUID,
+    note_regions: Sequence[NoteRegion],
 ) -> list[WebArticleIndexBlockSpec]:
     """One block per non-blank canonical line: headings carry the outline."""
-    if note_regions and fragment_id is None:
-        raise ValueError("Web note-region classification requires a fragment identity")
     heading_by_start = dict(_headings(html_sanitized, canonical_text, fragment_idx))
     note_index = NavigationNoteIndex(
         [region for region in note_regions if region.range.start.fragment_id == fragment_id],
-        {fragment_id: fragment_idx} if fragment_id is not None else {},
+        {fragment_id: fragment_idx},
     )
     routine_by_id = {
         heading.section_id: note_index.is_routine(DocumentPoint(fragment_idx, start))

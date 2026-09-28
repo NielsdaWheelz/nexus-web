@@ -679,9 +679,7 @@ The **registry** (`jobs/registry.py`) is the source of truth mapping job kind â†
 handler + policy. `job_topology.py` owns the disjoint/exhaustive 20-kind
 production topology and separate three-kind maintenance declaration without
 importing the application runtime graph. The entrypoint rejects
-missing/unknown lanes, registry drift, and raw allowlists on normal lanes.
-`get_task_contract_digest()` fingerprints the registry's per-kind resource
-class and attempt/lease policy for API `/version` and worker release-health proof. See
+missing/unknown lanes, registry drift, and raw allowlists on normal lanes. See
 [modules/jobs.md](modules/jobs.md).
 Registry shims decode durable same-system payloads without compatibility
 defaults. In particular, the sole note-index and Synapse enqueuers persist a
@@ -1069,9 +1067,9 @@ construction, and SSE lifecycle to `lib/api/useGenerationRun.ts`; no Dossier
 token or direct-SSE path exists beside it. The browser renders a revision in a
 sandboxed, Nexus-styled document frame; rejected or partial HTML is never
 emitted as an event. Media
-Intelligence is separately read through
-`GET /media/{media_handle}/intelligence`; the Media Dossier renders that
-current projection as a compact Abstract and consumes the same fingerprinted
+Intelligence reaches the web only inside the Dossier read model as
+`mediaAbstract` (`services/artifacts/subjects.py` `media_abstract`); the Media
+Dossier renders it as a compact Abstract and consumes the same fingerprinted
 projection as generation input.
 
 ---
@@ -2327,7 +2325,7 @@ The things most likely to bite you, distilled:
 | Generation backends                                               | `python/nexus/services/{generation_catalog,generation_policy,generation_service,generation_spec,generation_backend,provider_generation_backend,codex_generation_client,llm_execution,llm_ledger,tool_authority}.py`, `apps/codex_agent/`, [`modules/llms.md`](modules/llms.md) |
 | Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_source_ingest.py`, `source_attempt_failures.py`, `media_fact_revisions.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
 | Imports workspace (query owner, history, pane)                    | `python/nexus/services/{imports,import_history}.py`, `python/nexus/api/routes/imports.py`, `apps/web/src/lib/imports/`, `apps/web/src/components/imports/`, `apps/web/src/app/(authenticated)/imports/`                                              |
-| Reader/highlights backend                                         | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote,pdf_quote_match}.py`                                                                |
+| Reader/highlights backend                                         | `python/nexus/services/{reader_profile,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote}.py`                                                                        |
 | Chat / conversations                                              | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py`                                                                                                        |
 | Oracle                                                            | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_corpus.py`, `python/nexus/services/oracle_plates.py`                                                                                  |
 | Search / retrieval / indexing / resource target/openable search   | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation}.py`, `python/nexus/services/search/candidates.py`, `python/nexus/services/resource_items/{targets,openables}.py`   |

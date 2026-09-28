@@ -128,9 +128,7 @@ def fetch_author_thread_snapshot(post_id: str) -> XAuthorThreadSnapshot:
     root = snapshots.posts.get(root.id, root)
     anchor_id = thread_posts[0].id if thread_posts else root.id
     return XAuthorThreadSnapshot(
-        requested_post_id=root.id,
         conversation_id=root.conversation_id or root.id,
-        canonical_anchor_post_id=anchor_id,
         canonical_url=canonical_x_post_url(anchor_id),
         author=author,
         posts=tuple(thread_posts),
@@ -156,7 +154,6 @@ def fetch_single_post_snapshot(post_id: str) -> XSinglePostSnapshot:
     if post.author_id not in snapshots.users:
         raise _unavailable("X API returned no author data.", "lookup_x_post")
     return XSinglePostSnapshot(
-        requested_post_id=post.id,
         canonical_url=canonical_x_post_url(post.id),
         post=post,
         users=snapshots.users,
@@ -285,7 +282,6 @@ def _http_error(response: httpx.Response, operation: str) -> XProviderError:
         f"X API returned status {status}.",
         operation=operation,
         provider_status_code=status,
-        provider_error_type=error_type,
         provider_error_title=title,
         retry_after_seconds=retry_after,
     )

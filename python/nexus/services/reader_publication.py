@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, cast
@@ -27,7 +27,7 @@ from nexus.schemas.source_issues import (
     UnresolvedNavigationTarget,
     source_issues_payload,
 )
-from nexus.storage.client import StorageClient, StorageError, get_storage_client
+from nexus.storage.client import StorageError
 
 ReaderDocumentKind = Literal["pdf", "epub", "web_article"]
 _ELIGIBLE_KINDS = frozenset({"pdf", "epub", "web_article"})
@@ -66,11 +66,6 @@ class ReaderPublicationFragment:
 class ReaderPublicationEpubFragmentSource:
     fragment_idx: int
     package_href: str
-    manifest_item_id: str
-    spine_itemref_id: str | None
-    media_type: str
-    linear: bool
-    reading_order: int
 
 
 @dataclass(frozen=True)
@@ -114,14 +109,6 @@ class CapturedReaderPublication[T]:
     generation: int
     projection: ReaderPublicationProjection
     value: T
-
-
-class ReaderPublicationObjectReader:
-    def __init__(self, storage_client: StorageClient) -> None:
-        self._storage_client = storage_client
-
-    def stream(self, reference: ReaderPublicationObjectReference) -> Iterator[bytes]:
-        return self._storage_client.stream_object(reference.storage_path)
 
 
 def read_publication_generation(db: Session, *, media_id: UUID) -> int | None:
@@ -466,15 +453,16 @@ def capture_current[T](
     session_factory: sessionmaker[Session],
     *,
     media_id: UUID,
-    assemble: Callable[[ReaderPublicationProjection, ReaderPublicationObjectReader], T],
-    storage_client: StorageClient | None = None,
+    assemble: Callable[[ReaderPublicationProjection], T],
 ) -> CapturedReaderPublication[T]:
-    """Capture one coherent projection; the seqlock allows exactly one restart."""
-    objects = storage_client or get_storage_client()
+    """Capture one coherent projection; the seqlock allows exactly one restart.
+
+    A storage object that vanished because the generation moved restarts the capture.
+    """
     for _attempt in range(2):
         projection = _read_projection(session_factory, media_id=media_id)
         try:
-            value = assemble(projection, ReaderPublicationObjectReader(objects))
+            value = assemble(projection)
         except StorageError as exc:
             if exc.code != _MISSING_OBJECT_CODE:
                 raise
@@ -526,10 +514,9 @@ def _read_projection(
             ReaderPublicationEpubFragmentSource(*source)
             for source in db.execute(
                 text(
-                    "SELECT f.idx, efs.package_href, efs.manifest_item_id, efs.spine_itemref_id,"
-                    " efs.media_type, efs.linear, efs.reading_order"
+                    "SELECT f.idx, efs.package_href"
                     " FROM epub_fragment_sources efs JOIN fragments f ON f.id = efs.fragment_id"
-                    " WHERE efs.media_id = :media_id ORDER BY efs.reading_order, f.idx"
+                    " WHERE efs.media_id = :media_id ORDER BY f.idx"
                 ),
                 {"media_id": media_id},
             )

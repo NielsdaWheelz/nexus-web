@@ -617,23 +617,11 @@ def resource_can_own_ordered_adjacency(ref: ResourceRef) -> bool:
     return capability_for_ref(ref).adjacency_source
 
 
-def resource_can_be_ordered_adjacency_target(ref: ResourceRef) -> bool:
-    return capability_for_ref(ref).adjacency_target
-
-
 def app_search_scope_schemes() -> tuple[ResourceScheme, ...]:
     return tuple(
         scheme
         for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items()
         if capability.app_search_scope
-    )
-
-
-def citation_output_source_schemes() -> tuple[ResourceScheme, ...]:
-    return tuple(
-        scheme
-        for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items()
-        if capability.citation_output_source
     )
 
 

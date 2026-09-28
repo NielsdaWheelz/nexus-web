@@ -104,28 +104,6 @@ def _owner_user_id(db: Session, *, owner: LlmCallOwner, job_id: UUID) -> UUID | 
     return None
 
 
-def issue_generation_api_credential(
-    session_factory: sessionmaker[Session],
-    *,
-    user_id: UUID,
-    owner: LlmCallOwner,
-    generation_id: UUID,
-    job_context: JobExecutionContext,
-    expires_at: datetime,
-) -> str:
-    """Mint once after admission; never persist or log the raw bearer."""
-
-    with session_factory() as db, db.begin():
-        return issue_generation_api_credential_in_current_transaction(
-            db,
-            user_id=user_id,
-            owner=owner,
-            generation_id=generation_id,
-            job_context=job_context,
-            expires_at=expires_at,
-        )
-
-
 def issue_generation_api_credential_in_current_transaction(
     db: Session,
     *,

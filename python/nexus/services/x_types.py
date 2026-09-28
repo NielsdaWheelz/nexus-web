@@ -40,7 +40,6 @@ class XProviderError(Exception):
     message: str
     operation: str
     provider_status_code: int | None = None
-    provider_error_type: str | None = None
     provider_error_title: str | None = None
     retry_after_seconds: int | None = None
 
@@ -154,9 +153,7 @@ type XQuoteReference = XResolvedQuoteReference | XUnavailableQuoteReference
 
 @dataclass(frozen=True)
 class XAuthorThreadSnapshot:
-    requested_post_id: str
     conversation_id: str
-    canonical_anchor_post_id: str
     canonical_url: str
     author: XUserSnapshot
     posts: tuple[XPostSnapshot, ...]
@@ -167,7 +164,6 @@ class XAuthorThreadSnapshot:
 
 @dataclass(frozen=True)
 class XSinglePostSnapshot:
-    requested_post_id: str
     canonical_url: str
     post: XPostSnapshot
     users: Mapping[str, XUserSnapshot]

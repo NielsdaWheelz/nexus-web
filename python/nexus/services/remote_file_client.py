@@ -32,10 +32,10 @@ def fetch_binary_to_storage(
     content_type: str,
     max_bytes: int,
     accept: str,
-    signature_kind: str | None = None,
+    signature_kind: str,
 ) -> RemoteFileFetchResult:
     """Download one bounded remote file, checking its magic bytes on arrival."""
-    label = signature_kind.upper() if signature_kind is not None else "file"
+    label = signature_kind.upper()
     digest = hashlib.sha256()
     size_bytes = 0
     with TemporaryFile() as spool:
@@ -44,11 +44,7 @@ def fetch_binary_to_storage(
             nonlocal size_bytes
             if not chunk:
                 return
-            if (
-                size_bytes == 0
-                and signature_kind is not None
-                and not has_valid_file_signature(chunk, signature_kind)
-            ):
+            if size_bytes == 0 and not has_valid_file_signature(chunk, signature_kind):
                 raise InvalidRequestError(
                     ApiErrorCode.E_INVALID_FILE_TYPE,
                     f"Remote URL did not return a valid {label} file.",

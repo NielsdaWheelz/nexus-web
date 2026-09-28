@@ -53,7 +53,6 @@ class WorkerHeartbeatPublisher:
         source_sha: str,
         expected_database_revision: str,
         expected_oracle_manifest_digest: str,
-        task_contract_digest: str,
         readiness_check: Callable[[], bool],
     ) -> None:
         self._path = WORKER_HEARTBEAT_PATHS[lane]
@@ -66,7 +65,6 @@ class WorkerHeartbeatPublisher:
             "source_sha": source_sha,
             "expected_database_revision": expected_database_revision,
             "expected_oracle_manifest_digest": expected_oracle_manifest_digest,
-            "task_contract_digest": task_contract_digest,
         }
 
     def clear(self) -> None:
@@ -142,7 +140,6 @@ def main(argv: list[str] | None = None) -> int:
                 "source_sha": record["source_sha"],
                 "expected_database_revision": record["expected_database_revision"],
                 "expected_oracle_manifest_digest": record["expected_oracle_manifest_digest"],
-                "task_contract_digest": record["task_contract_digest"],
             },
             sort_keys=True,
         )
