@@ -2,19 +2,15 @@
 
 import {
   createContext,
-  useCallback,
   useContext,
   useEffect,
-  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { useFeedback } from "@/components/feedback/Feedback";
-import { requestDownloadsOpen } from "@/components/offlineMedia/downloadsSurfaceIngress";
 import { apiFetch } from "@/lib/api/client";
-import { absent, type Presence } from "@/lib/api/presence";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
 import {
@@ -28,10 +24,7 @@ import {
   offlineMediaRejectionMessage,
   type OfflineMediaController,
 } from "./controller";
-import {
-  decodeOfflineDownloadSpecEnvelope,
-  type LocalAvailability,
-} from "./contract";
+import { decodeOfflineDownloadSpecEnvelope } from "./contract";
 import { createWebKitOfflineMediaTransport } from "./transport";
 
 export type OfflineMediaCapability =
@@ -45,7 +38,6 @@ export type OfflineMediaCapability =
 
 const UNAVAILABLE: OfflineMediaCapability = { kind: "Unavailable" };
 const CONNECTING: OfflineMediaCapability = { kind: "Connecting" };
-const ABSENT_AVAILABILITY: Presence<LocalAvailability> = absent();
 const EMPTY_INVENTORY: readonly OfflineMediaInventoryItem[] = [];
 
 const OfflineMediaContext =
@@ -56,12 +48,8 @@ function OfflineMediaAnnouncements({
 }: {
   readonly store: OfflineMediaClientStore;
 }) {
-  const subscribe = useCallback(
-    (listener: () => void) => store.subscribeInventory(listener),
-    [store],
-  );
   const inventory = useSyncExternalStore(
-    subscribe,
+    store.subscribeInventory,
     store.getInventory,
     () => EMPTY_INVENTORY,
   );
@@ -139,7 +127,6 @@ export function OfflineMediaProvider({
       store,
       sessionTransport,
       readOfflineDownloadSpec,
-      window.location.origin,
       (message) =>
         feedback.publish({
           kind: "Hud",
@@ -156,7 +143,6 @@ export function OfflineMediaProvider({
         setAsyncDefect(error);
       },
       handleUnauthenticatedApiError,
-      requestDownloadsOpen,
     );
     setSession({ accountId, capability: CONNECTING });
     void controller
@@ -226,45 +212,4 @@ export function OfflineMediaProvider({
 
 export function useOfflineMediaCapability(): OfflineMediaCapability {
   return useContext(OfflineMediaContext);
-}
-
-export function useOfflineMediaItem(
-  mediaId: string | null,
-  title?: string,
-): {
-  readonly capability: OfflineMediaCapability;
-  readonly availability: Presence<LocalAvailability>;
-} {
-  const capability = useOfflineMediaCapability();
-  const store = capability.kind === "Ready" ? capability.store : null;
-
-  useEffect(() => {
-    if (store !== null && mediaId !== null && title !== undefined) {
-      store.noteTitle(mediaId, title);
-    }
-  }, [mediaId, store, title]);
-
-  const subscribe = useCallback(
-    (listener: () => void) =>
-      store !== null && mediaId !== null
-        ? store.subscribeItem(mediaId, listener)
-        : () => undefined,
-    [mediaId, store],
-  );
-  const getSnapshot = useCallback(
-    () =>
-      store !== null && mediaId !== null
-        ? store.getItem(mediaId)
-        : ABSENT_AVAILABILITY,
-    [mediaId, store],
-  );
-  const availability = useSyncExternalStore(
-    subscribe,
-    getSnapshot,
-    () => ABSENT_AVAILABILITY,
-  );
-  return useMemo(
-    () => ({ capability, availability }),
-    [availability, capability],
-  );
 }

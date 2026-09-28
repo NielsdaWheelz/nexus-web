@@ -1,6 +1,6 @@
 import type { OfflineMediaInventoryItem } from "./clientStore";
 
-export interface OfflineMediaAnnouncementMilestone {
+interface OfflineMediaAnnouncementMilestone {
   readonly key: string;
   readonly message: string;
 }

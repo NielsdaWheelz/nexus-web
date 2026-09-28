@@ -10,8 +10,8 @@ import {
 
 export const OFFLINE_MEDIA_PROTOCOL_VERSION = 1 as const;
 export const OFFLINE_DOWNLOAD_SPEC_DEADLINE_MS = 35_000;
-export const OFFLINE_MEDIA_TITLE_MAX_LENGTH = 512;
-export const OFFLINE_MEDIA_SOURCE_URL_MAX_LENGTH = 8_192;
+const OFFLINE_MEDIA_TITLE_MAX_LENGTH = 512;
+const OFFLINE_MEDIA_SOURCE_URL_MAX_LENGTH = 8_192;
 
 const ISO_INSTANT_RE =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
@@ -72,29 +72,20 @@ export interface NativeOfflineMediaItem {
   readonly state: NativeLocalAvailability;
 }
 
-interface OfflineMediaCommandBase {
-  readonly requestId: string;
-  readonly protocolVersion: typeof OFFLINE_MEDIA_PROTOCOL_VERSION;
-}
-
-export type OfflineMediaCommand =
-  | (OfflineMediaCommandBase & {
-      readonly kind: "Connect";
-      readonly accountId: string;
-    })
-  | (OfflineMediaCommandBase & { readonly kind: "GetSnapshot" })
-  | (OfflineMediaCommandBase & {
-      readonly kind: "Enqueue";
-      readonly spec: OfflineDownloadSpec;
-    })
-  | (OfflineMediaCommandBase & {
+export type OfflineMediaCommandBody =
+  | { readonly kind: "Connect"; readonly accountId: string }
+  | { readonly kind: "GetSnapshot" }
+  | { readonly kind: "Enqueue"; readonly spec: OfflineDownloadSpec }
+  | {
       readonly kind: "Cancel" | "Retry" | "Remove";
       readonly mediaId: string;
-    })
-  | (OfflineMediaCommandBase & {
-      readonly kind: "SetNetworkPolicy";
-      readonly policy: NetworkPolicy;
-    });
+    }
+  | { readonly kind: "SetNetworkPolicy"; readonly policy: NetworkPolicy };
+
+export type OfflineMediaCommand = OfflineMediaCommandBody & {
+  readonly requestId: string;
+  readonly protocolVersion: typeof OFFLINE_MEDIA_PROTOCOL_VERSION;
+};
 
 export type OfflineMediaReplyOutcome =
   | {
@@ -108,13 +99,13 @@ export type OfflineMediaReplyOutcome =
       readonly code: OfflineMediaRejectedCode;
     };
 
-export interface OfflineMediaReply {
+interface OfflineMediaReply {
   readonly requestId: string;
   readonly protocolVersion: typeof OFFLINE_MEDIA_PROTOCOL_VERSION;
   readonly outcome: OfflineMediaReplyOutcome;
 }
 
-export type OfflineMediaEvent =
+type OfflineMediaEvent =
   | {
       readonly protocolVersion: typeof OFFLINE_MEDIA_PROTOCOL_VERSION;
       readonly kind: "StateChanged";
@@ -127,7 +118,7 @@ export type OfflineMediaEvent =
       readonly policy: NetworkPolicy;
     };
 
-export type OfflineMediaInbound =
+type OfflineMediaInbound =
   | { readonly kind: "Reply"; readonly reply: OfflineMediaReply }
   | { readonly kind: "Event"; readonly event: OfflineMediaEvent };
 
@@ -428,9 +419,16 @@ function decodeEvent(raw: unknown): OfflineMediaEvent {
   }
 }
 
-export function decodeOfflineDownloadSpec(raw: unknown): OfflineDownloadSpec {
-  const spec = expectExactRecord(
+export function decodeOfflineDownloadSpecEnvelope(
+  raw: unknown,
+): OfflineDownloadSpec {
+  const envelope = expectExactRecord(
     raw,
+    ["data"],
+    "OfflineDownloadSpecResponse",
+  );
+  const spec = expectExactRecord(
+    envelope.data,
     ["kind", "mediaId", "title", "sourceUrl"],
     "OfflineDownloadSpec",
   );
@@ -455,17 +453,6 @@ export function decodeOfflineDownloadSpec(raw: unknown): OfflineDownloadSpec {
       OFFLINE_MEDIA_SOURCE_URL_MAX_LENGTH,
     ),
   };
-}
-
-export function decodeOfflineDownloadSpecEnvelope(
-  raw: unknown,
-): OfflineDownloadSpec {
-  const envelope = expectExactRecord(
-    raw,
-    ["data"],
-    "OfflineDownloadSpecResponse",
-  );
-  return decodeOfflineDownloadSpec(envelope.data);
 }
 
 export function decodeOfflineMediaInbound(raw: unknown): OfflineMediaInbound {
