@@ -162,14 +162,10 @@ def get_oracle_plate_metadata(
     )
 
 
-def read_oracle_plate_bytes(
-    metadata: OraclePlateMetadata,
-    *,
-    storage_client: StorageClient | None = None,
-) -> OraclePlateBytes:
-    sc = storage_client or get_storage_client()
+def read_oracle_plate_bytes(metadata: OraclePlateMetadata) -> OraclePlateBytes:
+    storage = get_storage_client()
     try:
-        data = b"".join(sc.stream_object(metadata.storage_key))
+        data = b"".join(storage.stream_object(metadata.storage_key))
     except StorageError as exc:
         logger.error(
             "oracle_plate_storage_read_failed",
@@ -217,14 +213,13 @@ def oracle_plate_storage_metadata(db: Session) -> tuple[OraclePlateMetadata, ...
 def validate_oracle_plate_storage_metadata(
     rows: Collection[OraclePlateMetadata],
     *,
-    storage_client: StorageClient | None = None,
+    storage_client: StorageClient,
 ) -> OraclePlateStorageReadiness:
     """Validate a closed DB metadata snapshot after its transaction has ended."""
-    sc = storage_client or get_storage_client()
     invalid: list[str] = []
     valid = 0
     for row in rows:
-        invalid_reason = _oracle_plate_storage_invalid_reason(row, sc)
+        invalid_reason = _oracle_plate_storage_invalid_reason(row, storage_client)
         if invalid_reason is not None:
             invalid.append(f"{row.image_id}: {invalid_reason}")
             continue

@@ -244,7 +244,7 @@ def _finalize(
     owner_kind: str,
     owner_id: UUID,
     storage_path: str,
-    storage_client: StorageClient | None,
+    storage_client: StorageClient,
 ) -> None:
     """Recheck after a successful write and mark its reservation Retained.
 
@@ -271,7 +271,7 @@ def _finalize(
         return
     # Rejected write: leave the reservation Armed, best-effort delete the object.
     try:
-        (storage_client or get_storage_client()).delete_object(storage_path)
+        storage_client.delete_object(storage_path)
     except Exception as exc:  # noqa: BLE001 - best-effort; the Armed deadline retries.
         logger.warning(
             "storage_object_cleanup_reject_delete_failed storage_path=%s error=%s",
@@ -281,7 +281,7 @@ def _finalize(
 
 
 def finalize_storage_object_write(
-    db: Session, *, media_id: UUID, storage_path: str, storage_client: StorageClient | None = None
+    db: Session, *, media_id: UUID, storage_path: str, storage_client: StorageClient
 ) -> None:
     _finalize(
         db,
@@ -297,7 +297,7 @@ def finalize_upload_session_storage_object_write(
     *,
     upload_session_id: UUID,
     storage_path: str,
-    storage_client: StorageClient | None = None,
+    storage_client: StorageClient,
 ) -> None:
     _finalize(
         db,

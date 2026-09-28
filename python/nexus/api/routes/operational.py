@@ -4,7 +4,6 @@ from fastapi import APIRouter, Response
 from fastapi.responses import JSONResponse
 
 from nexus.config import get_settings
-from nexus.jobs.registry import get_task_contract_digest
 from nexus.responses import success_response
 from nexus.runtime_health import get_runtime_identity, is_database_ready
 
@@ -40,11 +39,5 @@ def get_readiness(response: Response) -> dict | JSONResponse:
 @router.get("/version")
 async def get_version(response: Response) -> dict:
     """Return only the immutable, image-baked release contract."""
-    identity = get_runtime_identity()
     response.headers.update(NO_STORE_HEADERS)
-    return success_response(
-        {
-            **identity.as_json(),
-            "task_contract_digest": get_task_contract_digest(),
-        }
-    )
+    return success_response(get_runtime_identity().as_json())

@@ -17,7 +17,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Fragment, NoteBlock
-from nexus.services.pdf_quote_match import PREFIX_SUFFIX_WINDOW
+
+# The codepoint window of context stored either side of a matched quote.
+PREFIX_SUFFIX_WINDOW = 64
 
 
 class QuoteStatus(str, Enum):

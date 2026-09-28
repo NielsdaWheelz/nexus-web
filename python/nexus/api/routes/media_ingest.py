@@ -33,7 +33,7 @@ from nexus.services import (
     content_indexing,
     media_source_ingest,
     media_upload_sessions,
-    metadata_lifecycle,
+    metadata_dispatch,
 )
 from nexus.services.capabilities import ViewerRecovery
 
@@ -179,7 +179,7 @@ def retry_ingest(
             )
         case RetryMetadataRequest():
             return success_response(
-                metadata_lifecycle.retry_metadata_for_viewer(
+                metadata_dispatch.retry_metadata_for_viewer(
                     db, viewer.user_id, media_id, request_id=_request_id(request)
                 )
             )

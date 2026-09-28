@@ -5,7 +5,6 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from nexus.api.query_params import parse_comma_list
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.schemas.search import SearchResponse
@@ -57,10 +56,10 @@ def search(
     """
     query = build_search_query(
         text=q,
-        raw_kinds=parse_comma_list(kinds),
-        raw_formats=parse_comma_list(formats),
-        raw_authors=parse_comma_list(authors),
-        raw_roles=parse_comma_list(roles),
+        raw_kinds=_comma_list(kinds),
+        raw_formats=_comma_list(formats),
+        raw_authors=_comma_list(authors),
+        raw_roles=_comma_list(roles),
         scope=scope_from_uri(scope),
         cursor=cursor,
         limit=limit,
@@ -68,3 +67,9 @@ def search(
     return search_service(db=db, viewer_id=viewer.user_id, query=query).model_dump(
         mode="json", by_alias=True
     )
+
+
+def _comma_list(value: str | None) -> list[str] | None:
+    if value is None:
+        return None
+    return [item.strip() for item in value.split(",") if item.strip()]

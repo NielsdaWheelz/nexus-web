@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Literal, cast
 from uuid import UUID
 
@@ -16,6 +15,7 @@ from nexus.db.retries import retry_serializable
 from nexus.jobs.queue import JobExecutionContext, lock_and_renew_running_job_claim
 from nexus.logging import get_logger
 from nexus.schemas.import_history import SourceStageChanged, Stage
+from nexus.schemas.media import SourceCountedProgress, SourceProgress, SourceStageProgress
 from nexus.schemas.presence import absent, present
 from nexus.services.import_history import append_processing_event
 
@@ -58,28 +58,6 @@ class SourcePublicationFence:
 
 class SourcePublicationSuperseded(Exception):
     """The worker no longer owns the exact source operation."""
-
-
-@dataclass(frozen=True)
-class SourceStageProgress:
-    kind: Literal["Stage"]
-    stage: Literal["Validate", "Extract", "Finalize"]
-    run_count: int
-    updated_at: datetime
-
-
-@dataclass(frozen=True)
-class SourceCountedProgress:
-    kind: Literal["Counted"]
-    stage: Literal["Extract"]
-    completed: int
-    total: int
-    unit: Literal["Page", "Chapter"]
-    run_count: int
-    updated_at: datetime
-
-
-type SourceProgress = SourceStageProgress | SourceCountedProgress
 
 
 def require_source_publication(
@@ -290,8 +268,6 @@ def load_source_progress(db: Session, media_ids: tuple[UUID, ...]) -> dict[UUID,
         unit = attempt.progress_unit
         if stage == "Extract" and total is not None and unit in {"Page", "Chapter"}:
             progress[attempt.media_id] = SourceCountedProgress(
-                kind="Counted",
-                stage="Extract",
                 completed=int(attempt.progress_completed or 0),
                 total=int(total),
                 unit=cast(Literal["Page", "Chapter"], unit),
@@ -300,7 +276,6 @@ def load_source_progress(db: Session, media_ids: tuple[UUID, ...]) -> dict[UUID,
             )
         else:
             progress[attempt.media_id] = SourceStageProgress(
-                kind="Stage",
                 stage=cast(Literal["Validate", "Extract", "Finalize"], stage),
                 run_count=run_count,
                 updated_at=updated_at,

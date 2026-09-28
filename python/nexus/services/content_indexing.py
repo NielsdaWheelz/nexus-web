@@ -12,7 +12,7 @@ import base64
 import json
 import re
 from array import array
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import chain, islice
@@ -175,9 +175,6 @@ class ContentIndexResourceLimitExceeded(Exception):
 
     def __init__(self) -> None:
         super().__init__("Document content exceeds the bounded indexing envelope.")
-
-
-TextEmbeddingBatch = Callable[[list[str]], tuple[str, Sequence[Sequence[float]]]]
 
 
 def _is_document_source_kind(value: object) -> TypeGuard[DocumentSourceKind]:
@@ -682,7 +679,6 @@ def _iter_planned_chunks(
     embedding_model: str,
     embedding_dimensions: int,
     maximum_chunk_bytes: int | None,
-    embed_texts: TextEmbeddingBatch,
 ) -> Iterator[PlannedContentChunk]:
     """Yield every planned chunk, embedding them in bounded batches."""
     batch: list[list[tuple[IndexableBlock, int, int, int]]] = []
@@ -690,13 +686,11 @@ def _iter_planned_chunks(
         batch.append(parts)
         if len(batch) == CONTENT_INDEX_EMBEDDING_BATCH_SIZE:
             yield from _plan_batch(
-                batch, embedding_model, embedding_dimensions, maximum_chunk_bytes, embed_texts
+                batch, embedding_model, embedding_dimensions, maximum_chunk_bytes
             )
             batch = []
     if batch:
-        yield from _plan_batch(
-            batch, embedding_model, embedding_dimensions, maximum_chunk_bytes, embed_texts
-        )
+        yield from _plan_batch(batch, embedding_model, embedding_dimensions, maximum_chunk_bytes)
 
 
 def _plan_batch(
@@ -704,7 +698,6 @@ def _plan_batch(
     embedding_model: str,
     embedding_dimensions: int,
     maximum_chunk_bytes: int | None,
-    embed_texts: TextEmbeddingBatch,
 ) -> list[PlannedContentChunk]:
     """Embed one bounded batch and keep vectors in pgvector's float32 shape."""
     texts = [_chunk_text(parts) for parts in batch]
@@ -712,7 +705,7 @@ def _plan_batch(
         utf8_byte_length(chunk_text) > maximum_chunk_bytes for chunk_text in texts
     ):
         raise ContentIndexResourceLimitExceeded()
-    returned_model, embeddings = embed_texts(texts)
+    returned_model, embeddings = build_text_embeddings(texts)
     if returned_model != embedding_model:
         raise ValueError("Embedding model changed during content indexing")
     if len(embeddings) != len(batch):
@@ -799,7 +792,6 @@ def plan_content_index(
                 embedding_model=model,
                 embedding_dimensions=dimensions,
                 maximum_chunk_bytes=None,
-                embed_texts=build_text_embeddings,
             )
         ),
         embedding_provider=current_transcript_embedding_provider(),
@@ -814,7 +806,6 @@ def build_spooled_content_index_plan(
     source_kind: DocumentSourceKind,
     blocks: Sequence[IndexableBlock],
     spool_path: Path,
-    embed_texts: TextEmbeddingBatch,
 ) -> SpooledContentIndexPlan:
     """Build a bounded document plan outside the publication transaction."""
     block_list = list(blocks)
@@ -830,7 +821,6 @@ def build_spooled_content_index_plan(
                 embedding_model=model,
                 embedding_dimensions=dimensions,
                 maximum_chunk_bytes=CONTENT_INDEX_CHUNK_MAX_BYTES,
-                embed_texts=embed_texts,
             ):
                 written_bytes = _write_spool_record(spool, chunk, written_bytes=written_bytes)
                 chunk_count += 1

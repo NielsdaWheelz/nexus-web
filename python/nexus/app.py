@@ -56,7 +56,6 @@ from nexus.auth.verifier import SupabaseJwksVerifier
 from nexus.config import Environment, get_settings
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.jobs.registry import get_task_contract_digest
 from nexus.logging import get_logger
 from nexus.middleware.db_session import RequestDbSessionMiddleware
 from nexus.middleware.request_id import RequestIDMiddleware
@@ -148,7 +147,6 @@ async def lifespan(app: FastAPI):
     """
     settings = get_settings()
     get_runtime_identity()
-    get_task_contract_digest()
 
     validate_policy()
 

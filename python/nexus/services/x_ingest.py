@@ -195,7 +195,6 @@ def materialize_x_author_thread_media(
                     viewer_id=viewer_id,
                     media=quote_media,
                     snapshot=XSinglePostSnapshot(
-                        requested_post_id=quoted_post.id,
                         canonical_url=canonical_x_post_url(quoted_post.id),
                         post=quoted_post,
                         users=snapshot.users,

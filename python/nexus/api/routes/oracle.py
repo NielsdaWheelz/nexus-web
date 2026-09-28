@@ -9,14 +9,9 @@ from sqlalchemy.orm import Session
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db, get_session_factory
 from nexus.responses import ok
-from nexus.schemas.oracle import (
-    OracleCorpusStatusOut,
-    OracleReadingCreateRequest,
-    OracleReadingCreateResponse,
-)
+from nexus.schemas.oracle import OracleReadingCreateRequest, OracleReadingCreateResponse
 from nexus.services import oracle as oracle_service
-from nexus.services import oracle_corpus, oracle_plates
-from nexus.services.image_proxy import etags_match
+from nexus.services import oracle_plates
 
 router = APIRouter(tags=["oracle"])
 
@@ -58,28 +53,6 @@ def list_oracle_readings(
     return ok(rows)
 
 
-@router.get("/oracle/corpus")
-def get_oracle_corpus_status(
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    r = oracle_corpus.get_oracle_corpus_readiness(db)
-    library_ref = f"library:{r.library_id}" if r.library_id else None
-    return ok(
-        OracleCorpusStatusOut(
-            library_ref=library_ref,
-            library_id=r.library_id,
-            status=r.status,
-            work_count=r.work_count,
-            ready_media_count=r.ready_media_count,
-            anchor_count=r.anchor_count,
-            resolved_anchor_count=r.resolved_anchor_count,
-            plate_count=r.plate_count,
-            ready_plate_count=r.ready_plate_count,
-        )
-    )
-
-
 @router.get("/oracle/readings/{reading_id}/concordance")
 def get_oracle_reading_concordance(
     reading_id: UUID,
@@ -108,7 +81,7 @@ def get_oracle_plate(image_id: UUID, request: Request) -> Response:
     metadata = oracle_plates.get_oracle_plate_metadata(
         session_factory=get_session_factory(), image_id=image_id
     )
-    if inm and etags_match(inm, metadata.etag):
+    if inm and _etags_match(inm, metadata.etag):
         return Response(status_code=304, headers={"ETag": metadata.etag})
     plate = oracle_plates.read_oracle_plate_bytes(metadata)
     return Response(
@@ -121,3 +94,16 @@ def get_oracle_plate(image_id: UUID, request: Request) -> Response:
             "ETag": plate.etag,
         },
     )
+
+
+def _etags_match(if_none_match: str, cached_etag: str) -> bool:
+    """Match an ``If-None-Match`` header against a stored ETag.
+
+    Handles comma-separated lists, the ``W/`` weak prefix, quoting, and ``*``.
+    """
+    stored = cached_etag.strip('"')
+    for raw in if_none_match.split(","):
+        tag = raw.strip().removeprefix("W/").strip('"')
+        if tag == stored or tag == "*":
+            return True
+    return False

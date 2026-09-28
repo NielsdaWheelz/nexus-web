@@ -610,7 +610,7 @@ separate from source-authored apparatus.
 
 ### reader profile backend contract
 
-- `READER_PROFILE_DEFAULTS` in `python/nexus/services/reader.py` is the one
+- `READER_PROFILE_DEFAULTS` in `python/nexus/services/reader_profile.py` is the one
   preference-default authority (schema-validated, frozen); the seven
   preference columns carry no database default (migration `0181`). A
   missing-row GET returns the defaults without inserting; the first PATCH

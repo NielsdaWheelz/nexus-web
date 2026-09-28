@@ -32,7 +32,7 @@ from nexus.jobs.process_executor import (
     BackgroundProcessProtocolDefect,
     ValidatedCgroup,
 )
-from nexus.jobs.registry import get_default_registry, get_task_contract_digest
+from nexus.jobs.registry import get_default_registry
 from nexus.jobs.worker import JobWorker
 from nexus.logging import configure_logging, get_logger
 from nexus.runtime_health import get_runtime_identity, is_database_ready
@@ -161,7 +161,6 @@ def main() -> None:
             source_sha=identity.source_sha,
             expected_database_revision=identity.expected_database_revision,
             expected_oracle_manifest_digest=identity.expected_oracle_manifest_digest,
-            task_contract_digest=get_task_contract_digest(),
             readiness_check=lambda: _worker_readiness_check(
                 lane=lane,
                 settings=settings,
@@ -183,7 +182,6 @@ def main() -> None:
         worker_id=worker.worker_id,
         lane=settings.worker_lane,
         source_sha=identity.source_sha,
-        task_contract_digest=get_task_contract_digest(),
         allowed_job_kinds=list(worker.allowed_kinds),
     )
     try:

@@ -26,7 +26,6 @@ logger = get_logger(__name__)
 # meaningful, so a single ingest does not churn the whole map (§S1.5).
 ATLAS_REPROJECT_TRIGGER_MIN_UNPOSITIONED = 20
 
-_EMBEDDING_DIMS = 256
 _PCA_ITERATIONS = 20
 # Fewer works than components requested makes PCA degenerate (§R-1): fall back to
 # an evenly-spaced ring, which the repulsion pass then leaves alone.

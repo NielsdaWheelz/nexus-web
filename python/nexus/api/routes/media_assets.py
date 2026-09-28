@@ -8,13 +8,18 @@ from typing import Annotated
 from uuid import UUID
 
 from anyio import CapacityLimiter, to_thread
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 from starlette.types import Receive, Scope, Send
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_session_factory
-from nexus.services import epub_assets, image_proxy
+from nexus.services import epub_assets
+from nexus.services.image_validation import (
+    ValidatedImage,
+    create_http_client,
+    fetch_validated_image,
+)
 
 router = APIRouter(tags=["media"])
 
@@ -23,24 +28,23 @@ _WRITE_CHUNK_BYTES = 64 * 1024
 
 
 class _ProxiedImageResponse(Response):
-    def __init__(self, url: str, if_none_match: str | None) -> None:
+    def __init__(self, url: str) -> None:
         super().__init__()
         self.url = url
-        self.if_none_match = if_none_match
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        def fetch() -> ValidatedImage:
+            with create_http_client() as client:
+                return fetch_validated_image(self.url, client)
+
         # Hold the slot through transfer, including cancellation and send
         # failure, and validate before publishing any success headers.
         async with _image_fetch_slots:
-            result = await to_thread.run_sync(image_proxy.fetch_image, self.url, self.if_none_match)
-            response = (
-                Response(status_code=304, headers={"ETag": result.etag})
-                if result.not_modified
-                else Response(
-                    content=result.data,
-                    media_type=result.content_type,
-                    headers={"Cache-Control": "private, max-age=86400", "ETag": result.etag},
-                )
+            image = await to_thread.run_sync(fetch)
+            response = Response(
+                content=image.data,
+                media_type=image.content_type,
+                headers={"Cache-Control": "private, max-age=86400"},
             )
             await send(
                 {
@@ -63,11 +67,9 @@ class _ProxiedImageResponse(Response):
 
 
 @router.get("/media/image")
-async def get_proxied_image(
-    url: str, request: Request, viewer: Annotated[Viewer, Depends(get_viewer)]
-) -> Response:
-    """Proxy an external image with SSRF validation, ETag caching and 304s."""
-    return _ProxiedImageResponse(url, request.headers.get("If-None-Match"))
+async def get_proxied_image(url: str, viewer: Annotated[Viewer, Depends(get_viewer)]) -> Response:
+    """Proxy one external image behind SSRF validation; the browser caches it for a day."""
+    return _ProxiedImageResponse(url)
 
 
 @router.get("/media/{media_id}/assets/{asset_key:path}")

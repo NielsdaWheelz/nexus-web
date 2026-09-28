@@ -20,7 +20,6 @@ from nexus.auth.permissions import (
     visible_media_ids_cte_sql,
 )
 from nexus.db.models import MediaKind
-from nexus.db.sql_patterns import escape_ilike_pattern
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
@@ -31,9 +30,7 @@ from nexus.schemas.media import (
     MediaReadState,
     OfflineDownloadSpecOut,
     PodcastEpisodeChapterOut,
-    SourceCountedProgress,
     SourceProgress,
-    SourceStageProgress,
 )
 from nexus.schemas.media_summary import MediaDurationOut, MediaProcessingStatus, MediaSummaryOut
 from nexus.schemas.presence import (
@@ -73,11 +70,8 @@ from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
 from nexus.services.reading_time import load_reading_time_estimates
 from nexus.services.resource_grants import media_grant_path_exists_sql
-from nexus.services.source_publication import (
-    SourceCountedProgress as PublishedSourceCountedProgress,
-)
-from nexus.services.source_publication import SourceProgress as PublishedSourceProgress
 from nexus.services.source_publication import load_source_progress
+from nexus.text import escape_like
 
 _LIST_LIMIT_MAX = 200
 _TERMINAL_PROCESSING_STATUSES = ("ready_for_reading", "failed", "suspended")
@@ -603,29 +597,13 @@ def list_collection_media_for_viewer_by_ids(
     return collection
 
 
-def _source_progress(progress: PublishedSourceProgress | None) -> Presence[SourceProgress]:
+def _source_progress(progress: SourceProgress | None) -> Presence[SourceProgress]:
     """In-flight source progress in the field's own parametrization.
 
     ``present()`` would stamp the concrete variant, which serializes with a
     Pydantic field mismatch against the declared union.
     """
-    if progress is None:
-        return absent()
-    if isinstance(progress, PublishedSourceCountedProgress):
-        return Present[SourceProgress](
-            value=SourceCountedProgress(
-                completed=progress.completed,
-                total=progress.total,
-                unit=progress.unit,
-                run_count=progress.run_count,
-                updated_at=progress.updated_at,
-            )
-        )
-    return Present[SourceProgress](
-        value=SourceStageProgress(
-            stage=progress.stage, run_count=progress.run_count, updated_at=progress.updated_at
-        )
-    )
+    return absent() if progress is None else Present[SourceProgress](value=progress)
 
 
 def _load_chapters(
@@ -862,7 +840,7 @@ def list_visible_media(
     normalized_search = (search or "").strip()
     if normalized_search:
         where_clauses.append(r"m.title ILIKE :search_pattern ESCAPE '\'")
-        params["search_pattern"] = f"%{escape_ilike_pattern(normalized_search)}%"
+        params["search_pattern"] = f"%{escape_like(normalized_search)}%"
     if cursor:
         params["cursor_updated_at"], params["cursor_id"] = _decode_cursor(cursor)
         where_clauses.append("(m.updated_at, m.id) < (:cursor_updated_at, :cursor_id)")

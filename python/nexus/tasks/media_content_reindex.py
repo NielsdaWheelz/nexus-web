@@ -18,7 +18,6 @@ from nexus.services.content_indexing import (
     publish_media_content_reindex,
 )
 from nexus.services.parser_temp import parser_attempt_directory
-from nexus.services.semantic_chunks import build_text_embeddings
 
 
 def media_content_reindex_job(
@@ -58,7 +57,6 @@ def media_content_reindex_job(
             source_kind=work.source_kind,
             blocks=work.blocks,
             spool_path=attempt_directory / "content-index.jsonl",
-            embed_texts=build_text_embeddings,
         )
         publish_db = get_session_factory()()
         try:

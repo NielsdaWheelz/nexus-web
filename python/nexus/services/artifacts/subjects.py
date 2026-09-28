@@ -13,7 +13,7 @@ import hashlib
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import text
@@ -96,7 +96,6 @@ from nexus.services.resource_graph.refs import (
 from nexus.services.resource_graph.schemas import CitationSnapshot
 
 Subject = ResourceRef | IdeaSubject
-DossierSubjectScheme = ResourceScheme | Literal["idea"]
 
 _MEDIA_INPUT_CHAR_BUDGET = 60_000
 _INPUT_CHAR_BUDGET = 80_000
