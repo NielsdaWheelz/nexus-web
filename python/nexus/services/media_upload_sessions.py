@@ -243,7 +243,6 @@ def create_upload_session(
     input_origin: LocalFile | BrowserCapture,
     request_id: str | None,
     idempotency_key: str | None,
-    storage_client: StorageClient | None = None,
 ) -> UploadSessionResponse:
     """Accept one upload intent and mint the capability for its current generation.
 
@@ -341,7 +340,6 @@ def create_upload_session(
         capability,
         outcome="Created" if created else "Reused",
         expires_in=get_settings().signed_url_expiry_s,
-        storage_client=storage_client or get_storage_client(),
     )
 
 
@@ -356,7 +354,6 @@ def read_upload_session(
     viewer_id: UUID,
     origin_kind: InputOriginKind,
     session_handle: str,
-    storage_client: StorageClient | None = None,
 ) -> UploadSessionResponse:
     """The session's current projection. A live capability is re-signed for its
     remaining lifetime only; reading never extends or advances anything."""
@@ -380,7 +377,6 @@ def read_upload_session(
         capability,
         outcome="Reused",
         expires_in=int((capability.expires_at - now).total_seconds()),
-        storage_client=storage_client or get_storage_client(),
     )
 
 
@@ -436,7 +432,6 @@ def retry_upload_session(
     origin_kind: InputOriginKind,
     session_handle: str,
     request: RetryUploadSessionRequest,
-    storage_client: StorageClient | None = None,
 ) -> UploadRequired | NeedsAttention:
     """Admit one new upload generation, exactly once per ``client_mutation_id``.
 
@@ -533,7 +528,6 @@ def retry_upload_session(
         capability,
         outcome="Reused",
         expires_in=int((admitted.expires_at - now).total_seconds()),
-        storage_client=storage_client or get_storage_client(),
     )
 
 
@@ -550,7 +544,6 @@ def confirm_upload_session(
     session_handle: str,
     generation: int,
     request_id: str | None,
-    storage_client: StorageClient | None = None,
 ) -> Published:
     """Copy the staged object to a fresh candidate, verify that candidate, publish it.
 
@@ -580,7 +573,7 @@ def confirm_upload_session(
         input_origin = INPUT_ORIGIN_ADAPTER.validate_python(session.input_origin)
     capture = input_origin if isinstance(input_origin, BrowserCapture) else None
 
-    client = storage_client or get_storage_client()
+    client = get_storage_client()
     session_id = capability.session_id
     staging_path = capability.staging_path()
     candidate_path = build_upload_verification_candidate_storage_path(
@@ -1077,10 +1070,10 @@ def _sign(
     *,
     outcome: Literal["Created", "Reused"],
     expires_in: int,
-    storage_client: StorageClient,
 ) -> UploadRequired:
+    storage = get_storage_client()
     try:
-        signed = storage_client.sign_upload(
+        signed = storage.sign_upload(
             capability.staging_path(),
             content_type=capability.content_type,
             size_bytes=capability.expected_size_bytes,

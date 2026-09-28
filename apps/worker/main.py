@@ -32,7 +32,7 @@ from nexus.jobs.process_executor import (
     BackgroundProcessProtocolDefect,
     ValidatedCgroup,
 )
-from nexus.jobs.registry import get_default_registry, get_task_contract_digest
+from nexus.jobs.registry import get_default_registry
 from nexus.jobs.worker import JobWorker
 from nexus.logging import configure_logging, get_logger
 from nexus.runtime_health import get_runtime_identity, is_database_ready
@@ -111,12 +111,8 @@ def create_worker(
         # Interactive and gated maintenance handlers run in-process, so this
         # process needs the runtime a background child installs for itself.
         from nexus.services.generation_policy import validate_policy
-        from nexus.services.rate_limit import RateLimiter, set_rate_limiter
 
         validate_policy()
-        set_rate_limiter(
-            RateLimiter(session_factory=session_factory, rpm_limit=settings.rate_limit_rpm)
-        )
     return JobWorker(
         session_factory=session_factory,
         worker_id=f"{socket.gethostname()}:{os.getpid()}",
@@ -161,7 +157,6 @@ def main() -> None:
             source_sha=identity.source_sha,
             expected_database_revision=identity.expected_database_revision,
             expected_oracle_manifest_digest=identity.expected_oracle_manifest_digest,
-            task_contract_digest=get_task_contract_digest(),
             readiness_check=lambda: _worker_readiness_check(
                 lane=lane,
                 settings=settings,
@@ -183,7 +178,6 @@ def main() -> None:
         worker_id=worker.worker_id,
         lane=settings.worker_lane,
         source_sha=identity.source_sha,
-        task_contract_digest=get_task_contract_digest(),
         allowed_job_kinds=list(worker.allowed_kinds),
     )
     try:

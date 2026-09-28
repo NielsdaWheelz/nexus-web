@@ -919,16 +919,6 @@ def ensure_missing_items_for_assistant_in_current_transaction(
     )
 
 
-def remove_lectern_item(viewer_id: UUID, item_id: UUID) -> None:
-    """Remove one Lectern row, tolerating an already-removed item (assistant undo)."""
-
-    def remove(db: Session) -> None:
-        remove_lectern_item_in_current_transaction(db, viewer_id=viewer_id, item_id=item_id)
-        db.commit()
-
-    _in_own_txn("remove_lectern_item", remove)
-
-
 def remove_lectern_item_in_current_transaction(
     db: Session, *, viewer_id: UUID, item_id: UUID
 ) -> None:

@@ -69,8 +69,6 @@ class ResourceGrantRecord:
 class ResolvedLinkGrant:
     grant_id: UUID
     subject: ResourceRef
-    creator_id: UUID
-    canonical_token: ShareToken
 
 
 @dataclass(frozen=True, slots=True)
@@ -644,16 +642,11 @@ def resolve_link_token(db: Session, raw_token: str) -> ResolvedLinkGrant:
     if row is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Share unavailable")
     record = _record_from_row(row)
-    if not isinstance(record.audience, LinkGrantAudience) or record.share_token is None:
+    if not isinstance(record.audience, LinkGrantAudience):
         # justify-defect: token lookup can only resolve the link audience branch
         # written by this service.
         raise AssertionError("share token resolved a non-link resource grant")
-    return ResolvedLinkGrant(
-        grant_id=record.grant_id,
-        subject=record.subject,
-        creator_id=record.creator_id,
-        canonical_token=record.share_token,
-    )
+    return ResolvedLinkGrant(grant_id=record.grant_id, subject=record.subject)
 
 
 def list_creator_grants(

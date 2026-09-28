@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import select, text
@@ -21,7 +22,6 @@ from nexus.auth.permissions import can_read_media
 from nexus.db.models import MediaSummary
 from nexus.errors import NotFoundError
 from nexus.logging import get_logger
-from nexus.schemas.media import MediaIntelligenceStatus
 from nexus.services.media_intelligence_lifecycle import (
     MEDIA_UNIT_JOB_KIND,
     current_content_fingerprint,
@@ -30,6 +30,10 @@ from nexus.services.media_intelligence_lifecycle import (
 )
 
 logger = get_logger(__name__)
+
+MediaIntelligenceStatus = Literal[
+    "building", "ready", "stale", "failed", "suspended", "not_available"
+]
 
 # The candidate context budget in characters (~4 chars/token), leaving output
 # headroom in the model window; chunks past it are dropped with one warning.

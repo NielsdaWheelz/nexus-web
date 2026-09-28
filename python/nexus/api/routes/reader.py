@@ -41,7 +41,6 @@ def resolve_media_evidence(
     )
     if result["media_id"] != str(media_id) or result["resolver"]["kind"] == "note":
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Evidence not found")
-    del result["citation_label"]
     del result["resolver"]["selector"]
     return success_response(result)
 

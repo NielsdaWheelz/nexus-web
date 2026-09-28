@@ -120,10 +120,10 @@ internal secret. Public owned assets also use the BFF, but as a separate
 cookie-free lane: `/api/oracle/plates/[id]` strips browser credentials and sends
 only the internal secret to FastAPI `/oracle/plates/{id}`. The **only** direct
 browser-to-FastAPI exception is Server-Sent Events: the browser streams from
-FastAPI `/stream/*` using a short-lived, single-use stream token minted through
+FastAPI `/stream/*` using a short-lived stream token minted through
 the BFF. The Android native offline-reading transfer is the other deliberately
-narrow direct lane: native mints a media/generation/schema-bound, single-use
-token through the authenticated BFF, then consumes it only at the configured
+narrow direct lane: native mints a media/generation/schema-bound, short-lived
+token through the authenticated BFF, then presents it only at the configured
 FastAPI `/offline-reading/packages/{media_id}` origin. It is not browser product
 data and grants no general fetch authority. See [`rules/layers.md`](rules/layers.md) and
 [`rules/modules/transport.md`](rules/modules/transport.md).
@@ -328,13 +328,12 @@ Oracle plate images are public owned assets, not product data:
 Streaming bypasses the BFF for data delivery:
 
 1. The client mints a token: `apiFetch("/api/stream-token", {method:"POST"})` →
-   BFF → FastAPI `/internal/stream-tokens`. The token is an HS256 JWT, ~60s TTL,
-   **single-use** (a `jti` is claimed in the DB; replays return
-   `E_STREAM_TOKEN_REPLAYED`).
+   BFF → FastAPI `/internal/stream-tokens`. The token is an HS256 JWT with a 60s
+   TTL, verified by signature and claims alone (no server-side state).
 2. The client opens a raw `fetch` SSE stream **directly to FastAPI**
    `{stream_base_url}/...` with `Authorization: Bearer <stream token>` and
-   `Last-Event-ID` (`lib/api/sse-client.ts`). Because tokens are single-use, a
-   **fresh token is minted on every (re)connect**.
+   `Last-Event-ID` (`lib/api/sse-client.ts`). The client mints a **fresh token
+   on every (re)connect**.
 3. FastAPI `/stream/*` (`api/routes/stream.py`) authenticates the stream token,
    asserts ownership, and **tails persisted events** pushed via Postgres
    `LISTEN/NOTIFY` — re-reading new rows in a threadpool, never blocking the loop.
@@ -558,8 +557,7 @@ state without deleting history or Lectern membership. See
 [`modules/consumption-activity.md`](modules/consumption-activity.md) and
 [`cutovers/media-progress-reset-hard-cutover.md`](cutovers/media-progress-reset-hard-cutover.md).
 
-**Jobs** — `background_jobs` (raw-SQL-only durable queue), plus request-rate
-records (`rate_limit_request_log`) and stream-token replay claims. Worker lane
+**Jobs** — `background_jobs` (raw-SQL-only durable queue). Worker lane
 topology and exact queue claims own local execution capacity; no anonymous
 in-flight counter participates in admission or execution.
 
@@ -679,9 +677,7 @@ The **registry** (`jobs/registry.py`) is the source of truth mapping job kind �
 handler + policy. `job_topology.py` owns the disjoint/exhaustive 20-kind
 production topology and separate three-kind maintenance declaration without
 importing the application runtime graph. The entrypoint rejects
-missing/unknown lanes, registry drift, and raw allowlists on normal lanes.
-`get_task_contract_digest()` fingerprints the registry's per-kind resource
-class and attempt/lease policy for API `/version` and worker release-health proof. See
+missing/unknown lanes, registry drift, and raw allowlists on normal lanes. See
 [modules/jobs.md](modules/jobs.md).
 Registry shims decode durable same-system payloads without compatibility
 defaults. In particular, the sole note-index and Synapse enqueuers persist a
@@ -760,11 +756,9 @@ only text and strict structured output without model tools; its tool-bearing
 Chat seed and three background policies remain ineligible until an approved
 route change or a proven native-authority boundary.
 
-The worker installs the process-global request-rate limiter at startup so the
-first job of any kind has a working limiter. Local execution capacity belongs
-to the single-process interactive/background lanes and queue claims.
-SERIALIZABLE retries everywhere (including the scheduler loop) go through the
-one helper `db/retries.py:retry_serializable`.
+Local execution capacity belongs to the single-process interactive/background
+lanes and queue claims. SERIALIZABLE retries everywhere (including the scheduler
+loop) go through the one helper `db/retries.py:retry_serializable`.
 
 ### 7.4 Auth, identity & bootstrap
 
@@ -797,7 +791,7 @@ depends on inferred password presence.
 Other identity surfaces:
 
 - **Stream tokens** (`services/stream_tokens.py`, route `api/routes/stream_tokens.py`):
-  HS256, ~60s, single-use, for SSE.
+  HS256, 60s, stateless, for SSE.
 - **Extension sessions** (`services/extension_sessions.py`): opaque
   `nx_ext_<...>` bearer; only its sha256 is stored; revocable.
 - **Android handoff codes** (`services/auth_handoff_codes.py`): single-use,
@@ -823,11 +817,6 @@ Other identity surfaces:
   **Internal overrides** (`billing_entitlement_overrides`, CLI-managed via
   `ops/entitlement_overrides.py`) can raise a plan upward and grant unlimited
   transcription, with a full audit trail.
-- **Rate limiting** (`services/rate_limit.py`): a PostgreSQL-backed limiter using
-  per-scope advisory locks; it limits requests per minute and fails closed on
-  checks. Local execution capacity belongs to the existing single-worker
-  interactive/background lanes, exact queue claims, and Heavy capacity; no
-  anonymous in-flight counter participates in admission or execution.
 
 ### 7.6 Search, retrieval & the embedding pipeline
 
@@ -1069,9 +1058,9 @@ construction, and SSE lifecycle to `lib/api/useGenerationRun.ts`; no Dossier
 token or direct-SSE path exists beside it. The browser renders a revision in a
 sandboxed, Nexus-styled document frame; rejected or partial HTML is never
 emitted as an event. Media
-Intelligence is separately read through
-`GET /media/{media_handle}/intelligence`; the Media Dossier renders that
-current projection as a compact Abstract and consumes the same fingerprinted
+Intelligence reaches the web only inside the Dossier read model as
+`mediaAbstract` (`services/artifacts/subjects.py` `media_abstract`); the Media
+Dossier renders it as a compact Abstract and consumes the same fingerprinted
 projection as generation input.
 
 ---
@@ -1205,8 +1194,8 @@ consume resolved content rather than fetching media or progress themselves.
 
 For offline-capable documents, `reader_publication.py` captures one coherent
 generation and `offline_reading_packages.py` emits deterministic V1 ZIPs from
-that projection. The direct route uses the existing signing key and one-use JTI
-claim table. The package contains canonical reader inputs only: PDF bytes,
+that projection. The direct route verifies a 300s package token signed with the
+stream-token key. The package contains canonical reader inputs only: PDF bytes,
 sanitized undecorated article text, or preprocessed EPUB navigation/sections and
 declared local assets. It contains no credentials, highlights, notes, AI state,
 or remote article subresources.
@@ -2124,7 +2113,7 @@ they open over Resume and never become panes.
 - **BFF / proxy / auth / SSE** (`lib/api/*`, `lib/auth/*`, `lib/supabase/*`): covered
   in §5. The browser holds **no** Supabase client and no tokens; `lib/auth/dal.ts`
   `verifySession()` is the one verified-session boundary for protected pages/
-  actions; the SSE client mints fresh single-use tokens per connect.
+  actions; the SSE client mints a fresh stream token per connect.
 - **Surfaces** (`components/*`, `app/(authenticated)/**/*PaneBody.tsx`): reader,
   chat, player, notes editor, Nexus, search, contributors, libraries/
   items, billing/settings — all rendered as pane bodies. UI primitives live in
@@ -2236,7 +2225,7 @@ services start on the new digests.
 manually. `make dev` writes live local auth settings to `.dev-ports` for the
 make targets. Major groups: app/env, database + pool, Supabase
 Auth (issuer/JWKS/audiences), internal secret, encryption key, Codex host
-settings + generation rate limits, the narrow OpenAI embedding key,
+settings, the narrow OpenAI embedding key,
 Brave Browse/chat search, streaming (token signing key + base URL + CORS),
 podcasts, browse providers, worker schedules, and Stripe. Worker lanes are
 Compose-owned rather than stored in the merged production env.
@@ -2273,7 +2262,7 @@ The things most likely to bite you, distilled:
    `run_in_threadpool`. The DB connection is released at `http.response.start`, so
    don't touch the ORM while streaming a body.
 2. **The browser holds no tokens.** Product data goes through `/api/*`; only SSE
-   talks to FastAPI directly, with a single-use stream token minted per connect.
+   talks to FastAPI directly, with a short-lived stream token minted per connect.
 3. **Private and public asset lanes are different.** `/api/media/image` and EPUB
    assets are viewer-authenticated and unoptimized; `/api/oracle/plates/[id]` is
    cookie-free, internal-header-protected, DB-owned by stable storage key, and
@@ -2327,7 +2316,7 @@ The things most likely to bite you, distilled:
 | Generation backends                                               | `python/nexus/services/{generation_catalog,generation_policy,generation_service,generation_spec,generation_backend,provider_generation_backend,codex_generation_client,llm_execution,llm_ledger,tool_authority}.py`, `apps/codex_agent/`, [`modules/llms.md`](modules/llms.md) |
 | Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_source_ingest.py`, `source_attempt_failures.py`, `media_fact_revisions.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
 | Imports workspace (query owner, history, pane)                    | `python/nexus/services/{imports,import_history}.py`, `python/nexus/api/routes/imports.py`, `apps/web/src/lib/imports/`, `apps/web/src/components/imports/`, `apps/web/src/app/(authenticated)/imports/`                                              |
-| Reader/highlights backend                                         | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote,pdf_quote_match}.py`                                                                |
+| Reader/highlights backend                                         | `python/nexus/services/{reader_profile,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote}.py`                                                                        |
 | Chat / conversations                                              | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py`                                                                                                        |
 | Oracle                                                            | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_corpus.py`, `python/nexus/services/oracle_plates.py`                                                                                  |
 | Search / retrieval / indexing / resource target/openable search   | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation}.py`, `python/nexus/services/search/candidates.py`, `python/nexus/services/resource_items/{targets,openables}.py`   |
@@ -2337,7 +2326,7 @@ The things most likely to bite you, distilled:
 | Libraries / contributors / notes                                  | `python/nexus/services/{library_governance,library_entries,library_invitations,contributors,notes}.py`                                                                                                 |
 | Resource grants / public sharing                                  | [`modules/resource-sharing.md`](modules/resource-sharing.md), `python/nexus/services/{resource_grants,resource_sharing,public_resource_sharing}.py`, `apps/web/src/{components,lib}/sharing/`, `apps/web/src/app/s/` |
 | Podcasts / playback                                               | `python/nexus/services/podcasts/`, `python/nexus/services/consumption/`, `python/nexus/api/routes/{lectern,listening_state}.py`                                                                        |
-| Auth / billing / rate limit                                       | `python/nexus/services/{billing,billing_entitlements,rate_limit}.py`, `python/nexus/auth/`                                                                                                             |
+| Auth / billing / stream tokens                                    | `python/nexus/services/{billing,billing_entitlements,stream_tokens}.py`, `python/nexus/auth/`                                                                                                          |
 | Frontend BFF / auth / SSE                                         | `apps/web/src/lib/{api,auth,supabase}/`                                                                                                                                                                |
 | Workspace / panes / mobile viewport                               | `apps/web/src/lib/{workspace,panes,mobileViewport}/`, `apps/web/src/components/workspace/`                                                                                                             |
 | Desktop Nexus / mobile Nexus task                                 | `apps/web/src/components/{nexus,switchboard}/`, `apps/web/src/lib/{nexus,switchboard}/`                                                                                                                |

@@ -15,9 +15,9 @@ from nexus.db.session import get_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok, success_response
 from nexus.schemas.contributors import MediaAuthorsPutRequest
-from nexus.schemas.media import MediaIntelligenceOut, MediaLibrariesRequest
+from nexus.schemas.media import MediaLibrariesRequest
 from nexus.services import contributors as contributors_service
-from nexus.services import library_entries, media_intelligence, media_source_ingest
+from nexus.services import library_entries, media_source_ingest
 from nexus.services import media as media_service
 from nexus.services import media_deletion as media_deletion_service
 
@@ -133,19 +133,3 @@ def refresh_media_source(media_id: UUID, viewer: ViewerDep, db: DbDep, request: 
         request_id=getattr(request.state, "request_id", None),
     )
     return success_response(result)
-
-
-@router.get("/media/{media_handle}/intelligence")
-def get_media_intelligence(media_handle: UUID, viewer: ViewerDep, db: DbDep) -> dict:
-    projection = media_intelligence.read_single(
-        db, media_id=media_handle, requester_user_id=viewer.user_id
-    )
-    return ok(
-        MediaIntelligenceOut(
-            media_id=projection.media_id,
-            status=projection.status,
-            content_fingerprint=projection.content_fingerprint,
-            summary_md=projection.summary_md,
-            model_name=projection.model_name,
-        )
-    )

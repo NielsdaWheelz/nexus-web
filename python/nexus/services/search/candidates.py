@@ -23,7 +23,6 @@ from nexus.auth.permissions import (
     visible_media_ids_cte_sql,
     visible_podcast_ids_cte_sql,
 )
-from nexus.db.sql_patterns import escape_ilike_pattern
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search.projection import (
     _result_resource_ref,
@@ -48,6 +47,7 @@ from nexus.services.search.results import (
 )
 from nexus.services.search.retrievers import retrieve
 from nexus.services.search.service import _query_has_full_text_terms, build_query_embedding
+from nexus.text import escape_like
 
 # Sources the reference profile fans out to before the refill loop in
 # resource_items/targets.py re-calls with a larger cap.
@@ -457,7 +457,7 @@ def _union(
     """Run one UNION ALL over the typed candidate branches and map each row."""
     if not parts:
         return []
-    escaped = escape_ilike_pattern(q)
+    escaped = escape_like(q)
     rows = db.execute(
         text(
             "SELECT result_type, id, score, payload FROM ("

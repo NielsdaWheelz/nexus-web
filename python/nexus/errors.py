@@ -94,7 +94,6 @@ class ApiErrorCode(str, Enum):
     E_MEDIA_LAST_REFERENCE = ("E_MEDIA_LAST_REFERENCE", 409)
     E_DOSSIER_GENERATION_IN_PROGRESS = ("E_DOSSIER_GENERATION_IN_PROGRESS", 409)
     E_DOSSIER_BUILD_NOT_ACTIVE = ("E_DOSSIER_BUILD_NOT_ACTIVE", 409)
-    E_DOSSIER_ALREADY_EXISTS = ("E_DOSSIER_ALREADY_EXISTS", 409)
     E_COLLECTION_CHANGED = ("E_COLLECTION_CHANGED", 409)
     E_SELECTION_CHANGED = ("E_SELECTION_CHANGED", 409)
     E_TOOL_PROJECTION_RELOAD_REQUIRED = ("E_TOOL_PROJECTION_RELOAD_REQUIRED", 409)
@@ -116,7 +115,7 @@ class ApiErrorCode(str, Enum):
     # LLM errors
     E_APP_SEARCH_FAILED = ("E_APP_SEARCH_FAILED", 500)  # Required in-app retrieval failed
     E_MESSAGE_TOO_LONG = ("E_MESSAGE_TOO_LONG", 400)  # Message exceeds 20,000 char limit
-    E_RATE_LIMITED = ("E_RATE_LIMITED", 429)  # Per-user rate limit exceeded
+    E_RATE_LIMITED = ("E_RATE_LIMITED", 429)  # SSE listener capacity exhausted (db/listen.py)
     E_IDEMPOTENCY_KEY_REPLAY_MISMATCH = (
         "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH",
         409,
@@ -144,9 +143,7 @@ class ApiErrorCode(str, Enum):
 
     # Streaming errors
     E_CLIENT_DISCONNECT = ("E_CLIENT_DISCONNECT", 499)  # stream aborted by client
-    E_RATE_LIMITER_UNAVAILABLE = ("E_RATE_LIMITER_UNAVAILABLE", 503)  # budget system down
     E_STREAM_TOKEN_EXPIRED = ("E_STREAM_TOKEN_EXPIRED", 401)  # token past expiry
-    E_STREAM_TOKEN_REPLAYED = ("E_STREAM_TOKEN_REPLAYED", 401)  # jti already used
     E_STREAM_TOKEN_INVALID = ("E_STREAM_TOKEN_INVALID", 401)  # signature or claims failed
     E_PODCAST_QUOTA_EXCEEDED = (
         "E_PODCAST_QUOTA_EXCEEDED",

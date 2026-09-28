@@ -403,9 +403,6 @@ class Settings(BaseSettings):
         alias="OUTBOUND_HTTP_PROXY_URL",
     )
 
-    # Rate limiting settings.
-    rate_limit_rpm: int = Field(default=20, alias="RATE_LIMIT_RPM")  # Requests per minute
-
     # Transcript semantic embedding settings
     transcript_embedding_model_openai: str = Field(
         default="text-embedding-3-small",

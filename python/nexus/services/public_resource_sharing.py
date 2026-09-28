@@ -211,7 +211,7 @@ def get_public_bootstrap(
     db: Session,
     *,
     raw_token: str,
-    query_items: list[tuple[str, str]] | None = None,
+    query_items: list[tuple[str, str]],
 ) -> PublicShareBootstrapOut:
     projection = _resolve_public_projection(db, raw_token=raw_token)
     _require_no_query(query_items)
@@ -371,7 +371,7 @@ def get_public_section(
     *,
     raw_token: str,
     raw_section_handle: str,
-    query_items: list[tuple[str, str]] | None = None,
+    query_items: list[tuple[str, str]],
 ) -> PublicSectionOut:
     projection = _resolve_public_projection(db, raw_token=raw_token)
     _require_no_query(query_items)
@@ -423,8 +423,7 @@ def get_public_asset(
     *,
     raw_token: str,
     raw_asset_handle: str,
-    query_items: list[tuple[str, str]] | None = None,
-    storage_client: StorageClient | None = None,
+    query_items: list[tuple[str, str]],
 ) -> PublicAssetBody:
     projection = _resolve_public_projection(db, raw_token=raw_token)
     _require_no_query(query_items)
@@ -448,9 +447,7 @@ def get_public_asset(
         _masked_not_found()
     try:
         data = read_object_checked(
-            storage_client or get_storage_client(),
-            source.storage_path,
-            expected_size=source.size_bytes,
+            get_storage_client(), source.storage_path, expected_size=source.size_bytes
         )
     except StorageError:
         _masked_not_found()
@@ -462,15 +459,14 @@ def get_public_pdf_file(
     *,
     raw_token: str,
     raw_range: str | None,
-    query_items: list[tuple[str, str]] | None = None,
-    storage_client: StorageClient | None = None,
+    query_items: list[tuple[str, str]],
 ) -> PublicFileBody:
     """Authorize first, then interpret Range for one private PDF object."""
     projection = _resolve_public_projection(db, raw_token=raw_token)
     _require_no_query(query_items)
     if projection.media.kind != "pdf":
         _masked_not_found()
-    storage = storage_client or get_storage_client()
+    storage = get_storage_client()
     source = _validated_public_pdf_source(
         db,
         media_id=projection.media.media_id,
@@ -1242,7 +1238,7 @@ def _parse_page_query(query_items: list[tuple[str, str]]) -> tuple[str | None, s
     return values.get("cursor"), values.get("limit")
 
 
-def _require_no_query(query_items: list[tuple[str, str]] | None) -> None:
+def _require_no_query(query_items: list[tuple[str, str]]) -> None:
     if query_items:
         raise PublicRequestValidation("This endpoint does not accept query parameters")
 

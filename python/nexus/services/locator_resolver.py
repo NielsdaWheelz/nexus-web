@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
@@ -15,16 +15,6 @@ from nexus.schemas.reader import ResolvedHighlightReaderTarget
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services import reader_locations, text_quote
 from nexus.services.text_quote import QuoteStatus
-
-ResolverStatus = Literal["resolved", "unresolved", "no_geometry"]
-_MEDIA_RESOLVER_KINDS = frozenset({"web", "epub", "pdf", "transcript"})
-
-
-@dataclass(frozen=True, slots=True)
-class LocatorResolution:
-    params: dict[str, str]
-    status: ResolverStatus
-    highlight: dict[str, Any] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,12 +227,12 @@ def _resolve_pdf_passage(
 def resolve_evidence_span(
     db: Session, *, viewer_id: UUID, evidence_span_id: UUID
 ) -> dict[str, Any]:
-    """Resolve one stored evidence span into live reader routing params and geometry."""
+    """Read one evidence span, authorize it for ``viewer_id``, and resolve it."""
     row = (
         db.execute(
             text(
                 """
-                SELECT owner_kind, owner_id, span_text, selector, citation_label, resolver_kind
+                SELECT owner_kind, owner_id, span_text, selector, resolver_kind
                 FROM evidence_spans
                 WHERE id = :evidence_span_id
                 """
@@ -254,62 +244,50 @@ def resolve_evidence_span(
     )
     if row is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Evidence not found")
-
-    owner_kind = str(row["owner_kind"])
-    owner_id: UUID = row["owner_id"]
-    resolver_kind = str(row["resolver_kind"])
-    selector: dict[str, Any] = row["selector"] if isinstance(row["selector"], dict) else {}
-    span_text = str(row["span_text"] or "")
-    quote = _quote_selector(selector, span_text)
-
-    if owner_kind == "media" and resolver_kind in _MEDIA_RESOLVER_KINDS:
-        if not can_read_media(db, viewer_id, owner_id):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Evidence not found")
-        snapshot_matches = _evidence_span_snapshot_matches(
-            db, evidence_span_id=evidence_span_id, exact=quote["exact"]
+    if row["owner_kind"] == "media" and row["resolver_kind"] != "note":
+        readable = can_read_media(db, viewer_id, row["owner_id"])
+    elif row["owner_kind"] == "note_block" and row["resolver_kind"] == "note":
+        readable = viewer_id == db.scalar(
+            text("SELECT user_id FROM note_blocks WHERE id = :id"), {"id": row["owner_id"]}
         )
-        route_id = str(owner_id)
-    elif owner_kind == "note_block" and resolver_kind == "note":
-        if not _can_read_note(db, viewer_id=viewer_id, note_block_id=owner_id):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Evidence not found")
-        snapshot_matches = False
-        route_id = str(selector.get("note_block_id") or owner_id)
     else:
+        readable = False
+    if not readable:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Evidence not found")
-
-    resolution = _resolve_selector(
-        resolver_kind,
-        selector,
+    return evidence_resolution(
         evidence_span_id=evidence_span_id,
-        quote=quote,
-        snapshot_matches=snapshot_matches,
+        owner_id=row["owner_id"],
+        span_text=row["span_text"],
+        selector=row["selector"],
+        resolver_kind=row["resolver_kind"],
     )
-    return {
-        "evidence_span_id": str(evidence_span_id),
-        "media_id": route_id,
-        "citation_label": str(row["citation_label"]),
-        "span_text": span_text,
-        "resolver": {
-            "kind": resolver_kind,
-            "params": {"evidence": str(evidence_span_id), **resolution.params},
-            "status": resolution.status,
-            "selector": selector,
-            "highlight": resolution.highlight,
-        },
-    }
 
 
-def _resolve_selector(
-    resolver_kind: str,
-    selector: dict[str, Any],
+def evidence_resolution(
     *,
     evidence_span_id: UUID,
-    quote: dict[str, str],
-    snapshot_matches: bool,
-) -> LocatorResolution:
-    """Build the routing params and, when the span still reconstructs, the highlight."""
-    params: dict[str, str] = {}
-    status: ResolverStatus = "unresolved"
+    owner_id: UUID,
+    span_text: str,
+    selector: dict[str, Any],
+    resolver_kind: str,
+) -> dict[str, Any]:
+    """Resolve one read, authorized evidence span into reader routing params and geometry.
+
+    The status is a predicate on the selector alone. The span is not re-proved against
+    ``content_blocks``: ``publish_content_index``, the only writer, inserts a span with
+    its blocks in one transaction, its ``span_text`` equal to their slices and to
+    ``selector.text_quote.exact``, and nothing updates either table.
+    """
+    raw_quote = selector.get("text_quote")
+    stored_quote: dict[str, Any] = raw_quote if isinstance(raw_quote, dict) else {}
+    quote = {
+        "exact": str(stored_quote.get("exact") or span_text),
+        "prefix": str(stored_quote.get("prefix") or ""),
+        "suffix": str(stored_quote.get("suffix") or ""),
+    }
+    span_id = str(evidence_span_id)
+    params = {"evidence": span_id}
+    status = "unresolved"
     highlight: dict[str, Any] | None = None
     start_offset = selector.get("start_offset")
     end_offset = selector.get("end_offset")
@@ -325,12 +303,11 @@ def _resolve_selector(
             isinstance(fragment_id, str)
             and isinstance(start_offset, int)
             and isinstance(end_offset, int)
-            and snapshot_matches
         ):
             status = "resolved"
             highlight = {
                 "kind": "web_text" if resolver_kind == "web" else "epub_text",
-                "evidence_span_id": str(evidence_span_id),
+                "evidence_span_id": span_id,
                 "fragment_id": fragment_id,
                 "start_offset": start_offset,
                 "end_offset": end_offset,
@@ -343,17 +320,16 @@ def _resolve_selector(
         quads = _pdf_quads_from_geometry(geometry)
         if isinstance(page_number, int) and page_number >= 1:
             params["page"] = str(page_number)
-            if snapshot_matches:
-                status = "resolved" if quads else "no_geometry"
-                page_label = selector.get("page_label")
-                highlight = {
-                    "kind": "pdf_text",
-                    "evidence_span_id": str(evidence_span_id),
-                    "page_number": page_number,
-                    "page_label": page_label if isinstance(page_label, str) else None,
-                    "text_quote": quote,
-                    "geometry": {**geometry, "quads": quads} if quads else None,
-                }
+            status = "resolved" if quads else "no_geometry"
+            page_label = selector.get("page_label")
+            highlight = {
+                "kind": "pdf_text",
+                "evidence_span_id": span_id,
+                "page_number": page_number,
+                "page_label": page_label if isinstance(page_label, str) else None,
+                "text_quote": quote,
+                "geometry": {**geometry, "quads": quads} if quads else None,
+            }
     elif resolver_kind == "transcript":
         t_start_ms = selector.get("t_start_ms")
         t_end_ms = selector.get("t_end_ms")
@@ -364,12 +340,11 @@ def _resolve_selector(
             and isinstance(t_end_ms, int)
             and t_start_ms >= 0
             and t_end_ms > t_start_ms
-            and snapshot_matches
         ):
             status = "resolved"
             highlight = {
                 "kind": "transcript_time_text",
-                "evidence_span_id": str(evidence_span_id),
+                "evidence_span_id": span_id,
                 "t_start_ms": t_start_ms,
                 "t_end_ms": t_end_ms,
                 "text_quote": quote,
@@ -387,22 +362,23 @@ def _resolve_selector(
             status = "resolved"
             highlight = {
                 "kind": "note_text",
-                "evidence_span_id": str(evidence_span_id),
+                "evidence_span_id": span_id,
                 "note_block_id": note_block_id,
                 "start_offset": start_offset,
                 "end_offset": end_offset,
                 "text_quote": quote,
             }
-    return LocatorResolution(params=params, status=status, highlight=highlight)
-
-
-def _quote_selector(selector: dict[str, Any], span_text: str) -> dict[str, str]:
-    raw_quote = selector.get("text_quote")
-    quote: dict[str, Any] = raw_quote if isinstance(raw_quote, dict) else {}
     return {
-        "exact": str(quote.get("exact") or span_text or ""),
-        "prefix": str(quote.get("prefix") or ""),
-        "suffix": str(quote.get("suffix") or ""),
+        "evidence_span_id": span_id,
+        "media_id": str(owner_id),
+        "span_text": span_text,
+        "resolver": {
+            "kind": resolver_kind,
+            "params": params,
+            "status": status,
+            "selector": selector,
+            "highlight": highlight,
+        },
     }
 
 
@@ -427,90 +403,16 @@ def _pdf_quads_from_geometry(geometry: dict[str, Any]) -> list[dict[str, float]]
     return quads
 
 
-def _can_read_note(db: Session, *, viewer_id: UUID, note_block_id: UUID) -> bool:
-    row = db.execute(
-        text("SELECT user_id FROM note_blocks WHERE id = :note_block_id"),
-        {"note_block_id": note_block_id},
-    ).first()
-    return row is not None and row[0] == viewer_id
-
-
-def _evidence_span_snapshot_matches(db: Session, *, evidence_span_id: UUID, exact: str) -> bool:
-    """True when the stored span text still reconstructs from the current blocks."""
-    rows = (
-        db.execute(
-            text(
-                """
-                SELECT es.span_text, es.start_block_id, es.end_block_id,
-                       es.start_block_offset, es.end_block_offset,
-                       start_block.block_idx AS start_block_idx,
-                       end_block.block_idx AS end_block_idx,
-                       cb.id AS block_id, cb.block_idx, cb.canonical_text
-                FROM evidence_spans es
-                JOIN content_blocks start_block
-                  ON start_block.id = es.start_block_id
-                 AND start_block.owner_kind = es.owner_kind AND start_block.owner_id = es.owner_id
-                JOIN content_blocks end_block
-                  ON end_block.id = es.end_block_id
-                 AND end_block.owner_kind = es.owner_kind AND end_block.owner_id = es.owner_id
-                JOIN content_blocks cb
-                  ON cb.owner_kind = es.owner_kind AND cb.owner_id = es.owner_id
-                 AND cb.block_idx BETWEEN start_block.block_idx AND end_block.block_idx
-                WHERE es.id = :evidence_span_id
-                ORDER BY cb.block_idx ASC
-                """
-            ),
-            {"evidence_span_id": evidence_span_id},
-        )
-        .mappings()
-        .all()
-    )
-    if not rows:
-        return False
-
-    start_idx = int(rows[0]["start_block_idx"])
-    end_idx = int(rows[0]["end_block_idx"])
-    if start_idx > end_idx:
-        return False
-    parts: list[str] = []
-    expected_block_idx = start_idx
-    for row in rows:
-        block_idx = int(row["block_idx"])
-        if block_idx != expected_block_idx:
-            return False
-        block_text = str(row["canonical_text"] or "")
-        block_start = int(row["start_block_offset"]) if block_idx == start_idx else 0
-        block_end = int(row["end_block_offset"]) if block_idx == end_idx else len(block_text)
-        if block_start < 0 or block_end < block_start or block_end > len(block_text):
-            return False
-        parts.append(block_text[block_start:block_end])
-        expected_block_idx += 1
-    if expected_block_idx != end_idx + 1:
-        return False
-    if (
-        rows[0]["block_id"] != rows[0]["start_block_id"]
-        or rows[-1]["block_id"] != rows[0]["end_block_id"]
-    ):
-        return False
-    span_text = str(rows[0]["span_text"] or "")
-    return "".join(parts) == span_text and span_text == exact
-
-
 def locator_from_resolution(
     resolution: dict[str, Any], *, media_id: UUID, media_kind: str
 ) -> dict[str, Any]:
-    """Map a ``resolve_evidence_span`` resolution to a validated retrieval locator.
+    """Map an ``evidence_resolution`` to a validated retrieval locator.
 
     The single owner of the resolver-kind -> ``RetrievalLocator`` mapping, shared by
-    ``search`` (content-chunk results) and the Universal Dossier citation producer.
+    ``search`` (content-chunk and evidence-span results) and ``reader_targets``.
     """
-    resolver = resolution.get("resolver")
-    if not isinstance(resolver, dict):
-        raise AssertionError("Resolved evidence is missing resolver")
-    selector = resolver.get("selector")
-    if not isinstance(selector, dict):
-        raise AssertionError("Resolved evidence is missing selector")
-
+    resolver = resolution["resolver"]
+    selector = resolver["selector"]
     raw_quote = selector.get("text_quote")
     quote = raw_quote if isinstance(raw_quote, dict) else {}
     exact = str(quote.get("exact") or resolution.get("span_text") or "")

@@ -60,7 +60,7 @@ Readability can prefer notes. Corpus entries may pin a Wikisource revision URL a
 
 Operator publication readiness proves the system library, exact manifest
 works/metadata, shared media/index state, resolved anchors, plate metadata, and
-R2 object size/type sets. Request-time `get_oracle_corpus_readiness` performs the
+R2 object size/type sets. Generation-time `get_oracle_corpus_readiness` performs the
 bounded DB support derivation and reports `ready` only when it is ready and the
 sole publication marker exactly matches the baked manifest digest and active
 embedding provider/model. It does not contact R2 on each request; the marker
@@ -147,5 +147,5 @@ them. Physical garbage collection and destructive manifest removals are out of s
 
 The manifest describes direct ingestable media sources, passage selectors, and
 plate inputs, not corpus text or embeddings. Source URLs must contain the target
-text itself. `GET /oracle/corpus` is a pure marker-gated status report and never
-mutates on read.
+text itself. Corpus readiness is internal: the reading task checks it,
+marker-gated and read-only, before generation.

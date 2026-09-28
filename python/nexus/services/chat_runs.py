@@ -115,7 +115,6 @@ from nexus.services.generation_spec import (
     GenerationSpec,
     ProviderApiSelection,
 )
-from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.resource_graph.context import (
     add_context_ref_without_commit,
     list_context_refs,
@@ -489,7 +488,6 @@ def _admit_send(
             ApiErrorCode.E_MESSAGE_TOO_LONG,
             f"Message exceeds {MAX_MESSAGE_CONTENT_LENGTH} character limit",
         )
-    get_rate_limiter().check_rpm_limit(viewer_id)
 
     conversation, parent_message, branch_anchor = _resolve_destination(db, viewer_id, destination)
     branch_anchor_kind, branch_anchor_payload = branch_anchor_for_message(

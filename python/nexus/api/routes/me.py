@@ -26,7 +26,7 @@ from nexus.schemas.workspace_session import (
     WorkspaceSessionPutRequest,
 )
 from nexus.services import nexus_history as nexus_history_service
-from nexus.services import reader as reader_service
+from nexus.services import reader_profile as reader_profile_service
 from nexus.services import users as users_service
 from nexus.services import workspace_sessions as workspace_sessions_service
 
@@ -84,7 +84,7 @@ def get_reader_profile(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Get reader profile (per-user defaults). Returns defaults when none exists."""
-    result = reader_service.get_reader_profile(db, viewer.user_id)
+    result = reader_profile_service.get_reader_profile(db, viewer.user_id)
     return ok(result)
 
 
@@ -95,7 +95,7 @@ def patch_reader_profile(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Update reader profile (partial)."""
-    result = reader_service.patch_reader_profile(db, viewer.user_id, body)
+    result = reader_profile_service.patch_reader_profile(db, viewer.user_id, body)
     return ok(result)
 
 

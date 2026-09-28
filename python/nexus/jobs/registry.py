@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
 import importlib
-import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -61,26 +59,6 @@ def resolve_job_handler(path: str) -> JobHandler:
     if not separator:
         raise ValueError(f"Job handler path is malformed: {path!r}")
     return cast(JobHandler, getattr(importlib.import_module(module_name), attribute_name))
-
-
-@lru_cache(maxsize=1)
-def get_task_contract_digest() -> str:
-    """Stable digest of the execution policy, for runtime and release checks."""
-    payload = [
-        {
-            "kind": definition.kind,
-            "handler_path": definition.handler_path,
-            "resource_class": definition.resource_class,
-            "max_attempts": definition.max_attempts,
-            "retry_delays_seconds": list(definition.retry_delays_seconds),
-            "lease_seconds": definition.lease_seconds,
-            "resource_failure_projection": definition.resource_failure_projection,
-            "child_runtime": definition.child_runtime,
-            "periodic_priority": definition.periodic_priority,
-        }
-        for definition in sorted(get_default_registry().values(), key=lambda item: item.kind)
-    ]
-    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 def periodic_slot_start(*, now: datetime, interval_seconds: int) -> datetime:

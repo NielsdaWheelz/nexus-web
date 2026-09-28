@@ -1705,7 +1705,7 @@ export interface paths {
         };
         /**
          * Get Proxied Image
-         * @description Proxy an external image with SSRF validation, ETag caching and 304s.
+         * @description Proxy one external image behind SSRF validation; the browser caches it for a day.
          */
         get: operations["get_proxied_image_media_image_get"];
         put?: never;
@@ -1835,23 +1835,6 @@ export interface paths {
         put?: never;
         /** Record Upload Transport Failure */
         post: operations["record_upload_transport_failure_media_uploads__session_handle__transport_failure_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/media/{media_handle}/intelligence": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Media Intelligence */
-        get: operations["get_media_intelligence_media__media_handle__intelligence_get"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2440,29 +2423,12 @@ export interface paths {
         };
         /**
          * Get Offline Reading Package
-         * @description Consume one package token and transfer one verified immutable ZIP.
+         * @description Verify one package token and transfer one verified immutable ZIP.
          *
          *     The handler is async so the request can observe its own client disconnect
          *     while assembly runs; every blocking database call stays on a worker thread.
          */
         get: operations["get_offline_reading_package_offline_reading_packages__media_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/oracle/corpus": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Oracle Corpus Status */
-        get: operations["get_oracle_corpus_status_oracle_corpus_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -11430,39 +11396,6 @@ export interface operations {
             };
         };
     };
-    get_media_intelligence_media__media_handle__intelligence_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_handle: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_media_media__media_id__get: {
         parameters: {
             query?: never;
@@ -12886,28 +12819,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_oracle_corpus_status_oracle_corpus_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
                 };
             };
         };

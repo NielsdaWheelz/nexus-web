@@ -1,9 +1,11 @@
-"""Stream-token service: mint/verify the short-lived JWTs that authenticate
-direct browser-callable SSE endpoints, backed by a JTI replay-prevention table.
+"""Stream tokens: the short-lived HS256 JWTs of the two direct-to-FastAPI lanes.
 
-Moved out of `auth/` because it owns persistence (the `stream_token_jti_claims`
-table) and a serializable-retried claim — the definition of a service, not an
-auth adapter. Returns typed results so call sites never index string keys.
+A stream token (60s) authenticates the browser's `/stream/*` SSE requests. A
+package token (300s) authenticates one offline-reading package download and
+binds its media, reader generation and package schema. Both travel only in the
+Authorization header and are verified statelessly (signature, iss, aud, exp,
+scope, typed claims): a token authorizes any number of requests until it
+expires.
 """
 
 import base64
@@ -11,16 +13,14 @@ import binascii
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import jwt
-from sqlalchemy import text
-from sqlalchemy.exc import SQLAlchemyError
 
 from nexus.config import get_settings
-from nexus.db.session import get_session_factory, transaction
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
+from nexus.schemas.offline_reading_package import OFFLINE_READING_PACKAGE_SCHEMA_VERSION
 
 logger = get_logger(__name__)
 
@@ -30,7 +30,6 @@ STREAM_TOKEN_SCOPE = "stream"
 STREAM_TOKEN_TTL_SECONDS = 60
 OFFLINE_READING_PACKAGE_SCOPE = "offline-reading-package"
 OFFLINE_READING_PACKAGE_TOKEN_TTL_SECONDS = 300
-OFFLINE_READING_PACKAGE_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -38,12 +37,6 @@ class StreamTokenResult:
     token: str
     stream_base_url: str  # normalized, no trailing slash
     expires_at: str  # ISO-8601
-
-
-@dataclass(frozen=True)
-class VerifiedStreamToken:
-    user_id: UUID
-    jti: str
 
 
 @dataclass(frozen=True)
@@ -59,11 +52,7 @@ class OfflineReadingPackageTokenResult:
 @dataclass(frozen=True)
 class VerifiedOfflineReadingPackageToken:
     user_id: UUID
-    jti: str
-    media_id: UUID
     reader_generation: int
-    package_schema_version: int
-    exp_epoch: int
 
 
 def _get_signing_key_bytes() -> bytes:
@@ -91,7 +80,6 @@ def mint_stream_token(user_id: UUID) -> StreamTokenResult:
         "sub": str(user_id),
         "exp": now + STREAM_TOKEN_TTL_SECONDS,
         "iat": now,
-        "jti": str(uuid4()),
         "scope": STREAM_TOKEN_SCOPE,
     }
     token = jwt.encode(payload, _get_signing_key_bytes(), algorithm="HS256")
@@ -120,7 +108,6 @@ def mint_offline_reading_package_token(
         "sub": str(user_id),
         "exp": expires,
         "iat": now,
-        "jti": str(uuid4()),
         "scope": OFFLINE_READING_PACKAGE_SCOPE,
         "media_id": str(media_id),
         "reader_generation": reader_generation,
@@ -136,25 +123,15 @@ def mint_offline_reading_package_token(
     )
 
 
-def verify_stream_token(token: str) -> VerifiedStreamToken:
-    """Verify a stream token and claim its JTI once. Raises ApiError on failure."""
-    payload = _decode_token(
-        token,
-        required_claims=("exp", "iss", "aud", "sub", "jti", "scope"),
-    )
+def verify_stream_token(token: str) -> UUID:
+    """Return the user a stream token authenticates. Raises ApiError on failure."""
+    payload = _decode_token(token, required_claims=("exp", "iss", "aud", "sub", "scope"))
     if payload.get("scope") != STREAM_TOKEN_SCOPE:
         raise ApiError(ApiErrorCode.E_STREAM_TOKEN_INVALID, "Invalid stream token scope")
-
-    jti = payload["jti"]
-    exp = payload["exp"]
-    if not isinstance(jti, str) or not jti or type(exp) is not int:
-        raise ApiError(ApiErrorCode.E_STREAM_TOKEN_INVALID, "Invalid stream token claims")
     try:
-        user_id = UUID(str(payload["sub"]))
+        return UUID(str(payload["sub"]))
     except (TypeError, ValueError) as exc:
         raise ApiError(ApiErrorCode.E_STREAM_TOKEN_INVALID, "Invalid stream token subject") from exc
-    _claim_jti_once(jti=jti, user_id=user_id, exp_epoch=exp)
-    return VerifiedStreamToken(user_id=user_id, jti=jti)
 
 
 def verify_offline_reading_package_token(
@@ -170,7 +147,6 @@ def verify_offline_reading_package_token(
             "iss",
             "aud",
             "sub",
-            "jti",
             "scope",
             "media_id",
             "reader_generation",
@@ -188,33 +164,15 @@ def verify_offline_reading_package_token(
         ) from exc
     generation = payload["reader_generation"]
     schema_version = payload["package_schema_version"]
-    jti = payload["jti"]
-    exp = payload["exp"]
     if (
         media_id != expected_media_id
         or type(generation) is not int
         or generation < 1
         or type(schema_version) is not int
         or schema_version != OFFLINE_READING_PACKAGE_SCHEMA_VERSION
-        or not isinstance(jti, str)
-        or not jti
-        or type(exp) is not int
     ):
         raise ApiError(ApiErrorCode.E_STREAM_TOKEN_INVALID, "Invalid package token claims")
-    return VerifiedOfflineReadingPackageToken(
-        user_id=user_id,
-        jti=jti,
-        media_id=media_id,
-        reader_generation=generation,
-        package_schema_version=schema_version,
-        exp_epoch=exp,
-    )
-
-
-def claim_offline_reading_package_token(
-    token: VerifiedOfflineReadingPackageToken,
-) -> None:
-    _claim_jti_once(jti=token.jti, user_id=token.user_id, exp_epoch=token.exp_epoch)
+    return VerifiedOfflineReadingPackageToken(user_id=user_id, reader_generation=generation)
 
 
 def _decode_token(token: str, *, required_claims: tuple[str, ...]) -> dict[str, object]:
@@ -232,45 +190,3 @@ def _decode_token(token: str, *, required_claims: tuple[str, ...]) -> dict[str, 
     except jwt.InvalidTokenError as exc:
         logger.warning("stream_token_invalid", error=str(exc))
         raise ApiError(ApiErrorCode.E_STREAM_TOKEN_INVALID, "Invalid stream token") from exc
-
-
-def _claim_jti_once(*, jti: str, user_id: UUID, exp_epoch: int) -> None:
-    db = get_session_factory()()
-    try:
-        with transaction(db):
-            db.execute(text("DELETE FROM stream_token_jti_claims WHERE expires_at <= now()"))
-            result = db.execute(
-                text(
-                    """
-                    INSERT INTO stream_token_jti_claims (
-                        jti,
-                        user_id,
-                        expires_at,
-                        created_at
-                    )
-                    VALUES (:jti, :user_id, :expires_at, now())
-                    ON CONFLICT (jti) DO NOTHING
-                    RETURNING jti
-                    """
-                ),
-                {
-                    "jti": jti,
-                    "user_id": user_id,
-                    "expires_at": datetime.fromtimestamp(exp_epoch, tz=UTC),
-                },
-            )
-            if result.first() is None:
-                logger.warning("stream.jti_replay_blocked", jti=jti)
-                raise ApiError(
-                    ApiErrorCode.E_STREAM_TOKEN_REPLAYED,
-                    "Stream token has already been used",
-                )
-    except ApiError:
-        raise
-    except SQLAlchemyError as exc:
-        logger.warning("stream_token_jti_claim_failed", error=str(exc))
-        raise ApiError(
-            ApiErrorCode.E_STREAM_TOKEN_INVALID, "Unable to verify stream token"
-        ) from exc
-    finally:
-        db.close()

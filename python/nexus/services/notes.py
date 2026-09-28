@@ -367,22 +367,11 @@ def get_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> NoteBlockOut
     )
 
 
-def remove_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> None:
-    """Delete one owned note block. An already-absent block is a no-op."""
-
-    def attempt() -> None:
-        if remove_note_block_in_current_transaction(db, viewer_id, block_id):
-            db.commit()
-
-    retry_read_committed(db, "remove_note_block", attempt)
-
-
-def remove_note_block_in_current_transaction(db: Session, viewer_id: UUID, block_id: UUID) -> bool:
+def remove_note_block_in_current_transaction(db: Session, viewer_id: UUID, block_id: UUID) -> None:
     block = db.get(NoteBlock, block_id)
     if block is None or block.user_id != viewer_id:
-        return False
+        return
     _delete_note_block(db, viewer_id, block)
-    return True
 
 
 def set_highlight_note_body_pm_json(
