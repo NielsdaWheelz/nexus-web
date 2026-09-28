@@ -2,10 +2,12 @@
 
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 
-export default function ToolProjectionReloadNotice({
+export default function ChatReloadNotice({
   requestId,
+  message,
 }: {
   requestId: string | undefined;
+  message: string;
 }) {
   return (
     <FeedbackNotice
@@ -13,7 +15,7 @@ export default function ToolProjectionReloadNotice({
       content={{
         tone: "Warning",
         title: "Reload Nexus to continue",
-        message: "This tab is using an older tool contract. Your draft is saved.",
+        message,
         ...(requestId === undefined ? {} : { requestId }),
       }}
       actions={[

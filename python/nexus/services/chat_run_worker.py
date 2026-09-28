@@ -105,9 +105,14 @@ from nexus.services.llm_execution import (
     ExecutionRuntime,
     GenerationExecutionRequest,
     JobGenerationJournal,
+    cancel_prepared_generation_without_dispatch_in_current_transaction,
     execute_generation,
 )
-from nexus.services.llm_ledger import LlmCallOwner, read_model_turns
+from nexus.services.llm_ledger import (
+    LlmCallOwner,
+    lock_generation_for_authority_in_current_transaction,
+    read_model_turns,
+)
 from nexus.services.tool_authority import DeferredGenerationToolExecutor
 from nexus.services.tool_runtime.catalog import FrozenToolOperation
 
@@ -518,6 +523,104 @@ def _finalize_cancelled(
         last_provider_event_seq=last_provider_event_seq,
     )
     steps.clear()
+
+
+def settle_cancelled_dead_chat_run(db: Session, *, run: ChatRun, job: JobRow) -> bool:
+    """Fold a dead job only when its locked journal proves no work remains."""
+
+    if (
+        job.status != "dead"
+        or job.kind != "chat_run"
+        or job.payload.get("run_id") != str(run.id)
+        or run.cancel_requested_at is None
+    ):
+        raise AssertionError("dead chat settlement requires a cancelled run and locked dead job")
+    spec = chat_generation_spec(run)
+    if job.payload.get("generation_spec_fingerprint") != spec.fingerprint:
+        raise AssertionError("dead chat job differs from its frozen GenerationSpec")
+    state = read_step_states(job).get(_GENERATION_STEP)
+    generation_id = stable_generation_id(run.id, _GENERATION_STEP)
+    if state is not None and state.generation_id != generation_id:
+        raise AssertionError("chat generation step has a noncanonical id")
+    if state is not None and state.request_fingerprint != present(spec.fingerprint):
+        raise AssertionError("chat generation step differs from its frozen GenerationSpec")
+    if state is not None and state.dispatch_phase is Uncertain:
+        return False
+
+    owner = LlmCallOwner(kind="chat_run", id=run.id)
+    if state is None:
+        if (
+            lock_generation_for_authority_in_current_transaction(
+                db, owner=owner, generation_id=generation_id
+            )
+            is not None
+        ):
+            return False
+        assistant_content = ""
+        usage = None
+        last_provider_event_seq = None
+        payload = job.payload
+    elif state.dispatch_phase is Prepared:
+        if (
+            lock_generation_for_authority_in_current_transaction(
+                db, owner=owner, generation_id=generation_id
+            )
+            is not None
+        ):
+            return False
+        terminal_result = encode_step_result(
+            GenerationStepResultEnvelope(
+                root=CancelledGeneration(
+                    assistant_content="",
+                    usage=absent(),
+                    last_provider_event_seq=absent(),
+                )
+            )
+        )
+        completed = cancel_prepared_generation_without_dispatch_in_current_transaction(
+            db, owner=owner, state=state, terminal_result=terminal_result
+        )
+        payload = payload_with_step_state(job.payload, step_path=_GENERATION_STEP, state=completed)
+        assistant_content = ""
+        usage = None
+        last_provider_event_seq = None
+    elif state.dispatch_phase is Completed:
+        if not isinstance(state.terminal_result, Present):
+            raise AssertionError("completed chat generation has no terminal memo")
+        result = decode_step_result(state.terminal_result.value, GenerationStepResultEnvelope).root
+        assistant_content = (
+            result.text if isinstance(result, AssistantTurn) else result.assistant_content
+        )
+        usage = _value(result.usage)
+        last_provider_event_seq = _value(result.last_provider_event_seq)
+        payload = job.payload
+    else:
+        raise AssertionError("unknown chat generation dispatch phase")
+
+    settled = db.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET status = 'succeeded', payload = CAST(:payload AS jsonb),
+                lease_expires_at = NULL, claimed_by = NULL, error_code = NULL,
+                last_error = NULL, finished_at = clock_timestamp(), updated_at = clock_timestamp()
+            WHERE id = :job_id AND status = 'dead'
+            RETURNING id
+            """
+        ),
+        {"job_id": job.id, "payload": json.dumps(payload)},
+    ).scalar_one_or_none()
+    if settled is None:
+        raise AssertionError("dead chat job changed during local cancellation settlement")
+    finalize_run(
+        db,
+        run_id=run.id,
+        status="cancelled",
+        assistant_content=assistant_content,
+        usage=usage,
+        last_provider_event_seq=last_provider_event_seq,
+    )
+    return True
 
 
 # =============================================================================

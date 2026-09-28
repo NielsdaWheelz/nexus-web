@@ -14,7 +14,7 @@ import {
   decodeApiPayload,
   isApiError,
   isSameSystemApiDefect,
-  isToolProjectionReloadRequired,
+  isChatReloadRequired,
   type ApiError,
 } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -139,7 +139,6 @@ export function useChatRunTail({
   shouldStartRun?: (ctx: RunVisibilityContext) => boolean;
   shouldApplyRun?: (ctx: RunVisibilityContext) => boolean;
 }) {
-  const [activeRunId, setActiveRunId] = useState<string | null>(null);
   // Client-only recovery state, keyed by assistant message id. It remains
   // addressable through reconnect attempts until a tail has actually claimed
   // the run or durable terminal state replaces the pending message.
@@ -156,7 +155,7 @@ export function useChatRunTail({
 
   const reportProjectionReload = useCallback(
     (error: unknown): boolean => {
-      if (!isToolProjectionReloadRequired(error)) return false;
+      if (!isChatReloadRequired(error)) return false;
       onProjectionReloadRequired?.(error);
       return true;
     },
@@ -248,7 +247,6 @@ export function useChatRunTail({
 
   const abortAll = useCallback(() => {
     streamCtx.abortAll();
-    setActiveRunId(null);
     setConnectionRecoveries({});
   }, [streamCtx]);
 
@@ -262,8 +260,7 @@ export function useChatRunTail({
   }, []);
 
   const cancelRun = useCallback(
-    async (runId: string | null = activeRunId) => {
-      if (!runId) return;
+    async (runId: string) => {
       try {
         const raw = await apiFetch<unknown>(`/api/chat-runs/${runId}/cancel`, {
           method: "POST",
@@ -288,7 +285,7 @@ export function useChatRunTail({
         throw err;
       }
     },
-    [activeRunId, mergeRunMessages, reportProjectionReload, visibility],
+    [mergeRunMessages, reportProjectionReload, visibility],
   );
 
   useEffect(() => {
@@ -385,7 +382,6 @@ export function useChatRunTail({
         finished = true;
         streamAbort.abort();
         streamCtx.endStream(runId);
-        setActiveRunId((current) => (current === runId ? null : current));
       };
 
       if (isTerminalRunStatus(runData.run.status)) {
@@ -396,7 +392,6 @@ export function useChatRunTail({
         return true;
       }
 
-      setActiveRunId(runId);
       streamCtx.beginStream(runId, streamAbort);
 
       const reconcile = async () => {
@@ -463,7 +458,7 @@ export function useChatRunTail({
               switch (event.type) {
                 case "ExecutionAdvisory":
                   if (!currentVisible()) break;
-                  handleExecutionAdvisory(currentAssistantId, event.data);
+                  handleExecutionAdvisory(currentAssistantId, runId, event.data);
                   break;
                 case "meta":
                   currentUserId = event.data.user_message_id;
@@ -702,7 +697,7 @@ export function useChatRunTail({
           });
         }
       } catch (err) {
-        if (isToolProjectionReloadRequired(err)) {
+        if (isChatReloadRequired(err)) {
           reportProjectionReload(err);
           restoreOrFail({
             message:
@@ -736,7 +731,6 @@ export function useChatRunTail({
   );
 
   return {
-    activeRunId,
     abortAll,
     cancelRun,
     tailChatRun,

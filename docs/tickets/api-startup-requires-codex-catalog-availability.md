@@ -1,8 +1,8 @@
 # api startup requires a reachable codex catalogue
 
-status: open · origin: 2026-09-15, restoration memory review · area: api availability
+status: open; catalog recovery unverified · origin: 2026-09-15, restoration memory review · area: api availability
 
-`python/nexus/app.py:189` constructs the generation catalogue and awaits
+`python/nexus/app.py:167-171` constructs the generation catalogue and awaits
 `startup()` in production. catalogue definition refresh calls the codex host;
 `GenerationCatalogRefreshError` escapes the api lifespan if it is unavailable.
 `deploy/hetzner/docker-compose.yml:69` instead documents that host unavailability
@@ -14,3 +14,8 @@ admission closed when its catalogue is unavailable while allowing unrelated
 reader/import api routes to start. resolve the intended catalogue lifecycle at
 its owning boundary, then verify startup with an unavailable host and recovery
 when the host returns. do not recreate a browser or release simulation suite.
+
+the 2026-09-27 reliability candidate removed external catalog i/o from api
+startup. a fresh local api at database `0247` started with no codex socket;
+`/version` and saved chat reads returned 200 while `/llm-catalog` returned
+typed 503. recovery when a real host returns remains unverified on this tree.

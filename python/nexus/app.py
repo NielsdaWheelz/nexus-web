@@ -165,9 +165,6 @@ async def lifespan(app: FastAPI):
     app.state.generation_catalog_service = build_generation_catalog_service(
         settings, tool_runtime=app.state.tool_runtime
     )
-    if settings.nexus_env in (Environment.STAGING, Environment.PROD):
-        await app.state.generation_catalog_service.startup()
-
     logger.info(
         "app_lifespan_started",
         web_search_provider="brave" if settings.brave_search_api_key else None,

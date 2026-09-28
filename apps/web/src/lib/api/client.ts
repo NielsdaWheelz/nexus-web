@@ -13,10 +13,12 @@ import { TOOL_PROJECTION_REVISION } from "@/lib/conversations/toolContractProjec
 
 export type ApiPath = `/api/${string}`;
 export const TOOL_PROJECTION_HEADER = "X-Nexus-Tool-Projection";
+export const CHAT_CONTRACT_HEADER = "X-Nexus-Chat-Contract";
+export const CHAT_CONTRACT_REVISION = "1";
 export const TOOL_PROJECTION_RELOAD_REQUIRED_CODE =
   "E_TOOL_PROJECTION_RELOAD_REQUIRED";
 
-const TOOL_PROJECTION_PATHS = [
+const CHAT_WIRE_PATHS = [
   /^\/api\/chat-runs$/,
   /^\/api\/chat-runs\/[^/]+$/,
   /^\/api\/chat-runs\/[^/]+\/cancel$/,
@@ -25,10 +27,10 @@ const TOOL_PROJECTION_PATHS = [
   /^\/api\/messages\/[^/]+\/(?:rerun|regenerate)$/,
 ] as const;
 
-function carriesToolProjection(path: ApiPath): boolean {
+function carriesChatWire(path: ApiPath): boolean {
   const queryIndex = path.indexOf("?");
   const pathname = queryIndex === -1 ? path : path.slice(0, queryIndex);
-  return TOOL_PROJECTION_PATHS.some((pattern) => pattern.test(pathname));
+  return CHAT_WIRE_PATHS.some((pattern) => pattern.test(pathname));
 }
 
 function jsonRequestHeaders(
@@ -37,8 +39,9 @@ function jsonRequestHeaders(
 ): Headers {
   const headers = new Headers(headersInit);
   headers.set("Content-Type", "application/json");
-  if (carriesToolProjection(path)) {
+  if (carriesChatWire(path)) {
     headers.set(TOOL_PROJECTION_HEADER, TOOL_PROJECTION_REVISION);
+    headers.set(CHAT_CONTRACT_HEADER, CHAT_CONTRACT_REVISION);
   }
   return headers;
 }
@@ -140,17 +143,10 @@ export function isUnauthenticatedApiError(error: unknown): error is ApiError {
   );
 }
 
-export function isToolProjectionReloadRequired(
-  error: unknown,
-): error is ApiError & {
-  readonly status: 409;
-  readonly code: typeof TOOL_PROJECTION_RELOAD_REQUIRED_CODE;
-} {
-  return (
-    isApiError(error) &&
-    error.status === 409 &&
-    error.code === TOOL_PROJECTION_RELOAD_REQUIRED_CODE
-  );
+export function isChatReloadRequired(error: unknown): error is ApiError {
+  return isApiError(error) && error.status === 409 &&
+    (error.code === "E_CHAT_CONTRACT_RELOAD_REQUIRED" ||
+      error.code === TOOL_PROJECTION_RELOAD_REQUIRED_CODE);
 }
 
 /**

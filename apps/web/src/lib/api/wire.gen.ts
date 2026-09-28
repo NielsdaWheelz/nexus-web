@@ -4797,21 +4797,6 @@ export interface components {
             /** Reason */
             reason: string;
         };
-        /** Ineligible */
-        Ineligible: {
-            /**
-             * Code
-             * @enum {string}
-             */
-            code: "unsupported_capability" | "selection_not_configured";
-            /** Explanation */
-            explanation: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Ineligible";
-        };
         /** InheritedLibraryPlacementRelationOut */
         InheritedLibraryPlacementRelationOut: {
             /**
@@ -5709,28 +5694,6 @@ export interface components {
             expectedReaderGeneration: number;
             /** Locator */
             locator: components["schemas"]["PdfReaderResumeState"] | components["schemas"]["WebReaderResumeState"] | components["schemas"]["TranscriptReaderResumeState"] | components["schemas"]["EpubReaderResumeState"];
-        };
-        /** OperatorActionRequired */
-        OperatorActionRequired: {
-            /** Action */
-            action: string;
-            /**
-             * Code
-             * @enum {string}
-             */
-            code: "catalog_refresh_failed" | "codex_host_unavailable" | "credential_unavailable" | "required_tool_unavailable";
-            /** Explanation */
-            explanation: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "OperatorActionRequired";
-            /**
-             * Last Checked
-             * Format: date-time
-             */
-            last_checked: string;
         };
         /** OracleBindEventPayload */
         OracleBindEventPayload: {
@@ -7193,16 +7156,7 @@ export interface components {
         RunSelectionOut: {
             /** Catalog Definition Revision */
             catalog_definition_revision: string;
-            /** Current State */
-            current_state: components["schemas"]["Selectable"] | components["schemas"]["Ineligible"] | components["schemas"]["OperatorActionRequired"] | components["schemas"]["TemporarilyUnavailable"];
-            /**
-             * Current State Observed At
-             * Format: date-time
-             */
-            current_state_observed_at: string;
             display_at_dispatch: components["schemas"]["SelectionPresentation"];
-            /** Rerun Eligibility */
-            rerun_eligibility: boolean;
             /** Selection */
             selection: components["schemas"]["CodexPersonalSelection"] | components["schemas"]["ProviderApiSelection"];
             /** Source Catalog Definition Revision */
@@ -7889,14 +7843,6 @@ export interface components {
             /** Url */
             url: string;
         };
-        /** Selectable */
-        Selectable: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Selectable";
-        };
         /** SelectionPresentation */
         SelectionPresentation: {
             /** Billing */
@@ -8153,28 +8099,6 @@ export interface components {
         SynapseScanRequest: {
             /** Ref */
             ref: string;
-        };
-        /** TemporarilyUnavailable */
-        TemporarilyUnavailable: {
-            /** Action */
-            action: string;
-            /**
-             * Code
-             * @enum {string}
-             */
-            code: "catalog_refresh_failed" | "codex_host_unavailable" | "credential_unavailable" | "required_tool_unavailable";
-            /** Explanation */
-            explanation: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "TemporarilyUnavailable";
-            /**
-             * Last Checked
-             * Format: date-time
-             */
-            last_checked: string;
         };
         /** TerminalListeningIn */
         TerminalListeningIn: {
@@ -9091,6 +9015,7 @@ export interface operations {
                 status?: "active" | "queued" | "running" | "complete" | "error" | "cancelled";
             };
             header?: {
+                "X-Nexus-Chat-Contract"?: string | null;
                 "X-Nexus-Tool-Projection"?: string | null;
             };
             path?: never;
@@ -9125,6 +9050,7 @@ export interface operations {
             query?: never;
             header?: {
                 "Idempotency-Key"?: string | null;
+                "X-Nexus-Chat-Contract"?: string | null;
                 "X-Nexus-Tool-Projection"?: string | null;
             };
             path?: never;
@@ -9162,6 +9088,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
+                "X-Nexus-Chat-Contract"?: string | null;
                 "X-Nexus-Tool-Projection"?: string | null;
             };
             path: {
@@ -9197,6 +9124,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
+                "X-Nexus-Chat-Contract"?: string | null;
                 "X-Nexus-Tool-Projection"?: string | null;
             };
             path: {
@@ -9677,6 +9605,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
+                "X-Nexus-Chat-Contract"?: string | null;
                 "X-Nexus-Tool-Projection"?: string | null;
             };
             path: {
@@ -9883,6 +9812,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
+                "X-Nexus-Chat-Contract"?: string | null;
                 "X-Nexus-Tool-Projection"?: string | null;
             };
             path: {
@@ -9919,6 +9849,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
+                "X-Nexus-Chat-Contract"?: string | null;
                 "X-Nexus-Tool-Projection"?: string | null;
             };
             path: {
@@ -13237,6 +13168,7 @@ export interface operations {
             query?: never;
             header?: {
                 "Idempotency-Key"?: string | null;
+                "X-Nexus-Chat-Contract"?: string | null;
                 "X-Nexus-Tool-Projection"?: string | null;
             };
             path: {
@@ -13277,6 +13209,7 @@ export interface operations {
             query?: never;
             header?: {
                 "Idempotency-Key"?: string | null;
+                "X-Nexus-Chat-Contract"?: string | null;
                 "X-Nexus-Tool-Projection"?: string | null;
             };
             path: {
@@ -15076,9 +15009,10 @@ export interface operations {
                 after?: number | null;
             };
             header?: {
+                "X-Nexus-Chat-Contract"?: string | null;
+                "X-Nexus-Tool-Projection"?: string | null;
                 "Last-Event-ID"?: string | null;
                 "X-Nexus-SSE-Attempt"?: string | null;
-                "X-Nexus-Tool-Projection"?: string | null;
             };
             path: {
                 run_id: string;

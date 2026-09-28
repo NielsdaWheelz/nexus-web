@@ -41,8 +41,10 @@ from provider_runtime.types import Incomplete as ProviderIncomplete
 from provider_runtime.types import Present as RuntimePresent
 from provider_runtime.types import Succeeded as ProviderSucceeded
 from pydantic import BaseModel, SecretStr
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from nexus.db.models import ChatRun
 from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
@@ -432,6 +434,10 @@ class GenerationDispatchAborted(RuntimeError):
     """The live lease or domain claim disappeared before dispatch."""
 
 
+class _ChatCancellationBeforeDispatch(RuntimeError):
+    """A committed Chat stop won the child-admission lock."""
+
+
 class GenerationAdmissionInputsChanged(RuntimeError):
     """Mutable domain input no longer matches a frozen Prepared admission."""
 
@@ -558,6 +564,13 @@ async def execute_generation(
     except Exception as error:
         from nexus.services.codex_generation_client import CodexGenerationCapacityUnavailable
 
+        if isinstance(error, _ChatCancellationBeforeDispatch):
+            return await _complete_stop(
+                session_factory,
+                request,
+                terminal=GenerationStopped("cancelled", None, 0),
+                encode_failure=encode_failure,
+            )
         if isinstance(error, CodexGenerationCapacityUnavailable):
             return _capacity_refusal(session_factory, request, encode_failure=encode_failure)
         if _journal_is_uncertain(session_factory, request):
@@ -673,6 +686,18 @@ class _LedgerChildLifecycle:
                     raise GenerationUncertain(
                         f"generation {request.generation_id} initial child is not Prepared"
                     )
+                if request.owner.kind == "chat_run":
+                    run = db.execute(
+                        select(ChatRun.cancel_requested_at).where(ChatRun.id == request.owner.id)
+                    ).one_or_none()
+                    if run is None:
+                        raise AssertionError(
+                            "chat generation owner disappeared before child admission"
+                        )
+                    if run.cancel_requested_at is not None:
+                        raise _ChatCancellationBeforeDispatch(
+                            f"chat run {request.owner.id} was stopped before child admission"
+                        )
                 start_generation_in_current_transaction(
                     db,
                     GenerationStart(

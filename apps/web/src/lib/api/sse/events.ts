@@ -12,9 +12,9 @@
 import { isRecord } from "@/lib/validation";
 import { decodePresence, type Presence } from "@/lib/api/presence";
 import {
-  decodeExecutionAdvisory,
+  decodeChatExecutionAdvisory,
   EXECUTION_ADVISORY_EVENT_TYPE,
-  type DurableExecution,
+  type ChatRunExecution,
 } from "@/lib/api/executionAdvisory";
 import {
   decodeCitationOut,
@@ -79,7 +79,7 @@ interface SSEAssistantActivityEvent {
 
 interface SSEExecutionAdvisoryEvent {
   type: "ExecutionAdvisory";
-  data: DurableExecution;
+  data: ChatRunExecution;
 }
 
 /** Incremental assistant content. */
@@ -598,7 +598,7 @@ export function toChatSSEEvent(
     return {
       seq: 0,
       type: EXECUTION_ADVISORY_EVENT_TYPE,
-      data: decodeExecutionAdvisory(data, id),
+      data: decodeChatExecutionAdvisory(data, id),
     };
   }
   const seq = Number(id || 0);

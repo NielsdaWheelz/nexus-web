@@ -71,7 +71,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] workspace / rendering · 2026-09-24 reader-inspector-controls · PaneRuntimeFrame memo never bails out: [ticket](tickets/pane-runtime-frame-memo-never-bails-out.md).
 - [open] workspace / copy · 2026-09-24 reader-inspector-controls · secondary tab close label case differs from pane close: [ticket](tickets/secondary-tab-close-label-case.md).
 - [open] epub ingest · 2026-09-26 fragment-only nav fix review · unsafe authored nav hrefs lack source issues: [ticket](tickets/epub-unsafe-nav-targets-have-no-source-issue.md).
-- [open] chat api · 2026-09-24 reader-inspector-controls · conversation read returns 500 without a generation catalog: [ticket](tickets/conversation-read-500s-without-generation-catalog.md).
 - [open] worker / indexing · 2026-09-24 reader-inspector-controls · a missing indexing credential is classified as a child defect: [ticket](tickets/indexing-without-credential-is-a-child-defect.md).
 - [open] android offline reading · 2026-09-24 reader-inspector-controls · back from the downloaded reader shows Not found: [ticket](tickets/android-back-from-downloaded-reader-shows-not-found.md).
 - [open] local development · 2026-09-24 reader-inspector-controls · worker overlay memory bound fails the lane check: [ticket](tickets/local-worker-overlay-memory-bound-fails-lane-check.md).
@@ -245,14 +244,21 @@ unexpected timeouts. See
 - [open] oi-111 · reader publication · 2026-09-15 restoration rehearsal · p2 · web replacement can retain a cursor for a deleted fragment: [ticket](tickets/web-publication-invalidates-saved-reader-cursors.md).
 - [open] oi-113 · interactive worker · 2026-09-15 pr #255 qualification · p2 · exact-image startup is oom-killed at 256 mib; isolate provider imports and qualify real execution demand: [ticket](tickets/interactive-worker-startup-reaches-memory-cap.md).
 
-- [open] oi-115 · api availability · 2026-09-15 memory review · p2 · api startup requires codex catalogue availability despite its independent-readiness contract: [ticket](tickets/api-startup-requires-codex-catalog-availability.md).
+- [open] oi-115 · api availability · 2026-09-27 reliability candidate · cold startup and saved reads passed without codex; catalog recovery on the final tree remains unverified: [ticket](tickets/api-startup-requires-codex-catalog-availability.md).
 
 
 
 - [open] oi-125 · epub assets · 2026-09-15 source review · p2 · complete asset bodies, broad media reads and per-request storage clients lack an aggregate allocation budget: [ticket](tickets/epub-asset-response-allocation-and-client-lifetime.md).
 - [open] oi-126 · backend publication · 2026-09-15 restoration release · p2 · disk exhaustion aborts the runner before bundle upload and cleanup: [ticket](tickets/backend-publication-can-exhaust-devbox-disk.md).
 - [open] oi-127 · devbox operations · 2026-09-15 memory diagnosis · p2 · runner stopped and user/docker services restarted during diagnosis; cause remains unresolved: [ticket](tickets/devbox-services-interrupted-memory-diagnosis.md).
-- [open] oi-128 · generation · 2026-09-15 ecbe manual check · p2 · chat and metadata fail after codex dispatch with invalid_request; user defers chat repair: [ticket](tickets/restored-chat-codex-dispatch-fails.md).
+- [open] oi-128 · generation · 2026-09-15 ecbe manual check · p2 · deployed codex chat failed with invalid_request; isolated shell success has not closed the production incident: [ticket](tickets/restored-chat-codex-dispatch-fails.md).
+- [open] chat cancellation · 2026-09-27 reliability candidate · safe dead-state settlement passed; final-tree native interrupt/drain remains unverified: [ticket](tickets/chat-cancel-requeues-uncertain-dead-job.md).
+- [open] chat browser · 2026-09-27 reliability candidate · run-owned stop passed targeted proof; final-tree new/existing reply and reload journey remain unverified: [ticket](tickets/chat-composer-loses-durable-stop-state.md).
+- [open] chat recovery copy · 2026-09-27 reliability candidate · copy changed; final-tree terminal-defect browser journey remains unverified: [ticket](tickets/chat-operator-defect-copy-invites-new-command.md).
+- [open] chat incident · 2026-09-25 report, reviewed 2026-09-27 · original pane crash has no initiating exception: [ticket](tickets/production-chat-pane-crash-unattributed.md).
+- [open] model history cutover · 2026-09-27 combined-release plan · migration 0246 rejects uncertain old work without an audited abandonment transition: [ticket](tickets/model-history-cutover-blocked-by-uncertain-work.md).
+- [open] model history cutover / media enrichment · 2026-09-27 production census · 41 dead media jobs retain dispatched, unterminated generations and block migration 0246: [ticket](tickets/model-cutover-dead-media-generations.md).
+- [open] codex host diagnostics · 2026-09-27 reliability candidate · bounded first-cause log passed a local probe; final native-to-caller journey remains unverified: [ticket](tickets/codex-host-original-failure-not-retained.md).
 - [open] write undo · 2026-09-25 model cutover review · shared transaction fix is staged; interruption and retry proof for chat/background undo remains: [ticket](tickets/chat-write-undo-can-commit-before-completion-stamp.md).
 - [waived] api model qualification · 2026-09-26 owner decision · 61 api cells pass; 4 xai cells lack a key and are not live-qualified: [ticket](tickets/latest-model-api-live-cells-unqualified.md).
 - [open] codex credential refresh · 2026-09-25 model cutover · actual 0.157.1 refresh/write semantics were not witnessed: [ticket](tickets/codex-auth-refresh-not-qualified.md).
