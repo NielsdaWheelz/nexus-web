@@ -4,7 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import type { FormEvent } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import type { ReplayableSubmitState } from "@/lib/nexus/model";
-import styles from "./switchboard.module.css";
+import styles from "@/components/nexus/Nexus.module.css";
 
 export default function CreateLibraryPanel({
   name,
@@ -29,7 +29,7 @@ export default function CreateLibraryPanel({
       <header className={styles.header}>
         <button type="button" className={styles.iconButton} onClick={onBack}>
           <ArrowLeft size={20} aria-hidden="true" />
-          <span className={styles.srOnly}>Back</span>
+          <span className="sr-only">Back</span>
         </button>
         <h2 tabIndex={-1} data-switchboard-heading>
           New library

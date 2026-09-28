@@ -96,14 +96,10 @@ Desktop uses a combobox with a grid popup. DOM focus remains in the input;
 Up/Down changes rows, Left/Right changes primary versus Actions cells, Enter
 invokes the active cell, and Shift+Enter Forks a primary result. Each applicable
 row has one pointer Actions button backed by the shared `ActionMenu`. Mobile
-keeps a sibling action button and 48 px targets. Renderers never infer command,
-ranking, target, or workflow meaning from copy or identifiers.
-
-Desktop Nexus publishes named user-timing measures at input-ready, local rows
-committed, accepted pane paint, and first usable provider rows. The benchmark
-reports its sample size and p95 separately for warm and cold runs; it never
-labels a warmed provider loop as cold. The p95 gates are respectively under
-50 ms, 50 ms, 100 ms, and 250 ms.
+keeps a sibling action button and 48 px targets. On both surfaces the open
+chord (Cmd/Ctrl+K) pressed while Nexus is open on its root opens the active
+row's Actions menu. Renderers never infer command, ranking, target, or workflow
+meaning from copy or identifiers.
 
 ## Ownership
 
@@ -114,20 +110,22 @@ labels a warmed provider loop as cold. The p95 gates are respectively under
 | Fixed-nav membership, order, and decoration                       | `apps/web/src/components/appnav/navModel.ts`                                                                      |
 | Shared account membership and rendering                           | `apps/web/src/components/appnav/AccountMenu.tsx`                                                                  |
 | Imports badge count and its accessible name                       | `apps/web/src/components/imports/ImportsBadge.tsx` and `importsWorkspaceModel.ts`                                 |
-| Nexus commands and typed intent                                  | `apps/web/src/lib/nexus/commands.ts` and `apps/web/src/lib/nexus/intent.ts`                                        |
-| Nexus sections, Places projection, ranking, caps, and stability  | `apps/web/src/lib/nexus/results.ts` and `apps/web/src/lib/nexus/ranking.ts`                                        |
+| Nexus commands and typed intent                                  | `apps/web/src/lib/nexus/query.ts`                                                                                  |
+| Nexus sections, Places projection, ranking, caps, and stability  | `apps/web/src/lib/nexus/rows.ts`                                                                                   |
+| Nexus retrieval, latency gate, and history writes                | `apps/web/src/lib/nexus/useNexusFind.ts`                                                                           |
 | Route-to-semantic-section ownership                               | section `header.destinationId`, or resource `sectionDestinationId`, in `apps/web/src/lib/panes/paneRouteModel.ts` |
 | Desktop rail projection and pane dispatch                         | `apps/web/src/components/appnav/AppNav.tsx`                                                                       |
 | Internal-link gesture policy                                      | `apps/web/src/lib/panes/targetLinkActivation.ts`                                                                  |
 | Target selection, restoration, creation, and activation           | `activateWorkspaceTarget` in `apps/web/src/lib/workspace/store.tsx`                                               |
 | Server-restored deep-link merge                                   | `apps/web/src/lib/workspace/workspaceRestore.ts`                                                                  |
 | Nexus semantic contract                                          | `apps/web/src/lib/nexus/model.ts`                                                                                  |
-| Desktop Nexus renderer                                           | `apps/web/src/components/nexus/desktop/`                                                                           |
-| Mobile Nexus renderer                                            | `apps/web/src/components/switchboard/SwitchboardTask.tsx` and sibling presentation components                    |
+| Desktop Nexus renderer                                           | `apps/web/src/components/nexus/desktop/DesktopNexus.tsx`                                                           |
+| Mobile Nexus renderer                                            | `apps/web/src/components/switchboard/SwitchboardTask.tsx` and `NexusButton.tsx`                                   |
+| Nexus workflow pages and row parts (both surfaces)               | `apps/web/src/components/nexus/NexusPages.tsx` and `NexusRow.tsx`                                                 |
 | Nexus ingress and direct action session                          | `apps/web/src/lib/nexus/events.ts` and `apps/web/src/components/nexus/useNexusController.ts`                      |
 | Daily Page location and append entry                             | `apps/web/src/lib/notes/openDailyPage.ts` and workspace pane-entry delivery                                       |
 | Keybinding projection                                             | `apps/web/src/app/(authenticated)/settings/keybindings/KeybindingsPaneBody.tsx`                                   |
-| Nexus history href allowlist                                     | `python/nexus/services/nexus_history.py`                                                                          |
+| Nexus history href canonicalization                              | `python/nexus/services/nexus_history.py`                                                                          |
 
 The separations are deliberate. A destination can exist without occupying
 fixed navigation; a pane route can identify its owning section without
@@ -231,12 +229,11 @@ When adding or changing a destination:
 2. Change fixed, utility, or Account membership/order only in `APP_NAVIGATION`.
 3. Give a section route one `header.destinationId`; give a resource route one
    `sectionDestinationId`.
-4. If the backend records Nexus history for the href, update its canonical
-   allowlist and integration coverage.
-5. Add a destination to mobile Places only through the closed projection in
-   `lib/nexus/results.ts`; do not duplicate its identity outside
-   `DESTINATION_REGISTRY`.
-6. Verify desktop and mobile projection membership separately, semantic
+4. Add a destination to mobile Places only through the closed projection in
+   `lib/nexus/rows.ts`; do not duplicate its identity outside
+   `DESTINATION_REGISTRY`. Nexus history accepts any relative href, so the
+   backend needs no change.
+5. Verify desktop and mobile projection membership separately, semantic
    detail-route activity, native modified clicks,
    exact-pane reuse, minimized-pane restoration, and focus handoff.
 

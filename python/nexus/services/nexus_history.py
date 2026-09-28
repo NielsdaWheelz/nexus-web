@@ -1,20 +1,21 @@
-"""Nexus usage-history service."""
+"""Nexus usage history: recent targets, query-aware frecency, idempotent selection records.
 
-from datetime import UTC, datetime, timedelta
-from typing import cast
+Score = use_count × mean age points of the last ten visits; under a query the target-only
+aggregate (query "") counts 0.35. Hrefs are canonicalized structurally; the web owns routes.
+"""
+
+from datetime import datetime, timedelta
 from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import NexusUsage
 from nexus.db.retries import retry_serializable
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.nexus_history import (
     NexusHistoryOut,
     NexusHistoryRecentOut,
-    NexusHistorySource,
     NexusSelectionRecordOut,
     NexusSelectionRecordRequest,
 )
@@ -24,129 +25,99 @@ from nexus.services.resource_mutation_replay import (
     record_replay,
 )
 
-MAX_NEXUS_RECENT_TARGETS = 5
-MAX_QUERY_NORMALIZED_LENGTH = 200
-MAX_VISIT_TIMESTAMPS = 10
-TARGET_ONLY_QUERY_WEIGHT = 0.35
-NEXUS_SELECTION_RECORD_SCOPE = "Nexus.SelectionRecord"
+SELECTION_SCOPE = "Nexus.SelectionRecord"
+# Points for a visit no older than (hours, points); older visits score nothing.
+AGE_POINTS = ((4, 100), (24, 80), (72, 60), (168, 40), (720, 20), (2160, 10))
 
 
-def get_history_for_viewer(
-    db: Session,
-    viewer_id: UUID,
-    query: str | None = None,
-) -> NexusHistoryOut:
-    """Return recent targets and bounded frecency for the current viewer."""
-    query_normalized = _normalize_query(query)
-    destination_rows = (
+def get_history_for_viewer(db: Session, viewer_id: UUID, query: str | None) -> NexusHistoryOut:
+    recent = (
         db.execute(
-            select(NexusUsage)
-            .where(NexusUsage.user_id == viewer_id)
-            .order_by(NexusUsage.last_used_at.desc(), NexusUsage.id.desc())
+            text("""
+            SELECT target_href, label_snapshot, source, last_used_at FROM (
+                SELECT DISTINCT ON (target_href) target_href, label_snapshot, source, last_used_at, id
+                FROM nexus_usages
+                WHERE user_id = :viewer_id
+                ORDER BY target_href, last_used_at DESC, id DESC
+            ) newest
+            ORDER BY last_used_at DESC, id DESC
+            LIMIT 5
+        """),
+            {"viewer_id": viewer_id},
         )
-        .scalars()
+        .mappings()
         .all()
     )
-
-    recent: list[NexusHistoryRecentOut] = []
-    seen_recent_hrefs: set[str] = set()
-    for row in destination_rows:
-        if row.target_href in seen_recent_hrefs:
-            continue
-        seen_recent_hrefs.add(row.target_href)
-        recent.append(
-            NexusHistoryRecentOut(
-                target_href=row.target_href,
-                label_snapshot=row.label_snapshot,
-                source=cast(NexusHistorySource, row.source),
-                last_used_at=row.last_used_at,
-            )
-        )
-        if len(recent) == MAX_NEXUS_RECENT_TARGETS:
-            break
-
-    now = db.execute(select(func.now())).scalar_one()
-    raw_frecency_by_href: dict[str, float] = {}
-    for row in _load_frecency_rows(db, viewer_id, query_normalized):
-        contribution = _calculate_frecency(row, now)
-        if query_normalized and row.query_normalized == "":
-            contribution *= TARGET_ONLY_QUERY_WEIGHT
+    norm = _normalize_query(query)
+    now = db.execute(text("SELECT now()")).scalar_one()
+    rows = db.execute(
+        text("""
+            SELECT target_href, query_normalized, use_count, visit_timestamps FROM nexus_usages
+            WHERE user_id = :viewer_id AND query_normalized IN (:norm, '')
+        """),
+        {"viewer_id": viewer_id, "norm": norm},
+    )
+    raw: dict[str, float] = {}
+    for href, row_query, use_count, stamps in rows:
+        points = sum(_age_points(now - datetime.fromisoformat(stamp)) for stamp in stamps)
+        contribution = use_count * points / len(stamps)
+        if norm and not row_query:
+            contribution *= 0.35
         if contribution > 0:
-            raw_frecency_by_href[row.target_href] = (
-                raw_frecency_by_href.get(row.target_href, 0) + contribution
-            )
-
+            raw[href] = raw.get(href, 0) + contribution
     return NexusHistoryOut(
-        recent=recent,
-        frecency_by_href={
-            href: round(raw / (raw + 100), 6) for href, raw in raw_frecency_by_href.items()
-        },
+        recent=[NexusHistoryRecentOut.model_validate(dict(row)) for row in recent],
+        frecency_by_href={href: round(value / (value + 100), 6) for href, value in raw.items()},
     )
 
 
 def record_selection_for_viewer(
-    db: Session,
-    viewer_id: UUID,
-    *,
-    request: NexusSelectionRecordRequest,
+    db: Session, viewer_id: UUID, *, request: NexusSelectionRecordRequest
 ) -> NexusSelectionRecordOut:
-    """Record one accepted internal Nexus selection exactly once."""
     request_bytes = canonical_json_bytes(request.model_dump(mode="json"))
-    query_normalized = _normalize_query(request.query)
-    target_href = _canonicalize_target_href(request.target_href)
-    label_snapshot = _normalize_label_snapshot(request.label_snapshot)
+    params = {
+        "viewer_id": viewer_id,
+        "query": _normalize_query(request.query),
+        "href": _canonical_href(request.target_href),
+        "label": " ".join(request.label_snapshot.split())[:120],
+        "source": request.source,
+    }
+    if not params["label"]:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Missing Nexus target label")
 
     def op() -> NexusSelectionRecordOut:
         replay = lookup_replay(
             db,
             viewer_id=viewer_id,
-            scope=NEXUS_SELECTION_RECORD_SCOPE,
+            scope=SELECTION_SCOPE,
             client_mutation_id=request.client_mutation_id,
             request_bytes=request_bytes,
         )
         if replay is not None:
             return NexusSelectionRecordOut.model_validate(replay)
-
-        current_time = db.execute(select(func.now())).scalar_one()
-        row = db.scalar(
-            select(NexusUsage).where(
-                NexusUsage.user_id == viewer_id,
-                NexusUsage.query_normalized == query_normalized,
-                NexusUsage.target_href == target_href,
-            )
-        )
-        timestamp = _serialize_timestamp(current_time)
-        if row is None:
-            row = NexusUsage(
-                user_id=viewer_id,
-                query_normalized=query_normalized,
-                target_href=target_href,
-                label_snapshot=label_snapshot,
-                source=request.source,
-                use_count=1,
-                visit_timestamps=[timestamp],
-                last_used_at=current_time,
-                created_at=current_time,
-                updated_at=current_time,
-            )
-            db.add(row)
-        else:
-            row.label_snapshot = label_snapshot
-            row.source = request.source
-            row.use_count += 1
-            row.visit_timestamps = [
-                timestamp,
-                *row.visit_timestamps[: MAX_VISIT_TIMESTAMPS - 1],
-            ]
-            row.last_used_at = current_time
-            row.updated_at = current_time
-        db.flush()
-
-        response = NexusSelectionRecordOut.model_validate(row)
+        use_count, last_used_at = db.execute(
+            text("""
+                INSERT INTO nexus_usages
+                    (user_id, query_normalized, target_href, label_snapshot, source, use_count, visit_timestamps)
+                VALUES (:viewer_id, :query, :href, :label, :source, 1, jsonb_build_array(now()))
+                ON CONFLICT (user_id, query_normalized, target_href) DO UPDATE SET
+                    label_snapshot = EXCLUDED.label_snapshot,
+                    source = EXCLUDED.source,
+                    use_count = nexus_usages.use_count + 1,
+                    visit_timestamps = jsonb_path_query_array(
+                        EXCLUDED.visit_timestamps || nexus_usages.visit_timestamps, '$[0 to 9]'
+                    ),
+                    last_used_at = now(),
+                    updated_at = now()
+                RETURNING use_count, last_used_at
+            """),
+            params,
+        ).one()
+        response = NexusSelectionRecordOut(use_count=use_count, last_used_at=last_used_at)
         record_replay(
             db,
             viewer_id=viewer_id,
-            scope=NEXUS_SELECTION_RECORD_SCOPE,
+            scope=SELECTION_SCOPE,
             client_mutation_id=request.client_mutation_id,
             request_bytes=request_bytes,
             response_json=response.model_dump(mode="json"),
@@ -157,159 +128,23 @@ def record_selection_for_viewer(
     return retry_serializable(db, "record_nexus_selection", op)
 
 
-def _load_frecency_rows(
-    db: Session,
-    viewer_id: UUID,
-    query_normalized: str,
-) -> list[NexusUsage]:
-    query_filter = (
-        NexusUsage.query_normalized.in_([query_normalized, ""])
-        if query_normalized
-        else NexusUsage.query_normalized == ""
-    )
-    return list(
-        db.execute(
-            select(NexusUsage).where(
-                NexusUsage.user_id == viewer_id,
-                query_filter,
-            )
-        )
-        .scalars()
-        .all()
-    )
+def _age_points(age: timedelta) -> int:
+    return next((points for hours, points in AGE_POINTS if age <= timedelta(hours=hours)), 0)
 
 
 def _normalize_query(query: str | None) -> str:
-    if query is None:
-        return ""
-    return " ".join(query.lower().split()).strip()[:MAX_QUERY_NORMALIZED_LENGTH].strip()
+    return " ".join((query or "").lower().split())[:200].strip()
 
 
-def _normalize_label_snapshot(label_snapshot: str) -> str:
-    normalized = " ".join(label_snapshot.split()).strip()
-    if not normalized:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Missing Nexus target label")
-    return normalized
-
-
-def _serialize_timestamp(value: datetime) -> str:
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=UTC)
-    return value.isoformat()
-
-
-def _parse_timestamp(value: str) -> datetime:
-    parsed = datetime.fromisoformat(value)
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=UTC)
-    return parsed
-
-
-def _calculate_frecency(row: NexusUsage, now: datetime) -> float:
-    timestamps = [_parse_timestamp(value) for value in row.visit_timestamps]
-    if not timestamps:
-        return 0
-    bucket_points_sum = sum(_frecency_bucket_points(now, timestamp) for timestamp in timestamps)
-    if bucket_points_sum <= 0:
-        return 0
-    return row.use_count * bucket_points_sum / min(len(timestamps), MAX_VISIT_TIMESTAMPS)
-
-
-def _frecency_bucket_points(now: datetime, timestamp: datetime) -> int:
-    if now.tzinfo is None:
-        now = now.replace(tzinfo=UTC)
-    if timestamp.tzinfo is None:
-        timestamp = timestamp.replace(tzinfo=UTC)
-
-    age = now - timestamp
-    if age <= timedelta(hours=4):
-        return 100
-    if age <= timedelta(hours=24):
-        return 80
-    if age <= timedelta(days=3):
-        return 60
-    if age <= timedelta(days=7):
-        return 40
-    if age <= timedelta(days=30):
-        return 20
-    if age <= timedelta(days=90):
-        return 10
-    return 0
-
-
-def _canonicalize_target_href(href: str) -> str:
+def _canonical_href(href: str) -> str:
     parsed = urlsplit(href.strip())
-    if parsed.scheme or parsed.netloc:
+    path = parsed.path.rstrip("/") if len(parsed.path) > 1 else parsed.path
+    if parsed.scheme or parsed.netloc or not path.startswith("/") or "" in path.split("/")[1:]:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported Nexus target")
-
-    canonical_path = parsed.path
-    if len(canonical_path) > 1 and canonical_path.endswith("/"):
-        canonical_path = canonical_path.rstrip("/")
-    if not canonical_path.startswith("/"):
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported Nexus target")
-
-    segments = canonical_path.split("/")[1:]
-    if not segments or any(segment == "" for segment in segments):
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported Nexus target")
-
-    if len(segments) == 1:
-        if segments[0] in {
-            "lectern",
-            "libraries",
-            "podcasts",
-            "conversations",
-            "search",
-            "settings",
-            "notes",
-            "imports",
-            "stats",
-            "atlas",
-            "oracle",
-        }:
-            return _with_semantic_target_state(canonical_path, parsed.query, parsed.fragment)
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported Nexus target")
-
-    if segments[0] == "settings" and len(segments) == 2:
-        if segments[1] in {
-            "account",
-            "billing",
-            "reader",
-            "appearance",
-            "local-vault",
-            "identities",
-            "keybindings",
-        }:
-            return _with_semantic_target_state(canonical_path, parsed.query, parsed.fragment)
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported Nexus target")
-
-    if segments[0] in {"libraries", "media", "pages", "authors", "notes", "oracle"}:
-        if len(segments) == 2:
-            if segments[0] == "media":
-                return canonical_path
-            return _with_semantic_target_state(canonical_path, parsed.query, parsed.fragment)
-
-    if segments[0] == "conversations" and len(segments) == 2:
-        if segments[1] != "new":
-            return _with_semantic_target_state(canonical_path, parsed.query, parsed.fragment)
-
-    if segments[0] == "podcasts" and len(segments) == 2:
-        if segments[1] != "subscriptions":
-            return _with_semantic_target_state(canonical_path, parsed.query, parsed.fragment)
-
-    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported Nexus target")
-
-
-def _with_semantic_target_state(path: str, query: str, fragment: str) -> str:
-    query_pairs = parse_qsl(query, keep_blank_values=True)
-    canonical_query = urlencode(sorted(query_pairs, key=lambda pair: pair[0]))
-    canonical_fragment = quote(
-        unquote(fragment),
-        safe="!$&'()*+,-./:;=?@_~",
+    if path.split("/")[1] == "media":
+        return path
+    query = urlencode(
+        sorted(parse_qsl(parsed.query, keep_blank_values=True), key=lambda pair: pair[0])
     )
-
-    href = path
-    if canonical_query:
-        href = f"{href}?{canonical_query}"
-    if canonical_fragment:
-        href = f"{href}#{canonical_fragment}"
-    return href
+    fragment = quote(unquote(parsed.fragment), safe="!$&'()*+,-./:;=?@_~")
+    return path + (f"?{query}" if query else "") + (f"#{fragment}" if fragment else "")

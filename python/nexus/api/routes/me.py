@@ -11,8 +11,12 @@ from sqlalchemy.orm import Session
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.config import Settings, get_settings
 from nexus.db.session import get_db
-from nexus.responses import ok, success_response
-from nexus.schemas.nexus_history import NexusSelectionRecordRequest
+from nexus.responses import Data, ok, success_response
+from nexus.schemas.nexus_history import (
+    NexusHistoryOut,
+    NexusSelectionRecordOut,
+    NexusSelectionRecordRequest,
+)
 from nexus.schemas.reader import ReaderProfilePatch
 from nexus.schemas.user import UpdateProfileRequest
 from nexus.schemas.workspace_session import (
@@ -100,10 +104,9 @@ def get_nexus_history(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     query: Annotated[str | None, Query(max_length=500)] = None,
-) -> dict:
+) -> Data[NexusHistoryOut]:
     """Get Nexus usage history for the current viewer."""
-    result = nexus_history_service.get_history_for_viewer(db, viewer.user_id, query=query)
-    return ok(result)
+    return Data(data=nexus_history_service.get_history_for_viewer(db, viewer.user_id, query))
 
 
 @router.post("/me/nexus-selections")
@@ -111,14 +114,11 @@ def post_nexus_selection(
     body: NexusSelectionRecordRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> Data[NexusSelectionRecordOut]:
     """Record one accepted internal Nexus selection for the current viewer."""
-    result = nexus_history_service.record_selection_for_viewer(
-        db,
-        viewer.user_id,
-        request=body,
+    return Data(
+        data=nexus_history_service.record_selection_for_viewer(db, viewer.user_id, request=body)
     )
-    return ok(result)
 
 
 @router.get("/me/workspace-session")
