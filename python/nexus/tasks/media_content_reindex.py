@@ -82,8 +82,8 @@ def media_content_reindex_job(
 
 
 def _parse_payload(payload: Mapping[str, Any]) -> tuple[UUID, int, str]:
-    """The payload is the durable resume point: exactly four keys, all checked."""
-    if set(payload) != {"media_id", "revision", "reason", "request_id"}:
+    """The payload is the durable resume point: exactly three keys, all checked."""
+    if set(payload) != {"media_id", "revision", "reason"}:
         raise ValueError("media content-reindex payload keys are invalid")
     try:
         media_id = UUID(str(payload["media_id"]))
@@ -96,20 +96,4 @@ def _parse_payload(payload: Mapping[str, Any]) -> tuple[UUID, int, str]:
     reason = payload["reason"]
     if not isinstance(reason, str) or reason not in MEDIA_CONTENT_REINDEX_REASONS:
         raise ValueError("media content-reindex reason is invalid")
-
-    request_id = payload["request_id"]
-    if not isinstance(request_id, Mapping):
-        raise ValueError("media content-reindex request_id Presence is invalid")
-    if request_id.get("kind") == "Absent":
-        if set(request_id) != {"kind"}:
-            raise ValueError("Absent request_id Presence is invalid")
-    elif request_id.get("kind") == "Present":
-        if (
-            set(request_id) != {"kind", "value"}
-            or not isinstance(request_id.get("value"), str)
-            or not request_id["value"]
-        ):
-            raise ValueError("Present request_id Presence is invalid")
-    else:
-        raise ValueError("media content-reindex request_id Presence tag is invalid")
     return media_id, revision, reason

@@ -133,7 +133,7 @@ def reconcile_stale_ingest_media_job(request_id: str | None) -> dict[str, int]:
     index_outcomes = [
         _each(
             "reconcile_media_content_index",
-            partial(_ensure_index, media_id=UUID(str(row["media_id"])), request_id=request_id),
+            partial(_ensure_index, media_id=UUID(str(row["media_id"]))),
         )
         for row in index_rows
     ]
@@ -186,10 +186,8 @@ def _ensure_source(db: Session, *, media_id: UUID, attempt_id: UUID, request_id:
     return outcome
 
 
-def _ensure_index(db: Session, *, media_id: UUID, request_id: str | None) -> str:
-    intent = ensure_media_content_reindex_job(
-        db, media_id=media_id, reason="reconciliation", request_id=request_id
-    )
+def _ensure_index(db: Session, *, media_id: UUID) -> str:
+    intent = ensure_media_content_reindex_job(db, media_id=media_id, reason="reconciliation")
     db.commit()
     if intent.suspended:
         return "suspended"

@@ -50,7 +50,7 @@ from nexus.services.html_apparatus import attach_fragment_locators, derive_fragm
 from nexus.services.media_author_observation_seam import attach_author_observation
 from nexus.services.media_deletion import delete_document_storage_objects
 from nexus.services.media_fact_revisions import bump_all_media_fact_collections
-from nexus.services.media_processing_state import begin_extraction
+from nexus.services.media_processing_state import mark_extracting
 from nexus.services.media_source_ingest import (
     enqueue_accepted_source_attempt_in_transaction,
     reusable_embedded_source_media_ids,
@@ -157,7 +157,7 @@ def _begin_source_extraction(
                 f"{label} requires {'/'.join(sorted(expected_kinds))} media.",
             )
         changed = media.processing_status != ProcessingStatus.extracting
-        begin_extraction(db, media)
+        mark_extracting(db, media)
         if changed:
             bump_all_media_fact_collections(db)
         return media.kind
@@ -408,7 +408,7 @@ def _run_existing_file(
             raise InvalidRequestError(
                 ApiErrorCode.E_STORAGE_MISSING, "Source file metadata missing."
             )
-        begin_extraction(db, media)
+        mark_extracting(db, media)
         bump_all_media_fact_collections(db)
         return (
             media.kind,
@@ -762,7 +762,6 @@ def _replace_stored_html_projection(
                 fragment_id=fragment.id, document_embeds=prepared.document_embeds
             ),
             extraction_failed=prepared.document_embed_extraction_failed,
-            request_id=request_id,
             locked_existing_target_media_ids=frozenset(locked_embed_media_ids),
         )
         for child_media_id, child_attempt_id in queued_children:

@@ -77,7 +77,6 @@ def create_upload_session(
             viewer_id=viewer.user_id,
             request=request_body,
             input_origin=LocalFile(),
-            request_id=_request_id(request),
             idempotency_key=request.headers.get("Idempotency-Key"),
         ),
         by_alias=True,

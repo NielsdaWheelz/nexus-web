@@ -230,7 +230,6 @@ export interface AssistantTrustTrail {
     input_budget_tokens: number;
     estimated_input_tokens: number;
     included_message_ids: string[];
-    included_retrieval_ids: string[];
     included_context_refs: Array<Record<string, unknown>>;
     dropped_items: Array<Record<string, unknown>>;
   } | null;

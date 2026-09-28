@@ -179,7 +179,6 @@ export default function AssistantDetails({
                 <dt>Included</dt>
                 <dd>
                   {trustTrail.prompt.included_message_ids.length} messages /{" "}
-                  {trustTrail.prompt.included_retrieval_ids.length} retrievals /{" "}
                   {trustTrail.prompt.included_context_refs.length} refs
                 </dd>
               </div>

@@ -287,7 +287,6 @@ def replace_role_slices(
                 ContributorCredit(
                     contributor_id=contributor_id,
                     credited_name=credited_name,
-                    normalized_credited_name=contributor_match_key(credited_name),
                     role=role,
                     raw_role=raw_role,
                     source=row_source,

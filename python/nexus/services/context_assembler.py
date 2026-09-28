@@ -74,7 +74,6 @@ class ContextBudgetError(ValueError):
 
 @dataclass(frozen=True)
 class PromptBudget:
-    max_context_tokens: int
     reserved_output_tokens: int
     input_budget_tokens: int
 
@@ -158,7 +157,6 @@ def build_prompt_budget(*, max_context_tokens: int, max_output_tokens: int) -> P
             "Model context window is exhausted by the requested output allowance"
         )
     return PromptBudget(
-        max_context_tokens=max_context_tokens,
         reserved_output_tokens=reserved_output_tokens,
         input_budget_tokens=input_budget_tokens,
     )
@@ -221,14 +219,6 @@ class PromptPlan:
 
     def blocks(self) -> tuple[PromptBlock, ...]:
         return tuple(block for turn in self.turns for block in turn.blocks)
-
-    def manifest(self) -> dict[str, object]:
-        return {
-            "blocks": [
-                block.manifest_entry(ordinal=index, included=True)
-                for index, block in enumerate(self.blocks())
-            ],
-        }
 
 
 def render_system_prompt_block() -> str:
@@ -335,8 +325,6 @@ class HistoryUnit:
 
 @dataclass(frozen=True)
 class AssemblyLedger:
-    prompt_block_manifest: Mapping[str, object]
-    max_context_tokens: int
     reserved_output_tokens: int
     input_budget_tokens: int
     estimated_input_tokens: int
@@ -574,8 +562,6 @@ def assemble_chat_context(
     return ContextAssembly(
         generate_intent=_generation_intent_from_plan(plan),
         ledger=AssemblyLedger(
-            prompt_block_manifest=plan.manifest(),
-            max_context_tokens=budget.max_context_tokens,
             reserved_output_tokens=budget.reserved_output_tokens,
             input_budget_tokens=budget.input_budget_tokens,
             estimated_input_tokens=estimated_input_tokens,
@@ -618,45 +604,35 @@ def chat_prompt_payload_ref(*, run_id: UUID, intent: GenerationIntent) -> Immuta
 _INSERT_ASSEMBLY = text(
     """
     INSERT INTO chat_prompt_assemblies (
-        chat_run_id, conversation_id, assistant_message_id, prompt_block_manifest,
-        generation_intent, generation_intent_digest, max_context_tokens,
+        chat_run_id, conversation_id, assistant_message_id, generation_intent,
         reserved_output_tokens, input_budget_tokens, estimated_input_tokens,
-        included_message_ids, included_retrieval_ids, included_context_refs,
-        dropped_items, budget_breakdown
+        included_message_ids, included_context_refs, dropped_items
     )
     VALUES (
-        :chat_run_id, :conversation_id, :assistant_message_id, :prompt_block_manifest,
-        :generation_intent, :generation_intent_digest, :max_context_tokens,
+        :chat_run_id, :conversation_id, :assistant_message_id, :generation_intent,
         :reserved_output_tokens, :input_budget_tokens, :estimated_input_tokens,
-        :included_message_ids, '[]'::jsonb, :included_context_refs,
-        :dropped_items, '{}'::jsonb
+        :included_message_ids, :included_context_refs, :dropped_items
     )
     """
 ).bindparams(
     bindparam("included_message_ids", type_=JSONB),
     bindparam("included_context_refs", type_=JSONB),
     bindparam("dropped_items", type_=JSONB),
-    bindparam("prompt_block_manifest", type_=JSONB),
     bindparam("generation_intent", type_=JSONB),
 )
 
 
 def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssembly) -> None:
-    """Write the run's immutable prompt ledger. ``included_retrieval_ids`` and
-    ``budget_breakdown`` have no reader; their NOT NULL columns take empties."""
+    """Write the run's immutable prompt ledger."""
 
     ledger = assembly.ledger
-    intent_document = assembly.generate_intent.model_dump(mode="json")
     db.execute(
         _INSERT_ASSEMBLY,
         {
             "chat_run_id": run.id,
             "conversation_id": run.conversation_id,
             "assistant_message_id": run.assistant_message_id,
-            "prompt_block_manifest": dict(ledger.prompt_block_manifest),
-            "generation_intent": intent_document,
-            "generation_intent_digest": generation_fact_digest(intent_document),
-            "max_context_tokens": ledger.max_context_tokens,
+            "generation_intent": assembly.generate_intent.model_dump(mode="json"),
             "reserved_output_tokens": ledger.reserved_output_tokens,
             "input_budget_tokens": ledger.input_budget_tokens,
             "estimated_input_tokens": ledger.estimated_input_tokens,

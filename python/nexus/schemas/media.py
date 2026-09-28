@@ -194,7 +194,6 @@ class PodcastEpisodeChapterOut(BaseModel):
 class SourceStageProgress(_Strict):
     kind: Literal["Stage"] = "Stage"
     stage: Literal["Validate", "Extract", "Finalize"]
-    run_count: int = Field(ge=0)
     updated_at: datetime
 
 
@@ -204,7 +203,6 @@ class SourceCountedProgress(_Strict):
     completed: int = Field(ge=0)
     total: int = Field(gt=0)
     unit: Literal["Page", "Chapter"]
-    run_count: int = Field(ge=0)
     updated_at: datetime
 
 

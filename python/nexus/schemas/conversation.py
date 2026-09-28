@@ -491,7 +491,6 @@ class TrustPromptAssemblyOut(BaseModel):
     input_budget_tokens: int
     estimated_input_tokens: int
     included_message_ids: list[str]
-    included_retrieval_ids: list[str]
     included_context_refs: list[dict[str, Any]]
     dropped_items: list[dict[str, Any]]
 

@@ -263,7 +263,6 @@ def load_source_progress(db: Session, media_ids: tuple[UUID, ...]) -> dict[UUID,
         updated_at = attempt.progress_updated_at
         if stage is None or updated_at is None:
             continue
-        run_count = int(attempt.run_count or 0)
         total = attempt.progress_total
         unit = attempt.progress_unit
         if stage == "Extract" and total is not None and unit in {"Page", "Chapter"}:
@@ -271,13 +270,11 @@ def load_source_progress(db: Session, media_ids: tuple[UUID, ...]) -> dict[UUID,
                 completed=int(attempt.progress_completed or 0),
                 total=int(total),
                 unit=cast(Literal["Page", "Chapter"], unit),
-                run_count=run_count,
                 updated_at=updated_at,
             )
         else:
             progress[attempt.media_id] = SourceStageProgress(
                 stage=cast(Literal["Validate", "Extract", "Finalize"], stage),
-                run_count=run_count,
                 updated_at=updated_at,
             )
     return progress

@@ -61,7 +61,6 @@ def create_capture(
             input_origin=BrowserCapture(
                 source_url=request_body.source_url, sha256=request_body.sha256
             ),
-            request_id=_request_id(request),
             idempotency_key=request.headers.get("Idempotency-Key"),
         ),
         by_alias=True,

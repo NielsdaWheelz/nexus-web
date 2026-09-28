@@ -255,7 +255,6 @@ def _replace_projection(
                 fragment_id=fragment.id, document_embeds=prepared.document_embeds
             ),
             extraction_failed=prepared.document_embed_extraction_failed,
-            request_id=request_id,
             locked_existing_target_media_ids=locked_embed_media_ids,
         )
         from nexus.services.media_source_ingest import (

@@ -90,7 +90,7 @@ from nexus.services.import_history import (
     append_upload_event,
     delete_upload_history_in_current_transaction,
 )
-from nexus.services.media_processing_state import mark_source_queued
+from nexus.services.media_processing_state import mark_extracting
 from nexus.services.resource_mutation_replay import (
     canonical_json_bytes,
     lookup_replay,
@@ -131,8 +131,6 @@ UPLOAD_SESSION_DERIVED_STATE_SQL = """
         CASE
             WHEN published_at IS NOT NULL THEN 'Published'
             WHEN verification_error_code IS NOT NULL THEN 'VerificationFailed'
-            WHEN verification_token IS NOT NULL AND verification_expires_at > now()
-                THEN 'Verifying'
             WHEN transport_failed_at IS NOT NULL THEN 'TransportFailed'
             WHEN upload_url_expires_at <= now() THEN 'CapabilityExpired'
             ELSE 'AwaitingBytes'
@@ -140,9 +138,7 @@ UPLOAD_SESSION_DERIVED_STATE_SQL = """
 """The one set-wise expression of the derived-session-state precedence.
 
 The per-row surfaces below project the same order, so no consumer re-derives
-the rule independently. The ``Verifying`` branch and the ``verification_token``
-columns remain in the 0236 baseline and in the Imports read model; nothing in
-the confirm path writes them any more.
+the rule independently.
 """
 
 UPLOAD_SESSION_ATTENTION_STATES = ("VerificationFailed", "TransportFailed", "CapabilityExpired")
@@ -241,7 +237,6 @@ def create_upload_session(
     viewer_id: UUID,
     request: CreateUploadSessionRequest | BrowserCaptureIntent,
     input_origin: LocalFile | BrowserCapture,
-    request_id: str | None,
     idempotency_key: str | None,
 ) -> UploadSessionResponse:
     """Accept one upload intent and mint the capability for its current generation.
@@ -252,8 +247,11 @@ def create_upload_session(
     bytes behind a new staging path.
     """
     intent = _normalize_intent(request, input_origin)
-    clean_key = _require_key(idempotency_key, "Idempotency-Key")
-    clean_request_id = _require_key(request_id, "Request ID")[:255]
+    clean_key = (idempotency_key or "").strip()
+    if not clean_key:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Idempotency-Key is required.")
+    if len(clean_key) > 255:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Idempotency-Key is too long.")
     created = False
     with transaction(db):
         media_source_ingest.lock_identity(db, f"media_upload:{viewer_id}:{clean_key}")
@@ -281,7 +279,6 @@ def create_upload_session(
                 expected_size_bytes=intent.size_bytes,
                 input_origin=intent.input_origin.model_dump(mode="json"),
                 idempotency_key=clean_key,
-                request_id=clean_request_id,
                 upload_generation=1,
                 upload_url_expires_at=now + timedelta(seconds=get_settings().signed_url_expiry_s),
                 created_at=now,
@@ -334,7 +331,6 @@ def create_upload_session(
         "IntentAccepted",
         upload_session_id=str(capability.session_id),
         generation=capability.generation,
-        request_id=clean_request_id,
     )
     return _sign(
         capability,
@@ -677,11 +673,10 @@ def confirm_upload_session(
                 provider=media.provider,
                 provider_target_ref=None,
                 source_payload=_source_payload(session, candidate, capture, destination_ids),
-                request_id=request_id,
                 idempotency_key=None,
                 status="accepted",
             )
-            mark_source_queued(db, media)
+            mark_extracting(db, media)
             media_source_ingest.enqueue_accepted_source_attempt_in_transaction(
                 db,
                 media_id=media.id,
@@ -1208,15 +1203,6 @@ def _normalize_filename(filename: str) -> str:
 
 def _normalize_content_type(content_type: str) -> str:
     return content_type.split(";", 1)[0].strip().lower()
-
-
-def _require_key(value: str | None, label: str) -> str:
-    clean = (value or "").strip()
-    if not clean:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, f"{label} is required.")
-    if len(clean) > 255:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, f"{label} is too long.")
-    return clean
 
 
 def _storage_error(exc: StorageError) -> ApiError:

@@ -180,7 +180,6 @@ def materialize_x_author_thread_media(
                 parent_media_id=media.id,
                 document_embed_key=f"x-quote-post:{quoted_id}",
                 library_ids=source_library_ids,
-                request_id=request_id,
             )
             quote_media = db.get(Media, accepted.media_id)
             if quote_media is None:
@@ -210,7 +209,6 @@ def materialize_x_author_thread_media(
                     viewer_id=viewer_id,
                     post_id=quoted_post.id,
                     canonical_url=canonical_x_post_url(quoted_post.id),
-                    request_id=request_id,
                 )
             quote_media_ids[quoted_id] = quote_media.id
 
@@ -227,7 +225,6 @@ def materialize_x_author_thread_media(
                 now=now,
                 provider_id=provider_id,
                 source_attempt_id=source_attempt_id,
-                request_id=request_id,
                 quote_media_ids=quote_media_ids,
                 locked_quote_ids=locked_quote_ids,
             ),
@@ -362,8 +359,6 @@ def _fetch[T](call: Callable[[], T], viewer_id: UUID, request_id: str | None) ->
         return call()
     except XProviderError as exc:
         code, message = _PROVIDER_ERRORS[exc.code]
-        api_error = ApiError(code, message)
-        api_error.retry_after_seconds = exc.retry_after_seconds
         logger.warning(
             "x_provider_failure",
             request_id=request_id,
@@ -373,7 +368,7 @@ def _fetch[T](call: Callable[[], T], viewer_id: UUID, request_id: str | None) ->
             provider_error_title=exc.provider_error_title,
             api_error_code=code.value,
         )
-        raise api_error from exc
+        raise ApiError(code, message) from exc
 
 
 def _other_media_with_provider_id(
@@ -440,7 +435,6 @@ def _replace_thread_projection(
     now: datetime,
     provider_id: str,
     source_attempt_id: UUID,
-    request_id: str | None,
     quote_media_ids: dict[str, UUID],
     locked_quote_ids: set[UUID],
 ) -> None:
@@ -482,7 +476,6 @@ def _replace_thread_projection(
             for occurrence in prepared.quote_occurrences
         ],
         extraction_failed=False,
-        request_id=request_id,
         locked_existing_target_media_ids=frozenset(locked_quote_ids),
     )
     replace_media_apparatus(

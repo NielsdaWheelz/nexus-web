@@ -31,15 +31,15 @@ def build_source_artifact_storage_path(
 
 
 def build_upload_verification_candidate_storage_path(
-    media_id: UUID | str, verification_token: UUID | str, ext: str
+    media_id: UUID | str, candidate_id: UUID | str, ext: str
 ) -> str:
-    """The verification-token-fenced immutable published source of one upload.
+    """The immutable published source of one upload confirmation.
 
-    Fencing by the token, not the media id alone, keeps a stolen or superseded
-    lease from ever overwriting a published source.
+    Fenced by a fresh candidate id, so a stolen or superseded lease never
+    overwrites a published source.
     """
     ext = _require_bare_storage_extension(ext)
-    return f"media/{media_id}/candidates/{verification_token}/original.{ext}"
+    return f"media/{media_id}/candidates/{candidate_id}/original.{ext}"
 
 
 def build_upload_session_staging_storage_path(

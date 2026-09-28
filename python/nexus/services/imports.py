@@ -371,7 +371,7 @@ WITH visible_media AS (
         END AS classification,
         CASE
             WHEN r.derived_state IS NULL OR r.derived_state = 'Published' THEN w.current_stage
-            WHEN r.derived_state IN ('VerificationFailed', 'Verifying') THEN 'Validate'
+            WHEN r.derived_state = 'VerificationFailed' THEN 'Validate'
             ELSE 'Upload'
         END AS current_stage,
         CASE

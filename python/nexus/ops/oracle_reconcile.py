@@ -257,17 +257,11 @@ def _ensure_index_job_ids(
                 continue
             if state is None or state.status in {"ready", "failed", "no_text", "ocr_required"}:
                 intent = request_media_content_reindex(
-                    db,
-                    media_id=media_id,
-                    reason="reconciliation",
-                    request_id=f"oracle-reconcile:{media_id}",
+                    db, media_id=media_id, reason="reconciliation"
                 )
             else:
                 intent = ensure_media_content_reindex_job(
-                    db,
-                    media_id=media_id,
-                    reason="reconciliation",
-                    request_id=f"oracle-reconcile:{media_id}",
+                    db, media_id=media_id, reason="reconciliation"
                 )
             if intent.suspended:
                 suspended.append((media_id, intent.revision, intent.background_job_id))

@@ -66,7 +66,6 @@ export function mediaPaneErrorMessage(
       };
     case "E_MEDIA_NOT_FOUND":
     case "E_NOT_FOUND":
-    case "E_CHAPTER_NOT_FOUND":
     case "E_HIGHLIGHT_NOT_FOUND":
     case "E_EVIDENCE_NOT_FOUND":
       return {

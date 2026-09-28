@@ -28,7 +28,7 @@ the viewer/user, media, color, typed anchor kind, and canonical quote fields.
 Typed anchor rows hold the locator payload:
 
 - `highlight_fragment_anchors` stores reflowable fragment codepoint ranges.
-- `highlight_pdf_anchors` stores PDF page/text-layer match state.
+- `highlight_pdf_anchors` stores the PDF page, sort position and rect count.
 - `highlight_pdf_quads` stores canonical page-space geometry for PDF
   highlights.
 
@@ -67,10 +67,10 @@ smallest contiguous canonical interval covering the touched source spans.
 highlights sharing a source character share its paint, with all ids retained
 and the newest highlight on top.
 
-PDF anchors use page-space coordinates and text-layer match metadata. Geometry
+PDF anchors use page-space coordinates. Geometry
 is canonical; rendered viewport coordinates are derived presentation state.
 PDF writes take a transaction advisory lock on the viewer's exact selection, so
-duplicate and match-state decisions are made against current anchor rows.
+duplicate decisions are made against current anchor rows.
 
 Reader projection is not persisted. The reader may derive visible row anchors
 from rendered DOM segments or PDF viewport transforms, but that state belongs to
@@ -139,7 +139,7 @@ unwrap alternate envelopes or fill omitted response fields.
 Highlight creation, update, delete, color changes, and note attachment flow
 through the highlight routes and service owners. Fragment offset updates
 recompute the quote triple. PDF geometry updates go through the PDF highlight
-owner and require the corresponding quote/match-state payload.
+owner and require the selection's `exact` quote.
 
 Attached notes are note blocks linked to highlights through `resource_edges`
 with `origin='highlight_note'`. There is no separate highlight-note table.
