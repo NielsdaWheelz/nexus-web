@@ -30,6 +30,8 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
+- [open] web / python comments · 2026-09-28 pr-06 library placement · 25 code comments cite deleted `docs/cutovers/` files as rule owners: [ticket](tickets/code-comments-cite-deleted-cutovers.md).
+- [open] ingest-imports web · 2026-09-28 pr-06 library placement · Add Content still rereads and decides settlement-unknown placement writes and publishes the bus by hand, where the overlay now resends: [ticket](tickets/add-content-placement-unknown-machine.md).
 - [open] typed wire / resource graph · 2026-09-28 typed-wire foundation · `ResourceActivationOut` is camelCase on routes and snake_case in the chat SSE frame; the wire dump will reject the first route typed with it: [ticket](tickets/resource-activation-has-two-wire-casings.md).
 - [open] typed wire / sse · 2026-09-28 typed-wire foundation · chat tool_* frames and the media snapshot have no wire model, so their web decoders stay: [ticket](tickets/sse-payloads-without-wire-models.md).
 - [open] content index / schema · 2026-09-28 cleanup pr 05 · the four `evidence_spans` block-pointer columns, their fks, indexes and checks lost their last reader with the snapshot re-proof; drop them with a migration: [ticket](tickets/evidence-span-block-pointers-write-only.md).

@@ -13,13 +13,17 @@ from sqlalchemy.orm import Session
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
-from nexus.responses import ok, ok_page
+from nexus.responses import Data, ok, ok_page
 from nexus.schemas.library import (
     CreateLibraryInviteRequest,
     CreateLibraryRequest,
     LibraryEntryOrderRequest,
     LibraryInvitationStatusValue,
+    LibraryOut,
     LibraryPageInfo,
+    LibraryPlacementOptionOut,
+    PodcastPlacementAdditionOut,
+    PodcastPlacementRemovalOut,
     TransferLibraryOwnershipRequest,
     UpdateLibraryMemberRequest,
     UpdateLibraryRequest,
@@ -133,12 +137,12 @@ def get_podcast_libraries(
     podcast_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> Data[list[LibraryPlacementOptionOut]]:
     """Read the canonical library placement inventory for one podcast."""
     rows = library_entries.list_item_libraries(
         db, viewer_id=viewer.user_id, target=library_entries.podcast_target(podcast_id)
     )
-    return ok(rows, by_alias=True)
+    return Data(data=rows)
 
 
 @router.post("/libraries", status_code=201)
@@ -146,9 +150,9 @@ def create_library(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     body: CreateLibraryRequest,
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> Data[LibraryOut]:
     """Create a non-default library owned and admin'd by the caller."""
-    return ok(library_governance.create_library(db, viewer.user_id, body), by_alias=True)
+    return Data(data=library_governance.create_library(db, viewer.user_id, body))
 
 
 @router.get("/libraries/{library_id}")
@@ -326,10 +330,10 @@ def remove_podcast_from_library(
     podcast_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> Data[PodcastPlacementRemovalOut]:
     """Remove a podcast reference from one non-default library."""
     result = library_entries.remove_podcast_from_library(db, viewer.user_id, library_id, podcast_id)
-    return ok(result, by_alias=True)
+    return Data(data=result)
 
 
 @router.put("/libraries/{library_id}/podcasts/{podcast_id}")
@@ -338,9 +342,9 @@ def add_subscribed_podcast_to_library(
     podcast_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> Data[PodcastPlacementAdditionOut]:
     """Place an existing active podcast subscription in one named library."""
     result = library_entries.place_subscribed_podcast_in_named_library(
         db, viewer.user_id, library_id, podcast_id
     )
-    return ok(result, by_alias=True)
+    return Data(data=result)
