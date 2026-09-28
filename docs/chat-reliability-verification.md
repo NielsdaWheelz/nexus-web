@@ -1,17 +1,19 @@
 # chat reliability verification
 
-status: implementation candidate; release blocked · 2026-09-27
+status: merged candidate; release blocked · 2026-09-28
 implementation source: `1ef156931` on `feature/chat-reliability-main-plan`, based on remote `main` `fbd08ba68a699aa497c8281044a59f8709cf43ef`
 current-main integration: `f70026920a83e8b2de56be5dc8fdfac440e4afef` applies the chat delta to remote `main` `4da38ace7653f7abb99e9b83324ab9bbb6bd8175`; generated wire was refreshed
-production observed: source `7dc68929b4d5ddfd77eb1a50228d477fa0148b5d`, database `0241`
+merged source: pr #412, `27e961be657999140521ebf981d8758f0b7788d8`; subsequent main `0de14e39aa3f767736cb81cfcc06a84f384aae07` adds migration `0251`
+production observed 2026-09-28: public frontend and api `/version` both served `7dc68929b4d5ddfd77eb1a50228d477fa0148b5d`; api database `0241`
 
 the implementation source contains the chat revision, catalog-independent
 history reads, persisted run-owned stop state, safe dead-job settlement, host
 first-cause logging, and a reviewed-identity gate for migration `0246`. the
-old pane crash remains unattributed. no production image, migration, reset,
-or deployment was made. the integrated source has no built image or observed
-native codex revision; the older shell-cohort receipt is not qualification for
-this commit.
+old pane crash remains unattributed. merging #412 built a staged vercel
+production-target candidate and an immutable backend candidate; its pr checks
+and backend publisher passed. no release-controller run, production migration,
+or custom-domain promotion was observed. the merged source has no observed
+native codex reply; the older shell-cohort receipt is not qualification for it.
 
 the integration kept main's removed web-vitals route and dossier cutover while
 retaining the distinct origin request id in client-defect telemetry. static
@@ -49,6 +51,11 @@ original, nonreproducible production pane crash.
 - main now includes destructive dossier migration `0250`. its production
   stored-json guard, deletion counts, backup, and post-migration head check
   remain open; see the [preflight ticket](tickets/dossier-latest-revision-0250-production-preflight.md).
+- main now also includes irreversible schema deletion `0251`. a verified
+  pre-migration backup and loss inventory must cover both migrations; see the
+  [0251 ticket](tickets/schema-0251-production-loss-preflight.md). the exact
+  release vector must keep the web and backend chat contract paired; see the
+  [release-pairing ticket](tickets/chat-contract-release-pairing.md).
 - the final commit needs authenticated new and existing chat replies, same-run
   stream-loss/reload and native process-drain observations on an actual pinned
   host. the original crash needs its initiating exception before anyone can

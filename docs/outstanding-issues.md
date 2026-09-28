@@ -243,7 +243,7 @@ unexpected timeouts. See
 - [open] oi-111 · reader publication · 2026-09-15 restoration rehearsal · p2 · web replacement can retain a cursor for a deleted fragment: [ticket](tickets/web-publication-invalidates-saved-reader-cursors.md).
 - [open] oi-113 · interactive worker · 2026-09-15 pr #255 qualification · p2 · exact-image startup is oom-killed at 256 mib; isolate provider imports and qualify real execution demand: [ticket](tickets/interactive-worker-startup-reaches-memory-cap.md).
 
-- [open] oi-115 · api availability · 2026-09-27 reliability candidate · cold startup and saved reads passed without codex; catalog recovery on the final tree remains unverified: [ticket](tickets/api-startup-requires-codex-catalog-availability.md).
+- [open] oi-115 · api availability · 2026-09-28 pr #412 · cold startup and saved reads passed without codex; catalog recovery on the merged tree remains unverified: [ticket](tickets/api-startup-requires-codex-catalog-availability.md).
 
 
 
@@ -251,13 +251,14 @@ unexpected timeouts. See
 - [open] oi-126 · backend publication · 2026-09-15 restoration release · p2 · disk exhaustion aborts the runner before bundle upload and cleanup: [ticket](tickets/backend-publication-can-exhaust-devbox-disk.md).
 - [open] oi-127 · devbox operations · 2026-09-15 memory diagnosis · p2 · runner stopped and user/docker services restarted during diagnosis; cause remains unresolved: [ticket](tickets/devbox-services-interrupted-memory-diagnosis.md).
 - [open] oi-128 · generation · 2026-09-15 ecbe manual check · p2 · deployed codex chat failed with invalid_request; isolated shell success has not closed the production incident: [ticket](tickets/restored-chat-codex-dispatch-fails.md).
-- [open] chat cancellation · 2026-09-27 reliability candidate · safe dead-state settlement passed; final-tree native interrupt/drain remains unverified: [ticket](tickets/chat-cancel-requeues-uncertain-dead-job.md).
-- [open] chat browser · 2026-09-27 reliability candidate · run-owned stop passed targeted proof; final-tree new/existing reply and reload journey remain unverified: [ticket](tickets/chat-composer-loses-durable-stop-state.md).
-- [open] chat recovery copy · 2026-09-27 reliability candidate · copy changed; final-tree terminal-defect browser journey remains unverified: [ticket](tickets/chat-operator-defect-copy-invites-new-command.md).
+- [open] chat cancellation · 2026-09-28 pr #412 · safe dead-state settlement passed on the candidate; merged-tree native interrupt/drain remains unverified: [ticket](tickets/chat-cancel-requeues-uncertain-dead-job.md).
+- [open] chat browser · 2026-09-28 pr #412 · run-owned stop passed targeted proof; merged-tree new/existing reply and reload journey remain unverified: [ticket](tickets/chat-composer-loses-durable-stop-state.md).
+- [open] chat release · 2026-09-28 pr #412 · new exact chat decoder requires a matching backend before web promotion; production pairing unverified: [ticket](tickets/chat-contract-release-pairing.md).
+- [open] chat recovery copy · 2026-09-28 pr #412 · copy changed; merged-tree terminal-defect browser journey remains unverified: [ticket](tickets/chat-operator-defect-copy-invites-new-command.md).
 - [open] chat incident · 2026-09-25 report, reviewed 2026-09-27 · original pane crash has no initiating exception: [ticket](tickets/production-chat-pane-crash-unattributed.md).
 - [open] model history cutover · 2026-09-27 combined-release plan · migration 0246 rejects uncertain old work without an audited abandonment transition: [ticket](tickets/model-history-cutover-blocked-by-uncertain-work.md).
 - [open] model history cutover / media enrichment · 2026-09-27 production census · 41 dead media jobs retain dispatched, unterminated generations and block migration 0246: [ticket](tickets/model-cutover-dead-media-generations.md).
-- [open] codex host diagnostics · 2026-09-27 reliability candidate · bounded first-cause log passed a local probe; final native-to-caller journey remains unverified: [ticket](tickets/codex-host-original-failure-not-retained.md).
+- [open] codex host diagnostics · 2026-09-28 pr #412 · bounded first-cause log passed a local probe; merged-tree native-to-caller journey remains unverified: [ticket](tickets/codex-host-original-failure-not-retained.md).
 - [open] write undo · 2026-09-25 model cutover review · shared transaction fix is staged; interruption and retry proof for chat/background undo remains: [ticket](tickets/chat-write-undo-can-commit-before-completion-stamp.md).
 - [waived] api model qualification · 2026-09-26 owner decision · 61 api cells pass; 4 xai cells lack a key and are not live-qualified: [ticket](tickets/latest-model-api-live-cells-unqualified.md).
 - [open] codex credential refresh · 2026-09-25 model cutover · actual 0.157.1 refresh/write semantics were not witnessed: [ticket](tickets/codex-auth-refresh-not-qualified.md).
@@ -343,5 +344,6 @@ unexpected timeouts. See
 - [open] search / typed wire · 2026-09-28 cleanup pr-08 · `RetrievalLocator` `= None` defaults generate optional fields; stored locators omit those keys, so dropping them needs a backfill: [ticket](tickets/retrieval-locator-defaults-generate-optional-fields.md).
 - [open] dossiers / resource graph · 2026-09-28 cleanup pr-08 · user links to or from an `artifact_revision` die at the next regenerate; revisions should not be link endpoints: [ticket](tickets/dossier-revision-user-links-die-on-regenerate.md).
 - [open] dossiers / production migration · 2026-09-28 cleanup pr-08 · run 0250's stored-json preconditions and loss counts read-only against production before the backend deploy: [ticket](tickets/dossier-latest-revision-0250-production-preflight.md).
+- [open] schema / production migration · 2026-09-28 pr #413 · inventory irreversible 0251 data loss against the production lineage and verify the backup before release: [ticket](tickets/schema-0251-production-loss-preflight.md).
 - [open] resource actions web · 2026-09-28 cleanup pr-08 · web decodes and drops `MakeArtifactRevisionCurrent` until the backend with 0250 ships: [ticket](tickets/web-make-current-arm-outlives-revision-history.md).
 - [open] 2026-09-28 source ingest · `_publish_file_source(kind)` and `reusable_embedded_source_media_ids(viewer_id)` take parameters they never read: [ticket](tickets/source-ingest-unused-parameters.md).

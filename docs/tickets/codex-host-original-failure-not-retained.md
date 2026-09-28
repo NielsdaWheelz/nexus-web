@@ -20,3 +20,7 @@ diagnostic evidence, not a generation terminal.
 the 2026-09-27 candidate records those bounded fields before host terminal
 normalization, and a disposable host failure probe passed. a full native-host
 to caller contract-defect journey remains unverified on this tree.
+
+pr #412 merged as `27e961be6`. close after the pinned host and caller on one
+release sha retain the correlated first safe cause through a real failure,
+without logging prompt or bearer content.

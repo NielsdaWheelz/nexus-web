@@ -47,3 +47,8 @@ write since.
 
 acceptance: recorded loss counts and an empty guard query, then 0250 applies and
 each head has at most one revision. delete this ticket after.
+
+main now follows `0250` with irreversible migration `0251`; its separate
+production loss inventory is tracked in
+[the 0251 ticket](schema-0251-production-loss-preflight.md). one verified backup
+must cover the full migration chain.

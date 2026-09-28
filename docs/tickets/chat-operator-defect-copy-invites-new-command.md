@@ -17,3 +17,7 @@ rerun and same-run reconnect keep their distinct actions.
 the 2026-09-27 candidate changed the operator and generic copy at the shared
 failure presenter. an authenticated final-tree terminal-defect browser journey
 has not yet been observed.
+
+pr #412 merged as `27e961be6`. close after a terminal defect on the promoted
+source shows its support reference without inviting another send, while an
+eligible rerun and same-run reconnect still offer their distinct actions.
