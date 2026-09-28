@@ -1,8 +1,7 @@
 """Scoped async sessions over the process-owned PostgreSQL engine identity.
 
-The worker and MCP listener have different event loops. NullPool keeps their
-connections scoped to the invocation instead of moving pooled async connections
-between loops. Sync domain functions run only through AsyncSession.run_sync;
+NullPool keeps connections scoped to each invocation and avoids moving pooled
+async connections between event loops. Sync domain functions run only through AsyncSession.run_sync;
 its greenlet bridge awaits psycopg I/O on the owning loop without threads.
 """
 

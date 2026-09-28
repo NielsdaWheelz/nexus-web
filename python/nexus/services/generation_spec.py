@@ -17,7 +17,6 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
-    SecretStr,
     StringConstraints,
     ValidationInfo,
     model_validator,
@@ -31,10 +30,7 @@ from nexus.services.tool_runtime.snapshots import FrozenToolPlanSnapshot
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 BoundedText = Annotated[str, StringConstraints(min_length=1, max_length=512)]
 ModelKey = Annotated[str, StringConstraints(min_length=1, max_length=256, pattern=r"^[^\s]+$")]
-AgentReasoningKey = Annotated[
-    str, StringConstraints(min_length=1, max_length=64, pattern=r"^[^\s]+$")
-]
-ProviderReasoningLevel = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+ReasoningKey = Annotated[str, StringConstraints(pattern=r"^[!-~]{1,64}$")]
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 type BackgroundOperationKey = Literal[
     "metadata_enrichment",
@@ -104,13 +100,13 @@ class WireTaggedModel(BaseModel):
 class CodexPersonalSelection(_FrozenModel):
     route: Literal["CodexPersonal"]
     model: ModelKey
-    reasoning: AgentReasoningKey
+    reasoning: ReasoningKey
 
 
 class ProviderApiSelection(_FrozenModel):
     route: Literal["ProviderApi"]
     model_ref: ModelKey
-    reasoning: ProviderReasoningLevel
+    reasoning: ReasoningKey
 
 
 GenerationSelectionSpec = Annotated[
@@ -122,7 +118,7 @@ def selection_fingerprint(selection: CodexPersonalSelection | ProviderApiSelecti
     """Return the domain-separated identity of one exact selection."""
 
     payload = _canonical_json(selection.model_dump(mode="json"))
-    return hashlib.sha256(b"nexus.generation-selection.v1\0" + payload).hexdigest()
+    return hashlib.sha256(b"nexus.generation-selection.v2\0" + payload).hexdigest()
 
 
 class TextOutput(WireTaggedModel):
@@ -147,19 +143,6 @@ class JsonSchemaOutput(WireTaggedModel):
 
 
 GenerationOutput = Annotated[TextOutput | JsonSchemaOutput, Field(discriminator="kind")]
-
-
-class BearerToolGrant(WireTaggedModel):
-    """Sensitive, run-scoped material; its value is never serialized."""
-
-    kind: Literal["Bearer"] = "Bearer"
-    token: SecretStr = Field(exclude=True, repr=False)
-
-    @model_validator(mode="after")
-    def _token_is_not_blank(self) -> Self:
-        if not self.token.get_secret_value().strip():
-            raise ValueError("bearer token must not be blank")
-        return self
 
 
 class GenerationIntent(WireTaggedModel):
@@ -236,7 +219,6 @@ class ProviderDispatchTargetSnapshot(_FrozenModel):
     engine: BoundedText
     base_url: Presence[Annotated[str, StringConstraints(min_length=1, max_length=2_048)]]
     correlation: Literal["header", "in_band", "none"]
-    routing: Presence[dict[str, JsonValue]]
     continuation_codec: BoundedText
     registry_revision: BoundedText
 
@@ -318,8 +300,49 @@ def tool_scope_digest(scope: FrozenToolScope) -> str:
     return _digest(scope.model_dump(mode="json"))
 
 
+class CodexShell(_FrozenModel):
+    kind: Literal["CodexShell"] = "CodexShell"
+    api_contract_revision: BoundedText
+    api_plan: FrozenToolPlanSnapshot
+    execution_policy_revision: BoundedText
+
+
+class ProviderFunctions(_FrozenModel):
+    kind: Literal["ProviderFunctions"] = "ProviderFunctions"
+    model_tool_plan_snapshot: Presence[FrozenToolPlanSnapshot]
+    tool_effect_mode: Presence[Literal["ReadOnly", "AdditiveWrites"]]
+    admitted_tool_scope: Presence[FrozenToolScope]
+    admitted_tool_scope_digest: Presence[Sha256]
+
+    @model_validator(mode="after")
+    def _closed_authority(self) -> Self:
+        plan = self.model_tool_plan_snapshot
+        mode = self.tool_effect_mode
+        scope = self.admitted_tool_scope
+        scope_digest = self.admitted_tool_scope_digest
+        present_count = sum(
+            isinstance(value, Present) for value in (plan, mode, scope, scope_digest)
+        )
+        if present_count not in {0, 4}:
+            raise ValueError("provider function authority must be wholly Absent or Present")
+        if (
+            isinstance(plan, Present)
+            and isinstance(mode, Present)
+            and isinstance(scope, Present)
+            and isinstance(scope_digest, Present)
+        ):
+            if scope_digest.value != tool_scope_digest(scope.value):
+                raise ValueError("admitted tool scope digest differs from its facts")
+            if (mode.value == "AdditiveWrites") != (plan.value.max_live_writes is not None):
+                raise ValueError("tool effect mode and live-write allowance disagree")
+        return self
+
+
+GenerationAuthority = Annotated[CodexShell | ProviderFunctions, Field(discriminator="kind")]
+
+
 class GenerationSpecFacts(_FrozenModel):
-    schema_version: Literal["nexus-generation-spec.v1"] = "nexus-generation-spec.v1"
+    schema_version: Literal["nexus-generation-spec.v2"] = "nexus-generation-spec.v2"
     operation: GenerationOperation
     selection: GenerationSelectionSpec
     selection_source: Literal["ChatRun", "BackgroundPolicy"]
@@ -341,10 +364,7 @@ class GenerationSpecFacts(_FrozenModel):
     display_at_dispatch: SelectionPresentation
     host_tool_plan_snapshot: Presence[FrozenHostToolPlanSnapshot]
     host_evidence_revision: Presence[BoundedText]
-    model_tool_plan_snapshot: Presence[FrozenToolPlanSnapshot]
-    tool_effect_mode: Presence[Literal["ReadOnly", "AdditiveWrites"]]
-    admitted_tool_scope: Presence[FrozenToolScope]
-    admitted_tool_scope_digest: Presence[Sha256]
+    authority: GenerationAuthority
     catalog_definition_revision: Sha256
     policy_revision: BoundedText
     backend_contract_revision: BoundedText
@@ -358,6 +378,8 @@ class GenerationSpecFacts(_FrozenModel):
         agent_revision = self.agent_definition_revision
         registry_revision = self.provider_registry_revision
         if isinstance(self.selection, CodexPersonalSelection):
+            if not isinstance(self.authority, CodexShell):
+                raise ValueError("Codex selection requires shell authority")
             if not isinstance(target, CodexDispatchTargetSnapshot):
                 raise ValueError("Codex selection lacks a Codex dispatch target")
             if self.selection.model != target.model_key:
@@ -369,6 +391,8 @@ class GenerationSpecFacts(_FrozenModel):
             if not isinstance(registry_revision, Absent):
                 raise ValueError("Codex generation carries provider registry state")
         else:
+            if not isinstance(self.authority, ProviderFunctions):
+                raise ValueError("provider selection requires function authority")
             if not isinstance(target, ProviderDispatchTargetSnapshot):
                 raise ValueError("provider selection lacks a provider dispatch target")
             if self.selection.model_ref != target.model_ref:
@@ -387,26 +411,6 @@ class GenerationSpecFacts(_FrozenModel):
             self.effective_output_budget_tokens > self.source_max_output_tokens.value
         ):
             raise ValueError("effective output budget exceeds source capacity")
-        plan = self.model_tool_plan_snapshot
-        mode = self.tool_effect_mode
-        scope = self.admitted_tool_scope
-        scope_digest = self.admitted_tool_scope_digest
-        present_count = sum(
-            isinstance(value, Present) for value in (plan, mode, scope, scope_digest)
-        )
-        if present_count not in {0, 4}:
-            raise ValueError("model-tool authority must be wholly Absent or Present")
-        if (
-            isinstance(plan, Present)
-            and isinstance(mode, Present)
-            and isinstance(scope, Present)
-            and isinstance(scope_digest, Present)
-        ):
-            if scope_digest.value != tool_scope_digest(scope.value):
-                raise ValueError("admitted tool scope digest differs from its facts")
-            max_writes = plan.value.max_live_writes
-            if (mode.value == "AdditiveWrites") != (max_writes is not None):
-                raise ValueError("tool effect mode and live-write allowance disagree")
         if isinstance(self.host_tool_plan_snapshot, Present) != isinstance(
             self.host_evidence_revision, Present
         ):
@@ -479,6 +483,7 @@ class GenerationHistory(BaseModel):
     display_at_dispatch: SelectionPresentation
     tool_effect_mode: Presence[Literal["ReadOnly", "AdditiveWrites"]]
     model_tool_plan_snapshot: Presence[ToolPlanIdentity]
+    api_plan_snapshot: Presence[ToolPlanIdentity]
 
 
 def read_generation_history(value: GenerationSpec | Mapping[str, object]) -> GenerationHistory:
@@ -487,7 +492,11 @@ def read_generation_history(value: GenerationSpec | Mapping[str, object]) -> Gen
     spec = decode_generation_spec_document(
         value if isinstance(value, GenerationSpec) else dict(value)
     )
-    plan = spec.model_tool_plan_snapshot
+    authority = spec.authority
+    plan = (
+        authority.model_tool_plan_snapshot if isinstance(authority, ProviderFunctions) else Absent()
+    )
+    api_plan = authority.api_plan if isinstance(authority, CodexShell) else None
     return GenerationHistory(
         operation=spec.operation,
         selection_source=spec.selection_source,
@@ -496,7 +505,11 @@ def read_generation_history(value: GenerationSpec | Mapping[str, object]) -> Gen
         catalog_definition_revision=spec.catalog_definition_revision,
         source_catalog_definition_revision=spec.source_catalog_definition_revision,
         display_at_dispatch=spec.display_at_dispatch,
-        tool_effect_mode=spec.tool_effect_mode,
+        tool_effect_mode=(
+            Present[Literal["ReadOnly", "AdditiveWrites"]](value="AdditiveWrites")
+            if isinstance(authority, CodexShell)
+            else authority.tool_effect_mode
+        ),
         model_tool_plan_snapshot=(
             Present(
                 value=ToolPlanIdentity(
@@ -504,6 +517,15 @@ def read_generation_history(value: GenerationSpec | Mapping[str, object]) -> Gen
                 )
             )
             if isinstance(plan, Present)
+            else Absent()
+        ),
+        api_plan_snapshot=(
+            Present(
+                value=ToolPlanIdentity(
+                    plan_id=api_plan.plan_id, plan_revision=api_plan.plan_revision
+                )
+            )
+            if api_plan is not None
             else Absent()
         ),
     )

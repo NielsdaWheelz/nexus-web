@@ -1,4 +1,4 @@
-"""DNS and TLS-SNI egress boundary for the private Codex host.
+"""DNS, HTTP, and TLS egress boundary for the private Codex host.
 
 The host lives on an internal Docker network whose only peer is this process.
 Approved names resolve to this process; its TLS listener verifies the original
@@ -19,9 +19,10 @@ from dataclasses import dataclass
 from typing import Final
 
 _PROXY_IP_ENV: Final = "NEXUS_CODEX_EGRESS_PROXY_IP"
-_MCP_HOST_ENV: Final = "NEXUS_CODEX_EGRESS_MCP_HOST"
 _DNS_PORT: Final = 53
 _TLS_PORT: Final = 443
+_HTTP_PORT: Final = 80
+_MAX_HTTP_HEADER_BYTES: Final = 16 * 1024
 _MAX_DNS_QUERY_BYTES: Final = 4_096
 _MAX_CLIENT_HELLO_BYTES: Final = 64 * 1_024
 _CLIENT_HELLO_TIMEOUT_SECONDS: Final = 5.0
@@ -51,28 +52,20 @@ class _NeedMoreData(Exception):
 @dataclass(frozen=True, slots=True)
 class EgressPolicy:
     proxy_ip: ipaddress.IPv4Address
-    mcp_host: str
 
     @classmethod
     def from_environment(cls) -> EgressPolicy:
         try:
             proxy_ip = ipaddress.IPv4Address(os.environ[_PROXY_IP_ENV])
-            mcp_host = _canonical_host(os.environ[_MCP_HOST_ENV])
         except KeyError as error:
             raise RuntimeError(f"missing required environment variable {error.args[0]}") from error
         if not any(proxy_ip in network for network in _PRIVATE_PROXY_NETWORKS):
             raise RuntimeError(f"{_PROXY_IP_ENV} must be a private unicast IPv4 address")
-        if mcp_host == "chatgpt.com" or mcp_host.endswith(".chatgpt.com"):
-            raise RuntimeError(f"{_MCP_HOST_ENV} must name the distinct Nexus MCP origin")
-        return cls(proxy_ip=proxy_ip, mcp_host=mcp_host)
+        return cls(proxy_ip=proxy_ip)
 
     def admits(self, host: str) -> bool:
-        return (
-            host == "chatgpt.com"
-            or host.endswith(".chatgpt.com")
-            or host == "auth.openai.com"
-            or host == self.mcp_host
-        )
+        _canonical_host(host)
+        return True
 
 
 def _canonical_host(value: str) -> str:
@@ -341,9 +334,10 @@ def client_hello_sni(records: bytes) -> str:
 
 async def _public_connection(
     host: str,
+    port: int = _TLS_PORT,
 ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
     loop = asyncio.get_running_loop()
-    addresses = await loop.getaddrinfo(host, _TLS_PORT, type=socket.SOCK_STREAM)
+    addresses = await loop.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     last_error: OSError | None = None
     for family, socket_type, protocol, _canonical, socket_address in addresses:
         del socket_type, protocol, _canonical
@@ -352,7 +346,7 @@ async def _public_connection(
             continue
         try:
             async with asyncio.timeout(_CONNECT_TIMEOUT_SECONDS):
-                return await asyncio.open_connection(str(address), _TLS_PORT, family=family)
+                return await asyncio.open_connection(str(address), port, family=family)
         except OSError as error:
             last_error = error
     raise OSError(f"no reachable public address for admitted host {host}") from last_error
@@ -413,6 +407,60 @@ async def _serve_tls(
         await _close_writer(writer)
 
 
+async def _serve_http(
+    reader: asyncio.StreamReader,
+    writer: asyncio.StreamWriter,
+    policy: EgressPolicy,
+    slots: asyncio.Semaphore,
+) -> None:
+    upstream_writer: asyncio.StreamWriter | None = None
+    try:
+        async with slots:
+            initial = await asyncio.wait_for(
+                reader.readuntil(b"\r\n\r\n"), timeout=_CLIENT_HELLO_TIMEOUT_SECONDS
+            )
+            if len(initial) > _MAX_HTTP_HEADER_BYTES:
+                raise PolicyError("HTTP header is oversized")
+            lines = initial.split(b"\r\n")
+            if not lines[0].endswith((b" HTTP/1.0", b" HTTP/1.1")):
+                raise PolicyError("HTTP request line is invalid")
+            hosts = [line[5:].strip() for line in lines[1:] if line.lower().startswith(b"host:")]
+            if len(hosts) != 1:
+                raise PolicyError("HTTP request needs one Host header")
+            host_value = hosts[0].decode("ascii").lower()
+            if host_value.endswith(":80"):
+                host_value = host_value[:-3]
+            host = _canonical_host(host_value)
+            if not policy.admits(host):
+                raise PolicyError("HTTP host is outside egress policy")
+            upstream_reader, upstream_writer = await _public_connection(host, _HTTP_PORT)
+            upstream_writer.write(initial)
+            await upstream_writer.drain()
+            client_to_upstream = asyncio.create_task(_relay(reader, upstream_writer))
+            upstream_to_client = asyncio.create_task(_relay(upstream_reader, writer))
+            done, pending = await asyncio.wait(
+                (client_to_upstream, upstream_to_client),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*done, *pending, return_exceptions=True)
+    except (
+        TimeoutError,
+        ConnectionError,
+        OSError,
+        PolicyError,
+        UnicodeDecodeError,
+        asyncio.LimitOverrunError,
+        asyncio.IncompleteReadError,
+    ):
+        pass
+    finally:
+        if upstream_writer is not None:
+            await _close_writer(upstream_writer)
+        await _close_writer(writer)
+
+
 async def serve(policy: EgressPolicy) -> None:
     loop = asyncio.get_running_loop()
     udp_transport, _protocol = await loop.create_datagram_endpoint(
@@ -430,15 +478,21 @@ async def serve(policy: EgressPolicy) -> None:
         "0.0.0.0",
         _TLS_PORT,
     )
+    http = await asyncio.start_server(
+        lambda reader, writer: _serve_http(reader, writer, policy, slots),
+        "0.0.0.0",
+        _HTTP_PORT,
+        limit=_MAX_HTTP_HEADER_BYTES,
+    )
     try:
-        async with dns_tcp, tls:
-            await asyncio.gather(dns_tcp.serve_forever(), tls.serve_forever())
+        async with dns_tcp, tls, http:
+            await asyncio.gather(dns_tcp.serve_forever(), tls.serve_forever(), http.serve_forever())
     finally:
         udp_transport.close()
 
 
 def health() -> None:
-    for port in (_DNS_PORT, _TLS_PORT):
+    for port in (_DNS_PORT, _HTTP_PORT, _TLS_PORT):
         with socket.create_connection(("127.0.0.1", port), timeout=1):
             pass
 

@@ -13,6 +13,7 @@ import {
   expectExactRecord,
   expectRecord,
   expectString,
+  isRecord,
 } from "@/lib/validation";
 import { createRandomId } from "@/lib/createRandomId";
 import type { AuthenticatedAccount } from "@/lib/account/contract";
@@ -45,7 +46,82 @@ export const EMPTY_DRAFT_RECORD: ChatDraftRecord = Object.freeze({
   selection: Object.freeze({ kind: "Uninitialized" }),
   operation: Object.freeze({ kind: "Absent" }),
 });
-export const CHAT_DRAFT_STORAGE_PREFIX = "nx_chat_draft.v4:";
+export const CHAT_DRAFT_STORAGE_PREFIX = "nx_chat_draft.v5:";
+const PREVIOUS_DRAFT_PREFIX = "nx_chat_draft.v4:";
+const RECOVERED_DRAFTS_PREFIX = "nx_chat_cutover_recovered_drafts.v2:";
+
+export function readRecoveredChatDrafts(
+  accountId: AuthenticatedAccount["accountId"],
+): readonly string[] {
+  const raw = window.sessionStorage.getItem(RECOVERED_DRAFTS_PREFIX + accountId);
+  if (raw === null) return [];
+  const value: unknown = JSON.parse(raw);
+  if (!Array.isArray(value) || !value.every((text) => typeof text === "string")) {
+    throw new TypeError("Recovered chat drafts have an invalid format");
+  }
+  return value;
+}
+
+export function readOtherNewChatDrafts(
+  accountId: AuthenticatedAccount["accountId"],
+  activeKey: string,
+): readonly { readonly text: string; readonly selection: SelectionDraft }[] {
+  const prefix = `${CHAT_DRAFT_STORAGE_PREFIX}${accountId}:new:`;
+  const drafts: { text: string; selection: SelectionDraft }[] = [];
+  for (let index = 0; index < window.sessionStorage.length; index += 1) {
+    const key = window.sessionStorage.key(index);
+    if (key === null || key === activeKey || !key.startsWith(prefix)) continue;
+    const raw = window.sessionStorage.getItem(key);
+    if (raw === null) continue;
+    const record = decodeChatDraftRecord(raw);
+    if (record.operation.kind === "Absent" && record.text !== "")
+      drafts.push({ text: record.text, selection: record.selection });
+  }
+  return drafts;
+}
+
+export function recoverPreviousChatDrafts(
+  accountId: AuthenticatedAccount["accountId"],
+): void {
+  const storage = window.sessionStorage;
+  const keys: string[] = [];
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (key?.startsWith(PREVIOUS_DRAFT_PREFIX)) keys.push(key);
+  }
+  for (const key of keys) {
+    const raw = storage.getItem(key);
+    if (raw === null) continue;
+    const previous = expectRecord(JSON.parse(raw), key);
+    const text = expectString(previous.text, `${key}.text`);
+    if (text === "") {
+      storage.removeItem(key);
+      continue;
+    }
+    const operation = previous.operation;
+    const command =
+      isRecord(operation) &&
+      (operation.kind === "Submitting" ||
+        operation.kind === "ReconcileRequired" ||
+        operation.kind === "Acknowledged")
+        ? operation.command
+        : null;
+    const owner =
+      isRecord(command) && isRecord(command.origin)
+        ? command.origin.accountId
+        : null;
+    if (typeof owner !== "string" || !owner.trim()) {
+      storage.removeItem(key);
+      continue;
+    }
+    if (owner !== accountId) continue;
+    storage.setItem(
+      RECOVERED_DRAFTS_PREFIX + accountId,
+      JSON.stringify([...readRecoveredChatDrafts(accountId), text]),
+    );
+    storage.removeItem(key);
+  }
+}
 const storeListeners = new Set<() => void>();
 export function subscribeChatDraftStores(listener: () => void): () => void {
   storeListeners.add(listener);
@@ -215,6 +291,37 @@ export class ChatDraftStore {
         ...record,
         selection: decodeSelectionDraft(selection),
       });
+  };
+  settleProvisionalDraft = (
+    path: ChatDraftStore,
+    accountId: AuthenticatedAccount["accountId"],
+  ): void => {
+    const source = this.getSnapshot();
+    if (
+      source.operation.kind !== "Absent" ||
+      (source.text === "" && source.selection.kind === "Uninitialized")
+    ) return;
+    const destination = path.getSnapshot();
+    if (destination.operation.kind === "Absent" && destination.text === "") {
+      path.write({
+        ...source,
+        selection: source.selection.kind === "Uninitialized"
+          ? destination.selection
+          : source.selection,
+      });
+    } else if (
+      destination.operation.kind === "Absent" &&
+      source.text === "" &&
+      source.selection.kind !== "Uninitialized"
+    ) {
+      path.write({ ...destination, selection: source.selection });
+    } else if (source.text !== "") {
+      window.sessionStorage.setItem(
+        RECOVERED_DRAFTS_PREFIX + accountId,
+        JSON.stringify([...readRecoveredChatDrafts(accountId), source.text]),
+      );
+    }
+    this.write(EMPTY_DRAFT_RECORD);
   };
   assertAccount = (accountId: AuthenticatedAccount["accountId"]): void => {
     const operation = this.getSnapshot().operation;

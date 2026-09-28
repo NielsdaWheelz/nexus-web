@@ -5,14 +5,14 @@ This document owns the production variable boundaries.
 
 ## Inputs
 
-Copy the tracked contracts to the ignored files beside them:
+Create the ignored files owner-only beside the tracked contracts:
 
 ```bash
-cp deploy/env/env-prod.example deploy/env/env-prod
-cp deploy/env/env-prod-frontend.example deploy/env/env-prod-frontend
-cp deploy/env/env-prod-backend.example deploy/env/env-prod-backend
-cp deploy/env/env-prod-worker.example deploy/env/env-prod-worker
-cp deploy/env/env-prod-backup.example deploy/env/env-prod-backup
+install -m 600 deploy/env/env-prod.example deploy/env/env-prod
+install -m 600 deploy/env/env-prod-frontend.example deploy/env/env-prod-frontend
+install -m 600 deploy/env/env-prod-backend.example deploy/env/env-prod-backend
+install -m 600 deploy/env/env-prod-worker.example deploy/env/env-prod-worker
+install -m 600 deploy/env/env-prod-backup.example deploy/env/env-prod-backup
 ```
 
 | File | Owner |

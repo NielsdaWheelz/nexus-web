@@ -77,6 +77,10 @@ services:
         condition: service_started
     expose:
       - "8000"
+    networks:
+      default: {}
+      codex_private:
+        ipv4_address: 172.30.0.4
     volumes:
       - nexus_codex_run:/run/nexus-codex:ro
     healthcheck:
@@ -116,8 +120,6 @@ services:
       DATABASE_STATEMENT_TIMEOUT_MS: "300000"
       DATABASE_IDLE_IN_TX_TIMEOUT_MS: "0"
       NEXUS_CODEX_AGENT_SOCKET: /run/nexus-codex/agent.sock
-      NEXUS_AGENT_TOOLS_MCP_LISTEN: 0.0.0.0:8001
-      NEXUS_AGENT_TOOLS_MCP_ORIGIN: https://${CADDY_SITE:?set}/internal/agent-tools/mcp
     depends_on:
       postgres:
         condition: service_healthy
@@ -127,8 +129,6 @@ services:
       # must not prevent the interactive lane from serving unrelated jobs.
       nexus-codex-agent-host:
         condition: service_started
-    expose:
-      - "8001"
     volumes:
       - nexus_codex_run:/run/nexus-codex:ro
     healthcheck:
@@ -200,7 +200,6 @@ services:
     user: "10002:10002"
     environment:
       NEXUS_CODEX_EGRESS_PROXY_IP: 172.30.0.2
-      NEXUS_CODEX_EGRESS_MCP_HOST: ${CADDY_SITE:?set}
     read_only: true
     cap_drop:
       - ALL
@@ -226,8 +225,8 @@ services:
     image: ${WORKER_IMAGE:?set an immutable candidate digest}
     # The encrypted credential filesystem is unlocked manually after reboot.
     # Never let Docker restart this container against the protected underlay.
-    # Pinned Codex 0.144.4 updates only this exact file with truncate/write;
-    # every other Codex state and temporary path remains in one per-turn tree.
+    # Only the enrolled auth file is writable; exact refresh behavior for the
+    # pinned runtime remains a live qualification gate.
     restart: "no"
     mem_reservation: 256m
     mem_limit: 448m
@@ -240,8 +239,6 @@ services:
       NEXUS_CODEX_CREDENTIAL_FILE: /run/nexus-codex-credential/auth.json
       NEXUS_CODEX_WORKING_DIRECTORY_ROOT: /run/nexus-codex-turns
       NEXUS_CODEX_AGENT_SOCKET: /run/nexus-codex/agent.sock
-      NEXUS_CODEX_MCP_ORIGIN: https://${CADDY_SITE:?set}/internal/agent-tools/mcp
-      NEXUS_CODEX_MODEL_TOOL_NETWORK_ATTESTED: "true"
     depends_on:
       codex-egress-policy:
         condition: service_healthy

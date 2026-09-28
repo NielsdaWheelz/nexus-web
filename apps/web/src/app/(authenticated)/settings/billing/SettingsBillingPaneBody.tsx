@@ -235,7 +235,7 @@ export function GenerationBillingDisclosure() {
         ))}
       </dl>
       <p className={styles.usageMeta}>
-        You select the model and reasoning level in Chat for each run.
+        You select the model and thinking setting in Chat for each run.
       </p>
     </section>
   );

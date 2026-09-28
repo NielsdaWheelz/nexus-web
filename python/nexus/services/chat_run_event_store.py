@@ -65,8 +65,8 @@ def append_and_commit(
         db.commit()
         return
     if lease_fence is not None:
-        # Chat's global effect order is run -> job. MCP admission and
-        # publication take the same order, so a streamed frame can never hold
+        # Chat's global effect order is run -> job. Tool admission and
+        # publication take the same order, so a streamed frame cannot hold
         # the job while waiting on a concurrent call that already owns the run.
         lease_fence()
     append_run_event(db, run, event_type, payload)

@@ -154,8 +154,8 @@ function conversationOperationErrorMessage(
       return {
         tone: "Warning",
         requestId: error.requestId,
-        title: "That exact model and effort are unavailable.",
-        message: "Choose a different model; nothing was substituted.",
+        title: "That model or thinking setting is unavailable.",
+        message: "Choose a current selection and try again.",
       };
     case "E_INVALID_GENERATION_SELECTION":
       return {

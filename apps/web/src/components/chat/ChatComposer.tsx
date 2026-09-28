@@ -38,16 +38,23 @@ import type { ReaderSelectionInput } from "@/lib/api/sse/requests";
 import { buildChatRunBody } from "@/lib/conversations/chatRunBody";
 import type { ChatDraftKey } from "@/lib/conversations/chatDraftKey";
 import {
+  findGenerationCandidate,
   hasSelectableCandidate,
-  readinessAction,
   type RunSelectionOut,
 } from "@/lib/conversations/generationCatalog";
-import { selectableGenerationCandidate } from "@/lib/conversations/generationSelection";
+import {
+  selectableGenerationCandidate,
+  selectionUnavailabilityMessage,
+} from "@/lib/conversations/generationSelection";
 import {
   chatAdmissionErrorMessage,
   type AcceptedChatAdmission,
 } from "@/lib/conversations/chatAdmission";
-import type { ChatSendCommand } from "@/lib/conversations/chatDraftStore";
+import {
+  readRecoveredChatDrafts,
+  readOtherNewChatDrafts,
+  type ChatSendCommand,
+} from "@/lib/conversations/chatDraftStore";
 import type { PendingTurnContext } from "@/lib/conversations/pendingTurnContext";
 import { type ReaderSelectionOut } from "@/lib/conversations/readerSelection";
 import { readerSelectionKeyToWire } from "@/lib/conversations/readerSelectionKey";
@@ -243,6 +250,26 @@ export default function ChatComposer({
     conversationId,
     view: { identity: viewIdentity, accountId },
   });
+  const recoveredDrafts = restored
+    ? [
+        ...readRecoveredChatDrafts(accountId).map((text) => ({
+          text,
+          selection: null,
+        })),
+        ...(draftKey.kind === "NewConversation"
+          ? readOtherNewChatDrafts(accountId, activeDraftKey)
+          : []),
+      ]
+    : [];
+  const [showCutoverNotice, setShowCutoverNotice] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
+  useEffect(() => {
+    if (!restored) return;
+    const key = "nx_chat_cutover_notice.v1";
+    if (window.localStorage.getItem(key) !== null) return;
+    window.localStorage.setItem(key, "shown");
+    setShowCutoverNotice(true);
+  }, [restored]);
   const [mountedAccountId] = useState(accountId);
   const sending = operation.kind === "Submitting";
   const acknowledged = operation.kind === "Acknowledged";
@@ -292,11 +319,18 @@ export default function ChatComposer({
     catalog !== null && selectableGenerationCandidate(catalog, selection) !== null;
   const noSelectablePair =
     catalog !== null && !hasSelectableCandidate(catalog);
+  const blockedState = catalog === null
+    ? null
+    : effectiveSelection === null
+      ? catalog.chat_seed.state
+      : findGenerationCandidate(catalog, effectiveSelection)?.reasoning.chat_state ?? null;
   const operatorRecovery =
-    catalog?.routes
-      .map((route) => readinessAction(route.readiness))
-      .find((action) => action !== null) ??
-    "Retry after generation availability has been restored.";
+    blockedState?.kind === "Ineligible"
+      ? blockedState.explanation
+      : blockedState?.kind === "OperatorActionRequired" ||
+          blockedState?.kind === "TemporarilyUnavailable"
+        ? `${blockedState.explanation} ${blockedState.action}`
+        : "Retry after generation availability has been restored.";
 
   useEffect(() => {
     if (
@@ -307,6 +341,7 @@ export default function ChatComposer({
       operation.kind !== "Absent" ||
       selection.kind !== "Uninitialized"
     ) return;
+    if (store.getSnapshot().selection.kind !== "Uninitialized") return;
     setSelection({
       kind: "Selected",
       selection: inheritedRunSelection?.selection ?? catalog.chat_seed.selection,
@@ -319,6 +354,7 @@ export default function ChatComposer({
     selection,
     sendCapability.kind,
     setSelection,
+    store,
   ]);
 
   useEffect(() => {
@@ -691,6 +727,68 @@ export default function ChatComposer({
         <span className="sr-only" aria-live="polite">
           {sendCapabilityMessage(sendCapability)}
         </span>
+        {showCutoverNotice ? (
+          <p className={styles.composerWarning} role="status">
+            chat history was cleared for the model update. your library, media and notes are unchanged.
+          </p>
+        ) : null}
+        {recoveredDrafts.length > 0 ? (
+          <details className={styles.recoveredDrafts}>
+            <summary>saved unsent drafts ({recoveredDrafts.length})</summary>
+            <p>copy any text you want to reuse.</p>
+            <ol>
+              {recoveredDrafts.map((draft, index) => (
+                <li key={index}>
+                  <Textarea
+                    aria-label={`recovered unsent draft ${index + 1}`}
+                    readOnly
+                    rows={3}
+                    value={draft.text}
+                    onFocus={(event) => event.currentTarget.select()}
+                  />
+                  {draft.selection?.kind === "Selected" ? (
+                    <p>
+                      saved choice: {draft.selection.selection.route === "CodexPersonal"
+                        ? draft.selection.selection.model
+                        : draft.selection.selection.model_ref} · {draft.selection.selection.reasoning}
+                    </p>
+                  ) : null}
+                  {draft.selection !== null ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={content !== "" || operation.kind !== "Absent" || recoveryConflict}
+                      onClick={() => {
+                        const current = store.getSnapshot();
+                        if (current.operation.kind !== "Absent" || current.text !== "") return;
+                        setContent(draft.text);
+                        setSelection(draft.selection);
+                        setCopyStatus(`draft ${index + 1} restored here`);
+                      }}
+                    >
+                      use draft here
+                    </Button>
+                  ) : null}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(draft.text);
+                        setCopyStatus(`draft ${index + 1} copied`);
+                      } catch {
+                        setCopyStatus("copy failed. select the text and copy it manually.");
+                      }
+                    }}
+                  >
+                    copy draft {index + 1}
+                  </Button>
+                </li>
+              ))}
+            </ol>
+            {copyStatus !== null ? <p role="status">{copyStatus}</p> : null}
+          </details>
+        ) : null}
         {error ? (
           <div className={styles.composerError}>
             <FeedbackNotice content={error} announcement="Assertive" />
@@ -879,13 +977,12 @@ export default function ChatComposer({
           </div>
         ) : noSelectablePair ? (
           <div className={styles.composerWarning} role="status" aria-live="polite">
-            No model and effort pair is currently available for chat. {operatorRecovery}{" "}
+            No model and thinking setting is currently available for chat. {operatorRecovery}{" "}
             <button type="button" onClick={retryCatalog}>Retry</button>
           </div>
         ) : effectiveSelection !== null && !selectionIsSelectable && catalog !== null ? (
           <div className={styles.composerWarning} role="status">
-            The exact selection is unavailable. Choose a replacement; nothing
-            was substituted.
+            {selectionUnavailabilityMessage(catalog, effectiveSelection)}
           </div>
         ) : null}
       </div>

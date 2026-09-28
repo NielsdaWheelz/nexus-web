@@ -24,18 +24,19 @@ from provider_runtime.types import (
     Cancelled as ProviderCancelled,
 )
 from provider_runtime.types import (
-    Failed as ProviderFailed,
-)
-from provider_runtime.types import (
-    Incomplete as ProviderIncomplete,
-)
-from provider_runtime.types import (
+    ContinuationTooLarge,
     InvalidStructuredOutput,
     InvalidToolArguments,
     ProviderContextTooLarge,
     TextContent,
     TokenUsage,
     TransientExhausted,
+)
+from provider_runtime.types import (
+    Failed as ProviderFailed,
+)
+from provider_runtime.types import (
+    Incomplete as ProviderIncomplete,
 )
 from provider_runtime.types import (
     Present as RuntimePresent,
@@ -216,7 +217,14 @@ class ChatStepRuntime:
             request_fingerprint=present(fingerprint),
             terminal_result=absent(),
         )
-        self._write(payload_with_step_state(self.job.payload, step_path=path, state=state))
+        job = self.lock_dispatch(self.db)
+        if job is None:
+            self.db.rollback()
+            raise LostChatJobLease(f"chat job {self.job.id} lost its lease")
+        if path in read_step_states(job):
+            self.db.rollback()
+            raise AssertionError(f"chat step {path!r} was already prepared")
+        self._write(payload_with_step_state(job.payload, step_path=path, state=state))
         return state
 
     def clear(self) -> None:
@@ -295,8 +303,8 @@ async def _execute(
         return None
     spec, intent = _frozen_admission(db, run=run, job=steps.job)
     operation = steps.llm_runtime.admission.model_tool_operation(spec)
-    if operation is None:
-        raise AssertionError("Chat GenerationSpec is missing its model-tool plan")
+    if isinstance(spec.selection, ProviderApiSelection) and operation is None:
+        raise AssertionError("provider Chat GenerationSpec is missing its model-tool plan")
 
     mark_running(db, run.id)
     run = db.get(ChatRun, run_id)
@@ -525,7 +533,7 @@ async def _dispatch_generation(
     generation_id: UUID,
     spec: GenerationSpec,
     intent: GenerationIntent,
-    operation: FrozenToolOperation,
+    operation: FrozenToolOperation | None,
     session_factory: sessionmaker[Session],
     emitter: ChatRunEventEmitter,
 ) -> AssistantTurn | ExpectedFailure | CancelledGeneration | RescheduleRequested:
@@ -569,11 +577,10 @@ async def _dispatch_generation(
     if is_cancel_requested(db, run.id):
         cancel_signal.set()
     cancel_watcher: asyncio.Task[None] | None = None
-    codex_binding = None
 
     # First dispatch commits through the prepare step, while a Prepared capacity
     # replay arrives with the post-mark-running read transaction still active.
-    # Close both shapes before health, UDS, or MCP I/O begins.
+    # Close both shapes before health or UDS I/O begins.
     db.commit()
 
     def encode_terminal(
@@ -610,25 +617,9 @@ async def _dispatch_generation(
         return encode_terminal(terminal, host_cancelled=host_cancelled)
 
     tool_executor = None
-    admission_binder = None
-    before_terminal = None
-    if isinstance(spec.selection, CodexPersonalSelection):
-        from nexus.services.agent_tools_mcp import CodexGenerationToolBinding
-
-        codex_binding = CodexGenerationToolBinding(
-            session_factory=session_factory,
-            user_id=run.owner_user_id,
-            owner=LlmCallOwner(kind="chat_run", id=run.id),
-            generation_id=generation_id,
-            job_context=steps.execution_context,
-            operation=operation,
-            spec=spec,
-            intent=intent,
-            projection=projection,
-        )
-        admission_binder = codex_binding.bind_admission
-        before_terminal = codex_binding.wait_until_idle
-    elif isinstance(spec.selection, ProviderApiSelection):
+    if isinstance(spec.selection, ProviderApiSelection):
+        if operation is None:
+            raise AssertionError("provider Chat tool operation disappeared after admission")
         tool_executor = DeferredGenerationToolExecutor(
             session_factory=session_factory,
             user_id=run.owner_user_id,
@@ -638,7 +629,7 @@ async def _dispatch_generation(
             operation=operation,
             projection=projection,
         )
-    else:
+    elif not isinstance(spec.selection, CodexPersonalSelection):
         assert_never(spec.selection)
 
     try:
@@ -648,6 +639,7 @@ async def _dispatch_generation(
         result = await execute_generation(
             GenerationExecutionRequest(
                 owner=LlmCallOwner(kind="chat_run", id=run.id),
+                user_id=run.owner_user_id,
                 generation_id=generation_id,
                 spec=spec,
                 intent=intent,
@@ -656,14 +648,12 @@ async def _dispatch_generation(
                     step_path=_GENERATION_STEP,
                     lock_dispatch=steps.lock_dispatch,
                 ),
-                bind_admission=admission_binder,
                 tool_executor=tool_executor,
             ),
             session_factory=session_factory,
             runtime=steps.llm_runtime,
             observe_event=observe,
             cancel_signal=cancel_signal,
-            before_terminal=before_terminal,
             resolve_terminal=resolve_terminal,
             encode_terminal=encode_terminal,
             encode_failure=lambda code, _detail: _encode_failure(
@@ -678,14 +668,10 @@ async def _dispatch_generation(
         try:
             await text_coalescer.flush()
         finally:
-            try:
-                if cancel_watcher is not None:
-                    cancel_watcher.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await cancel_watcher
-            finally:
-                if codex_binding is not None:
-                    await codex_binding.drain_and_close()
+            if cancel_watcher is not None:
+                cancel_watcher.cancel()
+                with suppress(asyncio.CancelledError):
+                    await cancel_watcher
 
     if isinstance(result, RescheduleRequested):
         return result
@@ -860,6 +846,8 @@ def _provider_failure_code(outcome: ProviderIncomplete | ProviderFailed) -> str:
     failure = outcome.failure
     if isinstance(failure, ProviderContextTooLarge):
         return "context_too_large"
+    if isinstance(failure, ContinuationTooLarge):
+        return "output_limit"
     if isinstance(failure, InvalidStructuredOutput | InvalidToolArguments):
         return "invalid_output"
     if isinstance(failure, TransientExhausted):

@@ -24,3 +24,65 @@
   color: var(--ink-muted);
   font-size: var(--text-sm);
 }
+
+.effectsList,
+.effectRefs {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.effectsList {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.effect {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+  padding-block: var(--space-3);
+  border-bottom: 1px solid var(--edge-subtle);
+  min-width: 0;
+}
+
+.effectHeading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.effectHeading time,
+.effectStatus,
+.effectProvenance,
+.effectRefs {
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.effectHeading time {
+  margin-inline-start: auto;
+}
+
+.effectStatus,
+.effectProvenance {
+  margin: 0;
+}
+
+.effectProvenance {
+  overflow-wrap: anywhere;
+}
+
+.effectRefs {
+  display: grid;
+  gap: var(--space-1);
+  overflow-wrap: anywhere;
+}
+
+.effectsError {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--text-sm);
+}

@@ -33,8 +33,8 @@ Primary owners:
 - `codex_generation_*`: private Codex transport adapter;
 - `provider_generation_*`: ProviderRuntime adapter and continuation loop;
 - `llm_execution.py` and `llm_ledger.py`: parent/child/tool lifecycle and replay;
-- `tool_authority.py`, `tool_runtime/`, and `agent_tools_mcp.py`: one canonical
-  tool executor with API-function and Codex-MCP adapters;
+- `tool_authority.py` and `tool_runtime/`: the canonical Provider API tool
+  executor and frozen authority;
 - `apps/codex_agent/`: isolated subscription-backed Codex host.
 
 queue ownership is documented in [jobs.md](jobs.md).
@@ -59,7 +59,7 @@ CodexPersonalSelection(model_key, reasoning_key)
 The tag prevents same-named models on different routes from aliasing. The
 browser submits the exact selection plus the catalog-definition revision and
 never submits dispatch strings, credentials, capabilities, defaults, or
-fallback order. The developer-owned Codex Personal / GPT-5.6 Terra / medium
+fallback order. The developer-owned Codex Personal / GPT-6 Sol / medium
 seed initializes a new composer only; it is not a saved user preference and
 does not override a causal or explicit per-run selection.
 
@@ -91,15 +91,14 @@ only the five Nexus reads over their exact frozen evidence scope. metadata
 enrichment publishes `web.search`, `web.read`, `nexus.document.search`, and
 `nexus.resource.read` through `MetadataRead`. no background plan grants a
 write. the remaining background operations publish no model-tool
-schema or MCP configuration. Idea host research remains a separate bounded,
+schema. Idea host research remains a separate bounded,
 durable three-search preparation plan.
 
-Codex MCP observations and Provider API function proposals reach the same
-canonical `GenerationToolExecutor`, authority checks, receipts, evidence,
-citations, trust, and Undo. The sole tool-position grammar is
+Provider API function proposals reach the canonical `GenerationToolExecutor`,
+authority checks, receipts, evidence, citations, trust, and Undo. The sole tool-position grammar is
 `generation/{generation_seq}/tool/{n}`, with a one-based ordinal monotonic
 across the parent generation. An API model/tool/model loop never restarts it at
-a child call; Codex uses the same grammar inside its native child.
+a child call. Codex admits no model tools.
 
 Untrusted tool arguments or output cannot widen the frozen plan, principal,
 scope, limits, or effect authority. There is no tool-shaped text parser,
@@ -107,24 +106,38 @@ provider-native Web search, alternate executor, or transport fallback.
 
 ## Backend composition
 
-Codex Personal uses one private UDS command/NDJSON stream. The adapter binds the
-catalog-validated native model key before dispatch and supplies MCP only for a
-present frozen model-tool plan. The host has no database credential,
-application secret, generation API key, product data mount, or TCP listener. It
-owns one private per-turn root and deletes it after the pinned runtime closes.
+implementation status: the following describes the current text-only codex
+runtime. the approved replacement is the [subscription shell plan](../codex-shell-cutover-plan.md):
+disposable execution and a private generation api. its implementation and
+qualification are pending; the current rejection remains until then.
 
-The private authenticated MCP mount is exactly
-`/internal/agent-tools/mcp`, `mcp==2.1.0`, protocol `2025-06-18`. It is
-stateless and JSON-response only. Every Codex tool-bearing generation receives
-a short-lived bearer bound to its generation, attempt, worker lease, frozen
-plan, scope, budgets, and effect mode. The mount publishes only that plan and
-creates no public MCP principal or general client surface.
+Codex Personal uses one private UDS command/NDJSON stream. The adapter binds the
+catalog-validated native model key before dispatch and supplies no model tools.
+Frozen tool-bearing Codex specs fail before host slot admission. Empty native execution
+environments remove shell and patch before effects; the host rejects unexpected
+native events. Full Linux and browser-to-worker qualification remains open.
+The host has no database credential,
+application secret, generation API key, product data mount, or TCP listener. It
+owns one private per-generation root and native app-server process group, and
+deletes them only after the pinned runtime exits. It launches the exact
+`openai-codex-cli-bin==0.157.1` executable over a private Unix socket and
+checks the running version before admission.
+
+The Codex catalog records the library's frozen-MCP capability as a source fact,
+but Nexus does not project it into tool-bearing route capabilities. Pinned
+Codex exposes additional resource helpers whenever MCP is present, so the
+current host cannot enforce the exact frozen model-visible tool set. The
+tool-bearing Codex Chat seed and three background policies remain ineligible;
+startup fails for the background policies until the approved shell runtime
+is implemented and qualified. see the [runtime ticket](../tickets/codex-shell-runtime-unqualified.md).
 
 Provider API execution uses `ProviderRuntime` with the selected configured
 credential. Each independently accepted provider call is a child model turn.
 Tool proposals are executed only after durable admission; the sealed,
 target-bound continuation advances only after the child terminal and tool
-result are persisted. Unsupported strict-output-plus-tool combinations are
+result are persisted. Nexus stores the library's complete opaque native
+continuation rather than reconstructing assistant text or provider history.
+Unsupported strict-output-plus-tool combinations are
 ineligible at catalog qualification rather than silently losing strictness or
 tools.
 
@@ -137,7 +150,7 @@ state.
 One parent generation row records the frozen spec and terminal truth. One child
 row records each independently accepted model call: normally one for Codex and
 one per ProviderRuntime call in an API tool loop. Tool positions and their
-effect receipts are separate durable children. Credentials, MCP bearers, raw
+effect receipts are separate durable children. Credentials, raw
 prompts, and decrypted continuation bytes never enter catalog, history,
 evidence, or logs.
 

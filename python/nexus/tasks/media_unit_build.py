@@ -286,6 +286,7 @@ async def _build(
     try:
         request = await admit_job_generation(
             owner=owner,
+            user_id=owner_user_id,
             generation_id=step_journal.stable_generation_id(
                 head.media_id, f"{head.content_fingerprint}:{_STEP_PATH}"
             ),

@@ -16,7 +16,7 @@ one immutable `GenerationSpec` through `GenerationService`, folds route-neutral
 events, and finalizes the answer. The cohesive services it composes each have one owner:
 `chat_run_citations` (candidate numbering, attached/read evidence, final
 canonical publication, `citation_index`), `chat_run_tools` (`message_tool_calls`
-lifecycle + numbered tool-output rendering + Codex tool-event binding), and the
+lifecycle + numbered Provider API tool-output rendering), and the
 `ChatRunEventEmitter` in `chat_run_event_store` — the single durable run-event
 append owner (typed streaming methods commit inline for SSE visibility; batch
 tool-result/citation/context events defer to the executor's transaction). The
@@ -46,10 +46,10 @@ authority. owner scope, eight-live-write limit, receipts, and undo remain
 enforced. historical read-only runs retain their frozen facts.
 canonical ids are the only executable identities.
 
-Codex observes the frozen plan through the authenticated MCP mount; API models
-receive the same plan as provider functions. Both adapters call the same
-`GenerationToolExecutor`, authorization, position ledger, evidence, citations,
-trust, and Undo. The sole position path is
+API models receive the frozen plan as provider functions and call the
+`GenerationToolExecutor` with its authorization, position ledger, evidence,
+citations, trust, and Undo. Codex admits no model tools, so its Chat seed is
+ineligible until an approved route or native-authority change. The sole position path is
 `generation/{generation_seq}/tool/{n}`; the one-based ordinal never restarts at
 an API child turn.
 

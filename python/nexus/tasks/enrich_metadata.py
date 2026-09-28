@@ -35,7 +35,6 @@ from nexus.jobs.queue import (
 from nexus.logging import get_logger
 from nexus.schemas.presence import Present, present
 from nexus.services import durable_step_journal as step_journal
-from nexus.services.agent_tools_mcp import CodexGenerationToolBinding
 from nexus.services.codex_generation_contract import (
     GenerationTerminal,
     normalized_failure,
@@ -48,9 +47,7 @@ from nexus.services.collection_revisions import (
 from nexus.services.contributor_writes import MediaTarget
 from nexus.services.contributors import apply_observed_role_slices_in_current_transaction
 from nexus.services.durable_step_journal import Completed, Prepared, StepReplayState, Uncertain
-from nexus.services.generation_backend import BackendToolExecutor, CodexAdmissionBinder
 from nexus.services.generation_spec import (
-    FrozenToolScope,
     GenerationIntent,
     GenerationSpec,
     ImmutablePromptPayloadRef,
@@ -87,7 +84,6 @@ from nexus.services.reader_publication import (
     lock_publication_generation,
     read_publication_generation,
 )
-from nexus.services.tool_authority import DeferredGenerationToolExecutor
 from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
 logger = get_logger(__name__)
@@ -223,73 +219,33 @@ def enrich_metadata(
         from nexus.services import generation_policy
 
         nonlocal request_fingerprint
-        binding: CodexGenerationToolBinding | None = None
-
-        def bind_codex(spec: GenerationSpec) -> CodexAdmissionBinder:
-            nonlocal binding
-            operation = runtime.admission.model_tool_operation(spec)
-            if operation is None:
-                raise AssertionError("metadata lost its frozen tool operation")
-            binding = CodexGenerationToolBinding(
-                session_factory=factory,
-                user_id=requester_user_id,
-                owner=owner,
-                generation_id=generation_id,
-                job_context=context,
-                operation=operation,
-                spec=spec,
-                intent=intent,
-            )
-            return binding.bind_admission
-
-        def provider_executor(spec: GenerationSpec) -> BackendToolExecutor:
-            operation = runtime.admission.model_tool_operation(spec)
-            if operation is None:
-                raise AssertionError("metadata lost its frozen tool operation")
-            return DeferredGenerationToolExecutor(
-                session_factory=factory,
-                user_id=requester_user_id,
-                owner=owner,
-                generation_id=generation_id,
-                job_context=context,
-                operation=operation,
-            )
 
         revision = generation_policy.operation_revision("metadata_enrichment")
-        try:
-            request = await admit_job_generation(
-                owner=owner,
-                generation_id=generation_id,
-                operation="metadata_enrichment",
-                intent=intent,
-                prompt_template_revision=revision,
-                prompt_payload_ref=ImmutablePromptPayloadRef(
-                    owner_kind="media_enrichment",
-                    owner_id=str(media_uuid),
-                    revision=revision,
-                    payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
-                ),
-                journal=journal,
-                session_factory=factory,
-                runtime=runtime,
-                scope=FrozenToolScope(admitted_refs=(f"media:{media_uuid}",), predicates=()),
-                bind_admission_factory=bind_codex,
-                tool_executor_factory=provider_executor,
-            )
-            request_fingerprint = request.spec.fingerprint
-            return await execute_generation(
-                request,
-                session_factory=factory,
-                runtime=runtime,
-                encode_terminal=lambda terminal: _encode_terminal(
-                    codex_terminal_evidence(terminal)
-                ),
-                encode_failure=_encode_failure,
-                before_terminal=binding.wait_until_idle if binding is not None else None,
-            )
-        finally:
-            if binding is not None:
-                await binding.drain_and_close()
+        request = await admit_job_generation(
+            owner=owner,
+            user_id=requester_user_id,
+            generation_id=generation_id,
+            operation="metadata_enrichment",
+            intent=intent,
+            prompt_template_revision=revision,
+            prompt_payload_ref=ImmutablePromptPayloadRef(
+                owner_kind="media_enrichment",
+                owner_id=str(media_uuid),
+                revision=revision,
+                payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
+            ),
+            journal=journal,
+            session_factory=factory,
+            runtime=runtime,
+        )
+        request_fingerprint = request.spec.fingerprint
+        return await execute_generation(
+            request,
+            session_factory=factory,
+            runtime=runtime,
+            encode_terminal=lambda terminal: _encode_terminal(codex_terminal_evidence(terminal)),
+            encode_failure=_encode_failure,
+        )
 
     try:
         result = run_llm_task(_TASK, execute)

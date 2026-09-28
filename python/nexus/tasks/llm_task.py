@@ -52,15 +52,16 @@ def run_llm_task[R](
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
             trust_env=False,
         ) as http_client:
+            tools = compose_tool_runtime(
+                compose_configured_web_search_provider(http_client, settings=settings)
+            )
             return await handler(
                 db,
                 compose_generation_execution_runtime(
                     settings,
                     http_client=http_client,
-                    catalog=build_generation_catalog_service(settings),
-                    tools=compose_tool_runtime(
-                        compose_configured_web_search_provider(http_client, settings=settings)
-                    ),
+                    catalog=build_generation_catalog_service(settings, tool_runtime=tools),
+                    tools=tools,
                 ),
             )
 

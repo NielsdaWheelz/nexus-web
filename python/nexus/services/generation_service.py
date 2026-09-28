@@ -6,27 +6,32 @@ import hashlib
 from dataclasses import dataclass
 from typing import Literal
 
-from llm_tools import Available
-
 from nexus.schemas.llm import Ready
 from nexus.schemas.presence import Absent, Presence, Present
+from nexus.services.agent_api import GENERATION_API_CONTRACT_REVISION
+from nexus.services.codex_generation_health_contract import EXECUTION_POLICY_REVISION
 from nexus.services.generation_admission import (
     GenerationConfigurationDefect,
     GenerationOperationUnavailable,
 )
-from nexus.services.generation_catalog import GenerationCatalogService, ResolvedCatalogPair
+from nexus.services.generation_catalog import (
+    GenerationCatalogService,
+    ResolvedCatalogPair,
+    workflow_transport_capability,
+)
 from nexus.services.generation_policy import (
     EffectMode,
     ExactHostToolPlan,
     ExactModelTools,
     GenerationPolicy,
     NoHostToolPlan,
-    NoModelTools,
     OperationWorkflowSpec,
 )
 from nexus.services.generation_spec import (
     BackgroundOperationKey,
     CodexDispatchTargetSnapshot,
+    CodexPersonalSelection,
+    CodexShell,
     FrozenHostToolPlanSnapshot,
     FrozenToolScope,
     GenerationIntent,
@@ -35,6 +40,7 @@ from nexus.services.generation_spec import (
     GenerationSpecFacts,
     ImmutablePromptPayloadRef,
     JsonSchemaOutput,
+    ProviderFunctions,
     StrictJsonOutputSnapshot,
     TextOutput,
     TextOutputSnapshot,
@@ -45,6 +51,9 @@ from nexus.services.tool_runtime.catalog import (
     ComposedToolRuntime,
     FrozenToolOperation,
     freeze_tool_plan_snapshot,
+    required_agent_api_operation,
+    required_tool_operation,
+    unavailable_tool_ids,
 )
 
 
@@ -84,9 +93,27 @@ class GenerationService:
         if len(catalog_definition_revision) != 64:
             raise ValueError("Chat catalog definition revision must be SHA-256")
         workflow = self._policy.chat.workflow
+        is_codex = isinstance(pair.selection, CodexPersonalSelection)
         policy = workflow.model_tool_policy
-        if not isinstance(policy, ExactModelTools):
-            raise GenerationConfigurationDefect("Chat workflow lacks its exact model-tool plan")
+        provider_tools = None
+        if not is_codex:
+            if not isinstance(policy, ExactModelTools):
+                raise GenerationConfigurationDefect(
+                    "provider Chat workflow lacks its exact model-tool plan"
+                )
+            provider_tools = ModelToolAdmission(
+                operation=self._required_tool_operation(
+                    plan_id=policy.plan_id,
+                    authority_revision=policy.authority_revision,
+                    owner="chat",
+                ),
+                effect_mode=policy.effect_mode,
+                scope=scope,
+            )
+        if "TextWithTools" not in pair.capabilities:
+            raise GenerationOperationUnavailable(
+                "chat", "text with frozen model tools is unavailable"
+            )
         return _freeze_spec(
             operation="chat",
             selection_source="ChatRun",
@@ -99,15 +126,8 @@ class GenerationService:
             prompt_payload_ref=prompt_payload_ref,
             host_plan=None,
             host_evidence_revision=None,
-            model_tools=ModelToolAdmission(
-                operation=self._required_tool_operation(
-                    plan_id=policy.plan_id,
-                    authority_revision=policy.authority_revision,
-                    owner="chat",
-                ),
-                effect_mode=policy.effect_mode,
-                scope=scope,
-            ),
+            codex_api=self._codex_api() if is_codex else None,
+            model_tools=provider_tools,
         )
 
     async def freeze_background(
@@ -117,7 +137,6 @@ class GenerationService:
         intent: GenerationIntent,
         prompt_template_revision: str,
         prompt_payload_ref: ImmutablePromptPayloadRef,
-        scope: FrozenToolScope | None = None,
         host_plan: FrozenHostToolPlanSnapshot | None = None,
         host_evidence_revision: str | None = None,
     ) -> GenerationSpec:
@@ -130,6 +149,14 @@ class GenerationService:
             )
         if not isinstance(pair.readiness, Ready):
             raise GenerationOperationUnavailable(operation, pair.readiness)
+        if not isinstance(pair.selection, CodexPersonalSelection):
+            raise GenerationConfigurationDefect(
+                f"background operation {operation!r} must use Codex Personal"
+            )
+        if workflow_transport_capability(entry.workflow, codex_shell=True) not in pair.capabilities:
+            raise GenerationOperationUnavailable(
+                operation, "required model output mode is unavailable"
+            )
         _validate_host_policy(entry.workflow, host_plan, host_evidence_revision)
         return _freeze_spec(
             operation=operation,
@@ -143,7 +170,8 @@ class GenerationService:
             prompt_payload_ref=prompt_payload_ref,
             host_plan=host_plan,
             host_evidence_revision=host_evidence_revision,
-            model_tools=self._background_tool_admission(operation, entry.workflow, scope),
+            codex_api=self._codex_api(),
+            model_tools=None,
         )
 
     async def require_dispatch_ready(self, spec: GenerationSpec) -> None:
@@ -177,14 +205,42 @@ class GenerationService:
             )
         if not isinstance(pair.readiness, Ready):
             raise GenerationOperationUnavailable(spec.operation, pair.readiness)
-        operation = self.model_tool_operation(spec)
-        if operation is not None:
-            _require_available_bindings(operation, owner=spec.operation)
+        authority = spec.authority
+        has_tools = isinstance(authority, CodexShell) or isinstance(
+            authority.model_tool_plan_snapshot, Present
+        )
+        required_mode = (
+            "StructuredWithTools"
+            if isinstance(spec.output_contract, StrictJsonOutputSnapshot) and has_tools
+            else "StrictStructured"
+            if isinstance(spec.output_contract, StrictJsonOutputSnapshot)
+            else "TextWithTools"
+            if has_tools
+            else "Text"
+        )
+        if required_mode not in pair.capabilities:
+            raise GenerationOperationUnavailable(
+                spec.operation, "required model output mode is unavailable"
+            )
+        if isinstance(authority, CodexShell):
+            operation = self._codex_api()
+            if (
+                authority.api_plan != freeze_tool_plan_snapshot(operation)
+                or authority.api_contract_revision != GENERATION_API_CONTRACT_REVISION
+                or authority.execution_policy_revision != EXECUTION_POLICY_REVISION
+            ):
+                raise GenerationConfigurationDefect("frozen codex shell authority changed")
+        else:
+            operation = self.model_tool_operation(spec)
+            if operation is not None:
+                _require_available_bindings(operation, owner=spec.operation)
 
     def model_tool_operation(self, spec: GenerationSpec) -> FrozenToolOperation | None:
         """Resolve executable authority only from the already-frozen plan snapshot."""
 
-        snapshot = spec.model_tool_plan_snapshot
+        if not isinstance(spec.authority, ProviderFunctions):
+            return None
+        snapshot = spec.authority.model_tool_plan_snapshot
         if isinstance(snapshot, Absent):
             return None
         operation = self._tools.operations.get(snapshot.value.plan_id)
@@ -194,48 +250,27 @@ class GenerationService:
             )
         return operation
 
-    def _background_tool_admission(
-        self,
-        operation: BackgroundOperationKey,
-        workflow: OperationWorkflowSpec,
-        scope: FrozenToolScope | None,
-    ) -> ModelToolAdmission | None:
-        policy = workflow.model_tool_policy
-        if isinstance(policy, NoModelTools):
-            if scope is not None:
-                raise ValueError("NoModelTools background admission received a tool scope")
-            return None
-        if scope is None:
-            raise ValueError("ExactModelTools background admission requires a frozen scope")
-        return ModelToolAdmission(
-            operation=self._required_tool_operation(
-                plan_id=policy.plan_id,
-                authority_revision=policy.authority_revision,
-                owner=operation,
-            ),
-            effect_mode=policy.effect_mode,
-            scope=scope,
-        )
+    def _codex_api(self) -> FrozenToolOperation:
+        try:
+            return required_agent_api_operation(self._tools)
+        except ValueError as error:
+            raise GenerationConfigurationDefect(str(error)) from error
 
     def _required_tool_operation(
         self, *, plan_id: str, authority_revision: str, owner: str
     ) -> FrozenToolOperation:
         try:
-            operation = self._tools.operations[plan_id]
-        except KeyError as error:
-            raise GenerationConfigurationDefect(f"unknown model-tool plan {plan_id!r}") from error
-        if operation.definition.authority_revision != authority_revision:
-            raise GenerationConfigurationDefect(f"model-tool plan {plan_id!r} authority drifted")
+            operation = required_tool_operation(
+                self._tools, plan_id=plan_id, authority_revision=authority_revision
+            )
+        except ValueError as error:
+            raise GenerationConfigurationDefect(str(error)) from error
         _require_available_bindings(operation, owner=owner)
         return operation
 
 
 def _require_available_bindings(operation: FrozenToolOperation, *, owner: str) -> None:
-    unavailable = tuple(
-        str(grant.id)
-        for grant in operation.profile.ordered_grants
-        if not isinstance(operation.plan.catalog_view.binding(grant.id).execute, Available)
-    )
+    unavailable = unavailable_tool_ids(operation)
     if unavailable:
         raise GenerationOperationUnavailable(owner, {"unavailable_tools": unavailable})
 
@@ -276,6 +311,7 @@ def _freeze_spec(
     prompt_payload_ref: ImmutablePromptPayloadRef,
     host_plan: FrozenHostToolPlanSnapshot | None,
     host_evidence_revision: str | None,
+    codex_api: FrozenToolOperation | None,
     model_tools: ModelToolAdmission | None,
 ) -> GenerationSpec:
     validate_intent_bounds(
@@ -321,19 +357,35 @@ def _freeze_spec(
         host_evidence_revision=(
             Absent() if host_evidence_revision is None else Present(value=host_evidence_revision)
         ),
-        model_tool_plan_snapshot=(
-            Absent()
-            if model_tools is None
-            else Present(value=freeze_tool_plan_snapshot(model_tools.operation))
-        ),
-        tool_effect_mode=(
-            Absent() if model_tools is None else Present[EffectMode](value=model_tools.effect_mode)
-        ),
-        admitted_tool_scope=(Absent() if model_tools is None else Present(value=model_tools.scope)),
-        admitted_tool_scope_digest=(
-            Absent()
-            if model_tools is None
-            else Present(value=generation_fact_digest(model_tools.scope.model_dump(mode="json")))
+        authority=(
+            CodexShell(
+                api_contract_revision=GENERATION_API_CONTRACT_REVISION,
+                api_plan=freeze_tool_plan_snapshot(codex_api),
+                execution_policy_revision=EXECUTION_POLICY_REVISION,
+            )
+            if codex_api is not None
+            else ProviderFunctions(
+                model_tool_plan_snapshot=(
+                    Absent()
+                    if model_tools is None
+                    else Present(value=freeze_tool_plan_snapshot(model_tools.operation))
+                ),
+                tool_effect_mode=(
+                    Absent()
+                    if model_tools is None
+                    else Present[EffectMode](value=model_tools.effect_mode)
+                ),
+                admitted_tool_scope=(
+                    Absent() if model_tools is None else Present(value=model_tools.scope)
+                ),
+                admitted_tool_scope_digest=(
+                    Absent()
+                    if model_tools is None
+                    else Present(
+                        value=generation_fact_digest(model_tools.scope.model_dump(mode="json"))
+                    )
+                ),
+            )
         ),
         catalog_definition_revision=catalog_definition_revision,
         policy_revision=policy_revision,

@@ -16,6 +16,7 @@ from llm_tools import (
     EffectId,
     ExecutionContext,
     ExecutorConfigurationDefect,
+    HttpApi,
     InvocationPosition,
     ParsedJson,
     PlanCatalogView,
@@ -44,7 +45,9 @@ from nexus.jobs.queue import JobExecutionContext, JobRow, get_job, lock_running_
 from nexus.schemas.presence import Present
 from nexus.services.durable_step_journal import stable_generation_id
 from nexus.services.generation_spec import (
+    CodexShell,
     GenerationSpec,
+    ProviderFunctions,
     generation_fact_digest,
 )
 from nexus.services.llm_ledger import (
@@ -54,22 +57,20 @@ from nexus.services.llm_ledger import (
 )
 from nexus.services.retrieval_citation import RetrievalCitation
 from nexus.services.tool_runtime.catalog import FrozenToolOperation, freeze_tool_plan_snapshot
+from nexus.services.tool_runtime.snapshots import FrozenToolPlanSnapshot
 
 if TYPE_CHECKING:
-    from nexus.services.artifacts.generation import DossierToolExecutionProjection
     from nexus.services.generation_backend import (
         BackendToolExecutionRequest,
         BackendToolExecutionResult,
     )
     from nexus.services.tool_runtime.chat_projection import ChatToolExecutionProjection
 
-# A runtime import of either owner cycles back through this module; both are
-# concrete classes, so the union stays exhaustive under pyright.
-type ToolExecutionProjection = ChatToolExecutionProjection | DossierToolExecutionProjection
+type ToolExecutionProjection = ChatToolExecutionProjection
 
 type ToolEffectMode = Literal["ReadOnly", "AdditiveWrites"]
 type ToolReplayStatus = Literal["Prepared", "Uncertain", "Completed"]
-type ToolTransportKind = Literal["CodexMcp", "ProviderApi"]
+type ToolTransportKind = Literal["ProviderApi", "GenerationApi"]
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _MAX_TRANSPORT_CALL_ID_BYTES = 1_024
@@ -120,6 +121,7 @@ class ToolPositionRecord:
     replay_status: ToolReplayStatus
     created_at: datetime
     completed_at: datetime | None
+    reverted_at: datetime | None
 
     @property
     def path(self) -> str:
@@ -170,6 +172,7 @@ class ToolAuthority:
     operation: FrozenToolOperation = field(repr=False, compare=False)
     effect_mode: ToolEffectMode
     admitted_resource_uris: frozenset[str]
+    account_visible: bool
     projection: ToolExecutionProjection | None = field(repr=False, compare=False)
 
     @classmethod
@@ -196,7 +199,12 @@ class ToolAuthority:
                     job_context=job_context,
                     projection=projection,
                 )
-                plan, effect_mode, refs = _model_tool_facts(spec)
+                plan, effect_mode, refs, account_visible = _model_tool_facts(spec)
+                if isinstance(spec.authority, CodexShell):
+                    from nexus.services.agent_api import GENERATION_API_CONTRACT_REVISION
+
+                    if spec.authority.api_contract_revision != GENERATION_API_CONTRACT_REVISION:
+                        raise ToolAuthorityRefused("generation API contract revision drifted")
                 if plan != freeze_tool_plan_snapshot(operation):
                     raise ToolAuthorityRefused("runtime operation differs from frozen plan")
                 _assert_job_attempt(job, job_context)
@@ -211,6 +219,7 @@ class ToolAuthority:
                 operation=operation,
                 effect_mode=effect_mode,
                 admitted_resource_uris=refs,
+                account_visible=account_visible,
                 projection=projection,
             )
 
@@ -265,25 +274,31 @@ class ToolAuthority:
             binding = self.operation.plan.catalog_view.binding(tool_id)
         except KeyError as error:
             raise ToolAuthorityRefused("tool is outside the frozen catalogue") from error
-        plan = self.spec.model_tool_plan_snapshot
-        if not isinstance(plan, Present) or not any(
-            grant.id == str(tool_id) for grant in plan.value.grants
-        ):
+        plan, _mode, _refs, _account_visible = _model_tool_facts(self.spec)
+        if (transport_kind == "GenerationApi") != isinstance(self.operation.plan.exposure, HttpApi):
+            raise ToolAuthorityRefused("tool transport differs from frozen exposure")
+        if not any(grant.id == str(tool_id) for grant in plan.grants):
             raise ToolAuthorityRefused("tool is outside the frozen plan")
 
         def prepare(db: Session) -> ToolPositionRecord:
             with db.begin():
                 generation, _spec, _job = self.lock_in_current_transaction(db)
-                existing = db.scalar(
-                    select(LLMToolPosition)
-                    .where(
-                        LLMToolPosition.generation_id == self.generation_id,
-                        LLMToolPosition.transport_kind == transport_kind,
-                        LLMToolPosition.model_turn_seq == model_turn_seq,
-                        LLMToolPosition.transport_call_id == transport_call_id,
+                if transport_kind == "GenerationApi":
+                    from nexus.services.agent_api import (
+                        require_generation_api_admission_in_current_transaction,
                     )
-                    .with_for_update()
+
+                    require_generation_api_admission_in_current_transaction(
+                        db, generation_id=self.generation_id
+                    )
+                lookup = select(LLMToolPosition).where(
+                    LLMToolPosition.generation_id == self.generation_id,
+                    LLMToolPosition.transport_kind == transport_kind,
+                    LLMToolPosition.transport_call_id == transport_call_id,
                 )
+                if transport_kind == "ProviderApi":
+                    lookup = lookup.where(LLMToolPosition.model_turn_seq == model_turn_seq)
+                existing = db.scalar(lookup.with_for_update())
                 if existing is not None:
                     record = _position_record(existing, generation_seq=generation.generation_seq)
                     _assert_position_identity(
@@ -322,7 +337,7 @@ class ToolAuthority:
                     canonical_tool_id=str(tool_id),
                     canonical_input_digest=input_digest,
                     tool_contract_revision=binding.spec.tool_contract_revision,
-                    plan_revision=plan.value.plan_revision,
+                    plan_revision=plan.plan_revision,
                     binding_revision=binding.policy_revision,
                     reservation=None,
                     dispatch_claim=None,
@@ -421,6 +436,10 @@ class ToolPositionRecorder:
     def admitted_resource_uris(self) -> frozenset[str]:
         return self.authority.admitted_resource_uris
 
+    @property
+    def account_visible(self) -> bool:
+        return self.authority.account_visible
+
     def stage_audit(self, audit: ToolAuditProjection) -> None:
         self.audit = audit
 
@@ -428,8 +447,23 @@ class ToolPositionRecorder:
         projection = self.authority.projection
         count = projection.live_write_count(db, authority=self.authority) if projection else None
         if count is None:
-            raise ExecutorConfigurationDefect(
-                "write-capable tool plan has no projection owning reverted writes"
+            if not self.authority.account_visible:
+                raise ExecutorConfigurationDefect(
+                    "write-capable tool plan has no projection owning reverted writes"
+                )
+            from nexus.services.tool_runtime.catalog import write_tool_ids
+
+            count = (
+                db.scalar(
+                    select(func.count(LLMToolPosition.id)).where(
+                        LLMToolPosition.generation_id == self.authority.generation_id,
+                        LLMToolPosition.canonical_tool_id.in_(write_tool_ids()),
+                        LLMToolPosition.replay_status == "Completed",
+                        LLMToolPosition.reverted_at.is_(None),
+                        LLMToolPosition.result_evidence["tool_result"]["type"].astext == "Success",
+                    )
+                )
+                or 0
             )
         return count
 
@@ -464,6 +498,7 @@ class ToolPositionRecorder:
                 )
                 if (
                     record.replay_status == "Uncertain"
+                    and record.transport_kind != "GenerationApi"
                     and replay_policy is ReplayPolicy.ReDispatchable
                     and _dispatch_claim(row).attempt_no < self.authority.job_context.attempt_no
                 ):
@@ -568,6 +603,8 @@ class ToolPositionRecorder:
         del position
 
         def operation(_db: Session) -> None:
+            if self.position_record.transport_kind == "GenerationApi":
+                raise ValueError("generation API dispatch cannot be re-admitted")
             if replay_policy is not ReplayPolicy.ReDispatchable or not lease_recovered:
                 raise ValueError("only verified ReDispatchable work may be re-admitted")
             with self.db.begin():
@@ -607,12 +644,17 @@ class ToolPositionRecorder:
 
         def operation(_db: Session) -> ToolResult:
             evidence = {"tool_result": cast(object, result)}
+            if self.authority.account_visible and self.position_record.effect_identity is not None:
+                evidence["created_refs"] = cast(object, self.audit.created_refs)
             try:
                 self.authority.lock_in_current_transaction(self.db)
                 row = self._lock_row()
                 record = _position_record(row, generation_seq=self.authority.generation_seq)
                 if record.replay_status == "Completed":
-                    if record.result_evidence != evidence:
+                    if (
+                        record.result_evidence is None
+                        or record.result_evidence.get("tool_result") != result
+                    ):
                         raise ValueError("terminal result differs from completed durable position")
                     self.position_record = record
                     self.db.commit()
@@ -647,6 +689,22 @@ class ToolPositionRecorder:
                         result=result,
                         audit=self.audit,
                     )
+                elif (
+                    self.authority.account_visible
+                    and result["type"] == "Success"
+                    and record.effect_identity is not None
+                ):
+                    from nexus.services.assistant_write_authorship import (
+                        persist_assistant_write_authorships,
+                    )
+
+                    persist_assistant_write_authorships(
+                        self.db,
+                        viewer_id=self.authority.user_id,
+                        tool_call_id=record.id,
+                        position=record,
+                        created_refs=self.audit.created_refs,
+                    )
                 self.position_record = record
                 # Handler-owned domain effects, the canonical terminal receipt, and
                 # any optional projection become visible atomically.
@@ -673,9 +731,11 @@ class ToolPositionRecorder:
             with self.db.begin():
                 row = self._lock_row()
                 record = _position_record(row, generation_seq=self.authority.generation_seq)
-                if record.replay_status != "Completed" or record.result_evidence != {
-                    "tool_result": cast(object, result)
-                }:
+                if (
+                    record.replay_status != "Completed"
+                    or record.result_evidence is None
+                    or record.result_evidence.get("tool_result") != result
+                ):
                     raise ValueError("model output requires the completed durable tool result")
                 projection = self.authority.projection
                 if projection is None:
@@ -758,7 +818,7 @@ class _ToolTelemetry:
 
 @dataclass(frozen=True, slots=True)
 class GenerationToolExecutor:
-    """Shared executor used by Provider API proposals and Codex MCP requests."""
+    """Execute admitted Provider API tool proposals."""
 
     authority: ToolAuthority
 
@@ -847,7 +907,13 @@ class GenerationToolExecutor:
                 effect_id=effect_id,
                 budgets=recorder.budgets,
                 principal=Principal(str(self.authority.user_id)),
-                scope=Scope(projection.scope_label if projection else "generation_scope"),
+                scope=Scope(
+                    "account_visible"
+                    if self.authority.account_visible
+                    else projection.scope_label
+                    if projection
+                    else "generation_scope"
+                ),
                 cancellation=cancellation,
                 telemetry=_ToolTelemetry(),
             )
@@ -1006,16 +1072,23 @@ def _lock_authority(
     return generation, spec, job
 
 
-def _model_tool_facts(spec: GenerationSpec) -> tuple[object, ToolEffectMode, frozenset[str]]:
-    plan = spec.model_tool_plan_snapshot
-    effect = spec.tool_effect_mode
-    scope = spec.admitted_tool_scope
+def _model_tool_facts(
+    spec: GenerationSpec,
+) -> tuple[FrozenToolPlanSnapshot, ToolEffectMode, frozenset[str], bool]:
+    authority = spec.authority
+    if isinstance(authority, CodexShell):
+        return authority.api_plan, "AdditiveWrites", frozenset(), True
+    if not isinstance(authority, ProviderFunctions):
+        raise ToolAuthorityRefused("generation authority has an unknown variant")
+    plan = authority.model_tool_plan_snapshot
+    effect = authority.tool_effect_mode
+    scope = authority.admitted_tool_scope
     if not all(isinstance(value, Present) for value in (plan, effect, scope)):
         raise ToolAuthorityRefused("NoModelTools generation cannot acquire tool authority")
     assert isinstance(plan, Present)
     assert isinstance(effect, Present)
     assert isinstance(scope, Present)
-    return plan.value, effect.value, frozenset(scope.value.admitted_refs)
+    return plan.value, effect.value, frozenset(scope.value.admitted_refs), False
 
 
 def _assert_job_attempt(job: JobRow, context: JobExecutionContext) -> None:
@@ -1060,7 +1133,7 @@ def _assert_position_identity(
 def _position_record(row: LLMToolPosition, *, generation_seq: int) -> ToolPositionRecord:
     if row.replay_status not in {"Prepared", "Uncertain", "Completed"}:
         raise AssertionError("persisted tool position has an unknown replay status")
-    if row.transport_kind not in {"CodexMcp", "ProviderApi"}:
+    if row.transport_kind not in {"ProviderApi", "GenerationApi"}:
         raise AssertionError("persisted tool position has an unknown transport")
     return ToolPositionRecord(
         id=row.id,
@@ -1081,6 +1154,7 @@ def _position_record(row: LLMToolPosition, *, generation_seq: int) -> ToolPositi
         replay_status=cast(ToolReplayStatus, row.replay_status),
         created_at=row.created_at,
         completed_at=row.completed_at,
+        reverted_at=row.reverted_at,
     )
 
 

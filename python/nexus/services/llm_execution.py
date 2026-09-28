@@ -23,6 +23,7 @@ from llm_agent_kernel.generation import GenerationStopped
 from provider_runtime.types import Absent as RuntimeAbsent
 from provider_runtime.types import Cancelled as ProviderCancelled
 from provider_runtime.types import (
+    ContinuationTooLarge,
     ExpectedModelFailure,
     InvalidStructuredOutput,
     InvalidToolArguments,
@@ -39,7 +40,7 @@ from provider_runtime.types import FailureCode as ProviderFailureCode
 from provider_runtime.types import Incomplete as ProviderIncomplete
 from provider_runtime.types import Present as RuntimePresent
 from provider_runtime.types import Succeeded as ProviderSucceeded
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.jobs.queue import (
@@ -54,6 +55,7 @@ from nexus.jobs.queue import (
 from nexus.schemas.llm import CapacityPaused
 from nexus.schemas.presence import Absent, Present, absent, present
 from nexus.services.codex_generation_contract import (
+    GenerationApiAccess,
     GenerationTerminal,
     NormalizedFailureCode,
     normalized_failure,
@@ -75,7 +77,6 @@ from nexus.services.generation_backend import (
     BackendToolExecutionRequest,
     BackendToolExecutionResult,
     BackendToolExecutor,
-    CodexAdmissionBinder,
     CodexTerminalEvidence,
     ProviderContinuationIdentity,
     ProviderResumeState,
@@ -88,12 +89,13 @@ from nexus.services.generation_continuations import (
 from nexus.services.generation_policy import BACKGROUND_CAPACITY_PROBE_SECONDS
 from nexus.services.generation_spec import (
     BackgroundOperationKey,
+    CodexShell,
     FrozenHostToolPlanSnapshot,
-    FrozenToolScope,
     GenerationIntent,
     GenerationSpec,
     ImmutablePromptPayloadRef,
     ProviderApiSelection,
+    ProviderFunctions,
     decode_generation_spec_document,
 )
 from nexus.services.llm_ledger import (
@@ -125,11 +127,7 @@ type EncodeTerminal = Callable[[BackendTerminal], "EncodedGenerationTerminal"]
 type GenerationFailureCode = NormalizedFailureCode | Literal["cancelled", "turn_limit"]
 type EncodeFailure = Callable[[GenerationFailureCode, str], str]
 type ObserveEvent = Callable[[BackendEvent], Awaitable[None]]
-type BeforeTerminal = Callable[[], Awaitable[None]]
 type ResolveTerminal = Callable[[Session, BackendTerminal], "EncodedGenerationTerminal"]
-type BindAdmission = CodexAdmissionBinder
-type BindAdmissionFactory = Callable[[GenerationSpec], BindAdmission]
-type ToolExecutorFactory = Callable[[GenerationSpec], BackendToolExecutor]
 
 _MODEL_TURN_COMPONENT = "nexus-generation-model-turn.v1"
 
@@ -166,6 +164,9 @@ class GenerationAdmissionJournal(Protocol):
     Implemented by ``JobGenerationJournal`` over ``background_jobs.payload``.
     Implementations never commit or roll back.
     """
+
+    @property
+    def context(self) -> JobExecutionContext: ...
 
     def read(self, db: Session) -> StepReplayState | None: ...
 
@@ -370,11 +371,11 @@ class GenerationExecutionRequest:
     """Complete immutable request consumed by one durable owner."""
 
     owner: LlmCallOwner
+    user_id: UUID
     generation_id: UUID
     spec: GenerationSpec
     intent: GenerationIntent = field(repr=False)
     journal: GenerationAdmissionJournal
-    bind_admission: BindAdmission | None = field(default=None, repr=False)
     tool_executor: BackendToolExecutor | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
@@ -384,11 +385,11 @@ class GenerationExecutionRequest:
             raise ValueError("generation intent instructions differ from frozen spec")
         if hashlib.sha256(self.intent.input.encode()).hexdigest() != self.spec.input_digest:
             raise ValueError("generation intent input differs from frozen spec")
-        has_tools = isinstance(self.spec.model_tool_plan_snapshot, Present)
-        is_codex = self.spec.selection.route == "CodexPersonal"
-        if (self.bind_admission is not None) != (has_tools and is_codex):
-            raise ValueError("only tool-bearing Codex accepts an admission binder")
-        if (self.tool_executor is not None) != (has_tools and not is_codex):
+        authority = self.spec.authority
+        has_provider_tools = isinstance(authority, ProviderFunctions) and isinstance(
+            authority.model_tool_plan_snapshot, Present
+        )
+        if (self.tool_executor is not None) != has_provider_tools:
             raise ValueError("only tool-bearing ProviderApi accepts a direct tool executor")
 
 
@@ -454,6 +455,7 @@ class GenerationCapacityPaused(RuntimeError):
 async def admit_job_generation(
     *,
     owner: LlmCallOwner,
+    user_id: UUID,
     generation_id: UUID,
     operation: BackgroundOperationKey,
     intent: GenerationIntent,
@@ -462,11 +464,8 @@ async def admit_job_generation(
     journal: GenerationAdmissionJournal,
     session_factory: sessionmaker[Session],
     runtime: ExecutionRuntime,
-    scope: FrozenToolScope | None = None,
     host_plan: FrozenHostToolPlanSnapshot | None = None,
     host_evidence_revision: str | None = None,
-    bind_admission_factory: BindAdmissionFactory | None = None,
-    tool_executor_factory: ToolExecutorFactory | None = None,
 ) -> GenerationExecutionRequest:
     """Freeze and persist one background admission before any backend I/O.
 
@@ -483,7 +482,6 @@ async def admit_job_generation(
             intent=intent,
             prompt_template_revision=prompt_template_revision,
             prompt_payload_ref=prompt_payload_ref,
-            scope=scope,
             host_plan=host_plan,
             host_evidence_revision=host_evidence_revision,
         )
@@ -501,24 +499,13 @@ async def admit_job_generation(
         )
     if spec.operation != operation or spec.selection_source != "BackgroundPolicy":
         raise AssertionError("frozen job admission has the wrong operation identity")
-    has_tools = isinstance(spec.model_tool_plan_snapshot, Present)
-    is_codex = spec.selection.route == "CodexPersonal"
     return GenerationExecutionRequest(
         owner=owner,
+        user_id=user_id,
         generation_id=generation_id,
         spec=spec,
         intent=frozen_intent,
         journal=journal,
-        bind_admission=(
-            bind_admission_factory(spec)
-            if has_tools and is_codex and bind_admission_factory is not None
-            else None
-        ),
-        tool_executor=(
-            tool_executor_factory(spec)
-            if has_tools and not is_codex and tool_executor_factory is not None
-            else None
-        ),
     )
 
 
@@ -531,7 +518,6 @@ async def execute_generation(
     encode_failure: EncodeFailure,
     observe_event: ObserveEvent | None = None,
     cancel_signal: CancellationSignal | None = None,
-    before_terminal: BeforeTerminal | None = None,
     resolve_terminal: ResolveTerminal | None = None,
 ) -> GenerationExecutionResult:
     """Execute or exactly replay one generation without hidden redispatch."""
@@ -549,7 +535,6 @@ async def execute_generation(
         session_factory=session_factory,
         cipher=runtime.continuation_cipher,
         encode_terminal=encode_terminal,
-        before_terminal=before_terminal,
         resolve_terminal=resolve_terminal,
     )
     try:
@@ -561,9 +546,15 @@ async def execute_generation(
             tool_executor=request.tool_executor or _ForbiddenToolExecutor(),
             observe=observe_event or _ignore_event,
             cancellation=cancel_signal or _NeverCancelled(),
-            codex_bind_admission=request.bind_admission,
             provider_resume=resume,
         )
+        if isinstance(terminal, GenerationStopped):
+            return await _complete_stop(
+                session_factory,
+                request,
+                terminal=terminal,
+                encode_failure=encode_failure,
+            )
     except Exception as error:
         from nexus.services.codex_generation_client import CodexGenerationCapacityUnavailable
 
@@ -574,14 +565,6 @@ async def execute_generation(
                 f"generation {request.generation_id} failed after durable dispatch"
             ) from error
         raise
-    if isinstance(terminal, GenerationStopped):
-        return await _complete_stop(
-            session_factory,
-            request,
-            terminal=terminal,
-            encode_failure=encode_failure,
-            before_terminal=before_terminal,
-        )
     if lifecycle.completed is None or lifecycle.completed.terminal is not terminal:
         raise AssertionError("backend returned a terminal not committed by its lifecycle")
     if lifecycle.encoded is None:
@@ -597,10 +580,7 @@ async def _complete_stop(
     *,
     terminal: GenerationStopped[BackendTerminal],
     encode_failure: EncodeFailure,
-    before_terminal: BeforeTerminal | None,
 ) -> CompletedGeneration:
-    if before_terminal is not None:
-        await before_terminal()
     detail = (
         "Generation cancelled before the next dispatch."
         if terminal.reason == "cancelled"
@@ -650,21 +630,34 @@ class _LedgerChildLifecycle:
         session_factory: sessionmaker[Session],
         cipher: GenerationContinuationCipher,
         encode_terminal: EncodeTerminal,
-        before_terminal: BeforeTerminal | None,
         resolve_terminal: ResolveTerminal | None,
     ) -> None:
         self._request = request
         self._session_factory = session_factory
         self._cipher = cipher
         self._encode_terminal = encode_terminal
-        self._before_terminal = before_terminal
         self._resolve_terminal = resolve_terminal
         self.completed: BackendChildCompletion | None = None
         self.encoded: EncodedGenerationTerminal | None = None
+        self._codex_api_access: GenerationApiAccess | None = None
+        self._codex_api_deadline: datetime | None = None
+
+    def set_codex_api_deadline(self, expires_at: datetime) -> None:
+        if expires_at.tzinfo is None or self._codex_api_deadline is not None:
+            raise AssertionError("Codex API deadline is absent, naive, or already set")
+        self._codex_api_deadline = expires_at
+
+    async def close_codex_api_admission(self) -> None:
+        from nexus.services.agent_api import close_generation_api_admission
+
+        with self._session_factory() as db, db.begin():
+            lock_generation_owner_in_current_transaction(db, self._request.owner)
+            close_generation_api_admission(db, generation_id=self._request.generation_id)
 
     async def arm_child(self, child: BackendChildDispatch) -> None:
         request = self._request
         _assert_child_identity(child, request)
+        token: str | None = None
         start = ModelTurnStart(
             model_turn_id=_model_turn_id(child.generation_id, child.child_seq),
             generation_id=child.generation_id,
@@ -703,6 +696,21 @@ class _LedgerChildLifecycle:
                     raise GenerationDispatchAborted(
                         f"generation {request.generation_id} lost its claim before dispatch"
                     )
+                if isinstance(request.spec.authority, CodexShell):
+                    from nexus.services.agent_api import (
+                        issue_generation_api_credential_in_current_transaction,
+                    )
+
+                    if self._codex_api_deadline is None:
+                        raise AssertionError("Codex API deadline was not supplied by admission")
+                    token = issue_generation_api_credential_in_current_transaction(
+                        db,
+                        user_id=request.user_id,
+                        owner=request.owner,
+                        generation_id=request.generation_id,
+                        job_context=request.journal.context,
+                        expires_at=self._codex_api_deadline,
+                    )
             else:
                 if state.dispatch_phase is not Uncertain:
                     raise AssertionError("provider successor requires an Uncertain owner")
@@ -717,13 +725,22 @@ class _LedgerChildLifecycle:
                     db, source_model_turn_id=pending.source_turn.id, successor=start
                 )
             db.commit()
+        if token is not None:
+            self._codex_api_access = GenerationApiAccess(
+                generation_id=request.generation_id, token=SecretStr(token)
+            )
+
+    def take_codex_api_access(self) -> GenerationApiAccess:
+        access = self._codex_api_access
+        if access is None:
+            raise AssertionError("Codex shell credential was not armed")
+        self._codex_api_access = None
+        return access
 
     async def complete_child(self, completion: BackendChildCompletion) -> BackendChildCompletion:
         request = self._request
         _assert_child_identity(completion.child, request)
         is_final = isinstance(completion.successor, Absent)
-        if is_final and self._before_terminal is not None:
-            await self._before_terminal()
         with self._session_factory() as db:
             lock_generation_owner_in_current_transaction(db, request.owner)
             state = _require_journal_state(db, request)
@@ -1073,6 +1090,8 @@ def _parent_terminal_document(
 def _provider_failure_code(failure: ExpectedModelFailure) -> ProviderFailureCode:
     if isinstance(failure, ProviderContextTooLarge):
         return "context_too_large"
+    if isinstance(failure, ContinuationTooLarge):
+        return "continuation_too_large"
     if isinstance(failure, InvalidToolArguments):
         return "invalid_tool_arguments"
     if isinstance(failure, InvalidStructuredOutput):

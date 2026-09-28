@@ -9,8 +9,6 @@ const CONFIGURABLE_PROVIDER_PROCESSORS = {
   openai: "OpenAI",
   anthropic: "Anthropic",
   gemini: "Google",
-  moonshot: "Moonshot AI",
-  openrouter: "OpenRouter",
   deepseek: "DeepSeek",
   xai: "xAI",
 } satisfies Readonly<Record<GenerationApiProvider, string>>;
@@ -31,7 +29,7 @@ export default function PrivacyPage() {
     <EntryCanvas>
       <article className={styles.article}>
         <h1>Privacy Policy</h1>
-        <p>Last updated September 1, 2026.</p>
+        <p>Last updated September 25, 2026.</p>
         <p>
           This Privacy Policy explains how Nexus collects, uses, and protects
           information when you sign in, upload content, and use the product.
@@ -65,8 +63,7 @@ export default function PrivacyPage() {
           ChatGPT/Codex subscription and OpenAI Codex. If you select a configured
           Provider API route in Chat, Nexus instead uses the operator-managed API
           credential for that provider. Configurable Provider API processors are
-          {` ${CONFIGURABLE_PROCESSOR_LIST}. `}OpenRouter also uses the pinned
-          upstream provider disclosed in Chat.
+          {` ${CONFIGURABLE_PROCESSOR_LIST}. `}
           Before dispatch, Chat shows the selected route&apos;s processor chain,
           retention, training, and billing disclosures.
         </p>

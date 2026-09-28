@@ -140,7 +140,8 @@ it binds, and re-proves the public `/version`.
    runtime identity against the manifest.
 4. **backup** — read the current Alembic revision, prove it descends from the
    candidate head, stop `api`, `worker-interactive` and `worker-background`,
-   then run `nexus.release_backup create`: one pass that streams `pg_dump`
+   then stop the Codex host and require its clean exit before running
+   `nexus.release_backup create`: one pass that streams `pg_dump`
    into a private R2 multipart upload, reads the remote bytes back through
    `pg_restore`, publishes a `database.json` recovery manifest beside the
    archive and prints the verified evidence.

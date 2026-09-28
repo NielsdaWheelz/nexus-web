@@ -10,11 +10,12 @@ def resource_uri_is_admitted(
     *,
     uri: str,
     admitted_resource_uris: frozenset[str],
+    account_visible: bool = False,
     allow_derived_read: bool = False,
 ) -> bool:
     """Return whether a URI is admitted, directly or as a derived read pointer."""
 
-    if uri in admitted_resource_uris:
+    if account_visible or uri in admitted_resource_uris:
         return True
     if not allow_derived_read:
         return False

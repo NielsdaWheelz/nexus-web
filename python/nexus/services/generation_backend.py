@@ -11,6 +11,7 @@ import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import aclosing
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Literal, Protocol, assert_never
 from uuid import UUID
 
@@ -41,6 +42,7 @@ from provider_runtime.types import (
 from nexus.schemas.presence import Absent, Presence, Present
 from nexus.services.codex_generation_contract import (
     GenerationAdmission,
+    GenerationApiAccess,
     GenerationCommand,
     GenerationCommandDraft,
     GenerationFrame,
@@ -57,10 +59,12 @@ from nexus.services.codex_generation_contract import (
 )
 from nexus.services.generation_spec import (
     CodexPersonalSelection,
+    CodexShell,
     GenerationIntent,
     GenerationSpec,
     ProviderApiSelection,
     ProviderDispatchTargetSnapshot,
+    ProviderFunctions,
     StrictJsonOutputSnapshot,
 )
 from nexus.services.provider_generation_contract import (
@@ -85,7 +89,6 @@ if TYPE_CHECKING:
     )
 
 type BackendRoute = Literal["CodexPersonal", "ProviderApi"]
-type CodexAdmissionBinder = Callable[[GenerationAdmission], Awaitable[GenerationCommand]]
 type ProviderToolProjection = Callable[[GenerationSpec], ProviderModelTools | None]
 
 
@@ -128,7 +131,7 @@ class BackendToolProposed:
 
 @dataclass(frozen=True, slots=True)
 class BackendToolObserved:
-    """A Codex MCP call already executed through the shared ToolAuthority."""
+    """Sanitized native progress; Nexus does not execute the shell tool again."""
 
     kind: Literal["ToolObserved"] = field(default="ToolObserved", init=False)
     route: Literal["CodexPersonal"] = field(default="CodexPersonal", init=False)
@@ -257,6 +260,12 @@ class BackendChildLifecycle(Protocol):
 
     async def arm_child(self, child: BackendChildDispatch) -> None: ...
 
+    def set_codex_api_deadline(self, expires_at: datetime) -> None: ...
+
+    async def close_codex_api_admission(self) -> None: ...
+
+    def take_codex_api_access(self) -> GenerationApiAccess: ...
+
     async def complete_child(
         self, completion: BackendChildCompletion
     ) -> BackendChildCompletion: ...
@@ -301,7 +310,6 @@ class GenerationBackend:
         tool_executor: BackendToolExecutor,
         observe: ObserveEvent,
         cancellation: CancelSignal,
-        codex_bind_admission: CodexAdmissionBinder | None,
         provider_resume: ProviderResumeState | None,
     ) -> BackendGenerationOutcome:
         model_tools: ProviderModelTools | None = None
@@ -311,23 +319,17 @@ class GenerationBackend:
                 raise GenerationBackendDefect(
                     "CodexPersonal execution received a ProviderApi resume state"
                 )
-            if isinstance(spec.model_tool_plan_snapshot, Present) != (
-                codex_bind_admission is not None
-            ):
-                raise GenerationBackendDefect(
-                    "Codex ModelTools must use exactly one post-admission MCP grant binder"
-                )
+            if not isinstance(spec.authority, CodexShell):
+                raise GenerationBackendDefect("Codex shell authority is absent")
             start = GenerationTurn(
                 1, GenerationCommandDraft(request_id=generation_id, spec=spec, intent=intent)
             )
             max_turns = 1
         elif isinstance(spec.selection, ProviderApiSelection):
-            if codex_bind_admission is not None:
-                raise GenerationBackendDefect(
-                    "ProviderApi execution received a Codex MCP grant binder"
-                )
+            if not isinstance(spec.authority, ProviderFunctions):
+                raise GenerationBackendDefect("provider function authority is absent")
             if isinstance(spec.output_contract, StrictJsonOutputSnapshot) and isinstance(
-                spec.model_tool_plan_snapshot, Present
+                spec.authority.model_tool_plan_snapshot, Present
             ):
                 raise GenerationBackendCompositionRefused(
                     "ProviderApi strict structured output and model tools cannot share "
@@ -353,7 +355,6 @@ class GenerationBackend:
             lifecycle=lifecycle,
             tool_executor=tool_executor,
             observe_event=observe,
-            codex_bind_admission=codex_bind_admission,
             model_tools=model_tools,
         )
         try:
@@ -385,7 +386,6 @@ class _KernelAdapter:
     lifecycle: BackendChildLifecycle
     tool_executor: BackendToolExecutor
     observe_event: ObserveEvent = field(repr=False)
-    codex_bind_admission: CodexAdmissionBinder | None = field(repr=False)
     model_tools: ProviderModelTools | None = field(repr=False)
 
     async def stream(
@@ -446,17 +446,16 @@ class _KernelAdapter:
         KernelFrame[BackendEvent, BackendTerminal, ProviderContinuationMaterial, ToolCallResolution]
     ]:
         async def bind(admission: GenerationAdmission) -> GenerationCommand:
+            admitted_at = datetime.fromisoformat(admission.admitted_at[:-1] + "+00:00")
+            self.lifecycle.set_codex_api_deadline(
+                admitted_at + timedelta(seconds=admission.runtime_deadline_seconds)
+            )
             await arm()
-            binder = self.codex_bind_admission
-            command = (
-                generation_command_from_draft(draft, tool_grant=None)
-                if binder is None
-                else await binder(admission)
+            command = generation_command_from_draft(
+                draft, api_access=self.lifecycle.take_codex_api_access()
             )
             if generation_command_draft(command) != draft:
-                raise GenerationBackendDefect(
-                    "Codex admission binder changed frozen generation identity"
-                )
+                raise GenerationBackendDefect("Codex command changed frozen generation identity")
             return command
 
         # Race only the next transport read against cancellation: the native
@@ -474,7 +473,10 @@ class _KernelAdapter:
                     )
                     if read_task not in done:
                         await cancel_task
-                        await self.codex.cancel(draft.request_id)
+                        try:
+                            await self.lifecycle.close_codex_api_admission()
+                        finally:
+                            await self.codex.cancel(draft.request_id)
                         cancelled = True
                 try:
                     frame = await read_task
@@ -509,7 +511,6 @@ class _KernelAdapter:
         turn = self.provider.prepare_successor_turn(
             generation_id=self.generation_id,
             spec=self.spec,
-            intent=self.intent,
             source_turn_seq=continuation.source_ordinal,
             canonical_continuation=continuation.payload.canonical_bytes,
             tool_results=tuple(
@@ -697,8 +698,6 @@ def _resume_continuation(
         raise GenerationBackendDefect("ProviderApi resume requires frozen model tools")
     decoded = decode_provider_turn_continuation(
         resume.canonical_bytes,
-        spec=spec,
-        expected_source_turn_seq=identity.source_child_seq,
         target=ProviderTarget(provider=dispatch.provider, model=dispatch.model_id),
         codec_id=dispatch.continuation_codec,
     )

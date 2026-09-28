@@ -1021,8 +1021,13 @@ def cancel_chat_run(
 ) -> ChatRunResponse:
     """Stamp the cancellation and wake a suspended job so the worker folds it."""
 
+    from nexus.services.agent_api import close_generation_api_admission_for_owner
+    from nexus.services.llm_ledger import LlmCallOwner, lock_generation_owner_in_current_transaction
+
     owned = get_run_for_owner(db, viewer_id, run_id)
     lock_chat_generation_admission_in_current_transaction(db)
+    owner = LlmCallOwner(kind="chat_run", id=owned.id)
+    lock_generation_owner_in_current_transaction(db, owner)
     run = lock_chat_run_for_update(db, owned.id)
     if run is None or run.owner_user_id != viewer_id:
         raise AssertionError("owned chat run disappeared before cancellation")
@@ -1032,6 +1037,7 @@ def cancel_chat_run(
     if run.cancel_requested_at is None:
         run.cancel_requested_at = datetime.now(UTC)
         run.updated_at = datetime.now(UTC)
+    close_generation_api_admission_for_owner(db, owner=owner)
     dead_job = current_dead_job_for_payload(
         db,
         kind="chat_run",

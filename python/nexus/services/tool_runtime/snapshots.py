@@ -37,7 +37,7 @@ class FrozenToolGrantSnapshot(_FrozenSnapshot):
 
 
 class FrozenToolExposureSnapshot(_FrozenSnapshot):
-    type: Literal["HostTable", "Native"]
+    type: Literal["HostTable", "Native", "HttpApi"]
 
 
 class FrozenToolPlanSnapshot(_FrozenSnapshot):

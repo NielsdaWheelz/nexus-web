@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import importlib.metadata
 import json
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from pathlib import Path
@@ -12,7 +11,6 @@ from uuid import UUID
 import httpx
 from pydantic import ValidationError
 
-from nexus.schemas.presence import Present
 from nexus.services.codex_generation_contract import (
     MAX_ADMISSION_BODY_BYTES,
     MAX_MODEL_CATALOG_BODY_BYTES,
@@ -24,10 +22,14 @@ from nexus.services.codex_generation_contract import (
     GenerationHealth,
     GenerationPermissionRequest,
     GenerationTerminal,
-    GenerationToolUse,
     capacity_rejection_bytes,
     generation_admission_request,
     generation_command_draft,
+)
+from nexus.services.codex_generation_health_contract import (
+    EXECUTION_POLICY_REVISION,
+    LIBRARY_CONTRACT_REVISION,
+    PINNED_CODEX_VERSION,
 )
 
 _HOST_AUTHORITY = "http://nexus-codex"
@@ -36,8 +38,6 @@ _MAX_REJECTION_BYTES = 256
 _HEALTH_DEADLINE_SECONDS = 5.0
 _CONTROL_DEADLINE_SECONDS = 5.0
 _CATALOG_DEADLINE_SECONDS = 120.0
-_SDK_VERSION = importlib.metadata.version("openai-codex")
-_RUNTIME_VERSION = importlib.metadata.version("openai-codex-cli-bin")
 
 
 class CodexGenerationClientError(RuntimeError):
@@ -66,9 +66,12 @@ class CodexGenerationClient:
             label="Codex catalog",
         )
         try:
-            return CodexModelCatalog.model_validate_json(payload)
+            catalog = CodexModelCatalog.model_validate_json(payload)
         except ValidationError as error:
             raise CodexGenerationProtocolDefect("Codex catalog response is invalid") from error
+        if catalog.backend_contract_revision != LIBRARY_CONTRACT_REVISION:
+            raise CodexGenerationProtocolDefect("Codex catalog contract revision drifted")
+        return catalog
 
     async def health(self) -> GenerationHealth:
         payload = await self._read_json(
@@ -83,7 +86,11 @@ class CodexGenerationClient:
             raise CodexGenerationProtocolDefect(
                 "Codex generation health identity is invalid"
             ) from error
-        if observed != GenerationHealth(sdk_version=_SDK_VERSION, runtime_version=_RUNTIME_VERSION):
+        if observed != GenerationHealth(
+            native_version=PINNED_CODEX_VERSION,
+            library_contract_revision=LIBRARY_CONTRACT_REVISION,
+            execution_policy_revision=EXECUTION_POLICY_REVISION,
+        ):
             raise CodexGenerationProtocolDefect("Codex generation health runtime identity drifted")
         return observed
 
@@ -103,7 +110,7 @@ class CodexGenerationClient:
                     # The reservation POST is not idempotently observable if its
                     # response is lost; only its exact capacity rejection proves
                     # the host accepted nothing. Every admission is bound durably
-                    # before SDK dispatch.
+                    # before native dispatch.
                     admission = await self._admit(client, draft)
                     try:
                         command = await bind_admission(admission)
@@ -150,9 +157,6 @@ class CodexGenerationClient:
 
     async def cancel(self, request_id: UUID) -> None:
         await self._control(request_id, "cancel")
-
-    async def policy_violation(self, request_id: UUID) -> None:
-        await self._control(request_id, "policy-violation")
 
     async def _read_json(self, path: str, *, deadline: float, maximum: int, label: str) -> bytes:
         transport = httpx.AsyncHTTPTransport(uds=str(self._socket_path))
@@ -263,11 +267,7 @@ class _FrameStreamValidator:
         self._total_bytes = 0
         self._buffer = bytearray()
         self._terminal: GenerationFrame | None = None
-        self._forbidden_tool_event_seen = False
-        plan = command.spec.model_tool_plan_snapshot
-        self._allowed_model_tools = (
-            {grant.id for grant in plan.value.grants} if isinstance(plan, Present) else set[str]()
-        )
+        self._permission_request_seen = False
 
     def feed(self, chunk: bytes) -> tuple[GenerationFrame, ...]:
         self._total_bytes += len(chunk)
@@ -309,11 +309,8 @@ class _FrameStreamValidator:
                 self._validate_terminal(event)
                 self._terminal = frame
                 continue
-            if isinstance(event, GenerationToolUse):
-                if event.name not in self._allowed_model_tools:
-                    self._forbidden_tool_event_seen = True
-            elif isinstance(event, GenerationPermissionRequest):
-                self._forbidden_tool_event_seen = True
+            if isinstance(event, GenerationPermissionRequest):
+                self._permission_request_seen = True
             observed.append(frame)
         return tuple(observed)
 
@@ -323,9 +320,9 @@ class _FrameStreamValidator:
                 "Codex generation stream ended with an incomplete frame"
             )
         if self._terminal is None:
-            if self._forbidden_tool_event_seen:
+            if self._permission_request_seen:
                 raise CodexGenerationProtocolDefect(
-                    "Codex generation observed a forbidden tool event without terminal"
+                    "Codex generation observed a permission request without terminal"
                 )
             raise CodexGenerationClientError(
                 "Codex generation stream closed after acceptance without terminal"
@@ -333,17 +330,20 @@ class _FrameStreamValidator:
         return self._terminal
 
     def _validate_terminal(self, terminal: GenerationTerminal) -> None:
-        if terminal.sdk_version != _SDK_VERSION or terminal.runtime_version != _RUNTIME_VERSION:
+        if (
+            terminal.native_version != PINNED_CODEX_VERSION
+            or terminal.library_contract_revision != LIBRARY_CONTRACT_REVISION
+        ):
             raise CodexGenerationProtocolDefect(
                 "Codex generation terminal runtime identity drifted"
             )
-        if self._forbidden_tool_event_seen and (
+        if self._permission_request_seen and (
             terminal.status != "failed"
             or terminal.failure is None
             or terminal.failure.kind != "policy_violation"
         ):
             raise CodexGenerationProtocolDefect(
-                "Codex generation observed a forbidden tool event without policy failure"
+                "Codex generation accepted a permission request without policy failure"
             )
 
 
@@ -357,16 +357,9 @@ def _parse_frame(raw: bytes) -> GenerationFrame:
 
 
 def _wire_command(command: GenerationCommand) -> bytes:
-    # ``None`` is a required semantic value inside frozen snapshots (a read-only
-    # plan's ``max_live_writes``), so exclude only the non-serializing grant and
-    # project its bearer explicitly.
-    payload = command.model_dump(mode="json", exclude={"tool_grant"})
-    if command.tool_grant is not None:
-        payload["tool_grant"] = {
-            "kind": "Bearer",
-            "token": command.tool_grant.token.get_secret_value(),
-        }
-    return json.dumps(payload, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode()
+    return json.dumps(
+        command.model_dump(mode="json"), ensure_ascii=True, allow_nan=False, separators=(",", ":")
+    ).encode()
 
 
 async def _is_capacity_rejection(response: httpx.Response) -> bool:

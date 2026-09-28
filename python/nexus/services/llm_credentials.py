@@ -27,8 +27,6 @@ def provider_generation_credentials(
         "openai": settings.openai_generation_api_key,
         "anthropic": settings.anthropic_generation_api_key,
         "gemini": settings.gemini_generation_api_key,
-        "moonshot": settings.moonshot_generation_api_key,
-        "openrouter": settings.openrouter_generation_api_key,
         "deepseek": settings.deepseek_generation_api_key,
         "xai": settings.xai_generation_api_key,
     }

@@ -48,6 +48,7 @@ from nexus.schemas.llm import CapacityPaused
 from nexus.schemas.presence import absent, present
 from nexus.services import durable_step_journal as step_journal
 from nexus.services import run_kit
+from nexus.services.agent_api import close_generation_api_admission_for_owner
 from nexus.services.artifacts import subjects
 from nexus.services.artifacts.collect import (
     AggregateDependenciesPending,
@@ -707,13 +708,12 @@ async def _run_synthesis(
     )
     try:
         execution_result = await execute_generation(
-            admission.request,
+            admission,
             session_factory=get_session_factory(),
             runtime=runtime.llm_runtime,
             encode_terminal=step.encode_terminal,
             encode_failure=step.encode_failure,
             cancel_signal=cast("CancellationSignal", cancel_signal),
-            before_terminal=admission.before_terminal,
         )
     except GenerationDispatchAborted:
         _terminal_failure(
@@ -728,7 +728,6 @@ async def _run_synthesis(
     except GenerationUncertain as error:
         raise _UncertainReplayDefect(str(error)) from error
     finally:
-        await admission.close()
         watcher.cancel()
         await asyncio.gather(watcher, return_exceptions=True)
 
@@ -1099,6 +1098,7 @@ def cancel_build(db: Session, *, build_id: UUID, actor_user_id: UUID) -> None:
         if existing in ("revision", "failure"):
             db.commit()
             return False
+        close_generation_api_admission_for_owner(db, owner=owner)
         if existing == "cancellation":
             db.commit()
             return True
