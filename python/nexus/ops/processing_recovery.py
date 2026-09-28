@@ -120,10 +120,7 @@ def normalize_web(
             expected_index_revision=expected_index_revision,
         )
         intent = request_media_content_reindex(
-            db,
-            media_id=media_id,
-            reason="operator_heading_normalization",
-            request_id=None,
+            db, media_id=media_id, reason="operator_heading_normalization"
         )
         receipt: dict[str, object] = {
             "media_id": str(media_id),

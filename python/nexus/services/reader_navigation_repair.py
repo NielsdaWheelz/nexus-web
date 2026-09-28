@@ -173,9 +173,7 @@ def apply_reader_navigation_repair(
                 from nexus.schemas.reader_apparatus import NotesGroup
 
                 groups = [NotesGroup.model_validate(group) for group in prepared.metadata["groups"]]
-                request_media_content_reindex(
-                    db, media_id=media_id, reason="reconciliation", request_id=None
-                )
+                request_media_content_reindex(db, media_id=media_id, reason="reconciliation")
             replace_media_apparatus(
                 db,
                 media_id=media_id,

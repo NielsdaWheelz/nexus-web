@@ -38,7 +38,6 @@ class SourceAttemptFailure:
     failure_stage: MediaFailureStage
     error_code: str
     error_message: str
-    retry_after_seconds: int | None
     now: datetime
     execution_id: Presence[UUID]
     """The worker execution that observed the failure; Absent when the failure
@@ -78,7 +77,6 @@ def publish_resource_limited_source_attempt(
             failure_stage=source_attempt_failure_stage(str(source_type)),
             error_code=ApiErrorCode.E_RESOURCE_LIMIT.value,
             error_message=message,
-            retry_after_seconds=None,
             now=now,
             execution_id=command.execution_id,
         ),
@@ -105,7 +103,6 @@ def publish_source_attempt_failure(db: Session, failure: SourceAttemptFailure) -
                 SET status = 'failed',
                     error_code = :error_code,
                     error_message = :error_message,
-                    retry_after_seconds = :retry_after_seconds,
                     finished_at = :now,
                     updated_at = :now
                 WHERE id = :attempt_id
@@ -120,7 +117,6 @@ def publish_source_attempt_failure(db: Session, failure: SourceAttemptFailure) -
                 "media_id": failure.media_id,
                 "error_code": failure.error_code,
                 "error_message": failure.error_message[:1000],
-                "retry_after_seconds": failure.retry_after_seconds,
                 "now": failure.now,
             },
         )

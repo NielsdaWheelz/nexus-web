@@ -50,7 +50,6 @@ def mark_media_failed_by_id(
                 failure_stage = :failure_stage,
                 last_error_code = :error_code,
                 last_error_message = :error_message,
-                processing_completed_at = NULL,
                 failed_at = :now,
                 updated_at = :now
             WHERE id = :media_id
@@ -73,21 +72,10 @@ def _clear_failure(media: Media) -> None:
     media.updated_at = func.now()
 
 
-def begin_extraction(db: Session, media: Media) -> None:
-    """Start an extraction attempt: clear failure metadata, bump the attempt counter."""
-    media.processing_status = ProcessingStatus.extracting
-    media.processing_attempts = (media.processing_attempts or 0) + 1
-    media.processing_started_at = func.now()
-    media.processing_completed_at = None
-    _clear_failure(media)
-    db.flush()
-
-
-def mark_source_queued(db: Session, media: Media) -> None:
-    """Expose queued source work as active processing without counting an attempt."""
+def mark_extracting(db: Session, media: Media) -> None:
+    """Move queued or starting source work to extracting, failure cleared."""
     media.processing_status = ProcessingStatus.extracting
     media.processing_started_at = func.now()
-    media.processing_completed_at = None
     _clear_failure(media)
     db.flush()
 
@@ -95,7 +83,6 @@ def mark_source_queued(db: Session, media: Media) -> None:
 def mark_ready_for_reading(db: Session, media: Media) -> None:
     """Mark readable extraction complete."""
     media.processing_status = ProcessingStatus.ready_for_reading
-    media.processing_completed_at = func.now()
     _clear_failure(media)
     db.flush()
 
@@ -109,7 +96,6 @@ def mark_ready_for_reading_by_id(db: Session, *, media_id: UUID, now: datetime) 
                 failure_stage = NULL,
                 last_error_code = NULL,
                 last_error_message = NULL,
-                processing_completed_at = :now,
                 failed_at = NULL,
                 updated_at = :now
             WHERE id = :media_id

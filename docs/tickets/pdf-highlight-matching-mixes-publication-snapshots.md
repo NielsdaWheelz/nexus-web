@@ -2,10 +2,12 @@
 
 status: open · origin: 2026-09-17 package typecheck cleanup, base `352653689` · area: pdf highlights · oi-167
 
-`pdf_highlights.py:_compute_write_time_match` uses cached `Media.plain_text`,
-but `is_pdf_quote_text_ready` and `_get_page_span` query current database rows.
-nonempty cached text can therefore be matched with a replacement publication's
-page offsets. the resulting prefix/suffix and stored match offsets can be wrong.
+`pdf_highlights.py:_quote_context` uses cached `Media.plain_text`, but
+`is_pdf_quote_text_ready` and its `PdfPageTextSpan` query read current database
+rows. nonempty cached text can therefore be matched with a replacement
+publication's page offsets, and the stored prefix/suffix can be wrong. it stores
+quote context only; the match offsets were dropped with their columns (pr-09,
+cleanup/prune-write-only-schema).
 
 the same snapshot gap affects `media_read_map.py:247-280`: `read_page_range`
 loads text, then checks readiness and fetches page bounds in separate statements.
@@ -21,6 +23,6 @@ fix: first reproduce a reader session retaining old nonempty text while another
 session publishes new text/spans. choose one coherent publication read at the pdf
 highlight write owner. preserve ordinary create/update/no-op/conflict behavior.
 
-acceptance: that reproduction stores quote context and offsets from one complete
+acceptance: that reproduction stores quote context from one complete
 publication; no mixed old-text/new-span match is possible.
 the public page-range reader must also select text and bounds from one publication.

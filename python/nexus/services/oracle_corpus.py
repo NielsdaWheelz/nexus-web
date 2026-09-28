@@ -292,8 +292,6 @@ def ensure_oracle_corpus_media(
                 anchor.current_evidence_span_id = None
                 anchor.current_content_chunk_id = None
                 anchor.resolution_status = "pending"
-                anchor.resolution_error = None
-                anchor.resolved_at = None
             anchor.display_label = manifest_anchor.display_label
             anchor.tags = list(manifest_anchor.tags)
             anchor.phase_hints = list(manifest_anchor.phase_hints)
@@ -334,21 +332,15 @@ def _repair_reused_corpus_media(
             ApiErrorCode.E_MEDIA_NOT_FOUND,
             f"Oracle work {source.work_key!r} maps to missing media {source.media_id}",
         )
-    request_id = f"oracle-corpus-seed:{source.work_key}"
     if media.processing_status == ProcessingStatus.ready_for_reading:
         if not _has_ready_active_content_index(db, media_id=media.id):
-            request_media_content_reindex(
-                db,
-                media_id=media.id,
-                reason="oracle_corpus_seed",
-                request_id=request_id,
-            )
+            request_media_content_reindex(db, media_id=media.id, reason="oracle_corpus_seed")
         return
     repair_source_for_system_media(
         db=db,
         actor_user_id=owner_user_id,
         media_id=media.id,
-        request_id=request_id,
+        request_id=f"oracle-corpus-seed:{source.work_key}",
         reason="oracle_corpus_seed",
     )
 
@@ -392,7 +384,6 @@ def resolve_oracle_passage_anchors(
         .join(OracleCorpusSource, OracleCorpusSource.id == OraclePassageAnchor.corpus_source_id)
         .where(OracleCorpusSource.corpus_key == corpus_key)
     ).all()
-    now = db.scalar(select(func.now()))
     resolved = 0
     failed = 0
     chunk_cache: dict[UUID, list[tuple[UUID, UUID | None, str, tuple[str, ...], Counter[str]]]] = {}
@@ -407,15 +398,11 @@ def resolve_oracle_passage_anchors(
             anchor.current_content_chunk_id = match[0]
             anchor.current_evidence_span_id = match[1]
             anchor.resolution_status = "resolved"
-            anchor.resolution_error = None
-            anchor.resolved_at = now
             resolved += 1
         else:
             anchor.current_content_chunk_id = None
             anchor.current_evidence_span_id = None
             anchor.resolution_status = "failed"
-            anchor.resolution_error = "selector did not match a ready chunk in the mapped media"
-            anchor.resolved_at = None
             failed += 1
     db.flush()
     return AnchorResolutionResult(total=len(rows), resolved=resolved, failed=failed)

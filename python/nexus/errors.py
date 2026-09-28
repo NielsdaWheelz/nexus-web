@@ -103,7 +103,6 @@ class ApiErrorCode(str, Enum):
     E_IDEMPOTENCY_CONFLICT = ("E_IDEMPOTENCY_CONFLICT", 409)
     E_UPLOAD_GENERATION_STALE = ("E_UPLOAD_GENERATION_STALE", 409)
     E_UPLOAD_ALREADY_PUBLISHED = ("E_UPLOAD_ALREADY_PUBLISHED", 409)
-    E_UPLOAD_VERIFICATION_IN_PROGRESS = ("E_UPLOAD_VERIFICATION_IN_PROGRESS", 409)
     E_UPLOAD_INTENT_MISMATCH = ("E_UPLOAD_INTENT_MISMATCH", 409)
 
     # Highlight errors
@@ -158,7 +157,6 @@ class ApiErrorCode(str, Enum):
         "E_REGENERATION_NOT_ALLOWED",
         409,
     )  # completed answer not regeneratable
-    E_CHAPTER_NOT_FOUND = ("E_CHAPTER_NOT_FOUND", 404)
     E_ARCHIVE_UNSAFE = ("E_ARCHIVE_UNSAFE", 400)
     E_EPUB_FIND_SOURCE_CHANGED = ("E_EPUB_FIND_SOURCE_CHANGED", 409)
 
@@ -266,12 +264,10 @@ class ApiError(Exception):
         code: ApiErrorCode,
         message: str,
         *,
-        retry_after_seconds: int | None = None,
         details: dict[str, Any] | None = None,
     ):
         self.code = code
         self.message = message
-        self.retry_after_seconds = retry_after_seconds
         self.details = details
         self.status_code = code.status
         super().__init__(message)

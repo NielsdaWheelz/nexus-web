@@ -92,8 +92,8 @@ from nexus.services.media_deletion import (
 )
 from nexus.services.media_fact_revisions import bump_all_media_fact_collections
 from nexus.services.media_processing_state import (
+    mark_extracting,
     mark_ready_for_reading,
-    mark_source_queued,
     mark_stage_warning,
     require_media_failure_stage,
 )
@@ -546,7 +546,6 @@ def create_attempt(
     provider: str | None,
     provider_target_ref: str | None,
     source_payload: dict[str, object],
-    request_id: str | None,
     idempotency_key: str | None,
     status: str,
 ) -> MediaSourceAttempt:
@@ -569,7 +568,6 @@ def create_attempt(
         provider=provider,
         provider_target_ref=provider_target_ref,
         source_payload=source_payload,
-        request_id=request_id,
     )
     db.add(attempt)
     db.flush()
@@ -611,7 +609,6 @@ def _clone_attempt(
     media: Media,
     viewer_id: UUID,
     previous: MediaSourceAttempt,
-    request_id: str | None,
     intent_key: str,
 ) -> MediaSourceAttempt:
     """A fresh accepted attempt carrying the previous one's source identity only."""
@@ -626,7 +623,6 @@ def _clone_attempt(
         provider=previous.provider,
         provider_target_ref=previous.provider_target_ref,
         source_payload=dict(previous.source_payload or {}),
-        request_id=request_id,
         idempotency_key=None,
         status=ACCEPTED,
     )
@@ -816,7 +812,6 @@ def _accept_url(
         provider=spec.provider,
         provider_target_ref=spec.provider_target_ref,
         source_payload=source_payload,
-        request_id=request_id,
         idempotency_key=clean_key,
         status=ACCEPTED if created else settled_status,
     )
@@ -896,7 +891,6 @@ def accept_embedded_source(
     parent_media_id: UUID,
     document_embed_key: str,
     library_ids: list[UUID],
-    request_id: str | None = None,
 ) -> EmbeddedSourceAcceptance:
     """Create or reuse a child source for a trusted document embed. Flush-only."""
     validate_requested_url(url)
@@ -952,7 +946,6 @@ def accept_embedded_source(
             **spec.source_payload,
             "library_ids": [str(library_id) for library_id in library_ids],
         },
-        request_id=request_id,
         idempotency_key=None,
         status=ACCEPTED,
     )
@@ -1000,11 +993,10 @@ def enqueue_podcast_episode_transcript_source_attempt(
         provider=media.provider,
         provider_target_ref=media.provider_id,
         source_payload={"media_kind": media.kind, "request_reason": request_reason},
-        request_id=request_id,
         idempotency_key=None,
         status=ACCEPTED,
     )
-    mark_source_queued(db, media)
+    mark_extracting(db, media)
     bump_all_media_fact_collections(db)
     db.flush()
     enqueue_accepted_source_attempt_in_transaction(
@@ -1025,7 +1017,6 @@ def complete_x_post_snapshot_attempt(
     viewer_id: UUID,
     post_id: str,
     canonical_url: str,
-    request_id: str | None,
 ) -> MediaSourceAttempt:
     """Complete an accepted X-post child from the parent thread's provider snapshot."""
     attempt = db.get(MediaSourceAttempt, source_attempt_id)
@@ -1046,7 +1037,6 @@ def complete_x_post_snapshot_attempt(
             provider="x",
             provider_target_ref=post_id,
             source_payload={"post_id": post_id},
-            request_id=request_id,
             idempotency_key=None,
             status=SUCCEEDED,
         )
@@ -1055,7 +1045,6 @@ def complete_x_post_snapshot_attempt(
         attempt.status = SUCCEEDED
         attempt.error_code = None
         attempt.error_message = None
-        attempt.retry_after_seconds = None
         _record_event(
             db,
             media_id=media.id,
@@ -1063,8 +1052,6 @@ def complete_x_post_snapshot_attempt(
             facts=SourceSucceeded(source_attempt_id=attempt.id, execution_id=absent()),
             failure_code=absent(),
         )
-    attempt.run_count = max(1, int(attempt.run_count or 0))
-    attempt.started_at = attempt.started_at or now
     attempt.finished_at = now
     attempt.updated_at = now
     return attempt
@@ -1127,7 +1114,6 @@ def enqueue_accepted_source_attempt_in_transaction(
         raise ApiError(ApiErrorCode.E_INTERNAL, "Accepted source attempt identity changed.")
     attempt.job_id = job.id
     attempt.status = QUEUED
-    attempt.retry_after_seconds = None
     attempt.updated_at = func.now()
     return job.id
 
@@ -1247,7 +1233,6 @@ def ensure_stale_source_attempt_job(
     job = _enqueue_source_job(db, media.id, attempt.id, actor_user_id, request_id)
     attempt.job_id = job.id
     attempt.status = QUEUED
-    attempt.retry_after_seconds = None
     attempt.updated_at = func.now()
     return "enqueued"
 
@@ -1341,13 +1326,12 @@ def retry_source_for_viewer(
             media=media,
             viewer_id=viewer_id,
             previous=attempt,
-            request_id=request_id,
             intent_key=_action_intent_key(
                 "retry", media_id=media.id, previous_attempt_id=attempt.id
             ),
         )
         _admit_requeued_transcript(db, media, retry_attempt, viewer_id)
-        mark_source_queued(db, media)
+        mark_extracting(db, media)
         bump_all_media_fact_collections(db)
         job_id = enqueue_accepted_source_attempt_in_transaction(
             db,
@@ -1470,12 +1454,11 @@ def reprocess_retained_epub(
             media=media,
             viewer_id=creator_id,
             previous=attempt,
-            request_id=None,
             intent_key=_action_intent_key(
                 "operator_reprocess", media_id=media_id, previous_attempt_id=attempt.id
             ),
         )
-        mark_source_queued(db, media)
+        mark_extracting(db, media)
         bump_all_media_fact_collections(db)
         job_id = enqueue_accepted_source_attempt_in_transaction(
             db,
@@ -1591,11 +1574,10 @@ def correct_source_type(
                 "kind": spec.kind,
                 **spec.source_payload,
             },
-            request_id=None,
             idempotency_key=None,
             status=ACCEPTED,
         )
-        mark_source_queued(db, media)
+        mark_extracting(db, media)
         bump_all_media_fact_collections(db)
         job_id = enqueue_accepted_source_attempt_in_transaction(
             db,
@@ -1777,13 +1759,12 @@ def refresh_source_for_viewer(
             media=media,
             viewer_id=viewer_id,
             previous=attempt,
-            request_id=request_id,
             intent_key=_action_intent_key(
                 "refresh", media_id=media.id, previous_attempt_id=attempt.id
             ),
         )
         _admit_requeued_transcript(db, media, refresh_attempt, viewer_id)
-        mark_source_queued(db, media)
+        mark_extracting(db, media)
         bump_all_media_fact_collections(db)
         enqueue_accepted_source_attempt_in_transaction(
             db,
@@ -1857,7 +1838,7 @@ def repair_source_for_system_media(
             )
         if media.kind == MediaKind.epub.value:
             _require_unpublished_document(db, media.id, require_no_file=False)
-        mark_source_queued(db, media)
+        mark_extracting(db, media)
         bump_all_media_fact_collections(db)
         enqueue_accepted_source_attempt_in_transaction(
             db,
@@ -1891,7 +1872,6 @@ def repair_source_for_system_media(
         media=media,
         viewer_id=actor_user_id,
         previous=attempt,
-        request_id=request_id,
         intent_key=_action_intent_key(
             "system_repair", media_id=media.id, previous_attempt_id=attempt.id
         ),
@@ -1901,7 +1881,7 @@ def repair_source_for_system_media(
         "system_repair_reason": reason,
     }
     _admit_requeued_transcript(db, media, repair_attempt, actor_user_id)
-    mark_source_queued(db, media)
+    mark_extracting(db, media)
     bump_all_media_fact_collections(db)
     enqueue_accepted_source_attempt_in_transaction(
         db,
@@ -2027,8 +2007,6 @@ def _run_fenced_attempt(
 
     def mark_running(db: Session, attempt: MediaSourceAttempt) -> None:
         attempt.status = RUNNING
-        attempt.run_count = int(attempt.run_count or 0) + 1
-        attempt.started_at = func.now()
         attempt.updated_at = func.now()
         reset_source_progress(attempt)
         _record_event(
@@ -2124,7 +2102,6 @@ def _run_fenced_attempt(
             attempt=locked,
             terminal_media_id=terminal_media_id,
             outcome=outcome,
-            request_id=request_id,
             execution_id=fence.execution_id,
         ),
         discover=discover,
@@ -2187,7 +2164,6 @@ def _publish_terminal_attempt(
     attempt: MediaSourceAttempt,
     terminal_media_id: UUID,
     outcome: SourceRunOutcome,
-    request_id: str | None,
     execution_id: UUID,
 ) -> None:
     """Settle the attempt against the terminal media's own published outcome."""
@@ -2198,7 +2174,6 @@ def _publish_terminal_attempt(
         attempt.status = FAILED
         attempt.error_code = media.last_error_code
         attempt.error_message = media.last_error_message
-        attempt.retry_after_seconds = None
         _record_event(
             db,
             media_id=attempt.media_id,
@@ -2223,7 +2198,6 @@ def _publish_terminal_attempt(
         attempt.status = SUCCEEDED
         attempt.error_code = None
         attempt.error_message = None
-        attempt.retry_after_seconds = None
         _record_event(
             db,
             media_id=attempt.media_id,
@@ -2255,10 +2229,7 @@ def _publish_terminal_attempt(
 
             for reindex_media_id in (terminal_media_id, *outcome.additional_reindex_media_ids):
                 request_media_content_reindex(
-                    db,
-                    media_id=reindex_media_id,
-                    reason="source_success",
-                    request_id=request_id,
+                    db, media_id=reindex_media_id, reason="source_success"
                 )
     attempt.finished_at = func.now()
     attempt.updated_at = func.now()
@@ -2294,7 +2265,6 @@ def _publish_terminal_failure(
             attempt.status = FAILED
             attempt.error_code = error_code
             attempt.error_message = error_message[:1000]
-            attempt.retry_after_seconds = None
             attempt.finished_at = func.now()
             attempt.updated_at = func.now()
             _record_event(
@@ -2434,7 +2404,6 @@ def _fail_source_attempt(
             failure_stage=require_media_failure_stage(stage),
             error_code=error_code,
             error_message=error_message,
-            retry_after_seconds=_retry_after_seconds(exc),
             now=datetime.now(UTC),
             execution_id=execution_id,
         ),
@@ -2447,14 +2416,6 @@ def _source_error_fields(exc: Exception) -> tuple[str, str]:
     if isinstance(exc, StorageError):
         return exc.code, exc.message
     return ApiErrorCode.E_INGEST_FAILED.value, str(exc)
-
-
-def _retry_after_seconds(exc: Exception) -> int | None:
-    retry_after = getattr(exc, "retry_after_seconds", None)
-    try:
-        return max(0, int(retry_after)) if retry_after is not None else None
-    except (TypeError, ValueError):
-        return None
 
 
 def _is_terminal_source_failure(exc: Exception, *, source_type: str) -> bool:

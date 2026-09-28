@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import gzip
 import re
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from io import StringIO
 from typing import Any
 
@@ -35,20 +35,7 @@ _CATALOG_TIMEOUT = httpx.Timeout(120.0, connect=30.0)
 _INSERT_BATCH_SIZE = 1000
 _GUTENBERG_CREDIT_SOURCE = "project_gutenberg_catalog"
 # Refreshed on ON CONFLICT UPDATE; never created_at or ebook_id.
-_UPSERT_COLUMNS = (
-    "title",
-    "gutenberg_type",
-    "issued",
-    "language",
-    "subjects",
-    "locc",
-    "bookshelves",
-    "copyright_status",
-    "download_count",
-    "raw_metadata",
-    "synced_at",
-    "updated_at",
-)
+_UPSERT_COLUMNS = ("title", "subjects", "bookshelves", "download_count", "updated_at")
 
 
 def sync_project_gutenberg_catalog(
@@ -64,14 +51,13 @@ def sync_project_gutenberg_catalog(
     source_url, payload = download_project_gutenberg_catalog_feed(
         source_urls=source_urls or _CATALOG_FEED_URLS
     )
-    synced_at = datetime.now(UTC)
-    rows = parse_project_gutenberg_catalog_feed(payload, synced_at=synced_at)
+    parsed = parse_project_gutenberg_catalog_feed(payload)
 
     observations: dict[int, ContributorObservationBatch] = {}
     parsed_names: dict[int, tuple[str, ...]] = {}
-    for row in rows:
+    for row, authors in parsed:
         ebook_id = int(row["ebook_id"])
-        observation, _truncated = build_observation({"author": _author_entries(row)})
+        observation, _truncated = build_observation({"author": authors})
         observations[ebook_id] = observation
         parsed_names[ebook_id] = (
             tuple(credit.credited_name for credit in observation.credits)
@@ -101,9 +87,9 @@ def sync_project_gutenberg_catalog(
                     ProjectGutenbergCatalogEntry.ebook_id.in_(removed_ids)
                 )
             )
-        for start in range(0, len(rows), _INSERT_BATCH_SIZE):
+        for start in range(0, len(parsed), _INSERT_BATCH_SIZE):
             statement = pg_insert(ProjectGutenbergCatalogEntry).values(
-                rows[start : start + _INSERT_BATCH_SIZE]
+                [row for row, _ in parsed[start : start + _INSERT_BATCH_SIZE]]
             )
             db.execute(
                 statement.on_conflict_do_update(
@@ -124,7 +110,7 @@ def sync_project_gutenberg_catalog(
             for ebook_id in sorted(changed_ids)
         ]
     )
-    return {"source_url": source_url, "row_count": len(rows), "synced_at": synced_at.isoformat()}
+    return {"source_url": source_url, "row_count": len(parsed)}
 
 
 def download_project_gutenberg_catalog_feed(
@@ -144,48 +130,36 @@ def download_project_gutenberg_catalog_feed(
 
 
 def parse_project_gutenberg_catalog_feed(
-    payload: bytes, *, synced_at: datetime | None = None
-) -> list[dict[str, Any]]:
-    """Parse pg_catalog.csv(.gz) into normalized mirror rows."""
-    now = synced_at or datetime.now(UTC)
+    payload: bytes,
+) -> list[tuple[dict[str, Any], list[RawCreditEntry]]]:
+    """Parse pg_catalog.csv(.gz) into mirror rows, each with its author entries."""
+    now = datetime.now(UTC)
     raw = gzip.decompress(payload) if payload[:2] == b"\x1f\x8b" else payload
     reader = csv.DictReader(StringIO(raw.decode("utf-8-sig")))
-    rows: list[dict[str, Any]] = []
+    parsed: list[tuple[dict[str, Any], list[RawCreditEntry]]] = []
     for raw_row in reader:
         ebook_id = _optional_int(_value(raw_row, "Text#", "Text", "ID", "EBook-No."))
         if ebook_id is None:
             raise ValueError("Project Gutenberg catalog row is missing a valid ebook id")
-        rows.append(
-            {
-                "ebook_id": ebook_id,
-                "title": _value(raw_row, "Title") or "",
-                "gutenberg_type": _value(raw_row, "Type"),
-                "issued": _optional_date(_value(raw_row, "Issued")),
-                "language": _value(raw_row, "Language"),
-                "subjects": _value(raw_row, "Subjects", "Subject"),
-                "locc": _value(raw_row, "LoCC"),
-                "bookshelves": _value(raw_row, "Bookshelves", "Bookshelf"),
-                "copyright_status": _value(raw_row, "Copyright", "Copyright Status"),
-                "download_count": _optional_int(_value(raw_row, "Downloads")),
-                "raw_metadata": {key: value or "" for key, value in raw_row.items() if key},
-                "synced_at": now,
-                "created_at": now,
-                "updated_at": now,
-            }
-        )
-    return rows
+        row = {
+            "ebook_id": ebook_id,
+            "title": _value(raw_row, "Title") or "",
+            "subjects": _value(raw_row, "Subjects", "Subject"),
+            "bookshelves": _value(raw_row, "Bookshelves", "Bookshelf"),
+            "download_count": _optional_int(_value(raw_row, "Downloads")),
+            "created_at": now,
+            "updated_at": now,
+        }
+        parsed.append((row, _author_entries(_value(raw_row, "Authors", "Author") or "")))
+    return parsed
 
 
-def _author_entries(row: dict[str, Any]) -> list[RawCreditEntry]:
+def _author_entries(authors: str) -> list[RawCreditEntry]:
     """Split the catalog author string on ``;`` and `` and `` only.
 
     Commas are preserved so ``Verne, Jules`` stays one name. The catalog carries
     no identity keys — it is provenance, not identity.
     """
-    raw_metadata = row.get("raw_metadata")
-    if not isinstance(raw_metadata, dict):
-        return []
-    authors = str(raw_metadata.get("Authors") or raw_metadata.get("Author") or "").strip()
     return [
         RawCreditEntry(credited_name=part, raw_role="author")
         for part in re.split(r"\s*;\s*|\s+and\s+", authors)
@@ -204,12 +178,5 @@ def _value(row: dict[str, str | None], *keys: str) -> str | None:
 def _optional_int(value: str | None) -> int | None:
     try:
         return int(value) if value is not None else None
-    except ValueError:
-        return None
-
-
-def _optional_date(value: str | None) -> date | None:
-    try:
-        return date.fromisoformat(value) if value is not None else None
     except ValueError:
         return None

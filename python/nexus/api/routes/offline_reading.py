@@ -50,7 +50,6 @@ _PACKAGE_ASSEMBLY_WORK_DEADLINE_SECONDS = 540
 # thread and temp-disk cost proportional to a constant instead of to the number
 # of requests one account can open.
 PACKAGE_ASSEMBLY_MAX_CONCURRENCY = 2
-PACKAGE_ASSEMBLY_BUSY_RETRY_AFTER_SECONDS = 30
 _assembly_slots = BoundedSemaphore(PACKAGE_ASSEMBLY_MAX_CONCURRENCY)
 
 
@@ -185,7 +184,6 @@ async def _assemble_one_package(request: Request, *, media_id: UUID) -> _Assembl
         raise ApiError(
             ApiErrorCode.E_OFFLINE_READING_PACKAGE_BUSY,
             "Offline reading package assembly is at capacity",
-            retry_after_seconds=PACKAGE_ASSEMBLY_BUSY_RETRY_AFTER_SECONDS,
         )
     slot_held_here = True
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="offline-reading-package")

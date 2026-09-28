@@ -114,15 +114,6 @@ class MediaSourceAttemptStatus(str, PyEnum):
     failed = "failed"
 
 
-class SemanticStatus(str, PyEnum):
-    """Semantic index readiness state for transcript chunks."""
-
-    none = "none"
-    pending = "pending"
-    ready = "ready"
-    failed = "failed"
-
-
 # =============================================================================
 # Models
 # =============================================================================
@@ -562,15 +553,9 @@ class MediaUploadSession(Base):
     expected_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     input_origin: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
-    request_id: Mapped[str] = mapped_column(Text, nullable=False)
     upload_generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
     upload_url_expires_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False
-    )
-    verification_token: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
-    verification_generation: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    verification_expires_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
     )
     transport_failure_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
     transport_http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -663,11 +648,7 @@ class Media(Base):
     )
     last_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    processing_attempts: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
     processing_started_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
-    processing_completed_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
     failed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
@@ -736,12 +717,6 @@ class Media(Base):
     podcast_episode: Mapped["PodcastEpisode | None"] = relationship(
         "PodcastEpisode", back_populates="media", cascade="all, delete-orphan", uselist=False
     )
-    transcript_state: Mapped["MediaTranscriptState | None"] = relationship(
-        "MediaTranscriptState",
-        back_populates="media",
-        cascade="all, delete-orphan",
-        uselist=False,
-    )
     contributor_credits: Mapped[list["ContributorCredit"]] = relationship(
         "ContributorCredit",
         back_populates="media",
@@ -770,7 +745,6 @@ class MediaSourceAttempt(Base):
     )
     source_type: Mapped[str] = mapped_column(Text, nullable=False)
     attempt_no: Mapped[int] = mapped_column(Integer, nullable=False)
-    run_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     processing_stage: Mapped[str | None] = mapped_column(Text, nullable=True)
     progress_completed: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     progress_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -790,12 +764,9 @@ class MediaSourceAttempt(Base):
         nullable=False,
         server_default=text("'{}'::jsonb"),
     )
-    request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     job_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    retry_after_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -846,24 +817,9 @@ class ProjectGutenbergCatalogEntry(Base):
 
     ebook_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     title: Mapped[str] = mapped_column(Text, nullable=False)
-    gutenberg_type: Mapped[str | None] = mapped_column(Text, nullable=True)
-    issued: Mapped[date | None] = mapped_column(Date, nullable=True)
-    language: Mapped[str | None] = mapped_column(Text, nullable=True)
     subjects: Mapped[str | None] = mapped_column(Text, nullable=True)
-    locc: Mapped[str | None] = mapped_column(Text, nullable=True)
     bookshelves: Mapped[str | None] = mapped_column(Text, nullable=True)
-    copyright_status: Mapped[str | None] = mapped_column(Text, nullable=True)
     download_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    raw_metadata: Mapped[dict[str, str]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("'{}'::jsonb"),
-    )
-    synced_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -1008,7 +964,6 @@ class ContributorCredit(Base):
         nullable=True,
     )
     credited_name: Mapped[str] = mapped_column(Text, nullable=False)
-    normalized_credited_name: Mapped[str] = mapped_column(Text, nullable=False)
     role: Mapped[str] = mapped_column(Text, nullable=False)
     raw_role: Mapped[str | None] = mapped_column(Text, nullable=True)
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -1496,42 +1451,6 @@ class PodcastEpisode(Base):
     podcast: Mapped["Podcast"] = relationship("Podcast", back_populates="episodes")
 
 
-class ConsumptionQueueItem(Base):
-    """Per-user ordered consumption queue item (any media kind)."""
-
-    __tablename__ = "consumption_queue_items"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", name="fk_consumption_queue_items_user"),
-        nullable=False,
-    )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", name="fk_consumption_queue_items_media"),
-        nullable=False,
-    )
-    position: Mapped[int] = mapped_column(Integer, nullable=False)
-    added_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    # Internal provenance only (agent undo/trust, auto-subscription diagnostics);
-    # intentionally absent from the LecternSnapshot wire contract. The enum
-    # vocabulary is owned by persistence adapters, not a database CHECK (spec
-    # docs/cutovers/lectern-player-lifecycle-hard-cutover.md §4).
-    source: Mapped[str] = mapped_column(Text, nullable=False, server_default="manual")
-
-    user: Mapped["User"] = relationship("User")
-    media: Mapped["Media"] = relationship("Media")
-
-
 class ContentIndexState(Base):
     """Active evidence index pointer for a content owner."""
 
@@ -1588,48 +1507,6 @@ class MediaSummary(Base):
         server_default=text("now()"),
         nullable=False,
     )
-
-
-class MediaTranscriptState(Base):
-    """Dedicated transcript-state table for media capabilities/search readiness."""
-
-    __tablename__ = "media_transcript_states"
-
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    transcript_state: Mapped[str] = mapped_column(
-        Text,
-        nullable=False,
-        server_default=TranscriptState.not_requested.value,
-    )
-    transcript_coverage: Mapped[str] = mapped_column(
-        Text,
-        nullable=False,
-        server_default=TranscriptCoverage.none.value,
-    )
-    semantic_status: Mapped[str] = mapped_column(
-        Text,
-        nullable=False,
-        server_default=SemanticStatus.none.value,
-    )
-    last_request_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    transcript_origin: Mapped[str | None] = mapped_column(Text, nullable=True)
-    last_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    media: Mapped["Media"] = relationship("Media", back_populates="transcript_state")
 
 
 # =============================================================================
@@ -1735,11 +1612,7 @@ class HighlightFragmentAnchor(Base):
 
 
 class HighlightPdfAnchor(Base):
-    """PDF geometry anchor subtype (1:1 with highlights).
-
-    Stores page-space geometry metadata and persisted quote-match metadata
-    for PDF highlights.
-    """
+    """PDF geometry anchor subtype (1:1 with highlights): page-space geometry metadata."""
 
     __tablename__ = "highlight_pdf_anchors"
 
@@ -1756,11 +1629,6 @@ class HighlightPdfAnchor(Base):
     page_number: Mapped[int] = mapped_column(Integer, nullable=False)
     sort_top: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
     sort_left: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
-    plain_text_match_status: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default="pending"
-    )
-    plain_text_start_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    plain_text_end_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
     rect_count: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -2467,26 +2335,14 @@ class ChatPromptAssembly(Base):
         ForeignKey("messages.id"),
         nullable=False,
     )
-    prompt_block_manifest: Mapped[dict[str, object]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("'{}'::jsonb"),
-    )
     generation_intent: Mapped[dict[str, object]] = mapped_column(
         JSONB(none_as_null=True),
         nullable=False,
     )
-    generation_intent_digest: Mapped[str] = mapped_column(Text, nullable=False)
-    max_context_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
     reserved_output_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
     input_budget_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
     estimated_input_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
     included_message_ids: Mapped[list[str]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("'[]'::jsonb"),
-    )
-    included_retrieval_ids: Mapped[list[str]] = mapped_column(
         JSONB,
         nullable=False,
         server_default=text("'[]'::jsonb"),
@@ -2500,11 +2356,6 @@ class ChatPromptAssembly(Base):
         JSONB,
         nullable=False,
         server_default=text("'[]'::jsonb"),
-    )
-    budget_breakdown: Mapped[dict[str, object]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("'{}'::jsonb"),
     )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -2871,11 +2722,6 @@ class EpubFragmentSource(Base):
         nullable=False,
     )
     package_href: Mapped[str] = mapped_column(Text, nullable=False)
-    manifest_item_id: Mapped[str] = mapped_column(Text, nullable=False)
-    spine_itemref_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    media_type: Mapped[str] = mapped_column(Text, nullable=False)
-    linear: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    reading_order: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -3115,8 +2961,6 @@ class OraclePassageAnchor(Base):
     resolution_status: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=text("'pending'")
     )
-    resolution_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
     )

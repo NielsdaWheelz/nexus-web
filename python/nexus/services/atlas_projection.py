@@ -210,7 +210,7 @@ def repulse(
 
 
 def upsert_positions(db: Session, positions: dict[UUID, tuple[float, float]]) -> int:
-    """UPSERT positions, bumping ``projection_version`` on conflict. Returns rows written."""
+    """UPSERT positions, refreshing ``computed_at`` on conflict. Returns rows written."""
     count = 0
     for media_id, (x, y) in positions.items():
         db.execute(
@@ -221,7 +221,6 @@ def upsert_positions(db: Session, positions: dict[UUID, tuple[float, float]]) ->
                 ON CONFLICT (media_id) DO UPDATE SET
                     x = EXCLUDED.x,
                     y = EXCLUDED.y,
-                    projection_version = media_atlas_positions.projection_version + 1,
                     computed_at = now()
                 """
             ),

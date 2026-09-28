@@ -303,7 +303,6 @@ def build_assistant_trust_trails(
                     input_budget_tokens=prompt.input_budget_tokens,
                     estimated_input_tokens=prompt.estimated_input_tokens,
                     included_message_ids=prompt.included_message_ids,
-                    included_retrieval_ids=prompt.included_retrieval_ids,
                     included_context_refs=cast(list[dict[str, Any]], prompt.included_context_refs),
                     dropped_items=cast(list[dict[str, Any]], prompt.dropped_items),
                 )

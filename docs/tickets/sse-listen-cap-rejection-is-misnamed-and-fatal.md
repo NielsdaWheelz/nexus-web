@@ -18,10 +18,12 @@ arms sit on non-stream commands that never received the code: before 0248 its
 only emitters were the limiter's three callers (chat send, oracle create, the
 stream-token mint) and this cap.
 
-fix (owner's choice): give the cap a capacity code with
-`retry_after_seconds`, as `E_OFFLINE_READING_PACKAGE_BUSY` has
-(`python/nexus/errors.py:92`), let sse-client back off on it, and prune the
-dead web arms.
+fix (owner's choice): give the cap a capacity code whose response carries a
+`Retry-After` header, let sse-client back off on it, and prune the dead web
+arms. the handler has to render that header itself:
+`ApiError.retry_after_seconds` never reached a response (`api_error_handler`
+ignored it) and pr-09 (cleanup/prune-write-only-schema) deleted it along with
+`E_OFFLINE_READING_PACKAGE_BUSY`'s unused 30 s hint.
 
 acceptance: a 65th concurrent stream in one process reconnects after backoff
 instead of erroring.

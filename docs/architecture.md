@@ -1317,8 +1317,9 @@ The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
   `GET /chat-runs/{id}` snapshots.
 - **Context assembly** (`context_assembler.py`): a
   context-admitted, lane-ordered plan (system → scope → attached context → retrieved
-  evidence → web evidence → history → current user). The prompt plan stores
-  token counts, lane metadata, and text-free block manifests, but no prompt hashes
+  evidence → web evidence → history → current user). The prompt ledger stores
+  the frozen generation intent, budget token counts, the included message ids and
+  context refs, and the dropped blocks' text-free manifests, but no prompt hashes
   or remote cache key. Attached references render as numbered `<resources>`;
   the transient `<reader_selection>` (a highlight the user is asking about) is
   bind-only and never numbered.
