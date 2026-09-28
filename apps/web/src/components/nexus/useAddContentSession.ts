@@ -680,10 +680,8 @@ export function useAddContentSession(): AddContentSessionController {
       });
       if (generation !== generationRef.current) return;
 
-      // A rejected write leaves the placement UNKNOWN only when the transport
-      // itself is ambiguous; every other rejection is an authoritative refusal
-      // and fails the command directly, as the canonical placement controller
-      // does (lib/libraries/useLibraryPlacement.ts isMutationSettlementUnknown).
+      // An ambiguous transport failure leaves the placement unknown, so it is
+      // reread; any other rejection fails the command.
       const failPlacement = (
         mediaId: string,
         libraries: readonly LibraryPlacementOption[],

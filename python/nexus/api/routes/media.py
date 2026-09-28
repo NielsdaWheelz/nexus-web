@@ -13,8 +13,9 @@ from sqlalchemy.orm import Session
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.responses import ok, success_response
+from nexus.responses import Data, ok, success_response
 from nexus.schemas.contributors import MediaAuthorsPutRequest
+from nexus.schemas.library import LibraryEntryRemovalOut, LibraryPlacementOptionOut
 from nexus.schemas.media import MediaLibrariesRequest
 from nexus.services import contributors as contributors_service
 from nexus.services import library_entries, media_source_ingest
@@ -80,11 +81,13 @@ def remove_media(media_id: UUID, request: Request, viewer: ViewerDep, db: DbDep)
 
 
 @router.get("/media/{media_id}/libraries")
-def get_media_libraries(media_id: UUID, viewer: ViewerDep, db: DbDep) -> dict:
+def get_media_libraries(
+    media_id: UUID, viewer: ViewerDep, db: DbDep
+) -> Data[list[LibraryPlacementOptionOut]]:
     rows = library_entries.list_item_libraries(
         db, viewer_id=viewer.user_id, target=library_entries.media_target(media_id)
     )
-    return ok(rows)
+    return Data(data=rows)
 
 
 @router.get("/media/{media_id}/fragments")
@@ -111,17 +114,21 @@ def add_media_saved_in_nexus(media_id: UUID, viewer: ViewerDep, db: DbDep) -> Re
 
 
 @router.delete("/media/{media_id}/saved-in-nexus")
-def remove_media_saved_in_nexus(media_id: UUID, viewer: ViewerDep, db: DbDep) -> dict:
+def remove_media_saved_in_nexus(
+    media_id: UUID, viewer: ViewerDep, db: DbDep
+) -> Data[LibraryEntryRemovalOut]:
     result = library_entries.ensure_media_absent_from_saved_in_nexus_for_viewer(
         db, viewer_id=viewer.user_id, media_id=media_id
     )
-    return ok(result, by_alias=True)
+    return Data(data=result)
 
 
 @router.delete("/media/{media_id}/libraries/{library_id}")
-def remove_media_library(media_id: UUID, library_id: UUID, viewer: ViewerDep, db: DbDep) -> dict:
+def remove_media_library(
+    media_id: UUID, library_id: UUID, viewer: ViewerDep, db: DbDep
+) -> Data[LibraryEntryRemovalOut]:
     result = library_entries.remove_media_from_library(db, viewer.user_id, media_id, library_id)
-    return ok(result, by_alias=True)
+    return Data(data=result)
 
 
 @router.post("/media/{media_id}/refresh", status_code=202)

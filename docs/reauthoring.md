@@ -18,7 +18,7 @@ calibration (chat tools, 2026-09-21): a spec that describes the current structur
 
 verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, one alembic head) plus one named manual check per module. there are no automated tests; that is a known, accepted trade.
 
-wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the routes it rewrites and deletes their web decoders. the generated `apps/web/src/lib/api/wire.gen.ts` is excluded from line counts and targets. untyped JSON routes: 178 of 221 operations (2026-09-28; 7 typed, 24 without a body, 12 binary or SSE).
+wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the routes it rewrites and deletes their web decoders. the generated `apps/web/src/lib/api/wire.gen.ts` is excluded from line counts and targets. untyped JSON routes: 169 of 219 operations (2026-09-28; 14 typed, 24 without a body, 12 binary or SSE).
 
 ## inventory and targets
 
@@ -44,7 +44,7 @@ wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the 
 | podcasts (subscriptions, sync, refresh runs, backfill, transcription, OPML, detail panes) | 14.1k | 6k | reauthor; drop refresh-run ledger, OPML | python first pass landed (size/podcasts-py): 10.9k→7.1k, −35%; OPML and the refresh-run ledger deleted (0239); web 7.0k open |
 | player (browser + android runtimes, protocol, lectern, walknotes, native player) | 21.3k | 6k | one runtime behind one transport; deferred by owner 2026-09-21; keep and reauthor walknotes | open |
 | consumption-stats (spans, projection, stats pane, outbox, exclusions) | 12.2k | 3k | reauthor; keep stats + exclusions | python first pass landed (size/consumption-py): 6.0k→4.6k, −23%; web 6.0k and android outbox open |
-| library (libraries, entries, listing, placement 3.2k) | 15.5k | 5k | reauthor | python first pass landed (size/library-py, with sharing below): 5.9k→4.3k, −28%; web 9.6k open |
+| library (libraries, entries, listing, placement 3.2k) | 12.5k | 5k | reauthor | python first pass landed (size/library-py, with sharing below): 5.9k→4.3k, −28%; placement web reauthored (cleanup/library-placement): 1,759→402 lines, −77%; 13-phase machine, commit barrier and placement lease deleted; placement + create routes typed; web ~8.2k open |
 | library-sharing (memberships, invitations, governance) | 5.0k | 2k | keep, reauthor | python landed in size/library-py: invitations+membership governance now one services/library_sharing.py (624 lines); web sharing UI open |
 | resource-sharing (grants, public /s reader, share overlay) | 7.2k | 2.5k | keep grants + link; /s reader reuses the reader | open |
 | notes-pages (daily pages, two body editors, highlights service) | 11.2k | 4k | one editor | python first pass landed (size/notes-py): 3.5k→2.4k, −30%; web 8.7k (two body editors) open |

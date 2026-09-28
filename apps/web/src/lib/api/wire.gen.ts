@@ -3444,6 +3444,14 @@ export interface components {
              */
             kind: "absent";
         };
+        /** AbsentLibraryPlacementRelationOut */
+        AbsentLibraryPlacementRelationOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Absent";
+        };
         /**
          * ActivityRecordIn
          * @description Trusted backend activity record; the BFF alone injects ``deviceId``.
@@ -3535,6 +3543,14 @@ export interface components {
              */
             mode: "automatic";
         };
+        /** AvailableLibraryPlacementAvailabilityOut */
+        AvailableLibraryPlacementAvailabilityOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Available";
+        };
         /** BillingAccountOut */
         BillingAccountOut: {
             /** Billing Enabled */
@@ -3610,6 +3626,19 @@ export interface components {
         BillingWebhookOut: {
             /** Processed */
             processed: boolean;
+        };
+        /** BlockedLibraryPlacementAvailabilityOut */
+        BlockedLibraryPlacementAvailabilityOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Blocked";
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "RequiresAdmin" | "RequiresSubscription" | "SystemManaged" | "Inherited";
         };
         /** Body_transcribe_walknote_audio_walknotes_transcribe_audio_post */
         Body_transcribe_walknote_audio_walknotes_transcribe_audio_post: {
@@ -4176,6 +4205,35 @@ export interface components {
         Data_BillingWebhookOut_: {
             data: components["schemas"]["BillingWebhookOut"];
         };
+        /** Data[LibraryEntryRemovalOut] */
+        Data_LibraryEntryRemovalOut_: {
+            data: components["schemas"]["LibraryEntryRemovalOut"];
+        };
+        /** Data[LibraryOut] */
+        Data_LibraryOut_: {
+            data: components["schemas"]["LibraryOut"];
+        };
+        /** Data[PodcastPlacementAdditionOut] */
+        Data_PodcastPlacementAdditionOut_: {
+            data: components["schemas"]["PodcastPlacementAdditionOut"];
+        };
+        /** Data[PodcastPlacementRemovalOut] */
+        Data_PodcastPlacementRemovalOut_: {
+            data: components["schemas"]["PodcastPlacementRemovalOut"];
+        };
+        /** Data[list[LibraryPlacementOptionOut]] */
+        Data_list_LibraryPlacementOptionOut__: {
+            /** Data */
+            data: components["schemas"]["LibraryPlacementOptionOut"][];
+        };
+        /** DirectLibraryPlacementRelationOut */
+        DirectLibraryPlacementRelationOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Direct";
+        };
         /** DirectNaturalEndOrigin */
         DirectNaturalEndOrigin: {
             /**
@@ -4503,6 +4561,16 @@ export interface components {
              */
             kind: "Ineligible";
         };
+        /** InheritedLibraryPlacementRelationOut */
+        InheritedLibraryPlacementRelationOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Inherited";
+            /** Provenance */
+            provenance: components["schemas"]["LibraryIdentityOut"][];
+        };
         /** InsertNoteSurfaceCommand */
         InsertNoteSurfaceCommand: {
             /** Body Pm Json */
@@ -4586,6 +4654,80 @@ export interface components {
         LibraryEntryOrderRequest: {
             /** Entry Ids */
             entry_ids: string[];
+        };
+        /** LibraryEntryRemovalOut */
+        LibraryEntryRemovalOut: {
+            /** Libraryentriescollectionrevision */
+            libraryEntriesCollectionRevision: number;
+        };
+        /** LibraryIdentityOut */
+        LibraryIdentityOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+        };
+        /** LibraryLibraryPlacementDestinationOut */
+        LibraryLibraryPlacementDestinationOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Library";
+            library: components["schemas"]["LibraryIdentityOut"];
+        };
+        /** LibraryOut */
+        LibraryOut: {
+            /** Candelete */
+            canDelete: boolean;
+            /** Caneditentries */
+            canEditEntries: boolean;
+            /** Canmanagemembers */
+            canManageMembers: boolean;
+            /** Canrename */
+            canRename: boolean;
+            /** Cantransferownership */
+            canTransferOwnership: boolean;
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Isdefault */
+            isDefault: boolean;
+            /** Name */
+            name: string;
+            /** Owneruserhandle */
+            ownerUserHandle: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "admin" | "member";
+            /** Systemkey */
+            systemKey: string | null;
+            /**
+             * Updatedat
+             * Format: date-time
+             */
+            updatedAt: string;
+        };
+        /** LibraryPlacementOptionOut */
+        LibraryPlacementOptionOut: {
+            /** Availability */
+            availability: components["schemas"]["AvailableLibraryPlacementAvailabilityOut"] | components["schemas"]["BlockedLibraryPlacementAvailabilityOut"];
+            /** Destination */
+            destination: components["schemas"]["SavedInNexusLibraryPlacementDestinationOut"] | components["schemas"]["LibraryLibraryPlacementDestinationOut"];
+            /** Relation */
+            relation: components["schemas"]["AbsentLibraryPlacementRelationOut"] | components["schemas"]["DirectLibraryPlacementRelationOut"] | components["schemas"]["InheritedLibraryPlacementRelationOut"];
         };
         /** LinkAudienceIn */
         LinkAudienceIn: {
@@ -5463,6 +5605,26 @@ export interface components {
              */
             state: "all" | "unplayed" | "in_progress" | "played";
         };
+        /** PodcastPlacementAdditionOut */
+        PodcastPlacementAdditionOut: {
+            /** Libraryentriescollectionrevision */
+            libraryEntriesCollectionRevision: number;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "Added" | "AlreadyPresent";
+        };
+        /** PodcastPlacementRemovalOut */
+        PodcastPlacementRemovalOut: {
+            /** Libraryentriescollectionrevision */
+            libraryEntriesCollectionRevision: number;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "Removed" | "AlreadyAbsent";
+        };
         /** PodcastRefreshLibraryScope */
         PodcastRefreshLibraryScope: {
             /**
@@ -6246,6 +6408,14 @@ export interface components {
              * @enum {string}
              */
             tool_authority: "ReadOnly" | "AdditiveWrites";
+        };
+        /** SavedInNexusLibraryPlacementDestinationOut */
+        SavedInNexusLibraryPlacementDestinationOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "SavedInNexus";
         };
         /**
          * SearchPageInfo
@@ -10040,9 +10210,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_LibraryOut_"];
                 };
             };
             /** @description Validation Error */
@@ -10595,9 +10763,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_PodcastPlacementAdditionOut_"];
                 };
             };
             /** @description Validation Error */
@@ -10629,9 +10795,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_PodcastPlacementRemovalOut_"];
                 };
             };
             /** @description Validation Error */
@@ -11710,9 +11874,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_list_LibraryPlacementOptionOut__"];
                 };
             };
             /** @description Validation Error */
@@ -11777,9 +11939,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_LibraryEntryRemovalOut_"];
                 };
             };
             /** @description Validation Error */
@@ -12329,9 +12489,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_LibraryEntryRemovalOut_"];
                 };
             };
             /** @description Validation Error */
@@ -13363,9 +13521,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_list_LibraryPlacementOptionOut__"];
                 };
             };
             /** @description Validation Error */
