@@ -16,14 +16,13 @@ web keeps four arms no backend can reach:
   (`oracleRetryErrorMessage`, "The oracle is busy"): the retry POSTs
   `/api/oracle/readings` (`:440`), the same `create_reading`.
 
-they stay until then because the web deploys before the backend: the old
-backend still emits both codes, and `expectOneOf` (`chatAdmission.ts:101-104`)
-throws on an unknown rejection code.
+they were kept on the belief that the web deploys before the backend. correction (2026-09-28): the premise was wrong. merging deploys nothing, and `deploy/hetzner/deploy.sh` releases web and backend at one sha, so the new web never talks to the old backend. the arms guard nothing and can go now.
+`expectOneOf` (`chatAdmission.ts:101-104`) throws on an unknown rejection code, so the list must shrink with the python enum.
 
 `OracleReadingPaneBody.tsx:370` stays: it maps the persisted
 `OracleReadingFailureCode`, which keeps its historical `E_RATE_LIMITED`.
 
-prerequisite: a backend release that includes 0248.
+prerequisite: none.
 
 fix: delete the four arms; `REJECTION_CODES` then equals python's
 `ChatAdmissionRejectionCode`.

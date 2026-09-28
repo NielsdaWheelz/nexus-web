@@ -11,7 +11,9 @@ one evidence row citing an old revision would take down the workspace.
 therefore decodes that kind and returns `null`, and `decodeResourceActionSnapshot`
 filters it out.
 
-prerequisite: a backend release that includes 0250.
+correction (2026-09-28): the premise was wrong. merging deploys nothing, and `deploy/hetzner/deploy.sh` releases web and backend at one sha, so the new web never talks to the old backend. the arm guards nothing and can go now.
+
+prerequisite: none.
 
 fix: delete the `MakeArtifactRevisionCurrent` arm, the `| null` return and the
 `.filter`.
