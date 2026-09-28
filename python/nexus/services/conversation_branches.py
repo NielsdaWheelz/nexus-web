@@ -41,7 +41,6 @@ from nexus.services.conversations import (
     message_to_out,
     rerunnable_assistant_message_ids,
 )
-from nexus.services.generation_catalog import GenerationCatalogSnapshot
 from nexus.services.message_trust_trails import build_assistant_trust_trails
 
 
@@ -196,7 +195,6 @@ def set_active_path(
     viewer_id: UUID,
     conversation_id: UUID,
     active_leaf_message_id: UUID,
-    catalog_snapshot: GenerationCatalogSnapshot,
 ) -> ConversationTreeOut:
     get_conversation_for_visible_read_or_404(db, viewer_id, conversation_id)
     persist_active_leaf(
@@ -213,7 +211,6 @@ def set_active_path(
             db,
             viewer_id=viewer_id,
             conversation_id=conversation_id,
-            catalog_snapshot=catalog_snapshot,
         )
     finally:
         db.rollback()
@@ -224,7 +221,6 @@ def get_conversation_tree(
     *,
     viewer_id: UUID,
     conversation_id: UUID,
-    catalog_snapshot: GenerationCatalogSnapshot,
 ) -> ConversationTreeOut:
     conversation = get_conversation_for_visible_read_or_404(db, viewer_id, conversation_id)
     messages = _conversation_messages(db, conversation_id)
@@ -282,7 +278,6 @@ def get_conversation_tree(
         db,
         viewer_id,
         [*selected_path, *(message for path in path_by_leaf_id.values() for message in path)],
-        catalog_snapshot=catalog_snapshot,
     )
     return ConversationTreeOut(
         conversation=conversation_to_out(db, conversation, len(messages), viewer_id=viewer_id),
@@ -925,8 +920,6 @@ def _message_outs_by_id(
     db: Session,
     viewer_id: UUID,
     messages: Sequence[Message],
-    *,
-    catalog_snapshot: GenerationCatalogSnapshot,
 ) -> dict[UUID, MessageOut]:
     messages_by_id = {message.id: message for message in messages}
     rerunnable_message_ids = rerunnable_assistant_message_ids(
@@ -940,7 +933,6 @@ def _message_outs_by_id(
         assistant_message_ids=[
             message.id for message in messages_by_id.values() if message.role == "assistant"
         ],
-        catalog_snapshot=catalog_snapshot,
     )
     outs: dict[UUID, MessageOut] = {}
     for message_id, message in messages_by_id.items():

@@ -26,7 +26,7 @@ from nexus.schemas.conversation import (
     ChatRunDoneEventPayload,
     ChatRunMetaEventPayload,
 )
-from nexus.schemas.execution import DurableExecutionOut
+from nexus.schemas.execution import ChatRunExecutionOut, DurableExecutionOut
 from nexus.schemas.oracle import (
     OracleBindEventPayload,
     OracleCompleteDoneEventPayload,
@@ -49,6 +49,7 @@ SSE_PAYLOADS_BY_NAME = (
     ChatRunAssistantActivityEventPayload,
     ChatRunAssistantTextDeltaEventPayload,
     ChatRunDoneEventPayload,
+    ChatRunExecutionOut,
     DurableExecutionOut,
     OracleMetaEventPayload,
     OracleBindEventPayload,

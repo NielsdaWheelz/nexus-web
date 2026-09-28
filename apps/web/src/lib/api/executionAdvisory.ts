@@ -1,15 +1,10 @@
 import { isRecord } from "@/lib/validation";
+import type { Schema } from "./wire";
 
 /** Queue/coordination liveness. It is advisory-only and never a run status. */
-export type DurableExecutionPhase =
-  | "Queued"
-  | "Running"
-  | "Recovering"
-  | "Suspended";
-
-export interface DurableExecution {
-  phase: DurableExecutionPhase;
-}
+export type DurableExecutionPhase = Schema<"DurableExecutionPhase">;
+export type DurableExecution = Schema<"DurableExecutionOut">;
+export type ChatRunExecution = Schema<"ChatRunExecutionOut">;
 
 export const EXECUTION_ADVISORY_EVENT_TYPE = "ExecutionAdvisory";
 
@@ -60,4 +55,21 @@ export function decodeExecutionAdvisory(
     return fail("ExecutionAdvisory id");
   }
   return decodeDurableExecution(value, EXECUTION_ADVISORY_EVENT_TYPE);
+}
+
+export function decodeChatRunExecution(value: unknown): ChatRunExecution {
+  if (!isRecord(value) || Object.keys(value).length !== 2 ||
+      !("phase" in value) || !("cancel_requested" in value) ||
+      typeof value.cancel_requested !== "boolean") {
+    return fail("chat execution fields");
+  }
+  return {
+    phase: decodeDurableExecutionPhase(value.phase),
+    cancel_requested: value.cancel_requested,
+  };
+}
+
+export function decodeChatExecutionAdvisory(value: unknown, id = ""): ChatRunExecution {
+  if (id !== "") return fail("ExecutionAdvisory id");
+  return decodeChatRunExecution(value);
 }

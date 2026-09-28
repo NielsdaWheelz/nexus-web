@@ -15,4 +15,13 @@ class DurableExecutionOut(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class ChatRunExecutionOut(BaseModel):
+    """The queue phase and the run's durable stop intent in one observation."""
+
+    phase: DurableExecutionPhase
+    cancel_requested: bool
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
 EXECUTION_ADVISORY_EVENT_TYPE = "ExecutionAdvisory"

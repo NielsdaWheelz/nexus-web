@@ -46,12 +46,17 @@ authority. owner scope, eight-live-write limit, receipts, and undo remain
 enforced. historical read-only runs retain their frozen facts.
 canonical ids are the only executable identities.
 
-API models receive the frozen plan as provider functions and call the
+api models receive the frozen plan as provider functions and call the
 `GenerationToolExecutor` with its authorization, position ledger, evidence,
-citations, trust, and Undo. Codex admits no model tools, so its Chat seed is
-ineligible until an approved route or native-authority change. The sole position path is
-`generation/{generation_seq}/tool/{n}`; the one-based ordinal never restarts at
-an API child turn.
+citations, trust, and undo. codex instead runs an isolated native shell with
+public internet and a private, authenticated generation api. every codex run,
+including background work, receives the same frozen account-wide api profile;
+the chat context and operation prompt do not narrow that grant. nexus records
+and can undo its domain-api writes, but shell and public-network effects are
+outside that ledger. there is no exact model-visible native tool grant. see
+[the shell authority contract](../codex-shell-cutover-plan.md). the sole
+position path for provider functions is `generation/{generation_seq}/tool/{n}`;
+its one-based ordinal never restarts at an api child turn.
 
 Completed child calls and tool positions are replay input, never cache hints.
 An accepted ambiguous model call, external read, or write is never blindly
@@ -61,11 +66,16 @@ Conversation deletion deletes every owned Chat job and post-cutover generation
 row.
 
 `ChatRunOut.execution` and trust-run `execution` are required `Presence` values.
-Nonterminal runs project `Queued | Running | Recovering | Suspended`; terminal
-runs project `Absent`. SSE sends the same value as an unsequenced
-`ExecutionAdvisory`, so it never advances the committed event cursor. Suspended
-UI retains partial text and provenance and renders `Response paused`; it offers
-neither product rerun nor network reconnect.
+nonterminal runs project `Queued | Running | Recovering | Suspended` plus
+`cancel_requested`, derived from the run's persisted stop intent. terminal
+runs project `Absent`. sse sends the same value as an unsequenced
+`ExecutionAdvisory`, so it never advances the committed event cursor. the
+selected pending run on the active reply path owns composer status and stop;
+stream connectivity does not erase that authority. a stop request records
+intent, not a completed cancellation. suspended ui retains text and provenance,
+shows `Response paused`, and permits one stop request if none is recorded.
+when its transport is lost, `Check saved status` rereads the same run and
+restores its tail; it never admits a new generation.
 
 ## Engine, View, Adapter Split
 
@@ -244,7 +254,7 @@ reconciliation remain visible.
 
 The composer projects its existing send, cancel, and reconciliation conditions
 through one fixed action socket: `Send message`, `Sending message`,
-`Stop response`, `Stopping response`, or `Retry send`. Stop is neutral rather
+`Stop response`, `Requesting stop`, `Stop requested`, or `Retry send`. Stop is neutral rather
 than destructive. Desktop Enter sends, Shift+Enter inserts a newline, and
 Cmd/Ctrl+Enter sends; every Enter variant inserts a newline in the product
 mobile viewport. IME composition always owns Enter. The shared `Textarea` grows
@@ -274,7 +284,7 @@ three (`extra="forbid"`).
 
 ## Failure card and rerun
 
-`ChatFailureCard` is the only failure renderer, in two modes:
+`ChatFailureCard` is the only failure renderer, with three modes:
 
 - `{ failure: ExpectedChatFailure | null; supportId: Presence<string>;
   canRerun?; onRerun?; rerunning? }` — the support occurrence is owned by the
@@ -285,8 +295,13 @@ three (`extra="forbid"`).
   **Run again** action iff `canRerun && onRerun`. `failure === null` (a defect
   with no stored closed code, or a still-healthy fold) renders the generic
   non-leaking copy.
-- `{ mode: "reconnect"; onReconnect }` — fixed **Reconnect** copy and action;
-  never calls `/rerun`.
+- `{ mode: "reconnect"; recovery; onReconnect }` — client-only same-run
+  connection recovery; never calls `/rerun`.
+- `{ mode: "suspended"; stopRequested; onCheckStatus?; checking }` —
+  server-derived paused or stop-requested status with an unconfirmed outcome.
+  after transport loss, an optional **Check saved status** action rereads and
+  tails the same run. the composer retains the canonical run's stop control
+  until intent is recorded.
 
 At most one action ever renders. `ExpectedChatFailure` is the closed,
 discriminated union (`code` as the tag) mirroring
@@ -302,9 +317,11 @@ consolidated into one sibling-candidate constructor
 (`services/chat_runs.py`) that each route calls with an explicit
 `rerun`/`regenerate` operation and separate eligibility guards. Each request
 carries only an exact selection and the current catalog-definition revision.
-new runs use the fixed additive tool policy. the primary action reuses the source run's
-selection only while the current catalog still marks it rerun-eligible;
-otherwise `CandidateGenerationPicker` requires an explicit replacement. Nothing
+new runs use the fixed additive tool policy. structural source eligibility
+comes from the saved run, independent of current model availability. the
+primary action reuses the source selection only while the current catalog
+still offers it; otherwise `CandidateGenerationPicker` requires an explicit
+replacement. nothing
 silently substitutes a model. candidate edits are local and discarded on close;
 only the explicit rerun/regenerate button admits a run. both commands clone the source user turn (content, parent, branch
 lineage, reader-selection snapshot, turn context) into a new user sibling with a

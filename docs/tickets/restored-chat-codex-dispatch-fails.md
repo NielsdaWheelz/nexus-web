@@ -1,6 +1,6 @@
 # restored chat codex dispatch fails
 
-status: open; deferred by user · origin: 2026-09-15 ecbe manual check · area: generation
+status: open; successor staged, production outcome unverified · origin: 2026-09-15 ecbe manual check; reviewed 2026-09-27 · area: generation
 
 ## evidence
 
@@ -18,11 +18,20 @@ owned release mcp proof only establishes network/auth rejection; earlier
 three-turn generation qualification did not exercise tools. neither proves
 this product path. no successful tool use or leave/reopen recovery is claimed.
 
+the successor at remote main `fbd08ba68` replaces frozen mcp with the approved
+codex shell and private generation api. an isolated pre-merge cohort completed
+browser chat and model-originated create/read/undo; see
+`docs/codex-shell-cutover-verification.md`. the final merged tree is not
+live-qualified and production still pointed to
+`7dc68929b4d5ddfd77eb1a50228d477fa0148b5d` in the 2026-09-27 read-only
+check. these successor results do not identify the original `invalid_request`
+or settle its uncertain run.
+
 ## follow-up and acceptance
 
-inspect the retained host terminal and original generation request to identify
-the invalid request at its owner. preserve unresolved dispatch evidence; do
-not reset state or blindly resend a draft. repair the contract or request and
-use the owned reconciliation path for affected work. close after one new
-tool-using chat completes and leaving/reopening preserves the outcome without
-a duplicate send; separately verify affected metadata generation.
+preserve the original uncertain dispatch evidence; do not reset it or blindly
+resend a draft. preflight its disposition under the approved old-history reset.
+close only after the final integrated shell release serves a production
+tool-using chat and same-run reopen without duplicate effects, and affected
+background generation has its own passing proof. the original failure cause
+may remain unknown; do not claim it was specifically repaired.

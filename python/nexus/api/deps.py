@@ -12,12 +12,24 @@ from nexus.services.generation_catalog import GenerationCatalogService
 from nexus.services.tool_runtime.declarations import BROWSER_TOOL_PROJECTION_REVISION
 
 TOOL_PROJECTION_HEADER = "X-Nexus-Tool-Projection"
+CHAT_CONTRACT_HEADER = "X-Nexus-Chat-Contract"
+CHAT_CONTRACT_REVISION = "1"
+
+
+def require_chat_contract_revision(
+    revision: Annotated[str | None, Header(alias=CHAT_CONTRACT_HEADER)] = None,
+) -> None:
+    if revision != CHAT_CONTRACT_REVISION:
+        raise ApiError(
+            ApiErrorCode.E_CHAT_CONTRACT_RELOAD_REQUIRED,
+            "Reload Nexus to continue",
+        )
 
 
 def require_tool_projection_revision(
     revision: Annotated[str | None, Header(alias=TOOL_PROJECTION_HEADER)] = None,
 ) -> None:
-    """Reject stale same-system Chat clients before auth, reads, or mutation."""
+    """Reject stale tool clients after HTTP middleware authentication."""
 
     if revision != BROWSER_TOOL_PROJECTION_REVISION:
         raise ApiError(

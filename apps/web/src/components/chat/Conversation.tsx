@@ -713,6 +713,7 @@ export default function Conversation() {
                 sendCapability={convo.sendCapability}
                 projectionReloadRequestId={convo.projectionReloadRequestId}
                 activeRunId={convo.activeRunId}
+                activeRunExecution={convo.activeRunExecution}
                 onCancelRun={convo.cancelActiveRun}
                 onAdmitted={handleAdmitted}
                 viewIdentity={`${paneRuntime.visitId}:${paneRuntime.href}`}

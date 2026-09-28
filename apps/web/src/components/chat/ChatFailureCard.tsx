@@ -43,6 +43,9 @@ interface ReconnectCardProps {
 
 interface SuspendedCardProps {
   mode: "suspended";
+  stopRequested: boolean;
+  onCheckStatus?: () => void;
+  checking: boolean;
 }
 
 type ChatFailureCardProps =
@@ -52,7 +55,7 @@ type ChatFailureCardProps =
 
 const SUSPENDED_COPY = {
   title: "Response paused",
-  body: "Nexus saved the completed work but could not safely continue.",
+  body: "This response is paused. Its outcome is unconfirmed.",
 };
 
 function reconnectPresentation(recovery: ChatConnectionRecovery): {
@@ -66,14 +69,14 @@ function reconnectPresentation(recovery: ChatConnectionRecovery): {
     case "Lost":
       return {
         title: "Connection lost",
-        body: "We lost the connection to this response. Reconnect to pick up where it left off.",
+        body: "Reconnect to check this run's saved status and listen for later updates.",
         actionLabel: "Reconnect",
         showAction: true,
       };
     case "Reconnecting":
       return {
         title: "Reconnecting",
-        body: "Checking the saved response and restoring its live connection.",
+        body: "Checking this run's saved status and restoring its live connection.",
         actionLabel: "Reconnect",
         showAction: true,
       };
@@ -91,9 +94,16 @@ function reconnectPresentation(recovery: ChatConnectionRecovery): {
 export default function ChatFailureCard(props: ChatFailureCardProps) {
   if (props.mode === "suspended") {
     return (
-      <div className={styles.card} role="alert">
-        <p className={styles.title}>{SUSPENDED_COPY.title}</p>
-        <p className={styles.body}>{SUSPENDED_COPY.body}</p>
+      <div className={styles.card} role="status" aria-live="polite">
+        <p className={styles.title}>{props.stopRequested ? "Stop requested" : SUSPENDED_COPY.title}</p>
+        <p className={styles.body}>{props.stopRequested ? "The outcome is unconfirmed." : SUSPENDED_COPY.body}</p>
+        {props.onCheckStatus ? (
+          <div className={styles.actions}>
+            <Button variant="secondary" size="sm" loading={props.checking} onClick={props.onCheckStatus}>
+              Check saved status
+            </Button>
+          </div>
+        ) : null}
       </div>
     );
   }

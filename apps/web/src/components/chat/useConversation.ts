@@ -29,7 +29,7 @@ import {
   decodeApiPayload,
   isApiError,
   isSameSystemApiDefect,
-  isToolProjectionReloadRequired,
+  isChatReloadRequired,
   type ApiError,
   type ApiPath,
 } from "@/lib/api/client";
@@ -38,6 +38,7 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
+import type { ChatRunExecution } from "@/lib/api/executionAdvisory";
 import { loadGenerationCatalog } from "@/components/chat/useGenerationCatalog";
 import { useStringIdSet, type StringIdSet } from "@/lib/useStringIdSet";
 import {
@@ -231,6 +232,7 @@ interface UseConversation {
     isCurrent: () => boolean,
   ) => Promise<boolean>;
   activeRunId: string | null;
+  activeRunExecution: ChatRunExecution | null;
   cancelActiveRun: () => Promise<void>;
 
   // rerun (a new sibling candidate from an eligible failed/cancelled turn)
@@ -302,7 +304,7 @@ export function useConversation(
     setAsyncDefect({ error });
   }, []);
   const reportProjectionReload = useCallback((operationError: unknown) => {
-    if (!isToolProjectionReloadRequired(operationError)) return false;
+    if (!isChatReloadRequired(operationError)) return false;
     setProjectionReloadRequestId(operationError.requestId ?? "");
     return true;
   }, []);
@@ -408,7 +410,6 @@ export function useConversation(
   );
 
   const {
-    activeRunId,
     tailChatRun,
     abortAll,
     cancelRun,
@@ -428,10 +429,6 @@ export function useConversation(
   useEffect(() => {
     tailChatRunRef.current = tailChatRun;
   }, [tailChatRun]);
-
-  const cancelActiveRun = useCallback(async () => {
-    await cancelRun(activeRunId);
-  }, [activeRunId, cancelRun]);
 
   // --------------------------------------------------------------------------
   // Branching: active-runs resumption + tree application
@@ -599,7 +596,7 @@ export function useConversation(
         activeRuns = await loadVisibleActiveRuns(id, visibleMessageIds, signal);
       } catch (err) {
         if (isAbortError(err) || signal.aborted) throw err;
-        if (isToolProjectionReloadRequired(err)) throw err;
+        if (isChatReloadRequired(err)) throw err;
         if (handleUnauthenticatedApiError(err)) throw err;
         if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
         console.error("Failed to load active chat runs:", err);
@@ -928,7 +925,6 @@ export function useConversation(
               sourceSelection.selection,
             );
             if (
-              !sourceSelection.rerun_eligibility ||
               candidate?.reasoning.chat_state.kind !== "Selectable"
             ) {
               setError({
@@ -1365,19 +1361,30 @@ export function useConversation(
     return run.run_selection;
   }, [branchDraft, messages]);
 
+  const selectedPendingRuns = messages.filter(
+    (message) => message.role === "assistant" &&
+      message.status === "pending" &&
+      selectedPathIdsRef.current.has(message.id),
+  );
+  if (selectedPendingRuns.length > 1) {
+    throw new Error("Selected reply path has more than one pending run");
+  }
+  const activeRun = selectedPendingRuns[0]?.trust_trail?.run;
+  const activeRunId = activeRun?.run_id ?? null;
+  const activeRunExecution = activeRun?.execution.kind === "Present"
+    ? activeRun.execution.value : null;
+  const cancelActiveRun = useCallback(async () => {
+    if (activeRunId !== null) await cancelRun(activeRunId);
+  }, [activeRunId, cancelRun]);
+
   const sendCapability = useMemo<ChatSendCapability>(() => {
+    if (selectedPendingRuns.length > 0) {
+      return { kind: "AssistantRunning" };
+    }
     if (!conversationId) return { kind: "Available" };
     if (loading) return { kind: "HistoryLoading" };
     if (historyState === "Unavailable") return { kind: "HistoryUnavailable" };
     if (messages.length === 0) return { kind: "Available" };
-    if (
-      messages.some(
-        (message) =>
-          message.role === "assistant" && message.status === "pending",
-      )
-    ) {
-      return { kind: "AssistantRunning" };
-    }
     if (branchDraft) {
       return messages.some(
         (message) =>
@@ -1392,7 +1399,7 @@ export function useConversation(
       return { kind: "ReplyTargetUnavailable" };
     }
     return { kind: "Available" };
-  }, [branchDraft, conversationId, historyState, loading, messages, replyParentMessageId]);
+  }, [branchDraft, conversationId, historyState, loading, messages, replyParentMessageId, selectedPendingRuns.length]);
 
   if (asyncDefect !== null) throw asyncDefect.error;
 
@@ -1408,6 +1415,7 @@ export function useConversation(
     title,
     adoptAdmittedRun,
     activeRunId,
+    activeRunExecution,
     cancelActiveRun,
     rerunAssistantResponse,
     rerunAssistantResponseWithSelection,

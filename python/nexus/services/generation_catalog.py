@@ -195,11 +195,6 @@ class GenerationCatalogService:
         self._readiness: CatalogReadinessSnapshot | None = None
         self._lock = Lock()
 
-    async def startup(self) -> GenerationCatalogSnapshot:
-        snapshot = await self._read(require_fresh=True, force_definition=True, force_readiness=True)
-        validate_background_policy(snapshot, policy=GENERATION_POLICY)
-        return snapshot
-
     async def read_chat(self) -> GenerationCatalogSnapshot:
         return await self._read(require_fresh=False)
 
@@ -217,12 +212,12 @@ class GenerationCatalogService:
         )
 
     async def _read(
-        self, *, require_fresh: bool, force_definition: bool = False, force_readiness: bool = False
+        self, *, require_fresh: bool, force_readiness: bool = False
     ) -> GenerationCatalogSnapshot:
         async with self._lock:
             now = datetime.now(UTC)
             refresh_failed = False
-            if force_definition or _due(
+            if _due(
                 None if self._definitions is None else self._definitions[2],
                 now,
                 _DEFINITION_TTL_SECONDS,

@@ -37,6 +37,8 @@ from provider_runtime.agent_runtime import (
     CredentialRef,
 )
 
+from nexus.logging import configure_logging
+
 _SOCKET_ENV = "NEXUS_CODEX_AGENT_SOCKET"
 _CREDENTIAL_FILE_ENV = "NEXUS_CODEX_CREDENTIAL_FILE"
 _WORKING_DIRECTORY_ROOT_ENV = "NEXUS_CODEX_WORKING_DIRECTORY_ROOT"
@@ -82,6 +84,7 @@ async def _serve_after_authenticated_bootstrap() -> None:
         turn_lifecycle,
     )
 
+    configure_logging()
     socket_path, credential_file, working_directory_root = _runtime_configuration()
     _prepare_runtime_boundary(socket_path, credential_file, working_directory_root)
     versions = resolve_runtime_versions()
