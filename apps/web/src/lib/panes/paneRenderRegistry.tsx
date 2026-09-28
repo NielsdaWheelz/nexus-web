@@ -7,7 +7,6 @@ import {
 } from "@/lib/panes/paneRouteModel";
 import { usePaneResolvedBodyReady } from "@/lib/workspace/paneReturnMemento";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { useReportNexusPaneReady } from "@/lib/nexus/performance";
 
 type PaneLoader = () => Promise<{ default: ComponentType }>;
 
@@ -104,26 +103,19 @@ export function ResolvedPaneBodyMarker({ children }: { children: ReactNode }) {
   return children;
 }
 
-function PaneBodyPerformanceMarker({ children }: { children: ReactNode }) {
-  useReportNexusPaneReady();
-  return children;
-}
-
 export function renderPane(id: PaneRouteId): ReactNode {
   const Body = PANE_BODIES[id];
   return (
     <Suspense
       fallback={<PaneLoadingState label="Loading pane…" announcement="Polite" />}
     >
-      <PaneBodyPerformanceMarker>
-        {SHELL_SCROLL_ROUTE_IDS.has(id) ? (
-          <ResolvedPaneBodyMarker>
-            <Body />
-          </ResolvedPaneBodyMarker>
-        ) : (
+      {SHELL_SCROLL_ROUTE_IDS.has(id) ? (
+        <ResolvedPaneBodyMarker>
           <Body />
-        )}
-      </PaneBodyPerformanceMarker>
+        </ResolvedPaneBodyMarker>
+      ) : (
+        <Body />
+      )}
     </Suspense>
   );
 }

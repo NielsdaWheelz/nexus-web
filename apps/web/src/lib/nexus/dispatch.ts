@@ -10,7 +10,6 @@ import {
 import { readDailyDraft } from "@/lib/notes/dailyDraftStore";
 import { browseHref } from "@/lib/browse/query";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
-import { resolveWorkspaceActivationRouteId } from "@/lib/panes/paneIdentity";
 import {
   executeResourceChat,
   executeResourceShare,
@@ -35,11 +34,6 @@ import type {
   NexusTargetActivation,
   RetainedNexusTarget,
 } from "./model";
-import {
-  beginNexusPerformance,
-  cancelNexusPerformance,
-  NEXUS_PANE_ACTIVATE_PERFORMANCE,
-} from "./performance";
 
 export type MaterializedNexusTarget =
   | Exclude<NexusTarget, { kind: "OpenDailyPage" }>
@@ -162,52 +156,28 @@ export interface NexusDispatchCtx {
   resumeCurrentPlayback(): void;
 }
 
-function activationOutcome(
-  target: RetainedNexusTarget,
-  result: WorkspaceTargetActivationResult,
-): NexusDispatchOutcome {
-  return result.kind === "Rejected"
-    ? {
-        kind: "NavigationRejected",
-        reason: result.reason,
-        target,
-      }
-    : { kind: "NavigationAccepted" };
-}
-
-function activateMeasuredWorkspaceTarget(
-  target: WorkspaceTarget,
-  context: NexusDispatchCtx,
-  request: WorkspaceTargetActivationRequest,
-): WorkspaceTargetActivationResult {
-  const run = beginNexusPerformance(NEXUS_PANE_ACTIVATE_PERFORMANCE, {
-    targetId: resolveWorkspaceActivationRouteId(target.href),
-  });
-  const result = context.activateWorkspaceTarget(request);
-  if (result.kind === "Rejected") {
-    cancelNexusPerformance(NEXUS_PANE_ACTIVATE_PERFORMANCE, run);
-  }
-  return result;
-}
-
 function activateTarget(
   target: WorkspaceTarget,
   context: NexusDispatchCtx,
   activation: NexusTargetActivation,
 ): NexusDispatchOutcome {
-  return activationOutcome(
-    {
-      kind: "InternalHref",
-      href: target.href,
-      labelHint: target.labelHint,
-    },
-    activateMeasuredWorkspaceTarget(target, context, {
-      originPaneId: context.activePaneId,
-      target,
-      disposition: activation.disposition,
-      modality: activation.modality,
-    }),
-  );
+  const result = context.activateWorkspaceTarget({
+    originPaneId: context.activePaneId,
+    target,
+    disposition: activation.disposition,
+    modality: activation.modality,
+  });
+  return result.kind === "Rejected"
+    ? {
+        kind: "NavigationRejected",
+        reason: result.reason,
+        target: {
+          kind: "InternalHref",
+          href: target.href,
+          labelHint: target.labelHint,
+        },
+      }
+    : { kind: "NavigationAccepted" };
 }
 
 export type NexusDispatchResult =
@@ -261,19 +231,10 @@ export function dispatchNexusTarget(
         labelHint: target.labelHint,
         disposition: activation.disposition,
         activateTarget: ({ target: workspaceTarget, disposition }) => {
-          outcome = activationOutcome(
-            {
-              kind: "InternalHref",
-              href: workspaceTarget.href,
-              labelHint: workspaceTarget.labelHint,
-            },
-            activateMeasuredWorkspaceTarget(workspaceTarget, context, {
-              originPaneId: context.activePaneId,
-              target: workspaceTarget,
-              disposition,
-              modality: activation.modality,
-            }),
-          );
+          outcome = activateTarget(workspaceTarget, context, {
+            disposition,
+            modality: activation.modality,
+          });
         },
       });
       return target.activation.kind === "external"
@@ -292,22 +253,10 @@ export function dispatchNexusTarget(
       return executeResourceChat({
         ref: target.ref,
         openConversation: (conversationId) => {
-          const workspaceTarget = {
-            href: `/conversations/${conversationId}`,
-            labelHint: "Chat",
-          };
-          outcome = activationOutcome(
-            {
-              kind: "InternalHref",
-              href: workspaceTarget.href,
-              labelHint: workspaceTarget.labelHint,
-            },
-            activateMeasuredWorkspaceTarget(workspaceTarget, context, {
-              originPaneId: context.activePaneId,
-              target: workspaceTarget,
-              disposition: activation.disposition,
-              modality: activation.modality,
-            }),
+          outcome = activateTarget(
+            { href: `/conversations/${conversationId}`, labelHint: "Chat" },
+            context,
+            activation,
           );
         },
       }).then(() => outcome);
@@ -382,11 +331,6 @@ export function dispatchNexusTarget(
           context,
           activation,
         );
-      }
-      if (pane.id !== context.activePaneId) {
-        beginNexusPerformance(NEXUS_PANE_ACTIVATE_PERFORMANCE, {
-          targetId: resolveWorkspaceActivationRouteId(pane.href),
-        });
       }
       if (pane.visibility === "minimized") context.restorePane(pane.id);
       else context.activatePane(pane.id);

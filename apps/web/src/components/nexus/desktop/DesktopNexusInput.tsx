@@ -8,10 +8,6 @@ import {
   type NexusEntry,
   type NexusEntryKey,
 } from "@/lib/nexus/model";
-import {
-  beginNexusPerformance,
-  NEXUS_LOCAL_FIND_PERFORMANCE,
-} from "@/lib/nexus/performance";
 import type {
   DesktopNexusActionsOpener,
   DesktopNexusCell,
@@ -95,11 +91,9 @@ export default function DesktopNexusInput({
         autoCorrect="off"
         spellCheck={false}
         onChange={(event) => {
-          beginNexusPerformance(NEXUS_LOCAL_FIND_PERFORMANCE);
           setActiveCell("Primary");
           controller.setQuery(event.currentTarget.value);
         }}
-        onFocus={() => controller.inputReady?.()}
         onCompositionStart={() => {
           composing.current = true;
         }}

@@ -41,8 +41,6 @@ export interface DesktopNexusController {
     readonly action: NexusAction;
     readonly modality: DesktopNexusModality;
   }): void;
-  /** The adapter calls this only after the real desktop input receives focus. */
-  inputReady?(): void;
   retry(source: NexusSource): void;
   escape(): void;
   shouldSuppressReturnFocusOnClose(): boolean;

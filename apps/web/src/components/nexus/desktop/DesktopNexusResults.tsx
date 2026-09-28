@@ -1,15 +1,9 @@
 "use client";
 
-import { useLayoutEffect } from "react";
 import {
   nexusEntryKeyValue,
   nexusSourceFailureCopy,
 } from "@/lib/nexus/model";
-import {
-  completeNexusPerformance,
-  NEXUS_LOCAL_FIND_PERFORMANCE,
-  NEXUS_OPENABLES_PERFORMANCE,
-} from "@/lib/nexus/performance";
 import { DESKTOP_NEXUS_GRID_ID } from "./DesktopNexusInput";
 import DesktopNexusRow from "./DesktopNexusRow";
 import type {
@@ -63,11 +57,6 @@ export default function DesktopNexusResults({
   ]
     .filter(Boolean)
     .join(" ");
-
-  useLayoutEffect(() => {
-    completeNexusPerformance(NEXUS_LOCAL_FIND_PERFORMANCE);
-    completeNexusPerformance(NEXUS_OPENABLES_PERFORMANCE);
-  }, [controller.projection.groups]);
 
   return (
     <>
