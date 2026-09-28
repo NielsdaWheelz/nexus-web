@@ -50,9 +50,10 @@ split by storage and query concern:
   directly from the fenced finalization path in `services/podcasts/sync.py`.
 - `_lectern_store.py` — sole DML owner of `consumption_queue_items` (Lectern
   membership/order). Builds the canonical `LecternSnapshot`.
-- `state.py` — sole DML owner of `consumption_overrides` (explicit
+- `service.py` — also the sole DML owner of `consumption_overrides` (explicit
   `Unread`/`Finished` state plus the completion-only revision that fences a
-  delayed natural-end receipt) and of `reader_engagement_states`.
+  delayed natural-end receipt), of `reader_engagement_states` and of
+  `consumption_completion_facts`.
 - `_listening_store.py` — sole DML owner of `podcast_listening_states`
   (position/duration/nullable established episode rate, completion flag, and
   the heartbeat fencing tokens `write_revision`/`reset_epoch`).
@@ -80,10 +81,10 @@ split by storage and query concern:
   `INSERT ... ON CONFLICT (user_id, media_id) DO UPDATE`, with no fencing
   token, committed atomically with the successful/idempotent cursor write (see
   [reader-implementation.md](reader-implementation.md)).
-- `activity_store.py` — sole DML owner of `consumption_activity_spans` and
-  `consumption_completion_facts`; `activity_stats.py` owns their factual
-  aggregation and derived sessions. Neither changes the reader cursor or the
-  listening heartbeat.
+- `activity.py` — sole DML owner of `consumption_activity_spans` and
+  `consumption_activity_exclusions`; `stats.py` owns their factual aggregation
+  and derived sessions. Neither changes the reader cursor or the listening
+  heartbeat.
 - `projection.py` — the combined explicit-override + reader-engagement read
   model (`Unread`/`InProgress`/`Finished` + progress fraction), plus batched
   `PlayerDescriptor`s for podcast-episode media. Both descriptor paths reuse

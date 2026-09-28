@@ -314,3 +314,4 @@ unexpected timeouts. See
 - [open] 2026-09-25 notes writing live action probe · overlapping pdf highlight overlays block pointer access to a covered highlight: [ticket](tickets/pdf-overlapping-highlights-block-pointer-action.md).
 - [deferred] jobs / content indexing · 2026-09-27 backend dead-code sweep · reindex payload `request_id` is write-only but stored in never-pruned jobs; strip it with a migration: [ticket](tickets/reindex-payload-request-id-is-write-only.md).
 - [open] errors / web · 2026-09-27 backend dead-code sweep · two api error codes are never raised but web still switches on them: [ticket](tickets/unraised-api-error-codes-kept-by-web.md).
+- [deferred] consumption / schema · 2026-09-28 consumption-stats reauthoring · four consumption state timestamps are written by nothing and read by nothing; drop them one release later: [ticket](tickets/drop-write-only-consumption-timestamps.md).

@@ -72,15 +72,15 @@ the user had seen.
 progress has several current meanings:
 
 - canonical resume cursor: latest accepted reading position; it can move backward.
-- library progress: greatest accepted `total_progression`, stored in
-  `python/nexus/services/consumption/state.py:132-155`.
-- finished status: derived at `0.95` or later in
-  `python/nexus/services/consumption/projection.py:50,359-369`.
+- library progress: greatest accepted `total_progression`, stored by
+  `put_reader_cursor_in_txn` in `python/nexus/services/consumption/service.py`.
+- finished status: derived at `0.95` or later by the one read-state rule in
+  `python/nexus/services/consumption/projection.py` (`FINISHED_PROGRESSION`).
 - quick-read remaining time: based on the current cursor, not the maximum;
   backward reading can increase the estimate (`docs/quick-reads.md:33-44`).
 
 one accepted cursor write updates engagement and can create completion facts
-(`python/nexus/services/consumption/service.py:222-237`). saving the old position
+(`put_reader_cursor_in_txn` in `python/nexus/services/consumption/service.py`). saving the old position
 after a bad jump does not roll back the high-water mark or completion. prevention
 must occur before admitting the destination to the writer.
 

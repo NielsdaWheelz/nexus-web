@@ -1,67 +1,45 @@
-"""Consumption/Lectern wire contracts.
-
-Every model is strict camelCase. Command families are camel-in only; response
-families are built with snake field names by the projection and serialized
-``by_alias=True`` by the routes. All models ``extra="forbid"``; discriminator
-values are PascalCase. Owned absence uses :mod:`nexus.schemas.presence` — null,
-omission, and alternate casing are rejected.
-"""
+"""Lectern, consumption command, player and listening wire contracts: strict camelCase, owned
+absence via :mod:`nexus.schemas.presence`."""
 
 from __future__ import annotations
 
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
-from pydantic.alias_generators import to_camel
+from pydantic import AwareDatetime, Field
 
 from nexus.schemas.collection_page import CollectionRevision
-from nexus.schemas.consumption_activity import CompletionHandle
+from nexus.schemas.consumption_activity import CamelIn, CamelOut, CommandIn, CompletionHandle
 from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.presence import Presence
 from nexus.schemas.reader import ReaderCursorSnapshot
-
-_INT32_MAX = 2_147_483_647
-
-
-class _In(BaseModel):
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=False, extra="forbid")
-
-
-class _Out(BaseModel):
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
-
 
 ConsumptionStateValue = Literal["Unread", "InProgress", "Finished"]
 NextCapability = Literal["Stop", "FooterAudio", "Readable"]
 ConsumptionMediaKind = Literal["web_article", "epub", "pdf", "video", "podcast_episode"]
 PauseShorteningMode = Literal["Off", "Natural"]
 PlaybackRate = Annotated[float, Field(strict=True, ge=0.5, le=3)]
-_NonNegInt32 = Annotated[int, Field(ge=0, le=_INT32_MAX)]
+_NonNegInt32 = Annotated[int, Field(ge=0, le=2_147_483_647)]
 
 
-class ChapterOut(_Out):
-    """One playable chapter marker (title clamped to 300 in the projection)."""
-
+class ChapterOut(CamelOut):
     title: str = Field(min_length=1, max_length=300)
     start_ms: _NonNegInt32
     end_ms: Presence[_NonNegInt32]
 
 
-class PodcastPlaybackPreference(_Out):
+class PodcastPlaybackPreference(CamelOut):
     podcast_id: UUID
     value: Presence[PlaybackRate]
 
 
-class PlaybackRateResolution(_Out):
+class PlaybackRateResolution(CamelOut):
     value: PlaybackRate
     source: Literal["Episode", "Podcast", "Product"]
     podcast_preference: Presence[PodcastPlaybackPreference]
 
 
-class FooterAudioActivation(_Out):
-    """The only footer-playable activation."""
-
+class FooterAudioActivation(CamelOut):
     kind: Literal["FooterAudio"] = "FooterAudio"
     stream_url: str
     source_url: str
@@ -76,36 +54,31 @@ class FooterAudioActivation(_Out):
     chapters: list[ChapterOut] = Field(max_length=100)
 
 
-class ReadableActivation(_Out):
-    """Web article, EPUB, or PDF: opened in the reader, never footer-playable."""
-
+class ReadableActivation(CamelOut):
     kind: Literal["Readable"] = "Readable"
 
 
-class OpenPaneActivation(_Out):
-    """Video or a podcast without audio: opens a media pane, never ``<audio>``."""
-
+class OpenPaneActivation(CamelOut):
     kind: Literal["OpenPane"] = "OpenPane"
 
 
 LecternActivation = Annotated[
-    FooterAudioActivation | ReadableActivation | OpenPaneActivation,
-    Field(discriminator="kind"),
+    FooterAudioActivation | ReadableActivation | OpenPaneActivation, Field(discriminator="kind")
 ]
 
 
-class ConsumptionOut(_Out):
+class ConsumptionOut(CamelOut):
     state: ConsumptionStateValue
     progress: Presence[Annotated[float, Field(ge=0, le=1)]]
     progress_resettable: bool
 
 
-class PlayerDisplay(_Out):
+class PlayerDisplay(CamelOut):
     title: str
     subtitle: Presence[str]
 
 
-class LecternItemOut(_Out):
+class LecternItemOut(CamelOut):
     item_id: UUID
     media_summary: MediaSummaryOut
     href: str
@@ -115,51 +88,46 @@ class LecternItemOut(_Out):
     player_display: Presence[PlayerDisplay]
 
 
-class LecternSnapshot(_Out):
+class LecternSnapshot(CamelOut):
     items: list[LecternItemOut] = Field(max_length=2000)
 
 
-class PlayerDescriptor(_Out):
-    """A footer-playable descriptor reused by every Play entry point."""
-
+class PlayerDescriptor(CamelOut):
     media_id: UUID
     title: str
     subtitle: Presence[str]
     activation: FooterAudioActivation
 
 
-class FirstPlacement(_In):
+class FirstPlacement(CamelIn):
     kind: Literal["First"]
 
 
-class AfterPlacement(_In):
+class AfterPlacement(CamelIn):
     kind: Literal["After"]
     item_id: UUID
 
 
-class LastPlacement(_In):
+class LastPlacement(CamelIn):
     kind: Literal["Last"]
 
 
 Placement = Annotated[FirstPlacement | AfterPlacement | LastPlacement, Field(discriminator="kind")]
 
 
-class PlaceItemsCommand(_In):
+class PlaceItemsCommand(CommandIn):
     kind: Literal["PlaceItems"]
-    client_mutation_id: UUID
     media_ids: list[UUID] = Field(min_length=1, max_length=200)
     placement: Placement
 
 
-class RemoveItemCommand(_In):
+class RemoveItemCommand(CommandIn):
     kind: Literal["RemoveItem"]
-    client_mutation_id: UUID
     item_id: UUID
 
 
-class SetOrderCommand(_In):
+class SetOrderCommand(CommandIn):
     kind: Literal["SetOrder"]
-    client_mutation_id: UUID
     item_ids: list[UUID] = Field(min_length=0, max_length=2000)
 
 
@@ -168,17 +136,17 @@ LecternCommand = Annotated[
 ]
 
 
-class PlacedOutcome(_Out):
+class PlacedOutcome(CamelOut):
     kind: Literal["Placed"] = "Placed"
     item_ids: list[UUID]
 
 
-class RemovedOutcome(_Out):
+class RemovedOutcome(CamelOut):
     kind: Literal["Removed"] = "Removed"
     item_id: UUID
 
 
-class OrderedOutcome(_Out):
+class OrderedOutcome(CamelOut):
     kind: Literal["Ordered"] = "Ordered"
 
 
@@ -187,66 +155,59 @@ LecternOutcome = Annotated[
 ]
 
 
-class LecternResult(_Out):
+class LecternResult(CamelOut):
     outcome: LecternOutcome
     lectern: LecternSnapshot
 
 
-class EnsureMediaFinishedCommand(_In):
+class EnsureMediaFinishedCommand(CommandIn):
     kind: Literal["EnsureMediaFinished"]
-    client_mutation_id: UUID
     media_id: UUID
 
 
-class FinishLecternItemCommand(_In):
+class FinishLecternItemCommand(CommandIn):
     kind: Literal["FinishLecternItem"]
-    client_mutation_id: UUID
     media_id: UUID
     item_id: UUID
     next_capability: NextCapability
 
 
-class SetUnreadCommand(_In):
+class SetUnreadCommand(CommandIn):
     kind: Literal["SetUnread"]
-    client_mutation_id: UUID
     media_id: UUID
 
 
-class ResetProgressCommand(_In):
+class ResetProgressCommand(CommandIn):
     kind: Literal["ResetProgress"]
-    client_mutation_id: UUID
     media_id: UUID
 
 
-class UndoCompletionCommand(_In):
+class UndoCompletionCommand(CommandIn):
     kind: Literal["UndoCompletion"]
-    client_mutation_id: UUID
     completion_handle: CompletionHandle
 
 
-class SetBatchStateCommand(_In):
+class SetBatchStateCommand(CommandIn):
     kind: Literal["SetBatchState"]
-    client_mutation_id: UUID
     media_ids: list[UUID] = Field(min_length=1, max_length=1000)
     state: Literal["Finished", "Unread"]
 
 
-class DirectNaturalEndOrigin(_In):
+class DirectNaturalEndOrigin(CamelIn):
     kind: Literal["Direct"]
 
 
-class LecternNaturalEndOrigin(_In):
+class LecternNaturalEndOrigin(CamelIn):
     kind: Literal["Lectern"]
     item_id: UUID
 
 
 NaturalEndOrigin = Annotated[
-    DirectNaturalEndOrigin | LecternNaturalEndOrigin,
-    Field(discriminator="kind"),
+    DirectNaturalEndOrigin | LecternNaturalEndOrigin, Field(discriminator="kind")
 ]
 
 
-class TerminalListeningIn(_In):
+class TerminalListeningIn(CamelIn):
     position_ms: _NonNegInt32
     duration_ms: Presence[_NonNegInt32]
     episode_playback_rate: Presence[PlaybackRate]
@@ -254,9 +215,8 @@ class TerminalListeningIn(_In):
     expected_reset_epoch: _NonNegInt32
 
 
-class SettleNaturalEndCommand(_In):
+class SettleNaturalEndCommand(CommandIn):
     kind: Literal["SettleNaturalEnd"]
-    client_mutation_id: UUID
     media_id: UUID
     origin: NaturalEndOrigin
     terminal_listening: TerminalListeningIn
@@ -280,13 +240,11 @@ ConsumptionOutcomeKind = Literal[
 ]
 
 
-class ConsumptionStateOutcome(_Out):
-    """The five payload-free outcomes; each serializes as ``{"kind": ...}`` alone."""
-
+class ConsumptionStateOutcome(CamelOut):
     kind: ConsumptionOutcomeKind
 
 
-class ConsumptionRemovedOutcome(_Out):
+class ConsumptionRemovedOutcome(CamelOut):
     kind: Literal["Removed"] = "Removed"
     item_id: UUID
     next_item_id: Presence[UUID]
@@ -297,9 +255,7 @@ ConsumptionOutcome = Annotated[
 ]
 
 
-class ListeningStateOut(_Out):
-    """Position/duration/episode rate plus heartbeat fencing tokens."""
-
+class ListeningStateOut(CamelOut):
     position_ms: _NonNegInt32
     duration_ms: Presence[_NonNegInt32]
     episode_playback_rate: Presence[PlaybackRate]
@@ -307,15 +263,13 @@ class ListeningStateOut(_Out):
     reset_epoch: _NonNegInt32
 
 
-class MediaProgressState(_Out):
-    """Canonical current-progress snapshot installed after a reset."""
-
+class MediaProgressState(CamelOut):
     media_id: UUID
     reader_cursor: ReaderCursorSnapshot
     listening_state: Presence[ListeningStateOut]
 
 
-class ConsumptionResult(_Out):
+class ConsumptionResult(CamelOut):
     outcome: ConsumptionOutcome
     lectern: LecternSnapshot
     next_item: Presence[LecternItemOut]
@@ -324,26 +278,17 @@ class ConsumptionResult(_Out):
     library_entries_collection_revision: CollectionRevision
 
 
-class ListeningHeartbeatIn(_In):
-    """PUT body for ``/media/{id}/listening-state``: every field required."""
-
-    position_ms: _NonNegInt32
-    duration_ms: Presence[_NonNegInt32]
-    episode_playback_rate: Presence[PlaybackRate]
-    expected_write_revision: _NonNegInt32
-    expected_reset_epoch: _NonNegInt32
+class ListeningHeartbeatIn(TerminalListeningIn):
     heartbeat_generation: UUID
     heartbeat_sequence: _NonNegInt32
 
 
-class ListeningHeartbeatResult(_Out):
+class ListeningHeartbeatResult(CamelOut):
     listening_state: ListeningStateOut
     heartbeat_generation: UUID
     heartbeat_sequence: _NonNegInt32
 
 
-class PreviewPositionIn(_In):
-    """One post-acquisition transfer from an ephemeral Preview audio session."""
-
+class PreviewPositionIn(CamelIn):
     position_ms: _NonNegInt32
     duration_ms: Presence[_NonNegInt32]

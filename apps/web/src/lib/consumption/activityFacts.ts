@@ -1,24 +1,10 @@
-/**
- * Source-owned numeric facts used by consumption projections. These wrappers
- * make it impossible for collection presenters to accept unchecked numbers.
- */
+// Numeric facts guaranteed by their source, so presenters never take unchecked numbers.
 
-/** Source-decoder guarantee: finite and in the inclusive range [0, 1]. */
-export interface ProgressFraction {
-  readonly value: number;
-}
-
-/** Source-decoder or source-owned derivation guarantee: integer >= 1. */
-export interface PositiveMinutes {
-  readonly value: number;
-}
-
-/** Source-decoder or source-owned derivation guarantee: integer >= 0. */
-export interface NonNegativeMinutes {
-  readonly value: number;
-}
-
-/** Source-decoder or source-owned derivation guarantee: integer >= 1. */
-export interface PositiveCount {
-  readonly value: number;
-}
+/** Finite, within [0, 1]. */
+export type ProgressFraction = { readonly value: number };
+/** An integer >= 1. */
+export type PositiveMinutes = { readonly value: number };
+/** An integer >= 0. */
+export type NonNegativeMinutes = { readonly value: number };
+/** An integer >= 1. */
+export type PositiveCount = { readonly value: number };
