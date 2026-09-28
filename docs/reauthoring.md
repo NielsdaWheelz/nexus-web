@@ -52,7 +52,7 @@ wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the 
 | offline-android (delivery, packages, downloads, two kotlin stores) | 17.6k | 8k | one store | open |
 | vault (export/sync/watch CLI + pane) | 1.9k | 0–1k | deferred by owner 2026-09-21; keep and reauthor: keep at 1k or delete | open |
 | billing-settings (billing, entitlements, quota, 7 settings panes) | 4.4k | 2k | keep, reauthor | open |
-| auth-extension (auth, users, sessions, extension 2.8k of which 2.3k vendored Readability) | 4.9k | 2k | deferred by owner 2026-09-21; keep and reauthor extension; keep auth | capture routing 351→334 lines: one permission/classification owner fixes denied inspection and duplicate prompts; auth and the remaining extension remain open |
+| auth-extension (auth, users, sessions, extension 2.8k of which 2.3k vendored Readability) | 4.7k | 2k | deferred by owner 2026-09-21; keep and reauthor extension; keep auth | capture routing 351→334 lines: one permission/classification owner fixes denied inspection and duplicate prompts; postgres rate limiter and stream-token jti claims deleted (cleanup/delete-rate-limiter, mig 0248): tokens are stateless signed JWTs, stream_tokens.py 276→192; auth and the remaining extension remain open |
 | substrate: resource graph (refs, edges, citations) | 5.2k | 2k | reauthor | first pass landed (size/resource-graph-py): 6.6k→4.9k, −25%; two blocks await the action-menu rewrite |
 | substrate: action menu (snapshot→menu→runtime/cache) | 11.4k | 1.5k | one catalog + one menu | catalog/environment/menu/runtime core: 3,265→2,168 lines and 104,151→70,217 bytes; direct capability-to-command projection replaces intent/plan/dispatch layers. cache, mutation leases, editor handoff and remaining substrate stay open |
 | substrate: workspace/panes (store, host, memento, mobile chrome, pane find, route model) | 20.7k | 6k | reauthor | open |
@@ -72,5 +72,6 @@ wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the 
 
 ## decision log
 
+- 2026-09-27 · owner: delete the postgres rate limiter and the stream-token jti replay table. stream and package tokens stay short-lived signed JWTs without one-use claims; the SSE LISTEN cap (429 `E_RATE_LIMITED`) stays.
 - 2026-09-21 · owner: target 50–100k; "reauthor to target" approved for everything; kill dawn write; oracle/atlas, x/email/arxiv ingest, reading slate, walknotes, vault, extension deferred (keep, reauthor).
 - 2026-09-18 · owner: fork graph kept; System appearance dropped; see `docs/outstanding-issues.md` history for the rest.

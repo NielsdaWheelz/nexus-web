@@ -98,7 +98,6 @@ from nexus.services.llm_execution import (
 )
 from nexus.services.llm_ledger import LlmCallOwner, lock_generation_owner_in_current_transaction
 from nexus.services.oracle_plates import oracle_plate_url
-from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.resource_graph.citations import (
     build_citation_outs,
     concordant_sources,
@@ -200,15 +199,12 @@ def create_reading(
     (OracleReadingCreateRequest: str_strip_whitespace + min/max_length), the
     optional ``Idempotency-Key`` at the route edge (Header min/max_length,
     exactly like LI generate). A reused key replays the existing reading (LI
-    replay semantics: same key, same reading; no payload hash) before any
-    pre-enqueue control runs.
+    replay semantics: same key, same reading; no payload hash).
     """
     if idempotency_key is not None:
         existing = _get_reading_by_idempotency_key(db, viewer_id, idempotency_key)
         if existing is not None:
             return existing
-
-    _validate_oracle_pre_enqueue_controls(viewer_id=viewer_id)
 
     for attempt in range(ORACLE_FOLIO_ALLOCATE_ATTEMPTS):
         try:
@@ -549,11 +545,6 @@ def compute_concordance(
         )
     scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
     return [entry for _score, _created_at, entry in scored[:5]]
-
-
-def _validate_oracle_pre_enqueue_controls(*, viewer_id: UUID) -> None:
-    rate_limiter = get_rate_limiter()
-    rate_limiter.check_rpm_limit(viewer_id)
 
 
 # ---------- SSE handler dependencies ----------------------------------------
