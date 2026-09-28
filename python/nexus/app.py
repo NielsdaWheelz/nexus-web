@@ -173,15 +173,6 @@ async def lifespan(app: FastAPI):
         web_search_provider="brave" if settings.brave_search_api_key else None,
     )
 
-    # Initialize Postgres-backed rate limiter runtime state.
-    from nexus.services.rate_limit import RateLimiter, set_rate_limiter
-
-    rate_limiter = RateLimiter(
-        session_factory=get_session_factory(),
-        rpm_limit=settings.rate_limit_rpm,
-    )
-    set_rate_limiter(rate_limiter)
-
     yield
 
     # Shutdown: close shared HTTP client.

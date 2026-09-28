@@ -314,3 +314,5 @@ unexpected timeouts. See
 - [open] 2026-09-25 notes writing live action probe · overlapping pdf highlight overlays block pointer access to a covered highlight: [ticket](tickets/pdf-overlapping-highlights-block-pointer-action.md).
 - [deferred] jobs / content indexing · 2026-09-27 backend dead-code sweep · reindex payload `request_id` is write-only but stored in never-pruned jobs; strip it with a migration: [ticket](tickets/reindex-payload-request-id-is-write-only.md).
 - [open] errors / web · 2026-09-27 backend dead-code sweep · two api error codes are never raised but web still switches on them: [ticket](tickets/unraised-api-error-codes-kept-by-web.md).
+- [open] 2026-09-28 chat admission / oracle web · web keeps E_RATE_LIMITED / E_RATE_LIMITER_UNAVAILABLE arms until the backend with 0248 ships: [ticket](tickets/web-rate-limit-copy-outlives-limiter.md).
+- [open] 2026-09-28 sse transport · the listen cap's 429 E_RATE_LIMITED is misnamed and the sse client treats it as fatal: [ticket](tickets/sse-listen-cap-rejection-is-misnamed-and-fatal.md).

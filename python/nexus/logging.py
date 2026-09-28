@@ -6,7 +6,6 @@ Provides JSON-formatted logs with consistent context including:
 - path: Raw request path (never includes query string)
 - method: HTTP method
 - flow_id: Correlation ID for multi-phase chat-run flows
-- stream_jti: JWT ID from stream token (streaming only)
 - timestamp: ISO8601 formatted timestamp
 
 Usage:
@@ -35,7 +34,6 @@ user_id_var: ContextVar[str | None] = ContextVar("user_id", default=None)
 path_var: ContextVar[str | None] = ContextVar("path", default=None)
 method_var: ContextVar[str | None] = ContextVar("method", default=None)
 flow_id_var: ContextVar[str | None] = ContextVar("flow_id", default=None)
-stream_jti_var: ContextVar[str | None] = ContextVar("stream_jti", default=None)
 
 
 def add_request_context(logger: logging.Logger, method_name: str, event_dict: dict) -> dict:
@@ -48,7 +46,6 @@ def add_request_context(logger: logging.Logger, method_name: str, event_dict: di
     path = path_var.get()
     method = method_var.get()
     flow_id = flow_id_var.get()
-    stream_jti = stream_jti_var.get()
 
     if request_id:
         event_dict["request_id"] = request_id
@@ -60,8 +57,6 @@ def add_request_context(logger: logging.Logger, method_name: str, event_dict: di
         event_dict["method"] = method
     if flow_id:
         event_dict["flow_id"] = flow_id
-    if stream_jti:
-        event_dict["stream_jti"] = stream_jti
 
     return event_dict
 
@@ -159,15 +154,6 @@ def set_flow_id(flow_id: str | None) -> None:
     flow_id_var.set(flow_id)
 
 
-def set_stream_jti(jti: str | None) -> None:
-    """Set stream JTI for stream token correlation.
-
-    Args:
-        jti: JWT ID from verified stream token.
-    """
-    stream_jti_var.set(jti)
-
-
 def clear_request_context() -> None:
     """Clear all request-scoped context at the end of a request."""
     request_id_var.set(None)
@@ -175,7 +161,6 @@ def clear_request_context() -> None:
     path_var.set(None)
     method_var.set(None)
     flow_id_var.set(None)
-    stream_jti_var.set(None)
 
 
 def get_request_id() -> str | None:

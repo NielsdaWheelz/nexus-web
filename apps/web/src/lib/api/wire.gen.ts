@@ -2423,7 +2423,7 @@ export interface paths {
         };
         /**
          * Get Offline Reading Package
-         * @description Consume one package token and transfer one verified immutable ZIP.
+         * @description Verify one package token and transfer one verified immutable ZIP.
          *
          *     The handler is async so the request can observe its own client disconnect
          *     while assembly runs; every blocking database call stays on a worker thread.

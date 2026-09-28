@@ -55,9 +55,8 @@ export type SseClientDirectArgs<TEvent> = SseClientDirectCommon<TEvent> &
  * flow, abort, content-type validation, and `Last-Event-ID` resumption. Caller
  * supplies the URL and a typed event decoder.
  *
- * Token flow: stream tokens are single-use JTI — reusing one returns
- * E_STREAM_TOKEN_REPLAYED — so every connect needs a fresh token, minted via
- * `fetchStreamToken`. Callers that need the deployment-selected stream base URL
+ * Token flow: every connect mints a fresh stream token via `fetchStreamToken`
+ * (tokens live 60s). Callers that need the deployment-selected stream base URL
  * use `initialConnection` so that first token mint is also covered by the
  * bounded reconnect loop.
  *
@@ -188,8 +187,8 @@ export function sseClientDirect<TEvent>(
 
       if (!response.ok) {
         const failure = await apiErrorFromResponse(response);
-        // 401 means the single-use token was replayed or expired — a fresh
-        // token clears it — and 5xx is transient by definition. Every other
+        // 401 means the stream token expired or was rejected — a fresh token
+        // clears it — and 5xx is transient by definition. Every other
         // status (400/403/404/…) is an addressing or permission bug: fatal.
         if (response.status === 401 || response.status >= 500) {
           if (await scheduleReconnect(failure)) continue;

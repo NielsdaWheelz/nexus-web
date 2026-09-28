@@ -135,7 +135,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if is_stream_path(request.url.path):
             return await call_next(request)
 
-        # This exact direct route verifies its scoped one-use bearer at the
+        # This exact direct route verifies its scoped package bearer at the
         # route boundary. No other offline-reading path skips BFF/Supabase auth.
         if is_offline_reading_package_path(request.url.path):
             return await call_next(request)

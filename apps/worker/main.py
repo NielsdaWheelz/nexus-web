@@ -111,12 +111,8 @@ def create_worker(
         # Interactive and gated maintenance handlers run in-process, so this
         # process needs the runtime a background child installs for itself.
         from nexus.services.generation_policy import validate_policy
-        from nexus.services.rate_limit import RateLimiter, set_rate_limiter
 
         validate_policy()
-        set_rate_limiter(
-            RateLimiter(session_factory=session_factory, rpm_limit=settings.rate_limit_rpm)
-        )
     return JobWorker(
         session_factory=session_factory,
         worker_id=f"{socket.gethostname()}:{os.getpid()}",

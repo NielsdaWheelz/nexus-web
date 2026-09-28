@@ -7,7 +7,6 @@ from fastapi import Header, Request
 
 from nexus.auth.bearer import parse_bearer_token
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.logging import set_stream_jti
 from nexus.services import stream_tokens
 from nexus.services.generation_catalog import GenerationCatalogService
 from nexus.services.tool_runtime.declarations import BROWSER_TOOL_PROJECTION_REVISION
@@ -38,9 +37,7 @@ def get_stream_viewer(request: Request) -> UUID:
         raise ApiError(
             ApiErrorCode.E_STREAM_TOKEN_INVALID, "Missing or invalid Authorization header"
         )
-    verified = stream_tokens.verify_stream_token(token)
-    set_stream_jti(verified.jti)
-    return verified.user_id
+    return stream_tokens.verify_stream_token(token)
 
 
 def get_generation_catalog_service(request: Request) -> GenerationCatalogService:
