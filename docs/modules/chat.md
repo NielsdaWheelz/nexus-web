@@ -116,14 +116,14 @@ An existing Conversation publishes one Resource Inspector group with
 `Context | Forks | Dossier`; `/conversations/new` publishes none until the
 resource exists. One shared inspector action opens the group on desktop and
 mobile. Context and Forks remain chat-owned bodies; Dossier uses the universal
-surface/controller and workspace-local revision selection.
+surface/controller.
 
 The Conversation Dossier binding collects every complete message on every
 branch, deduplicates shared prefixes, includes branch topology and attached
 Context, and derives a User audience from the conversation owner. Generation is
-manual. The generic Dossier head/build/history API and
+manual. The generic Dossier head/build API and
 `artifact_build_events` stream own Generate, Regenerate, cancellation, retry,
-history, provenance, and citations; chat owns no feature-specific synthesis
+provenance, and citations; chat owns no feature-specific synthesis
 route, job, schema, deep link, or inline output.
 
 Artifact and Artifact Revision resources use the existing generated-output

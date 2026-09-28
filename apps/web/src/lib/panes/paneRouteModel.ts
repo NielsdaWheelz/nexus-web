@@ -199,7 +199,6 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["artifacts", ":artifactRef"],
     defaultLabel: "Dossier",
     labelMode: "dynamic",
-    queryNavigation: "in-place",
     returnMemento: { kind: "ShellScroll" },
     bodyMode: "standard",
     secondaryGroups: ["resource-inspector"],

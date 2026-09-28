@@ -1,8 +1,9 @@
 """The eight typed dossier input manifests.
 
-Stored in ``artifact_revisions.input_manifest`` (jsonb) and decoded key-exact by
-the web. Freshness compares a stored manifest with the subject's live one; the
-head's coverage projection is derived from the same value.
+Stored in ``artifact_revisions.input_manifest`` (jsonb) and read by the web as
+generated types (docs/local-rules/typed-wire.md). Freshness compares a stored
+manifest with the subject's live one; the head's coverage projection is derived
+from the same value.
 """
 
 from __future__ import annotations
@@ -47,15 +48,15 @@ class MediaInputManifestV1(_Manifest):
     media_ref: str
     content_fingerprint: str
     offered_claim_count: int
-    omitted_evidence: list[EvidenceOmission] = Field(default_factory=list)
+    omitted_evidence: list[EvidenceOmission]
 
 
 class ConversationInputManifestV1(_Manifest):
     version: Literal["v1"] = "v1"
     kind: Literal["conversation"] = "conversation"
     conversation_ref: str
-    message_refs: list[str] = Field(default_factory=list)
-    context_refs: list[str] = Field(default_factory=list)
+    message_refs: list[str]
+    context_refs: list[str]
     topology_fingerprint: Presence[str]
     completeness: ConversationComplete
 
@@ -64,21 +65,21 @@ class LibraryInputManifestV1(_Manifest):
     version: Literal["v1"] = "v1"
     kind: Literal["library"] = "library"
     library_ref: str
-    media: list[MediaManifestEntry] = Field(default_factory=list)
+    media: list[MediaManifestEntry]
 
 
 class PodcastInputManifestV1(_Manifest):
     version: Literal["v1"] = "v1"
     kind: Literal["podcast"] = "podcast"
     podcast_ref: str
-    episodes: list[MediaManifestEntry] = Field(default_factory=list)
+    episodes: list[MediaManifestEntry]
 
 
 class ContributorInputManifestV1(_Manifest):
     version: Literal["v1"] = "v1"
     kind: Literal["contributor"] = "contributor"
     contributor_handle: str
-    works: list[MediaManifestEntry] = Field(default_factory=list)
+    works: list[MediaManifestEntry]
 
 
 class PageInputManifestV1(_Manifest):
@@ -86,8 +87,8 @@ class PageInputManifestV1(_Manifest):
     kind: Literal["page"] = "page"
     page_ref: str
     input_fingerprint: str
-    block_refs: list[str] = Field(default_factory=list)
-    connection_refs: list[str] = Field(default_factory=list)
+    block_refs: list[str]
+    connection_refs: list[str]
 
 
 class NoteInputManifestV1(_Manifest):
@@ -96,7 +97,7 @@ class NoteInputManifestV1(_Manifest):
     note_ref: str
     input_fingerprint: str
     body_fingerprint: Presence[str]
-    connection_refs: list[str] = Field(default_factory=list)
+    connection_refs: list[str]
 
 
 class IdeaIncludedSource(_Manifest):
@@ -114,11 +115,11 @@ class IdeaInputManifestV1(_Manifest):
     version: Literal["v1"] = "v1"
     kind: Literal["idea"] = "idea"
     idea_subject_id: str
-    included_seed_refs: list[str] = Field(default_factory=list)
-    nexus_query_fingerprints: list[str] = Field(default_factory=list)
-    web_query_fingerprints: list[str] = Field(default_factory=list)
-    included_sources: list[IdeaIncludedSource] = Field(default_factory=list)
-    omitted_sources: list[IdeaOmittedSource] = Field(default_factory=list)
+    included_seed_refs: list[str]
+    nexus_query_fingerprints: list[str]
+    web_query_fingerprints: list[str]
+    included_sources: list[IdeaIncludedSource]
+    omitted_sources: list[IdeaOmittedSource]
 
 
 AggregateManifestV1 = LibraryInputManifestV1 | PodcastInputManifestV1 | ContributorInputManifestV1

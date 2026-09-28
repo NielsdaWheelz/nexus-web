@@ -18,7 +18,7 @@ calibration (chat tools, 2026-09-21): a spec that describes the current structur
 
 verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, one alembic head) plus one named manual check per module. there are no automated tests; that is a known, accepted trade.
 
-wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the routes it rewrites and deletes their web decoders. the generated `apps/web/src/lib/api/wire.gen.ts` is excluded from line counts and targets. untyped JSON routes: 160 of 216 operations (2026-09-28; 20 typed, 24 without a body, 12 binary or SSE).
+wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the routes it rewrites and deletes their web decoders. the generated `apps/web/src/lib/api/wire.gen.ts` is excluded from line counts and targets. untyped JSON routes: 153 of 213 operations (2026-09-28; 25 typed, 23 without a body, 12 binary or SSE).
 
 ## inventory and targets
 
@@ -37,7 +37,7 @@ wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the 
 | chat (runs, conversations, forks, composer, tails) | 29.6k | 10k | reauthor; 17 chat_run_* files → 3 | python first pass landed (size/chat-py): 11.8k→9.4k, −20%, eleven chat_run_* files gone; weakest yield so far — schemas (2.7k, frozen wire) and the 20-kwarg admission/finalize signatures are the mass; web 18k open |
 | chat-tools (runtime, authority, MCP, six tools) | 5.8k | 2.5k | reauthor: six tools + one dispatcher | first pass landed (size/chat-tools) at 5.8k, −32%; remaining levers: MCP transport 0.9k, HostTable research plan 0.5k, ledger density |
 | generation (catalog, ledger, codex + 7 provider APIs, picker) | 10.2k | 3k | codex + 1–2 providers; drop model lifecycle | python first pass landed (size/generation-py): 10.9k→7.6k, −30%; model lifecycle deleted; picker web 2.6k open |
-| dossiers (engine 3.4k, ten subject bindings, web document runtime) | 14.6k | 5k | reauthor: one engine, one binding table | python first pass landed (size/dossiers-py): 12.0k→7.4k, −39%; web document runtime 7.2k open |
+| dossiers (engine 3.4k, ten subject bindings, web document runtime) | 11.9k | 5k | reauthor: one engine, one binding table | python first pass landed (size/dossiers-py): 12.0k→7.4k, −39%; revision history deleted, latest revision only (cleanup/dossier-latest-revision, mig 0250): py 7.1k→6.8k, web 6.8k→5.1k (wc -l over services/artifacts, routes/dossiers, schemas/artifact, lib/dossiers, components/dossier, the artifact pane); head, build and learn routes typed, dossierWire deleted; web document runtime reauthoring open |
 | oracle-atlas (oracle, plates, concordance, corpus ops, atlas, manifests, deploy plate train) | 12.6k | 0–4k | deferred by owner 2026-09-21; keep and reauthor: delete, or keep at 4k | open |
 | synapse-connections (resonance, synapse, dawn write, connections surface, reading slate) | 7.8k | 2k | keep synapse + connections; DELETE dawn write (decided 2026-09-21); reading slate deferred | dawn write deleted (size/dawn); rest open; python synapse+resonance first pass landed (size/synapse-py): 3.5k→2.6k, −25%; _evidence.py is 414 lines of frozen slate SQL; web connections/slate 4k open |
 | search-browse-nexus (index, 11 retrievers, browse adapters, nexus launcher, switchboard, /search) | 26.4k | 8k | reauthor: one search UI, one retriever | python search/index/retrieval first pass landed (size/search-py) at 6.0k of 9.0k, −33%; per-hit evidence re-proof removed (cleanup/search-locators): locator_resolver + search/chunks 1,338→1,240 (−98), 3 fewer statements per ranked chunk hit; nexus launcher reauthored (size/nexus-launcher-web): 9,392→3,351, −64%, one controller and one set of workflow pages for desktop and mobile, history href allowlist and selection journal deleted (the 191-line `lib/nexus/performance.ts` went with #408); browse and the other web search UIs open |
@@ -72,6 +72,7 @@ wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the 
 
 ## decision log
 
+- 2026-09-27 · owner: dossiers keep only the latest revision; revision history, Make current and the learn tables are deleted.
 - 2026-09-27 · owner: delete the postgres rate limiter and the stream-token jti replay table. stream and package tokens stay short-lived signed JWTs without one-use claims; the SSE LISTEN cap (429 `E_RATE_LIMITED`) stays.
 - 2026-09-21 · owner: target 50–100k; "reauthor to target" approved for everything; kill dawn write; oracle/atlas, x/email/arxiv ingest, reading slate, walknotes, vault, extension deferred (keep, reauthor).
 - 2026-09-18 · owner: fork graph kept; System appearance dropped; see `docs/outstanding-issues.md` history for the rest.

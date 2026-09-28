@@ -377,6 +377,7 @@ def _empty_media(ref: ResourceRef, content_fingerprint: str) -> Collected:
             media_ref=ref.uri,
             content_fingerprint=content_fingerprint,
             offered_claim_count=0,
+            omitted_evidence=[],
         ),
         heading="DOCUMENT CLAIMS",
         context="",

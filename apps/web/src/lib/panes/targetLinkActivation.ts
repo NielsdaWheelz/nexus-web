@@ -1,10 +1,6 @@
 "use client";
 
 import type { MouseEvent as ReactMouseEvent } from "react";
-import {
-  isWorkspaceSecondarySurfaceId,
-  type WorkspaceSecondaryActivation,
-} from "@/lib/panes/paneSecondaryModel";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { preloadPane } from "@/lib/panes/paneRenderRegistry";
 import type {
@@ -70,7 +66,6 @@ export function activateTargetLink(input: {
   runtime: TargetLinkActivationRuntime | null;
   href: string | null;
   labelHint?: string;
-  secondaryActivation?: WorkspaceSecondaryActivation;
   sourceAnchor?: HTMLAnchorElement;
 }): TargetLinkActivationResult {
   const runtime = input.runtime;
@@ -96,9 +91,6 @@ export function activateTargetLink(input: {
     target: {
       href,
       ...(input.labelHint ? { labelHint: input.labelHint } : {}),
-      ...(input.secondaryActivation
-        ? { secondaryActivation: input.secondaryActivation }
-        : {}),
     },
     disposition,
   });
@@ -140,33 +132,6 @@ export function activateTargetAnchor(input: {
       (anchor.getAttribute("role") === "menuitem"
         ? anchor.textContent?.trim() || undefined
         : undefined),
-    secondaryActivation: secondaryActivationForAnchor(anchor) ?? undefined,
     sourceAnchor: anchor,
   });
-}
-
-function secondaryActivationForAnchor(
-  anchor: HTMLAnchorElement,
-): WorkspaceSecondaryActivation | null {
-  const surfaceId = anchor.dataset.paneSecondarySurface;
-  if (!isWorkspaceSecondarySurfaceId(surfaceId)) {
-    return null;
-  }
-  const activationKind = anchor.dataset.paneSecondaryActivation;
-  const revisionRef = anchor.dataset.paneDossierRevision;
-  if (activationKind === "DossierRevision" && revisionRef !== undefined) {
-    return surfaceId === "resource-dossier"
-      ? { kind: "DossierRevision", surfaceId, revisionRef }
-      : null;
-  }
-  if (
-    activationKind === "DossierCurrent" &&
-    revisionRef === undefined &&
-    surfaceId === "resource-dossier"
-  ) {
-    return { kind: "DossierCurrent", surfaceId };
-  }
-  return activationKind === undefined || activationKind === "Surface"
-    ? { kind: "Surface", surfaceId }
-    : null;
 }

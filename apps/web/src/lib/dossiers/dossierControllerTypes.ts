@@ -1,309 +1,38 @@
-// The decoded, owned Dossier controller value types (CONTRACTS.md A15). These
-// mirror the backend read models in `python/nexus/schemas/artifact.py`
-// (DossierHeadOut / DossierRevisionOut / DossierBuildSummary / MediaAbstractOut)
-// as owned frontend values: absence is the repository-wide `Presence<T>`
-// encoding (never `null`/boolean-flattened), and every multi-state axis is a
-// closed discriminated union so the view-model can switch exhaustively.
-//
-// A15 controller unions (implemented EXACTLY):
-//   head = Idle | Loading | Failed{error} | Ready{ current_revision, freshness,
-//     active_build{execution}, latest_unsuccessful_build, history }
-//   revision_selection = Current | Historical{revision_ref}
-//   historical_revision = Idle | Loading | Ready{revision} | Failed{error}
-//   stream = Disconnected | Connecting | Live | Reconnecting | Suspended
-//     | Terminal{outcome, reconciled}
-import type { CitationOut } from "@/lib/conversations/citationOut";
-import type { Presence } from "@/lib/api/presence";
-import type { DurableExecution } from "@/lib/api/executionAdvisory";
-import type {
-  GenerationSelectionSpec,
-  SelectionPresentation,
-} from "@/lib/conversations/generationCatalog";
-import type { ResourceActivation } from "@/lib/resources/activation";
+// The dossier controller's client state. Wire values are the generated
+// `Schema<…>` types (docs/local-rules/typed-wire.md), read where they are used.
+import type { Schema } from "@/lib/api/wire";
 
-/** A9/A15 head-read freshness label (binding `manifests_equal` summary). */
-export type DossierFreshness = "Current" | "Stale";
+/** The Media dossier's abstract: the one wire union without a generated name. */
+export type MediaAbstract = Extract<
+  Schema<"DossierHeadOut">["media_abstract"],
+  { kind: "Present" }
+>["value"];
 
-/** The current A7 write vocabulary (`DossierBuildFailureCode` on the backend). */
-export const DOSSIER_BUILD_FAILURE_CODES = [
-  "NoSourceMaterial",
-  "InputsChanged",
-  "DependencyProjectionFailed",
-  "ContextTooLarge",
-  "Auth",
-  "Quota",
-  "Timeout",
-  "OutputLimit",
-  "InvalidOutput",
-  "PolicyViolation",
-  "RuntimeUnavailable",
-  "CapacityUnavailable",
-  "DocumentValidationFailed",
-  "CitationValidationFailed",
-] as const;
-
-export type DossierBuildFailureCode =
-  (typeof DOSSIER_BUILD_FAILURE_CODES)[number];
-
-/** A decoded same-system API/transport error, kept near the screen boundary
- * for `dossierErrorMessage`. `code` is the `ApiError.code`; `message` the
- * backend-authored human message (used as the exhaustive-map fallback). */
+/** A same-system API or transport error, kept for `dossierErrorMessage`. */
 export interface DossierErrorInfo {
   code: string;
   message: string;
-}
-
-export type DossierMediaDisposition =
-  | "Included"
-  | "OmittedNoReadyUnit"
-  | "OmittedBudget"
-  | "OmittedNotAudienceVisible"
-  | "OmittedProjectionFailed";
-
-export interface DossierMediaManifestEntry {
-  mediaRef: string;
-  contentFingerprint: string;
-  disposition: DossierMediaDisposition;
-}
-
-export type DossierInputManifest =
-  | {
-      version: "v1";
-      kind: "media";
-      mediaRef: string;
-      contentFingerprint: string;
-      offeredClaimCount: number;
-      omittedEvidenceRefs: readonly string[];
-    }
-  | {
-      version: "v1";
-      kind: "conversation";
-      conversationRef: string;
-      messageRefs: readonly string[];
-      contextRefs: readonly string[];
-      topologyFingerprint: Presence<string>;
-      completeness: { kind: "Complete" };
-    }
-  | {
-      version: "v1";
-      kind: "library";
-      libraryRef: string;
-      media: readonly DossierMediaManifestEntry[];
-    }
-  | {
-      version: "v1";
-      kind: "podcast";
-      podcastRef: string;
-      episodes: readonly DossierMediaManifestEntry[];
-    }
-  | {
-      version: "v1";
-      kind: "contributor";
-      contributorHandle: string;
-      works: readonly DossierMediaManifestEntry[];
-    }
-  | {
-      version: "v1";
-      kind: "page";
-      pageRef: string;
-      inputFingerprint: string;
-      blockRefs: readonly string[];
-      connectionRefs: readonly string[];
-    }
-  | {
-      version: "v1";
-      kind: "note";
-      noteRef: string;
-      inputFingerprint: string;
-      bodyFingerprint: Presence<string>;
-      connectionRefs: readonly string[];
-    }
-  | {
-      version: "v1";
-      kind: "idea";
-      ideaSubjectId: string;
-      includedSeedRefs: readonly string[];
-      nexusQueryFingerprints: readonly string[];
-      webQueryFingerprints: readonly string[];
-      includedSources: readonly {
-        ref: string;
-        contentFingerprint: string;
-        role: "seed" | "nexus" | "web";
-      }[];
-      omittedSources: readonly {
-        locator: string;
-        reason: string;
-      }[];
-    };
-
-/** One immutable, citation-bearing revision (DossierRevisionOut). */
-export interface DossierRevision {
-  artifactId: string;
-  artifactRef: string;
-  revisionId: string;
-  revisionRef: string;
-  isCurrent: boolean;
-  contentHtml: string;
-  contentText: string;
-  citations: readonly CitationOut[];
-  inputManifest: DossierInputManifest;
-  instruction: Presence<string>;
-  creatorUserId: Presence<string>;
-  modelProvider: Presence<string>;
-  modelName: Presence<string>;
-  totalTokens: Presence<number>;
-  createdAt: string;
-  promotedAt: Presence<string>;
-}
-
-/** One `GET /artifacts/{ref}/revisions` list item (DossierRevisionSummaryOut).
- * Carries NO body — the head-read boundary keeps historical bodies out of the
- * list; the single-revision fetch supplies `content_html` and `content_text`. */
-export interface DossierRevisionSummary {
-  revisionId: string;
-  revisionRef: string;
-  isCurrent: boolean;
-  citationCount: number;
-  inputManifest: DossierInputManifest;
-  instruction: Presence<string>;
-  creatorUserId: Presence<string>;
-  modelProvider: Presence<string>;
-  modelName: Presence<string>;
-  totalTokens: Presence<number>;
-  createdAt: string;
-  promotedAt: Presence<string>;
-}
-
-/** Failed{code, detail} facts, shared by the head snapshot and the SSE
- * `Failed` event (one shape for one fact). */
-export interface DossierFailedFacts {
-  failureCode: DossierBuildFailureCode;
-  detail: Presence<string>;
-}
-
-/** Cancelled{actor, time} facts. */
-export interface DossierCancelledFacts {
-  actor: Presence<string>;
-  at: string;
-}
-
-/** The frozen model-tool authority of one admitted background generation
- * (spec 5.1): either no model-callable tool or exactly one frozen plan. */
-export type DossierBuildToolPlan =
-  | { kind: "NoModelTools" }
-  | {
-      kind: "CodexShell";
-      planId: string;
-      planRevision: string;
-      effectMode: "AdditiveWrites";
-    }
-  | {
-      kind: "ExactModelTools";
-      planId: string;
-      planRevision: string;
-      effectMode: "ReadOnly" | "AdditiveWrites";
-    };
-
-/** Read-only facts of the build's latest admitted ledger generation (spec 3.4,
- * AC 15): the exact selection, its dispatch-time disclosure, the tool plan,
- * and the journaled tool-position count. Never a control or a price. */
-export interface DossierAdmittedGeneration {
-  selection: GenerationSelectionSpec;
-  displayAtDispatch: SelectionPresentation;
-  toolPlan: DossierBuildToolPlan;
-  toolPositions: number;
-}
-
-/** The durable pre-admission `CapacityPaused` parked on an active build's job
- * (spec 3.4): the user waits for Codex capacity and may cancel. */
-export interface DossierCapacityPause {
-  explanation: string;
-  resetAt: Presence<string>;
-  nextCheckAt: string;
-  lastChecked: string;
-}
-
-/** One build attempt's identity (DossierBuildSummary). Serves both
- * `active_build` (only `execution` Present) and `latest_unsuccessful_build`
- * (exactly one of `failure`/`cancellation` Present). `admittedGeneration` is
- * the latest ledger generation; `capacityPause` is Present only on an active
- * build parked by Codex quota. */
-export interface DossierBuildSummary {
-  handle: string;
-  requesterUserId: Presence<string>;
-  instruction: Presence<string>;
-  createdAt: string;
-  execution: Presence<DurableExecution>;
-  failure: Presence<DossierFailedFacts>;
-  cancellation: Presence<DossierCancelledFacts>;
-  admittedGeneration: Presence<DossierAdmittedGeneration>;
-  capacityPause: Presence<DossierCapacityPause>;
-}
-
-/** A11 Media Abstract (Media Dossier only): compact, read-only, current-only. */
-export type MediaAbstract =
-  | { kind: "Building" }
-  | { kind: "Ready"; summaryMd: string }
-  | { kind: "Stale"; summaryMd: string }
-  | { kind: "Failed" }
-  | { kind: "NotAvailable" };
-
-export type DossierHistoryStatus = "idle" | "loading" | "ready" | "failed";
-
-export type DossierIdentity =
-  | {
-      kind: "Resource";
-      title: string;
-      activation: ResourceActivation;
-    }
-  | {
-      kind: "Idea";
-      title: string;
-    };
-
-/** The `Ready` head fields (A9 shape) plus the separately-fetched `history`
- * list (A15 folds `history` into Ready even though the head read omits bodies;
- * the controller fills it from `GET /artifacts/{ref}/revisions`). Absent
- * `artifact_id`/`current_revision` is the legitimate "never generated" state. */
-export interface DossierHeadReady {
-  artifactId: Presence<string>;
-  artifactRef: Presence<string>;
-  currentRevision: Presence<DossierRevision>;
-  freshness: Presence<DossierFreshness>;
-  activeBuild: Presence<DossierBuildSummary>;
-  latestUnsuccessfulBuild: Presence<DossierBuildSummary>;
-  revisionCount: number;
-  mediaAbstract: Presence<MediaAbstract>;
-  identity: Presence<DossierIdentity>;
-  history: readonly DossierRevisionSummary[];
-  historyStatus: DossierHistoryStatus;
 }
 
 export type DossierHead =
   | { kind: "Idle" }
   | { kind: "Loading" }
   | { kind: "Failed"; error: DossierErrorInfo }
-  | { kind: "Ready"; ready: DossierHeadReady };
-
-export type DossierRevisionSelection =
-  | { kind: "Current" }
-  | { kind: "Historical"; revisionRef: string };
-
-export type DossierHistoricalRevision =
-  | { kind: "Idle" }
-  | { kind: "Loading" }
-  | { kind: "Ready"; revision: DossierRevision }
-  | { kind: "Failed"; error: DossierErrorInfo };
+  | { kind: "Ready"; ready: Schema<"DossierHeadOut"> };
 
 /**
- * The persisted terminal event observed by this client. It remains separate
- * from the authoritative head so terminal UI settles immediately even when the
- * follow-up head read is slow or unavailable.
+ * The persisted terminal event observed by this client. It stays separate from
+ * the head so terminal UI settles at once even when the follow-up head read is
+ * slow or fails.
  */
 export type DossierTerminalOutcome =
   | { kind: "Succeeded"; artifactRevisionRef: string }
-  | { kind: "Failed"; buildHandle: string; facts: DossierFailedFacts }
-  | { kind: "Cancelled"; buildHandle: string; facts: DossierCancelledFacts };
+  | { kind: "Failed"; buildHandle: string; facts: Schema<"FailedEventPayload"> }
+  | {
+      kind: "Cancelled";
+      buildHandle: string;
+      facts: Schema<"CancelledEventPayload">;
+    };
 
 export type DossierStream =
   | { kind: "Disconnected" }
@@ -314,22 +43,19 @@ export type DossierStream =
   | {
       kind: "Terminal";
       outcome: DossierTerminalOutcome;
-      /** The authoritative head has absorbed this event's exact result. */
+      /** The head has absorbed this event's exact result. */
       reconciled: boolean;
     };
 
-/** In-flight manual command (drives control busy state + near-control error). */
-export type DossierPendingAction = "generate" | "cancel" | "makeCurrent" | null;
+/** The in-flight command: drives control busy state and the near-control error. */
+export type DossierPendingAction = "generate" | "cancel" | null;
 
-/** The whole controller snapshot. `useSyncExternalStore` returns this by
- * reference; the store replaces it immutably on every change and never mutates
- * in place, so snapshot identity is a valid change signal. */
+/** The whole controller snapshot, replaced (never mutated) on every change, so
+ * its identity is a sound `useSyncExternalStore` change signal. */
 export interface DossierControllerState {
   head: DossierHead;
-  revisionSelection: DossierRevisionSelection;
-  historicalRevision: DossierHistoricalRevision;
   stream: DossierStream;
-  /** Last `Progress` user message from the active build (polite status region). */
+  /** The active build's last `Progress` message (polite status region). */
   progressMessage: string | null;
   pendingAction: DossierPendingAction;
   actionError: DossierErrorInfo | null;
@@ -339,8 +65,6 @@ export interface DossierControllerState {
 export function initialDossierControllerState(): DossierControllerState {
   return {
     head: { kind: "Idle" },
-    revisionSelection: { kind: "Current" },
-    historicalRevision: { kind: "Idle" },
     stream: { kind: "Disconnected" },
     progressMessage: null,
     pendingAction: null,

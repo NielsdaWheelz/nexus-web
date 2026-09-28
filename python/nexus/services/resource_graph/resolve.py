@@ -442,7 +442,7 @@ def _load_artifact_revision(
     from nexus.services.artifacts.subjects import visible_persisted_subject_sql
 
     def build(ref: ResourceRef, row: Any) -> ResolvedResource:
-        subject = f"{row[4] or 'Dossier'} ({'current' if row[6] else 'historical'})"
+        subject = str(row[4] or "Dossier")
         return _dossier(
             ref,
             label=f"Dossier revision — {subject}",
@@ -457,7 +457,7 @@ def _load_artifact_revision(
         items,
         f"""
         SELECT r.id, a.id AS artifact_id, a.subject_scheme, a.subject_id, {_SUBJECT_TITLE_SQL},
-               r.content_text, a.current_revision_id = r.id AS is_current
+               r.content_text
         FROM artifact_revisions r
         JOIN artifact_builds b ON b.id = r.build_id
         JOIN artifacts a ON a.id = b.artifact_id

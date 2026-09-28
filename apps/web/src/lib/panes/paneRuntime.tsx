@@ -41,7 +41,6 @@ import type {
 } from "@/lib/workspace/targetActivation";
 import type {
   PaneTransientSecondarySurfaceId,
-  WorkspaceDossierActivation,
   WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
 import {
@@ -111,7 +110,6 @@ export interface PaneRuntimeContextValue {
   resourceKey: string | null;
   resourceStatus: PaneResourceStatus;
   secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
-  secondaryActivation: WorkspaceDossierActivation | null;
   paneEntryDelivery: PaneEntryDelivery | null;
   transientSecondarySurface: PaneRuntimeTransientSecondarySurface | null;
   pathParams: Record<string, string>;
@@ -139,7 +137,6 @@ export interface PaneRuntimeContextValue {
   ) => void;
   closeTransientSecondarySurface: () => void;
   previewTransientSecondaryResult: () => void;
-  acknowledgeSecondaryActivation: () => void;
   acknowledgePaneEntryDelivery: (delivery: PaneEntryDelivery) => void;
   setPaneAliases: (aliases: readonly string[]) => void;
 }
@@ -164,7 +161,6 @@ interface PaneRuntimeProviderProps {
   resourceItem?: ResourceItem | null;
   resourceStatus?: PaneResourceStatus;
   secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
-  secondaryActivation?: WorkspaceDossierActivation | null;
   paneEntryDelivery?: PaneEntryDelivery | null;
   transientSecondarySurface?: PaneRuntimeTransientSecondarySurface | null;
   pathParams?: Record<string, string>;
@@ -207,11 +203,6 @@ interface PaneRuntimeProviderProps {
   onPreviewTransientSecondaryResult: (
     paneId: string,
     routeKey: string,
-  ) => void;
-  onAcknowledgeSecondaryActivation: (
-    paneId: string,
-    routeKey: string,
-    activation: WorkspaceDossierActivation,
   ) => void;
   onAcknowledgePaneEntryDelivery: (delivery: PaneEntryDelivery) => void;
   onSetPaneAliases: (input: {
@@ -291,7 +282,6 @@ export function PaneRuntimeProvider({
   resourceItem = null,
   resourceStatus = "none",
   secondaryPane = null,
-  secondaryActivation = null,
   paneEntryDelivery = null,
   transientSecondarySurface = null,
   pathParams = {},
@@ -309,7 +299,6 @@ export function PaneRuntimeProvider({
   onRequestTransientSecondarySurface,
   onCloseTransientSecondarySurface,
   onPreviewTransientSecondaryResult,
-  onAcknowledgeSecondaryActivation,
   onAcknowledgePaneEntryDelivery,
   onSetPaneAliases,
   children,
@@ -409,10 +398,8 @@ export function PaneRuntimeProvider({
     onRequestTransientSecondarySurface,
     onCloseTransientSecondarySurface,
     onPreviewTransientSecondaryResult,
-    onAcknowledgeSecondaryActivation,
     onAcknowledgePaneEntryDelivery,
     onSetPaneAliases,
-    secondaryActivation,
     paneEntryDelivery,
   };
   const commandsRef = useRef(commands);
@@ -558,16 +545,6 @@ export function PaneRuntimeProvider({
       current.routeKey,
     );
   }, []);
-  const acknowledgeSecondaryActivation = useCallback(() => {
-    const current = commandsRef.current;
-    if (current.secondaryActivation) {
-      current.onAcknowledgeSecondaryActivation(
-        current.paneId,
-        current.routeKey,
-        current.secondaryActivation,
-      );
-    }
-  }, []);
   const acknowledgePaneEntryDelivery = useCallback(
     (delivery: PaneEntryDelivery) => {
       const current = commandsRef.current;
@@ -599,7 +576,6 @@ export function PaneRuntimeProvider({
       resourceKey,
       resourceStatus: effectiveResourceStatus,
       secondaryPane: runtimeSecondaryPane,
-      secondaryActivation,
       paneEntryDelivery,
       transientSecondarySurface: runtimeTransientSecondarySurface,
       pathParams,
@@ -614,7 +590,6 @@ export function PaneRuntimeProvider({
       requestTransientSecondarySurface,
       closeTransientSecondarySurface,
       previewTransientSecondaryResult,
-      acknowledgeSecondaryActivation,
       acknowledgePaneEntryDelivery,
       setPaneAliases,
     }),
@@ -626,7 +601,6 @@ export function PaneRuntimeProvider({
       setPaneLayout,
       requestSecondarySurface,
       closeSecondaryPane,
-      acknowledgeSecondaryActivation,
       acknowledgePaneEntryDelivery,
       setPaneAliases,
       paneId,
@@ -640,7 +614,6 @@ export function PaneRuntimeProvider({
       resourceKey,
       effectiveResourceStatus,
       runtimeSecondaryPane,
-      secondaryActivation,
       paneEntryDelivery,
       runtimeTransientSecondarySurface,
       routeKey,

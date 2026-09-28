@@ -8,6 +8,16 @@ success, an ``artifact_build_failures`` modeled failure, or an
 serialization point — every mutation takes it ``FOR UPDATE`` first — and
 active-ness derives from the absence of a terminal child.
 
+- A head has at most one revision, its ``current_revision_id``;
+  ``_success_terminal`` is its single writer.
+- A replaced build leaves with its revision, so no build is left childless (a
+  childless build reads as active).
+- A build's idempotency key lives on its row, so a successful build's key is
+  honored until the next success replaces it; replayed after that, it admits a
+  new build.
+- Failed and cancelled builds stay until the head is deleted.
+- ``llm_calls`` of replaced builds stay: they are the ledger, not the dossier.
+
 This module carries no subject branches: identity, authorization, inputs and
 freshness come from the binding table in :mod:`.subjects`.
 """
@@ -44,6 +54,7 @@ from nexus.jobs.queue import (
     revoke_jobs_by_dedupe_keys,
     running_job_claim_is_current,
 )
+from nexus.schemas.citation import CitationOut
 from nexus.schemas.llm import CapacityPaused
 from nexus.schemas.presence import absent, present
 from nexus.services import durable_step_journal as step_journal
@@ -76,7 +87,6 @@ from nexus.services.artifacts.dossier_types import (
     InvalidInstruction,
     InvalidSubjectLocator,
     ProgressEventPayload,
-    RevisionNotFound,
     StartedEventPayload,
     SucceededEventPayload,
 )
@@ -105,7 +115,13 @@ from nexus.services.artifacts.idea import (
 from nexus.services.artifacts.manifests import InputManifestV1
 from nexus.services.artifacts.research import ResearchInputsChanged
 from nexus.services.artifacts.subjects import Subject, SubjectBinding
-from nexus.services.generation_spec import GenerationHistory, read_generation_history
+from nexus.services.generation_spec import (
+    CodexPersonalSelection,
+    GenerationHistory,
+    ProviderApiSelection,
+    ProviderDispatchTargetSnapshot,
+    read_generation_history,
+)
 from nexus.services.llm_execution import (
     CancellationSignal,
     GenerationAdmissionInputsChanged,
@@ -116,11 +132,19 @@ from nexus.services.llm_execution import (
     read_capacity_pauses,
 )
 from nexus.services.llm_ledger import (
+    GenerationRecord,
     LlmCallOwner,
+    ModelTurnRecord,
     lock_generation_owner_in_current_transaction,
     read_latest_generation_for_owner,
+    read_latest_generations_for_owners,
+    read_model_turns_for_generations,
 )
-from nexus.services.resource_graph.citations import replace_citations_for_output
+from nexus.services.resource_graph.citations import (
+    build_citation_outs_for_sources,
+    replace_citations_for_output,
+)
+from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resources
 from nexus.services.resource_graph.refs import RESOURCE_SCHEMES, ResourceRef, ResourceScheme
 from nexus.services.tool_authority import read_tool_positions
 
@@ -181,31 +205,39 @@ class UnsuccessfulBuildView:
 
 
 @dataclass(frozen=True, slots=True)
+class RevisionView:
+    """The head's one revision: body, citations, typed manifest, provenance."""
+
+    revision_id: UUID
+    created_at: datetime
+    content_html: str
+    content_text: str
+    citations: list[CitationOut]
+    input_manifest: InputManifestV1
+    instruction: str | None
+    creator_user_id: UUID | None
+    model_provider: str | None
+    model_name: str | None
+    total_tokens: int | None
+
+
+@dataclass(frozen=True, slots=True)
 class DossierHeadView:
     artifact_id: UUID | None
     subject: Subject
     subject_scheme: str
     subject_id: UUID
-    current_revision_id: UUID | None
+    current_revision: RevisionView | None
     freshness: Literal["Current", "Stale"] | None
     active_build: ActiveBuildView | None
     latest_unsuccessful_build: UnsuccessfulBuildView | None
-    revision_count: int
-
-
-@dataclass(frozen=True, slots=True)
-class ArtifactActionFacts:
-    """Set-based action facts for an Artifact head or immutable revision."""
-
-    has_active_build: bool
-    is_current_revision: bool | None
 
 
 @dataclass(frozen=True, slots=True)
 class ArtifactActionCandidate:
-    """Audience-visible lifecycle facts plus the subject still needing authz."""
+    """An audience-visible head's lifecycle fact and the subject still needing authz."""
 
-    facts: ArtifactActionFacts
+    has_active_build: bool
     subject_ref: ResourceRef | None
 
 
@@ -215,19 +247,20 @@ def artifact_action_candidates(
     viewer_id: UUID,
     artifact_ids: Sequence[UUID],
     revision_ids: Sequence[UUID],
-) -> tuple[dict[UUID, ArtifactActionCandidate], dict[UUID, ArtifactActionCandidate]]:
-    """Read audience-visible Artifact lifecycle candidates in two bounded queries.
+) -> tuple[dict[UUID, ArtifactActionCandidate], dict[UUID, ResourceRef | None]]:
+    """Read audience-visible heads and revisions in two bounded queries.
 
-    Resource-subject visibility stays with each subject domain; the snapshot
-    composition owner resolves those refs in bounded scheme batches, and every
-    mutating command re-resolves and reauthorizes.
+    Returns each head with its lifecycle fact, and each revision with its head's
+    subject ref. Resource-subject visibility stays with each subject domain; the
+    snapshot composition owner resolves those refs in bounded scheme batches, and
+    every mutating command re-resolves and reauthorizes.
     """
     ordered_artifact_ids = list(dict.fromkeys(artifact_ids))
     ordered_revision_ids = list(dict.fromkeys(revision_ids))
     audience = subjects.audience_visible_sql("artifact")
     params = {"viewer_id": viewer_id, "viewer_id_text": str(viewer_id)}
     artifacts: dict[UUID, ArtifactActionCandidate] = {}
-    revisions: dict[UUID, ArtifactActionCandidate] = {}
+    revisions: dict[UUID, ResourceRef | None] = {}
     if ordered_artifact_ids:
         rows = db.execute(
             text(
@@ -246,10 +279,7 @@ def artifact_action_candidates(
         ).mappings()
         artifacts = {
             UUID(str(row["id"])): ArtifactActionCandidate(
-                facts=ArtifactActionFacts(
-                    has_active_build=bool(row["has_active_build"]),
-                    is_current_revision=None,
-                ),
+                has_active_build=bool(row["has_active_build"]),
                 subject_ref=_action_subject_ref(row),
             )
             for row in rows
@@ -258,8 +288,7 @@ def artifact_action_candidates(
         rows = db.execute(
             text(
                 f"""
-                SELECT revision.id, artifact.subject_scheme, artifact.subject_id,
-                       artifact.current_revision_id = revision.id AS is_current
+                SELECT revision.id, artifact.subject_scheme, artifact.subject_id
                 FROM artifact_revisions revision
                 JOIN artifact_builds build ON build.id = revision.build_id
                 JOIN artifacts artifact ON artifact.id = build.artifact_id
@@ -268,16 +297,7 @@ def artifact_action_candidates(
             ),
             {"revision_ids": ordered_revision_ids, **params},
         ).mappings()
-        revisions = {
-            UUID(str(row["id"])): ArtifactActionCandidate(
-                facts=ArtifactActionFacts(
-                    has_active_build=False,
-                    is_current_revision=bool(row["is_current"]),
-                ),
-                subject_ref=_action_subject_ref(row),
-            )
-            for row in rows
-        }
+        revisions = {UUID(str(row["id"])): _action_subject_ref(row) for row in rows}
     return artifacts, revisions
 
 
@@ -885,7 +905,8 @@ def _success_terminal(
     manifest: InputManifestV1,
     ctx: JobExecutionContext,
 ) -> None:
-    """Publish the revision, its citation edges and the head repoint atomically.
+    """Publish the revision, its citation edges and the head repoint atomically,
+    and delete the revision it replaces.
 
     Under the head lock the inputs are rechecked once more: a mismatch writes
     ``InputsChanged`` and the already-paid output survives only in the ledger.
@@ -915,9 +936,8 @@ def _success_terminal(
             text(
                 "INSERT INTO artifact_revisions "
                 "(id, build_id, content_html, content_text, input_manifest, "
-                " citation_owner_user_id, creator_user_id, promoted_at) "
-                "VALUES (:id, :b, :html, :text, CAST(:manifest AS jsonb), "
-                " :owner, :creator, now())"
+                " citation_owner_user_id, creator_user_id) "
+                "VALUES (:id, :b, :html, :text, CAST(:manifest AS jsonb), :owner, :creator)"
             ),
             {
                 "id": revision_id,
@@ -947,6 +967,16 @@ def _success_terminal(
             text("UPDATE artifacts SET current_revision_id = :r, updated_at = now() WHERE id = :h"),
             {"r": revision_id, "h": head_id},
         )
+        # A head keeps one revision: the one this success replaces leaves with its build.
+        replaced = db.execute(
+            text(
+                "SELECT r.build_id FROM artifact_revisions r "
+                "JOIN artifact_builds b ON b.id = r.build_id "
+                "WHERE b.artifact_id = :h AND r.id <> :r"
+            ),
+            {"h": head_id, "r": revision_id},
+        ).scalars()
+        _delete_builds(db, [UUID(str(build_id)) for build_id in replaced])
         db.commit()
 
     retry_serializable(db, "_success_terminal", op)
@@ -1123,36 +1153,6 @@ def cancel_build(db: Session, *, build_id: UUID, actor_user_id: UUID) -> None:
         raise BuildNotActive()
 
 
-def make_current(db: Session, *, revision_id: UUID, actor_user_id: UUID) -> None:
-    """Repoint the head at an older revision without mutating any revision."""
-
-    def op() -> None:
-        artifact_id = db.execute(
-            text(
-                "SELECT b.artifact_id FROM artifact_revisions r "
-                "JOIN artifact_builds b ON b.id = r.build_id WHERE r.id = :rid"
-            ),
-            {"rid": revision_id},
-        ).scalar_one_or_none()
-        if artifact_id is None:
-            db.rollback()
-            raise RevisionNotFound()
-        head_id = UUID(str(artifact_id))
-        _lock_head(db, head_id)
-        try:
-            _visible_head(db, artifact_id=head_id, viewer_id=actor_user_id)
-        except NotFoundError:
-            db.rollback()
-            raise RevisionNotFound() from None
-        db.execute(
-            text("UPDATE artifacts SET current_revision_id = :r, updated_at = now() WHERE id = :h"),
-            {"r": revision_id, "h": head_id},
-        )
-        db.commit()
-
-    retry_serializable(db, "make_current", op)
-
-
 # ---------------------------------------------------------------------------
 # Head and build reads.
 # ---------------------------------------------------------------------------
@@ -1191,11 +1191,10 @@ def read_head(
             subject=subject,
             subject_scheme=scheme,
             subject_id=subject_id,
-            current_revision_id=None,
+            current_revision=None,
             freshness=None,
             active_build=None,
             latest_unsuccessful_build=None,
-            revision_count=0,
         )
     return _head_snapshot(
         db,
@@ -1203,7 +1202,8 @@ def read_head(
         subject=subject,
         audience=audience,
         head_id=UUID(str(head[0])),
-        current_revision_id=(UUID(str(head[1])) if head[1] is not None else None),
+        current_revision_id=_optional_uuid(head[1]),
+        viewer_id=requester_user_id,
     )
 
 
@@ -1225,6 +1225,7 @@ def read_artifact_head(
         audience=_audience_from_head(head),
         head_id=artifact_id,
         current_revision_id=head.current_revision_id,
+        viewer_id=requester_user_id,
     )
 
 
@@ -1242,6 +1243,7 @@ def _head_snapshot(
     audience: AudienceScope,
     head_id: UUID,
     current_revision_id: UUID | None,
+    viewer_id: UUID,
 ) -> DossierHeadView:
     builds = (
         db.execute(
@@ -1266,13 +1268,11 @@ def _head_snapshot(
     )
     active: ActiveBuildView | None = None
     latest_unsuccessful: UnsuccessfulBuildView | None = None
-    revision_count = 0
     newer_success_seen = False
     for row in builds:
         rev, fail, canc = int(row["rev"]), int(row["fail"]), int(row["canc"])
         if rev + fail + canc > 1:
             raise AssertionError(f"build {row['id']} has conflicting terminal children")
-        revision_count += rev
         build_id = UUID(str(row["id"]))
         requester = _optional_uuid(row["requester_user_id"])
         instruction = str(row["instruction"]) if row["instruction"] is not None else None
@@ -1316,24 +1316,105 @@ def _head_snapshot(
                 ),
             )
 
+    current = (
+        _revision_view(db, revision_id=current_revision_id, viewer_id=viewer_id)
+        if current_revision_id is not None
+        else None
+    )
     scheme, subject_id = subjects.subject_key(subject)
     return DossierHeadView(
         artifact_id=head_id,
         subject=subject,
         subject_scheme=scheme,
         subject_id=subject_id,
-        current_revision_id=current_revision_id,
-        freshness=_freshness(
-            db,
-            binding=binding,
-            subject=subject,
-            audience=audience,
-            current_revision_id=current_revision_id,
+        current_revision=current,
+        freshness=(
+            _freshness(
+                db,
+                binding=binding,
+                subject=subject,
+                audience=audience,
+                stored=current.input_manifest,
+            )
+            if current is not None
+            else None
         ),
         active_build=active,
         latest_unsuccessful_build=latest_unsuccessful,
-        revision_count=revision_count,
     )
+
+
+def _revision_view(db: Session, *, revision_id: UUID, viewer_id: UUID) -> RevisionView:
+    """The head's revision with its build's instruction, ledger provenance and citations."""
+    row = (
+        db.execute(
+            text(
+                "SELECT r.build_id, r.created_at, r.content_html, r.content_text, "
+                "r.input_manifest, r.creator_user_id, r.citation_owner_user_id, b.instruction "
+                "FROM artifact_revisions r JOIN artifact_builds b ON b.id = r.build_id "
+                "WHERE r.id = :id"
+            ),
+            {"id": revision_id},
+        )
+        .mappings()
+        .one()
+    )
+    owner = LlmCallOwner(kind="artifact_build", id=UUID(str(row["build_id"])))
+    generation = read_latest_generations_for_owners(db, owners=[owner], outcome="Succeeded").get(
+        owner
+    )
+    turns = (
+        ()
+        if generation is None
+        else read_model_turns_for_generations(db, generation_ids=[generation.id])[generation.id]
+    )
+    provider, model, total_tokens = _provenance(generation, turns)
+    source = ResourceRef(scheme="artifact_revision", id=revision_id)
+    return RevisionView(
+        revision_id=revision_id,
+        created_at=row["created_at"],
+        content_html=str(row["content_html"]),
+        content_text=str(row["content_text"]),
+        citations=build_citation_outs_for_sources(
+            db,
+            viewer_id=viewer_id,
+            edge_owner_id=UUID(str(row["citation_owner_user_id"])),
+            sources=[source],
+        )[source.uri],
+        input_manifest=_MANIFEST_ADAPTER.validate_python(row["input_manifest"]),
+        instruction=str(row["instruction"]) if row["instruction"] is not None else None,
+        creator_user_id=_optional_uuid(row["creator_user_id"]),
+        model_provider=provider,
+        model_name=model,
+        total_tokens=total_tokens,
+    )
+
+
+def _provenance(
+    generation: GenerationRecord | None,
+    turns: tuple[ModelTurnRecord, ...],
+) -> tuple[str | None, str | None, int | None]:
+    if generation is None:
+        return None, None, None
+    spec = read_generation_history(generation.spec)
+    if isinstance(spec.selection, CodexPersonalSelection):
+        provider, model = "codex-personal", spec.selection.model
+    elif isinstance(spec.selection, ProviderApiSelection):
+        target = spec.resolved_dispatch_target
+        if not isinstance(target, ProviderDispatchTargetSnapshot):
+            raise AssertionError("ProviderApi generation lost its provider target")
+        provider, model = str(target.provider), spec.selection.model_ref
+    else:
+        raise AssertionError("generation selection is not exhaustive")
+    totals: list[int] = []
+    for turn in turns:
+        if turn.usage is None:
+            return provider, model, None
+        value = turn.usage.get("total_tokens")
+        if type(value) is not int or value < 0:
+            return provider, model, None
+        totals.append(value)
+    return provider, model, sum(totals) if totals else None
 
 
 def assert_build_viewer(db: Session, *, build_id: UUID, viewer_id: UUID) -> None:
@@ -1564,8 +1645,6 @@ def _lock_jobs_for_builds(db: Session, build_ids: Sequence[UUID]) -> dict[UUID, 
 
 
 def _delete_heads(db: Session, head_ids: list[UUID]) -> None:
-    from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
-
     build_ids = _build_ids_for_heads(db, head_ids)
     for build_id, job in _lock_jobs_for_builds(db, build_ids).items():
         state = step_journal.read_step_states(job).get(SYNTHESIS_STEP_PATH)
@@ -1588,46 +1667,47 @@ def _delete_heads(db: Session, head_ids: list[UUID]) -> None:
         if (idea_subject_id := delete_artifact_idea_rows_before_head(db, artifact_id=head_id))
         is not None
     ]
-    revision_ids = (
-        [
-            UUID(str(row[0]))
-            for row in db.execute(
-                text("SELECT id FROM artifact_revisions WHERE build_id = ANY(:ids)"),
-                {"ids": build_ids},
-            )
-        ]
-        if build_ids
-        else []
-    )
-    if build_ids:
-        revoke_jobs_by_dedupe_keys(
-            db,
-            kind=_JOB_KIND,
-            dedupe_keys=[_dispatch_key(build_id) for build_id in build_ids],
-        )
     # Clear the circular head pointer before deleting revisions.
     db.execute(
         text("UPDATE artifacts SET current_revision_id = NULL WHERE id = ANY(:ids)"),
         {"ids": head_ids},
     )
-    for head_id in head_ids:
-        delete_edges_for_deleted_resource(db, ref=ResourceRef(scheme="artifact", id=head_id))
-    for revision_id in revision_ids:
-        delete_edges_for_deleted_resource(
-            db, ref=ResourceRef(scheme="artifact_revision", id=revision_id)
-        )
-    if build_ids:
-        for table in (
-            "artifact_build_events",
-            "artifact_revisions",
-            "artifact_build_failures",
-            "artifact_build_cancellations",
-        ):
-            db.execute(text(f"DELETE FROM {table} WHERE build_id = ANY(:ids)"), {"ids": build_ids})
-        db.execute(text("DELETE FROM artifact_builds WHERE id = ANY(:ids)"), {"ids": build_ids})
+    delete_edges_for_deleted_resources(
+        db, refs=[ResourceRef(scheme="artifact", id=head_id) for head_id in head_ids]
+    )
+    _delete_builds(db, build_ids)
     db.execute(text("DELETE FROM artifacts WHERE id = ANY(:ids)"), {"ids": head_ids})
     for idea_subject_id in idea_subject_ids:
         delete_idea_subject_after_head(db, idea_subject_id=idea_subject_id)
+
+
+def _delete_builds(db: Session, build_ids: list[UUID]) -> None:
+    """Delete builds with their revisions, events, terminal rows, queue rows and edges.
+
+    Flush-only. The caller holds the head lock and has moved ``current_revision_id``
+    off every revision it deletes.
+    """
+    revision_ids = db.execute(
+        text("SELECT id FROM artifact_revisions WHERE build_id = ANY(:ids)"), {"ids": build_ids}
+    ).scalars()
+    delete_edges_for_deleted_resources(
+        db,
+        refs=[
+            ResourceRef(scheme="artifact_revision", id=UUID(str(revision_id)))
+            for revision_id in revision_ids
+        ],
+    )
+    revoke_jobs_by_dedupe_keys(
+        db, kind=_JOB_KIND, dedupe_keys=[_dispatch_key(build_id) for build_id in build_ids]
+    )
+    for table in (
+        "artifact_build_events",
+        "artifact_revisions",
+        "artifact_build_failures",
+        "artifact_build_cancellations",
+    ):
+        db.execute(text(f"DELETE FROM {table} WHERE build_id = ANY(:ids)"), {"ids": build_ids})
+    db.execute(text("DELETE FROM artifact_builds WHERE id = ANY(:ids)"), {"ids": build_ids})
 
 
 # ---------------------------------------------------------------------------
@@ -1895,18 +1975,9 @@ def _freshness(
     binding: SubjectBinding,
     subject: Subject,
     audience: AudienceScope,
-    current_revision_id: UUID | None,
-) -> Literal["Current", "Stale"] | None:
+    stored: InputManifestV1,
+) -> Literal["Current", "Stale"]:
     """Compare the current revision's stored manifest to the live inputs (no LLM)."""
-    if current_revision_id is None:
-        return None
-    stored_raw = db.execute(
-        text("SELECT input_manifest FROM artifact_revisions WHERE id = :r"),
-        {"r": current_revision_id},
-    ).scalar_one_or_none()
-    if stored_raw is None:
-        return None
-    stored = _MANIFEST_ADAPTER.validate_python(stored_raw)
     try:
         live = binding.live_manifest(db, subject, audience)
     except DossierInputTooLarge:

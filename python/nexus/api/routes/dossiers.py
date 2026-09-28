@@ -7,13 +7,12 @@ from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, Header, Request, Response
 from llm_tools import Available, ToolId
-from pydantic import TypeAdapter
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.responses import ok
+from nexus.responses import Data
 from nexus.schemas.artifact import (
     CollectionDossierCoverageOut,
     ConversationDossierCoverageOut,
@@ -29,11 +28,11 @@ from nexus.schemas.artifact import (
     DossierGenerateRequest,
     DossierHeadOut,
     DossierRevisionOut,
-    DossierRevisionSummaryOut,
     IdeaDossierCoverageOut,
     IdeaDossierIdentityOut,
     LearnDossierBuildAcceptedOut,
     LearnDossierOpenedOut,
+    LearnDossierOut,
     LearnDossierRequest,
     MediaDossierCoverageOut,
     NoteDossierCoverageOut,
@@ -49,7 +48,6 @@ from nexus.schemas.presence import (
     present,
 )
 from nexus.services.artifacts import engine, subjects
-from nexus.services.artifacts import revisions as revision_service
 from nexus.services.artifacts.dossier_types import (
     CancelledEventPayload,
     FailedEventPayload,
@@ -78,8 +76,6 @@ from nexus.services.resource_items.routing import resource_activation_for_ref
 from nexus.services.tool_runtime.catalog import ComposedToolRuntime
 
 router = APIRouter(tags=["dossiers"])
-
-_MANIFEST_ADAPTER: TypeAdapter[InputManifestV1] = TypeAdapter(InputManifestV1)
 
 
 def _require_idea_web_research(request: Request) -> None:
@@ -144,45 +140,20 @@ def _coverage(manifest: InputManifestV1) -> DossierCoverageOut:
     )
 
 
-def _revision_out(view: revision_service.RevisionView) -> DossierRevisionOut:
-    manifest = _MANIFEST_ADAPTER.validate_python(view.input_manifest)
+def _revision_out(view: engine.RevisionView) -> DossierRevisionOut:
     return DossierRevisionOut(
-        artifact_id=view.artifact_id,
-        artifact_ref=ResourceRef(scheme="artifact", id=view.artifact_id).uri,
-        revision_id=view.revision_id,
         revision_ref=ResourceRef(scheme="artifact_revision", id=view.revision_id).uri,
-        is_current=view.is_current,
+        input_manifest=view.input_manifest,
+        coverage=_coverage(view.input_manifest),
+        instruction=presence_from_nullable(view.instruction),
+        creator_user_id=presence_from_nullable(view.creator_user_id),
+        model_provider=presence_from_nullable(view.model_provider),
+        model_name=presence_from_nullable(view.model_name),
+        total_tokens=presence_from_nullable(view.total_tokens),
+        created_at=view.created_at,
         content_html=view.content_html,
         content_text=view.content_text,
         citations=view.citations,
-        input_manifest=manifest,
-        coverage=_coverage(manifest),
-        instruction=presence_from_nullable(view.instruction),
-        creator_user_id=presence_from_nullable(view.creator_user_id),
-        model_provider=presence_from_nullable(view.model_provider),
-        model_name=presence_from_nullable(view.model_name),
-        total_tokens=presence_from_nullable(view.total_tokens),
-        created_at=view.created_at,
-        promoted_at=presence_from_nullable(view.promoted_at),
-    )
-
-
-def _revision_summary_out(view: revision_service.RevisionSummary) -> DossierRevisionSummaryOut:
-    manifest = _MANIFEST_ADAPTER.validate_python(view.input_manifest)
-    return DossierRevisionSummaryOut(
-        revision_id=view.revision_id,
-        revision_ref=ResourceRef(scheme="artifact_revision", id=view.revision_id).uri,
-        is_current=view.is_current,
-        citation_count=view.citation_count,
-        input_manifest=manifest,
-        coverage=_coverage(manifest),
-        instruction=presence_from_nullable(view.instruction),
-        creator_user_id=presence_from_nullable(view.creator_user_id),
-        model_provider=presence_from_nullable(view.model_provider),
-        model_name=presence_from_nullable(view.model_name),
-        total_tokens=presence_from_nullable(view.total_tokens),
-        created_at=view.created_at,
-        promoted_at=presence_from_nullable(view.promoted_at),
     )
 
 
@@ -281,14 +252,8 @@ def _head_out(db: Session, *, viewer_id: UUID, head: engine.DossierHeadView) -> 
         ),
         identity=present(identity),
         current_revision=(
-            present(
-                _revision_out(
-                    revision_service.get_revision(
-                        db, viewer_id=viewer_id, revision_id=head.current_revision_id
-                    )
-                )
-            )
-            if head.current_revision_id is not None
+            present(_revision_out(head.current_revision))
+            if head.current_revision is not None
             else absent()
         ),
         freshness=presence_from_nullable(head.freshness),
@@ -302,7 +267,6 @@ def _head_out(db: Session, *, viewer_id: UUID, head: engine.DossierHeadView) -> 
             if head.latest_unsuccessful_build is not None
             else absent()
         ),
-        revision_count=head.revision_count,
         media_abstract=subjects.media_abstract(
             db,
             subject_scheme=head.subject_scheme,
@@ -317,15 +281,15 @@ def get_dossier(
     subject_scheme: str,
     subject_handle: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
+    db: Annotated[Session, Depends(get_repeatable_read_db)],
+) -> Data[DossierHeadOut]:
     head = engine.read_head(
         db,
         subject_scheme=subject_scheme,
         subject_handle=subject_handle,
         requester_user_id=viewer.user_id,
     )
-    return ok(_head_out(db, viewer_id=viewer.user_id, head=head))
+    return Data(data=_head_out(db, viewer_id=viewer.user_id, head=head))
 
 
 @router.post("/artifacts/dossiers/{subject_scheme}/{subject_handle}/builds", status_code=202)
@@ -336,7 +300,7 @@ def create_dossier_build(
     db: Annotated[Session, Depends(get_db)],
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
     body: Annotated[DossierGenerateRequest, Body()],
-) -> dict:
+) -> Data[DossierBuildCreatedOut]:
     ticket = engine.start_build(
         db,
         subject_scheme=subject_scheme,
@@ -345,8 +309,8 @@ def create_dossier_build(
         idempotency_key=idempotency_key,
         instruction=nullable_from_presence(body.instruction),
     )
-    return ok(
-        DossierBuildCreatedOut(
+    return Data(
+        data=DossierBuildCreatedOut(
             artifact_ref=ResourceRef(scheme="artifact", id=ticket.artifact_id).uri,
             build_handle=ticket.handle,
             created=ticket.created,
@@ -361,7 +325,7 @@ def learn_dossier(
     db: Annotated[Session, Depends(get_db)],
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
     body: Annotated[LearnDossierRequest, Body()],
-) -> dict:
+) -> Data[LearnDossierOut]:
     _require_idea_web_research(request)
     outcome = engine.learn_idea(
         db,
@@ -371,9 +335,9 @@ def learn_dossier(
     )
     artifact_ref = ResourceRef(scheme="artifact", id=outcome.artifact_id).uri
     if outcome.kind == "Opened":
-        return ok(LearnDossierOpenedOut(artifact_ref=artifact_ref))
-    return ok(
-        LearnDossierBuildAcceptedOut(
+        return Data(data=LearnDossierOpenedOut(artifact_ref=artifact_ref))
+    return Data(
+        data=LearnDossierBuildAcceptedOut(
             artifact_ref=artifact_ref,
             build_handle=str(outcome.build_id),
         )
@@ -384,14 +348,14 @@ def learn_dossier(
 def get_dossier_by_ref(
     artifact_ref: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
+    db: Annotated[Session, Depends(get_repeatable_read_db)],
+) -> Data[DossierHeadOut]:
     head = engine.read_artifact_head(
         db,
         artifact_id=_ref(artifact_ref, "artifact").id,
         requester_user_id=viewer.user_id,
     )
-    return ok(_head_out(db, viewer_id=viewer.user_id, head=head))
+    return Data(data=_head_out(db, viewer_id=viewer.user_id, head=head))
 
 
 @router.post("/artifacts/{artifact_ref}/builds", status_code=202)
@@ -402,7 +366,7 @@ def regenerate_dossier(
     db: Annotated[Session, Depends(get_db)],
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
     body: Annotated[DossierGenerateRequest, Body()],
-) -> dict:
+) -> Data[DossierBuildCreatedOut]:
     artifact_id = _ref(artifact_ref, "artifact").id
     scheme = engine.artifact_subject_scheme(
         db, artifact_id=artifact_id, requester_user_id=viewer.user_id
@@ -416,56 +380,13 @@ def regenerate_dossier(
         idempotency_key=idempotency_key,
         instruction=nullable_from_presence(body.instruction),
     )
-    return ok(
-        DossierBuildCreatedOut(
+    return Data(
+        data=DossierBuildCreatedOut(
             artifact_ref=ResourceRef(scheme="artifact", id=ticket.artifact_id).uri,
             build_handle=ticket.handle,
             created=ticket.created,
         )
     )
-
-
-@router.get("/artifacts/{artifact_ref}/revisions")
-def list_dossier_revisions(
-    artifact_ref: str,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    revisions = revision_service.list_revisions(
-        db, viewer_id=viewer.user_id, artifact_id=_ref(artifact_ref, "artifact").id
-    )
-    return ok([_revision_summary_out(view) for view in revisions])
-
-
-@router.get("/artifact-revisions/{artifact_revision_ref}")
-def get_dossier_revision(
-    artifact_revision_ref: str,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    return ok(
-        _revision_out(
-            revision_service.get_revision(
-                db,
-                viewer_id=viewer.user_id,
-                revision_id=_ref(artifact_revision_ref, "artifact_revision").id,
-            )
-        )
-    )
-
-
-@router.post("/artifact-revisions/{artifact_revision_ref}/make-current", status_code=204)
-def make_dossier_revision_current(
-    artifact_revision_ref: str,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> Response:
-    engine.make_current(
-        db,
-        revision_id=_ref(artifact_revision_ref, "artifact_revision").id,
-        actor_user_id=viewer.user_id,
-    )
-    return Response(status_code=204)
 
 
 @router.post("/artifact-builds/{artifact_build_id}/cancel", status_code=204)

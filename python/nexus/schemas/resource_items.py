@@ -249,8 +249,8 @@ class ResourceItemCapabilitiesOut(CamelModel):
 class ResourceActivationOut(CamelModel):
     resource_ref: str
     kind: Literal["route", "external", "none"]
-    href: str | None = None
-    unresolved_reason: str | None = None
+    href: str | None
+    unresolved_reason: str | None
 
 
 class ResourceItemOut(CamelModel):

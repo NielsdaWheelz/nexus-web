@@ -2,11 +2,11 @@
 
 // The external, subscribable Dossier controller store (A14/A15). Created PER
 // SUBJECT by the mounted primary pane (via `useResourceInspector`), NOT with
-// `useMemo`, NEVER disposed during render, never module-global. It owns the A15
-// `head` / `revision_selection` / `historical_revision` / `stream` unions, the
-// head/revision fetches, and the build SSE connection. Stream tokens MUTATE the
-// store (replacing its immutable snapshot) — they never republish the pane's
-// Dossier body — so the primary pane does not re-render per token.
+// `useMemo`, NEVER disposed during render, never module-global. It owns the
+// `head` and `stream` unions, the head fetch, and the build SSE connection.
+// Stream tokens MUTATE the store (replacing its immutable snapshot) — they never
+// republish the pane's Dossier body — so the primary pane does not re-render per
+// token.
 //
 // `getSnapshot` returns the current immutable snapshot by reference; every
 // mutation replaces the whole `DossierControllerState` object, so snapshot
@@ -14,14 +14,12 @@
 import { useRef } from "react";
 import { useSyncExternalStore } from "react";
 import { isApiError } from "@/lib/api/client";
+import type { Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   cancelDossierBuild,
   createDossierBuild,
   fetchDossierHead,
-  fetchDossierRevision,
-  fetchDossierRevisions,
-  makeDossierRevisionCurrent,
   openDossierBuildStream,
   type DossierReadTarget,
   type DossierSubjectDescriptor,
@@ -33,11 +31,8 @@ import {
 import { toDossierErrorInfo } from "@/lib/dossiers/dossierErrorMessage";
 import {
   initialDossierControllerState,
-  type DossierBuildSummary,
   type DossierControllerState,
-  type DossierHeadReady,
 } from "@/lib/dossiers/dossierControllerTypes";
-import type { DecodedDossierHead } from "@/lib/dossiers/dossierWire";
 
 export interface DossierControllerStore {
   subscribe(listener: () => void): () => void;
@@ -48,7 +43,6 @@ export interface DossierControllerStore {
    * the durable build continues; the snapshot is retained for remount. */
   detach(): void;
   refreshHead(): void;
-  loadHistory(): void;
   generate(instruction: string | null): void;
   /** Regenerate preserves the current readable revision (A15); same path as
    * Generate with a fresh idempotency key. */
@@ -57,13 +51,7 @@ export interface DossierControllerStore {
    * reuses the terminal build (A15). */
   retry(): void;
   cancel(): void;
-  makeCurrent(revisionRef: string): void;
-  selectHistorical(revisionRef: string): void;
-  selectCurrent(): void;
   setInstructionDraft(value: string): void;
-  /** Reset revision selection to Current (owned by the Inspector hidden→visible
-   * observer in `useResourceInspector`; NOT a body mount effect). */
-  resetRevisionSelection(): void;
   dispose(): void;
 }
 
@@ -76,23 +64,6 @@ function isGenerationInProgress(error: unknown): boolean {
 
 function isBuildNotActive(error: unknown): boolean {
   return isApiError(error) && error.code === "E_DOSSIER_BUILD_NOT_ACTIVE";
-}
-
-function readyFromDecodedHead(
-  decoded: DecodedDossierHead,
-  prior: DossierHeadReady | null,
-): DossierHeadReady {
-  // Preserve any already-loaded history across a background refresh; a changed
-  // revision_count invalidates it (a new revision landed) so it reloads.
-  const keepHistory =
-    prior !== null &&
-    prior.historyStatus === "ready" &&
-    prior.revisionCount === decoded.revisionCount;
-  return {
-    ...decoded,
-    history: keepHistory ? prior.history : [],
-    historyStatus: keepHistory ? "ready" : "idle",
-  };
 }
 
 export function createDossierControllerStore(
@@ -108,8 +79,6 @@ export function createDossierControllerStore(
   let disposed = false;
   let attached = false;
   let headRequestId = 0;
-  let historicalRequestId = 0;
-  let historyRequestId = 0;
   let stopStream: (() => void) | null = null;
   let connectingHandle: string | null = null;
 
@@ -123,20 +92,22 @@ export function createDossierControllerStore(
     emit();
   }
 
-  function setReady(mutate: (ready: DossierHeadReady) => DossierHeadReady): void {
+  function setReady(
+    mutate: (ready: Schema<"DossierHeadOut">) => Schema<"DossierHeadOut">,
+  ): void {
     if (state.head.kind !== "Ready") return;
     set({ head: { kind: "Ready", ready: mutate(state.head.ready) } });
   }
 
-  function activeBuild(): DossierBuildSummary | null {
+  function activeBuild(): Schema<"DossierBuildSummary"> | null {
     if (state.head.kind !== "Ready") return null;
-    const ab = state.head.ready.activeBuild;
-    return ab.kind === "Present" ? ab.value : null;
+    const build = state.head.ready.active_build;
+    return build.kind === "Present" ? build.value : null;
   }
 
   function currentArtifactRef(): string | null {
     if (state.head.kind !== "Ready") return null;
-    const ref = state.head.ready.artifactRef;
+    const ref = state.head.ready.artifact_ref;
     return ref.kind === "Present" ? ref.value : null;
   }
 
@@ -149,31 +120,26 @@ export function createDossierControllerStore(
     const requestId = ++headRequestId;
     if (!hadReady) set({ head: { kind: "Loading" } });
     try {
-      const decoded = await fetchDossierHead(target);
+      const ready = await fetchDossierHead(target);
       if (disposed || requestId !== headRequestId) return;
-      const prior = state.head.kind === "Ready" ? state.head.ready : null;
-      const nextReady = readyFromDecodedHead(decoded, prior);
       const terminalReconciled =
         state.stream.kind === "Terminal" &&
-        nextReady.activeBuild.kind === "Absent" &&
+        ready.active_build.kind === "Absent" &&
         (state.stream.outcome.kind === "Succeeded"
-          ? nextReady.currentRevision.kind === "Present" &&
-            nextReady.currentRevision.value.revisionRef ===
+          ? ready.current_revision.kind === "Present" &&
+            ready.current_revision.value.revision_ref ===
               state.stream.outcome.artifactRevisionRef
-          : nextReady.latestUnsuccessfulBuild.kind === "Present" &&
-            nextReady.latestUnsuccessfulBuild.value.handle ===
+          : ready.latest_unsuccessful_build.kind === "Present" &&
+            ready.latest_unsuccessful_build.value.handle ===
               state.stream.outcome.buildHandle);
       set({
-        head: { kind: "Ready", ready: nextReady },
+        head: { kind: "Ready", ready },
         stream:
           terminalReconciled && state.stream.kind === "Terminal"
             ? { ...state.stream, reconciled: true }
             : state.stream,
       });
       syncStream();
-      if (nextReady.revisionCount > 1 && nextReady.historyStatus === "idle") {
-        void loadHistory();
-      }
     } catch (error) {
       if (disposed || requestId !== headRequestId) return;
       if (handleUnauthenticatedApiError(error)) return;
@@ -186,22 +152,6 @@ export function createDossierControllerStore(
 
   function refreshHead(): void {
     void loadHead(true);
-  }
-
-  async function loadHistory(): Promise<void> {
-    const artifactRef = currentArtifactRef();
-    if (artifactRef === null || state.head.kind !== "Ready") return;
-    const requestId = ++historyRequestId;
-    setReady((ready) => ({ ...ready, historyStatus: "loading" }));
-    try {
-      const summaries = await fetchDossierRevisions(artifactRef);
-      if (disposed || requestId !== historyRequestId) return;
-      setReady((ready) => ({ ...ready, history: summaries, historyStatus: "ready" }));
-    } catch (error) {
-      if (disposed || requestId !== historyRequestId) return;
-      if (handleUnauthenticatedApiError(error)) return;
-      setReady((ready) => ({ ...ready, historyStatus: "failed" }));
-    }
   }
 
   // --- Stream --------------------------------------------------------------
@@ -302,13 +252,13 @@ export function createDossierControllerStore(
           set({ stream: { kind: "Live" } });
         }
         setReady((ready) =>
-          ready.activeBuild.kind === "Present"
+          ready.active_build.kind === "Present"
             ? {
                 ...ready,
-                activeBuild: {
+                active_build: {
                   kind: "Present",
                   value: {
-                    ...ready.activeBuild.value,
+                    ...ready.active_build.value,
                     execution: { kind: "Present", value: { phase: event.phase } },
                   },
                 },
@@ -319,9 +269,9 @@ export function createDossierControllerStore(
         // parked (Codex capacity) or resumed; those facts live on the head.
         if (
           state.head.kind === "Ready" &&
-          state.head.ready.activeBuild.kind === "Present" &&
-          state.head.ready.activeBuild.value.execution.kind === "Present" &&
-          state.head.ready.activeBuild.value.execution.value.phase !== event.phase
+          state.head.ready.active_build.kind === "Present" &&
+          state.head.ready.active_build.value.execution.kind === "Present" &&
+          state.head.ready.active_build.value.execution.value.phase !== event.phase
         ) {
           void loadHead(true);
         }
@@ -432,71 +382,20 @@ export function createDossierControllerStore(
 
   function lastInstruction(): string | null {
     if (state.head.kind !== "Ready") return null;
-    const { activeBuild: ab, latestUnsuccessfulBuild: lub, currentRevision } =
-      state.head.ready;
+    const {
+      active_build: active,
+      latest_unsuccessful_build: unsuccessful,
+      current_revision: current,
+    } = state.head.ready;
     const source =
-      ab.kind === "Present"
-        ? ab.value.instruction
-        : lub.kind === "Present"
-          ? lub.value.instruction
-          : currentRevision.kind === "Present"
-            ? currentRevision.value.instruction
+      active.kind === "Present"
+        ? active.value.instruction
+        : unsuccessful.kind === "Present"
+          ? unsuccessful.value.instruction
+          : current.kind === "Present"
+            ? current.value.instruction
             : null;
     return source && source.kind === "Present" ? source.value : null;
-  }
-
-  async function runMakeCurrent(revisionRef: string): Promise<void> {
-    if (disposed) return;
-    set({ pendingAction: "makeCurrent", actionError: null });
-    try {
-      await makeDossierRevisionCurrent(revisionRef);
-    } catch (error) {
-      if (disposed) return;
-      if (handleUnauthenticatedApiError(error)) return;
-      set({ pendingAction: null, actionError: toDossierErrorInfo(error) });
-      return;
-    }
-    if (disposed) return;
-    // Make current clears the historical selection (A14).
-    set({
-      pendingAction: null,
-      revisionSelection: { kind: "Current" },
-      historicalRevision: { kind: "Idle" },
-    });
-    await loadHead(true);
-    void loadHistory();
-  }
-
-  async function runSelectHistorical(revisionRef: string): Promise<void> {
-    set({
-      revisionSelection: { kind: "Historical", revisionRef },
-      historicalRevision: { kind: "Loading" },
-    });
-    const requestId = ++historicalRequestId;
-    try {
-      const revision = await fetchDossierRevision(revisionRef);
-      if (disposed || requestId !== historicalRequestId) return;
-      if (
-        target.kind === "Artifact" &&
-        revision.artifactRef !== target.artifactRef
-      ) {
-        set({
-          historicalRevision: {
-            kind: "Failed",
-            error: {
-              code: "E_DOSSIER_REVISION_NOT_FOUND",
-              message: "That revision is no longer available.",
-            },
-          },
-        });
-        return;
-      }
-      set({ historicalRevision: { kind: "Ready", revision } });
-    } catch (error) {
-      if (disposed || requestId !== historicalRequestId) return;
-      if (handleUnauthenticatedApiError(error)) return;
-      set({ historicalRevision: { kind: "Failed", error: toDossierErrorInfo(error) } });
-    }
   }
 
   return {
@@ -529,9 +428,6 @@ export function createDossierControllerStore(
       }
     },
     refreshHead,
-    loadHistory() {
-      void loadHistory();
-    },
     generate(instruction) {
       void runGenerate(instruction);
     },
@@ -544,21 +440,8 @@ export function createDossierControllerStore(
     cancel() {
       void runCancel();
     },
-    makeCurrent(revisionRef) {
-      void runMakeCurrent(revisionRef);
-    },
-    selectHistorical(revisionRef) {
-      void runSelectHistorical(revisionRef);
-    },
-    selectCurrent() {
-      set({ revisionSelection: { kind: "Current" }, historicalRevision: { kind: "Idle" } });
-    },
     setInstructionDraft(value) {
       set({ instructionDraft: value });
-    },
-    resetRevisionSelection() {
-      if (state.revisionSelection.kind === "Current") return;
-      set({ revisionSelection: { kind: "Current" }, historicalRevision: { kind: "Idle" } });
     },
     dispose() {
       disposed = true;

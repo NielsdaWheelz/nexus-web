@@ -423,8 +423,7 @@ targets are exact `evidence_span` rows. `services/media_intelligence_lifecycle.p
 owns the head lifecycle, `tasks/media_unit_build.py` publishes or fails a unit,
 and `services/media_intelligence.py` publishes audience-gated single/batch
 projections.
-Media Intelligence is current-only reusable interpretation, not Dossier
-revision history.
+Media Intelligence is current-only reusable interpretation, not a Dossier.
 
 **Highlights & passage anchors** — `highlights` (base row + the
 exact/prefix/suffix triple), `highlight_fragment_anchors` (codepoint ranges;
@@ -504,7 +503,9 @@ revision stores one accepted semantic `content_html` article, its derived
 `content_text`, a typed input manifest, and at least one citation edge. Eight
 subject policies/bindings cover Media, Conversation, Library, Podcast,
 Contributor, Page, Note, and the internal user-owned Idea subject. One generic
-engine, API, history contract, and `dossier_build` job own the lifecycle.
+engine, API and `dossier_build` job own the lifecycle; a head keeps only its
+current revision, and a success replaces it and deletes the replaced revision
+with its build, events, job and edges in the same transaction.
 
 **Conversations / chat** — `conversations`, `messages` (the message tree with
 branch pointers), `conversation_branches`, `conversation_active_paths`
@@ -1022,7 +1023,7 @@ The backend separates three owners:
   manifest, coverage, freshness, citation materialization, and final document
   compilation;
 - the generic engine owns idempotent build creation, durable execution,
-  document acceptance, terminal children, revision history, Make current,
+  document acceptance, terminal children, latest-revision replacement,
   cancellation, and events.
 
 `services/artifacts/subjects.py` holds the one eight-entry binding table.
@@ -1042,24 +1043,19 @@ existing head regenerates only through
 canonical authorized head read. Selection Learn uses
 `POST /artifacts/dossiers/learn`, resolves an internal Idea, records the
 Highlight as a seed, and adopts the standalone Artifact pane. The remaining
-API is
-`GET /artifacts/{artifact_ref}/revisions`,
-`GET /artifact-revisions/{artifact_revision_ref}`,
-`POST /artifact-revisions/{artifact_revision_ref}/make-current`, and
-`POST /artifact-builds/{artifact_build_id}/cancel`. Build streaming is
+API is `POST /artifact-builds/{artifact_build_id}/cancel`. Build streaming is
 `GET /stream/artifact-builds/{artifact_build_id}/events`; persisted
 `Started | Progress | Succeeded | Failed | Cancelled` events are build-keyed
 and replayable. `lib/dossiers/generationAdapter.ts` is the one browser Dossier
-transport boundary: value responses must be the exact `{data: ...}` envelope,
-Make-current and Cancel must be exact HTTP 204 commands, and same-system shape
-violations become `E_INVALID_RESPONSE` defects. Artifact-build streaming is an
+transport boundary: head, build and learn responses are generated wire types
+(typed-wire); Cancel is an exact 204. Artifact-build streaming is an
 `artifact-builds` generation-run kind and delegates token minting, encoded path
 construction, and SSE lifecycle to `lib/api/useGenerationRun.ts`; no Dossier
 token or direct-SSE path exists beside it. The browser renders a revision in a
 sandboxed, Nexus-styled document frame; rejected or partial HTML is never
 emitted as an event. Media
 Intelligence reaches the web only inside the Dossier read model as
-`mediaAbstract` (`services/artifacts/subjects.py` `media_abstract`); the Media
+`media_abstract` (`services/artifacts/subjects.py` `media_abstract`); the Media
 Dossier renders it as a compact Abstract and consumes the same fingerprinted
 projection as generation input.
 

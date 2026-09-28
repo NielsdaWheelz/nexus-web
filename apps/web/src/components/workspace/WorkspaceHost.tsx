@@ -63,7 +63,6 @@ import {
   getSecondaryWidthPolicy,
   resolveEffectiveSecondarySizing,
   type PaneTransientSecondarySurfaceId,
-  type WorkspaceDossierActivation,
   type WorkspaceSecondarySizing,
   type WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
@@ -169,11 +168,6 @@ interface PaneFixedChromePublicationRecord {
   publication: PaneFixedChromePublication;
 }
 
-interface SecondaryActivationDelivery {
-  routeKey: string;
-  activation: WorkspaceDossierActivation;
-}
-
 interface PaneTransientSecondaryActivationRecord {
   routeKey: string;
   surfaceId: PaneTransientSecondarySurfaceId;
@@ -212,7 +206,6 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   resourceItem,
   resourceStatus,
   secondaryPane,
-  secondaryActivation,
   paneEntryDelivery,
   transientSecondarySurface,
   navigatePane,
@@ -230,7 +223,6 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   requestTransientSecondarySurface,
   closeTransientSecondarySurface,
   previewTransientSecondaryResult,
-  acknowledgeSecondaryActivation,
   acknowledgePaneEntryDelivery,
   publishPaneAliases,
   children,
@@ -244,7 +236,6 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   resourceItem: ResourceItem | null;
   resourceStatus: PaneResourceStatus;
   secondaryPane: WorkspaceAttachedSecondaryPaneState | null;
-  secondaryActivation: WorkspaceDossierActivation | null;
   paneEntryDelivery: PaneEntryDelivery | null;
   transientSecondarySurface: {
     readonly id: PaneTransientSecondarySurfaceId;
@@ -297,11 +288,6 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   ) => void;
   closeTransientSecondarySurface: (paneId: string, routeKey: string) => void;
   previewTransientSecondaryResult: (paneId: string, routeKey: string) => void;
-  acknowledgeSecondaryActivation: (
-    paneId: string,
-    routeKey: string,
-    activation: WorkspaceDossierActivation,
-  ) => void;
   acknowledgePaneEntryDelivery: (delivery: PaneEntryDelivery) => void;
   publishPaneAliases: (input: {
     paneId: string;
@@ -344,7 +330,6 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
       resourceItem={resourceItem}
       resourceStatus={resourceStatus}
       secondaryPane={secondaryPane}
-      secondaryActivation={secondaryActivation}
       paneEntryDelivery={paneEntryDelivery}
       transientSecondarySurface={transientSecondarySurface}
       pathParams={route.params}
@@ -362,7 +347,6 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
       onRequestTransientSecondarySurface={requestTransientSecondarySurface}
       onCloseTransientSecondarySurface={closeTransientSecondarySurface}
       onPreviewTransientSecondaryResult={previewTransientSecondaryResult}
-      onAcknowledgeSecondaryActivation={acknowledgeSecondaryActivation}
       onAcknowledgePaneEntryDelivery={acknowledgePaneEntryDelivery}
       onSetPaneAliases={publishPaneAliases}
     >
@@ -648,8 +632,6 @@ function WorkspaceHost() {
   );
   const [fixedChromePublicationByPaneId, setFixedChromePublicationByPaneId] =
     useState<Map<string, PaneFixedChromePublicationRecord>>(() => new Map());
-  const [secondaryActivationByPaneId, setSecondaryActivationByPaneId] =
-    useState<Map<string, SecondaryActivationDelivery>>(() => new Map());
   const keybindings = useKeybindings();
 
   // --- Mobile viewport and pane focus state ---
@@ -814,9 +796,6 @@ function WorkspaceHost() {
     setFixedChromePublicationByPaneId((current) =>
       pruneRouteKeyedRecords(current, currentRouteKeyByPaneId),
     );
-    setSecondaryActivationByPaneId((current) =>
-      pruneRouteKeyedRecords(current, currentRouteKeyByPaneId),
-    );
   }, [
     currentRouteKeyByPaneId,
     pruneSecondaryPublicationRecords,
@@ -935,17 +914,6 @@ function WorkspaceHost() {
           request.activation.surfaceId,
         )
       ) {
-        if (request.activation.kind !== "Surface") {
-          const activation = request.activation;
-          setSecondaryActivationByPaneId((current) => {
-            const next = new Map(current);
-            next.set(pane.paneId, {
-              routeKey: request.routeKey,
-              activation,
-            });
-            return next;
-          });
-        }
         requestSecondarySurface(pane.paneId, request.activation.surfaceId);
       }
       acknowledgePendingSecondaryActivation(
@@ -960,31 +928,6 @@ function WorkspaceHost() {
     pendingSecondaryActivationByPaneId,
     requestSecondarySurface,
   ]);
-
-  const acknowledgeSecondaryActivation = useCallback(
-    (
-      paneId: string,
-      routeKey: string,
-      activation: WorkspaceDossierActivation,
-    ) => {
-      setSecondaryActivationByPaneId((current) => {
-        const delivered = current.get(paneId);
-        if (
-          delivered?.routeKey !== routeKey ||
-          delivered.activation.kind !== activation.kind ||
-          (delivered.activation.kind === "DossierRevision" &&
-            activation.kind === "DossierRevision" &&
-            delivered.activation.revisionRef !== activation.revisionRef)
-        ) {
-          return current;
-        }
-        const next = new Map(current);
-        next.delete(paneId);
-        return next;
-      });
-    },
-    [],
-  );
 
   useEffect(() => {
     if (isMobile) {
@@ -1492,13 +1435,6 @@ function WorkspaceHost() {
                   resourceItem={pane.resourceItem}
                   resourceStatus={pane.resourceStatus}
                   secondaryPane={pane.runtimeSecondaryPane}
-                  secondaryActivation={
-                    secondaryActivationByPaneId.get(pane.paneId)?.routeKey ===
-                    pane.routeKey
-                      ? (secondaryActivationByPaneId.get(pane.paneId)
-                          ?.activation ?? null)
-                      : null
-                  }
                   paneEntryDelivery={
                     pendingPaneEntryDeliveryByPaneId.get(pane.paneId)
                       ?.visitId === pane.visitId
@@ -1534,9 +1470,6 @@ function WorkspaceHost() {
                   }
                   previewTransientSecondaryResult={
                     handlePreviewTransientSecondaryResult
-                  }
-                  acknowledgeSecondaryActivation={
-                    acknowledgeSecondaryActivation
                   }
                   acknowledgePaneEntryDelivery={acknowledgePaneEntryDelivery}
                   publishPaneAliases={publishPaneAliases}

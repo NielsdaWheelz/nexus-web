@@ -28,7 +28,9 @@ its wire types are generated from FastAPI's OpenAPI schema, so tsc catches drift
   an injected `Response`, and the route still returns the model.
 - 204, binary, redirect and SSE routes keep their shape.
 - an SSE `data:` frame that is a model as-is is listed in `nexus/wire_schema.py`
-  and generates under its own name, e.g. `Schema<"ChatRunDoneEventPayload">`.
+  and generates under its own name, e.g. `Schema<"ChatRunDoneEventPayload">`,
+  except the three that nest `ResourceActivationOut` by field name (ticket
+  `resource-activation-has-two-wire-casings`).
 
 ## generation
 

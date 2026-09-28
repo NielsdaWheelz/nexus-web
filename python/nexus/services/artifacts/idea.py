@@ -21,9 +21,6 @@ from nexus.db.models import (
     ArtifactIdeaResolution,
     ArtifactIdeaSeed,
     ArtifactIdeaSubject,
-    ArtifactLearnFailure,
-    ArtifactLearnRequest,
-    ArtifactLearnSuccess,
     Highlight,
     SynthesisArtifact,
 )
@@ -211,14 +208,6 @@ def list_idea_seed_highlight_ids(db: Session, *, artifact_id: UUID) -> list[UUID
 
 def delete_highlight_idea_rows(db: Session, *, highlight_id: UUID) -> None:
     """Drop every Idea row that keys off a highlight being deleted."""
-    request_ids = select(ArtifactLearnRequest.id).where(
-        ArtifactLearnRequest.highlight_id == highlight_id
-    )
-    db.execute(delete(ArtifactLearnSuccess).where(ArtifactLearnSuccess.request_id.in_(request_ids)))
-    db.execute(delete(ArtifactLearnFailure).where(ArtifactLearnFailure.request_id.in_(request_ids)))
-    db.execute(
-        delete(ArtifactLearnRequest).where(ArtifactLearnRequest.highlight_id == highlight_id)
-    )
     db.execute(delete(ArtifactIdeaSeed).where(ArtifactIdeaSeed.highlight_id == highlight_id))
     db.execute(
         delete(ArtifactIdeaResolution).where(ArtifactIdeaResolution.highlight_id == highlight_id)
@@ -226,40 +215,13 @@ def delete_highlight_idea_rows(db: Session, *, highlight_id: UUID) -> None:
 
 
 def delete_artifact_idea_rows_before_head(db: Session, *, artifact_id: UUID) -> UUID | None:
-    """Drop a head's Idea seeds and leftover Learn rows; return its Idea subject."""
+    """Drop a head's Idea seeds; return its Idea subject."""
     idea_subject_id = db.scalar(
         select(SynthesisArtifact.subject_id).where(
             SynthesisArtifact.id == artifact_id,
             SynthesisArtifact.subject_scheme == "idea",
         )
     )
-    request_ids = set(
-        db.scalars(
-            select(ArtifactLearnSuccess.request_id).where(
-                ArtifactLearnSuccess.artifact_id == artifact_id
-            )
-        )
-    )
-    if idea_subject_id is not None:
-        request_ids.update(
-            db.scalars(
-                select(ArtifactLearnRequest.id).where(
-                    ArtifactLearnRequest.highlight_id.in_(
-                        select(ArtifactIdeaResolution.highlight_id).where(
-                            ArtifactIdeaResolution.idea_subject_id == idea_subject_id
-                        )
-                    )
-                )
-            )
-        )
-    if request_ids:
-        db.execute(
-            delete(ArtifactLearnFailure).where(ArtifactLearnFailure.request_id.in_(request_ids))
-        )
-        db.execute(
-            delete(ArtifactLearnSuccess).where(ArtifactLearnSuccess.request_id.in_(request_ids))
-        )
-        db.execute(delete(ArtifactLearnRequest).where(ArtifactLearnRequest.id.in_(request_ids)))
     db.execute(delete(ArtifactIdeaSeed).where(ArtifactIdeaSeed.artifact_id == artifact_id))
     return idea_subject_id
 

@@ -71,7 +71,6 @@ import type { ActionSelectDetail } from "@/lib/ui/actionDescriptor";
 import {
   createDossierBuild,
   learnDossierFromHighlight,
-  makeDossierRevisionCurrent,
 } from "@/lib/dossiers/generationAdapter";
 import { requestHighlightActionIntent } from "@/lib/highlights/actionIntent";
 import {
@@ -1005,7 +1004,7 @@ export function resourceActionDescriptors({
             ports.workspace.activateWorkspaceTarget({
               originPaneId: ports.activePaneId,
               target: {
-                href: `/artifacts/${encodeURIComponent(outcome.artifactRef)}`,
+                href: `/artifacts/${encodeURIComponent(outcome.artifact_ref)}`,
                 labelHint: "Dossier",
               },
               disposition: { kind: "Follow" },
@@ -1026,15 +1025,6 @@ export function resourceActionDescriptors({
             });
           },
           { reconcile: subjectScope },
-        );
-      case "MakeArtifactRevisionCurrent":
-        return make(
-          capability,
-          "ResourceOperation.ArtifactRevision.MakeCurrent",
-          async () => {
-            await makeDossierRevisionCurrent(ref);
-          },
-          { reconcile: allScope },
         );
       case "HighlightNote":
         return make(

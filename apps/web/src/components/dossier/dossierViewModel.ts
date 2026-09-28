@@ -6,16 +6,10 @@
 // core is unit-testable in isolation.
 import { dossierBuildFailureMessage } from "@/lib/dossiers/dossierErrorMessage";
 import type { DurableExecutionPhase } from "@/lib/api/executionAdvisory";
+import type { Schema } from "@/lib/api/wire";
 import type {
-  DossierAdmittedGeneration,
-  DossierBuildFailureCode,
-  DossierCapacityPause,
   DossierControllerState,
-  DossierFreshness,
-  DossierHistoryStatus,
   DossierPendingAction,
-  DossierRevision,
-  DossierRevisionSummary,
   DossierTerminalOutcome,
   MediaAbstract,
 } from "@/lib/dossiers/dossierControllerTypes";
@@ -27,12 +21,9 @@ export type DossierBodyView =
   | { kind: "NeverGenerated" }
   | {
       kind: "Revision";
-      revision: DossierRevision;
-      provenance: "current" | "historical";
-      freshness: DossierFreshness | null;
+      revision: Schema<"DossierRevisionOut">;
+      stale: boolean;
     }
-  | { kind: "HistoricalLoading" }
-  | { kind: "HistoricalFailed"; message: string }
   | {
       kind: "Building";
       liveness:
@@ -47,7 +38,7 @@ export type DossierBodyView =
       outcome: "succeeded" | "failed" | "cancelled";
     };
 
-/** The build-activity banner (independent of which revision the body shows). */
+/** The build-activity banner (independent of the body). */
 export type DossierActivityView =
   | { kind: "Idle" }
   | { kind: "Connecting" }
@@ -61,8 +52,8 @@ export type DossierActivityView =
     }
   | { kind: "Suspended" }
   /** Codex quota parked the admission durably (spec 3.4); cancel stays available. */
-  | { kind: "CapacityPaused"; pause: DossierCapacityPause }
-  | { kind: "Failed"; code: DossierBuildFailureCode; message: string }
+  | { kind: "CapacityPaused"; pause: Schema<"CapacityPaused"> }
+  | { kind: "Failed"; code: Schema<"DossierBuildFailureCode">; message: string }
   | { kind: "Cancelled" };
 
 interface DossierControls {
@@ -71,9 +62,6 @@ interface DossierControls {
   canCancel: boolean;
   canRetry: boolean;
   canReconnect: boolean;
-  canMakeCurrent: boolean;
-  /** History arrows / list are VIEW-ONLY (A15). */
-  historyAvailable: boolean;
   busy: DossierPendingAction;
 }
 
@@ -84,22 +72,13 @@ export interface DossierViewModel {
   mediaAbstract: MediaAbstract | null;
   /** Read-only admitted selection and tool plan of the build the activity
    * concerns (active, else the latest unsuccessful); never a control. */
-  generationDetail: DossierAdmittedGeneration | null;
+  generationDetail: Schema<"DossierBuildAdmittedGenerationOut"> | null;
   /** One polite status-region line (progress / suspended / cancellation). */
   statusMessage: string | null;
   /** Terminal build failure → visible alert, WITHOUT moving focus. */
   alert: { message: string } | null;
   /** Synchronous command error attached near the invoked control. */
   actionError: string | null;
-  history: readonly DossierRevisionSummary[];
-  historyStatus: DossierHistoryStatus;
-  revisionCount: number;
-  viewingHistorical: boolean;
-  /** The revision the Make-current control acts on, when viewing a historical. */
-  makeCurrentTargetRef: string | null;
-  /** The revision the body currently shows (historical selection, else the
-   * current revision) — anchors the view-only history arrows. */
-  selectedRevisionRef: string | null;
 }
 
 const NO_CONTROLS: DossierControls = {
@@ -108,8 +87,6 @@ const NO_CONTROLS: DossierControls = {
   canCancel: false,
   canRetry: false,
   canReconnect: false,
-  canMakeCurrent: false,
-  historyAvailable: false,
   busy: null,
 };
 
@@ -139,8 +116,8 @@ function terminalActivity(
     case "Failed":
       return {
         kind: "Failed",
-        code: outcome.facts.failureCode,
-        message: dossierBuildFailureMessage(outcome.facts.failureCode),
+        code: outcome.facts.failure_code,
+        message: dossierBuildFailureMessage(outcome.facts.failure_code),
       };
     case "Cancelled":
       return { kind: "Cancelled" };
@@ -160,15 +137,6 @@ export function deriveDossierViewModel(
     statusMessage: null,
     alert: null,
     actionError: state.actionError ? state.actionError.message : null,
-    history: [] as readonly DossierRevisionSummary[],
-    historyStatus: "idle" as const,
-    revisionCount: 0,
-    viewingHistorical: state.revisionSelection.kind === "Historical",
-    makeCurrentTargetRef: null,
-    selectedRevisionRef:
-      state.revisionSelection.kind === "Historical"
-        ? state.revisionSelection.revisionRef
-        : null,
   } satisfies Omit<DossierViewModel, "body" | "activity" | "controls">;
 
   if (state.head.kind === "Idle" || state.head.kind === "Loading") {
@@ -189,8 +157,8 @@ export function deriveDossierViewModel(
   }
 
   const ready = state.head.ready;
-  const hasCurrent = ready.currentRevision.kind === "Present";
-  const hasActive = ready.activeBuild.kind === "Present";
+  const hasCurrent = ready.current_revision.kind === "Present";
+  const hasActive = ready.active_build.kind === "Present";
   const terminalStream = state.stream.kind === "Terminal" ? state.stream : null;
   const terminalOutcome =
     terminalStream && !terminalStream.reconciled
@@ -199,22 +167,22 @@ export function deriveDossierViewModel(
   const hasTerminalOutcome = terminalOutcome !== null;
   const hasEffectiveActive = hasActive && !hasTerminalOutcome;
   const activePhase: DurableExecutionPhase | null =
-    ready.activeBuild.kind === "Present" &&
-    ready.activeBuild.value.execution.kind === "Present"
-      ? ready.activeBuild.value.execution.value.phase
+    ready.active_build.kind === "Present" &&
+    ready.active_build.value.execution.kind === "Present"
+      ? ready.active_build.value.execution.value.phase
       : hasActive
         ? "Running"
         : null;
   const suspended =
     hasEffectiveActive &&
     (activePhase === "Suspended" || state.stream.kind === "Suspended");
-  const capacityPause: DossierCapacityPause | null =
+  const capacityPause: Schema<"CapacityPaused"> | null =
     hasEffectiveActive &&
-    ready.activeBuild.kind === "Present" &&
-    ready.activeBuild.value.capacityPause.kind === "Present"
-      ? ready.activeBuild.value.capacityPause.value
+    ready.active_build.kind === "Present" &&
+    ready.active_build.value.capacity_pause.kind === "Present"
+      ? ready.active_build.value.capacity_pause.value
       : null;
-  const lub = ready.latestUnsuccessfulBuild;
+  const lub = ready.latest_unsuccessful_build;
   const failureFacts =
     lub.kind === "Present" && lub.value.failure.kind === "Present"
       ? lub.value.failure.value
@@ -225,31 +193,14 @@ export function deriveDossierViewModel(
       : null;
 
   // --- Body ---------------------------------------------------------------
+  // The current revision outranks Building: it stays readable while a
+  // regenerate runs.
   let body: DossierBodyView;
-  if (state.revisionSelection.kind === "Historical") {
-    switch (state.historicalRevision.kind) {
-      case "Ready":
-        body = {
-          kind: "Revision",
-          revision: state.historicalRevision.revision,
-          provenance: "historical",
-          freshness: null,
-        };
-        break;
-      case "Failed":
-        body = { kind: "HistoricalFailed", message: state.historicalRevision.error.message };
-        break;
-      case "Loading":
-      case "Idle":
-        body = { kind: "HistoricalLoading" };
-        break;
-    }
-  } else if (ready.currentRevision.kind === "Present") {
+  if (ready.current_revision.kind === "Present") {
     body = {
       kind: "Revision",
-      revision: ready.currentRevision.value,
-      provenance: "current",
-      freshness: ready.freshness.kind === "Present" ? ready.freshness.value : null,
+      revision: ready.current_revision.value,
+      stale: ready.freshness.kind === "Present" && ready.freshness.value === "Stale",
     };
   } else if (terminalOutcome !== null) {
     body = {
@@ -299,8 +250,8 @@ export function deriveDossierViewModel(
   } else if (failureFacts) {
     activity = {
       kind: "Failed",
-      code: failureFacts.failureCode,
-      message: dossierBuildFailureMessage(failureFacts.failureCode),
+      code: failureFacts.failure_code,
+      message: dossierBuildFailureMessage(failureFacts.failure_code),
     };
   } else if (cancelledFacts) {
     activity = { kind: "Cancelled" };
@@ -309,13 +260,6 @@ export function deriveDossierViewModel(
   }
 
   // --- Controls -----------------------------------------------------------
-  const viewingHistorical = state.revisionSelection.kind === "Historical";
-  const makeCurrentTarget =
-    viewingHistorical &&
-    state.historicalRevision.kind === "Ready" &&
-    !state.historicalRevision.revision.isCurrent
-      ? state.historicalRevision.revision.revisionRef
-      : null;
   const hasRetryableOutcome =
     terminalOutcome?.kind === "Failed" ||
     terminalOutcome?.kind === "Cancelled" ||
@@ -340,8 +284,6 @@ export function deriveDossierViewModel(
       !hasRetryableOutcome &&
       terminalOutcome === null,
     canCancel: hasEffectiveActive,
-    canMakeCurrent: makeCurrentTarget !== null,
-    historyAvailable: ready.revisionCount > 1 || ready.history.length > 1,
     busy: state.pendingAction,
   };
 
@@ -372,16 +314,16 @@ export function deriveDossierViewModel(
 
   // --- Read-only generation detail (spec 3.4, AC 15) ----------------------
   const detailBuild =
-    hasEffectiveActive && ready.activeBuild.kind === "Present"
-      ? ready.activeBuild.value
+    hasEffectiveActive && ready.active_build.kind === "Present"
+      ? ready.active_build.value
       : !hasEffectiveActive &&
           lub.kind === "Present" &&
           (failureFacts !== null || cancelledFacts !== null)
         ? lub.value
         : null;
   const generationDetail =
-    detailBuild !== null && detailBuild.admittedGeneration.kind === "Present"
-      ? detailBuild.admittedGeneration.value
+    detailBuild !== null && detailBuild.admitted_generation.kind === "Present"
+      ? detailBuild.admitted_generation.value
       : null;
 
   return {
@@ -389,20 +331,10 @@ export function deriveDossierViewModel(
     activity,
     controls,
     mediaAbstract:
-      ready.mediaAbstract.kind === "Present" ? ready.mediaAbstract.value : null,
+      ready.media_abstract.kind === "Present" ? ready.media_abstract.value : null,
     generationDetail,
     statusMessage,
     alert,
     actionError: base.actionError,
-    history: ready.history,
-    historyStatus: ready.historyStatus,
-    revisionCount: ready.revisionCount,
-    viewingHistorical,
-    makeCurrentTargetRef: makeCurrentTarget,
-    selectedRevisionRef: viewingHistorical
-      ? base.selectedRevisionRef
-      : ready.currentRevision.kind === "Present"
-        ? ready.currentRevision.value.revisionRef
-        : null,
   };
 }

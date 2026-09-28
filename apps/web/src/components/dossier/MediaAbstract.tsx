@@ -1,8 +1,8 @@
 "use client";
 
 // The Media Abstract (A11 §252): the Media Dossier's compact, read-only,
-// current-only MediaIntelligence display — no Generate control, no history,
-// visually subordinate to the Dossier's own build state. Renders the typed
+// current-only MediaIntelligence display — no Generate control, visually
+// subordinate to the Dossier's own build state. Renders the typed
 // `Building | Ready | Stale | Failed | NotAvailable` union exhaustively; it is
 // never the Dossier's build machinery, only a subordinate projection.
 import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
@@ -30,7 +30,7 @@ export default function MediaAbstract({
         <section className={styles.abstract} aria-label="Media abstract">
           <span className={styles.abstractLabel}>Abstract</span>
           <MachineText origin={{ label: "Media abstract" }}>
-            <MarkdownMessage content={abstract.summaryMd} />
+            <MarkdownMessage content={abstract.summary_md} />
           </MachineText>
           <button
             type="button"
@@ -46,7 +46,7 @@ export default function MediaAbstract({
         <section className={styles.abstract} aria-label="Media abstract">
           <span className={styles.abstractLabel}>Abstract · outdated</span>
           <MachineText origin={{ label: "Media abstract" }}>
-            <MarkdownMessage content={abstract.summaryMd} />
+            <MarkdownMessage content={abstract.summary_md} />
           </MachineText>
           <button
             type="button"
