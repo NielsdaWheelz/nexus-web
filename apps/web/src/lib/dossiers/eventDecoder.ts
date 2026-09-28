@@ -16,11 +16,7 @@ import {
   EXECUTION_ADVISORY_EVENT_TYPE,
   type DurableExecutionPhase,
 } from "@/lib/api/executionAdvisory";
-import { decodeFailureCode } from "@/lib/dossiers/dossierWire";
-import type {
-  DossierCancelledFacts,
-  DossierFailedFacts,
-} from "@/lib/dossiers/dossierControllerTypes";
+import type { Schema } from "@/lib/api/wire";
 
 export type DossierStreamEvent =
   | {
@@ -30,12 +26,38 @@ export type DossierStreamEvent =
     }
   | { kind: "Progress"; phase: string; message: string }
   | { kind: "Succeeded"; artifactRevisionRef: string }
-  | { kind: "Failed"; facts: DossierFailedFacts }
-  | { kind: "Cancelled"; facts: DossierCancelledFacts }
+  | { kind: "Failed"; facts: Schema<"FailedEventPayload"> }
+  | { kind: "Cancelled"; facts: Schema<"CancelledEventPayload"> }
   | { kind: "Advisory"; phase: DurableExecutionPhase };
+
+// Persisted events replay across a deploy, so the stream keeps strict runtime
+// decoding. The Record makes tsc reject a missing or extra code.
+const FAILURE_CODES: Record<Schema<"DossierBuildFailureCode">, true> = {
+  NoSourceMaterial: true,
+  InputsChanged: true,
+  DependencyProjectionFailed: true,
+  ContextTooLarge: true,
+  Auth: true,
+  Quota: true,
+  Timeout: true,
+  OutputLimit: true,
+  InvalidOutput: true,
+  PolicyViolation: true,
+  RuntimeUnavailable: true,
+  CapacityUnavailable: true,
+  DocumentValidationFailed: true,
+  CitationValidationFailed: true,
+};
 
 function fail(what: string): never {
   throw new Error(`Invalid SSE payload for ${what}`);
+}
+
+function failureCode(value: unknown): Schema<"DossierBuildFailureCode"> {
+  if (typeof value === "string" && Object.hasOwn(FAILURE_CODES, value)) {
+    return value as Schema<"DossierBuildFailureCode">;
+  }
+  return fail(`Failed.failure_code ${JSON.stringify(value)}`);
 }
 
 function str(value: unknown, field: string): string {
@@ -101,7 +123,7 @@ export function decodeDossierStreamEvent(
       return {
         kind: "Failed",
         facts: {
-          failureCode: decodeFailureCode(data.failure_code),
+          failure_code: failureCode(data.failure_code),
           detail: decodePresence(data.detail, (v) => str(v, "Failed.detail")),
         },
       };

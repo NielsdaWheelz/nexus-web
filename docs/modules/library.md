@@ -478,13 +478,13 @@ keyed by the Library subject and Library audience, so membership is the read and
 generation boundary. The binding collects direct entries, expands Podcast
 entries to Episodes, intersects all Media with audience visibility, and records
 typed coverage/freshness in the revision manifest. Generate, Regenerate,
-history, Make current, provenance, and retry use the same API and surface as
-every other eligible resource.
+provenance, and retry use the same API and surface as every other eligible
+resource.
 
 Dossier citations are `resource_edges` sourced from
-`artifact_revision:<id>`, never a Library-owned citation table. Promotion
-repoints only the stable `artifact:<id>` head; historical revision content and
-citations remain immutable.
+`artifact_revision:<id>`, never a Library-owned citation table. A successful
+regenerate repoints the stable `artifact:<id>` head and deletes the replaced
+revision with its citation edges.
 
 The current revision body is one accepted semantic `content_html` article plus
 its derived `content_text`. Library search/chat consume the text projection;

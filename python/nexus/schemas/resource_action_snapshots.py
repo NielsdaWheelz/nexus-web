@@ -112,7 +112,6 @@ SimpleResourceActionCapabilityKind = Literal[
     "EditNoteBody",
     "RenameContributor",
     "RegenerateArtifact",
-    "MakeArtifactRevisionCurrent",
     "RemoveMedia",
     "LibraryPlacement",
     "OfflineAudio",

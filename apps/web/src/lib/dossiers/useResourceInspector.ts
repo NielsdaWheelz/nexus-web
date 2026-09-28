@@ -14,9 +14,7 @@
 //  - opens on the remembered tab while it is published, else the
 //    publication's default; it never rewrites the remembered tab (the host
 //    shows the default while that tab is unpublished, so a later publication
-//    brings it back);
-//  - resets revision selection to Current on the Inspector's hidden→visible
-//    transition (an observer — NOT a body mount effect).
+//    brings it back).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createElement, type ReactNode } from "react";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
@@ -89,9 +87,6 @@ export function useResourceInspector({
   const paneRuntime = usePaneRuntime();
   const paneId = paneRuntime?.paneId ?? null;
   const secondaryPane = paneRuntime?.secondaryPane ?? null;
-  const secondaryActivation = paneRuntime?.secondaryActivation ?? null;
-  const acknowledgeSecondaryActivation =
-    paneRuntime?.acknowledgeSecondaryActivation;
 
   const policy = RESOURCE_CAPABILITIES[scheme].inspectorPolicy;
   const eligible = policy !== null && handle !== null;
@@ -329,28 +324,6 @@ export function useResourceInspector({
       onClose,
     ],
   );
-
-  // --- Reset revision selection on Inspector hidden→visible (observer) -------
-  const wasVisibleRef = useRef(false);
-  useEffect(() => {
-    const visibleNow = Boolean(inspectorVisible);
-    if (visibleNow && store && secondaryActivation) {
-      if (secondaryActivation.kind === "DossierRevision") {
-        store.selectHistorical(secondaryActivation.revisionRef);
-      } else {
-        store.selectCurrent();
-      }
-      acknowledgeSecondaryActivation?.();
-    } else if (visibleNow && !wasVisibleRef.current) {
-      store?.resetRevisionSelection();
-    }
-    wasVisibleRef.current = visibleNow;
-  }, [
-    acknowledgeSecondaryActivation,
-    inspectorVisible,
-    secondaryActivation,
-    store,
-  ]);
 
   return {
     companionAction: companion,

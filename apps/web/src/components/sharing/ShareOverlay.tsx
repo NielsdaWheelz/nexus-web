@@ -219,7 +219,7 @@ function SharePanel({ session, onClose }: { session: ShareSession; onClose: () =
       originPaneId: workspace.state.activePrimaryPaneId,
       target: {
         href: snapshot.authenticatedHref,
-        secondaryActivation: { kind: "Surface", surfaceId: "resource-members" },
+        secondaryActivation: { surfaceId: "resource-members" },
       },
       disposition: { kind: "Follow" },
       modality: "Programmatic",

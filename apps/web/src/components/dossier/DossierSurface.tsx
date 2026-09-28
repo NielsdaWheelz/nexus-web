@@ -3,7 +3,7 @@
 // The Dossier surface (A14/A15): the sole `resource-dossier` body. It owns the
 // build lifecycle UI for EVERY A15 state — never-generated, head-loading/failed,
 // building, regenerating (current preserved), suspended (+Cancel), current,
-// stale, historical, failed, cancelled — driven entirely by the pure
+// stale, failed, cancelled — driven entirely by the pure
 // `deriveDossierViewModel` over the external controller store. Stream tokens
 // mutate the store (this leaf re-renders per token); the pane's publication body
 // stays reference-stable, so the PRIMARY pane never re-renders per token.
@@ -13,7 +13,7 @@
 // focus; a synchronous command error sits near the control, also without moving
 // focus (A14).
 import { useEffect } from "react";
-import { GitBranch, RotateCcw, X } from "lucide-react";
+import { RotateCcw, X } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import MachineText from "@/components/ui/MachineText";
@@ -21,15 +21,11 @@ import { toReaderCitationData } from "@/lib/resourceGraph/citations";
 import { dispatchReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
+import type { Schema } from "@/lib/api/wire";
 import {
   useDossierSelector,
   type DossierControllerStore,
 } from "@/lib/dossiers/dossierControllerStore";
-import type {
-  DossierAdmittedGeneration,
-  DossierBuildToolPlan,
-  DossierCapacityPause,
-} from "@/lib/dossiers/dossierControllerTypes";
 import { formatDisplayDate } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import MediaAbstract from "@/components/dossier/MediaAbstract";
@@ -37,7 +33,6 @@ import {
   deriveDossierViewModel,
   type DossierActivityView,
   type DossierBodyView,
-  type DossierViewModel,
 } from "@/components/dossier/dossierViewModel";
 import { dossierCoverageLabel } from "@/components/dossier/dossierCoverage";
 import DossierDocumentFrame, {
@@ -63,9 +58,6 @@ interface DossierSurfaceProps {
   ) => void;
   /** Relays a validated iframe Cmd/Ctrl+F request to the pane owner. */
   onFindRequested?: () => void;
-  /** Standalone Artifact panes project revision selection into `?revision=`.
-   * Resource Companion surfaces omit this and retain their local controller. */
-  onRevisionSelect?: (revisionRef: string | null) => void;
 }
 
 const defaultCitationActivate: DossierCitationActivate = (
@@ -87,7 +79,6 @@ export default function DossierSurface({
   onCitationActivate = defaultCitationActivate,
   onFindCapabilityChange = ignoreFindCapability,
   onFindRequested = ignoreFindRequest,
-  onRevisionSelect,
 }: DossierSurfaceProps) {
   // A14: connect on mount / disconnect the CLIENT stream on unmount — the
   // durable build continues; remount refetches the head and resumes.
@@ -206,23 +197,6 @@ export default function DossierSurface({
             Reconnect
           </Button>
         ) : null}
-        {vm.controls.canMakeCurrent && vm.makeCurrentTargetRef ? (
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => store.makeCurrent(vm.makeCurrentTargetRef as string)}
-            disabled={busy}
-            leadingIcon={<GitBranch size={16} aria-hidden="true" />}
-          >
-            Make current
-          </Button>
-        ) : null}
-        <span className={styles.spacer} />
-        <HistoryNav
-          store={store}
-          vm={vm}
-          onRevisionSelect={onRevisionSelect}
-        />
       </div>
 
       {vm.actionError ? (
@@ -239,7 +213,6 @@ export default function DossierSurface({
           onCitationActivate={onCitationActivate}
           onFindCapabilityChange={onFindCapabilityChange}
           onFindRequested={onFindRequested}
-          onRevisionSelect={onRevisionSelect}
         />
       </div>
     </div>
@@ -303,7 +276,7 @@ function ActivityBanner({ activity }: { activity: DossierActivityView }) {
 
 /** Spec 3.4: a quota-parked admission waits durably (no spend, no model switch);
  * the Cancel control in the controls row stays available. */
-function CapacityPausedBanner({ pause }: { pause: DossierCapacityPause }) {
+function CapacityPausedBanner({ pause }: { pause: Schema<"CapacityPaused"> }) {
   const environment = useRenderEnvironment();
   const formatInstant = (instant: string): string => {
     const formatted = formatDisplayDate(instant, environment, {
@@ -319,15 +292,18 @@ function CapacityPausedBanner({ pause }: { pause: DossierCapacityPause }) {
     <div className={styles.banner}>
       <span>Waiting for Codex capacity</span>
       <span>
-        {pause.resetAt.kind === "Present"
-          ? `Codex reports capacity returning at ${formatInstant(pause.resetAt.value)}.`
-          : `Nexus checks again at ${formatInstant(pause.nextCheckAt)}.`}
+        {pause.reset_at.kind === "Present"
+          ? `Codex reports capacity returning at ${formatInstant(pause.reset_at.value)}.`
+          : `Nexus checks again at ${formatInstant(pause.next_check_at)}.`}
       </span>
     </div>
   );
 }
 
-function toolPlanFact(plan: DossierBuildToolPlan, toolPositions: number): string {
+function toolPlanFact(
+  plan: Schema<"DossierBuildAdmittedGenerationOut">["tool_plan"],
+  toolPositions: number,
+): string {
   switch (plan.kind) {
     case "NoModelTools":
       return "No model tools";
@@ -336,9 +312,9 @@ function toolPlanFact(plan: DossierBuildToolPlan, toolPositions: number): string
       return `Account-wide reading and additive writes · ${calls}`;
     }
     case "ExactModelTools": {
-      const mode = plan.effectMode === "ReadOnly" ? "read-only" : "additive writes";
+      const mode = plan.effect_mode === "ReadOnly" ? "read-only" : "additive writes";
       const calls = `${toolPositions} tool ${toolPositions === 1 ? "call" : "calls"}`;
-      return `${plan.planId} (${mode}) · ${calls}`;
+      return `${plan.plan_id} (${mode}) · ${calls}`;
     }
     default: {
       const exhaustive: never = plan;
@@ -352,16 +328,16 @@ function toolPlanFact(plan: DossierBuildToolPlan, toolPositions: number): string
 function GenerationDetail({
   detail,
 }: {
-  detail: DossierAdmittedGeneration | null;
+  detail: Schema<"DossierBuildAdmittedGenerationOut"> | null;
 }) {
   if (detail === null) return null;
-  const { displayAtDispatch, toolPlan, toolPositions } = detail;
+  const { display_at_dispatch: display, tool_plan, tool_positions } = detail;
   const facts = [
-    displayAtDispatch.route_label,
-    displayAtDispatch.model_label,
-    `thinking: ${displayAtDispatch.reasoning_label}`,
-    displayAtDispatch.billing.label,
-    toolPlanFact(toolPlan, toolPositions),
+    display.route_label,
+    display.model_label,
+    `thinking: ${display.reasoning_label}`,
+    display.billing.label,
+    toolPlanFact(tool_plan, tool_positions),
   ];
   return (
     <div
@@ -382,7 +358,6 @@ function DossierBody({
   onCitationActivate,
   onFindCapabilityChange,
   onFindRequested,
-  onRevisionSelect,
 }: {
   store: DossierControllerStore;
   body: DossierBodyView;
@@ -392,7 +367,6 @@ function DossierBody({
     capability: DossierDocumentFindCapability | null,
   ) => void;
   onFindRequested: () => void;
-  onRevisionSelect?: (revisionRef: string | null) => void;
 }) {
   switch (body.kind) {
     case "HeadLoading":
@@ -411,23 +385,6 @@ function DossierBody({
         <p className={styles.empty}>
           No dossier yet. Generate one to synthesize this subject.
         </p>
-      );
-    case "HistoricalLoading":
-      return <p className={styles.empty}>Loading revision…</p>;
-    case "HistoricalFailed":
-      return (
-        <div className={styles.empty}>
-          <span>{body.message}</span>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() =>
-              onRevisionSelect ? onRevisionSelect(null) : store.selectCurrent()
-            }
-          >
-            View current
-          </Button>
-        </div>
       );
     case "Building":
       return (
@@ -456,9 +413,7 @@ function DossierBody({
     case "Revision":
       return (
         <div className={styles.revision}>
-          {body.provenance === "historical" ? (
-            <p className={styles.freshness}>Viewing a past revision.</p>
-          ) : body.freshness === "Stale" ? (
+          {body.stale ? (
             <p className={styles.freshness}>
               Sources changed since this was generated — regenerate to refresh.
             </p>
@@ -466,8 +421,8 @@ function DossierBody({
           <MachineText origin={{ label: "Dossier" }}>
             <DossierDocumentFrame
               title={documentTitle}
-              revisionRef={body.revision.revisionRef}
-              contentHtml={body.revision.contentHtml}
+              revisionRef={body.revision.revision_ref}
+              contentHtml={body.revision.content_html}
               onFindCapabilityChange={onFindCapabilityChange}
               onFindRequested={onFindRequested}
               onCitation={(ordinal, disposition) => {
@@ -486,7 +441,7 @@ function DossierBody({
           </MachineText>
           <div className={styles.revisionMeta} aria-label="Dossier coverage">
             <span className={styles.abstractLabel}>Coverage</span>
-            <span>{dossierCoverageLabel(body.revision.inputManifest)}</span>
+            <span>{dossierCoverageLabel(body.revision.input_manifest)}</span>
           </div>
           <RevisionProvenance revision={body.revision} />
           {body.revision.instruction.kind === "Present" ? (
@@ -510,111 +465,25 @@ function DossierBody({
 function RevisionProvenance({
   revision,
 }: {
-  revision: Extract<DossierBodyView, { kind: "Revision" }>["revision"];
+  revision: Schema<"DossierRevisionOut">;
 }) {
   const facts = [
-    revision.creatorUserId.kind === "Present"
-      ? `Creator ${revision.creatorUserId.value}`
+    revision.creator_user_id.kind === "Present"
+      ? `Creator ${revision.creator_user_id.value}`
       : "Deleted user",
-    revision.modelProvider.kind === "Present"
-      ? revision.modelProvider.value
+    revision.model_provider.kind === "Present"
+      ? revision.model_provider.value
       : null,
-    revision.modelName.kind === "Present" ? revision.modelName.value : null,
-    revision.totalTokens.kind === "Present"
-      ? `${revision.totalTokens.value.toLocaleString()} tokens`
+    revision.model_name.kind === "Present" ? revision.model_name.value : null,
+    revision.total_tokens.kind === "Present"
+      ? `${revision.total_tokens.value.toLocaleString()} tokens`
       : null,
-    revision.createdAt,
+    revision.created_at,
   ].filter((fact): fact is string => fact !== null);
   return (
     <div className={styles.revisionMeta} aria-label="Dossier provenance">
       <span className={styles.abstractLabel}>Provenance</span>
       <span>{facts.join(" · ")}</span>
-    </div>
-  );
-}
-
-/** View-only revision arrows (A15): step through history; Make-current is the
- * only mutation, and it lives in the controls row above. */
-function HistoryNav({
-  store,
-  vm,
-  onRevisionSelect,
-}: {
-  store: DossierControllerStore;
-  vm: DossierViewModel;
-  onRevisionSelect?: (revisionRef: string | null) => void;
-}) {
-  if (!vm.controls.historyAvailable) return null;
-  if (vm.historyStatus === "idle" || vm.historyStatus === "loading") {
-    return (
-      <p className={styles.historyStatus}>Loading revision history…</p>
-    );
-  }
-  if (vm.historyStatus === "failed") {
-    return (
-      <div className={styles.historyStatus} role="alert">
-        <span>Revision history is unavailable.</span>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => store.loadHistory()}
-        >
-          Retry revision history
-        </Button>
-      </div>
-    );
-  }
-  if (vm.history.length === 0) return null;
-  const index = vm.history.findIndex(
-    (entry) => entry.revisionRef === vm.selectedRevisionRef,
-  );
-  const go = (nextIndex: number) => {
-    const entry = vm.history[nextIndex];
-    if (!entry) return;
-    if (onRevisionSelect) {
-      onRevisionSelect(entry.isCurrent ? null : entry.revisionRef);
-    } else if (entry.isCurrent) {
-      store.selectCurrent();
-    } else {
-      store.selectHistorical(entry.revisionRef);
-    }
-  };
-  return (
-    <div className={styles.historyNav}>
-      <Button
-        variant="ghost"
-        size="sm"
-        iconOnly
-        aria-label="Older revision"
-        disabled={index < 0 || index >= vm.history.length - 1}
-        onClick={() => go(index + 1)}
-      >
-        ‹
-      </Button>
-      <span aria-live="off">
-        {index >= 0 ? `${index + 1} / ${vm.history.length}` : `${vm.history.length} revisions`}
-      </span>
-      <Button
-        variant="ghost"
-        size="sm"
-        iconOnly
-        aria-label="Newer revision"
-        disabled={index <= 0}
-        onClick={() => go(index - 1)}
-      >
-        ›
-      </Button>
-      {vm.viewingHistorical ? (
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() =>
-            onRevisionSelect ? onRevisionSelect(null) : store.selectCurrent()
-          }
-        >
-          Current
-        </Button>
-      ) : null}
     </div>
   );
 }

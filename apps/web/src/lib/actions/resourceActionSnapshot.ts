@@ -75,8 +75,7 @@ export type ResourceActionCapability =
         | "DeletePage"
         | "EditNoteBody"
         | "RenameContributor"
-        | "RegenerateArtifact"
-        | "MakeArtifactRevisionCurrent";
+        | "RegenerateArtifact";
       readonly availability: ServerActionAvailability;
     }
   | {
@@ -201,10 +200,17 @@ function decodeServerActionAvailability(
 function decodeResourceActionCapability(
   raw: unknown,
   name: string,
-): ResourceActionCapability {
+): ResourceActionCapability | null {
   const record = expectRecord(raw, name);
   const kind = expectString(record.kind, `${name}.kind`);
   switch (kind) {
+    case "MakeArtifactRevisionCurrent":
+      // the web deploys before the backend, and a pre-0250 backend offers this
+      // on every superseded revision. drop it, or the unknown-kind defect below
+      // takes down the workspace. ticket:
+      // docs/tickets/web-make-current-arm-outlives-revision-history.md.
+      expectExactRecord(record, ["kind", "availability"], name);
+      return null;
     case "OfflineReading": {
       expectExactRecord(record, ["kind", "availability", "requestedTitle", "mediaKind"], name);
       const requestedTitle = expectString(record.requestedTitle, `${name}.requestedTitle`);
@@ -297,8 +303,7 @@ function decodeResourceActionCapability(
     case "DeletePage":
     case "EditNoteBody":
     case "RenameContributor":
-    case "RegenerateArtifact":
-    case "MakeArtifactRevisionCurrent": {
+    case "RegenerateArtifact": {
       expectExactRecord(record, ["kind", "availability"], name);
       return {
         kind,
@@ -479,7 +484,7 @@ function decodeResourceActionSnapshot(
         `${name}.capabilities[${index}]`,
       ),
     `${name}.capabilities`,
-  );
+  ).filter((capability) => capability !== null);
   if (missing && capabilities.length > 0) {
     // justify-defect: the resolve contract returns a missing resource with no
     // capabilities; a missing snapshot carrying actions is wire corruption.

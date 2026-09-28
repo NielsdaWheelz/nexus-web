@@ -1,54 +1,15 @@
+import type { Schema } from "@/lib/api/wire";
 import { isRecord } from "@/lib/validation";
 import { hasOnlyKeys, isOptionalString } from "@/lib/api/sse/guards";
-import {
-  isRetrievalLocator,
-  type RetrievalLocator,
-} from "@/lib/api/sse/locators";
-import {
-  normalizeResourceActivation,
-  type ResourceActivation,
-} from "@/lib/resources/activation";
+import { isRetrievalLocator } from "@/lib/api/sse/locators";
+import { normalizeResourceActivation } from "@/lib/resources/activation";
 
-export type CitationRole = "supports" | "contradicts" | "context";
-// The closed set of citation-edge target schemes that render as chips, mirroring
-// the backend `nexus.schemas.citation.CitationTargetType`.
-export type CitationTargetType =
-  | "evidence_span"
-  | "content_chunk"
-  | "media"
-  | "highlight"
-  | "fragment"
-  | "page"
-  | "note_block"
-  | "message"
-  | "external_snapshot"
-  | "oracle_passage_anchor"
-  | "reader_apparatus_item";
+/** The shared `[N]` citation. `media_id` is the jump anchor: for an
+ * evidence_span citation, `target_ref.id` is the span, NOT the media. */
+export type CitationOut = Schema<"CitationOut">;
 
-export interface CitationTargetRef {
-  type: CitationTargetType;
-  id: string;
-}
-
-export interface CitationSnapshot {
-  title?: string | null;
-  excerpt?: string | null;
-  section_label?: string | null;
-  result_type?: string | null;
-  summary_md?: string | null;
-}
-
-export interface CitationOut {
-  ordinal: number;
-  role: CitationRole;
-  target_ref: CitationTargetRef;
-  activation: ResourceActivation;
-  /** The jump anchor. For an evidence_span citation, target_ref.id is the span, NOT the media. */
-  media_id: string | null;
-  locator: RetrievalLocator | null;
-  deep_link: string | null;
-  snapshot: CitationSnapshot | null;
-}
+type CitationRole = CitationOut["role"];
+type CitationTargetType = CitationOut["target_ref"]["type"];
 
 const CITATION_ROLES = new Set<CitationRole>([
   "supports",
@@ -70,7 +31,7 @@ const CITATION_TARGET_TYPES = new Set<CitationTargetType>([
   "reader_apparatus_item",
 ]);
 
-function isCitationTargetRef(value: unknown): value is CitationTargetRef {
+function isCitationTargetRef(value: unknown): value is CitationOut["target_ref"] {
   return (
     isRecord(value) &&
     hasOnlyKeys(value, ["type", "id"]) &&
@@ -80,7 +41,7 @@ function isCitationTargetRef(value: unknown): value is CitationTargetRef {
   );
 }
 
-function isCitationSnapshot(value: unknown): value is CitationSnapshot {
+function isCitationSnapshot(value: unknown): boolean {
   return (
     isRecord(value) &&
     hasOnlyKeys(value, [
@@ -135,8 +96,8 @@ export function decodeCitationOut(value: unknown): CitationOut | null {
     target_ref: value.target_ref,
     activation,
     media_id: value.media_id as string | null,
-    locator: value.locator as RetrievalLocator | null,
+    locator: value.locator as CitationOut["locator"],
     deep_link: value.deep_link as string | null,
-    snapshot: value.snapshot as CitationSnapshot | null,
+    snapshot: value.snapshot as CitationOut["snapshot"],
   };
 }

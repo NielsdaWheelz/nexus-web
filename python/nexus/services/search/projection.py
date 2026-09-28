@@ -168,7 +168,7 @@ def _result_resource_ref(result: InternalSearchResult) -> ResourceRef:
         except ValueError as exc:
             raise AssertionError("web_result search row has no external_snapshot source") from exc
     if isinstance(result, _RankedArtifactResult):
-        # The exact revision ref lets workspace-local activation select history.
+        # The exact revision ref names the cited text.
         return ResourceRef(scheme="artifact_revision", id=result.revision_id)
     return ResourceRef(scheme=_RESULT_SCHEME[result.result_type], id=result.id)
 

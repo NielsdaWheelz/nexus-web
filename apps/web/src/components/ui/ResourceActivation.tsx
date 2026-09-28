@@ -1,7 +1,6 @@
 "use client";
 
 import type { ReactNode } from "react";
-import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 import { isNestedInteractiveTarget } from "@/lib/ui/isNestedInteractiveTarget";
 
 export type ResourceRowPrimary =
@@ -12,7 +11,6 @@ export type ResourceRowPrimary =
       target?: "_self" | "_blank";
       rel?: string;
       viewTransition?: "media-reader";
-      secondaryActivation?: WorkspaceSecondaryActivation;
     }
   | {
       kind: "button";
@@ -33,7 +31,6 @@ export default function ResourceActivation({
   children: ReactNode;
 }) {
   if (primary.kind === "link") {
-    const secondaryActivation = primary.secondaryActivation;
     return (
       <a
         className={className}
@@ -41,13 +38,6 @@ export default function ResourceActivation({
         href={primary.href}
         data-pane-label-hint={primary.paneLabelHint}
         data-view-transition={primary.viewTransition}
-        data-pane-secondary-surface={secondaryActivation?.surfaceId}
-        data-pane-secondary-activation={secondaryActivation?.kind}
-        data-pane-dossier-revision={
-          secondaryActivation?.kind === "DossierRevision"
-            ? secondaryActivation.revisionRef
-            : undefined
-        }
         target={primary.target}
         rel={primary.rel}
       >

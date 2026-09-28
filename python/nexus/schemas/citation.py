@@ -37,11 +37,11 @@ class CitationTargetRef(BaseModel):
 class CitationSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    title: str | None = None
-    excerpt: str | None = None
-    section_label: str | None = None
-    result_type: str | None = None
-    summary_md: str | None = None
+    title: str | None
+    excerpt: str | None
+    section_label: str | None
+    result_type: str | None
+    summary_md: str | None
 
 
 class CitationOut(BaseModel):
@@ -53,7 +53,7 @@ class CitationOut(BaseModel):
     activation: ResourceActivationOut
     # Hoisted out of the locator for the render href (not every locator variant
     # carries one; evidence-span citations always do).
-    media_id: UUID | None = None
-    locator: RetrievalLocator | None = None
-    deep_link: str | None = None
-    snapshot: CitationSnapshot | None = None
+    media_id: UUID | None
+    locator: RetrievalLocator | None
+    deep_link: str | None
+    snapshot: CitationSnapshot | None

@@ -125,25 +125,9 @@ export type PaneSecondaryPresentationSurfaceId =
   | WorkspaceSecondarySurfaceId
   | PaneTransientSecondarySurfaceId;
 
-export type WorkspaceSecondaryActivation =
-  | {
-      readonly kind: "Surface";
-      readonly surfaceId: WorkspaceSecondarySurfaceId;
-    }
-  | {
-      readonly kind: "DossierCurrent";
-      readonly surfaceId: "resource-dossier";
-    }
-  | {
-      readonly kind: "DossierRevision";
-      readonly surfaceId: "resource-dossier";
-      readonly revisionRef: string;
-    };
-
-export type WorkspaceDossierActivation = Extract<
-  WorkspaceSecondaryActivation,
-  { kind: "DossierCurrent" | "DossierRevision" }
->;
+export interface WorkspaceSecondaryActivation {
+  readonly surfaceId: WorkspaceSecondarySurfaceId;
+}
 
 export type PaneSecondaryIconId =
   | (typeof PANE_SECONDARY_SURFACE_DEFINITIONS)[number]["iconId"]
