@@ -1,1251 +1,330 @@
-"""Token-authorized, read-only anonymous media projection."""
+"""What an anonymous share-link holder may read.
+
+A link resolves to its grant by equality on the stored raw token, and the grant's subject
+passes one readiness gate, the one link creation uses. The gate may only loosen: tightening
+it would break links already handed out. A passing share is one allowlisted document, EPUB
+sections and images fetched by handles sealed to (grant, media, content revision), and the
+PDF's bytes; anything else is one masked 404. The media row is locked FOR SHARE before its
+facts are read, so teardown and dedupe serialize with a read and no read mixes generations.
+"""
 
 from __future__ import annotations
 
+import base64
 import hashlib
-import json
+import hmac
 import re
-import unicodedata
-from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Literal, NoReturn
 from uuid import UUID
 
-from pydantic import BaseModel, TypeAdapter, ValidationError
-from sqlalchemy import text
+from sqlalchemy import RowMapping, text
 from sqlalchemy.orm import Session
 
-from nexus.errors import ApiError, ApiErrorCode, NotFoundError
-from nexus.schemas.presence import absent, presence_from_nullable
+from nexus.config import get_settings
+from nexus.db.models import ResourceGrant
+from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.schemas.presence import presence_from_nullable
 from nexus.schemas.public_resource_sharing import (
-    PublicArticleFragmentOut,
-    PublicArticleFragmentPageOut,
     PublicArticleReaderOut,
-    PublicArticleTextAnchorOut,
     PublicEpubReaderOut,
-    PublicEpubTextAnchorOut,
-    PublicFragmentPageOut,
+    PublicFragmentOut,
     PublicHighlightOut,
-    PublicHighlightSubjectOut,
-    PublicMediaOut,
-    PublicMediaSubjectOut,
-    PublicNavigationItemOut,
-    PublicNavigationPageOut,
-    PublicPageInfo,
-    PublicPdfGeometryAnchorOut,
+    PublicPdfAnchorOut,
     PublicPdfReaderOut,
-    PublicReaderOut,
+    PublicSectionEntryOut,
     PublicSectionOut,
-    PublicShareBootstrapOut,
-    PublicSubjectOut,
-    PublicTimeRangeOut,
+    PublicSegmentOut,
+    PublicShareOut,
+    PublicTextAnchorOut,
     PublicTranscriptReaderOut,
-    PublicTranscriptSegmentOut,
-    PublicTranscriptSegmentPageOut,
-    PublicTranscriptTextAnchorOut,
 )
-from nexus.schemas.reader import (
-    EpubTextOffsetsTargetOut,
-    PdfPageGeometryTargetOut,
-    TranscriptTextOffsetsTargetOut,
-    WebTextOffsetsTargetOut,
-)
-from nexus.services import locator_resolver
+from nexus.schemas.reader import PdfPageGeometryTargetOut
+from nexus.services import resource_grants
 from nexus.services.capabilities import is_text_document_ready
 from nexus.services.contributor_credits import load_current_source_author_bylines
-from nexus.services.epub_assets import list_public_epub_asset_sources
-from nexus.services.epub_read import (
-    get_epub_fragment_source,
-    list_epub_fragment_sources,
-)
-from nexus.services.media_file_access import (
-    MediaFileSource,
-    get_media_file_source,
-    parse_single_byte_range,
-)
-from nexus.services.public_html import (
-    sanitize_public_article_html,
-    sanitize_public_epub_html,
-)
-from nexus.services.public_share_handles import (
-    PublicHandleContext,
-    seal_public_handle,
-    unseal_public_handle,
-)
-from nexus.services.public_source_urls import current_public_source_url
+from nexus.services.epub_assets import EpubAssetSource, list_public_epub_asset_sources
+from nexus.services.epub_read import EpubFragmentSourceContent, list_epub_fragment_sources
+from nexus.services.locator_resolver import resolve_highlight_reader_target
+from nexus.services.media_file_access import MediaFileSource, get_media_file_source
+from nexus.services.public_html import sanitize_public_html
+from nexus.services.public_source_urls import public_source_url
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.storage.client import (
-    StorageClient,
-    StorageError,
-    get_storage_client,
-    read_object_checked,
-)
+from nexus.storage.client import StorageError, get_storage_client, read_object_checked
 
-_MAX_PAGE_BYTES = 8 * 1024 * 1024
-_MAX_EPUB_FIELD_BYTES = 4 * 1024 * 1024
-_MAX_EPUB_ASSET_BYTES = 25 * 1024 * 1024
-_DEFAULT_LIMIT = 50
-_MAX_LIMIT = 100
-_MAX_SAFE_UINT = 2**53 - 1
-_PDF_CONTENT_TYPE = "application/pdf"
-_PLACEHOLDER_SECTION_HANDLE = "nxps1_" + ("A" * 48)
-_PLACEHOLDER_ASSET_HANDLE = "nxpa1_" + ("A" * 48)
-_PUBLIC_ASSET_CONTENT_TYPES = frozenset(
-    {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"}
-)
-_HANDLE_ADAPTERS = {
-    "subject": TypeAdapter(PublicSubjectOut),
-    "reader": TypeAdapter(PublicReaderOut),
-    "fragments": TypeAdapter(PublicFragmentPageOut),
-}
+Readiness = Literal["ProjectionNotReady", "ProjectionUnsupported"]
+_HandleDomain = Literal["section", "asset"]
+_HANDLE_PREFIX: dict[_HandleDomain, str] = {"section": "nxps1_", "asset": "nxpa1_"}
+_UNSUPPORTED: Readiness = "ProjectionUnsupported"
 
-
-@dataclass(frozen=True, slots=True)
-class Available:
-    kind: Literal["Available"] = "Available"
+_FACTS_SQL = """
+    SELECT m.kind, m.title, m.processing_status, mts.transcript_state, mts.transcript_coverage,
+           mts.last_request_reason,
+           EXISTS (SELECT 1 FROM media_teardown_intents t WHERE t.media_id = m.id) AS tearing_down,
+           a.id AS attempt_id, a.attempt_no, a.source_type, a.provider, a.provider_target_ref,
+           a.canonical_source_url, a.requested_url, e.id AS epub_attempt_id,
+           e.attempt_no AS epub_attempt_no, e.source_type AS epub_source_type
+    FROM media m
+    LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
+    LEFT JOIN LATERAL (
+        SELECT * FROM media_source_attempts WHERE media_id = m.id AND status = 'succeeded'
+        ORDER BY attempt_no DESC, id DESC LIMIT 1
+    ) a ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT * FROM media_source_attempts WHERE media_id = m.id AND status = 'succeeded'
+          AND source_type IN ('remote_epub_url', 'uploaded_epub_file', 'browser_epub_capture')
+        ORDER BY attempt_no DESC, id DESC LIMIT 1
+    ) e ON TRUE
+    WHERE m.id = :media_id
+"""
 
 
 @dataclass(frozen=True, slots=True)
-class ProjectionNotReady:
-    kind: Literal["ProjectionNotReady"] = "ProjectionNotReady"
-
-
-@dataclass(frozen=True, slots=True)
-class ProjectionUnsupported:
-    kind: Literal["ProjectionUnsupported"] = "ProjectionUnsupported"
-
-
-type ProjectionAvailability = Available | ProjectionNotReady | ProjectionUnsupported
-
-
-@dataclass(frozen=True, slots=True)
-class _MediaFacts:
+class _Share:
     media_id: UUID
     kind: str
     title: str
-    processing_status: str
-    transcript_state: str | None
-    transcript_coverage: str | None
-    transcript_last_request_reason: str | None
-    source_attempt_id: UUID | None
-    source_attempt_no: int | None
-    source_type: str | None
-    duration_ms: int | None
-    page_count: int | None
-
-
-@dataclass(frozen=True, slots=True)
-class _EpubSourceOwner:
-    attempt_id: UUID
-    attempt_no: int
-    source_type: str
-
-
-@dataclass(frozen=True, slots=True)
-class _Projection:
-    grant_id: UUID
-    subject: ResourceRef
-    media: _MediaFacts
-    handle_context: PublicHandleContext
+    source_url: str | None
     highlight: PublicHighlightOut | None
+    fragments: list[RowMapping]
+    sections: list[EpubFragmentSourceContent]
+    assets: list[EpubAssetSource]
+    epub_digest: bytes
+    pdf: MediaFileSource | None
 
 
-@dataclass(frozen=True, slots=True)
-class PublicAssetBody:
-    data: bytes
-    content_type: str
+def _gone() -> NoReturn:
+    raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Share unavailable")
 
 
-@dataclass(frozen=True, slots=True)
-class PublicFileBody:
-    chunks: Iterator[bytes]
-    status_code: Literal[200, 206]
-    content_length: int
-    content_range: str | None
-    filename: str
-
-
-class PublicRangeNotSatisfiable(Exception):
-    """Authorized PDF request supplied a malformed/unsatisfiable Range."""
-
-    def __init__(self, size_bytes: int):
-        self.size_bytes = size_bytes
-        super().__init__("Requested range is not satisfiable")
-
-
-class PublicRequestValidation(Exception):
-    """Authorized public request has invalid route-local input."""
-
-
-def highlight_target_available(db: Session, *, highlight_id: UUID) -> bool:
-    """Return whether one highlight has an exact current format-total target."""
-    return (
-        locator_resolver.resolve_highlight_reader_target(
-            db,
-            highlight_id=highlight_id,
-        )
-        is not None
+def _load(db: Session, scheme: str, subject_id: UUID) -> _Share | Readiness:
+    """The one readiness gate; a passing subject's document facts."""
+    media = (
+        ":id" if scheme == "media" else "(SELECT anchor_media_id FROM highlights WHERE id = :id)"
     )
-
-
-def link_projection_availability(
-    db: Session,
-    *,
-    subject: ResourceRef,
-) -> ProjectionAvailability:
-    """Return modeled link readiness without authorizing or creating a grant."""
-    subject_facts = _load_subject_facts(db, subject=subject)
-    if subject_facts is None:
-        return ProjectionUnsupported()
-    media, highlight_id = subject_facts
-    if _media_has_teardown_intent(db, media.media_id):
-        return ProjectionUnsupported()
-    if not _is_media_ready(media):
-        return ProjectionNotReady()
-    if not _projection_shape_supported(db, media=media, highlight_id=highlight_id):
-        return ProjectionUnsupported()
-    return Available()
-
-
-def get_public_bootstrap(
-    db: Session,
-    *,
-    raw_token: str,
-    query_items: list[tuple[str, str]] | None = None,
-) -> PublicShareBootstrapOut:
-    projection = _resolve_public_projection(db, raw_token=raw_token)
-    _require_no_query(query_items)
-    source_url = current_public_source_url(db, media_id=projection.media.media_id)
-    bylines = _load_bylines(db, media_id=projection.media.media_id)
-    media_kind = _public_media_kind(projection.media.kind)
-    media_out = PublicMediaOut(
-        title=projection.media.title,
-        media_kind=media_kind,
-        source_url=presence_from_nullable(source_url),
-        bylines=bylines,
-    )
-    reader = _public_reader(projection.media, db=db)
-    subject: PublicMediaSubjectOut | PublicHighlightSubjectOut
-    if projection.highlight is None:
-        subject = PublicMediaSubjectOut()
-    else:
-        subject = PublicHighlightSubjectOut(highlight=projection.highlight)
-    return PublicShareBootstrapOut(
-        subject=_HANDLE_ADAPTERS["subject"].validate_python(subject),
-        media=media_out,
-        reader=_HANDLE_ADAPTERS["reader"].validate_python(reader),
-    )
-
-
-def get_public_fragments(
-    db: Session,
-    *,
-    raw_token: str,
-    query_items: list[tuple[str, str]],
-) -> PublicArticleFragmentPageOut | PublicTranscriptSegmentPageOut:
-    projection = _resolve_public_projection(db, raw_token=raw_token)
-    if projection.media.kind not in {"web_article", "video", "podcast_episode"}:
-        _masked_not_found()
-    raw_cursor, raw_limit = _parse_page_query(query_items)
-    after_ordinal = _parse_cursor(raw_cursor, projection=projection)
-    limit = _parse_limit(raw_limit)
-    rows = (
-        db.execute(
-            text(
-                """
-                SELECT idx, html_sanitized, canonical_text,
-                       t_start_ms, t_end_ms, speaker_label
-                FROM fragments
-                WHERE media_id = :media_id
-                  AND idx > :after_ordinal
-                ORDER BY idx ASC
-                LIMIT :fetch_limit
-                """
-            ),
-            {
-                "media_id": projection.media.media_id,
-                "after_ordinal": after_ordinal,
-                "fetch_limit": limit + 1,
-            },
-        )
-        .mappings()
-        .all()
-    )
-    has_more = len(rows) > limit
-    rows = rows[:limit]
-    if projection.media.kind == "web_article":
-
-        def article_page(
-            items: list[PublicArticleFragmentOut], more: bool
-        ) -> PublicArticleFragmentPageOut:
-            return PublicArticleFragmentPageOut(
-                items=items,
-                page_info=_page_info(items[-1].ordinal if more and items else None, projection),
-            )
-
-        article_items, article_more = _budgeted_items(
-            [
-                PublicArticleFragmentOut(
-                    ordinal=int(row["idx"]),
-                    html_sanitized=sanitize_public_article_html(str(row["html_sanitized"])),
-                    canonical_text=str(row["canonical_text"]),
-                )
-                for row in rows
-            ],
-            has_more=has_more,
-            page_factory=article_page,
-        )
-        return _HANDLE_ADAPTERS["fragments"].validate_python(
-            article_page(article_items, article_more)
-        )
-
-    def transcript_page(
-        items: list[PublicTranscriptSegmentOut], more: bool
-    ) -> PublicTranscriptSegmentPageOut:
-        return PublicTranscriptSegmentPageOut(
-            items=items,
-            page_info=_page_info(items[-1].ordinal if more and items else None, projection),
-        )
-
-    transcript_items, transcript_more = _budgeted_items(
-        [
-            PublicTranscriptSegmentOut(
-                ordinal=int(row["idx"]),
-                canonical_text=str(row["canonical_text"]),
-                time_range=_time_range_presence(row["t_start_ms"], row["t_end_ms"]),
-                speaker=presence_from_nullable(
-                    str(row["speaker_label"]) if row["speaker_label"] is not None else None
-                ),
-            )
-            for row in rows
-        ],
-        has_more=has_more,
-        page_factory=transcript_page,
-    )
-    return _HANDLE_ADAPTERS["fragments"].validate_python(
-        transcript_page(transcript_items, transcript_more)
-    )
-
-
-def get_public_navigation(
-    db: Session,
-    *,
-    raw_token: str,
-    query_items: list[tuple[str, str]],
-) -> PublicNavigationPageOut:
-    projection = _resolve_public_projection(db, raw_token=raw_token)
-    if projection.media.kind != "epub":
-        _masked_not_found()
-    raw_cursor, raw_limit = _parse_page_query(query_items)
-    after_ordinal = _parse_cursor(raw_cursor, projection=projection)
-    limit = _parse_limit(raw_limit)
-    rows = list_epub_fragment_sources(
-        db,
-        media_id=projection.media.media_id,
-        after_ordinal=after_ordinal,
-        limit=limit + 1,
-    )
-    has_more = len(rows) > limit
-    rows = rows[:limit]
-    items = [
-        PublicNavigationItemOut(
-            ordinal=row.ordinal,
-            label=row.label,
-            depth=row.depth,
-            section_handle=seal_public_handle(
-                "section",
-                ordinal=row.ordinal,
-                context=projection.handle_context,
-            ),
-        )
-        for row in rows
-    ]
-    return PublicNavigationPageOut(
-        items=items,
-        page_info=_page_info(items[-1].ordinal if has_more and items else None, projection),
-    )
-
-
-def get_public_section(
-    db: Session,
-    *,
-    raw_token: str,
-    raw_section_handle: str,
-    query_items: list[tuple[str, str]] | None = None,
-) -> PublicSectionOut:
-    projection = _resolve_public_projection(db, raw_token=raw_token)
-    _require_no_query(query_items)
-    if projection.media.kind != "epub":
-        _masked_not_found()
-    ordinal = unseal_public_handle(
-        "section",
-        raw_section_handle,
-        context=projection.handle_context,
-    )
-    if ordinal is None:
-        _masked_not_found()
-    source = get_epub_fragment_source(
-        db,
-        media_id=projection.media.media_id,
-        ordinal=ordinal,
-    )
-    if source is None:
-        _masked_not_found()
-    assets = list_public_epub_asset_sources(db, media_id=projection.media.media_id)
-    asset_handle_by_key = {
-        asset.asset_key: seal_public_handle(
-            "asset",
-            ordinal=asset.ordinal,
-            context=projection.handle_context,
-        )
-        for asset in assets
-    }
-    html = sanitize_public_epub_html(
-        source.html_sanitized,
-        asset_handle_for_key=asset_handle_by_key.get,
-    )
-    try:
-        result = PublicSectionOut(
-            ordinal=source.ordinal,
-            section_handle=raw_section_handle,
-            html_sanitized=html,
-            canonical_text=source.canonical_text,
-        )
-        if _serialized_envelope_size(result) > _MAX_PAGE_BYTES:
-            _masked_not_found()
-        return result
-    except ValidationError:
-        _masked_not_found()
-
-
-def get_public_asset(
-    db: Session,
-    *,
-    raw_token: str,
-    raw_asset_handle: str,
-    query_items: list[tuple[str, str]] | None = None,
-    storage_client: StorageClient | None = None,
-) -> PublicAssetBody:
-    projection = _resolve_public_projection(db, raw_token=raw_token)
-    _require_no_query(query_items)
-    if projection.media.kind != "epub":
-        _masked_not_found()
-    ordinal = unseal_public_handle(
-        "asset",
-        raw_asset_handle,
-        context=projection.handle_context,
-    )
-    if ordinal is None:
-        _masked_not_found()
-    sources = list_public_epub_asset_sources(db, media_id=projection.media.media_id)
-    source = next((candidate for candidate in sources if candidate.ordinal == ordinal), None)
-    if (
-        source is None
-        or source.content_type not in _PUBLIC_ASSET_CONTENT_TYPES
-        or source.size_bytes < 0
-        or source.size_bytes > _MAX_EPUB_ASSET_BYTES
+    lock = text(f"SELECT m.id FROM media m WHERE m.id = {media} FOR SHARE OF m")
+    media_id = db.execute(lock, {"id": subject_id}).scalar()
+    if media_id is None:
+        return _UNSUPPORTED
+    facts = db.execute(text(_FACTS_SQL), {"media_id": media_id}).mappings().one()
+    kind = facts["kind"]
+    if facts["tearing_down"]:
+        return _UNSUPPORTED
+    if not is_text_document_ready(
+        kind, facts["processing_status"], facts["transcript_state"], facts["transcript_coverage"]
     ):
-        _masked_not_found()
+        return "ProjectionNotReady"
+    source_url = public_source_url(facts)
+    if (
+        facts["attempt_id"] is None
+        or (kind == "podcast_episode" and facts["last_request_reason"] != "rss_feed")
+        or (kind == "video" and facts["source_type"] not in {"youtube_video", "video_transcript"})
+        or (kind == "video" and source_url is None)
+    ):
+        return _UNSUPPORTED
+
+    fragments, sections, assets, epub_digest, pdf = [], [], [], b"", None
+    if kind == "epub":
+        sections = list_epub_fragment_sources(db, media_id=media_id, limit=2**31 - 1)
+        if facts["epub_attempt_id"] is None or not sections:
+            return _UNSUPPORTED
+        assets = list_public_epub_asset_sources(db, media_id=media_id)
+        epub_digest = _epub_digest(facts, sections, assets)
+    elif kind == "pdf":
+        pdf = get_media_file_source(db, media_id=media_id)
+        if pdf is None or pdf.content_type != "application/pdf" or pdf.size_bytes < 1:
+            return _UNSUPPORTED
+    else:
+        fragments = list(
+            db.execute(
+                text(
+                    "SELECT idx, html_sanitized, canonical_text, t_start_ms, speaker_label"
+                    " FROM fragments WHERE media_id = :media_id ORDER BY idx"
+                ),
+                {"media_id": media_id},
+            ).mappings()
+        )
+        if not fragments:
+            return _UNSUPPORTED
+    highlight = _highlight(db, subject_id) if scheme == "highlight" else None
+    if scheme == "highlight" and highlight is None:
+        return _UNSUPPORTED
+    return _Share(
+        media_id=media_id,
+        kind=kind,
+        title=facts["title"],
+        source_url=source_url,
+        highlight=highlight,
+        fragments=fragments,
+        sections=sections,
+        assets=assets,
+        epub_digest=epub_digest,
+        pdf=pdf,
+    )
+
+
+def _highlight(db: Session, highlight_id: UUID) -> PublicHighlightOut | None:
+    """The shared highlight's quote, color and handle-free anchor, or None if it does not resolve."""
+    target = resolve_highlight_reader_target(db, highlight_id=highlight_id)
+    if target is None:
+        return None
+    on_pdf = isinstance(target, PdfPageGeometryTargetOut)
+    row = db.execute(
+        text(
+            "SELECT h.exact, h.color, f.idx FROM highlights h LEFT JOIN fragments f"
+            " ON f.id = :fragment_id AND f.media_id = h.anchor_media_id WHERE h.id = :id"
+        ),
+        {"id": highlight_id, "fragment_id": None if on_pdf else target.fragment_id},
+    ).one_or_none()
+    if row is None:
+        return None
+    if isinstance(target, PdfPageGeometryTargetOut):
+        anchor = PublicPdfAnchorOut(page_number=target.page_number, quads=target.quads)
+    elif row.idx is None:
+        return None
+    else:
+        start, end = target.start_offset, target.end_offset
+        anchor = PublicTextAnchorOut(ordinal=row.idx, start_offset=start, end_offset=end)
+    quote = presence_from_nullable(row.exact or None)
+    return PublicHighlightOut(quote=quote, color=row.color, anchor=anchor)
+
+
+def _epub_digest(
+    facts: RowMapping, sections: list[EpubFragmentSourceContent], assets: list[EpubAssetSource]
+) -> bytes:
+    """The EPUB's content revision. Handed-out handles embed it, so its bytes never change."""
+    digest = hashlib.sha256()
+    parts: list[str | bytes] = [b"epub", facts["last_request_reason"] or ""]
+    parts += [str(facts["attempt_id"]), str(facts["attempt_no"]), facts["source_type"]]
+    parts += [b"source-owner", str(facts["epub_attempt_id"]), str(facts["epub_attempt_no"])]
+    parts += [facts["epub_source_type"], b"sections", str(len(sections))]
+    for s in sections:
+        parts += [str(s.ordinal), s.label, str(s.depth), s.html_sanitized, s.canonical_text]
+    parts += [b"assets", str(len(assets))]
+    for a in assets:
+        parts += [str(a.ordinal), a.asset_key, a.storage_path, a.content_type, str(a.size_bytes)]
+    for part in parts:
+        data = part if isinstance(part, bytes) else part.encode()
+        digest.update(len(data).to_bytes(8, "big") + data)
+    return hashlib.sha256(digest.digest()).digest()[:16]
+
+
+def _tag(domain: _HandleDomain, grant: ResourceGrant, share: _Share, body: bytes) -> bytes:
+    root = base64.b64decode(get_settings().effective_stream_token_signing_key)
+    key = hmac.new(root, b"nexus-handle-key\0" + domain.encode() + b"\0" + b"1", hashlib.sha256)
+    message = b"nexus-public-handle\0" + domain.encode() + b"\0" + b"1" + b"\0"
+    message += grant.id.bytes + share.media_id.bytes + body
+    return hmac.new(key.digest(), message, hashlib.sha256).digest()[:16]
+
+
+def _seal(domain: _HandleDomain, grant: ResourceGrant, share: _Share, ordinal: int) -> str:
+    body = ordinal.to_bytes(4, "big") + share.epub_digest
+    sealed = base64.urlsafe_b64encode(body + _tag(domain, grant, share, body))
+    return _HANDLE_PREFIX[domain] + sealed.rstrip(b"=").decode()
+
+
+def _unseal(domain: _HandleDomain, grant: ResourceGrant, share: _Share, handle: str) -> int:
+    match = re.fullmatch(re.escape(_HANDLE_PREFIX[domain]) + r"([A-Za-z0-9_-]{48})", handle)
+    if share.kind != "epub" or match is None:
+        _gone()
+    sealed = base64.urlsafe_b64decode(match[1])
+    body = sealed[:4] + share.epub_digest
+    if not hmac.compare_digest(sealed, body + _tag(domain, grant, share, body)):
+        _gone()
+    return int.from_bytes(sealed[:4], "big")
+
+
+def _open(db: Session, token: str) -> tuple[ResourceGrant, _Share]:
+    grant = resource_grants.link_grant(db, token)
+    if grant is None:
+        _gone()
+    share = _load(db, grant.subject_scheme, grant.subject_id)
+    if not isinstance(share, _Share):
+        _gone()
+    return grant, share
+
+
+def link_readiness(db: Session, subject: ResourceRef) -> Readiness | None:
+    """Why a link to the subject would not open now, or None when it would."""
+    share = _load(db, subject.scheme, subject.id)
+    return None if isinstance(share, _Share) else share
+
+
+def read_share(db: Session, token: str) -> PublicShareOut:
+    grant, share = _open(db, token)
+    if share.kind == "web_article":
+        reader = PublicArticleReaderOut(
+            fragments=[
+                PublicFragmentOut(
+                    ordinal=row["idx"],
+                    html_sanitized=sanitize_public_html(row["html_sanitized"]),
+                    canonical_text=row["canonical_text"],
+                )
+                for row in share.fragments
+            ]
+        )
+    elif share.kind == "epub":
+        reader = PublicEpubReaderOut(
+            sections=[
+                PublicSectionEntryOut(
+                    ordinal=s.ordinal,
+                    label=s.label,
+                    depth=s.depth,
+                    section_handle=_seal("section", grant, share, s.ordinal),
+                )
+                for s in share.sections
+            ]
+        )
+    elif share.kind == "pdf":
+        reader = PublicPdfReaderOut()
+    else:
+        reader = PublicTranscriptReaderOut(
+            segments=[
+                PublicSegmentOut(
+                    ordinal=row["idx"],
+                    canonical_text=row["canonical_text"],
+                    start_ms=presence_from_nullable(row["t_start_ms"]),
+                    speaker=presence_from_nullable(row["speaker_label"]),
+                )
+                for row in share.fragments
+            ]
+        )
+    return PublicShareOut(
+        title=share.title,
+        bylines=load_current_source_author_bylines(db, media_id=share.media_id),
+        source_url=presence_from_nullable(share.source_url),
+        highlight=presence_from_nullable(share.highlight),
+        reader=reader,
+    )
+
+
+def read_section(db: Session, token: str, handle: str) -> PublicSectionOut:
+    grant, share = _open(db, token)
+    ordinal = _unseal("section", grant, share, handle)
+    section = next(s for s in share.sections if s.ordinal == ordinal)
+    asset_handles = {a.asset_key: _seal("asset", grant, share, a.ordinal) for a in share.assets}
+    return PublicSectionOut(
+        html_sanitized=sanitize_public_html(section.html_sanitized, asset_handles.get),
+        canonical_text=section.canonical_text,
+    )
+
+
+def read_asset(db: Session, token: str, handle: str) -> tuple[bytes, str]:
+    """An EPUB image's bytes and content type."""
+    grant, share = _open(db, token)
+    asset = share.assets[_unseal("asset", grant, share, handle)]
     try:
         data = read_object_checked(
-            storage_client or get_storage_client(),
-            source.storage_path,
-            expected_size=source.size_bytes,
+            get_storage_client(), asset.storage_path, expected_size=asset.size_bytes
         )
     except StorageError:
-        _masked_not_found()
-    return PublicAssetBody(data=data, content_type=source.content_type)
+        _gone()
+    return data, asset.content_type
 
 
-def get_public_pdf_file(
-    db: Session,
-    *,
-    raw_token: str,
-    raw_range: str | None,
-    query_items: list[tuple[str, str]] | None = None,
-    storage_client: StorageClient | None = None,
-) -> PublicFileBody:
-    """Authorize first, then interpret Range for one private PDF object."""
-    projection = _resolve_public_projection(db, raw_token=raw_token)
-    _require_no_query(query_items)
-    if projection.media.kind != "pdf":
-        _masked_not_found()
-    storage = storage_client or get_storage_client()
-    source = _validated_public_pdf_source(
-        db,
-        media_id=projection.media.media_id,
-        storage_client=storage,
-    )
-    if source is None:
-        _masked_not_found()
-    filename = _pdf_filename(projection.media.title)
-    if raw_range is None:
-        return PublicFileBody(
-            chunks=_verified_stream(
-                storage.stream_object(source.storage_path),
-                expected_length=source.size_bytes,
-            ),
-            status_code=200,
-            content_length=source.size_bytes,
-            content_range=None,
-            filename=filename,
-        )
-    try:
-        byte_range = parse_single_byte_range(raw_range, size_bytes=source.size_bytes)
-    except ValueError as exc:
-        raise PublicRangeNotSatisfiable(source.size_bytes) from exc
-    return PublicFileBody(
-        chunks=_verified_stream(
-            storage.stream_object_range(
-                source.storage_path,
-                start=byte_range.start,
-                end_inclusive=byte_range.end,
-            ),
-            expected_length=byte_range.length,
-        ),
-        status_code=206,
-        content_length=byte_range.length,
-        content_range=f"bytes {byte_range.start}-{byte_range.end}/{source.size_bytes}",
-        filename=filename,
-    )
-
-
-def _resolve_public_projection(db: Session, *, raw_token: str) -> _Projection:
-    try:
-        from nexus.services.resource_grants import resolve_link_token
-
-        resolved = resolve_link_token(db, raw_token)
-    except (ApiError, ValueError):
-        _masked_not_found()
-    subject_facts = _load_subject_facts(db, subject=resolved.subject)
-    if subject_facts is None:
-        _masked_not_found()
-    media, highlight_id = subject_facts
-    if _media_has_teardown_intent(db, media.media_id) or not _is_media_ready(media):
-        _masked_not_found()
-    if not _projection_shape_supported(db, media=media, highlight_id=highlight_id):
-        _masked_not_found()
-    handle_context = PublicHandleContext(
-        grant_id=resolved.grant_id,
-        parent_media_id=media.media_id,
-        source_revision_bytes=_source_revision_bytes(db, media=media),
-    )
-    highlight = None
-    if highlight_id is not None:
-        highlight = _project_highlight(
-            db,
-            highlight_id=highlight_id,
-            media=media,
-            section_handle_for_ordinal=lambda ordinal: seal_public_handle(
-                "section",
-                ordinal=ordinal,
-                context=handle_context,
-            ),
-        )
-        if highlight is None:
-            _masked_not_found()
-    return _Projection(
-        grant_id=resolved.grant_id,
-        subject=resolved.subject,
-        media=media,
-        handle_context=handle_context,
-        highlight=highlight,
-    )
-
-
-def _load_subject_facts(
-    db: Session,
-    *,
-    subject: ResourceRef,
-) -> tuple[_MediaFacts, UUID | None] | None:
-    if subject.scheme == "media":
-        media_id = subject.id
-        highlight_id = None
-    elif subject.scheme == "highlight":
-        media_id = db.execute(
-            text("SELECT anchor_media_id FROM highlights WHERE id = :highlight_id"),
-            {"highlight_id": subject.id},
-        ).scalar()
-        if not isinstance(media_id, UUID):
-            return None
-        highlight_id = subject.id
-    else:
-        return None
-    locked_media_id = db.execute(
-        text("SELECT id FROM media WHERE id = :media_id FOR SHARE"),
-        {"media_id": media_id},
-    ).scalar()
-    if locked_media_id is None:
-        return None
-    row = (
-        db.execute(
-            text(
-                """
-                SELECT m.id, m.kind, m.title, m.processing_status,
-                       mts.transcript_state, mts.transcript_coverage,
-                       mts.last_request_reason AS transcript_last_request_reason,
-                       source_attempt.id AS source_attempt_id,
-                       source_attempt.attempt_no AS source_attempt_no,
-                       source_attempt.source_type,
-                       CASE
-                         WHEN m.kind = 'podcast_episode'
-                         THEN pe.duration_seconds * 1000
-                         ELSE (
-                           SELECT max(f.t_end_ms)
-                           FROM fragments f
-                           WHERE f.media_id = m.id
-                         )
-                       END AS duration_ms,
-                       m.page_count
-                FROM media m
-                LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
-                LEFT JOIN podcast_episodes pe ON pe.media_id = m.id
-                LEFT JOIN LATERAL (
-                    SELECT msa.id, msa.attempt_no, msa.source_type
-                    FROM media_source_attempts msa
-                    WHERE msa.media_id = m.id
-                      AND msa.status = 'succeeded'
-                    ORDER BY msa.attempt_no DESC, msa.id DESC
-                    LIMIT 1
-                ) source_attempt ON TRUE
-                WHERE m.id = :media_id
-                """
-            ),
-            {"media_id": media_id},
-        )
-        .mappings()
-        .first()
-    )
-    if row is None:
-        return None
-    return (
-        _MediaFacts(
-            media_id=UUID(str(row["id"])),
-            kind=str(row["kind"]),
-            title=str(row["title"]),
-            processing_status=str(row["processing_status"]),
-            transcript_state=(
-                str(row["transcript_state"]) if row["transcript_state"] is not None else None
-            ),
-            transcript_coverage=(
-                str(row["transcript_coverage"]) if row["transcript_coverage"] is not None else None
-            ),
-            transcript_last_request_reason=(
-                str(row["transcript_last_request_reason"])
-                if row["transcript_last_request_reason"] is not None
-                else None
-            ),
-            source_attempt_id=(
-                UUID(str(row["source_attempt_id"]))
-                if row["source_attempt_id"] is not None
-                else None
-            ),
-            source_attempt_no=(
-                int(row["source_attempt_no"]) if row["source_attempt_no"] is not None else None
-            ),
-            source_type=str(row["source_type"]) if row["source_type"] is not None else None,
-            duration_ms=int(row["duration_ms"]) if row["duration_ms"] is not None else None,
-            page_count=int(row["page_count"]) if row["page_count"] is not None else None,
-        ),
-        highlight_id,
-    )
-
-
-def _is_media_ready(media: _MediaFacts) -> bool:
-    try:
-        return is_text_document_ready(
-            media.kind,
-            media.processing_status,
-            media.transcript_state,
-            media.transcript_coverage,
-        )
-    except ValueError:
-        return False
-
-
-def _projection_shape_supported(
-    db: Session,
-    *,
-    media: _MediaFacts,
-    highlight_id: UUID | None,
-) -> bool:
-    if media.kind not in {"web_article", "epub", "pdf", "video", "podcast_episode"}:
-        return False
-    bylines = _load_bylines_if_supported(db, media_id=media.media_id)
-    if bylines is None:
-        return False
-    try:
-        PublicMediaOut(
-            title=media.title,
-            media_kind=_public_media_kind(media.kind),
-            source_url=presence_from_nullable(
-                current_public_source_url(db, media_id=media.media_id)
-            ),
-            bylines=bylines,
-        )
-    except (TypeError, ValueError, ValidationError):
-        return False
-    if media.source_attempt_id is None or media.source_attempt_no is None or not media.source_type:
-        return False
-    if media.kind == "podcast_episode" and media.transcript_last_request_reason != "rss_feed":
-        return False
-    if media.kind == "video" and (
-        media.source_type not in {"youtube_video", "video_transcript"}
-        or current_public_source_url(db, media_id=media.media_id) is None
-    ):
-        return False
-    if media.kind in {"web_article", "video", "podcast_episode"}:
-        rows = db.execute(
-            text(
-                """
-                SELECT idx, html_sanitized, canonical_text,
-                       t_start_ms, t_end_ms, speaker_label
-                FROM fragments
-                WHERE media_id = :media_id
-                ORDER BY idx ASC
-                """
-            ),
-            {"media_id": media.media_id},
-        ).all()
-        if not rows:
-            return False
-        try:
-            for row in rows:
-                ordinal = int(row[0])
-                canonical_text = str(row[2])
-                if media.kind == "web_article":
-                    PublicArticleFragmentOut(
-                        ordinal=ordinal,
-                        html_sanitized=sanitize_public_article_html(str(row[1])),
-                        canonical_text=canonical_text,
-                    )
-                    continue
-                start_raw, end_raw = row[3], row[4]
-                if (start_raw is None) != (end_raw is None):
-                    return False
-                PublicTranscriptSegmentOut(
-                    ordinal=ordinal,
-                    canonical_text=canonical_text,
-                    time_range=_time_range_presence(start_raw, end_raw),
-                    speaker=presence_from_nullable(str(row[5]) if row[5] is not None else None),
-                )
-        except (TypeError, ValueError, ValidationError):
-            return False
-    elif media.kind == "epub":
-        if _load_epub_source_owner(db, media_id=media.media_id) is None:
-            return False
-        sections = list_epub_fragment_sources(
-            db,
-            media_id=media.media_id,
-            after_ordinal=None,
-            limit=2**31 - 1,
-        )
-        if not sections:
-            return False
-        if any(
-            len(section.html_sanitized.encode("utf-8")) > _MAX_EPUB_FIELD_BYTES
-            or len(section.canonical_text.encode("utf-8")) > _MAX_EPUB_FIELD_BYTES
-            for section in sections
-        ):
-            return False
-        assets = list_public_epub_asset_sources(db, media_id=media.media_id)
-        if any(asset.size_bytes > _MAX_EPUB_ASSET_BYTES for asset in assets):
-            return False
-        asset_keys = {asset.asset_key for asset in assets}
-        try:
-            for section in sections:
-                PublicNavigationItemOut(
-                    ordinal=section.ordinal,
-                    label=section.label,
-                    depth=section.depth,
-                    section_handle=_PLACEHOLDER_SECTION_HANDLE,
-                )
-            for asset in assets:
-                if (
-                    not asset.asset_key
-                    or not asset.storage_path
-                    or asset.content_type not in _PUBLIC_ASSET_CONTENT_TYPES
-                    or asset.size_bytes < 0
-                    or asset.size_bytes > _MAX_EPUB_ASSET_BYTES
-                ):
-                    return False
-            if any(
-                _serialized_envelope_size(
-                    PublicSectionOut(
-                        ordinal=section.ordinal,
-                        section_handle=_PLACEHOLDER_SECTION_HANDLE,
-                        html_sanitized=sanitize_public_epub_html(
-                            section.html_sanitized,
-                            asset_handle_for_key=lambda key: (
-                                _PLACEHOLDER_ASSET_HANDLE if key in asset_keys else None
-                            ),
-                        ),
-                        canonical_text=section.canonical_text,
-                    )
-                )
-                > _MAX_PAGE_BYTES
-                for section in sections
-            ):
-                return False
-        except (TypeError, ValueError, ValidationError):
-            return False
-    elif media.kind == "pdf":
-        source = get_media_file_source(db, media_id=media.media_id)
-        if (
-            source is None
-            or source.content_type != _PDF_CONTENT_TYPE
-            or source.size_bytes < 1
-            or source.size_bytes > _MAX_SAFE_UINT
-        ):
-            return False
-    else:
-        return False
-    if highlight_id is not None:
-        return (
-            _project_highlight(
-                db,
-                highlight_id=highlight_id,
-                media=media,
-                section_handle_for_ordinal=lambda _: _PLACEHOLDER_SECTION_HANDLE,
-            )
-            is not None
-        )
-    return True
-
-
-def _validated_public_pdf_source(
-    db: Session,
-    *,
-    media_id: UUID,
-    storage_client: StorageClient,
-) -> MediaFileSource | None:
-    """Bind public PDF metadata to an object that exists with the exact stored shape."""
-    source = get_media_file_source(db, media_id=media_id)
-    if (
-        source is None
-        or source.content_type != _PDF_CONTENT_TYPE
-        or source.size_bytes < 1
-        or source.size_bytes > _MAX_SAFE_UINT
-    ):
-        return None
-    try:
-        metadata = storage_client.head_object(source.storage_path)
-    except StorageError:
-        return None
-    if (
-        metadata is None
-        or metadata.content_type != source.content_type
-        or metadata.size_bytes != source.size_bytes
-    ):
-        return None
-    return source
-
-
-def _project_highlight(
-    db: Session,
-    *,
-    highlight_id: UUID,
-    media: _MediaFacts,
-    section_handle_for_ordinal: Callable[[int], str],
-) -> PublicHighlightOut | None:
-    """Project one highlight anchor, or ``None`` when it cannot be projected."""
-    target = locator_resolver.resolve_highlight_reader_target(
-        db,
-        highlight_id=highlight_id,
-    )
-    metadata = (
-        db.execute(
-            text(
-                """
-                SELECT exact, color
-                FROM highlights
-                WHERE id = :highlight_id
-                  AND anchor_media_id = :media_id
-                """
-            ),
-            {"highlight_id": highlight_id, "media_id": media.media_id},
-        )
-        .mappings()
-        .first()
-    )
-    if target is None or metadata is None:
-        return None
-    try:
-        if isinstance(target, WebTextOffsetsTargetOut):
-            ordinal = db.execute(
-                text(
-                    """
-                    SELECT idx FROM fragments
-                    WHERE id = :fragment_id AND media_id = :media_id
-                    """
-                ),
-                {"fragment_id": target.fragment_id, "media_id": media.media_id},
-            ).scalar()
-            if ordinal is None:
-                return None
-            anchor = PublicArticleTextAnchorOut(
-                fragment_ordinal=int(ordinal),
-                start_offset=target.start_offset,
-                end_offset=target.end_offset,
-            )
-        elif isinstance(target, EpubTextOffsetsTargetOut):
-            section_ordinal = db.execute(
-                text(
-                    """
-                    SELECT idx
-                    FROM fragments
-                    WHERE media_id = :media_id
-                      AND id = :fragment_id
-                    """
-                ),
-                {"media_id": media.media_id, "fragment_id": target.fragment_id},
-            ).scalar()
-            if section_ordinal is None:
-                return None
-            anchor = PublicEpubTextAnchorOut(
-                section_handle=section_handle_for_ordinal(int(section_ordinal)),
-                start_offset=target.start_offset,
-                end_offset=target.end_offset,
-            )
-        elif isinstance(target, TranscriptTextOffsetsTargetOut):
-            ordinal = db.execute(
-                text(
-                    """
-                    SELECT idx FROM fragments
-                    WHERE id = :fragment_id AND media_id = :media_id
-                    """
-                ),
-                {"fragment_id": target.fragment_id, "media_id": media.media_id},
-            ).scalar()
-            if ordinal is None:
-                return None
-            anchor = PublicTranscriptTextAnchorOut.model_validate(
-                {
-                    "segment_ordinal": int(ordinal),
-                    "start_offset": target.start_offset,
-                    "end_offset": target.end_offset,
-                    "time_range": target.time_range.model_dump(mode="python"),
-                }
-            )
-        elif isinstance(target, PdfPageGeometryTargetOut):
-            anchor = PublicPdfGeometryAnchorOut.model_validate(
-                {
-                    "page_number": target.page_number,
-                    "quads": [quad.model_dump(mode="python") for quad in target.quads],
-                }
-            )
-        else:
-            return None
-        exact = str(metadata["exact"])
-        return PublicHighlightOut.model_validate(
-            {
-                "quote": presence_from_nullable(exact if exact else None),
-                "color": str(metadata["color"]).capitalize(),
-                "anchor": anchor,
-            }
-        )
-    except (TypeError, ValueError, ValidationError):
-        return None
-
-
-def _source_revision_bytes(db: Session, *, media: _MediaFacts) -> bytes:
-    digest = hashlib.sha256()
-    _digest_part(digest, media.kind.encode("utf-8"))
-    _digest_part(
-        digest,
-        (media.transcript_last_request_reason or "").encode("utf-8"),
-    )
-    for value in (
-        str(media.source_attempt_id or ""),
-        str(media.source_attempt_no or ""),
-        media.source_type or "",
-    ):
-        _digest_part(digest, value.encode("utf-8"))
-    if media.kind == "pdf":
-        source = get_media_file_source(db, media_id=media.media_id)
-        if source is None:
-            _masked_not_found()
-        for value in (source.storage_path, source.content_type, str(source.size_bytes)):
-            _digest_part(digest, value.encode("utf-8"))
-        return digest.digest()
-
-    if media.kind == "epub":
-        owner = _load_epub_source_owner(db, media_id=media.media_id)
-        if owner is None:
-            _masked_not_found()
-        _digest_part(digest, b"source-owner")
-        for value in (
-            str(owner.attempt_id),
-            str(owner.attempt_no),
-            owner.source_type,
-        ):
-            _digest_part(digest, value.encode("utf-8"))
-        sections = list_epub_fragment_sources(
-            db,
-            media_id=media.media_id,
-            after_ordinal=None,
-            limit=2**31 - 1,
-        )
-        _digest_part(digest, b"sections")
-        _digest_part(digest, str(len(sections)).encode("ascii"))
-        for section in sections:
-            for value in (
-                str(section.ordinal),
-                section.label,
-                str(section.depth),
-                section.html_sanitized,
-                section.canonical_text,
-            ):
-                _digest_part(digest, value.encode("utf-8"))
-        assets = list_public_epub_asset_sources(db, media_id=media.media_id)
-        _digest_part(digest, b"assets")
-        _digest_part(digest, str(len(assets)).encode("ascii"))
-        for source in assets:
-            for value in (
-                str(source.ordinal),
-                source.asset_key,
-                source.storage_path,
-                source.content_type,
-                str(source.size_bytes),
-            ):
-                _digest_part(digest, value.encode("utf-8"))
-        return digest.digest()
-
-    rows = db.execute(
-        text(
-            """
-            SELECT idx, html_sanitized, canonical_text,
-                   t_start_ms, t_end_ms, speaker_label
-            FROM fragments
-            WHERE media_id = :media_id
-            ORDER BY idx ASC
-            """
-        ),
-        {"media_id": media.media_id},
-    ).all()
-    for row in rows:
-        for value in row:
-            _digest_part(digest, str(value if value is not None else "").encode("utf-8"))
-    return digest.digest()
-
-
-def _load_epub_source_owner(
-    db: Session,
-    *,
-    media_id: UUID,
-) -> _EpubSourceOwner | None:
-    row = (
-        db.execute(
-            text(
-                """
-                SELECT id, attempt_no, source_type
-                FROM media_source_attempts
-                WHERE media_id = :media_id
-                  AND status = 'succeeded'
-                  AND source_type IN (
-                    'remote_epub_url',
-                    'uploaded_epub_file',
-                    'browser_epub_capture'
-                  )
-                ORDER BY attempt_no DESC, id DESC
-                LIMIT 1
-                """
-            ),
-            {"media_id": media_id},
-        )
-        .mappings()
-        .first()
-    )
-    if row is None:
-        return None
-    return _EpubSourceOwner(
-        attempt_id=UUID(str(row["id"])),
-        attempt_no=int(row["attempt_no"]),
-        source_type=str(row["source_type"]),
-    )
-
-
-def _digest_part(digest, value: bytes) -> None:
-    digest.update(len(value).to_bytes(8, "big"))
-    digest.update(value)
-
-
-def _serialized_envelope_size(model: BaseModel) -> int:
-    """Return compact UTF-8 bytes emitted for one public success envelope."""
-    payload = {"data": model.model_dump(mode="json")}
-    return len(
-        json.dumps(
-            payload,
-            ensure_ascii=False,
-            allow_nan=False,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    )
-
-
-def _budgeted_items[ItemT: BaseModel](
-    candidates: list[ItemT],
-    *,
-    has_more: bool,
-    page_factory: Callable[[list[ItemT], bool], BaseModel],
-) -> tuple[list[ItemT], bool]:
-    """Trim ``candidates`` to the longest prefix whose page fits ``_MAX_PAGE_BYTES``."""
-    kept: list[ItemT] = []
-    for index, candidate in enumerate(candidates):
-        page = page_factory([*kept, candidate], has_more or index < len(candidates) - 1)
-        if _serialized_envelope_size(page) > _MAX_PAGE_BYTES:
-            if not kept:
-                _masked_not_found()
-            return kept, True
-        kept.append(candidate)
-    return kept, has_more
-
-
-def _load_bylines(db: Session, *, media_id: UUID) -> list[str]:
-    bylines = _load_bylines_if_supported(db, media_id=media_id)
-    if bylines is None:
-        _masked_not_found()
-    return bylines
-
-
-def _load_bylines_if_supported(
-    db: Session,
-    *,
-    media_id: UUID,
-) -> list[str] | None:
-    bylines = load_current_source_author_bylines(db, media_id=media_id)
-    if len(bylines) > 32 or any(len(value) > 512 for value in bylines):
-        return None
-    return bylines
-
-
-def _public_media_kind(kind: str) -> Literal["Article", "Epub", "Pdf", "Video", "PodcastEpisode"]:
-    mapping: dict[str, Literal["Article", "Epub", "Pdf", "Video", "PodcastEpisode"]] = {
-        "web_article": "Article",
-        "epub": "Epub",
-        "pdf": "Pdf",
-        "video": "Video",
-        "podcast_episode": "PodcastEpisode",
-    }
-    try:
-        return mapping[kind]
-    except KeyError:
-        _masked_not_found()
-
-
-def _public_reader(media: _MediaFacts, *, db: Session):
-    if media.kind == "web_article":
-        return PublicArticleReaderOut()
-    if media.kind == "epub":
-        return PublicEpubReaderOut()
-    if media.kind == "pdf":
-        source = get_media_file_source(db, media_id=media.media_id)
-        if source is None:
-            _masked_not_found()
-        return PublicPdfReaderOut(
-            byte_length=source.size_bytes,
-            filename=_pdf_filename(media.title),
-        )
-    if media.kind in {"video", "podcast_episode"}:
-        return PublicTranscriptReaderOut(
-            source_kind="Video" if media.kind == "video" else "PodcastEpisode",
-            duration_ms=presence_from_nullable(media.duration_ms),
-        )
-    _masked_not_found()
-
-
-def _parse_limit(raw_limit: str | None) -> int:
-    if raw_limit is None:
-        return _DEFAULT_LIMIT
-    if not re.fullmatch(r"[1-9][0-9]*", raw_limit):
-        raise PublicRequestValidation("limit must be an integer from 1 to 100")
-    limit = int(raw_limit)
-    if limit > _MAX_LIMIT:
-        raise PublicRequestValidation("limit must be an integer from 1 to 100")
-    return limit
-
-
-def _parse_cursor(raw_cursor: str | None, *, projection: _Projection) -> int:
-    if raw_cursor is None:
-        return -1
-    ordinal = unseal_public_handle(
-        "page-cursor",
-        raw_cursor,
-        context=projection.handle_context,
-    )
-    if ordinal is None:
-        _masked_not_found()
-    return ordinal
-
-
-def _page_info(last_ordinal: int | None, projection: _Projection) -> PublicPageInfo:
-    return PublicPageInfo(
-        next_cursor=presence_from_nullable(
-            seal_public_handle(
-                "page-cursor",
-                ordinal=last_ordinal,
-                context=projection.handle_context,
-            )
-            if last_ordinal is not None
-            else None
-        )
-    )
-
-
-def _time_range_presence(start_raw, end_raw):
-    if start_raw is None or end_raw is None:
-        return absent()
-    return presence_from_nullable(PublicTimeRangeOut(start_ms=int(start_raw), end_ms=int(end_raw)))
-
-
-def _media_has_teardown_intent(db: Session, media_id: UUID) -> bool:
-    return (
-        db.execute(
-            text("SELECT 1 FROM media_teardown_intents WHERE media_id = :media_id"),
-            {"media_id": media_id},
-        ).first()
-        is not None
-    )
-
-
-def _pdf_filename(title: str) -> str:
-    normalized = unicodedata.normalize("NFC", title)
-    cleaned = "".join(
-        " " if unicodedata.category(char).startswith("C") or char in {"/", "\\", '"'} else char
-        for char in normalized
-    )
-    cleaned = " ".join(cleaned.split()).strip(" .")
-    if not cleaned:
-        cleaned = "document"
-    if not cleaned.lower().endswith(".pdf"):
-        cleaned += ".pdf"
-    return cleaned[:255].rstrip(" .") or "document.pdf"
-
-
-def _verified_stream(chunks: Iterator[bytes], *, expected_length: int) -> Iterator[bytes]:
-    seen = 0
-    for chunk in chunks:
-        seen += len(chunk)
-        if seen > expected_length:
-            raise StorageError("Stored object is larger than persisted metadata")
-        yield chunk
-    if seen != expected_length:
-        raise StorageError("Stored object integrity mismatch")
-
-
-def _parse_page_query(query_items: list[tuple[str, str]]) -> tuple[str | None, str | None]:
-    values: dict[str, str] = {}
-    for key, value in query_items:
-        if key not in {"cursor", "limit"} or key in values:
-            raise PublicRequestValidation("Invalid pagination query")
-        values[key] = value
-    return values.get("cursor"), values.get("limit")
-
-
-def _require_no_query(query_items: list[tuple[str, str]] | None) -> None:
-    if query_items:
-        raise PublicRequestValidation("This endpoint does not accept query parameters")
-
-
-def _masked_not_found() -> NoReturn:
-    raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Share unavailable")
+def pdf_source(db: Session, token: str) -> MediaFileSource:
+    """The shared PDF's authorized storage facts; the caller streams it."""
+    _, share = _open(db, token)
+    if share.pdf is None:
+        _gone()
+    return share.pdf

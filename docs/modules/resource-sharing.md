@@ -1,74 +1,93 @@
 # Resource Sharing
 
-Resource sharing grants another user or an anonymous bearer access to one media
-or owned-highlight subject. It does not expose the owner's library, notes, or
-other annotations; it does not turn `resource_edges` into ACLs; and it is
-separate from inbound Android/web capture, which remains owned by
-[sharing.md](sharing.md).
+Resource sharing gives another user, or any holder of an unlisted bearer link,
+read access to one media or one of the owner's highlights. It never exposes the
+owner's library, notes or other annotations, and it is separate from inbound
+Android/web capture ([sharing.md](sharing.md)).
 
-## Grants and authority
+## Grants
 
-`resource_grants` is the sole persisted access-grant table. A row grants one
-canonical `ResourceRef` to either one sealed user identity or one random link
-bearer. `services/resource_grants.py` owns creation, resolution, listing,
-revocation/decline, lock order, and subject cleanup.
-`services/resource_sharing.py` owns the authenticated snapshot, availability,
-and create projection. Permissions consume the grants; search, readers, and
-highlight access do not reimplement them.
+`resource_grants` is the only access-grant table, owned by
+`services/resource_grants.py`. A row gives its creator and exactly one audience
+(a grantee user, or the holder of its raw `share_token`) read access to one
+media or highlight. The database enforces the shape (0248): the subject scheme
+is `media` or `highlight`, exactly one audience column is set, and a creator
+holds one grant per subject and audience. A grant is also:
 
-The capability registry closes the product surface:
+- an authorization path: `auth/permissions.py` reads the ORM and SQL
+  predicates; a highlight grant opens that highlight and its media;
+- a reference: while any grant names a document media or its highlights, the
+  media is not torn down; revoking the last one claims the teardown.
 
-- media: `ResourceGrants`;
-- owned highlight: `HighlightGrants` (the parent media plus that highlight,
-  never the author's other annotations or notes);
-- library: membership-only route sharing, never a link grant;
-- podcast: `CopyOnly`;
-- unsupported resources: no Share action.
+Every grant mutation invalidates audience visibility for exactly the users it
+affects, in the same transaction. Locks go media, then highlight, then grant,
+the order media deletion uses. Revoke/decline runs READ COMMITTED and restarts
+when a dedupe repoint moved the grant's subject while it waited.
 
-Authenticated APIs use canonical `ResourceRef` subjects and sealed
-`nrg1.*`/`nus1.*` handles. Handles identify records but do not authorize.
-`POST /resource-items/{ref}/shares` rechecks the selected audience; DELETE
-removes only the named path. A recipient can reshare media through an independent
-grant. Revoking an upstream grant therefore does not recursively revoke a
-downstream grant.
+`services/resource_sharing.py` serves the Share overlay: one ordered
+availability check (mode, highlight present, not deleting, highlight owner,
+media readable, highlight resolvable; then entitlement; then, for links, public
+readiness) whose first failing reason wins. The create command re-runs it under
+the subject's row locks, returns an existing grant before billing (402
+`E_BILLING_REQUIRED` gates only new grants), and inserts under SERIALIZABLE.
+Library subjects carry `members` (can the viewer manage them) from
+`library_governance.library_out`.
 
-## Anonymous projection
+## Anonymous reader
 
-The public href is `/s#share=nxshr1_…`. The fragment keeps the bearer out of the
-HTTP request target. Browser code sends it only in `X-Nexus-Share-Token` to the
-exact `/api/public/resource-share` tree; the BFF strips cookies, authorization,
-and caller-supplied internal trust before forwarding. FastAPI exempts only that
-closed read-only tree after internal trust validation.
+A link is `{APP_PUBLIC_URL}/s#share=nxshr1_<43>`. The token lives in the URL
+fragment and is stored raw; resolution is equality on that column and depends
+on no key. `/s` sends it only in the `X-Nexus-Share-Token` header of
+credential-free, uncached fetches to `/api/public/resource-share`, whose one
+catch-all BFF route forwards four closed shapes (document, `file`,
+`sections/nxps1_…`, `assets/nxpa1_…`) and 404s anything else.
 
-`services/public_resource_sharing.py` is an allowlist projection, not an
-unauthenticated form of the normal media API. It emits strict V1 DTOs for article
-fragments, EPUB navigation/sections/assets, PDF bytes/ranges, and video/podcast
-transcript segments. It never emits raw storage paths/URLs, database IDs,
-library/user identity, notes, annotation collections, or mutation affordances.
-Every subresource reauthorizes the header token. Invalid, revoked, deleted,
-tearing-down, stale-handle, unsupported, and malformed-subresource cases share
-one `404 E_NOT_FOUND / Share unavailable` envelope.
+`services/public_resource_sharing.py` resolves the token, then gates the
+subject. The gate is the same predicate link creation uses and may only
+loosen, because tightening it breaks links already handed out: no teardown,
+text-ready (else `ProjectionNotReady`), a succeeded source attempt, podcasts
+fed by RSS, videos from YouTube with a disclosable URL, at least one
+fragment/section, a PDF file, and a resolvable highlight. Every other outcome,
+including bad handles and wrong-kind endpoints, is one masked
+`404 E_NOT_FOUND "Share unavailable"`. Authorization precedes interpretation:
+handles and Range are read only after the token passes; query strings are
+ignored.
 
-Public resolution holds `Media FOR SHARE`. Source publishers hold
-`Media FOR UPDATE` across current web/EPUB/PDF/transcript row publication, so a
-bootstrap/body/handle revision cannot mix generations. PDF delivery HEAD-checks
-the private object against persisted content type and size before returning
-200/206. EPUB handles and cursors bind the grant, media, kind, ordinal, and
-complete source revision; refresh makes old handles fail closed.
+A read locks the media `FOR SHARE`, then reads its facts in a fresh statement,
+so teardown and dedupe serialize with it and one read never mixes publication
+generations. The document is one response: title, bylines, disclosable source
+URL, the shared highlight (quote, color, and a text anchor naming a
+fragment/segment/section ordinal or a PDF page and quads), and the reader
+(article fragments, transcript segments, EPUB contents, or PDF). EPUB sections
+and images are fetched by handles sealed to (grant, media, content revision):
+HMAC under `STREAM_TOKEN_SIGNING_KEY`, byte-stable across releases, so a
+content change fails old handles closed. PDF bytes stream through FastAPI with
+the token reauthorized on every range request; there are no signed storage
+URLs, and uvicorn aborts a body that disagrees with its Content-Length.
 
-Only provenance-owned source URLs are eligible for explicit “View original”
-egress. Generic public HTTP URLs lose query, params, and fragments and reject
-credentials/IP/private-style hosts. X, YouTube, and arXiv URLs must resolve from
-agreeing typed source identities. Captured/uploaded/email source URLs are absent.
-The reader sanitizes public HTML, loads EPUB image bytes through token-authorized
-opaque asset handles, sets no-store/no-referrer/noindex/nosniff headers, and
-loads no third party until a user explicitly opens the disclosed source link.
+`public_html.py` is the closed HTML policy: tag and attribute allowlist,
+script-like subtrees dropped, links forced external and referrer-free, every
+image source removed and EPUB assets rewritten to handles.
+`public_source_urls.py` decides the disclosable URL: a generic web URL (ingest
+already validated and normalized it) minus params, query and fragment; X,
+YouTube and arXiv only when every identity of the attempt agrees; nothing else.
 
-## Product surface
+Every public API response, errors included, carries `Cache-Control: private,
+no-store`, `Referrer-Policy: no-referrer`, `X-Robots-Tag: noindex, nofollow`,
+`nosniff`, `Cross-Origin-Resource-Policy: same-origin`, a `default-src 'none'`
+CSP and no `Set-Cookie`, stamped by `app.py`'s middleware, the BFF and
+`web/middleware.ts`. The WAF rate-limits `^/api/public/resource-share(?:/.*)?$`.
 
-The universal `ShareControllerProvider` owns one responsive modal. Pane chrome,
-resource menus, media/podcast/highlight actions, and selection-create-then-share
-flows call its central target/options builders; they do not grow bespoke copy
-or membership dialogs. Item-to-library placement is independently owned by the
-top-level `Libraries…` resource relationship action. Copying an authenticated
-URL never changes access.
+## Web
+
+`lib/sharing/controller.tsx` owns the one Share overlay
+(`components/sharing/ShareOverlay.tsx`): Nexus link copy/share, people search,
+person grants, received access with decline, the public link (copy, native
+share and X behind bearer warnings, turn off), and library People. Route
+targets copy the pane's address without a request. The wire types of every
+route here come from `lib/api/wire.gen.ts`.
+
+`app/s/PublicShareReader.tsx` renders the document with the reader's own
+primitives: `HtmlRenderer`, `applyHighlightsToHtml` and the global `hl-*`
+colors, `formatClock`; `PublicPdf.tsx` uses the pdf.js runtime and the reader's
+PDF coordinate transforms.

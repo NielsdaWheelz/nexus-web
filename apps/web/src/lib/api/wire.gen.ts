@@ -2816,40 +2816,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/public/resource-share/fragments": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Public Resource Share Fragments */
-        get: operations["get_public_resource_share_fragments_public_resource_share_fragments_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/public/resource-share/navigation": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Public Resource Share Navigation */
-        get: operations["get_public_resource_share_navigation_public_resource_share_navigation_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/public/resource-share/sections/{section_handle}": {
         parameters: {
             query?: never;
@@ -3559,6 +3525,27 @@ export interface components {
             /** Suffix */
             suffix?: string | null;
         };
+        /** AudienceAvailableOut */
+        AudienceAvailableOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Available";
+        };
+        /** AudienceUnavailableOut */
+        AudienceUnavailableOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Unavailable";
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "UnsupportedSubject" | "Deleting" | "InsufficientAuthority" | "HighlightUnresolved" | "EntitlementRequired" | "ProjectionNotReady" | "ProjectionUnsupported";
+        };
         /** AutomaticMediaAuthorsRequest */
         AutomaticMediaAuthorsRequest: {
             /** Clientmutationid */
@@ -4153,6 +4140,13 @@ export interface components {
             /** Quads */
             quads: components["schemas"]["PdfQuadIn"][];
         };
+        /** CreateResourceShareOut */
+        CreateResourceShareOut: {
+            /** Created */
+            created: boolean;
+            /** Share */
+            share: components["schemas"]["UserShareOut"] | components["schemas"]["LinkShareOut"];
+        };
         /** CreateResourceShareRequest */
         CreateResourceShareRequest: {
             /** Audience */
@@ -4173,6 +4167,13 @@ export interface components {
             library_ids?: string[];
             /** Size Bytes */
             size_bytes: number;
+        };
+        /** CreationAvailabilityOut */
+        CreationAvailabilityOut: {
+            /** Link */
+            link: components["schemas"]["AudienceAvailableOut"] | components["schemas"]["AudienceUnavailableOut"];
+            /** User */
+            user: components["schemas"]["AudienceAvailableOut"] | components["schemas"]["AudienceUnavailableOut"];
         };
         /**
          * CursorWrite
@@ -4209,6 +4210,22 @@ export interface components {
         /** Data[BillingWebhookOut] */
         Data_BillingWebhookOut_: {
             data: components["schemas"]["BillingWebhookOut"];
+        };
+        /** Data[CreateResourceShareOut] */
+        Data_CreateResourceShareOut_: {
+            data: components["schemas"]["CreateResourceShareOut"];
+        };
+        /** Data[PublicSectionOut] */
+        Data_PublicSectionOut_: {
+            data: components["schemas"]["PublicSectionOut"];
+        };
+        /** Data[PublicShareOut] */
+        Data_PublicShareOut_: {
+            data: components["schemas"]["PublicShareOut"];
+        };
+        /** Data[ResourceShareSnapshotOut] */
+        Data_ResourceShareSnapshotOut_: {
+            data: components["schemas"]["ResourceShareSnapshotOut"];
         };
         /** DirectNaturalEndOrigin */
         DirectNaturalEndOrigin: {
@@ -4726,6 +4743,18 @@ export interface components {
             kind: "resource";
             /** Ref */
             ref: string;
+        };
+        /** LinkShareOut */
+        LinkShareOut: {
+            /** Handle */
+            handle: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Link";
+            /** Publichref */
+            publicHref: string;
         };
         /** ListeningActivityBatchIn */
         ListeningActivityBatchIn: {
@@ -5601,9 +5630,12 @@ export interface components {
         Presence_Literal__Off____Natural___: components["schemas"]["Absent"] | components["schemas"]["Present_Literal__Off____Natural___"];
         Presence_MediaDurationOut_: components["schemas"]["Absent"] | components["schemas"]["Present_MediaDurationOut_"];
         Presence_PodcastReplacementConfirmation_: components["schemas"]["Absent"] | components["schemas"]["Present_PodcastReplacementConfirmation_"];
+        Presence_PublicHighlightOut_: components["schemas"]["Absent"] | components["schemas"]["Present_PublicHighlightOut_"];
         Presence_ReaderSelectionInput_: components["schemas"]["Absent"] | components["schemas"]["Present_ReaderSelectionInput_"];
         Presence_ReaderTimeRange_: components["schemas"]["Absent"] | components["schemas"]["Present_ReaderTimeRange_"];
+        Presence_ShareMembersOut_: components["schemas"]["Absent"] | components["schemas"]["Present_ShareMembersOut_"];
         Presence_UUID_: components["schemas"]["Absent"] | components["schemas"]["Present_UUID_"];
+        Presence_int_: components["schemas"]["Absent"] | components["schemas"]["Present_int_"];
         Presence_str_: components["schemas"]["Absent"] | components["schemas"]["Present_str_"];
         /** Present[Annotated[float, FieldInfo(annotation=NoneType, required=True, metadata=[Ge(ge=0), Le(le=1)])]] */
         Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____: {
@@ -5755,6 +5787,15 @@ export interface components {
             kind: "Present";
             value: components["schemas"]["PodcastReplacementConfirmation"];
         };
+        /** Present[PublicHighlightOut] */
+        Present_PublicHighlightOut_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["PublicHighlightOut"];
+        };
         /** Present[ReaderSelectionInput] */
         Present_ReaderSelectionInput_: {
             /**
@@ -5773,6 +5814,15 @@ export interface components {
             kind: "Present";
             value: components["schemas"]["ReaderTimeRange"];
         };
+        /** Present[ShareMembersOut] */
+        Present_ShareMembersOut_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["ShareMembersOut"];
+        };
         /** Present[UUID] */
         Present_UUID_: {
             /**
@@ -5785,6 +5835,16 @@ export interface components {
              * Format: uuid
              */
             value: string;
+        };
+        /** Present[int] */
+        Present_int_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /** Value */
+            value: number;
         };
         /** Present[str] */
         Present_str_: {
@@ -5837,6 +5897,128 @@ export interface components {
              * @enum {string}
              */
             route: "ProviderApi";
+        };
+        /** PublicArticleReaderOut */
+        PublicArticleReaderOut: {
+            /** Fragments */
+            fragments: components["schemas"]["PublicFragmentOut"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Article";
+        };
+        /** PublicEpubReaderOut */
+        PublicEpubReaderOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Epub";
+            /** Sections */
+            sections: components["schemas"]["PublicSectionEntryOut"][];
+        };
+        /** PublicFragmentOut */
+        PublicFragmentOut: {
+            /** Canonical Text */
+            canonical_text: string;
+            /** Html Sanitized */
+            html_sanitized: string;
+            /** Ordinal */
+            ordinal: number;
+        };
+        /** PublicHighlightOut */
+        PublicHighlightOut: {
+            /** Anchor */
+            anchor: components["schemas"]["PublicTextAnchorOut"] | components["schemas"]["PublicPdfAnchorOut"];
+            /**
+             * Color
+             * @enum {string}
+             */
+            color: "yellow" | "green" | "blue" | "pink" | "purple";
+            quote: components["schemas"]["Presence_str_"];
+        };
+        /** PublicPdfAnchorOut */
+        PublicPdfAnchorOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Pdf";
+            /** Page Number */
+            page_number: number;
+            /** Quads */
+            quads: components["schemas"]["HighlightTargetPdfQuadOut"][];
+        };
+        /** PublicPdfReaderOut */
+        PublicPdfReaderOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Pdf";
+        };
+        /** PublicSectionEntryOut */
+        PublicSectionEntryOut: {
+            /** Depth */
+            depth: number;
+            /** Label */
+            label: string;
+            /** Ordinal */
+            ordinal: number;
+            /** Section Handle */
+            section_handle: string;
+        };
+        /** PublicSectionOut */
+        PublicSectionOut: {
+            /** Canonical Text */
+            canonical_text: string;
+            /** Html Sanitized */
+            html_sanitized: string;
+        };
+        /** PublicSegmentOut */
+        PublicSegmentOut: {
+            /** Canonical Text */
+            canonical_text: string;
+            /** Ordinal */
+            ordinal: number;
+            speaker: components["schemas"]["Presence_str_"];
+            start_ms: components["schemas"]["Presence_int_"];
+        };
+        /** PublicShareOut */
+        PublicShareOut: {
+            /** Bylines */
+            bylines: string[];
+            highlight: components["schemas"]["Presence_PublicHighlightOut_"];
+            /** Reader */
+            reader: components["schemas"]["PublicArticleReaderOut"] | components["schemas"]["PublicTranscriptReaderOut"] | components["schemas"]["PublicEpubReaderOut"] | components["schemas"]["PublicPdfReaderOut"];
+            source_url: components["schemas"]["Presence_str_"];
+            /** Title */
+            title: string;
+        };
+        /** PublicTextAnchorOut */
+        PublicTextAnchorOut: {
+            /** End Offset */
+            end_offset: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Text";
+            /** Ordinal */
+            ordinal: number;
+            /** Start Offset */
+            start_offset: number;
+        };
+        /** PublicTranscriptReaderOut */
+        PublicTranscriptReaderOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Transcript";
+            /** Segments */
+            segments: components["schemas"]["PublicSegmentOut"][];
         };
         /** PutLinkNoteRequest */
         PutLinkNoteRequest: {
@@ -5985,6 +6167,20 @@ export interface components {
             remainingMinutes: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___Ge_ge_0___Le_le_2147483647_____"];
             /** Totalminutes */
             totalMinutes: number;
+        };
+        /** ReceivedUserShareOut */
+        ReceivedUserShareOut: {
+            /** Handle */
+            handle: string;
+            /**
+             * Kind
+             * @default ReceivedUser
+             * @constant
+             */
+            kind: "ReceivedUser";
+            sharedBy: components["schemas"]["ShareUserOut"];
+            /** Subject */
+            subject: string;
         };
         /** RelinkSurfaceCommand */
         RelinkSurfaceCommand: {
@@ -6145,6 +6341,22 @@ export interface components {
             kind: "resource_ref";
             /** Ref */
             ref: string;
+        };
+        /** ResourceShareSnapshotOut */
+        ResourceShareSnapshotOut: {
+            /** Authenticatedhref */
+            authenticatedHref: string;
+            creationAvailability: components["schemas"]["CreationAvailabilityOut"];
+            members: components["schemas"]["Presence_ShareMembersOut_"];
+            /** Receivedaccess */
+            receivedAccess: components["schemas"]["ReceivedUserShareOut"][];
+            /** Shares */
+            shares: (components["schemas"]["UserShareOut"] | components["schemas"]["LinkShareOut"])[];
+            /**
+             * Sharing
+             * @enum {string}
+             */
+            sharing: "None" | "CopyOnly" | "ResourceGrants" | "HighlightGrants" | "LibraryMembership";
         };
         /** ResourceSurfaceCommandRequest */
         ResourceSurfaceCommandRequest: {
@@ -7074,6 +7286,18 @@ export interface components {
             origin: components["schemas"]["DirectNaturalEndOrigin"] | components["schemas"]["LecternNaturalEndOrigin"];
             terminalListening: components["schemas"]["TerminalListeningIn"];
         };
+        /** ShareMembersOut */
+        ShareMembersOut: {
+            /** Canmanage */
+            canManage: boolean;
+        };
+        /** ShareUserOut */
+        ShareUserOut: {
+            displayName: components["schemas"]["Presence_str_"];
+            email: components["schemas"]["Presence_str_"];
+            /** Userhandle */
+            userHandle: string;
+        };
         /**
          * SourceRepairRequest
          * @description Requeue the exact dead job of one nonterminal source attempt.
@@ -7440,6 +7664,17 @@ export interface components {
             kind: "User";
             /** Userhandle */
             userHandle: string;
+        };
+        /** UserShareOut */
+        UserShareOut: {
+            /** Handle */
+            handle: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "User";
+            user: components["schemas"]["ShareUserOut"];
         };
         /** ValidationError */
         ValidationError: {
@@ -13472,7 +13707,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Nexus-Share-Token"?: string | null;
+                "X-Nexus-Share-Token"?: string;
             };
             path?: never;
             cookie?: never;
@@ -13485,9 +13720,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_PublicShareOut_"];
                 };
             };
             /** @description Validation Error */
@@ -13505,7 +13738,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Nexus-Share-Token"?: string | null;
+                "X-Nexus-Share-Token"?: string;
             };
             path: {
                 asset_handle: string;
@@ -13538,7 +13771,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                "X-Nexus-Share-Token"?: string | null;
+                "X-Nexus-Share-Token"?: string;
                 Range?: string | null;
             };
             path?: never;
@@ -13566,77 +13799,11 @@ export interface operations {
             };
         };
     };
-    get_public_resource_share_fragments_public_resource_share_fragments_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Nexus-Share-Token"?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_public_resource_share_navigation_public_resource_share_navigation_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Nexus-Share-Token"?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_public_resource_share_section_public_resource_share_sections__section_handle__get: {
         parameters: {
             query?: never;
             header?: {
-                "X-Nexus-Share-Token"?: string | null;
+                "X-Nexus-Share-Token"?: string;
             };
             path: {
                 section_handle: string;
@@ -13651,9 +13818,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_PublicSectionOut_"];
                 };
             };
             /** @description Validation Error */
@@ -14113,9 +14278,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ResourceShareSnapshotOut_"];
                 };
             };
             /** @description Validation Error */
@@ -14150,9 +14313,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_CreateResourceShareOut_"];
                 };
             };
             /** @description Validation Error */
