@@ -43,11 +43,13 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] epub / sections · 2026-09-26 chapter implementation · ambiguous pillow frontmatter headings still become routine stops: [ticket](tickets/epub-contents-union-overpromotes-source-headings.md).
 - [open] reader / production · 2026-09-27 release preflight · four exact ready books need source-byte proof and fenced 0243 repair before the deferred cutover: [ticket](tickets/reader-chapter-production-correspondence-unverified.md).
 - [open] reader / production migration · 2026-09-27 source-note integration review · confirm every apparatus media has a publication before applying 0245: [ticket](tickets/reader-source-body-production-publication-preflight.md).
+- [open] reader / production repair · 2026-09-27 pr #398 acceptance · 234 source-note publication changes remain clone-only: [ticket](tickets/reader-source-notes-production-repair-pending.md).
 - [open] reader / evidence delivery · 2026-09-27 pr #398 browser acceptance · 7–10 mb document maps need production transfer and phone latency proof: [ticket](tickets/reader-document-map-large-transfer-unverified.md).
 - [open] epub / retained reader content · 2026-09-27 source-note integration review · authored inline text is reordered in a retained note and needs an identity-safe repair: [ticket](tickets/epub-retained-inline-text-order-differs-from-source.md).
 - [open] epub / historical repair · 2026-09-27 corpus census · 17 source/retained text or href mismatches need full retained-coordinate replay: [ticket](tickets/reader-epub-source-correspondence-drift.md).
 - [open] epub / target identity · 2026-09-27 corpus census · seven source-only anchors need relevance classification before repair: [ticket](tickets/reader-epub-source-only-anchors.md).
 - [open] epub / apparatus · 2026-09-27 corpus census · one old note body cannot be proved for preservation: [ticket](tickets/reader-epub-old-apparatus-body-unproved.md).
+- [deferred] epub / apparatus · 2026-09-27 pr #398 review · row 232's second false backlink awaits a deletion-scope decision: [ticket](tickets/reader-epub-row232-backlink-classification.md).
 - [open] epub / parser bound · 2026-09-27 corpus census · two backlink indexes exceed the bounded extractor: [ticket](tickets/reader-epub-backlink-index-exhaustion.md).
 - [open] api / operations · 2026-09-27 release preflight · a read-only live source-hash probe exited 137 and restarted the api once: [ticket](tickets/live-api-source-hash-probe-restarted-container.md).
 - [open] reader / selection · 2026-09-24 reader-inspector-controls · retained selection geometry ignores a canonical reset: [ticket](tickets/retained-selection-geometry-ignores-canonical-reset.md).
