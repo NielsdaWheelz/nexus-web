@@ -104,8 +104,10 @@ each final authenticated read returned 404.
   [gap](tickets/offline-reader-lacks-source-apparatus-inspection.md).
 - normalized source bodies enlarge initial authenticated document-map responses:
   measured decoded utf8 was 2,456,436 bytes for pillow, 1,415,813 for
-  augustine and 509,126 for montaigne. compressed transfer was not measured.
-  a single response avoids target request/cache machinery.
+  augustine and 509,126 for montaigne. compressed transfer, decode, render and
+  device memory costs were not measured. the later pr #398 browser run found
+  larger maps; [measure the delivery cost](tickets/reader-document-map-large-transfer-unverified.md)
+  before changing the one-response contract.
 - the one-origin model omits intermediate history. adoption takes an explicit
   action and can mark finished by position without proving skipped-text coverage.
   restart does not preserve an excursion. removing temporary probes relinquishes
