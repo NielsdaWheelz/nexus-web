@@ -7,7 +7,7 @@ status: open · origin: 2026-09-25 latest-model cutover · area: generation rele
 the implemented cohort is nexus api/worker/host `d6b06991c`, repaired web
 `a50401623`, llm-calling `6a7093f7`, llm-tools `d305da8f`, kernel
 `937434b0`, and codex cli 0.157.1. the isolated stacks have not been deployed.
-the subsequent integration with main `dc9838cf6` changes the final source;
+the subsequent integration with main `dc9838cf6` and `47d8143cf` changes the final source;
 no live journey on that merged tree has been observed.
 the nonsecret current evidence and exact
 limits are in [the verification receipt](../codex-shell-cutover-verification.md).
