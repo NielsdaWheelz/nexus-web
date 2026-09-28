@@ -1,3 +1,4 @@
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { isAbortError } from "@/lib/errors";
 import { OfflineMediaClientStore } from "./clientStore";
 import {
@@ -7,15 +8,11 @@ import {
   type NetworkPolicy,
   type OfflineDownloadSpec,
   type OfflineMediaCommand,
+  type OfflineMediaCommandBody,
   type OfflineMediaRejectedCode,
   type OfflineMediaReplyOutcome,
 } from "./contract";
 import type { OfflineMediaTransport } from "./transport";
-
-type OfflineDownloadSpecReader = (
-  mediaId: string,
-  signal: AbortSignal,
-) => Promise<OfflineDownloadSpec>;
 
 export interface OfflineMediaController {
   readonly enqueue: (mediaId: string) => Promise<void>;
@@ -23,18 +20,11 @@ export interface OfflineMediaController {
   readonly retry: (mediaId: string) => Promise<void>;
   readonly remove: (mediaId: string) => Promise<void>;
   readonly setNetworkPolicy: (policy: NetworkPolicy) => Promise<void>;
-  readonly openDownloads: () => void;
 }
 
 interface PendingReply {
   readonly resolve: (outcome: OfflineMediaReplyOutcome) => void;
   readonly reject: (error: Error) => void;
-}
-
-interface ResolvingRequest {
-  readonly generation: number;
-  readonly abortController: AbortController;
-  nativeRequested: boolean;
 }
 
 export class OfflineMediaRejectedError extends Error {
@@ -74,21 +64,23 @@ export class OfflineMediaControllerRuntime
   implements OfflineMediaController
 {
   private readonly pendingReplies = new Map<string, PendingReply>();
-  private readonly resolving = new Map<string, ResolvingRequest>();
-  private readonly resolvingGenerations = new Map<string, number>();
+  // At most one resolve per media id. A late spec or reply counts only while
+  // its own AbortController is still the map entry.
+  private readonly resolving = new Map<string, AbortController>();
   private stopTransport: (() => void) | null = null;
   private disposed = false;
 
   constructor(
     private readonly accountId: string,
-    readonly store: OfflineMediaClientStore,
+    private readonly store: OfflineMediaClientStore,
     private readonly transport: OfflineMediaTransport,
-    private readonly readDownloadSpec: OfflineDownloadSpecReader,
-    private readonly ownedOrigin: string,
+    private readonly readDownloadSpec: (
+      mediaId: string,
+      signal: AbortSignal,
+    ) => Promise<OfflineDownloadSpec>,
     private readonly showError: (message: string) => void,
     private readonly onFatal: (error: Error) => void,
     private readonly handleUnauthenticated: (error: unknown) => boolean,
-    readonly openDownloads: () => void,
   ) {}
 
   async connect(): Promise<void> {
@@ -136,28 +128,30 @@ export class OfflineMediaControllerRuntime
   };
 
   enqueue = async (mediaId: string): Promise<void> => {
-    if (this.disposed || this.store.getItem(mediaId).kind === "Present") return;
-    const generation = (this.resolvingGenerations.get(mediaId) ?? 0) + 1;
-    this.resolvingGenerations.set(mediaId, generation);
-    const abortController = new AbortController();
-    const request = { generation, abortController, nativeRequested: false };
+    if (
+      this.disposed ||
+      this.resolving.has(mediaId) ||
+      this.store.getInventory().some((item) => item.mediaId === mediaId)
+    ) {
+      return;
+    }
+    const request = new AbortController();
     this.resolving.set(mediaId, request);
-    this.store.beginResolving(mediaId);
-    let deadlineExpired = false;
-    const deadline = setTimeout(() => {
-      deadlineExpired = true;
-      abortController.abort();
-    }, OFFLINE_DOWNLOAD_SPEC_DEADLINE_MS);
+    const deadline = setTimeout(
+      () => request.abort(),
+      OFFLINE_DOWNLOAD_SPEC_DEADLINE_MS,
+    );
     try {
-      const spec = await this.readDownloadSpec(mediaId, abortController.signal);
-      if (!this.isCurrentResolving(mediaId, request)) return;
+      const spec = await this.readDownloadSpec(mediaId, request.signal);
+      if (this.resolving.get(mediaId) !== request) return;
       if (spec.mediaId !== mediaId) {
         throw new TypeError("OfflineDownloadSpec mediaId mismatch");
       }
-      this.store.updateResolvingTitle(mediaId, spec.title);
-      request.nativeRequested = true;
+      // Resolving must exist before Enqueue is sent: native emits the item's
+      // first state before its reply, and an unknown id is a defect.
+      this.store.beginResolving(mediaId, spec.title);
       const outcome = await this.request({ kind: "Enqueue", spec });
-      if (!this.isCurrentResolving(mediaId, request)) return;
+      if (this.resolving.get(mediaId) !== request) return;
       if (outcome.kind === "Rejected") {
         this.store.clearResolving(mediaId);
         this.showError(offlineMediaRejectionMessage(outcome.code));
@@ -168,41 +162,38 @@ export class OfflineMediaControllerRuntime
         throw new Error(`Enqueue returned ${outcome.kind}`);
       }
     } catch (error) {
-      if (!this.isCurrentResolving(mediaId, request)) return;
+      // justify-ignore-error: a cancelled or disposed resolve owns no outcome;
+      // its rejection is our own abort or the ended session.
+      if (this.resolving.get(mediaId) !== request) return;
       this.store.clearResolving(mediaId);
-      if (this.handleUnauthenticated(error)) {
+      if (this.handleUnauthenticated(error)) return;
+      if (isAbortError(error)) {
+        // Cancel and dispose end the resolve before aborting it, so a live
+        // abort is the deadline.
+        this.showError("Preparing the download took too long. Try again.");
         return;
       }
-      if (deadlineExpired) {
-        this.showError("Preparing the download took too long. Try again.");
-      } else if (!isAbortError(error)) {
-        this.showError("Couldn’t prepare this download.");
-      }
+      // justify-defect: only an expected API failure of the spec read is
+      // user-facing; decode, protocol and transport violations are defects.
+      if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+      this.showError("Couldn’t prepare this download.");
     } finally {
       clearTimeout(deadline);
-      if (this.isCurrentResolving(mediaId, request)) {
+      if (this.resolving.get(mediaId) === request) {
         this.resolving.delete(mediaId);
       }
     }
   };
 
   cancel = async (mediaId: string): Promise<void> => {
-    const resolving = this.resolving.get(mediaId);
-    if (resolving !== undefined) {
-      this.resolvingGenerations.set(mediaId, resolving.generation + 1);
-      this.resolving.delete(mediaId);
-      resolving.abortController.abort("cancel");
-      const current = this.store.getItem(mediaId);
-      if (
-        !resolving.nativeRequested &&
-        (current.kind === "Absent" || current.value.kind === "Resolving")
-      ) {
-        this.store.clearResolving(mediaId);
-        return;
-      }
-    }
-    const accepted = await this.acceptCommand({ kind: "Cancel", mediaId });
-    if (resolving !== undefined && accepted) {
+    const request = this.resolving.get(mediaId);
+    this.resolving.delete(mediaId);
+    request?.abort();
+    // A stale Accepted must keep the Resolving row of a newer resolve.
+    if (
+      (await this.acceptCommand({ kind: "Cancel", mediaId })) &&
+      !this.resolving.has(mediaId)
+    ) {
       this.store.clearResolving(mediaId);
     }
   };
@@ -224,10 +215,9 @@ export class OfflineMediaControllerRuntime
     this.disposed = true;
     this.stopTransport?.();
     this.stopTransport = null;
-    for (const request of this.resolving.values()) {
-      request.abortController.abort("session-disposed");
-    }
+    const requests = [...this.resolving.values()];
     this.resolving.clear();
+    for (const request of requests) request.abort();
     const error = new Error("Offline media session ended");
     for (const pending of this.pendingReplies.values()) pending.reject(error);
     this.pendingReplies.clear();
@@ -235,9 +225,7 @@ export class OfflineMediaControllerRuntime
   }
 
   private async acceptCommand(
-    command:
-      | { readonly kind: "Cancel" | "Retry" | "Remove"; readonly mediaId: string }
-      | { readonly kind: "SetNetworkPolicy"; readonly policy: NetworkPolicy },
+    command: OfflineMediaCommandBody,
   ): Promise<boolean> {
     if (this.disposed) return false;
     const outcome = await this.request(command);
@@ -253,67 +241,22 @@ export class OfflineMediaControllerRuntime
   }
 
   private request(
-    command:
-      | Omit<Extract<OfflineMediaCommand, { kind: "Connect" }>, "requestId" | "protocolVersion">
-      | Omit<Extract<OfflineMediaCommand, { kind: "GetSnapshot" }>, "requestId" | "protocolVersion">
-      | Omit<Extract<OfflineMediaCommand, { kind: "Enqueue" }>, "requestId" | "protocolVersion">
-      | Omit<Extract<OfflineMediaCommand, { kind: "Cancel" | "Retry" | "Remove" }>, "requestId" | "protocolVersion">
-      | Omit<Extract<OfflineMediaCommand, { kind: "SetNetworkPolicy" }>, "requestId" | "protocolVersion">,
+    body: OfflineMediaCommandBody,
   ): Promise<OfflineMediaReplyOutcome> {
     if (this.disposed) {
       return Promise.reject(new Error("Offline media session ended"));
     }
-    const requestId = crypto.randomUUID();
-    let wireCommand: OfflineMediaCommand;
-    switch (command.kind) {
-      case "Connect":
-        wireCommand = {
-          kind: command.kind,
-          accountId: command.accountId,
-          requestId,
-          protocolVersion: OFFLINE_MEDIA_PROTOCOL_VERSION,
-        };
-        break;
-      case "GetSnapshot":
-        wireCommand = {
-          kind: command.kind,
-          requestId,
-          protocolVersion: OFFLINE_MEDIA_PROTOCOL_VERSION,
-        };
-        break;
-      case "Enqueue":
-        wireCommand = {
-          kind: command.kind,
-          spec: command.spec,
-          requestId,
-          protocolVersion: OFFLINE_MEDIA_PROTOCOL_VERSION,
-        };
-        break;
-      case "Cancel":
-      case "Retry":
-      case "Remove":
-        wireCommand = {
-          kind: command.kind,
-          mediaId: command.mediaId,
-          requestId,
-          protocolVersion: OFFLINE_MEDIA_PROTOCOL_VERSION,
-        };
-        break;
-      case "SetNetworkPolicy":
-        wireCommand = {
-          kind: command.kind,
-          policy: command.policy,
-          requestId,
-          protocolVersion: OFFLINE_MEDIA_PROTOCOL_VERSION,
-        };
-        break;
-    }
+    const command: OfflineMediaCommand = {
+      ...body,
+      requestId: crypto.randomUUID(),
+      protocolVersion: OFFLINE_MEDIA_PROTOCOL_VERSION,
+    };
     return new Promise((resolve, reject) => {
-      this.pendingReplies.set(requestId, { resolve, reject });
+      this.pendingReplies.set(command.requestId, { resolve, reject });
       try {
-        this.transport.send(wireCommand);
+        this.transport.send(command);
       } catch (error) {
-        this.pendingReplies.delete(requestId);
+        this.pendingReplies.delete(command.requestId);
         reject(
           error instanceof Error
             ? error
@@ -349,17 +292,6 @@ export class OfflineMediaControllerRuntime
         this.store.installNetworkPolicy(inbound.event.policy);
         break;
     }
-  }
-
-  private isCurrentResolving(
-    mediaId: string,
-    request: ResolvingRequest,
-  ): boolean {
-    return (
-      !this.disposed &&
-      this.resolving.get(mediaId) === request &&
-      this.resolvingGenerations.get(mediaId) === request.generation
-    );
   }
 
   private fail(error: Error): void {

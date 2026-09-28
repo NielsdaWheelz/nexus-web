@@ -4,10 +4,8 @@
  * One request ingress for "show me my downloads".
  *
  * The Downloads surface is composed above both offline capabilities, while the
- * things that ask for it (the account menu, and the native audio bridge through
- * `OfflineMediaController.openDownloads`) live on either side of that
- * boundary. Routing the request through one ingress keeps a single owner for
- * the surface instead of one copy per capability.
+ * account menu that asks for it lives outside that boundary. Routing the
+ * request through one ingress keeps a single owner for the surface.
  */
 type DownloadsOpenListener = () => void;
 
