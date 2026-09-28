@@ -36,11 +36,6 @@ import { useOpenDailyPage, resolveDailyLocalDate } from "@/lib/notes/openDailyPa
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { getNexusCommand, NEXUS_COMMAND_IDS } from "@/lib/nexus/commands";
 import {
-  beginNexusPerformance,
-  completeNexusPerformanceAfterPaint,
-  NEXUS_OPEN_PERFORMANCE,
-} from "@/lib/nexus/performance";
-import {
   dispatchNexusTarget,
   isAndroidShellRestrictedHref,
   materializeNexusTarget,
@@ -98,7 +93,6 @@ import {
 } from "@/lib/nexus/results";
 import { usePaneWarm } from "@/lib/panes/paneWarm";
 import { dispatchPaneSearchRequest } from "@/lib/panes/paneSearchEvents";
-import { resolveWorkspaceActivationRouteId } from "@/lib/panes/paneIdentity";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import {
   usePlayerCommands,
@@ -151,10 +145,6 @@ interface NexusHistoryResponse {
   };
 }
 
-export interface NexusManagedPane extends NexusPane {
-  readonly activationRouteId: ReturnType<typeof resolveWorkspaceActivationRouteId>;
-}
-
 export interface NexusManagedClosedPane {
   readonly id: string;
   readonly label: string;
@@ -176,7 +166,7 @@ export interface NexusController {
   readonly focusKey: string;
   readonly dismissalConfirmation: AddDismissalConfirmation;
   readonly desktop: DesktopNexusController;
-  readonly managedPanes: readonly NexusManagedPane[];
+  readonly managedPanes: readonly NexusPane[];
   readonly managedClosedPanes: readonly NexusManagedClosedPane[];
   readonly managedTabsFeedback: {
     readonly content: FeedbackContent;
@@ -531,19 +521,15 @@ export function useNexusController(): NexusController {
       apiFetch<NexusHistoryResponse>("/api/me/nexus-history", { signal }),
   });
 
-  const panes = useMemo<NexusManagedPane[]>(
+  const panes = useMemo<NexusPane[]>(
     () =>
-      getWorkspacePrimaryPanes(state).map((pane) => {
-        const href = pane.currentVisit.href;
-        return {
-          id: pane.id,
-          href,
-          visibility: pane.visibility,
-          label: resolveWorkspacePaneLabel(pane, runtimeLabelByPaneId).label,
-          current: pane.id === state.activePrimaryPaneId,
-          activationRouteId: resolveWorkspaceActivationRouteId(href),
-        };
-      }),
+      getWorkspacePrimaryPanes(state).map((pane) => ({
+        id: pane.id,
+        href: pane.currentVisit.href,
+        visibility: pane.visibility,
+        label: resolveWorkspacePaneLabel(pane, runtimeLabelByPaneId).label,
+        current: pane.id === state.activePrimaryPaneId,
+      })),
     [runtimeLabelByPaneId, state],
   );
   const managedClosedPanes = useMemo<NexusManagedClosedPane[]>(
@@ -1561,9 +1547,6 @@ export function useNexusController(): NexusController {
         }
         case "Replace": {
           const detail = intent.detail;
-          if (detail.kind === "Root") {
-            beginNexusPerformance(NEXUS_OPEN_PERFORMANCE);
-          }
           suppressReturnFocusRef.current = false;
           if (
             detail.kind === "Root" &&
@@ -1877,8 +1860,6 @@ export function useNexusController(): NexusController {
     dialogLabel,
     nexusOpenShortcutLabel: keybindingController.labelFor("Nexus.Open") ?? "",
     actionsRequest,
-    inputReady: () =>
-      completeNexusPerformanceAfterPaint(NEXUS_OPEN_PERFORMANCE),
     setQuery,
     setActiveEntry,
     activatePrimary: ({ entry, disposition, modality }) =>

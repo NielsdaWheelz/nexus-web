@@ -13,10 +13,6 @@ import {
   useMobileChrome,
   useMobileChromeSurface,
 } from "@/lib/workspace/mobileChrome";
-import {
-  beginNexusPerformance,
-  NEXUS_OPEN_PERFORMANCE,
-} from "@/lib/nexus/performance";
 import type { WorkspaceAdjacentPaneDirection } from "@/lib/workspace/store";
 import styles from "./switchboard.module.css";
 
@@ -213,7 +209,6 @@ export default function NexusButton({
             suppressNextPointerClickRef.current = false;
             return;
           }
-          beginNexusPerformance(NEXUS_OPEN_PERFORMANCE);
           flushSync(() => onOpen(event.currentTarget));
         }}
       >

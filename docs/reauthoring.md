@@ -18,7 +18,7 @@ calibration (chat tools, 2026-09-21): a spec that describes the current structur
 
 verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, one alembic head) plus one named manual check per module. there are no automated tests; that is a known, accepted trade.
 
-wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the routes it rewrites and deletes their web decoders. the generated `apps/web/src/lib/api/wire.gen.ts` is excluded from line counts and targets. untyped JSON routes: 163 of 217 operations (2026-09-28; 18 typed, 24 without a body, 12 binary or SSE).
+wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the routes it rewrites and deletes their web decoders. the generated `apps/web/src/lib/api/wire.gen.ts` is excluded from line counts and targets. untyped JSON routes: 162 of 216 operations (2026-09-28; 18 typed, 24 without a body, 12 binary or SSE).
 
 ## inventory and targets
 
@@ -60,7 +60,7 @@ wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the 
 | substrate: ui primitives (+3.5k css, fonts/legal) | 14.3k | 6k | reauthor css | open |
 | substrate: jobs/worker | 6.6k | 2k | reauthor | first pass landed (size/jobs-py): 6.4k→4.0k, −38%; queue.py 1,027 (310 SQL lines) and worker.py 707 are the remaining mass |
 | codex agent host (+ deploy isolation) | 4.4k | 2k | keep; declare isolation in compose, not python | open |
-| telemetry | 1.5k | 0.5k | delete rum; keep client-defects + release backup tooling | open |
+| telemetry (WebVitalsReporter, lib/nexus/performance.ts, clientDefects.ts, api/telemetry/client-defects, routes+schemas/telemetry.py, release_backup.py, env-prod-backup.example) | 0.6k | 0.5k | delete rum; keep client-defects + release backup tooling | rum deleted (cleanup/delete-write-only-telemetry): web-vitals reporter/route/schema and nexus user timing with its call sites in 9 files; 868→592 over the named files (the old 1.5k is not reproducible); client-defects + release_backup remain, release_backup.py 441 is the mass |
 | android shell/build, scripts/config | 5.0k | 4k | keep | open |
 | TOTAL | 544.6k | ~140k | | |
 

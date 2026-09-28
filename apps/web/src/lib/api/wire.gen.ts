@@ -3269,26 +3269,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/telemetry/web-vitals": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Post Web Vital
-         * @description Record one Core Web Vital sample as a ``rum.web_vital`` structlog line.
-         */
-        post: operations["post_web_vital_telemetry_web_vitals_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/users/search": {
         parameters: {
             query?: never;
@@ -7921,30 +7901,6 @@ export interface components {
             kind: "WebTextOffsets";
             /** Start Offset */
             start_offset: number;
-        };
-        /**
-         * WebVitalRequest
-         * @description One Core Web Vital sample reported by the browser.
-         */
-        WebVitalRequest: {
-            /** Href */
-            href: string;
-            /** Id */
-            id: string;
-            /**
-             * Name
-             * @enum {string}
-             */
-            name: "LCP" | "INP" | "CLS" | "TTFB";
-            /** Nav Id */
-            nav_id: string;
-            /**
-             * Rating
-             * @enum {string}
-             */
-            rating: "good" | "needs-improvement" | "poor";
-            /** Value */
-            value: number;
         };
         /**
          * WorkspaceSessionPutRequest
@@ -14853,41 +14809,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ClientDefectRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_web_vital_telemetry_web_vitals_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WebVitalRequest"];
             };
         };
         responses: {

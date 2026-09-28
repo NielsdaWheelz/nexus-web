@@ -27,7 +27,6 @@ import {
   usePaneRuntime,
   useRecordPaneNavigationModality,
 } from "@/lib/panes/paneRuntime";
-import { resolveWorkspaceActivationRouteId } from "@/lib/panes/paneIdentity";
 import {
   activateTargetAnchor,
   type TargetLinkMouseEvent,
@@ -71,7 +70,6 @@ import {
   findPaneSearchFocusTarget,
 } from "@/lib/workspace/paneDom";
 import { useActiveMobileViewport } from "@/lib/mobileViewport/MobileViewportProvider";
-import { NexusPanePerformanceContext } from "@/lib/nexus/performance";
 import styles from "./PaneShell.module.css";
 import { pointerModality } from "@/lib/ui/pointerModality";
 
@@ -156,13 +154,6 @@ export default function PaneShell({
     // justify-defect: PaneShell execution requires pane-scoped navigation.
     throw new Error("PaneShell must be used inside PaneRuntimeProvider");
   }
-  const panePerformance = useMemo(
-    () => ({
-      activationRouteId: resolveWorkspaceActivationRouteId(paneRuntime.href),
-      isActive,
-    }),
-    [isActive, paneRuntime.href],
-  );
   const recordNavigationModality = useRecordPaneNavigationModality();
   const activateTarget = paneRuntime.activateTarget;
   const activateChromeAnchor = useCallback(
@@ -813,23 +804,19 @@ export default function PaneShell({
             }
             style={bodyStyle}
           >
-            <NexusPanePerformanceContext.Provider
-              value={panePerformance}
-            >
-              {acceptedCollection ? (
-                <div
-                  className={styles.collectionRow}
-                  role="group"
-                  aria-label={acceptedCollection.label}
-                  data-pane-collection-controls="true"
-                >
-                  {acceptedCollection.content}
-                </div>
-              ) : null}
-              <PanePrimaryChromeProvider publish={publishPrimaryChrome}>
-                {children}
-              </PanePrimaryChromeProvider>
-            </NexusPanePerformanceContext.Provider>
+            {acceptedCollection ? (
+              <div
+                className={styles.collectionRow}
+                role="group"
+                aria-label={acceptedCollection.label}
+                data-pane-collection-controls="true"
+              >
+                {acceptedCollection.content}
+              </div>
+            ) : null}
+            <PanePrimaryChromeProvider publish={publishPrimaryChrome}>
+              {children}
+            </PanePrimaryChromeProvider>
             <div
               className={styles.refreshIndicator}
               data-refresh-state={refreshState.kind}

@@ -18,14 +18,6 @@ import {
   type NexusSource,
   type NexusTargetActivation,
 } from "@/lib/nexus/model";
-import {
-  beginNexusPerformance,
-  completeNexusPerformance,
-  completeNexusPerformanceAfterPaint,
-  NEXUS_LOCAL_FIND_PERFORMANCE,
-  NEXUS_OPEN_PERFORMANCE,
-  NEXUS_OPENABLES_PERFORMANCE,
-} from "@/lib/nexus/performance";
 import SwitchboardRow from "./SwitchboardRow";
 import styles from "./switchboard.module.css";
 
@@ -96,13 +88,7 @@ export default function SwitchboardSearch({
   useLayoutEffect(() => {
     if (!active) return;
     inputRef.current?.focus({ preventScroll: true });
-    completeNexusPerformanceAfterPaint(NEXUS_OPEN_PERFORMANCE);
   }, [active, focusKey]);
-
-  useLayoutEffect(() => {
-    completeNexusPerformance(NEXUS_LOCAL_FIND_PERFORMANCE);
-    completeNexusPerformance(NEXUS_OPENABLES_PERFORMANCE);
-  }, [projection.groups, query]);
 
   useLayoutEffect(() => {
     if (
@@ -219,10 +205,7 @@ export default function SwitchboardSearch({
           autoComplete="off"
           enterKeyHint="search"
           data-mobile-nexus-search
-          onChange={(event) => {
-            beginNexusPerformance(NEXUS_LOCAL_FIND_PERFORMANCE);
-            onQuery(event.currentTarget.value);
-          }}
+          onChange={(event) => onQuery(event.currentTarget.value)}
           onKeyDown={onSearchKeyDown}
           onCompositionStart={() => {
             composingRef.current = true;
