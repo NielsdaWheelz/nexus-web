@@ -1,4 +1,9 @@
-"""Sealed outward handles: completion facts, activity exclusions, devices."""
+"""Sealed outward handles for completion facts, activity exclusions and devices.
+
+A handle is ``<prefix>.<id>.<tag>`` in canonical base64url, the tag an HMAC
+under a per-kind key derived from ``STREAM_TOKEN_SIGNING_KEY``. A device handle
+is the tag alone: a one-way pseudonym, so no raw device id leaves the server.
+"""
 
 from __future__ import annotations
 
@@ -9,9 +14,7 @@ from typing import NamedTuple
 from uuid import UUID
 
 from nexus.config import get_settings
-from nexus.errors import ApiErrorCode, InvalidRequestError
-
-_TAG_BYTES = 16
+from nexus.errors import InvalidRequestError
 
 
 class HandleKind(NamedTuple):
@@ -25,55 +28,40 @@ EXCLUSION = HandleKind("nce1", "activity exclusion", b"consumption-activity-excl
 DEVICE = HandleKind("ncd1", "device", b"consumption-device\0v1")
 
 
-class InvalidHandle(InvalidRequestError):
-    def __init__(self, kind: HandleKind) -> None:
-        super().__init__(ApiErrorCode.E_INVALID_REQUEST, f"Invalid {kind.label} handle")
-
-
 def seal(kind: HandleKind, value: UUID) -> str:
-    """The canonical ``<prefix>.<id>.<tag>`` handle for one identity."""
-    return f"{kind.prefix}.{_b64url(value.bytes)}.{_b64url(_tag(kind, value.bytes))}"
+    return f"{kind.prefix}.{_encode(value.bytes)}.{_encode(_tag(kind, value.bytes))}"
 
 
 def unseal(kind: HandleKind, raw: str) -> UUID:
-    """Recover the identity, rejecting a foreign prefix, a forgery, or padding."""
+    """The sealed identity; 400 for a foreign prefix, a forgery or non-canonical base64url."""
     try:
         prefix, encoded_id, encoded_tag = raw.split(".")
-        if prefix != kind.prefix:
-            raise ValueError("wrong prefix")
-        value = UUID(bytes=_decode_b64url(encoded_id, 16))
-        provided = _decode_b64url(encoded_tag, _TAG_BYTES)
+        value = UUID(bytes=_decode(encoded_id))
+        if prefix != kind.prefix or not hmac.compare_digest(
+            _decode(encoded_tag), _tag(kind, value.bytes)
+        ):
+            raise ValueError("not a handle of this kind")
     except ValueError as exc:
-        raise InvalidHandle(kind) from exc
-    if not hmac.compare_digest(provided, _tag(kind, value.bytes)):
-        raise InvalidHandle(kind)
+        raise InvalidRequestError(message=f"Invalid {kind.label} handle") from exc
     return value
 
 
 def seal_device(device_id: str) -> str:
-    """A one-way pseudonym: the tag alone, so no device id leaves the server."""
-    raw = device_id.encode("utf-8")
-    if not 1 <= len(raw) <= 200:
-        raise ValueError("device id must be 1..200 UTF-8 bytes")
-    return f"{DEVICE.prefix}.{_b64url(_tag(DEVICE, raw))}"
+    return f"{DEVICE.prefix}.{_encode(_tag(DEVICE, device_id.encode()))}"
 
 
 def _tag(kind: HandleKind, payload: bytes) -> bytes:
     root = base64.b64decode(get_settings().effective_stream_token_signing_key, validate=True)
-    if len(root) < 32:
-        raise RuntimeError("STREAM_TOKEN_SIGNING_KEY must decode to at least 32 bytes")
     key = hmac.new(root, b"nexus-handle-key\0" + kind.domain, hashlib.sha256).digest()
-    digest = hmac.new(key, b"nexus-handle\0" + kind.domain + payload, hashlib.sha256).digest()
-    return digest[:_TAG_BYTES]
+    return hmac.new(key, b"nexus-handle\0" + kind.domain + payload, hashlib.sha256).digest()[:16]
 
 
-def _b64url(raw: bytes) -> str:
+def _encode(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
-def _decode_b64url(value: str, expected_bytes: int) -> bytes:
-    """Decode then re-encode: the round trip is what makes the grammar single-valued."""
+def _decode(value: str) -> bytes:
     decoded = base64.b64decode(value + "=" * (-len(value) % 4), altchars=b"-_", validate=True)
-    if len(decoded) != expected_bytes or _b64url(decoded) != value:
+    if len(decoded) != 16 or _encode(decoded) != value:
         raise ValueError("noncanonical base64url")
     return decoded

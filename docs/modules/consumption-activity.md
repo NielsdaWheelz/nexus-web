@@ -47,12 +47,12 @@ All breakdowns, sessions, streaks, and Year presentation derive from effective
 
 | Concern | Owner |
 | --- | --- |
-| Span and exclusion DML | `python/nexus/services/consumption/activity_store.py` |
-| Replayable writes and public reads | `python/nexus/services/consumption/service.py` |
-| Aggregation, filtering, sessions | `python/nexus/services/consumption/activity_stats.py` |
-| Completion policy and the read-state derivation | `python/nexus/services/consumption/projection.py` |
-| Stats and Sessions wire payloads | `python/nexus/services/consumption/stats_read.py` |
-| Strict transport shapes | Python activity schema and web Consumption decoders |
+| Viewer-locked write transactions and replayed commands | `python/nexus/services/consumption/__init__.py` |
+| Span ingest and exclusion writes | `python/nexus/services/consumption/activity.py` |
+| Current state writes, completion facts and public reads | `python/nexus/services/consumption/service.py` |
+| Aggregation, filtering, sessions and the Stats and Sessions payloads | `python/nexus/services/consumption/stats.py` |
+| The read-state derivation | `python/nexus/services/consumption/projection.py` |
+| Strict transport shapes | `python/nexus/schemas/consumption_activity.py`; the web reads them as generated wire types |
 | Browser capture | `apps/web/src/lib/consumption/activityRecorder.ts` |
 | Browser durability and health | `activityOutbox.ts` and `activityRuntime.ts` |
 | Android listening capture | `NativeConsumptionRecorder.kt` |
@@ -62,9 +62,10 @@ All breakdowns, sessions, streaks, and Year presentation derive from effective
 ## Boundaries
 
 `POST /consumption/activity` is the observation endpoint. The browser BFF
-alone injects the private `nx_device`; each span's `captureKey` provides fact
-identity, so a retried batch inserts nothing and a reused key with different
-facts conflicts.
+alone injects the private `nx_device`, overwriting any client value, and bounds a
+batch at 48,000 bytes; FastAPI is the sole validator of the frozen body. Each
+span's `captureKey` provides fact identity, so a retried batch inserts nothing
+and a reused key with different facts conflicts.
 
 `POST /consumption/activity-exclusions` is a strict replayable `Exclude |
 Restore` lifecycle union. Exclude names one exact, un-clipped session by media,
@@ -74,15 +75,20 @@ the write transaction, and memoizes the result under
 `Consumption.ActivityExclusions`. No command accepts a duration.
 
 `GET /consumption/stats` and `GET /consumption/sessions` are private,
-`no-store` factual reads. Session device summaries are required because every
-session is observed. Raw device IDs and span payloads never reach presentation.
+`no-store` factual reads over an instant range. The pane resolves a local period
+to the first instant of each bounding local midnight (`statsPeriod.ts`); Day,
+Week, Month and Year bucket edges follow the same rule in SQL, so a repeated
+midnight starts at its earlier reading and a skipped one at its transition; a
+date the zone skips entirely has no bucket of its own. Session device summaries
+are required because every session is observed. Raw device IDs and span
+payloads never reach presentation.
 The Stats pane binds a session continuation to the exact committed Stats path
 and decoded URL state, never the still-pending requested view. The shared manual
 cursor owner atomically adopts first-page rows, cursor, loading, and expected
 request failure; it aborts and generation-rejects an older continuation when a
 new first page commits. A failed continuation preserves committed rows and
-offers Retry. Same-system decoder failures remain defects, and owned cursor
-absence remains `Presence<string>` until the pagination adapter unwraps it.
+offers Retry. Owned cursor absence remains `Presence<string>` until the
+pagination adapter unwraps it.
 
 The browser recorder has one tab-local owner. Reader, non-Android global-audio,
 and visible-video adapters publish observations to it; none persists, retries,

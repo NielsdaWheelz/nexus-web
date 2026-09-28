@@ -1,10 +1,9 @@
-"""The consumption read model.
+"""The consumption read model other slices compose.
 
-Explicit override, then the podcast listening ladder, then reader engagement:
-that precedence is derived once in Python (for Lectern items) and once in SQL
-(for every listing that joins :func:`engagement_fact_rows_sql` or
-:func:`episode_state_case_sql`). This module is the sole owner of both; no
-adopter reads the consumption tables directly.
+Read state has one rule, written once in SQL: explicit override, then the
+podcast listening ladder, then reader engagement, else unread. Listings join
+:func:`engagement_fact_rows_sql` or :func:`episode_state_case_sql`; Lectern
+items and :func:`media_read_states` read the same relation.
 """
 
 from __future__ import annotations
@@ -12,20 +11,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from math import ceil
-from typing import cast
+from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
-from nexus.db.models import MediaKind
 from nexus.schemas.consumption import (
     ChapterOut,
     ConsumptionOut,
     ConsumptionStateValue,
     FooterAudioActivation,
-    LecternActivation,
     LecternItemOut,
     LecternSnapshot,
     ListeningStateOut,
@@ -36,423 +33,23 @@ from nexus.schemas.consumption import (
     PodcastPlaybackPreference,
     ReadableActivation,
 )
-from nexus.schemas.consumption_activity import ActivityModality
-from nexus.schemas.media import MediaReadState, PlaybackSourceOut
+from nexus.schemas.media import MediaReadState
 from nexus.schemas.media_summary import MediaDurationOut, MediaSummaryOut
 from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable, present
 from nexus.schemas.reading_time import ReadingTimeEstimateOut
-from nexus.services.consumption import _listening_store, state
+from nexus.services.consumption import _listening_store
 from nexus.services.consumption._lectern_store import LecternRow
 from nexus.services.consumption._listening_store import ListeningRow
 from nexus.services.playback_source import derive_playback_source
-from nexus.services.podcasts.playback_preferences import (
-    SubscriptionPlaybackSettings,
-    load_subscription_playback_settings,
-)
+from nexus.services.podcasts.playback_preferences import load_subscription_playback_settings
 
 FINISHED_PROGRESSION = 0.95
-_MAX_CHAPTERS = 100
-_MAX_TITLE_CHARS = 300
-_READABLE_KINDS = frozenset(
-    {MediaKind.web_article.value, MediaKind.epub.value, MediaKind.pdf.value}
-)
-_COMPLETION_MODALITY: dict[str, ActivityModality] = {
-    MediaKind.web_article.value: "Reading",
-    MediaKind.epub.value: "Reading",
-    MediaKind.pdf.value: "Reading",
-    MediaKind.podcast_episode.value: "Listening",
-    MediaKind.video.value: "Viewing",
-}
-_TO_READ_STATE: dict[ConsumptionStateValue, MediaReadState] = {
+_READABLE_KINDS = frozenset({"web_article", "epub", "pdf"})
+_TO_READ_STATE: dict[str, MediaReadState] = {
     "Unread": "unread",
     "InProgress": "in_progress",
     "Finished": "finished",
 }
-
-
-def completion_modality_for_kind(kind: str) -> ActivityModality:
-    return _COMPLETION_MODALITY[kind]
-
-
-def listening_duration(
-    *, position_ms: int, listening_duration_ms: int | None, feed_duration_seconds: int | None
-) -> Absent | Present[MediaDurationOut]:
-    """Display media time at 1×, with the listening record before feed duration."""
-    duration_ms = (
-        listening_duration_ms
-        if listening_duration_ms is not None
-        else feed_duration_seconds * 1000
-        if feed_duration_seconds is not None
-        else None
-    )
-    if duration_ms is None or duration_ms <= 0:
-        return absent()
-    return present(
-        MediaDurationOut(
-            modality="Listen",
-            estimate=ReadingTimeEstimateOut(
-                total_minutes=ceil(duration_ms / 60_000),
-                remaining_minutes=present(ceil(max(0, duration_ms - position_ms) / 60_000)),
-            ),
-        )
-    )
-
-
-def build_snapshot(
-    db: Session, *, viewer_id: UUID, rows: list[LecternRow], summaries: dict[UUID, MediaSummaryOut]
-) -> LecternSnapshot:
-    """Project the viewer's visible rows into the canonical snapshot."""
-    return LecternSnapshot(
-        items=_project(
-            db, viewer_id=viewer_id, rows=[r for r in rows if r.visible], summaries=summaries
-        )
-    )
-
-
-def build_item(
-    db: Session, *, viewer_id: UUID, row: LecternRow, summaries: dict[UUID, MediaSummaryOut]
-) -> LecternItemOut:
-    return _project(db, viewer_id=viewer_id, rows=[row], summaries=summaries)[0]
-
-
-def activation_kind(row: LecternRow) -> str:
-    """The activation discriminator alone, without loading listening state."""
-    if row.kind in _READABLE_KINDS:
-        return "Readable"
-    return "FooterAudio" if _stream_source(row) is not None else "OpenPane"
-
-
-def _stream_source(row: LecternRow) -> PlaybackSourceOut | None:
-    """The playable audio source, or ``None`` when the row opens a pane instead."""
-    if row.kind != MediaKind.podcast_episode.value:
-        return None
-    source = derive_playback_source(
-        kind=row.kind,
-        external_playback_url=row.external_playback_url,
-        canonical_source_url=row.canonical_source_url,
-        provider=row.provider,
-        provider_id=row.provider_id,
-    )
-    return source if source is not None and source.stream_url else None
-
-
-def _project(
-    db: Session, *, viewer_id: UUID, rows: list[LecternRow], summaries: dict[UUID, MediaSummaryOut]
-) -> list[LecternItemOut]:
-    if not rows:
-        return []
-    media_ids = [row.media_id for row in rows]
-    sources = {row.media_id: _stream_source(row) for row in rows}
-    audio_ids = [media_id for media_id, source in sources.items() if source is not None]
-    overrides = state.load_override_rows(db, viewer_id=viewer_id, media_ids=media_ids)
-    listening = _listening_store.load_states(db, viewer_id=viewer_id, media_ids=media_ids)
-    subscriptions = load_subscription_playback_settings(
-        db,
-        viewer_id=viewer_id,
-        podcast_ids=[row.podcast_id for row in rows if row.podcast_id is not None],
-    )
-    chapters = _load_chapters(db, audio_ids)
-    engagement = state.load_engagement_rows(
-        db, viewer_id=viewer_id, media_ids=[m for m in media_ids if sources[m] is None]
-    )
-
-    items: list[LecternItemOut] = []
-    for row in rows:
-        source = sources[row.media_id]
-        listening_row = listening.get(row.media_id)
-        engagement_row = engagement.get(row.media_id)
-        override = overrides.get(row.media_id)
-        if source is None:
-            activation: LecternActivation = (
-                ReadableActivation() if row.kind in _READABLE_KINDS else OpenPaneActivation()
-            )
-            derived, progress = _doc_state(engagement_row)
-        else:
-            # justify-defect: every podcast_episode row joins its parent relation.
-            assert row.podcast_id is not None
-            activation = _footer_audio(
-                source=source,
-                listening=listening_row,
-                podcast_id=row.podcast_id,
-                subscription=subscriptions.get(row.podcast_id),
-                override=override,
-                duration_seconds=row.duration_seconds,
-                artwork_url=row.podcast_image_url,
-                chapters=chapters.get(row.media_id, []),
-            )
-            derived, progress = _audio_state(listening_row, row.duration_seconds)
-        items.append(
-            LecternItemOut(
-                item_id=row.item_id,
-                media_summary=summaries[row.media_id],
-                href=f"/media/{row.media_id}",
-                added_at=row.added_at,
-                consumption=ConsumptionOut(
-                    state=override.state if override is not None else derived,
-                    progress=progress,
-                    progress_resettable=(
-                        override is not None
-                        or engagement_row is not None
-                        or (
-                            listening_row is not None
-                            and (listening_row.position_ms > 0 or listening_row.is_completed)
-                        )
-                    ),
-                ),
-                activation=activation,
-                player_display=(
-                    present(
-                        PlayerDisplay(
-                            title=row.title[:_MAX_TITLE_CHARS],
-                            subtitle=(
-                                present(row.podcast_title[:_MAX_TITLE_CHARS])
-                                if row.podcast_title is not None
-                                else absent()
-                            ),
-                        )
-                    )
-                    if isinstance(activation, FooterAudioActivation)
-                    else absent()
-                ),
-            )
-        )
-    return items
-
-
-def _footer_audio(
-    *,
-    source: PlaybackSourceOut,
-    listening: ListeningRow | None,
-    podcast_id: UUID,
-    subscription: SubscriptionPlaybackSettings | None,
-    override: state.OverrideRow | None,
-    duration_seconds: int | None,
-    artwork_url: str | None,
-    chapters: list[ChapterOut],
-) -> FooterAudioActivation:
-    """The one footer-playable activation, shared by Lectern items and descriptors."""
-    duration_ms: Absent | Present[int] = absent()
-    if listening is not None and listening.duration_ms is not None:
-        duration_ms = present(listening.duration_ms)
-    elif duration_seconds is not None:
-        duration_ms = present(duration_seconds * 1000)
-    return FooterAudioActivation(
-        stream_url=source.stream_url,
-        source_url=source.source_url,
-        position_ms=listening.position_ms if listening is not None else 0,
-        write_revision=listening.write_revision if listening is not None else 0,
-        reset_epoch=listening.reset_epoch if listening is not None else 0,
-        playback_rate=_playback_rate(
-            episode_rate=listening.playback_speed if listening is not None else None,
-            podcast_id=podcast_id,
-            subscription_preference=subscription.playback_rate
-            if subscription is not None
-            else None,
-        ),
-        pause_shortening_mode=(
-            subscription.pause_shortening_mode if subscription is not None else absent()
-        ),
-        consumption_override_revision=(
-            present(override.revision) if override is not None else absent()
-        ),
-        duration_ms=duration_ms,
-        artwork_url=present(artwork_url) if artwork_url is not None else absent(),
-        chapters=chapters,
-    )
-
-
-def _playback_rate(
-    *,
-    episode_rate: float | None,
-    podcast_id: UUID,
-    subscription_preference: Absent | Present[float] | None,
-) -> PlaybackRateResolution:
-    """Episode rate wins, then the subscription preference, then the product default."""
-    podcast_preference = (
-        present(
-            PodcastPlaybackPreference.model_validate(
-                {"podcast_id": podcast_id, "value": subscription_preference.model_dump()}
-            )
-        )
-        if subscription_preference is not None
-        else absent()
-    )
-    if episode_rate is not None:
-        return PlaybackRateResolution(
-            value=episode_rate, source="Episode", podcast_preference=podcast_preference
-        )
-    if isinstance(subscription_preference, Present):
-        return PlaybackRateResolution(
-            value=subscription_preference.value,
-            source="Podcast",
-            podcast_preference=podcast_preference,
-        )
-    return PlaybackRateResolution(value=1, source="Product", podcast_preference=podcast_preference)
-
-
-def player_descriptors(
-    db: Session, *, viewer_id: UUID, media_ids: list[UUID]
-) -> dict[UUID, PlayerDescriptor]:
-    """Batch footer-playable descriptors for podcast-episode media.
-
-    Derives exactly like a Lectern item, with one listening load and one
-    chapters load for the whole page. A media absent from the result is either
-    not an episode or has no playable audio.
-    """
-    if not media_ids:
-        return {}
-    rows = [
-        dict(row)
-        for row in db.execute(
-            text("""
-                SELECT m.id AS media_id, m.title, m.external_playback_url,
-                       m.canonical_source_url, m.provider, m.provider_id,
-                       pe.podcast_id, p.title AS podcast_title,
-                       p.image_url AS podcast_image_url, pe.duration_seconds
-                FROM media m
-                JOIN podcast_episodes pe ON pe.media_id = m.id
-                LEFT JOIN podcasts p ON p.id = pe.podcast_id
-                WHERE m.id = ANY(:media_ids) AND m.kind = :kind
-            """),
-            {"media_ids": media_ids, "kind": MediaKind.podcast_episode.value},
-        ).mappings()
-    ]
-    if not rows:
-        return {}
-    for row in rows:
-        row["media_id"] = UUID(str(row["media_id"]))
-        row["podcast_id"] = UUID(str(row["podcast_id"]))
-    row_media_ids = [row["media_id"] for row in rows]
-    listening = _listening_store.load_states(db, viewer_id=viewer_id, media_ids=row_media_ids)
-    subscriptions = load_subscription_playback_settings(
-        db, viewer_id=viewer_id, podcast_ids=[row["podcast_id"] for row in rows]
-    )
-    overrides = state.load_override_rows(db, viewer_id=viewer_id, media_ids=row_media_ids)
-    chapters = _load_chapters(db, row_media_ids)
-
-    result: dict[UUID, PlayerDescriptor] = {}
-    for row in rows:
-        source = derive_playback_source(
-            kind=MediaKind.podcast_episode.value,
-            external_playback_url=row["external_playback_url"],
-            canonical_source_url=row["canonical_source_url"],
-            provider=row["provider"],
-            provider_id=row["provider_id"],
-        )
-        if source is None or not source.stream_url:
-            continue
-        media_id = row["media_id"]
-        subtitle = row["podcast_title"]
-        duration_seconds = row["duration_seconds"]
-        result[media_id] = PlayerDescriptor(
-            media_id=media_id,
-            title=str(row["title"])[:_MAX_TITLE_CHARS],
-            subtitle=present(str(subtitle)[:_MAX_TITLE_CHARS])
-            if subtitle is not None
-            else absent(),
-            activation=_footer_audio(
-                source=source,
-                listening=listening.get(media_id),
-                podcast_id=row["podcast_id"],
-                subscription=subscriptions.get(row["podcast_id"]),
-                override=overrides.get(media_id),
-                duration_seconds=int(duration_seconds) if duration_seconds is not None else None,
-                artwork_url=row["podcast_image_url"],
-                chapters=chapters.get(media_id, []),
-            ),
-        )
-    return result
-
-
-def to_listening_state_out(row: ListeningRow | None) -> ListeningStateOut:
-    """Wire shape for one media's listening state (owned-absence defaults)."""
-    if row is None:
-        return ListeningStateOut(
-            position_ms=0,
-            duration_ms=absent(),
-            episode_playback_rate=absent(),
-            write_revision=0,
-            reset_epoch=0,
-        )
-    return ListeningStateOut(
-        position_ms=row.position_ms,
-        duration_ms=presence_from_nullable(row.duration_ms),
-        episode_playback_rate=presence_from_nullable(row.playback_speed),
-        write_revision=row.write_revision,
-        reset_epoch=row.reset_epoch,
-    )
-
-
-def _audio_state(
-    listening: ListeningRow | None, duration_seconds: int | None
-) -> tuple[ConsumptionStateValue, Absent | Present[float]]:
-    if listening is None:
-        return "Unread", absent()
-    duration_ms = listening.duration_ms
-    if duration_ms is None and duration_seconds is not None:
-        duration_ms = duration_seconds * 1000
-    fraction = (
-        min(1.0, listening.position_ms / duration_ms)
-        if duration_ms is not None and duration_ms > 0
-        else None
-    )
-    progress: Absent | Present[float] = present(fraction) if fraction is not None else absent()
-    if listening.is_completed or (fraction is not None and fraction >= FINISHED_PROGRESSION):
-        return "Finished", progress
-    if listening.position_ms > 0:
-        return "InProgress", progress
-    return "Unread", progress
-
-
-def _doc_state(
-    engagement: state.ReaderEngagementRow | None,
-) -> tuple[ConsumptionStateValue, Absent | Present[float]]:
-    """Any retained engagement row means in-progress; there is no dwell threshold."""
-    if engagement is None:
-        return "Unread", absent()
-    reached = engagement.max_total_progression
-    progress: Absent | Present[float] = present(reached) if reached is not None else absent()
-    if reached is not None and reached >= FINISHED_PROGRESSION:
-        return "Finished", progress
-    return "InProgress", progress
-
-
-def _load_chapters(db: Session, media_ids: list[UUID]) -> dict[UUID, list[ChapterOut]]:
-    """First 100 stored rows per media by ordinal; a blank-title row is dropped.
-
-    The cap counts raw rows, so a malformed row inside the window is excluded
-    rather than replaced by the 101st.
-    """
-    if not media_ids:
-        return {}
-    rows = db.execute(
-        text("""
-            SELECT media_id, title, t_start_ms, t_end_ms
-            FROM podcast_episode_chapters
-            WHERE media_id = ANY(:media_ids)
-            ORDER BY media_id ASC, chapter_idx ASC
-        """),
-        {"media_ids": media_ids},
-    ).fetchall()
-    result: dict[UUID, list[ChapterOut]] = {}
-    seen: dict[UUID, int] = {}
-    for media_id_raw, title_raw, start_ms, end_ms in rows:
-        media_id = UUID(str(media_id_raw))
-        raw_count = seen.get(media_id, 0)
-        if raw_count >= _MAX_CHAPTERS:
-            continue
-        seen[media_id] = raw_count + 1
-        title = str(title_raw)[:_MAX_TITLE_CHARS]
-        if not title.strip():
-            continue
-        result.setdefault(media_id, []).append(
-            ChapterOut(
-                title=title,
-                start_ms=int(start_ms),
-                end_ms=presence_from_nullable(int(end_ms) if end_ms is not None else None),
-            )
-        )
-    return result
 
 
 def _read_state_case_sql(
@@ -504,16 +101,24 @@ def _read_state_case_sql(
 
 
 def engagement_fact_rows_sql(*, media_ids_param: str | None = None) -> str:
-    """Composable canonical consumption facts for one viewer. Binds ``:viewer_id``.
+    """Canonical consumption facts for one viewer (binds ``:viewer_id``).
 
     Columns: ``media_id``, ``read_state``, ``progress_fraction``,
     ``progress_resettable``, ``last_engaged_at``. The candidate union stays
-    MATERIALIZED: four listing surfaces compose this as a joined subquery, and
-    inlining re-runs the union once per outer candidate. ``media_ids_param``
-    names a bound UUID array applied inside every candidate arm.
+    MATERIALIZED: listings compose this as a joined subquery, and inlining
+    re-runs the union once per outer row. ``media_ids_param`` names a bound
+    UUID array applied inside every candidate arm.
     """
     duration_ms = "COALESCE(pls.duration_ms, pe.duration_seconds * 1000)"
     candidate_filter = f"AND media_id = ANY(:{media_ids_param})" if media_ids_param else ""
+    read_state = _read_state_case_sql(
+        listening="pls",
+        override="co",
+        episode="pe",
+        labels=("Finished", "InProgress", "Unread"),
+        media_kind="m.kind",
+        engagement="res",
+    )
     return f"""
         WITH consumption_media_ids AS MATERIALIZED (
             SELECT media_id FROM consumption_overrides
@@ -527,16 +132,7 @@ def engagement_fact_rows_sql(*, media_ids_param: str | None = None) -> str:
         )
         SELECT
             ids.media_id,
-            {
-        _read_state_case_sql(
-            listening="pls",
-            override="co",
-            episode="pe",
-            labels=("Finished", "InProgress", "Unread"),
-            media_kind="m.kind",
-            engagement="res",
-        )
-    } AS read_state,
+            {read_state} AS read_state,
             CASE
                 WHEN m.kind = 'podcast_episode' AND {duration_ms} > 0
                     THEN LEAST(1.0, pls.position_ms::float8 / {duration_ms})
@@ -570,7 +166,7 @@ def engagement_fact_rows_sql(*, media_ids_param: str | None = None) -> str:
 def episode_state_case_sql(*, listening_alias: str, override_alias: str, episode_alias: str) -> str:
     """``played`` | ``in_progress`` | ``unplayed`` for one podcast episode.
 
-    Requires the joins from :func:`episode_state_joins_sql` and an episode alias
+    Requires the joins of :func:`episode_state_joins_sql` and an episode alias
     exposing ``duration_seconds``.
     """
     return _read_state_case_sql(
@@ -596,18 +192,28 @@ def episode_state_joins_sql(
 
 
 def lectern_membership_rows_sql() -> str:
-    """Complete Lectern membership (hidden rows included). Binds ``:viewer_id``."""
+    """Complete Lectern membership, hidden rows included. Binds ``:viewer_id``."""
     return "SELECT q.media_id FROM consumption_queue_items q WHERE q.user_id = :viewer_id"
 
 
-def lectern_item_count(db: Session, *, viewer_id: UUID) -> int:
-    """Count every Lectern row, including hidden rows."""
-    return int(
-        db.execute(
-            text("SELECT COUNT(*) FROM consumption_queue_items WHERE user_id = :viewer_id"),
-            {"viewer_id": viewer_id},
-        ).scalar_one()
-    )
+def _read_states(
+    db: Session, viewer_id: UUID, media_ids: list[UUID]
+) -> dict[UUID, tuple[ConsumptionStateValue, float | None, bool]]:
+    """``(state, progress, resettable)`` for media with any consumption row."""
+    if not media_ids:
+        return {}
+    rows = db.execute(
+        text(engagement_fact_rows_sql(media_ids_param="media_ids")),
+        {"viewer_id": viewer_id, "media_ids": media_ids},
+    ).mappings()
+    return {
+        row["media_id"]: (
+            cast(ConsumptionStateValue, row["read_state"]),
+            row["progress_fraction"],
+            row["progress_resettable"],
+        )
+        for row in rows
+    }
 
 
 @dataclass(frozen=True)
@@ -620,27 +226,248 @@ class MediaReadStateOut:
 def media_read_states(
     db: Session, *, viewer_id: UUID, media_ids: list[UUID]
 ) -> dict[UUID, MediaReadStateOut]:
-    """Batch read-state for arbitrary media; media with no rows are Unread."""
+    """Read state for every requested media; media with no rows are unread."""
+    states = _read_states(db, viewer_id, media_ids)
+    return {
+        media_id: MediaReadStateOut(_TO_READ_STATE[state], progress, resettable)
+        for media_id in media_ids
+        for state, progress, resettable in [states.get(media_id, ("Unread", None, False))]
+    }
+
+
+def build_snapshot(
+    db: Session, *, viewer_id: UUID, rows: list[LecternRow], summaries: dict[UUID, MediaSummaryOut]
+) -> LecternSnapshot:
+    """The viewer's visible Lectern rows as the canonical snapshot."""
+    return LecternSnapshot(
+        items=_items(db, viewer_id, [row for row in rows if row.visible], summaries)
+    )
+
+
+def build_item(
+    db: Session, *, viewer_id: UUID, row: LecternRow, summaries: dict[UUID, MediaSummaryOut]
+) -> LecternItemOut:
+    return _items(db, viewer_id, [row], summaries)[0]
+
+
+def _items(
+    db: Session, viewer_id: UUID, rows: list[LecternRow], summaries: dict[UUID, MediaSummaryOut]
+) -> list[LecternItemOut]:
+    states = _read_states(db, viewer_id, [row.media_id for row in rows])
+    descriptors = player_descriptors(
+        db,
+        viewer_id=viewer_id,
+        media_ids=[row.media_id for row in rows if row.kind == "podcast_episode"],
+    )
+    items = []
+    for row in rows:
+        state, progress, resettable = states.get(row.media_id, ("Unread", None, False))
+        descriptor = descriptors.get(row.media_id)
+        items.append(
+            LecternItemOut(
+                item_id=row.item_id,
+                media_summary=summaries[row.media_id],
+                href=f"/media/{row.media_id}",
+                added_at=row.added_at,
+                consumption=ConsumptionOut(
+                    state=state,
+                    progress=presence_from_nullable(progress),
+                    progress_resettable=resettable,
+                ),
+                activation=descriptor.activation
+                if descriptor
+                else ReadableActivation()
+                if row.kind in _READABLE_KINDS
+                else OpenPaneActivation(),
+                player_display=present(
+                    PlayerDisplay(title=descriptor.title, subtitle=descriptor.subtitle)
+                )
+                if descriptor
+                else absent(),
+            )
+        )
+    return items
+
+
+def activation_kind(row: LecternRow) -> str:
+    """The activation discriminator alone, without loading listening state."""
+    if row.kind in _READABLE_KINDS:
+        return "Readable"
+    source = (
+        derive_playback_source(
+            kind=row.kind,
+            external_playback_url=row.external_playback_url,
+            canonical_source_url=row.canonical_source_url,
+            provider=row.provider,
+            provider_id=row.provider_id,
+        )
+        if row.kind == "podcast_episode"
+        else None
+    )
+    return "FooterAudio" if source is not None and source.stream_url else "OpenPane"
+
+
+def player_descriptors(
+    db: Session, *, viewer_id: UUID, media_ids: list[UUID]
+) -> dict[UUID, PlayerDescriptor]:
+    """Footer-playable descriptors; a media missing from the result has no playable audio."""
     if not media_ids:
         return {}
-    result = {
-        media_id: MediaReadStateOut(
-            state="unread", progress_fraction=None, progress_resettable=False
+    rows = (
+        db.execute(
+            text("""
+                SELECT m.id AS media_id, m.title, m.external_playback_url,
+                       m.canonical_source_url, m.provider, m.provider_id,
+                       pe.podcast_id, p.title AS podcast_title,
+                       p.image_url AS podcast_image_url, pe.duration_seconds
+                FROM media m
+                JOIN podcast_episodes pe ON pe.media_id = m.id
+                LEFT JOIN podcasts p ON p.id = pe.podcast_id
+                WHERE m.id = ANY(:media_ids) AND m.kind = 'podcast_episode'
+            """),
+            {"media_ids": media_ids},
         )
-        for media_id in media_ids
-    }
-    rows = db.execute(
-        text(engagement_fact_rows_sql(media_ids_param="media_ids")),
-        {"viewer_id": viewer_id, "media_ids": media_ids},
-    ).mappings()
+        .mappings()
+        .all()
+    )
+    ids = [row["media_id"] for row in rows]
+    listening = _listening_store.load_states(db, viewer_id=viewer_id, media_ids=ids)
+    subscriptions = load_subscription_playback_settings(
+        db, viewer_id=viewer_id, podcast_ids=[row["podcast_id"] for row in rows]
+    )
+    revisions = override_revisions(db, viewer_id=viewer_id, media_ids=ids)
+    chapters: dict[UUID, list[ChapterOut]] = {}
+    for chapter in db.execute(
+        text("""
+            SELECT media_id, title, t_start_ms, t_end_ms FROM (
+                SELECT *, row_number() OVER (PARTITION BY media_id ORDER BY chapter_idx) AS n
+                FROM podcast_episode_chapters WHERE media_id = ANY(:media_ids)
+            ) first WHERE n <= 100
+            ORDER BY media_id, chapter_idx
+        """),
+        {"media_ids": ids},
+    ):
+        if chapter.title[:300].strip():
+            chapters.setdefault(chapter.media_id, []).append(
+                ChapterOut(
+                    title=chapter.title[:300],
+                    start_ms=chapter.t_start_ms,
+                    end_ms=presence_from_nullable(chapter.t_end_ms),
+                )
+            )
+
+    result: dict[UUID, PlayerDescriptor] = {}
     for row in rows:
-        fraction = row["progress_fraction"]
-        result[UUID(str(row["media_id"]))] = MediaReadStateOut(
-            state=_TO_READ_STATE[cast(ConsumptionStateValue, row["read_state"])],
-            progress_fraction=float(fraction) if fraction is not None else None,
-            progress_resettable=bool(row["progress_resettable"]),
+        source = derive_playback_source(
+            kind="podcast_episode",
+            external_playback_url=row["external_playback_url"],
+            canonical_source_url=row["canonical_source_url"],
+            provider=row["provider"],
+            provider_id=row["provider_id"],
+        )
+        if source is None or not source.stream_url:
+            continue
+        media_id, podcast_id = row["media_id"], row["podcast_id"]
+        heard = listening.get(media_id)
+        subscription = subscriptions.get(podcast_id)
+        preference = subscription.playback_rate if subscription is not None else None
+        rate_source: Literal["Episode", "Podcast", "Product"]
+        if heard is not None and heard.playback_speed is not None:
+            rate, rate_source = heard.playback_speed, "Episode"
+        elif isinstance(preference, Present):
+            rate, rate_source = preference.value, "Podcast"
+        else:
+            rate, rate_source = 1.0, "Product"
+        listened_ms = heard.duration_ms if heard is not None else None
+        duration_ms = _duration_ms(listened_ms, row["duration_seconds"])
+        result[media_id] = PlayerDescriptor(
+            media_id=media_id,
+            title=row["title"][:300],
+            subtitle=presence_from_nullable(
+                row["podcast_title"][:300] if row["podcast_title"] is not None else None
+            ),
+            activation=FooterAudioActivation(
+                stream_url=source.stream_url,
+                source_url=source.source_url,
+                position_ms=heard.position_ms if heard is not None else 0,
+                write_revision=heard.write_revision if heard is not None else 0,
+                reset_epoch=heard.reset_epoch if heard is not None else 0,
+                playback_rate=PlaybackRateResolution(
+                    value=rate,
+                    source=rate_source,
+                    podcast_preference=present(
+                        PodcastPlaybackPreference.model_validate(
+                            {"podcast_id": podcast_id, "value": preference.model_dump()}
+                        )
+                    )
+                    if preference is not None
+                    else absent(),
+                ),
+                pause_shortening_mode=subscription.pause_shortening_mode
+                if subscription is not None
+                else absent(),
+                consumption_override_revision=presence_from_nullable(revisions.get(media_id)),
+                duration_ms=presence_from_nullable(duration_ms),
+                artwork_url=presence_from_nullable(row["podcast_image_url"]),
+                chapters=chapters.get(media_id, []),
+            ),
         )
     return result
+
+
+def listening_duration(
+    *, position_ms: int, listening_duration_ms: int | None, feed_duration_seconds: int | None
+) -> Absent | Present[MediaDurationOut]:
+    """Display media time at 1×."""
+    duration_ms = _duration_ms(listening_duration_ms, feed_duration_seconds)
+    if duration_ms is None or duration_ms <= 0:
+        return absent()
+    return present(
+        MediaDurationOut(
+            modality="Listen",
+            estimate=ReadingTimeEstimateOut(
+                total_minutes=ceil(duration_ms / 60_000),
+                remaining_minutes=present(ceil(max(0, duration_ms - position_ms) / 60_000)),
+            ),
+        )
+    )
+
+
+def _duration_ms(listening_ms: int | None, feed_seconds: int | None) -> int | None:
+    """Media time at 1×: the listening record's duration before the feed's."""
+    if listening_ms is not None:
+        return listening_ms
+    return feed_seconds * 1000 if feed_seconds is not None else None
+
+
+def to_listening_state_out(row: ListeningRow | None) -> ListeningStateOut:
+    """One media's listening state; no row reads as zero with Absent duration and rate."""
+    return ListeningStateOut(
+        position_ms=row.position_ms if row is not None else 0,
+        duration_ms=presence_from_nullable(row.duration_ms if row is not None else None),
+        episode_playback_rate=presence_from_nullable(
+            row.playback_speed if row is not None else None
+        ),
+        write_revision=row.write_revision if row is not None else 0,
+        reset_epoch=row.reset_epoch if row is not None else 0,
+    )
+
+
+def override_revisions(db: Session, *, viewer_id: UUID, media_ids: list[UUID]) -> dict[UUID, int]:
+    """The explicit override's revision (the natural-end fence) per media that has one."""
+    rows = db.execute(
+        text("""
+            SELECT media_id, revision FROM consumption_overrides
+            WHERE user_id = :viewer_id AND media_id = ANY(:media_ids)
+        """),
+        {"viewer_id": viewer_id, "media_ids": media_ids},
+    )
+    return {row.media_id: row.revision for row in rows}
+
+
+def media_kinds(db: Session, media_ids: list[UUID]) -> dict[UUID, str]:
+    rows = db.execute(text("SELECT id, kind FROM media WHERE id = ANY(:ids)"), {"ids": media_ids})
+    return {row.id: row.kind for row in rows}
 
 
 def listening_recency(
@@ -652,7 +479,14 @@ def listening_recency(
 def reader_engagement_recency(
     db: Session, *, viewer_id: UUID, media_ids: list[UUID]
 ) -> dict[UUID, datetime]:
-    return state.engagement_recency(db, viewer_id=viewer_id, media_ids=media_ids)
+    rows = db.execute(
+        text("""
+            SELECT media_id, last_engaged_at FROM reader_engagement_states
+            WHERE user_id = :viewer_id AND media_id = ANY(:media_ids)
+        """),
+        {"viewer_id": viewer_id, "media_ids": media_ids},
+    )
+    return {row.media_id: row.last_engaged_at for row in rows}
 
 
 @dataclass(frozen=True, slots=True)
@@ -668,8 +502,6 @@ def recent_engagement_anchor_facts(
 
     Both indexed sources are bounded independently before their small merge.
     """
-    if limit < 1:
-        return ()
     rows = db.execute(
         text(f"""
             WITH reader_recent AS (
@@ -701,20 +533,5 @@ def recent_engagement_anchor_facts(
             LIMIT :limit
         """),
         {"viewer_id": viewer_id, "limit": limit},
-    ).mappings()
-    return tuple(
-        RecentEngagementAnchorFact(
-            media_id=UUID(str(row["media_id"])), activity_at=row["activity_at"]
-        )
-        for row in rows
     )
-
-
-def media_kinds(db: Session, media_ids: list[UUID]) -> dict[UUID, str]:
-    """The stored ``media.kind`` for each id present."""
-    if not media_ids:
-        return {}
-    rows = db.execute(
-        text("SELECT id, kind FROM media WHERE id = ANY(:ids)"), {"ids": media_ids}
-    ).fetchall()
-    return {UUID(str(media_id)): str(kind) for media_id, kind in rows}
+    return tuple(RecentEngagementAnchorFact(row.media_id, row.activity_at) for row in rows)

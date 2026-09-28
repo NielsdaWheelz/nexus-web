@@ -1,396 +1,188 @@
-import type {
-  ActivityDeviceClass,
-  ActivityCaptureKey,
-  ActivityModality,
-  ClosedActivitySpan,
-  MediaRef,
-  ReadingActivitySpanBody,
-  ListeningActivitySpanBody,
-  ViewingActivitySpanBody,
-} from "./activityContract";
+import type { ClosedActivitySpan } from "./activityContract";
 
-export const ACTIVITY_OUTBOX_DB_NAME = "nexus-consumption-activity";
+// IndexedDB "nexus-consumption-activity" v1 persists in users' browsers: its stores, keys, index
+// and row shape are a contract with every shipped client.
+
 export const ACTIVITY_OUTBOX_MAX_SPANS = 100_000;
 
-const DATABASE_VERSION = 1;
-const SPANS_STORE = "spans";
-const SETTINGS_STORE = "settings";
-const ACCOUNT_STATE_CREATED_AT_INDEX = "accountStateCreatedAt";
+export type OutboxRow = ClosedActivitySpan & {
+  accountId: string;
+  createdAt: number;
+  state: "Pending" | "Failed";
+};
 
-export type ActivityFailureReason =
-  | "MediaUnavailable"
-  | "Expired"
-  | "Defect";
-
-interface StoredSpanBase {
-  readonly accountId: string;
-  readonly captureKey: ActivityCaptureKey;
-  readonly mediaRef: MediaRef;
-  readonly deviceClass: ActivityDeviceClass;
-  readonly createdAt: number;
-  readonly state: "Pending" | "Failed";
-  readonly failureReason?: ActivityFailureReason;
+export interface OutboxSummary {
+  total: number;
+  pending: number;
+  failed: number;
+  oldestPendingAt?: number;
+  paused: boolean;
 }
 
-interface StoredReadingSpan extends StoredSpanBase {
-  readonly modality: "Reading";
-  readonly span: ReadingActivitySpanBody;
-}
+const BY_STATE = "accountStateCreatedAt";
+let database: Promise<IDBDatabase> | undefined;
 
-interface StoredListeningSpan extends StoredSpanBase {
-  readonly modality: "Listening";
-  readonly span: ListeningActivitySpanBody;
-}
-
-interface StoredViewingSpan extends StoredSpanBase {
-  readonly modality: "Viewing";
-  readonly span: ViewingActivitySpanBody;
-}
-
-export type StoredActivitySpan =
-  | StoredReadingSpan
-  | StoredListeningSpan
-  | StoredViewingSpan;
-
-interface ActivitySettings {
-  readonly accountId: string;
-  readonly paused: boolean;
-}
-
-export interface ActivityOutboxSummary {
-  readonly total: number;
-  readonly pending: number;
-  readonly failed: number;
-  readonly oldestPendingAt: number | undefined;
-  readonly paused: boolean;
-}
-
-export interface ActivityOutboxBatch {
-  readonly mediaRef: MediaRef;
-  readonly modality: ActivityModality;
-  readonly deviceClass: ActivityDeviceClass;
-  readonly rows: readonly StoredActivitySpan[];
-}
-
-export function activityOutboxCapacity(
-  count: number,
-  limit = ACTIVITY_OUTBOX_MAX_SPANS,
-): "Available" | "Reached" {
-  return count >= limit ? "Reached" : "Available";
-}
-
-function requestResult<T>(request: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result);
+function open(): Promise<IDBDatabase> {
+  database ??= new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open("nexus-consumption-activity", 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      const spans = db.createObjectStore("spans", { keyPath: ["accountId", "captureKey"] });
+      spans.createIndex(BY_STATE, ["accountId", "state", "createdAt"]);
+      db.createObjectStore("settings", { keyPath: "accountId" });
+    };
+    request.onsuccess = () => {
+      const db = request.result;
+      db.onversionchange = () => {
+        db.close();
+        database = undefined;
+      };
+      resolve(db);
+    };
     request.onerror = () => reject(request.error);
+    request.onblocked = () =>
+      reject(new DOMException("Activity storage open was blocked", "InvalidStateError"));
   });
+  database.catch(() => (database = undefined));
+  return database;
 }
 
-function transactionCompletion(transaction: IDBTransaction): Promise<void> {
-  return new Promise((resolve, reject) => {
+/** One transaction: `body` issues requests and returns a reader of their results. */
+async function run<T>(
+  stores: string[],
+  mode: IDBTransactionMode,
+  body: (transaction: IDBTransaction) => () => T,
+): Promise<T> {
+  const transaction = (await open()).transaction(stores, mode);
+  const result = body(transaction);
+  await new Promise<void>((resolve, reject) => {
     transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
-    transaction.onabort = () => reject(transaction.error);
+    transaction.onerror = transaction.onabort = () => reject(transaction.error);
   });
+  return result();
 }
 
-function accountKeys(accountId: string): IDBKeyRange {
-  return IDBKeyRange.bound([accountId, ""], [accountId, "\uffff"]);
-}
+const inAccount = (accountId: string) => IDBKeyRange.bound([accountId, ""], [accountId, "￿"]);
+const inState = (accountId: string, state: OutboxRow["state"]) =>
+  IDBKeyRange.bound([accountId, state, 0], [accountId, state, Number.MAX_SAFE_INTEGER]);
 
-function accountStateRows(
+/** Visit the account's rows in `state`, oldest first, until `visit` returns false. */
+function eachInState(
+  transaction: IDBTransaction,
   accountId: string,
-  state: StoredActivitySpan["state"],
-): IDBKeyRange {
-  return IDBKeyRange.bound(
-    [accountId, state, 0],
-    [accountId, state, Number.MAX_SAFE_INTEGER],
-  );
+  state: OutboxRow["state"],
+  visit: (cursor: IDBCursorWithValue, row: OutboxRow) => boolean | void,
+): void {
+  const index = transaction.objectStore("spans").index(BY_STATE);
+  const request = index.openCursor(inState(accountId, state));
+  request.onsuccess = () => {
+    const cursor = request.result;
+    if (cursor !== null && visit(cursor, cursor.value) !== false) cursor.continue();
+  };
 }
 
-function asStoredSpan(
+const updateEach = (
   accountId: string,
-  span: ClosedActivitySpan,
-  createdAt: number,
-): StoredActivitySpan {
-  const base = {
-    accountId,
-    captureKey: span.captureKey,
-    mediaRef: span.mediaRef,
-    deviceClass: span.deviceClass,
-    createdAt,
-    state: "Pending",
-  } as const;
-  switch (span.modality) {
-    case "Reading":
-      return { ...base, modality: "Reading", span: span.span };
-    case "Listening":
-      return { ...base, modality: "Listening", span: span.span };
-    case "Viewing":
-      return { ...base, modality: "Viewing", span: span.span };
-  }
-}
+  state: OutboxRow["state"],
+  visit: (cursor: IDBCursorWithValue, row: OutboxRow) => void,
+) =>
+  run(["spans"], "readwrite", (transaction) => {
+    eachInState(transaction, accountId, state, visit);
+    return () => undefined;
+  });
 
-export class ActivityOutbox {
-  private database: IDBDatabase | undefined;
-  private opening: Promise<IDBDatabase> | undefined;
-
-  constructor(
-    private readonly maxSpansPerAccount = ACTIVITY_OUTBOX_MAX_SPANS,
-  ) {}
-
-  async open(): Promise<void> {
-    await this.db();
-  }
-
-  async enqueue(
-    accountId: string,
-    span: ClosedActivitySpan,
-    createdAt: number,
-  ): Promise<"Enqueued" | "CapacityReached"> {
-    const db = await this.db();
-    const transaction = db.transaction(SPANS_STORE, "readwrite");
-    const store = transaction.objectStore(SPANS_STORE);
-    let result: "Enqueued" | "CapacityReached" = "CapacityReached";
-    const count = store.count(accountKeys(accountId));
-    count.onsuccess = () => {
-      if (
-        activityOutboxCapacity(count.result, this.maxSpansPerAccount) ===
-        "Reached"
-      ) {
-        return;
-      }
-      store.add(asStoredSpan(accountId, span, createdAt));
-      result = "Enqueued";
-    };
-    await transactionCompletion(transaction);
-    return result;
-  }
-
-  async summary(accountId: string): Promise<ActivityOutboxSummary> {
-    const db = await this.db();
-    const transaction = db.transaction(
-      [SPANS_STORE, SETTINGS_STORE],
-      "readonly",
-    );
-    const spans = transaction.objectStore(SPANS_STORE);
-    const index = spans.index(ACCOUNT_STATE_CREATED_AT_INDEX);
-    const totalRequest = spans.count(accountKeys(accountId));
-    const pendingRequest = index.count(accountStateRows(accountId, "Pending"));
-    const failedRequest = index.count(accountStateRows(accountId, "Failed"));
-    const oldestRequest = index.openCursor(
-      accountStateRows(accountId, "Pending"),
-    );
-    const settingsRequest: IDBRequest<ActivitySettings | undefined> = transaction
-      .objectStore(SETTINGS_STORE)
-      .get(accountId);
-    const completed = transactionCompletion(transaction);
-    const [total, pending, failed, oldest, settings] = await Promise.all([
-      requestResult(totalRequest),
-      requestResult(pendingRequest),
-      requestResult(failedRequest),
-      requestResult(oldestRequest),
-      requestResult(settingsRequest),
-    ]);
-    await completed;
-    const oldestRow: StoredActivitySpan | undefined = oldest?.value;
-    return {
-      total,
-      pending,
-      failed,
-      oldestPendingAt:
-        oldest === null
-          ? undefined
-          : oldestRow?.createdAt,
-      paused: settings?.paused ?? false,
-    };
-  }
-
-  async nextPendingBatch(
-    accountId: string,
-    limit: number,
-  ): Promise<ActivityOutboxBatch | undefined> {
-    const db = await this.db();
-    const transaction = db.transaction(SPANS_STORE, "readonly");
-    const request = transaction
-      .objectStore(SPANS_STORE)
-      .index(ACCOUNT_STATE_CREATED_AT_INDEX)
-      .openCursor(accountStateRows(accountId, "Pending"));
-    const completed = transactionCompletion(transaction);
-    const rows = await new Promise<StoredActivitySpan[]>((resolve, reject) => {
-      const selected: StoredActivitySpan[] = [];
-      let group: Pick<
-        StoredActivitySpan,
-        "mediaRef" | "modality" | "deviceClass"
-      > | undefined;
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => {
-        const cursor = request.result;
-        if (cursor === null || selected.length >= limit) {
-          resolve(selected);
-          return;
-        }
-        const row: StoredActivitySpan = cursor.value;
-        group ??= row;
-        if (
-          row.mediaRef === group.mediaRef &&
-          row.modality === group.modality &&
-          row.deviceClass === group.deviceClass
-        ) {
-          selected.push(row);
-        }
-        cursor.continue();
+export const outbox = {
+  /** Store a closed span as Pending; false when the account already holds the maximum. */
+  add: (accountId: string, span: ClosedActivitySpan, now: number) =>
+    run(["spans"], "readwrite", (transaction) => {
+      const store = transaction.objectStore("spans");
+      const count = store.count(inAccount(accountId));
+      let added = false;
+      count.onsuccess = () => {
+        if (count.result >= ACTIVITY_OUTBOX_MAX_SPANS) return;
+        store.add({ ...span, accountId, createdAt: now, state: "Pending" } satisfies OutboxRow);
+        added = true;
       };
-    });
-    await completed;
-    const first = rows[0];
-    return first === undefined
-      ? undefined
-      : {
-          mediaRef: first.mediaRef,
-          modality: first.modality,
-          deviceClass: first.deviceClass,
-          rows,
-        };
-  }
+      return () => added;
+    }),
 
-  async deleteRows(accountId: string, captureKeys: readonly string[]): Promise<void> {
-    const db = await this.db();
-    const transaction = db.transaction(SPANS_STORE, "readwrite");
-    const store = transaction.objectStore(SPANS_STORE);
-    for (const captureKey of captureKeys) {
-      store.delete([accountId, captureKey]);
-    }
-    await transactionCompletion(transaction);
-  }
-
-  async markFailed(
-    accountId: string,
-    captureKeys: readonly string[],
-    reason: ActivityFailureReason,
-  ): Promise<void> {
-    const db = await this.db();
-    const transaction = db.transaction(SPANS_STORE, "readwrite");
-    const store = transaction.objectStore(SPANS_STORE);
-    for (const captureKey of captureKeys) {
-      const request: IDBRequest<StoredActivitySpan | undefined> = store.get([
-        accountId,
-        captureKey,
-      ]);
-      request.onsuccess = () => {
-        const row = request.result;
-        if (row?.state === "Pending") {
-          store.put({ ...row, state: "Failed", failureReason: reason });
-        }
-      };
-    }
-    await transactionCompletion(transaction);
-  }
-
-  async markExpired(accountId: string, cutoff: number): Promise<void> {
-    const db = await this.db();
-    const transaction = db.transaction(SPANS_STORE, "readwrite");
-    const request = transaction
-      .objectStore(SPANS_STORE)
-      .index(ACCOUNT_STATE_CREATED_AT_INDEX)
-      .openCursor(accountStateRows(accountId, "Pending"));
-    request.onsuccess = () => {
-      const cursor = request.result;
-      if (cursor === null) return;
-      const row: StoredActivitySpan = cursor.value;
-      const endedAt = Date.parse(row.span.occurredAt) + row.span.durationMs;
-      if (endedAt < cutoff) {
-        cursor.update({
-          ...row,
-          state: "Failed",
-          failureReason: "Expired",
-        });
-      }
-      cursor.continue();
-    };
-    await transactionCompletion(transaction);
-  }
-
-  async setPaused(accountId: string, paused: boolean): Promise<void> {
-    const db = await this.db();
-    const transaction = db.transaction(SETTINGS_STORE, "readwrite");
-    transaction.objectStore(SETTINGS_STORE).put({ accountId, paused });
-    await transactionCompletion(transaction);
-  }
-
-  async retryFailed(accountId: string): Promise<void> {
-    await this.changeFailedRows(accountId, (cursor, row) => {
-      cursor.update({
-        accountId: row.accountId,
-        captureKey: row.captureKey,
-        mediaRef: row.mediaRef,
-        modality: row.modality,
-        deviceClass: row.deviceClass,
-        span: row.span,
-        createdAt: row.createdAt,
-        state: "Pending",
+  summary: (accountId: string) =>
+    run(["spans", "settings"], "readonly", (transaction): (() => OutboxSummary) => {
+      const spans = transaction.objectStore("spans");
+      const total = spans.count(inAccount(accountId));
+      const pending = spans.index(BY_STATE).count(inState(accountId, "Pending"));
+      const failed = spans.index(BY_STATE).count(inState(accountId, "Failed"));
+      const settings = transaction.objectStore("settings").get(accountId);
+      let oldestPendingAt: number | undefined;
+      eachInState(transaction, accountId, "Pending", (_, row) => {
+        oldestPendingAt = row.createdAt;
+        return false;
       });
-    });
-  }
+      return () => ({
+        total: total.result,
+        pending: pending.result,
+        failed: failed.result,
+        oldestPendingAt,
+        paused: settings.result?.paused ?? false,
+      });
+    }),
 
-  async discardFailed(accountId: string): Promise<void> {
-    await this.changeFailedRows(accountId, (cursor) => cursor.delete());
-  }
+  /** The oldest Pending rows sharing the first one's work, modality and device class. */
+  nextBatch: (accountId: string, limit: number) =>
+    run(["spans"], "readonly", (transaction) => {
+      const rows: OutboxRow[] = [];
+      eachInState(transaction, accountId, "Pending", (_, row) => {
+        const first = rows[0] ?? row;
+        const sameBatch =
+          row.mediaRef === first.mediaRef &&
+          row.modality === first.modality &&
+          row.deviceClass === first.deviceClass;
+        if (sameBatch) rows.push(row);
+        return rows.length < limit;
+      });
+      return () => rows;
+    }),
 
-  private async changeFailedRows(
-    accountId: string,
-    change: (cursor: IDBCursorWithValue, row: StoredActivitySpan) => void,
-  ): Promise<void> {
-    const db = await this.db();
-    const transaction = db.transaction(SPANS_STORE, "readwrite");
-    const request = transaction
-      .objectStore(SPANS_STORE)
-      .index(ACCOUNT_STATE_CREATED_AT_INDEX)
-      .openCursor(accountStateRows(accountId, "Failed"));
-    request.onsuccess = () => {
-      const cursor = request.result;
-      if (cursor === null) return;
-      const row: StoredActivitySpan = cursor.value;
-      change(cursor, row);
-      cursor.continue();
-    };
-    await transactionCompletion(transaction);
-  }
+  remove: (accountId: string, captureKeys: readonly string[]) =>
+    run(["spans"], "readwrite", (transaction) => {
+      for (const key of captureKeys) transaction.objectStore("spans").delete([accountId, key]);
+      return () => undefined;
+    }),
 
-  private async db(): Promise<IDBDatabase> {
-    if (this.database !== undefined) return this.database;
-    this.opening ??= new Promise((resolve, reject) => {
-      const request = indexedDB.open(
-        ACTIVITY_OUTBOX_DB_NAME,
-        DATABASE_VERSION,
-      );
-      request.onupgradeneeded = () => {
-        const db = request.result;
-        const spans = db.createObjectStore(SPANS_STORE, {
-          keyPath: ["accountId", "captureKey"],
-        });
-        spans.createIndex(
-          ACCOUNT_STATE_CREATED_AT_INDEX,
-          ["accountId", "state", "createdAt"],
-        );
-        db.createObjectStore(SETTINGS_STORE, { keyPath: "accountId" });
-      };
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-      request.onblocked = () =>
-        reject(new DOMException("Activity storage open was blocked", "InvalidStateError"));
-    });
-    try {
-      this.database = await this.opening;
-      this.database.onversionchange = () => {
-        this.database?.close();
-        this.database = undefined;
-        this.opening = undefined;
-      };
-      return this.database;
-    } catch (error) {
-      this.opening = undefined;
-      throw error;
-    }
-  }
-}
+  fail: (accountId: string, captureKeys: readonly string[]) =>
+    run(["spans"], "readwrite", (transaction) => {
+      const store = transaction.objectStore("spans");
+      for (const key of captureKeys) {
+        const request = store.get([accountId, key]);
+        request.onsuccess = () => {
+          const row: OutboxRow | undefined = request.result;
+          if (row?.state === "Pending") store.put({ ...row, state: "Failed" });
+        };
+      }
+      return () => undefined;
+    }),
+
+  /** Fail Pending rows that ended before the cutoff: the server refuses them anyway. */
+  expire: (accountId: string, endedBefore: number) =>
+    updateEach(accountId, "Pending", (cursor, row) => {
+      if (Date.parse(row.span.occurredAt) + row.span.durationMs < endedBefore) {
+        cursor.update({ ...row, state: "Failed" });
+      }
+    }),
+
+  /** Failed rows become Pending again, dropping the reason earlier clients stored with them. */
+  retryFailed: (accountId: string) =>
+    updateEach(accountId, "Failed", (cursor, row) => {
+      const { failureReason: _, ...retried } = row as OutboxRow & { failureReason?: string };
+      cursor.update({ ...retried, state: "Pending" });
+    }),
+
+  discardFailed: (accountId: string) =>
+    updateEach(accountId, "Failed", (cursor) => cursor.delete()),
+
+  setPaused: (accountId: string, paused: boolean) =>
+    run(["settings"], "readwrite", (transaction) => {
+      transaction.objectStore("settings").put({ accountId, paused });
+      return () => undefined;
+    }),
+};
