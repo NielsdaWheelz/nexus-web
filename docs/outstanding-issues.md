@@ -30,6 +30,7 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
+- [open] release / production · 2026-09-28 cleanup campaign · production still serves 7dc68929b at alembic 0241; main carries irreversible migrations 0242–0251 with preflights to run first: [ticket](tickets/production-release-pending-since-7dc68929b.md).
 - [open] resource sharing / production migration · 2026-09-28 resource-sharing reauthoring · run 0249's malformed/duplicate `resource_grants` count read-only against production before deploy: [ticket](tickets/resource-grants-0249-production-preflight.md).
 - [open] resource sharing / sealed handles · 2026-09-28 resource-sharing reauthoring · the public `nxps1_`/`nxpa1_` codec re-derives `sealed_handles`' key schedule byte for byte: [ticket](tickets/public-handle-kdf-duplicates-sealed-handles.md).
 - [deferred] resource sharing / sealed handles · 2026-09-28 resource-sharing reauthoring · owner call: keep `nxps1_`/`nxpa1_` byte-stable across deploys, or scope them to the open tab: [ticket](tickets/public-sealed-handle-codec-stability-decision.md).
