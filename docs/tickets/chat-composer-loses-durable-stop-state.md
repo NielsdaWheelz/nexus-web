@@ -22,3 +22,9 @@ accepted stop intent. disposable browser/reducer proofs covered advisory loss,
 reload and stopped/paused copy. an authenticated local existing chat rendered
 `Stop requested` during catalog outage. a final-tree new/existing reply and
 full reload/focus/transcript journey still need a live model host.
+
+pr #412 merged as `27e961be6`; its pr checks were static. the official
+production web and api still served `7dc68929b4d5ddfd77eb1a50228d477fa0148b5d`
+on 2026-09-28. close after the paired release proves new and existing chat
+replies, same-run stream-loss/reload, selected-run stop, draft retention, focus
+and transcript position on the exact promoted source.

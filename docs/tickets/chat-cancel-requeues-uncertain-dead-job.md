@@ -25,3 +25,7 @@ proof passed eight settlement/duplicate cases and an owner-lock stop/arm race;
 uncertain work stayed dead with attempts unchanged. the uds host control path
 returned 204. an actual native process interrupt and drain has not yet been
 observed on the final tree; an acknowledgment alone is not a terminal fact.
+
+pr #412 merged as `27e961be6`. close after a pinned native process is
+interrupted and drained under the exact release source, while the run's durable
+stop intent survives reconnect and uncertain dispatch remains unretried.

@@ -19,3 +19,8 @@ the 2026-09-27 reliability candidate removed external catalog i/o from api
 startup. a fresh local api at database `0247` started with no codex socket;
 `/version` and saved chat reads returned 200 while `/llm-catalog` returned
 typed 503. recovery when a real host returns remains unverified on this tree.
+
+the change merged in pr #412 (`27e961be6`); static pr checks passed, but no
+merged-source host-down/host-return journey was run. close after an authenticated
+saved read stays available through host loss and catalog admission recovers when
+the pinned host returns, without restarting unrelated api routes.
