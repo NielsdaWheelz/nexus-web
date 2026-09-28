@@ -7,6 +7,8 @@ status: open · origin: 2026-09-25 latest-model cutover · area: generation rele
 the implemented cohort is nexus api/worker/host `d6b06991c`, repaired web
 `a50401623`, llm-calling `6a7093f7`, llm-tools `d305da8f`, kernel
 `937434b0`, and codex cli 0.157.1. the isolated stacks have not been deployed.
+the subsequent integration with main `dc9838cf6` changes the final source;
+no live journey on that merged tree has been observed.
 the nonsecret current evidence and exact
 limits are in [the verification receipt](../codex-shell-cutover-verification.md).
 `./scripts/test` is static only.
@@ -41,5 +43,7 @@ background effect/list/undo are tracked separately.
 complete the remaining shell-plan denials and background roles,
 and observe actual auth refresh using an independent disposable credential.
 run anthropic's 20 cells only after the owner changes the retention decision.
-keep xai marked waived. retain temporary proofs until the complete acceptance
-contract is met; never relabel blocked or historical evidence as a final pass.
+keep xai marked waived. use fresh proof code for unfinished journeys; the
+tracked disposable files were removed before merge. retain nonsecret receipts
+until the complete contract is met; never relabel blocked or historical
+evidence as a final pass.

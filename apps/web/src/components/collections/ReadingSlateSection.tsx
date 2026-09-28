@@ -266,12 +266,15 @@ export default function ReadingSlateSection({
           ? []
           : state.items;
     for (const item of items) {
+      const title = item.target.kind === "Media"
+        ? item.target.mediaSummary.title
+        : item.target.title;
       const loading =
         state.kind === "Adding" && state.acceptedRef === item.target.ref;
       const accessibleName =
         destination.kind === "Lectern"
-          ? `Add ${item.target.title} to Lectern`
-          : `Add ${item.target.title} to ${destination.name}`;
+          ? `Add ${title} to Lectern`
+          : `Add ${title} to ${destination.name}`;
       byRef[item.target.ref] = (
         <Button
           variant="secondary"

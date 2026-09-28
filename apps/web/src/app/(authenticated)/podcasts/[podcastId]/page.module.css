@@ -39,17 +39,6 @@
   flex-wrap: wrap;
 }
 
-.episodeFilterPills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.episodeFilterPill[aria-pressed="true"] {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
 .episodeActions {
   display: flex;
   align-items: center;

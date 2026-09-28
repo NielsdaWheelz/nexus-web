@@ -6,6 +6,7 @@ import { decodeContributorCredit } from "@/lib/contributors/credit";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import { decodePresence } from "@/lib/api/presence";
 import { decodePublicationDateOnly } from "@/lib/dates/publicationDate";
+import { decodeMediaSummary } from "@/lib/media/mediaSummary";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { decodeSnakeCaseResourceActivation } from "@/lib/resources/activation";
 import { decodeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
@@ -70,10 +71,6 @@ const SEARCH_RESULT_BASE_KEYS = [
   "id",
   "score",
   "snippet",
-  "title",
-  "source_label",
-  "media_id",
-  "media_kind",
   "resource_ref",
   "owner_resource_ref",
   "actionSubjectRef",
@@ -81,11 +78,12 @@ const SEARCH_RESULT_BASE_KEYS = [
   "citation_target",
   "context_ref",
 ] as const;
+const SEARCH_RESULT_TITLED_KEYS = ["title", "source_label", "media_id", "media_kind"] as const;
 
 const SEARCH_RESULT_VARIANT_KEYS = {
-  media: ["source"],
-  episode: ["source"],
-  video: ["source"],
+  media: ["mediaSummary"],
+  episode: ["mediaSummary"],
+  video: ["mediaSummary"],
   podcast: ["contributors"],
   contributor: ["contributor_handle", "contributor"],
   content_chunk: [
@@ -145,6 +143,9 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
   if (
     !hasExactKeys(row, [
       ...SEARCH_RESULT_BASE_KEYS,
+      ...(resultType === "media" || resultType === "episode" || resultType === "video"
+        ? []
+        : SEARCH_RESULT_TITLED_KEYS),
       ...SEARCH_RESULT_VARIANT_KEYS[resultType],
     ])
   ) {
@@ -157,16 +158,6 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
     return null;
   }
   if (typeof row.snippet !== "string") {
-    return null;
-  }
-  if (typeof row.title !== "string") {
-    return null;
-  }
-  if (
-    (row.source_label !== null && typeof row.source_label !== "string") ||
-    (row.media_id !== null && typeof row.media_id !== "string") ||
-    (row.media_kind !== null && typeof row.media_kind !== "string")
-  ) {
     return null;
   }
   if (typeof row.resource_ref !== "string") {
@@ -232,10 +223,6 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
     id: row.id,
     score: row.score,
     snippet: row.snippet,
-    title: row.title,
-    source_label: row.source_label,
-    media_id: row.media_id,
-    media_kind: row.media_kind,
     resource_ref: row.resource_ref,
     owner_resource_ref: row.owner_resource_ref,
     activation,
@@ -251,48 +238,33 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
     },
   };
 
+  if (resultType === "media" || resultType === "episode" || resultType === "video") {
+    if (base.context_ref.type !== "media") return null;
+    const mediaSummary = decodeMediaSummary(row.mediaSummary);
+    if (mediaSummary.mediaId !== row.id) return null;
+    if ((resultType === "episode") !== (mediaSummary.mediaKind === "podcast_episode")) return null;
+    if ((resultType === "video") !== (mediaSummary.mediaKind === "video")) return null;
+    return { ...base, type: resultType, mediaSummary };
+  }
+  if (
+    typeof row.title !== "string" ||
+    (row.source_label !== null && typeof row.source_label !== "string") ||
+    (row.media_id !== null && typeof row.media_id !== "string") ||
+    (row.media_kind !== null && typeof row.media_kind !== "string")
+  ) return null;
+  const titledBase = {
+    ...base,
+    title: row.title,
+    source_label: row.source_label,
+    media_id: row.media_id,
+    media_kind: row.media_kind,
+  };
+
   switch (row.type) {
-    case "media": {
-      if (base.context_ref.type !== row.type) {
-        return null;
-      }
-      const source = resolveSource(row);
-      if (!source) {
-        return null;
-      }
-      const contributors = decodeSearchContributors(source.contributors);
-      return {
-        ...base,
-        type: "media",
-        source: {
-          ...source,
-          contributors,
-        },
-      };
-    }
-    case "episode":
-    case "video": {
-      if (base.context_ref.type !== "media") {
-        return null;
-      }
-      const source = resolveSource(row);
-      if (!source) {
-        return null;
-      }
-      const contributors = decodeSearchContributors(source.contributors);
-      return {
-        ...base,
-        type: row.type,
-        source: {
-          ...source,
-          contributors,
-        },
-      };
-    }
     case "podcast": {
       const contributors = decodeSearchContributors(row.contributors);
       return {
-        ...base,
+        ...titledBase,
         type: "podcast",
         contributors,
       };
@@ -312,7 +284,7 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
         return null;
       }
       return {
-        ...base,
+        ...titledBase,
         type: "contributor",
         contributor_handle: contributorHandle,
         contributor: {
@@ -341,7 +313,7 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
       const contributors = decodeSearchContributors(source.contributors);
 
       return {
-        ...base,
+        ...titledBase,
         type: "content_chunk",
         media_id: row.media_id,
         media_kind: row.media_kind,
@@ -364,7 +336,7 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
       }
       const contributors = decodeSearchContributors(source.contributors);
       return {
-        ...base,
+        ...titledBase,
         type: "fragment",
         citation_label:
           typeof row.citation_label === "string" ? row.citation_label : null,
@@ -377,7 +349,7 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
     }
     case "page":
       return {
-        ...base,
+        ...titledBase,
         type: "page",
       };
     case "note_block":
@@ -393,7 +365,7 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
         return null;
       }
       return {
-        ...base,
+        ...titledBase,
         type: "note_block",
         body_text: row.body_text,
         highlight_excerpt: row.highlight_excerpt,
@@ -412,7 +384,7 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
       }
       const contributors = decodeSearchContributors(source.contributors);
       return {
-        ...base,
+        ...titledBase,
         type: "highlight",
         color: row.color,
         exact: row.exact,
@@ -435,7 +407,7 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
       }
 
       return {
-        ...base,
+        ...titledBase,
         type: "message",
         conversation_id: row.conversation_id,
         seq: row.seq,
@@ -454,7 +426,7 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
       }
       const contributors = decodeSearchContributors(source.contributors);
       return {
-        ...base,
+        ...titledBase,
         type: "evidence_span",
         evidence_span_id: row.evidence_span_id,
         citation_label: row.citation_label,
@@ -477,7 +449,7 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
       }
       const contributors = decodeSearchContributors(source.contributors);
       return {
-        ...base,
+        ...titledBase,
         type: "reader_apparatus_item",
         apparatus_kind: row.apparatus_kind,
         locator: row.locator,
@@ -492,7 +464,7 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
         return null;
       }
       return {
-        ...base,
+        ...titledBase,
         type: "conversation",
       };
     case "artifact": {
@@ -507,7 +479,7 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
         return null;
       }
       return {
-        ...base,
+        ...titledBase,
         type: "artifact",
         revision_id: row.revision_id,
         subject_ref: row.subject_ref,
@@ -536,7 +508,7 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
         return null;
       }
       return {
-        ...base,
+        ...titledBase,
         type: "web_result",
         result_type: "web_result",
         source_id: row.source_id,

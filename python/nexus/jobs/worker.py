@@ -51,7 +51,7 @@ from nexus.jobs.queue import (
     fail_job,
     get_job,
     heartbeat_job,
-    lock_running_job_attempt,
+    lock_running_job_claim,
     reschedule_running_job,
 )
 from nexus.jobs.registry import (
@@ -244,7 +244,9 @@ class JobWorker:
                         return
                     case ChildShutdownInterrupted():
                         drain()
-                        self._reschedule(definition, job, ScheduleAfter(0), reason="shutdown")
+                        self._reschedule(
+                            definition, job, context, ScheduleAfter(0), reason="shutdown"
+                        )
                         return
                     case ChildResourceFailure(dimension=dimension):
                         drain()
@@ -278,6 +280,7 @@ class JobWorker:
                 self._reschedule(
                     definition,
                     job,
+                    context,
                     handler_result.schedule,
                     reason="handler",
                     payload=handler_result.payload,
@@ -288,6 +291,7 @@ class JobWorker:
                 self._fail_attempt(
                     definition,
                     job,
+                    context,
                     error_code=str(result.get("error_code") or "E_WORKER_TASK_FAILED"),
                     message=str(result.get("reason") or "task returned failed status"),
                     result_payload=result,
@@ -296,9 +300,7 @@ class JobWorker:
             with self.session_factory() as db:
                 completed = complete_job(
                     db,
-                    job_id=job.id,
-                    worker_id=self.worker_id,
-                    attempt_no=job.attempts,
+                    context=context,
                     result_payload=result,
                 )
                 db.commit()
@@ -313,7 +315,7 @@ class JobWorker:
                 error=str(exc),
             )
             self._fail_attempt(
-                definition, job, error_code=_derive_error_code(exc), message=str(exc)
+                definition, job, context, error_code=_derive_error_code(exc), message=str(exc)
             )
         finally:
             drain()
@@ -342,6 +344,7 @@ class JobWorker:
         self,
         definition: JobDefinition,
         job: JobRow,
+        context: JobExecutionContext,
         schedule: RescheduleSchedule,
         *,
         reason: Literal["handler", "shutdown"],
@@ -351,9 +354,7 @@ class JobWorker:
         with self.session_factory() as db:
             rescheduled = reschedule_running_job(
                 db,
-                job_id=job.id,
-                worker_id=self.worker_id,
-                attempt_no=job.attempts,
+                context=context,
                 schedule=schedule,
                 payload=payload,
             )
@@ -368,6 +369,7 @@ class JobWorker:
         self,
         definition: JobDefinition,
         job: JobRow,
+        context: JobExecutionContext,
         *,
         error_code: str,
         message: str,
@@ -377,9 +379,7 @@ class JobWorker:
         with self.session_factory() as db:
             failed = fail_job(
                 db,
-                job_id=job.id,
-                worker_id=self.worker_id,
-                attempt_no=job.attempts,
+                context=context,
                 error_code=error_code,
                 error_message=message,
                 retry_delays_seconds=definition.retry_delays_seconds,
@@ -414,12 +414,7 @@ class JobWorker:
         if dimension is None and not projects_source:
             return False
         with self.session_factory() as db:
-            if (
-                lock_running_job_attempt(
-                    db, job_id=job.id, worker_id=self.worker_id, attempt_no=job.attempts
-                )
-                is None
-            ):
+            if not lock_running_job_claim(db, context=context):
                 self._warn("worker_child_settlement_rejected_lost_ownership", job)
                 return True
             if projects_source and _committed_source_success(db, job):
@@ -428,9 +423,7 @@ class JobWorker:
                     result["child_exit"] = {"kind": "ResourceFailure", "dimension": dimension}
                 complete_job(
                     db,
-                    job_id=job.id,
-                    worker_id=self.worker_id,
-                    attempt_no=job.attempts,
+                    context=context,
                     result_payload=result,
                 )
                 db.commit()
@@ -450,9 +443,7 @@ class JobWorker:
                 )
             dead = fail_job(
                 db,
-                job_id=job.id,
-                worker_id=self.worker_id,
-                attempt_no=job.attempts,
+                context=context,
                 error_code="E_RESOURCE_LIMIT",
                 error_message=message,
                 retry_delays_seconds=definition.retry_delays_seconds,

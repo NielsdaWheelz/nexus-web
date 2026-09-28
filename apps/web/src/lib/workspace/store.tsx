@@ -826,8 +826,6 @@ export function WorkspaceStoreProvider({
   const cancelledPaneEntryActivationIds =
     paneEntryDeliveryLifecycle.cancelledActivationIds;
   const consumedPaneEntryActivationIdSetRef = useRef<Set<string>>(new Set());
-  const hashFoldedRef = useRef(false);
-  const lastFoldedLocationHashHrefRef = useRef<string | null>(null);
   const pendingLabelHintByPaneIdRef = useRef<
     Map<string, WorkspacePaneLabelRecord>
   >(new Map());
@@ -1002,9 +1000,6 @@ export function WorkspaceStoreProvider({
       return;
     }
     const locationHref = `${window.location.pathname}${window.location.search}${locationHash}`;
-    if (lastFoldedLocationHashHrefRef.current === locationHref) {
-      return;
-    }
     const locationWithoutHash = `${window.location.pathname}${window.location.search}`;
     const state = stateRef.current;
     const activePane = getWorkspacePrimaryPanes(state).find(
@@ -1024,7 +1019,6 @@ export function WorkspaceStoreProvider({
     ) {
       return;
     }
-    lastFoldedLocationHashHrefRef.current = locationHref;
     if (activeHref === locationHref) {
       return;
     }
@@ -1037,22 +1031,13 @@ export function WorkspaceStoreProvider({
   }, [dispatch]);
 
   useEffect(() => {
-    if (hashFoldedRef.current) {
-      return;
-    }
-    hashFoldedRef.current = true;
     setMounted(true);
-    foldLocationHashIntoActivePane();
-  }, [foldLocationHashIntoActivePane]);
+  }, []);
 
-  useEffect(() => {
-    if (!mounted) {
-      return;
-    }
+  useLayoutEffect(() => {
     foldLocationHashIntoActivePane({ requireActivePathMatch: true });
   }, [
     foldLocationHashIntoActivePane,
-    mounted,
     primaryPanes,
     state.activePrimaryPaneId,
   ]);

@@ -46,7 +46,7 @@ from nexus.services.epub_ingest import EpubExtractionPlan
 from nexus.services.epub_lifecycle import prepare_epub_source, publish_epub_source
 from nexus.services.file_ingest_validation import validate_file_ingest_request
 from nexus.services.fragment_blocks import insert_fragment_blocks
-from nexus.services.html_apparatus import attach_fragment_locators
+from nexus.services.html_apparatus import attach_fragment_locators, derive_fragment_note_groups
 from nexus.services.media_author_observation_seam import attach_author_observation
 from nexus.services.media_deletion import delete_document_storage_objects
 from nexus.services.media_fact_revisions import bump_all_media_fact_collections
@@ -61,6 +61,7 @@ from nexus.services.podcasts.transcription import run_podcast_transcription_now
 from nexus.services.reader_apparatus import replace_media_apparatus
 from nexus.services.reader_publication import (
     ReaderPublicationSourceFile,
+    ReplaceSourceIssues,
     replace_reader_publication,
 )
 from nexus.services.remote_file_client import REMOTE_FILE_CONTENT_TYPES, fetch_binary_to_storage
@@ -663,6 +664,7 @@ def _publish_stored_html(
             html=content_html,
             embed_source_html=embed_source_html,
             base_url=base_url,
+            document_url=packet.url if packet is not None else base_url,
             fragment_idx=0,
             extract_embeds=extract_embeds,
         )
@@ -698,12 +700,14 @@ def _publish_stored_html(
             db,
             media_id=media_id,
             expected_kind="web_article",
+            issues=ReplaceSourceIssues(issues=()),
             replace_projection=lambda media: _replace_stored_html_projection(
                 db=db,
                 media=media,
                 locked_attempt=locked,
                 media_id=media_id,
                 prepared=prepared,
+                source_html=content_html,
                 packet=packet,
                 request_id=request_id,
                 locked_embed_media_ids=locked_embed_media_ids,
@@ -727,6 +731,7 @@ def _replace_stored_html_projection(
     locked_attempt: MediaSourceAttempt,
     media_id: UUID,
     prepared: WebArticlePreparedFragment,
+    source_html: str,
     packet: ArticlePacket | None,
     request_id: str | None,
     locked_embed_media_ids: set[UUID],
@@ -780,6 +785,12 @@ def _replace_stored_html_projection(
             html_sanitized=prepared.html_sanitized,
         ),
         edges=prepared.apparatus_edges,
+        note_groups=derive_fragment_note_groups(
+            prepared.html_sanitized,
+            prepared.canonical_text,
+            fragment.id,
+            source_html=source_html,
+        ),
     )
     if packet is None:
         return fragment.id, NOT_OBSERVED

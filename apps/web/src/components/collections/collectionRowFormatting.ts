@@ -1,7 +1,4 @@
-import type {
-  CollectionActivity,
-  ConsumptionModality,
-} from "@/lib/collections/types";
+import type { CollectionActivity } from "@/lib/collections/types";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
 import { assertNever } from "@/lib/assertNever";
 
@@ -10,104 +7,39 @@ export interface ActivityText {
   readonly accessible: string;
 }
 
-function consumptionVerb(modality: ConsumptionModality) {
-  switch (modality) {
-    case "Read":
-      return "read";
-    case "Listen":
-      return "listen";
-    case "Watch":
-      return "watch";
-    default:
-      return assertNever(modality, "Unsupported consumption modality");
-  }
-}
-
-function consumptionGerund(modality: ConsumptionModality): string {
-  switch (modality) {
-    case "Read":
-      return "reading";
-    case "Listen":
-      return "listening";
-    case "Watch":
-      return "watching";
-    default:
-      return assertNever(modality, "Unsupported consumption modality");
-  }
-}
-
 function minuteLabel(minutes: number): string {
   return minutes === 1 ? "minute" : "minutes";
 }
 
 export function collectionActivityText(activity: CollectionActivity): ActivityText {
   switch (activity.kind) {
-    case "Unread": {
-      if (
-        activity.modality === "Read" &&
-        activity.remainingMinutes.kind === "Present"
-      ) {
-        const minutes = activity.remainingMinutes.value.value;
-        return {
-          visible: `Unread · ≈${minutes} min left`,
-          accessible: `Unread, about ${minutes} ${minuteLabel(minutes)} left to read`,
-        };
+    case "MediaDuration": {
+      const { modality, estimate } = activity.duration;
+      const remaining = estimate.remainingMinutes;
+      const minutes = remaining.kind === "Present"
+        ? remaining.value.value
+        : estimate.totalMinutes.value;
+      if (modality === "Listen") {
+        return remaining.kind === "Present"
+          ? {
+              visible: `${minutes} min left to listen`,
+              accessible: `${minutes} ${minuteLabel(minutes)} left to listen`,
+            }
+          : {
+              visible: `${minutes} min to listen`,
+              accessible: `${minutes} ${minuteLabel(minutes)} to listen`,
+            };
       }
-      if (activity.totalMinutes.kind === "Absent") {
-        return { visible: "Unread", accessible: "Unread" };
-      }
-      const minutes = activity.totalMinutes.value.value;
-      if (activity.modality === "Read") {
-        return {
-          visible: `Unread · ≈${minutes} min total`,
-          accessible: `Unread, about ${minutes} ${minuteLabel(minutes)} total to read`,
-        };
-      }
-      return {
-        visible: `Unread · ≈${minutes} min`,
-        accessible: `Unread, about ${minutes} ${minuteLabel(minutes)} to ${consumptionVerb(activity.modality)}`,
-      };
+      return remaining.kind === "Present"
+        ? {
+            visible: `${minutes === 0 ? "" : "≈"}${minutes} min left`,
+            accessible: `${minutes === 0 ? "" : "About "}${minutes} ${minuteLabel(minutes)} left to read`,
+          }
+        : {
+            visible: `≈${minutes} min total`,
+            accessible: `About ${minutes} ${minuteLabel(minutes)} total to read`,
+          };
     }
-    case "InProgress": {
-      const fraction =
-        activity.fraction.kind === "Present"
-          ? Math.round(activity.fraction.value.value * 100)
-          : null;
-      const minutes =
-        activity.remainingMinutes.kind === "Present"
-          ? activity.remainingMinutes.value.value
-          : null;
-      if (activity.modality === "Read" && minutes !== null) {
-        return {
-          visible: `≈${minutes} min left`,
-          accessible: `About ${minutes} ${minuteLabel(minutes)} left to read`,
-        };
-      }
-      if (fraction !== null && minutes !== null) {
-        return {
-          visible: `${fraction}% · ≈${minutes} min left`,
-          accessible: `${fraction} percent complete, about ${minutes} ${minuteLabel(minutes)} left to ${consumptionVerb(activity.modality)}`,
-        };
-      }
-      if (fraction !== null) {
-        return {
-          visible: `${fraction}%`,
-          accessible: `${fraction} percent ${consumptionGerund(activity.modality)} progress`,
-        };
-      }
-      if (minutes === null) {
-        throw new Error("Invalid InProgress activity without progress facts");
-      }
-      return {
-        visible: `≈${minutes} min left`,
-        accessible: `About ${minutes} ${minuteLabel(minutes)} left to ${consumptionVerb(activity.modality)}`,
-      };
-    }
-    case "Finished":
-      return {
-        visible: "Finished",
-        accessible: `Finished ${consumptionGerund(activity.modality)}`,
-      };
     case "Unplayed": {
       const count = activity.count.value;
       return {

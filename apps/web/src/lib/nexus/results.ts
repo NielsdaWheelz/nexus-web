@@ -719,12 +719,15 @@ export function projectNexusSearchEntries(input: {
     if (row.resourceRef === row.ownerResourceRef) {
       directOwner.set(row.ownerResourceRef, {
         key: { kind: "Resource", occurrenceRef: row.resourceRef },
-        label: row.primaryText,
+        label: "mediaSummary" in row ? row.mediaSummary.title : row.primaryText,
       });
     }
   }
 
   return input.rows.flatMap((row) => {
+    const label = "mediaSummary" in row ? row.mediaSummary.title : row.primaryText;
+    const metadata = "mediaSummary" in row ? null : row.sourceMeta;
+    const typeLabel = "mediaSummary" in row ? row.type : row.typeLabel;
     if (row.type === "web_result") {
       throw new Error("Canonical Nexus Search returned a live Web result");
     }
@@ -742,8 +745,8 @@ export function projectNexusSearchEntries(input: {
     const tier =
       nexusTextRankTier({
         query: input.query,
-        label: row.primaryText,
-        metadata: row.sourceMeta ? [row.sourceMeta] : [],
+        label,
+        metadata: metadata ? [metadata] : [],
         fullText: true,
       }) ?? "MetadataOrFullText";
     const directParent = directOwner.get(row.ownerResourceRef);
@@ -762,9 +765,9 @@ export function projectNexusSearchEntries(input: {
     return [
       resourceEntry({
         occurrenceRef: row.resourceRef,
-        label: row.primaryText,
-        typeLabel: row.typeLabel,
-        metadata: row.sourceMeta ?? undefined,
+        label,
+        typeLabel,
+        metadata: metadata ?? undefined,
         snippetSegments: row.snippetSegments,
         subject: row.actionSubject,
         activation: row.activation,

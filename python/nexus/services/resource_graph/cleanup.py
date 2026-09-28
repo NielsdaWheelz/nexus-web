@@ -24,8 +24,10 @@ from nexus.db.models import (
     ResourceVersion,
     ResourceViewState,
 )
+from nexus.errors import ApiErrorCode, ConflictError
 from nexus.services.resource_graph.edges import Pair, link_note_blocks_for_pair
-from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
+from nexus.services.resource_items import versions
 
 
 def delete_edges_for_deleted_resource(db: Session, *, ref: ResourceRef) -> None:
@@ -43,6 +45,33 @@ def delete_edges_for_deleted_resources(db: Session, *, refs: Iterable[ResourceRe
     source = tuple_(ResourceEdge.source_scheme, ResourceEdge.source_id).in_(pairs)
     target = tuple_(ResourceEdge.target_scheme, ResourceEdge.target_id).in_(pairs)
 
+    neutral = db.scalars(
+        select(ResourceEdge).where(
+            ResourceEdge.origin == "user",
+            ResourceEdge.kind == "context",
+            ResourceEdge.source_order_key.is_(None),
+            ResourceEdge.ordinal.is_(None),
+            ResourceEdge.snapshot.is_(None),
+            or_(source, target),
+        )
+    ).all()
+    affected = {
+        (edge.user_id, scheme, resource_id)
+        for edge in neutral
+        for scheme, resource_id in (
+            (edge.source_scheme, edge.source_id),
+            (edge.target_scheme, edge.target_id),
+        )
+        if (scheme, resource_id) not in pairs
+    }
+    for viewer_id, scheme, resource_id in affected:
+        versions.bump_version(
+            db,
+            viewer_id=viewer_id,
+            ref=assert_resource_ref(f"{scheme}:{resource_id}"),
+            lane="links",
+        )
+
     bare = select(ResourceEdge.id).where(ResourceEdge.ordinal.is_(None), or_(source, target))
     db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id.in_(bare)))
     db.execute(delete(ResourceEdge).where(ResourceEdge.ordinal.is_(None), or_(source, target)))
@@ -59,19 +88,30 @@ def delete_edges_for_deleted_resources(db: Session, *, refs: Iterable[ResourceRe
     )
 
 
-def detach_link_note_motif(db: Session, *, viewer_id: UUID, a: ResourceRef, b: ResourceRef) -> None:
-    """Delete both attachment edges of the Link-note motif between ``a`` and ``b``.
-
-    The authored prose is never touched: it survives as a standalone note.
-    """
-    _delete_link_note_edges(
-        db, note_ids=link_note_blocks_for_pair(db, viewer_id=viewer_id, a=a, b=b)
-    )
-
-
-def clear_edge_view_state(db: Session, *, edge_id: UUID) -> None:
-    """Drop the view states referencing one edge, before the caller deletes it."""
-    db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id == edge_id))
+def detach_link_note_motif(
+    db: Session, *, viewer_id: UUID, a: ResourceRef, b: ResourceRef, note_id: UUID | None = None
+) -> None:
+    """Detach the selected pair's motif without deleting its note or other links."""
+    pair = {(a.scheme, a.id), (b.scheme, b.id)}
+    attached = link_note_blocks_for_pair(db, viewer_id=viewer_id, a=a, b=b)
+    selected = [note_id] if note_id is not None else attached
+    for selected_id in selected:
+        rows = db.execute(
+            select(ResourceEdge.id, ResourceEdge.target_scheme, ResourceEdge.target_id).where(
+                ResourceEdge.user_id == viewer_id,
+                ResourceEdge.origin == "link_note",
+                ResourceEdge.source_scheme == "note_block",
+                ResourceEdge.source_id == selected_id,
+            )
+        ).all()
+        if {(scheme, target_id) for _, scheme, target_id in rows} != pair:
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT,
+                "Link note has ambiguous attachments",
+            )
+        edge_ids = [edge_id for edge_id, _, _ in rows]
+        db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id.in_(edge_ids)))
+        db.execute(delete(ResourceEdge).where(ResourceEdge.id.in_(edge_ids)))
 
 
 def delete_resource_protocol_state(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> None:

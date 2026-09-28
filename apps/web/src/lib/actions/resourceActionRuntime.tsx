@@ -54,6 +54,7 @@ import { useShareController } from "@/lib/sharing/controller";
 import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { useResourceOverlaysController } from "@/lib/resources/resourceOverlaysController";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 import {
   canonicalSessionOfGlobalState,
   usePlayerCommands,
@@ -166,6 +167,7 @@ export function ResourceActionRuntimeProvider({
   const { openLibraryPlacement } = useLibraryPlacementController();
   const {
     openAuthorsEditor,
+    openMediaMetadata,
     openLibrarySettings,
     openPodcastSettings,
     openSubscribe,
@@ -177,6 +179,26 @@ export function ResourceActionRuntimeProvider({
   const offlineReadingCapability = useOfflineReadingCapability();
   const feedback = useFeedback();
   const offerCompletionUndo = useCompletionUndo(cache.reconcile);
+  const { getCanonicalSnapshot, onCanonicalInstall } = lectern;
+  useEffect(() => {
+    let previous = new Set(
+      getCanonicalSnapshot()?.items.map((item) => item.mediaSummary.mediaId) ?? [],
+    );
+    return onCanonicalInstall((event) => {
+      if (event.kind !== "snapshot") return;
+      const current = new Set(event.snapshot.items.map((item) => item.mediaSummary.mediaId));
+      const changed = [
+        ...[...previous].filter((id) => !current.has(id)),
+        ...[...current].filter((id) => !previous.has(id)),
+      ];
+      previous = current;
+      if (changed.length === 0) return;
+      void cache.reconcile({
+        kind: "Subjects",
+        refs: changed.map((id) => canonicalResourceRef({ scheme: "media", id })),
+      }).catch((error) => setDefect({ error }));
+    });
+  }, [cache, getCanonicalSnapshot, onCanonicalInstall]);
   const createOverlayMutationBoundary = useCallback(
     (ref: CanonicalResourceRef, actionId: ResourceActionId) => {
       const key = `${ref}|${actionId}`;
@@ -214,6 +236,7 @@ export function ResourceActionRuntimeProvider({
     openShare,
     openLibraryPlacement,
     openAuthorsEditor,
+    openMediaMetadata,
     openLibrarySettings,
     openPodcastSettings,
     openSubscribe,
@@ -254,7 +277,7 @@ export function ResourceActionRuntimeProvider({
           busy.add(key);
         }
         try {
-          await command.execute(current);
+          await command.execute(current, command.detail);
           if (!command.openOnly) await cache.reconcile(command.reconcile);
         } catch (error) {
           if (handleUnauthenticatedApiError(error)) return;

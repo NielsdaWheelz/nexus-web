@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db, get_repeatable_read_db
+from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok
 from nexus.schemas.consumption import (
@@ -50,7 +50,7 @@ def get_quick_reads(
 @router.get("/lectern")
 def get_lectern(
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: Annotated[Session, Depends(get_repeatable_read_db)],
 ) -> dict:
     snapshot = consumption_service.get_lectern(db, viewer.user_id)
     return ok(snapshot, by_alias=True)

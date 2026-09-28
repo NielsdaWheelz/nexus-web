@@ -156,21 +156,33 @@ export function useDocumentReaderSession({
   const currentNavigation =
     navigationRefreshKey === null ? navigationResource : refreshedNavigation;
 
-  const [activeEpubFragment, setActiveEpubFragment] =
+  const [loadedEpubFragment, setActiveEpubFragment] =
     useState<EpubFragmentContent | null>(null);
   const epubFragmentId = epub?.fragmentId ?? null;
   const epubFragmentCacheKey = epub?.cacheKey ?? null;
   const epubSourceGeneration = epub?.sourceGeneration ?? 0;
+  const activeEpubFragment =
+    currentNavigation.status === "ready" &&
+    currentNavigation.data.kind === "epub" &&
+    loadedEpubFragment?.generation === currentNavigation.data.generation &&
+    loadedEpubFragment.fragment_id === epubFragmentId &&
+    currentNavigation.data.fragments.some(
+      (fragment) => fragment.fragment_id === loadedEpubFragment.fragment_id,
+    )
+      ? loadedEpubFragment
+      : null;
   const epubFragmentInitial = useMemo(
     () =>
       initial.status === "ready" &&
       initial.data.document.kind === "Epub" &&
+      currentNavigation.status === "ready" &&
+      initial.data.document.fragment.generation === currentNavigation.data.generation &&
       epubSourceGeneration === 0 &&
       epubFragmentId !== null &&
       initial.data.document.fragment.fragment_id === epubFragmentId
         ? ({ status: "ready", data: initial.data.document.fragment } as const)
         : null,
-    [epubFragmentId, epubSourceGeneration, initial],
+    [currentNavigation, epubFragmentId, epubSourceGeneration, initial],
   );
   const epubFragmentFetch = useResource<EpubFragmentContent>({
     cacheKey:

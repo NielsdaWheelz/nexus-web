@@ -24,11 +24,13 @@ import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import { useResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import Button from "@/components/ui/Button";
+import AppliedFilters, { type AppliedFilterChip } from "@/components/ui/AppliedFilters";
 import SelectField from "@/components/ui/SelectField";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
+import CollectionFilterEditor from "@/components/workspace/CollectionFilterEditor";
 import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
 import {
@@ -59,7 +61,6 @@ import {
   CANONICAL_PODCAST_SUBSCRIPTION_VIEW,
   SUBSCRIPTION_FILTERS,
   SUBSCRIPTION_SORTS,
-  activeSubscriptionControlCount,
   decodePodcastSubscriptionView,
   encodePodcastSubscriptionView,
   podcastSubscriptionViewQuery,
@@ -543,23 +544,21 @@ export default function PodcastsPaneBody() {
     !loading && exhaustion.kind === "Complete"
       ? exhaustion.itemCount
       : null;
-  const activeDomainControlCount =
-    view === null ? 0 : activeSubscriptionControlCount(view);
   const sortSelectRef = useRef<HTMLSelectElement | null>(null);
-  // Recovery actions that disappear after reset return focus to Sort by.
-  const pendingCommitFocusRef = useRef(false);
-  useEffect(() => {
-    if (!pendingCommitFocusRef.current) return;
-    pendingCommitFocusRef.current = false;
-    sortSelectRef.current?.focus();
-  }, [view]);
+  const filtersTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const selectedLibraryId = view?.library.kind === "ExactLibrary"
+    ? view.library.id
+    : null;
+  const selectedLibrary = selectedLibraryId === null
+    ? undefined
+    : libraries.find((library) => library.id === selectedLibraryId);
   const subscriptionFilterNodes = useMemo(
     () =>
       view === null ? undefined : (
         <>
           <SelectField
             layout="Stacked"
-            label="Filter"
+            label="Show"
             value={view.filter}
             onChange={(event) =>
               setDecodedView({
@@ -599,31 +598,12 @@ export default function PodcastsPaneBody() {
             disabled={librariesLoading}
           >
             <option value="">All libraries</option>
+            {selectedLibraryId !== null && selectedLibrary === undefined ? (
+              <option value={selectedLibraryId}>{selectedLibraryId}</option>
+            ) : null}
             {libraries.map((library) => (
               <option key={library.id} value={library.id}>
                 {library.name}
-              </option>
-            ))}
-          </SelectField>
-
-          <SelectField
-            layout="Stacked"
-            label="Sort by"
-            ref={sortSelectRef}
-            value={view.sort}
-            onChange={(event) =>
-              setDecodedView({
-                kind: "Valid",
-                view: {
-                  ...view,
-                  sort: event.target.value as SubscriptionSort,
-                },
-              })
-            }
-          >
-            {SUBSCRIPTION_SORTS.map((sort) => (
-              <option key={sort} value={sort}>
-                {subscriptionSortLabel(sort)}
               </option>
             ))}
           </SelectField>
@@ -633,6 +613,8 @@ export default function PodcastsPaneBody() {
     [
       libraries,
       librariesLoading,
+      selectedLibrary,
+      selectedLibraryId,
       setDecodedView,
       view,
     ],
@@ -704,6 +686,24 @@ export default function PodcastsPaneBody() {
       view: CANONICAL_PODCAST_SUBSCRIPTION_VIEW,
     });
   }, [clearQuery, setDecodedView]);
+  const clearDomainFilters = useCallback(() => {
+    if (view === null) return;
+    setDecodedView({
+      kind: "Valid",
+      view: { ...view, filter: "all", library: { kind: "AllLibraries" } },
+    });
+  }, [setDecodedView, view]);
+  const appliedFilters = useMemo<AppliedFilterChip[]>(() => view === null ? [] : [
+    ...(view.filter === "all"
+      ? []
+      : [{ id: "filter", label: subscriptionFilterLabel(view.filter) }]),
+    ...(view.library.kind === "AllLibraries"
+      ? []
+      : [{
+          id: "library",
+          label: `Library: ${selectedLibrary?.name ?? view.library.id}`,
+        }]),
+  ], [view, selectedLibrary?.name]);
   const { inputRef, focusInput } = usePaneCollectionInput();
   const collection = useMemo(
     () =>
@@ -720,23 +720,55 @@ export default function PodcastsPaneBody() {
                 onQueryChange={onQueryChange}
                 onClearQuery={clearQuery}
                 rowStatus={rowStatus}
-                filters={subscriptionFilterNodes}
-                controls={
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={resetToCanonicalView}
-                    disabled={activeDomainControlCount === 0 && !filterQuery.trim()}
-                  >
-                    Reset view
-                  </Button>
+                filters={
+                  <>
+                    <SelectField
+                      layout="Inline"
+                      label="Sort shows"
+                      size="sm"
+                      ref={sortSelectRef}
+                      value={view.sort}
+                      onChange={(event) =>
+                        setDecodedView({
+                          kind: "Valid",
+                          view: { ...view, sort: event.target.value as SubscriptionSort },
+                        })
+                      }
+                    >
+                      {SUBSCRIPTION_SORTS.map((sort) => (
+                        <option key={sort} value={sort}>{subscriptionSortLabel(sort)}</option>
+                      ))}
+                    </SelectField>
+                    <CollectionFilterEditor
+                      activeCount={appliedFilters.length}
+                      triggerRef={filtersTriggerRef}
+                      onClearFilters={clearDomainFilters}
+                      onResetView={view.sort !== "recent_episode" || filterQuery.trim() || appliedFilters.length > 0 ? resetToCanonicalView : undefined}
+                    >
+                      {subscriptionFilterNodes}
+                    </CollectionFilterEditor>
+                  </>
+                }
+                appliedFilters={
+                  <AppliedFilters
+                    chips={appliedFilters}
+                    returnFocusTo={filtersTriggerRef}
+                    onRemove={(chipId) => {
+                      if (chipId === "filter") {
+                        setDecodedView({ kind: "Valid", view: { ...view, filter: "all" } });
+                      } else if (chipId === "library") {
+                        setDecodedView({ kind: "Valid", view: { ...view, library: { kind: "AllLibraries" } } });
+                      }
+                    }}
+                  />
                 }
               />
             ),
             focusInput,
           },
     [
-      activeDomainControlCount,
+      appliedFilters,
+      clearDomainFilters,
       clearQuery,
       filterQuery,
       focusInput,
@@ -744,6 +776,7 @@ export default function PodcastsPaneBody() {
       onQueryChange,
       resetToCanonicalView,
       rowStatus,
+      setDecodedView,
       subscriptionFilterNodes,
       view,
     ],
@@ -828,8 +861,8 @@ export default function PodcastsPaneBody() {
         content={{ tone: "Danger", title: "Invalid podcasts view" }}
         announcement="Assertive"
         actions={[{ label: "Reset view", onClick: () => {
-          pendingCommitFocusRef.current = true;
           resetToCanonicalView();
+          requestAnimationFrame(() => sortSelectRef.current?.focus({ preventScroll: true }));
         } }]}
       />
     );
@@ -879,7 +912,7 @@ export default function PodcastsPaneBody() {
                 }}
                 announcement="None"
               />
-            ) : activeDomainControlCount > 0 ? (
+            ) : appliedFilters.length > 0 ? (
               <FeedbackNotice
                 content={{
                   tone: "Neutral",
@@ -892,8 +925,8 @@ export default function PodcastsPaneBody() {
                     size="sm"
                     className={styles.inlineButton}
                     onClick={() => {
-                      pendingCommitFocusRef.current = true;
-                      resetToCanonicalView();
+                      filtersTriggerRef.current?.focus({ preventScroll: true });
+                      clearDomainFilters();
                     }}
                   >
                     Clear filters

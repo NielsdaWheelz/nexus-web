@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Annotated, Any, Literal, TypeGuard
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from pydantic import AliasChoices, AliasGenerator, BaseModel, ConfigDict, Field, field_validator
@@ -36,7 +37,23 @@ NOTE_PM_NODE_TYPES = {
     "image",
 }
 NOTE_PM_INLINE_NODE_TYPES = {"text", "hard_break", "object_ref", "image"}
-NOTE_PM_MARK_TYPES = {"strong", "em", "code", "link", "strikethrough"}
+NOTE_PM_MARK_TYPES = {"strong", "em", "code", "link", "strikethrough", "underline"}
+
+
+class AbsentExpectedBody(BaseModel):
+    kind: Literal["absent"]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class VersionExpectedBody(BaseModel):
+    kind: Literal["version"]
+    version: int = Field(ge=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+ExpectedNoteBody = Annotated[AbsentExpectedBody | VersionExpectedBody, Field(discriminator="kind")]
 
 
 class CamelModel(BaseModel):
@@ -136,9 +153,30 @@ def _validate_pm_marks(marks: object, *, path: str) -> None:
         if mark_type == "link":
             if not isinstance(attrs, dict) or not isinstance(attrs.get("href"), str):
                 raise ValueError(f"{mark_path}.attrs.href must be a string")
+            if not _safe_note_link_href(attrs["href"]):
+                raise ValueError(f"{mark_path}.attrs.href must be a safe link")
             title = attrs.get("title")
             if title is not None and not isinstance(title, str):
                 raise ValueError(f"{mark_path}.attrs.title must be a string or null")
+
+
+def _safe_note_link_href(href: str) -> bool:
+    if not href or any(
+        char.isspace() or ord(char) < 32 or ord(char) == 127 or char == "\\" for char in href
+    ):
+        return False
+    if href.startswith("/"):
+        return not href.startswith("//")
+    try:
+        parsed = urlsplit(href)
+        if parsed.scheme in {"http", "https"}:
+            if "%" in parsed.netloc:
+                return False
+            _ = parsed.port  # reject malformed or out-of-range ports, as the browser does
+            return bool(parsed.hostname)
+    except ValueError:
+        return False
+    return parsed.scheme == "mailto" and bool(parsed.path) and not parsed.netloc
 
 
 def _validate_pm_attrs(node_type: str, attrs: dict[str, Any] | None, *, path: str) -> None:
@@ -306,8 +344,10 @@ class ResourceSurfaceNode(BaseModel):
 
 
 class ResourceSurfaceOccurrence(BaseModel):
-    occurrence_id: UUID
+    link_id: UUID
     target: ResourceSurfaceNode
+    collapsed: bool
+    has_link_note: bool
 
     model_config = ConfigDict(extra="forbid")
 
@@ -321,8 +361,15 @@ class ResourceSurfaceOut(BaseModel):
 
 class ResourceLaneVersionIn(BaseModel):
     ref: str
-    lane: Literal["title", "body", "outgoing_edges"]
+    lane: Literal["title", "body", "links"]
     version: int = Field(ge=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SurfaceContext(BaseModel):
+    root_ref: str
+    link_path: list[UUID]
 
     model_config = ConfigDict(extra="forbid")
 
@@ -335,7 +382,7 @@ class SurfaceStartPosition(BaseModel):
 
 class SurfaceAfterPosition(BaseModel):
     kind: Literal["after"]
-    occurrence_id: UUID
+    link_id: UUID
 
     model_config = ConfigDict(extra="forbid")
 
@@ -344,6 +391,18 @@ SurfacePosition = Annotated[
     SurfaceStartPosition | SurfaceAfterPosition,
     Field(discriminator="kind"),
 ]
+
+
+class SurfaceBodyEdit(BaseModel):
+    ref: str
+    body_pm_json: dict[str, Any]
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("body_pm_json")
+    @classmethod
+    def validate_body_pm_json(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_note_body_pm_json(value) or value
 
 
 class InsertNoteSurfaceCommand(BaseModel):
@@ -362,7 +421,7 @@ class InsertNoteSurfaceCommand(BaseModel):
 
 class SplitNoteSurfaceCommand(BaseModel):
     type: Literal["split_note"]
-    occurrence_id: UUID
+    link_id: UUID
     note_id: UUID
     left_body_pm_json: dict[str, Any]
     right_body_pm_json: dict[str, Any]
@@ -385,15 +444,81 @@ class InsertResourceSurfaceCommand(BaseModel):
 
 class MoveOccurrenceSurfaceCommand(BaseModel):
     type: Literal["move_occurrence"]
-    occurrence_id: UUID
+    link_id: UUID
     position: SurfacePosition
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SurfaceRemoval(BaseModel):
+    endpoint_ref: str
+    link_id: UUID
+    context: SurfaceContext
 
     model_config = ConfigDict(extra="forbid")
 
 
 class RemoveOccurrenceSurfaceCommand(BaseModel):
     type: Literal["remove_occurrence"]
-    occurrence_id: UUID
+    entries: list[SurfaceRemoval] = Field(min_length=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RelinkSurfaceCommand(BaseModel):
+    type: Literal["relink"]
+    link_id: UUID
+    destination_ref: str
+    position: SurfacePosition
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class JoinNotesSurfaceCommand(BaseModel):
+    type: Literal["join_notes"]
+    earlier_link_id: UUID
+    later_link_id: UUID
+    body_pm_json: dict[str, Any]
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("body_pm_json")
+    @classmethod
+    def validate_body_pm_json(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_note_body_pm_json(value) or value
+
+
+class OutlineNote(BaseModel):
+    note_id: UUID
+    body_pm_json: dict[str, Any]
+    parent_index: int | None = Field(default=None, ge=0)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("parent_index")
+    @classmethod
+    def validate_parent_index(cls, value: int | None) -> int:
+        if value is None:
+            raise ValueError("Omit parent_index for a root item")
+        return value
+
+    @field_validator("body_pm_json")
+    @classmethod
+    def validate_body_pm_json(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_note_body_pm_json(value) or value
+
+
+class PasteOutlineSurfaceCommand(BaseModel):
+    type: Literal["paste_outline"]
+    position: SurfacePosition
+    items: list[OutlineNote] = Field(min_length=1, max_length=1000)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ReverseEditSurfaceCommand(BaseModel):
+    type: Literal["reverse_edit"]
+    receipt_id: UUID
 
     model_config = ConfigDict(extra="forbid")
 
@@ -403,14 +528,20 @@ SurfaceCommand = Annotated[
     | SplitNoteSurfaceCommand
     | InsertResourceSurfaceCommand
     | MoveOccurrenceSurfaceCommand
-    | RemoveOccurrenceSurfaceCommand,
+    | RemoveOccurrenceSurfaceCommand
+    | RelinkSurfaceCommand
+    | JoinNotesSurfaceCommand
+    | PasteOutlineSurfaceCommand
+    | ReverseEditSurfaceCommand,
     Field(discriminator="type"),
 ]
 
 
 class ResourceSurfaceCommandRequest(BaseModel):
     client_mutation_id: str = Field(min_length=1, max_length=120)
-    base_versions: list[ResourceLaneVersionIn] = Field(default_factory=list)
+    base_versions: list[ResourceLaneVersionIn]
+    context: SurfaceContext
+    body_edits: list[SurfaceBodyEdit]
     command: SurfaceCommand
 
     model_config = ConfigDict(extra="forbid")
@@ -418,7 +549,10 @@ class ResourceSurfaceCommandRequest(BaseModel):
 
 class ResourceSurfaceCommandOut(BaseModel):
     client_mutation_id: str
-    surface: ResourceSurfaceOut
+    receipt_id: UUID
+    reverse_versions: list[ResourceLaneVersionIn]
+    nodes: list[ResourceSurfaceNode]
+    surfaces: list[ResourceSurfaceOut]
 
     model_config = ConfigDict(extra="forbid")
 

@@ -13,7 +13,12 @@ import type {
 import { useEffect, useMemo, useRef } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import { composeRefs } from "@/lib/ui/composeRefs";
-import { readerScrollKeyDirection, type TrustedScrollDirection } from "@/lib/reader/readerScrollInput";
+import {
+  isReaderScrollbarSeekStart,
+  readerScrollKeyIntent,
+  type TrustedScrollDirection,
+} from "@/lib/reader/readerScrollInput";
+import type { ReaderNavigationSeekOperation } from "@/lib/reader/useReaderNavigation";
 import styles from "./textDocumentReader.module.css";
 
 export type ReaderViewportSnapshot = {
@@ -71,6 +76,8 @@ export default function TextDocumentReader({
   onViewportScroll,
   onViewportScrollEnd,
   onTrustedScrollIntent,
+  onSeekBoundary,
+  onBeginScrollbarSeek,
   endContent,
   onContentClick,
   onContentPointerOver,
@@ -97,6 +104,8 @@ export default function TextDocumentReader({
   onViewportScroll: (snapshot: ReaderViewportSnapshot) => void;
   onViewportScrollEnd?: (snapshot: ReaderViewportSnapshot) => void;
   onTrustedScrollIntent: (direction: TrustedScrollDirection) => void;
+  onSeekBoundary: (edge: "Start" | "End") => void;
+  onBeginScrollbarSeek: () => ReaderNavigationSeekOperation | null;
   endContent: ReactNode;
   onContentClick: (event: MouseEvent<HTMLDivElement>) => void;
   onContentPointerOver: (event: PointerEvent<HTMLDivElement>) => void;
@@ -128,8 +137,12 @@ export default function TextDocumentReader({
   const onViewportScrollEndRef = useRef(onViewportScrollEnd);
   const onTrustedScrollIntentRef = useRef(onTrustedScrollIntent);
   const lastTouchYRef = useRef<number | null>(null);
-  const pointerScrollActiveRef = useRef(false);
-  const lastScrollTopRef = useRef(0);
+  const scrollbarSeekRef = useRef<{
+    operation: ReaderNavigationSeekOperation;
+    viewport: HTMLElement;
+    top: number;
+    left: number;
+  } | null>(null);
   onViewportReadyRef.current = onViewportReady;
   onViewportScrollRef.current = onViewportScroll;
   onViewportScrollEndRef.current = onViewportScrollEnd;
@@ -147,28 +160,50 @@ export default function TextDocumentReader({
       clientHeight: viewport.clientHeight,
     });
 
-    lastScrollTopRef.current = viewport.scrollTop;
     onViewportReadyRef.current(snapshot());
-    const publishScroll = (event: Event) => {
+    let settleTimer: number | undefined;
+    const publishScrollEnd = () => {
+      if (settleTimer !== undefined) window.clearTimeout(settleTimer);
+      settleTimer = undefined;
+      onViewportScrollEndRef.current?.(snapshot());
+    };
+    const publishScroll = () => {
       const nextSnapshot = snapshot();
-      const delta = nextSnapshot.scrollTop - lastScrollTopRef.current;
-      lastScrollTopRef.current = nextSnapshot.scrollTop;
-      if (pointerScrollActiveRef.current && event.isTrusted && delta !== 0) {
-        onTrustedScrollIntentRef.current(
-          delta > 0 ? "forward" : "backward",
-        );
-      }
       onViewportScrollRef.current(nextSnapshot);
+      if (!("onscrollend" in viewport) && onViewportScrollEndRef.current) {
+        if (settleTimer !== undefined) window.clearTimeout(settleTimer);
+        settleTimer = window.setTimeout(publishScrollEnd, 200);
+      }
     };
 
     viewport.addEventListener("scroll", publishScroll, { passive: true });
-    const publishScrollEnd = () => onViewportScrollEndRef.current?.(snapshot());
     viewport.addEventListener("scrollend", publishScrollEnd);
     return () => {
+      if (settleTimer !== undefined) window.clearTimeout(settleTimer);
       viewport.removeEventListener("scroll", publishScroll);
       viewport.removeEventListener("scrollend", publishScrollEnd);
     };
   }, [mediaId, textViewportRef]);
+
+  useEffect(() => {
+    const finish = (cancelled: boolean) => {
+      const seek = scrollbarSeekRef.current;
+      if (!seek) return;
+      scrollbarSeekRef.current = null;
+      const displaced = seek.viewport.scrollTop !== seek.top || seek.viewport.scrollLeft !== seek.left;
+      if (cancelled) void seek.operation.cancel(displaced);
+      else void seek.operation.settle({ kind: displaced ? "Arrived" : "Unchanged" });
+    };
+    const onPointerUp = () => finish(false);
+    const onPointerCancel = () => finish(true);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerCancel);
+    return () => {
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerCancel);
+      finish(true);
+    };
+  }, [mediaId]);
 
   function publishTrustedScrollIntent(direction: TrustedScrollDirection) {
     onTrustedScrollIntentRef.current(direction);
@@ -209,13 +244,27 @@ export default function TextDocumentReader({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    const direction = readerScrollKeyDirection(event.nativeEvent);
-    if (direction !== null) publishTrustedScrollIntent(direction);
+    const intent = readerScrollKeyIntent(event.nativeEvent);
+    if (intent?.kind === "Traverse") publishTrustedScrollIntent(intent.direction);
+    else if (intent?.kind === "Seek") {
+      event.preventDefault();
+      onSeekBoundary(intent.edge);
+    }
   }
 
   function handlePointerDown(event: PointerEvent<HTMLDivElement>) {
-    pointerScrollActiveRef.current =
-      event.isTrusted && event.pointerType !== "touch" && event.target === event.currentTarget;
+    if (!isReaderScrollbarSeekStart(event.nativeEvent, event.currentTarget)) return;
+    const operation = onBeginScrollbarSeek();
+    if (!operation) {
+      event.preventDefault();
+      return;
+    }
+    scrollbarSeekRef.current = {
+      operation,
+      viewport: event.currentTarget,
+      top: event.currentTarget.scrollTop,
+      left: event.currentTarget.scrollLeft,
+    };
   }
 
   function handleRenderedContentClick(event: MouseEvent<HTMLDivElement>) {
@@ -228,6 +277,13 @@ export default function TextDocumentReader({
         )
         ?.setAttribute("data-reader-tap-handled", "true");
       const apparatusEl = target.closest("[data-reader-apparatus-item-id]");
+      const anchorEl = target.closest("a[href]");
+      // A note body may carry apparatus identity around independently authored
+      // links. Only a marker inside the link owns that link's disclosure action.
+      if (anchorEl instanceof HTMLAnchorElement && apparatusEl && !anchorEl.contains(apparatusEl)) {
+        if (onInternalLinkClick?.(anchorEl)) event.preventDefault();
+        return;
+      }
       if (apparatusEl) {
         onContentClick(event);
         delegatedToContentClick = true;
@@ -237,7 +293,6 @@ export default function TextDocumentReader({
       }
 
       if (onInternalLinkClick) {
-        const anchorEl = target.closest("a[href]");
         if (
           anchorEl instanceof HTMLAnchorElement &&
           onInternalLinkClick(anchorEl)
@@ -269,12 +324,6 @@ export default function TextDocumentReader({
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onPointerDown={handlePointerDown}
-        onPointerUp={() => {
-          pointerScrollActiveRef.current = false;
-        }}
-        onPointerCancel={() => {
-          pointerScrollActiveRef.current = false;
-        }}
         onKeyDown={handleKeyDown}
       >
         {beforeContent}

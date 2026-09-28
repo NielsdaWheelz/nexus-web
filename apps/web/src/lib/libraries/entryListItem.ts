@@ -1,20 +1,10 @@
 import { decodePresence, type Presence } from "@/lib/api/presence";
-import type {
-  PositiveCount,
-  ProgressFraction,
-} from "@/lib/consumption/activityFacts";
+import type { PositiveCount, ProgressFraction } from "@/lib/consumption/activityFacts";
 import { decodeContributorCredit } from "@/lib/contributors/credit";
 import type { ContributorCredit } from "@/lib/contributors/types";
-import {
-  decodePublicationDate,
-  decodePublicationDateOnly,
-  type PublicationDate,
-} from "@/lib/dates/publicationDate";
+import { decodePublicationDate, type PublicationDate } from "@/lib/dates/publicationDate";
 import type { MediaActionCapabilities } from "@/lib/media/mediaActionCapabilities";
-import {
-  MEDIA_KINDS,
-  type MediaKind,
-} from "@/lib/media/kind";
+import { decodeMediaSummary, type MediaSummary } from "@/lib/media/mediaSummary";
 import {
   decodePodcastSyncStatus,
   type PodcastSyncStatus,
@@ -24,10 +14,7 @@ import {
   parsePauseShorteningMode,
   type PauseShorteningMode,
 } from "@/lib/player/pauseShortening";
-import {
-  decodeLibraryReadingTimeEntry,
-} from "@/lib/libraries/readingTime";
-import type { ReadingTimeEstimatePresence } from "@/lib/media/readingTime";
+import { decodeReadingTimeEstimate, type ReadingTimeEstimatePresence } from "@/lib/media/readingTime";
 import {
   expectArray,
   expectBoolean,
@@ -40,33 +27,18 @@ import {
   expectString,
 } from "@/lib/validation";
 
-const PROCESSING_STATUSES = [
-  "pending",
-  "extracting",
-  "ready_for_reading",
-  "failed",
-  "suspended",
-] as const;
 const READ_STATES = ["unread", "in_progress", "finished"] as const;
 const AUTHOR_MODES = ["automatic", "manual"] as const;
 
 export interface LibraryMediaListValue {
   readonly id: string;
-  readonly kind: MediaKind;
-  readonly title: string;
-  readonly created_at: string;
-  readonly contributors: ContributorCredit[];
-  readonly author_mode: "automatic" | "manual";
-  readonly original_published_date: Presence<PublicationDate>;
-  readonly publicationDate: Presence<PublicationDate>;
-  readonly canonical_source_url: string | null;
-  readonly sourceHost: Presence<string>;
-  readonly processing_status: (typeof PROCESSING_STATUSES)[number];
-  readonly read_state: "unread" | "in_progress" | "finished";
-  readonly progress_fraction: number | null;
+  readonly createdAt: string;
+  readonly authorMode: "automatic" | "manual";
+  readonly canonicalSourceUrl: string | null;
+  readonly readState: "unread" | "in_progress" | "finished";
   readonly progressFraction: Presence<ProgressFraction>;
-  readonly progress_resettable: boolean;
-  readonly last_engaged_at: string | null;
+  readonly progressResettable: boolean;
+  readonly lastEngagedAt: string | null;
   readonly capabilities: Pick<
     MediaActionCapabilities,
     | "can_quote"
@@ -102,41 +74,33 @@ export interface LibraryEntryPlacement {
 interface LibraryEntryBase {
   readonly placement: Presence<LibraryEntryPlacement>;
   readonly addedAt: string;
-  readonly readingTimeEstimate: ReadingTimeEstimatePresence;
 }
 
 export interface LibraryMediaListItem extends LibraryEntryBase {
   readonly kind: "media";
   readonly media: LibraryMediaListValue;
+  readonly mediaSummary: MediaSummary;
 }
 
 export interface LibraryPodcastListItem extends LibraryEntryBase {
   readonly kind: "podcast";
   readonly podcast: LibraryPodcastListValue;
   readonly subscription: Presence<LibraryPodcastSubscriptionValue>;
+  readonly readingTimeEstimate: ReadingTimeEstimatePresence;
 }
 
 export type LibraryEntryListItem =
   | LibraryMediaListItem
   | LibraryPodcastListItem;
 
-type LibraryMediaListWire = Omit<
-  LibraryMediaListValue,
-  "publicationDate" | "sourceHost" | "progressFraction"
->;
-function decodeMedia(raw: unknown): LibraryMediaListWire {
+function decodeMedia(raw: unknown): LibraryMediaListValue {
   const media = expectExactRecord(
     raw,
     [
       "id",
-      "kind",
-      "title",
       "created_at",
-      "contributors",
       "author_mode",
-      "original_published_date",
       "canonical_source_url",
-      "processing_status",
       "read_state",
       "progress_fraction",
       "progress_resettable",
@@ -159,65 +123,32 @@ function decodeMedia(raw: unknown): LibraryMediaListWire {
   );
   return {
     id: expectString(media.id, "Library media list item.id"),
-    kind: expectOneOf(
-      media.kind,
-      MEDIA_KINDS,
-      "Library media list item.kind",
-    ),
-    title: expectString(media.title, "Library media list item.title"),
-    created_at: expectString(
-      media.created_at,
-      "Library media list item.created_at",
-    ),
-    contributors: expectArray(
-      media.contributors,
-      (credit, index) =>
-        decodeContributorCredit(
-          credit,
-          index,
-          "Library entry contributors",
-        ),
-      "Library media list item.contributors",
-    ),
-    author_mode: expectOneOf(
+    createdAt: expectString(media.created_at, "Library media list item.created_at"),
+    authorMode: expectOneOf(
       media.author_mode,
       AUTHOR_MODES,
       "Library media list item.author_mode",
     ),
-    original_published_date: decodePresence(
-      media.original_published_date,
-      (date) =>
-        decodePublicationDateOnly(
-          date,
-          "Library media list item.original_published_date",
-        ),
-    ),
-    canonical_source_url: expectNullableString(
+    canonicalSourceUrl: expectNullableString(
       media.canonical_source_url,
       "Library media list item.canonical_source_url",
     ),
-    processing_status: expectOneOf(
-      media.processing_status,
-      PROCESSING_STATUSES,
-      "Library media list item.processing_status",
-    ),
-    read_state: expectOneOf(
+    readState: expectOneOf(
       media.read_state,
       READ_STATES,
       "Library media list item.read_state",
     ),
-    progress_fraction:
-      media.progress_fraction === null
-        ? null
-        : expectFiniteNumber(
-            media.progress_fraction,
-            "Library media list item.progress_fraction",
-          ),
-    progress_resettable: expectBoolean(
+    progressFraction: (() => {
+      if (media.progress_fraction === null) return { kind: "Absent" } as const;
+      const fraction = expectFiniteNumber(media.progress_fraction, "Library media list item.progress_fraction");
+      if (fraction < 0 || fraction > 1) throw new TypeError("Library media progressFraction must be in [0, 1]");
+      return { kind: "Present", value: { value: fraction } } as const;
+    })(),
+    progressResettable: expectBoolean(
       media.progress_resettable,
       "Library media list item.progress_resettable",
     ),
-    last_engaged_at: expectNullableString(
+    lastEngagedAt: expectNullableString(
       media.last_engaged_at,
       "Library media list item.last_engaged_at",
     ),
@@ -378,15 +309,20 @@ export function decodeLibraryEntryListItem(
   if (kind === "media") {
     const mediaEntry = expectExactRecord(
       raw,
-      ["kind", "placement", "addedAt", "media", "readingTimeEstimate"],
+      ["kind", "placement", "addedAt", "media", "mediaSummary"],
       "Library media entry",
     );
-    return decodeLibraryReadingTimeEntry({
+    const media = decodeMedia(mediaEntry.media);
+    const mediaSummary = decodeMediaSummary(mediaEntry.mediaSummary);
+    if (media.id !== mediaSummary.mediaId) {
+      throw new TypeError("Library media entry identity mismatch");
+    }
+    return {
       ...common,
       kind,
-      media: decodeMedia(mediaEntry.media),
-      readingTimeEstimate: mediaEntry.readingTimeEstimate,
-    });
+      media,
+      mediaSummary,
+    };
   }
 
   const podcastEntry = expectExactRecord(
@@ -402,11 +338,14 @@ export function decodeLibraryEntryListItem(
     "Library podcast entry",
   );
   const subscription = decodeSubscription(podcastEntry.subscription);
-  return decodeLibraryReadingTimeEntry({
+  return {
     ...common,
     kind,
     podcast: decodePodcast(podcastEntry.podcast, subscription),
     subscription,
-    readingTimeEstimate: podcastEntry.readingTimeEstimate,
-  });
+    readingTimeEstimate: decodePresence(
+      podcastEntry.readingTimeEstimate,
+      decodeReadingTimeEstimate,
+    ),
+  };
 }

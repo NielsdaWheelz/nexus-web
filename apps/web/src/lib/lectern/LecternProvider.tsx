@@ -560,9 +560,7 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
           installCanonical(result.lectern, unreadMediaIds);
           // One acknowledged consumption write for all seven commands; the pane
           // decides whether to refetch from its own committed projection.
-          publishConsumptionProjectionChange({
-            durationChanged: command.kind === "ResetProgress",
-          });
+          publishConsumptionProjectionChange({ rowChanged: true });
           if (progressState.kind === "Present") {
             emit({ kind: "progressState", state: progressState.value });
           }

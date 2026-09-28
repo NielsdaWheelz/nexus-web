@@ -49,22 +49,7 @@ function renderContext(context: CollectionContext): ReactNode {
 function renderExceptionalStatus(status: ExceptionalStatus): ReactNode {
   switch (status.kind) {
     case "MediaProcessing":
-      const processingStatus = status.status;
-      switch (processingStatus) {
-        case "pending":
-          return <Pill tone="neutral">Queued</Pill>;
-        case "extracting":
-          return <Pill tone="info">Processing</Pill>;
-        case "failed":
-          return <Pill tone="danger">Processing failed</Pill>;
-        case "suspended":
-          return <Pill tone="warning">Needs attention</Pill>;
-        default:
-          return assertNever(
-            processingStatus,
-            "Unsupported media processing status",
-          );
-      }
+      return <span>processing failed</span>;
     case "PodcastSync":
       const podcastSyncStatus = status.status;
       switch (podcastSyncStatus) {
@@ -263,25 +248,40 @@ export default function CollectionRow({
     : row.title.text;
 
   const supportParts: ReactNode[] = [];
-  if (row.contributors.length > 0) {
+  const mediaDuration =
+    row.activity.kind === "Present" && row.activity.value.kind === "MediaDuration"
+      ? collectionActivityText(row.activity.value)
+      : null;
+  const date = row.publicationDate.kind === "Present" ? (
+    <time key="date" dateTime={row.publicationDate.value}>
+      {formatCollectionPublicationDate(row.publicationDate.value)}
+    </time>
+  ) : null;
+  const contributors = row.contributors.length > 0 ? (
+    <ContributorCreditList
+      key="contributors"
+      className={styles.contributorList}
+      credits={row.contributors}
+      maxVisible={2}
+      overflowNoun={row.mediaIdentity ? "authors" : "contributors"}
+    />
+  ) : null;
+  if (row.mediaIdentity) {
+    if (date) supportParts.push(date);
+    if (contributors) supportParts.push(contributors);
+  } else {
+    if (contributors) supportParts.push(contributors);
+    if (date) supportParts.push(date);
+  }
+  if (mediaDuration) {
     supportParts.push(
-      <ContributorCreditList
-        key="contributors"
-        className={styles.contributorList}
-        credits={row.contributors}
-        maxVisible={2}
-      />,
+      <span key="duration" className={styles.duration}>
+        <span aria-hidden="true">{mediaDuration.visible}</span>
+        <span className="sr-only">{mediaDuration.accessible}</span>
+      </span>,
     );
   }
-  if (row.publicationDate.kind === "Present") {
-    const formattedDate = formatCollectionPublicationDate(row.publicationDate.value);
-    supportParts.push(
-      <time key="date" dateTime={row.publicationDate.value}>
-        {formattedDate}
-      </time>,
-    );
-  }
-  if (row.context.kind === "Present") {
+  if (row.context.kind === "Present" && !row.mediaIdentity) {
     supportParts.push(
       <span key="context" className={styles.context}>
         {renderContext(row.context.value)}
@@ -304,9 +304,15 @@ export default function CollectionRow({
         ))}
       </span>
     ) : undefined;
+  const evidence =
+    row.mediaIdentity && row.context.kind === "Present"
+      ? <span className={styles.context}>{renderContext(row.context.value)}</span>
+      : undefined;
 
   const activity =
-    row.activity.kind === "Present" ? collectionActivityText(row.activity.value) : null;
+    row.activity.kind === "Present" && !mediaDuration
+      ? collectionActivityText(row.activity.value)
+      : null;
   const exceptionalStatus =
     row.exceptionalStatus.kind === "Present"
       ? renderExceptionalStatus(row.exceptionalStatus.value)
@@ -350,7 +356,7 @@ export default function CollectionRow({
       </span>
     ) : undefined;
 
-  const menuLabel = `More actions for ${row.title.text}`;
+  const menuLabel = `${row.mediaIdentity ? "more" : "More"} actions for ${row.title.text}`;
   const occurrenceActions: ActionDescriptor[] = [];
   if (rowActionsAvailable && reorder) {
     occurrenceActions.push(
@@ -407,12 +413,16 @@ export default function CollectionRow({
         "aria-current": row.selected ? "true" : undefined,
         "data-collection-row-id": row.id,
         "data-collection-item-kind": row.kind,
+        "data-media-identity": row.mediaIdentity ? "true" : undefined,
+        "data-media-failed": row.mediaIdentity && exceptionalStatus ? "true" : undefined,
         "data-view-transition-part": "row",
         style: rootStyle,
       }}
       title={title}
       supporting={supporting}
       status={status}
+      separateStatus={!row.mediaIdentity}
+      evidence={evidence}
       primaryControl={primaryControl}
       actions={actions}
       expanded={panel}

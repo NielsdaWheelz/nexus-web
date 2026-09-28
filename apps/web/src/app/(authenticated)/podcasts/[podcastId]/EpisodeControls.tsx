@@ -102,7 +102,7 @@ export default function EpisodeControls({
                       .value as TranscriptRequestReason,
                   }))
                 }
-                aria-label={`Transcript request reason for ${episode.title}`}
+                aria-label={`Transcript request reason for ${episode.mediaSummary.title}`}
               >
                 <option value="search">search</option>
                 <option value="highlight">highlight</option>
@@ -112,7 +112,7 @@ export default function EpisodeControls({
             <Button
               variant="secondary"
               size="sm"
-              aria-label={`Submit transcript request for ${episode.title}`}
+              aria-label={`Submit transcript request for ${episode.mediaSummary.title}`}
               disabled={transcriptRequestDisabled}
               onClick={() =>
                 void transcript.handleRequestTranscript(episode.id)

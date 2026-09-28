@@ -8,6 +8,7 @@ every write through ``source_publication``'s exact queue-claim fence.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import posixpath
 from collections.abc import Callable
@@ -44,7 +45,9 @@ from nexus.jobs.queue import (
 )
 from nexus.logging import get_logger
 from nexus.schemas.import_history import (
+    CorrectSourceTypeRecovery,
     RepairSourceRecovery,
+    ReprocessSourceRecovery,
     RetrySourceRecovery,
     SafeFailureCode,
     SourceAccepted,
@@ -59,11 +62,11 @@ from nexus.schemas.import_history import (
 from nexus.schemas.imports import RepairSourceOffer, RetrySourceOffer, SourceRecoveryInput
 from nexus.schemas.media import (
     FromUrlResponse,
-    MediaProcessingStatus,
     MediaSourceAttemptStatus,
     SourceRepairAdmission,
     SourceRetryAdmission,
 )
+from nexus.schemas.media_summary import MediaProcessingStatus
 from nexus.schemas.presence import Presence, absent, present
 from nexus.services import library_entries, library_governance
 from nexus.services import media_source_types as source_types
@@ -125,10 +128,6 @@ from nexus.services.x_identity import classify_x_url, is_x_url
 from nexus.services.youtube_identity import classify_youtube_url, is_youtube_url
 from nexus.storage.client import StorageError, get_storage_client
 from nexus.storage.paths import get_file_extension
-from nexus.tasks.storage_object_cleanup import (
-    finalize_storage_object_write,
-    reserve_storage_object_write,
-)
 
 logger = get_logger(__name__)
 
@@ -140,16 +139,15 @@ FAILED = "failed"
 IN_FLIGHT_STATUSES = frozenset({ACCEPTED, QUEUED, RUNNING})
 
 # The bytes behind these failures are gone for good: only a new source helps.
-_NON_REACQUIRABLE_FILE_ERROR_CODES = frozenset(
-    "E_SIGN_UPLOAD_FAILED E_STORAGE_MISSING E_STORAGE_ERROR".split()
-)
+_NON_REACQUIRABLE_FILE_ERROR_CODES = frozenset("E_SIGN_UPLOAD_FAILED E_STORAGE_MISSING".split())
 # Only these settle the attempt; every other failure re-raises to the queue.
 _TERMINAL_SOURCE_FAILURE_CODES = frozenset(
     """E_SOURCE_ACCESS_DENIED E_SOURCE_INTEGRITY E_SOURCE_TOO_LARGE E_SOURCE_NOT_READABLE
     E_SSRF_BLOCKED E_INVALID_FILE_TYPE E_INVALID_CONTENT_TYPE E_FILE_TOO_LARGE
     E_CAPTURE_TOO_LARGE E_ARCHIVE_UNSAFE E_INVALID_REQUEST E_PDF_PASSWORD_REQUIRED
     E_TRANSCRIPT_UNAVAILABLE E_X_POST_UNAVAILABLE E_X_PROVIDER_CREDITS_DEPLETED
-    E_X_PROVIDER_AUTH_REJECTED E_PODCAST_QUOTA_EXCEEDED E_BILLING_REQUIRED""".split()
+    E_X_PROVIDER_AUTH_REJECTED E_PODCAST_QUOTA_EXCEEDED E_BILLING_REQUIRED
+    E_REPAIR_NOT_ALLOWED""".split()
 )
 _RESTRICTION_MESSAGES: dict[SourceRecoveryRestriction, str] = {
     "NotOwner": "Only the creator can retry source content.",
@@ -741,6 +739,7 @@ def accept_system_url_source(
         assign_viewer_libraries=False,
         expected_kind=expected_kind,
         payload_extra={"system_source": system_source},
+        caller_owns_transaction=True,
     )
 
 
@@ -755,6 +754,7 @@ def _accept_url(
     assign_viewer_libraries: bool,
     expected_kind: str | None = None,
     payload_extra: dict[str, object] | None = None,
+    caller_owns_transaction: bool = False,
 ) -> FromUrlResponse:
     validate_requested_url(url)
     spec = url_source_spec(url)
@@ -795,7 +795,8 @@ def _accept_url(
         if in_flight is not None and in_flight.status in IN_FLIGHT_STATUSES:
             # A second submission joins the run already crossing the fence rather
             # than accepting a newer attempt over it.
-            db.commit()
+            if not caller_owns_transaction:
+                db.commit()
             return _from_url_response(media, in_flight, "reused")
 
     source_payload: dict[str, object] = {"url": url, "kind": spec.kind, **spec.source_payload}
@@ -824,18 +825,20 @@ def _accept_url(
         if attempt.status == FAILED:
             attempt.error_code = media.last_error_code
             attempt.error_message = media.last_error_message
-    db.commit()
-
     if not created:
+        if not caller_owns_transaction:
+            db.commit()
         return _from_url_response(media, attempt, "reused", ingest_enqueued=False)
-    return _store_and_enqueue(
+    enqueue_accepted_source_attempt_in_transaction(
         db,
         media_id=media.id,
         attempt_id=attempt.id,
-        viewer_id=viewer_id,
+        actor_user_id=viewer_id,
         request_id=request_id,
-        writes=(),
     )
+    if not caller_owns_transaction:
+        db.commit()
+    return _from_url_response(media, attempt, "created", ingest_enqueued=True)
 
 
 def _new_media_from_spec(db: Session, spec: UrlSourceSpec, *, url: str, viewer_id: UUID) -> Media:
@@ -1129,96 +1132,6 @@ def enqueue_accepted_source_attempt_in_transaction(
     return job.id
 
 
-def enqueue_accepted_source_attempt(
-    db: Session, *, media_id: UUID, attempt_id: UUID, actor_user_id: UUID, request_id: str | None
-) -> bool:
-    """Commit the queue binding for one accepted attempt and settle its embed edges."""
-    enqueued = _enqueue_attempt(
-        db,
-        media_id=media_id,
-        attempt_id=attempt_id,
-        actor_user_id=actor_user_id,
-        request_id=request_id,
-        failure_stage="extract",
-        requeue=False,
-    )
-    _sync_document_embed_targets(db, media_id)
-    return enqueued
-
-
-def _enqueue_attempt(
-    db: Session,
-    *,
-    media_id: UUID,
-    attempt_id: UUID,
-    actor_user_id: UUID,
-    request_id: str | None,
-    failure_stage: str,
-    requeue: bool,
-) -> bool:
-    """Commit one attempt into the queue; a failure here fails the attempt visibly.
-
-    ``requeue`` additionally preflights the stored source with no transaction
-    open and re-admits the domain state a second run needs.
-    """
-    try:
-        if requeue:
-            _verify_source_storage(db, media_id=media_id, attempt_id=attempt_id)
-            media = db.execute(
-                select(Media).where(Media.id == media_id).with_for_update(key_share=True)
-            ).scalar()
-            attempt = db.scalars(
-                select(MediaSourceAttempt)
-                .where(MediaSourceAttempt.id == attempt_id)
-                .with_for_update()
-            ).one_or_none()
-            if media is None or attempt is None:
-                db.rollback()
-                return False
-            if attempt.status == FAILED:
-                db.commit()
-                return False
-            _admit_requeued_transcript(db, media, attempt, actor_user_id)
-            mark_source_queued(db, media)
-            bump_all_media_fact_collections(db)
-        else:
-            attempt = db.get(MediaSourceAttempt, attempt_id)
-            if attempt is None:
-                db.rollback()
-                return False
-            if attempt.status == FAILED:
-                db.commit()
-                return False
-        job = _enqueue_source_job(db, media_id, attempt_id, actor_user_id, request_id)
-        attempt.job_id = job.id
-        attempt.status = QUEUED
-        attempt.retry_after_seconds = None
-        attempt.updated_at = func.now()
-        db.commit()
-        return True
-    except Exception as exc:
-        # A quota or billing refusal is the caller's answer, not a queue failure:
-        # the attempt is settled failed and the refusal is re-raised.
-        quota_refusal = isinstance(exc, ApiError) and exc.code in {
-            ApiErrorCode.E_BILLING_REQUIRED,
-            ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED,
-        }
-        if not quota_refusal:
-            db.rollback()
-        _fail_source_attempt(
-            db,
-            media_id=media_id,
-            attempt_id=attempt_id,
-            exc=exc,
-            stage=failure_stage,
-            execution_id=absent(),
-        )
-        db.commit()
-        if quota_refusal:
-            raise
-        return False
-
-
 def _admit_requeued_transcript(
     db: Session, media: Media, attempt: MediaSourceAttempt, actor_user_id: UUID
 ) -> None:
@@ -1261,6 +1174,12 @@ def _verify_source_storage(db: Session, *, media_id: UUID, attempt_id: UUID) -> 
                 raise InvalidRequestError(
                     ApiErrorCode.E_STORAGE_MISSING, "Captured article source artifact is missing."
                 )
+        elif attempt.source_type == source_types.EMAIL_MESSAGE:
+            source_path = str((attempt.source_payload or {}).get("storage_path") or "")
+            if not source_path:
+                raise InvalidRequestError(
+                    ApiErrorCode.E_STORAGE_MISSING, "Email source artifact is missing."
+                )
     db.rollback()
     if source_path is None:
         return
@@ -1273,6 +1192,29 @@ def _verify_source_storage(db: Session, *, media_id: UUID, attempt_id: UUID) -> 
     if metadata is None:
         raise InvalidRequestError(
             ApiErrorCode.E_STORAGE_MISSING, "Source storage object is missing."
+        )
+
+
+def _require_unpublished_document(db: Session, media_id: UUID, *, require_no_file: bool) -> None:
+    """A replacement may not invalidate previously exposed reader identities."""
+    blocked = db.scalar(
+        text("""
+        SELECT EXISTS (SELECT 1 FROM reader_publications WHERE media_id = :media_id)
+            OR EXISTS (SELECT 1 FROM fragments WHERE media_id = :media_id)
+            OR EXISTS (SELECT 1 FROM reader_media_state
+                       WHERE media_id = :media_id AND locator IS NOT NULL)
+            OR EXISTS (SELECT 1 FROM highlights WHERE anchor_media_id = :media_id)
+            OR EXISTS (SELECT 1 FROM passage_anchors
+                       WHERE owner_scheme = 'media' AND owner_id = :media_id)
+            OR (:require_no_file AND EXISTS
+                (SELECT 1 FROM media_file WHERE media_id = :media_id))
+    """),
+        {"media_id": media_id, "require_no_file": require_no_file},
+    )
+    if blocked:
+        raise ConflictError(
+            ApiErrorCode.E_REPAIR_NOT_ALLOWED,
+            "Reader content or source file already exists for this media.",
         )
 
 
@@ -1297,6 +1239,11 @@ def ensure_stale_source_attempt_job(
     actor_user_id = attempt.created_by_user_id or media.created_by_user_id
     if actor_user_id is None:
         return "skipped"
+    if media.kind == MediaKind.epub.value:
+        try:
+            _require_unpublished_document(db, media.id, require_no_file=False)
+        except ConflictError:
+            return "suspended"
     job = _enqueue_source_job(db, media.id, attempt.id, actor_user_id, request_id)
     attempt.job_id = job.id
     attempt.status = QUEUED
@@ -1321,16 +1268,26 @@ def retry_source_for_viewer(
 ) -> SourceRetryAdmission:
     """Admit one new source attempt for a terminally failed source.
 
-    A read-committed pre-check heads the stored source with no transaction open,
-    then the serializable admission re-checks authority, the inspected attempt
+    Replay is checked before storage. A read-committed pre-check then heads the
+    stored source with no transaction open, and serializable admission re-checks the attempt
     and the owner policy before cloning the attempt and enqueueing its one job in
     the same commit that records the replay receipt.
     """
     scope = f"media_source_retry:{media_id}"
     request_bytes = canonical_json_bytes({"expected_attempt_id": str(expected_attempt_id)})
     _load_owned_media(db, viewer_id, media_id, lock=False)
+    replay = lookup_replay(
+        db,
+        viewer_id=viewer_id,
+        scope=scope,
+        client_mutation_id=client_mutation_id,
+        request_bytes=request_bytes,
+    )
+    if replay is not None:
+        db.rollback()
+        return SourceRetryAdmission.model_validate(replay)
     inspected = _latest_attempt(db, media_id)
-    if inspected is not None:
+    if inspected is not None and inspected.id == expected_attempt_id:
         _verify_source_storage(db, media_id=media_id, attempt_id=inspected.id)
     db.rollback()
 
@@ -1377,6 +1334,8 @@ def retry_source_for_viewer(
                 raise ConflictError(
                     ApiErrorCode.E_RETRY_NOT_ALLOWED, "Latest source attempt is not retryable."
                 )
+        if media.kind == MediaKind.epub.value:
+            _require_unpublished_document(db, media.id, require_no_file=False)
         retry_attempt = _clone_attempt(
             db,
             media=media,
@@ -1424,6 +1383,256 @@ def retry_source_for_viewer(
         return admission
 
     return admit_serializable(db, "retry_source_for_viewer", admit)
+
+
+def reprocess_retained_epub(
+    db: Session,
+    *,
+    media_id: UUID,
+    expected_attempt_id: UUID,
+    expected_source_sha256: str,
+    mutation_id: str,
+    runtime_sha256: str,
+) -> SourceRetryAdmission:
+    """Operator admission after review of a corrected processor; original bytes remain."""
+    scope = f"operator_reprocess_source:{media_id}"
+    request_bytes = canonical_json_bytes(
+        {
+            "expected_attempt_id": str(expected_attempt_id),
+            "expected_source_sha256": expected_source_sha256,
+        }
+    )
+    creator_id = db.scalar(select(Media.created_by_user_id).where(Media.id == media_id))
+    if creator_id is None:
+        raise ConflictError(ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Media has no creator identity.")
+    replay = lookup_replay(
+        db,
+        viewer_id=creator_id,
+        scope=scope,
+        client_mutation_id=mutation_id,
+        request_bytes=request_bytes,
+    )
+    if replay is not None:
+        db.rollback()
+        return SourceRetryAdmission.model_validate(replay["admission"])
+    inspected = _latest_attempt(db, media_id)
+    source = db.get(MediaFile, media_id)
+    if inspected is None or inspected.id != expected_attempt_id or source is None:
+        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Inspected source changed.")
+    if source.source_sha256 != expected_source_sha256:
+        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Inspected source hash changed.")
+    source_path = source.storage_path
+    db.rollback()
+    digest = hashlib.sha256()
+    try:
+        for chunk in get_storage_client().stream_object(source_path):
+            digest.update(chunk)
+    except StorageError as exc:
+        raise ApiError(ApiErrorCode.E_STORAGE_ERROR, "Failed to verify retained source.") from exc
+    if digest.hexdigest() != expected_source_sha256:
+        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Retained source bytes changed.")
+
+    def admit() -> SourceRetryAdmission:
+        replay_now = lookup_replay(
+            db,
+            viewer_id=creator_id,
+            scope=scope,
+            client_mutation_id=mutation_id,
+            request_bytes=request_bytes,
+        )
+        if replay_now is not None:
+            db.rollback()
+            return SourceRetryAdmission.model_validate(replay_now["admission"])
+        media = db.scalar(select(Media).where(Media.id == media_id).with_for_update(key_share=True))
+        attempt = _lock_latest_attempt(db, media_id)
+        source_now = db.get(MediaFile, media_id)
+        if (
+            media is None
+            or attempt is None
+            or attempt.id != expected_attempt_id
+            or source_now is None
+            or source_now.source_sha256 != expected_source_sha256
+            or source_now.storage_path != source_path
+            or media.created_by_user_id != creator_id
+        ):
+            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Inspected source changed.")
+        if (
+            media.kind != MediaKind.epub.value
+            or media.processing_status != ProcessingStatus.failed
+            or attempt.status != FAILED
+            or attempt.source_type
+            not in {source_types.UPLOADED_EPUB_FILE, source_types.BROWSER_EPUB_CAPTURE}
+        ):
+            raise ConflictError(ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Retained epub is not eligible.")
+        _require_unpublished_document(db, media_id, require_no_file=False)
+        new_attempt = _clone_attempt(
+            db,
+            media=media,
+            viewer_id=creator_id,
+            previous=attempt,
+            request_id=None,
+            intent_key=_action_intent_key(
+                "operator_reprocess", media_id=media_id, previous_attempt_id=attempt.id
+            ),
+        )
+        mark_source_queued(db, media)
+        bump_all_media_fact_collections(db)
+        job_id = enqueue_accepted_source_attempt_in_transaction(
+            db,
+            media_id=media_id,
+            attempt_id=new_attempt.id,
+            actor_user_id=creator_id,
+            request_id=None,
+        )
+        _record_event(
+            db,
+            media_id=media_id,
+            attempt=attempt,
+            facts=SourceRecoveryAccepted(
+                source_attempt_id=attempt.id,
+                recovery=ReprocessSourceRecovery(new_source_attempt_id=new_attempt.id),
+            ),
+            failure_code=absent(),
+        )
+        receipt = SourceRetryAdmission(
+            media_id=media_id,
+            source_attempt_id=new_attempt.id,
+            job_id=job_id,
+        )
+        record_replay(
+            db,
+            viewer_id=creator_id,
+            scope=scope,
+            client_mutation_id=mutation_id,
+            request_bytes=request_bytes,
+            response_json={
+                "admission": receipt.model_dump(mode="json"),
+                "runtime_sha256": runtime_sha256,
+            },
+        )
+        db.commit()
+        return receipt
+
+    return admit_serializable(db, "reprocess_retained_epub", admit)
+
+
+def correct_source_type(
+    db: Session,
+    *,
+    media_id: UUID,
+    expected_attempt_id: UUID,
+    expected_source_type: str,
+    mutation_id: str,
+) -> SourceRetryAdmission:
+    """Correct one failed web URL whose current URL classifier selects remote epub."""
+    scope = f"operator_correct_source_type:{media_id}"
+    request_bytes = canonical_json_bytes(
+        {
+            "expected_attempt_id": str(expected_attempt_id),
+            "expected_source_type": expected_source_type,
+        }
+    )
+
+    def admit() -> SourceRetryAdmission:
+        creator_id = db.scalar(select(Media.created_by_user_id).where(Media.id == media_id))
+        if creator_id is None:
+            raise ConflictError(ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Media has no creator identity.")
+        replay = lookup_replay(
+            db,
+            viewer_id=creator_id,
+            scope=scope,
+            client_mutation_id=mutation_id,
+            request_bytes=request_bytes,
+        )
+        if replay is not None:
+            db.rollback()
+            return SourceRetryAdmission.model_validate(replay)
+        media = db.scalar(select(Media).where(Media.id == media_id).with_for_update(key_share=True))
+        attempt = _lock_latest_attempt(db, media_id)
+        if media is None or attempt is None or attempt.id != expected_attempt_id:
+            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Inspected source changed.")
+        if attempt.source_type != expected_source_type:
+            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Inspected source type changed.")
+        if (
+            media.created_by_user_id != creator_id
+            or media.kind != MediaKind.web_article.value
+            or media.processing_status != ProcessingStatus.failed
+            or attempt.status != FAILED
+            or attempt.source_type != source_types.GENERIC_WEB_URL
+        ):
+            raise ConflictError(
+                ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Source type correction is not eligible."
+            )
+        _require_unpublished_document(db, media_id, require_no_file=True)
+        url = attempt.requested_url
+        if not url:
+            raise ConflictError(ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Source has no URL.")
+        spec = url_source_spec(url)
+        if spec.source_type != source_types.REMOTE_EPUB_URL:
+            raise ConflictError(
+                ApiErrorCode.E_REPAIR_NOT_ALLOWED, "URL is not a remote epub source."
+            )
+        media.kind = MediaKind.epub.value
+        media.canonical_source_url = spec.canonical_source_url
+        new_attempt = create_attempt(
+            db,
+            media=media,
+            viewer_id=creator_id,
+            source_type=spec.source_type,
+            intent_key=_action_intent_key(
+                "operator_correct_type", media_id=media_id, previous_attempt_id=attempt.id
+            ),
+            requested_url=url,
+            canonical_source_url=spec.canonical_source_url,
+            provider=spec.provider,
+            provider_target_ref=spec.provider_target_ref,
+            source_payload={
+                **dict(attempt.source_payload or {}),
+                "kind": spec.kind,
+                **spec.source_payload,
+            },
+            request_id=None,
+            idempotency_key=None,
+            status=ACCEPTED,
+        )
+        mark_source_queued(db, media)
+        bump_all_media_fact_collections(db)
+        job_id = enqueue_accepted_source_attempt_in_transaction(
+            db,
+            media_id=media_id,
+            attempt_id=new_attempt.id,
+            actor_user_id=creator_id,
+            request_id=None,
+        )
+        _record_event(
+            db,
+            media_id=media_id,
+            attempt=attempt,
+            facts=SourceRecoveryAccepted(
+                source_attempt_id=attempt.id,
+                recovery=CorrectSourceTypeRecovery(
+                    new_source_attempt_id=new_attempt.id, source_type=spec.source_type
+                ),
+            ),
+            failure_code=absent(),
+        )
+        receipt = SourceRetryAdmission(
+            media_id=media_id,
+            source_attempt_id=new_attempt.id,
+            job_id=job_id,
+        )
+        record_replay(
+            db,
+            viewer_id=creator_id,
+            scope=scope,
+            client_mutation_id=mutation_id,
+            request_bytes=request_bytes,
+            response_json=receipt.model_dump(mode="json"),
+        )
+        db.commit()
+        return receipt
+
+    return admit_serializable(db, "correct_source_type", admit)
 
 
 def repair_dead_source_execution(
@@ -1491,6 +1700,8 @@ def repair_dead_source_execution(
                 ApiErrorCode.E_REPAIR_NOT_ALLOWED,
                 "No exact current dead source execution is repairable.",
             )
+        if media.kind == MediaKind.epub.value:
+            _require_unpublished_document(db, media.id, require_no_file=False)
         if not requeue_dead_job(db, job_id=offer.expected_job_id):
             raise ConflictError(
                 ApiErrorCode.E_REPAIR_NOT_ALLOWED,
@@ -1528,48 +1739,69 @@ def refresh_source_for_viewer(
     *, db: Session, viewer_id: UUID, media_id: UUID, request_id: str | None
 ) -> dict[str, object]:
     """Clone and requeue the latest attempt of a settled, re-acquirable source."""
-    media = _load_owned_media(db, viewer_id, media_id, lock=True)
-    if media.processing_status not in {
-        ProcessingStatus.ready_for_reading,
-        ProcessingStatus.failed,
-    }:
-        raise ConflictError(
-            ApiErrorCode.E_MEDIA_NOT_READY,
-            "Media source refresh is not available in the current processing state.",
+    _load_owned_media(db, viewer_id, media_id, lock=False)
+    inspected = _latest_attempt(db, media_id)
+    if inspected is not None:
+        _verify_source_storage(db, media_id=media_id, attempt_id=inspected.id)
+    db.rollback()
+
+    def admit() -> UUID:
+        media = _load_owned_media(db, viewer_id, media_id, lock=True)
+        if media.processing_status not in {
+            ProcessingStatus.ready_for_reading,
+            ProcessingStatus.failed,
+        }:
+            raise ConflictError(
+                ApiErrorCode.E_MEDIA_NOT_READY,
+                "Media source refresh is not available in the current processing state.",
+            )
+        attempt = _lock_latest_attempt(db, media.id)
+        if attempt is None:
+            raise ConflictError(
+                ApiErrorCode.E_RETRY_NOT_ALLOWED,
+                "Source refresh is not available for media without a source attempt.",
+            )
+        if inspected is None or attempt.id != inspected.id:
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT, "Source attempt changed during verification."
+            )
+        if attempt.status in IN_FLIGHT_STATUSES:
+            raise ConflictError(
+                ApiErrorCode.E_RETRY_INVALID_STATE, "Source ingest is already queued or running."
+            )
+        _raise_if_not_reacquirable(media, attempt)
+        if media.kind == MediaKind.epub.value:
+            _require_unpublished_document(db, media.id, require_no_file=False)
+        refresh_attempt = _clone_attempt(
+            db,
+            media=media,
+            viewer_id=viewer_id,
+            previous=attempt,
+            request_id=request_id,
+            intent_key=_action_intent_key(
+                "refresh", media_id=media.id, previous_attempt_id=attempt.id
+            ),
         )
-    attempt = _latest_attempt(db, media.id)
-    if attempt is None:
-        raise ConflictError(
-            ApiErrorCode.E_RETRY_NOT_ALLOWED,
-            "Source refresh is not available for media without a source attempt.",
+        _admit_requeued_transcript(db, media, refresh_attempt, viewer_id)
+        mark_source_queued(db, media)
+        bump_all_media_fact_collections(db)
+        enqueue_accepted_source_attempt_in_transaction(
+            db,
+            media_id=media.id,
+            attempt_id=refresh_attempt.id,
+            actor_user_id=viewer_id,
+            request_id=request_id,
         )
-    if attempt.status in IN_FLIGHT_STATUSES:
-        raise ConflictError(
-            ApiErrorCode.E_RETRY_INVALID_STATE, "Source ingest is already queued or running."
-        )
-    _raise_if_not_reacquirable(media, attempt)
-    refresh_attempt = _clone_attempt(
-        db,
-        media=media,
-        viewer_id=viewer_id,
-        previous=attempt,
-        request_id=request_id,
-        intent_key=_action_intent_key("refresh", media_id=media.id, previous_attempt_id=attempt.id),
-    )
-    db.commit()
-    enqueued = _enqueue_attempt(
-        db,
-        media_id=media.id,
-        attempt_id=refresh_attempt.id,
-        actor_user_id=viewer_id,
-        request_id=request_id,
-        failure_stage=source_attempt_failure_stage(refresh_attempt.source_type),
-        requeue=True,
-    )
+        db.commit()
+        return refresh_attempt.id
+
+    refresh_attempt_id = admit_serializable(db, "refresh_source_for_viewer", admit)
     from nexus.services.media import get_media_for_viewer
 
-    reloaded = db.get(Media, media.id) or media
-    attempt_now = db.get(MediaSourceAttempt, refresh_attempt.id) or refresh_attempt
+    reloaded = db.get(Media, media_id)
+    attempt_now = db.get(MediaSourceAttempt, refresh_attempt_id)
+    if reloaded is None or attempt_now is None:
+        raise ApiError(ApiErrorCode.E_INTERNAL, "Source refresh disappeared after admission.")
     return {
         "media_id": str(reloaded.id),
         "source_attempt_id": str(attempt_now.id),
@@ -1577,8 +1809,8 @@ def refresh_source_for_viewer(
         "source_attempt_status": attempt_now.status,
         "idempotency_outcome": "refreshed",
         "processing_status": reloaded.processing_status.value,
-        "ingest_enqueued": enqueued,
-        "capabilities": get_media_for_viewer(db, viewer_id, media.id).capabilities.model_dump(),
+        "ingest_enqueued": True,
+        "capabilities": get_media_for_viewer(db, viewer_id, media_id).capabilities.model_dump(),
     }
 
 
@@ -1619,16 +1851,22 @@ def repair_source_for_system_media(
             processing_status=media.processing_status.value,
         )
     if attempt.status == ACCEPTED:
-        enqueued = _enqueue_attempt(
+        if attempt.source_type in source_types.LOCAL_FILE_SOURCE_TYPES:
+            raise ConflictError(
+                ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Stored-source repair requires verification."
+            )
+        if media.kind == MediaKind.epub.value:
+            _require_unpublished_document(db, media.id, require_no_file=False)
+        mark_source_queued(db, media)
+        bump_all_media_fact_collections(db)
+        enqueue_accepted_source_attempt_in_transaction(
             db,
             media_id=media.id,
             attempt_id=attempt.id,
             actor_user_id=actor_user_id,
             request_id=request_id,
-            failure_stage=source_attempt_failure_stage(attempt.source_type),
-            requeue=True,
         )
-        return _system_repair_result(db, media.id, attempt.id, "queued", enqueued)
+        return _system_repair_result(db, media.id, attempt.id, "queued", True)
     if media.processing_status != ProcessingStatus.failed and attempt.status != FAILED:
         return SystemSourceRepairResult(
             media_id=media.id,
@@ -1642,6 +1880,12 @@ def repair_source_for_system_media(
             ApiErrorCode.E_RETRY_INVALID_STATE, "Latest source attempt is not repairable."
         )
     _raise_if_not_reacquirable(media, attempt)
+    if attempt.source_type in source_types.LOCAL_FILE_SOURCE_TYPES:
+        raise ConflictError(
+            ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Stored-source repair requires verification."
+        )
+    if media.kind == MediaKind.epub.value:
+        _require_unpublished_document(db, media.id, require_no_file=False)
     repair_attempt = _clone_attempt(
         db,
         media=media,
@@ -1656,17 +1900,17 @@ def repair_source_for_system_media(
         **dict(repair_attempt.source_payload or {}),
         "system_repair_reason": reason,
     }
-    db.commit()
-    enqueued = _enqueue_attempt(
+    _admit_requeued_transcript(db, media, repair_attempt, actor_user_id)
+    mark_source_queued(db, media)
+    bump_all_media_fact_collections(db)
+    enqueue_accepted_source_attempt_in_transaction(
         db,
         media_id=media.id,
         attempt_id=repair_attempt.id,
         actor_user_id=actor_user_id,
         request_id=request_id,
-        failure_stage=source_attempt_failure_stage(repair_attempt.source_type),
-        requeue=True,
     )
-    return _system_repair_result(db, media.id, repair_attempt.id, "repair_queued", enqueued)
+    return _system_repair_result(db, media.id, repair_attempt.id, "repair_queued", True)
 
 
 def _system_repair_result(
@@ -2031,6 +2275,49 @@ def _publish_terminal_failure(
     fence: SourcePublicationFence,
 ) -> dict[str, object]:
     def publish(db: Session, attempt: MediaSourceAttempt) -> None:
+        # An old, readable EPUB can outlive an invalid preadmitted source job.
+        # Retire that job without making the existing publication unreadable.
+        if (
+            isinstance(exc, ApiError)
+            and exc.code == ApiErrorCode.E_REPAIR_NOT_ALLOWED
+            and db.scalar(
+                text(
+                    "SELECT EXISTS (SELECT 1 FROM reader_publications WHERE media_id = :media_id)"
+                ),
+                {"media_id": media_id},
+            )
+        ):
+            media = db.get(Media, media_id)
+            if media is None or media.kind != MediaKind.epub.value:
+                raise SourcePublicationSuperseded("published_epub_disappeared")
+            error_code, error_message = _source_error_fields(exc)
+            attempt.status = FAILED
+            attempt.error_code = error_code
+            attempt.error_message = error_message[:1000]
+            attempt.retry_after_seconds = None
+            attempt.finished_at = func.now()
+            attempt.updated_at = func.now()
+            _record_event(
+                db,
+                media_id=media_id,
+                attempt=attempt,
+                facts=SourceFailed(
+                    source_attempt_id=attempt.id,
+                    execution_id=present(fence.execution_id),
+                    origin="Domain",
+                    terminal=True,
+                    progress=source_failure_progress(
+                        processing_stage=attempt.processing_stage,
+                        progress_completed=int(attempt.progress_completed or 0),
+                        progress_total=attempt.progress_total,
+                        progress_unit=attempt.progress_unit,
+                    ),
+                ),
+                failure_code=present(assume_safe_failure_code(error_code)),
+            )
+            mark_ready_for_reading(db, media)
+            bump_all_media_fact_collections(db)
+            return
         _fail_source_attempt(
             db,
             media_id=media_id,
@@ -2117,71 +2404,6 @@ def _library_ids_from_payload(payload: dict[str, object] | None) -> list[UUID]:
 # =============================================================================
 # Failure publication
 # =============================================================================
-
-
-def _store_and_enqueue(
-    db: Session,
-    *,
-    media_id: UUID,
-    attempt_id: UUID,
-    viewer_id: UUID,
-    request_id: str | None,
-    writes: tuple[tuple[str, bytes, str], ...],
-) -> FromUrlResponse:
-    """The tail every accept surface shares: store the artifacts, then queue the run.
-
-    Each write reserves its durable final sweep first, so a crash leaves a
-    reservation the sweeper collects rather than orphan bytes; a write that
-    fails settles the accepted attempt visibly instead of dropping the source.
-    """
-    storage_client = get_storage_client()
-    try:
-        for path, payload, content_type in writes:
-            reserve_storage_object_write(db, media_id=media_id, storage_path=path)
-            storage_client.put_object(path, payload, content_type)
-            finalize_storage_object_write(
-                db, media_id=media_id, storage_path=path, storage_client=storage_client
-            )
-    except Exception as exc:
-        return _fail_accepted_source(
-            db, media_id=media_id, attempt_id=attempt_id, exc=exc, stage="upload"
-        )
-    enqueued = _enqueue_attempt(
-        db,
-        media_id=media_id,
-        attempt_id=attempt_id,
-        actor_user_id=viewer_id,
-        request_id=request_id,
-        failure_stage="extract",
-        requeue=False,
-    )
-    return _reloaded_response(db, media_id, attempt_id, "created", ingest_enqueued=enqueued)
-
-
-def _fail_accepted_source(
-    db: Session, *, media_id: UUID, attempt_id: UUID, exc: Exception, stage: str
-) -> FromUrlResponse:
-    """Settle an accepted attempt that failed before it ever reached the queue."""
-    _fail_source_attempt(
-        db, media_id=media_id, attempt_id=attempt_id, exc=exc, stage=stage, execution_id=absent()
-    )
-    db.commit()
-    return _reloaded_response(db, media_id, attempt_id, "created", ingest_enqueued=False)
-
-
-def _reloaded_response(
-    db: Session,
-    media_id: UUID,
-    attempt_id: UUID,
-    outcome: Literal["created", "reused", "retrying", "refreshed"],
-    *,
-    ingest_enqueued: bool,
-) -> FromUrlResponse:
-    media = db.get(Media, media_id)
-    attempt = db.get(MediaSourceAttempt, attempt_id)
-    if media is None or attempt is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    return _from_url_response(media, attempt, outcome, ingest_enqueued=ingest_enqueued)
 
 
 def _fail_source_attempt(

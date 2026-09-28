@@ -1017,8 +1017,8 @@ resource activation plus an optional reader-internal focus target.
 linked-items policy, Forks, and default surface order; the committed TypeScript
 projection must agree with the backend. Every eligible resource implies Dossier.
 `useResourceInspector` composes one stable publication and inspector action per
-pane from route-owned Contents/Evidence/Context/Forks/Connections bodies plus
-the shared Dossier body. Selecting that action validates the requested surface
+pane from route-owned Contents, Evidence, Context, Forks, and
+Connections bodies plus the shared Dossier body. Selecting that action validates the requested surface
 against its route-owned publication and, when attached to the workspace host,
 synchronously reasserts the same publication before requesting its surface, so
 publication cleanup and command acceptance cannot race or silently discard a
@@ -1173,7 +1173,10 @@ policies the catalog does — `media_source_ingest.source_recovery` for source
 retry/repair and `content_indexing` for search repair — so counts, membership,
 and offered recovery cannot disagree. A published upload keeps its
 `upload:<handle>` identity for life, so one import is one row from acceptance to
-History. See `docs/cutovers/imports-workspace-hard-cutover.md`.
+History. its compact collection row keeps the committed query and applied
+constraints visible; a failed later page retains loaded rows, marks the loaded
+count as failed, and offers one retry of that cursor. See
+`docs/cutovers/imports-workspace-hard-cutover.md`.
 
 **Recovery/deletion:** `reconcile_stale_ingest_media` requeues/fails stale
 `extracting` rows and repairs content/semantic indexes. Upload-session expiry is
@@ -1249,8 +1252,8 @@ through byte-size-checked storage helpers. EPUB assets are not in Next Image
 selection becomes a stored highlight with a precomputed
 `exact`/`prefix`/`suffix` triple (a 64-codepoint context window) that doubles as
 the canonical quote shown to chat. PDF highlights may have empty `exact` (no
-text-layer match) — a first-class geometry-only state Evidence renders with an
-explicit placeholder. The current highlight
+text-layer match) — a first-class geometry-only state that Evidence
+renders with an explicit placeholder. The current highlight
 contract lives in [`modules/highlight.md`](modules/highlight.md). Highlight-note
 persistence has one strict request wire: `note_block_id`,
 `client_mutation_id`, and `body_pm_json`. Camel-case spellings and the generic
@@ -1278,12 +1281,11 @@ rows are addressed as `reader_apparatus_item:<uuid>` resources and can be
 searched, opened, linked, read, and cited through the same resource activation
 and graph-citation spine as other explicit resource targets. Web/EPUB
 apparatus is extracted before sanitization removes semantic attributes. PDF
-apparatus is capability-gated: native `cite.*` links can be `ready` when
-deterministic reference targets are materialized, marker-only native-link rows
-remain `partial`, synthetic legal-footnote support is narrow, and unsupported
-scholarly/literary PDFs deliberately emit empty apparatus rather than inferring
-from raw layout text. Replacement reconciles rows by `(media_id, stable_key)` so
-surviving resource refs and their graph edges remain stable across refresh.
+  apparatus is capability-gated: native `cite.*` links can be `ready` when
+  deterministic reference targets are materialized, marker-only native-link rows
+  remain `partial`, and unsupported scholarly/literary PDFs emit empty apparatus
+  rather than inferring from raw layout text. Replacement preserves proven
+  occurrence identities and rejects ambiguous changes to referenced items.
 
 **Frontend** (`components/reader/*`, `PdfReader.tsx`, `HtmlRenderer.tsx`,
 `lib/reader/*`, `lib/highlights/*`): `HtmlRenderer` is the only
@@ -1292,15 +1294,15 @@ annotation transforms, and applies the bounded media `h1`-to-`h2` projection
 beneath the resource heading. Inline
 highlight rendering remains separate for text selection. Media publishes one
 shared **Resource Inspector** whose tabs are `Contents` when
-available, `Evidence`, and `Dossier`. Contents and Evidence retain their
-internal **Document Map** semantics:
+available, `Evidence`, and `Dossier`. Contents and Highlights &
+citations retain their internal **Document Map** semantics:
 Evidence is a target-centered aggregate of highlights, source references,
 generated citations, links, and Synapses, separated into passage and
-whole-document scopes with typed one-hop associations. `MarginRail` is the
-wide-reader spatial presenter for the same filtered passage facts. The desktop
-overview rail receives aggregate marker positions plus the semantic viewport
-range; it performs no scroll discovery or position math and has no
-opener. The shared inspector action opens the
+  whole-document scopes with typed one-hop associations. the evidence pane
+  aligns these facts with the visible source and owns complete note content;
+  its browse mode retains the full inventory. the narrow desktop overview bar
+  shows aggregate marker positions and previews and navigates only on explicit
+  activation. the shared inspector action opens the
 same `resource-inspector` publication on desktop and in the workspace mobile
 sheet.
 The contract is
@@ -1893,34 +1895,38 @@ publish no Pane Search/Find capability.
 
 ### 8.11 Collection refinement
 
-Every primary collection pane is an instance of one refinement grammar —
-`Filter text -> domain controls -> Clear filters` — rendered in the Pane Search
-row. The shell owns the grammar; each domain owns a closed view type, its URL
-codec, its option inventory and labels, its request identity, its server query,
-its total order, its cursor, and its local match fields. This is a capability
-expansion, not a query engine: there is no row-metadata schema, runtime
+Every primary collection pane composes the same visible grammar: input,
+readable order, conditional filters disclosure, applied chips, and an honest
+result status. the controls live in the ordinary body scrollport; the filters
+editor owns disclosure and focus, while domains own clear/reset semantics and
+request policy. the shell hosts the labelled collection publication and its
+`Pane.Search` focus command, without a duplicate menu search action. each
+domain owns a closed view type, URL codec, option inventory and labels, request
+identity, server query, total order, cursor, and local match fields. this is
+presentation composition, not a query engine: no row-metadata schema, runtime
 registry, generic controller, Boolean AST, or client sorting of pageable rows.
 
 | Surface | Local match fields | Canonical view | `Sort by` options | Execution |
 | --- | --- | --- | --- | --- |
-| Lectern | title; presented subtitle | Custom order | Custom order; Added — newest/oldest; Title — A–Z/Z–A | client over the complete snapshot |
-| Author works | work title | Published — newest | Published — newest/oldest; Title — A–Z/Z–A | owner SQL before keyset |
-| Chats | chat title | Updated — newest | Updated — newest/oldest; Title — A–Z/Z–A | owner SQL before keyset |
-| Libraries | presented Library name | Created — oldest | Created — oldest/newest; Name — A–Z/Z–A | owner SQL before keyset |
-| Notes index | Page title | Updated — newest | Updated — newest/oldest; Title — A–Z/Z–A | owner SQL over the complete result |
-| Library entries | row title; contributor names | Recently added / Custom order | Title/Creator/Published/Added/Remaining | owner SQL before keyset |
-| Podcast subscriptions | title; contributor names | Recent Episode | Recent Episode; Most Unplayed; Title — A–Z | owner SQL |
-| Podcast episodes | title; contributor names | Newest | Newest; Oldest; Shortest; Longest | owner SQL |
+| Lectern | title; presented subtitle | Custom order | Custom order; newest/oldest added; title A–Z/Z–A | client over the complete snapshot |
+| Author works | work title | Newest published | Newest/oldest published; title A–Z/Z–A | owner SQL before keyset |
+| Chats | chat title | Newest update | Newest/oldest update; title A–Z/Z–A | owner SQL before keyset |
+| Libraries | presented Library name | Oldest created | Oldest/newest created; name A–Z/Z–A | owner SQL before keyset |
+| Notes index | Page title | Newest update | Newest/oldest update; title A–Z/Z–A | owner SQL over the complete result |
+| Library entries | row title; contributor names | Recently added / Custom order | title/creator A–Z/Z–A; newest/oldest published or added; least/most time left | owner SQL before keyset |
+| Podcast subscriptions | title; contributor names | Newest episode | Newest episode; most unplayed; title A–Z | owner SQL |
+| Podcast episodes | title; contributor names | Newest released | Newest/oldest released; shortest/longest duration | owner SQL |
 | Page/Note direct items | direct item text | Authored order | none | local inspection Filter |
 
-Exempt by design: Browse, Search and Preview are retrieval surfaces with
-body-owned query, facets, ranking and provider continuation; Page/Note direct
-items preserve authored order; and chat messages, TOCs, chapters, transcripts,
-sources, citations, trust trails, fork trees, navigation, menus, settings
-choices, destination pickers, and ranked slate/quick-read lists retain semantic
-owner order. Connections, Downloads, Library members/invites, choosers,
-overlays, Preview episodes and Stats tables are secondary lists and out of
-scope.
+Browse and Search use the same compact collection presentation but keep
+their body-owned remote query, facets, ranking, and provider continuation;
+Preview publishes no collection controls. Page/Note direct items use transient
+editor filtering in authored order. chat messages, TOCs, chapters,
+transcripts, sources, citations, trust trails, fork trees, navigation, menus,
+settings choices, destination pickers, and ranked slate/quick-read lists retain
+semantic owner order. Connections, Downloads, Library members/invites,
+choosers, overlays, Preview episodes and Stats tables are secondary lists and
+out of scope.
 
 The chain is:
 

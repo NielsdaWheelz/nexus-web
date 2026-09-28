@@ -6,6 +6,7 @@
  */
 import { apiFetch } from "@/lib/api/client";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
+import { decodeHighlightLinkedNoteBlock } from "@/lib/highlights/highlightContract";
 import type {
   PdfHighlightOut,
   PdfHighlightWrite,
@@ -34,7 +35,12 @@ class HostedPdfReaderDecorations implements PdfReaderDecorations {
       `/api/media/${this.mediaId}/pdf-highlights?page_number=${pageNumber}&mine_only=false`,
       { signal },
     );
-    return response.data.highlights;
+    return response.data.highlights.map((highlight) => ({
+      ...highlight,
+      linked_note_blocks: highlight.linked_note_blocks.map((note, index) =>
+        decodeHighlightLinkedNoteBlock(note, `PDF highlight ${highlight.id} note ${index}`),
+      ),
+    }));
   }
 
   async createHighlight(
@@ -52,7 +58,12 @@ class HostedPdfReaderDecorations implements PdfReaderDecorations {
         }),
       },
     );
-    return response.data;
+    return {
+      ...response.data,
+      linked_note_blocks: response.data.linked_note_blocks.map((note, index) =>
+        decodeHighlightLinkedNoteBlock(note, `PDF highlight note ${index}`),
+      ),
+    };
   }
 
   async updateHighlight(

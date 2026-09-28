@@ -120,13 +120,17 @@ six explicitly supported finite standard-scroll panes publish it. Refresh never
 reloads the route or polls for completion, and the gesture is never its only
 path.
 
-`collection` publishes one labelled, always-visible refinement band as the first
-child of the pane body's existing scrollport. it composes `PaneToolbar` and the
-existing input, select, button, and applied-filter primitives. its `focusInput`
-command reveals and focuses the mounted input. collection cannot coexist with
-`search` or `instrument`; a document may still combine transient search and
-instrument. the band scrolls with results and has no separate mobile chrome
-height or scrollport.
+`collection` publishes one labelled compact control row as the first child
+of the pane body's existing scrollport. `PaneToolbar` owns its quiet layout;
+`PaneCollectionBar` adapts local text and settled-count announcements, while
+remote forms retain their own query/commit rules. domains own order, facet
+options, chips, clear/reset and retrieval. `CollectionFilterEditor` discloses
+facet fields in an anchored desktop dialog or the existing mobile sheet;
+applied chips and the concise count remain visible at the list boundary.
+`focusInput` reveals, focuses and selects the mounted input. collection cannot
+coexist with `search` or `instrument`; a document may still combine transient
+search and instrument. the row scrolls with results and has no separate mobile
+chrome height or scrollport.
 
 `search` remains transient document/editor find: `FilterRows` matches direct
 page/note items, while `FindOccurrences` delegates document matching and exact
@@ -139,11 +143,14 @@ If the live browser viewport leads React during a responsive host replacement,
 the arbiter carries one pane-and-route-fenced Search handoff; the incoming
 `PaneShell` acknowledges it only after its current publication is ready.
 
-`usePaneFilterRows` owns visit-local text and honest partial, complete, or
-retained-row status. collection owners compose their domain controls and reset
-behavior, then publish the whole band through the primary chrome record. the
-source key excludes the domain view: same-path in-place refinement preserves
-text, control identity, focus, and scroll. a new source retires local text.
+`usePaneFilterRows` owns visit-local text and honest partial, complete,
+retained, or failed-row status. the collection presenter shows concise visual
+status and speaks changed settled counts once, including restoration after a
+text clear; initial mounting stays quiet. facet editor dismissal preserves
+applied state and returns focus on keyboard escape; removing a focused chip
+moves focus to its surviving neighbor or trigger. the source key excludes the
+domain view: same-path refinement preserves text, focus, and scroll. a new
+source retires local text.
 `usePaneScrollRetention` restores the scrollport once the new view commits.
 
 A resource pane publishes only its canonical `actionSubject`
@@ -181,10 +188,12 @@ hover title is the projected `Show inspector`/`Hide inspector` command copy.
 Other `ActionBar` consumers stay icon-only.
 
 `ContextualActionMenu` projects every remaining command through the existing
-`ActionMenu` in desktop and mobile chrome. PDF and EPUB publish
-one labelled `instrument` containing control content only. `PaneShell` owns its
-40px desktop or 48px mobile contextual frame and renders it as an accessible
-group. Expanded Search takes exclusive occupancy of that same track.
+`ActionMenu` in desktop and mobile chrome. PDF publishes page controls; EPUB and
+web articles publish section controls when navigation has at least one section.
+Each publishes one labelled `instrument` containing control content only.
+`PaneShell` owns its 40px desktop or 48px mobile contextual frame and renders it
+as an accessible group. Expanded Search takes exclusive occupancy of that same
+track.
 
 `PaneHeaderIdentity` owns the single route-level `h1` for every pane kind. Body
 outlines start at `h2`, and imported reader headings are projected beneath the
@@ -364,11 +373,11 @@ Highlight-to-Idea command succeeds. Artifact revision navigation is in-place:
 `?revision=artifact_revision:<id>` changes the viewed revision without changing
 the pane's Artifact resource identity or creating a duplicate pane.
 
-Pane Find movement is reversible inspection, not pane navigation. Web,
-transcript, and accepted Artifact previews write no pane href or history
-entry. Their single **Go back to reading position** origin is ephemeral,
-revision-bound presentation state retired by Return, source replacement, or
-route exit.
+Pane Find movement is inspection, not pane navigation. reader Find consumes the
+shared mounted-reader navigation owner: its origin survives closing Find and
+ordinary input, and only verified return or explicit adoption ends inspection.
+Artifact and other non-reader Find retain their own return contract. previews
+write no pane history entry.
 
 `targetLinkActivation.ts` is the one browser gesture adapter. Plain click and
 `Enter` are `Follow`; `Shift`+click is `Fork`; Meta/Ctrl/Alt, middle-click,

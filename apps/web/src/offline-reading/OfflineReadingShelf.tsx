@@ -9,6 +9,7 @@ import {
   OFFLINE_READING_COPY,
   formatOfflineReadingDate,
   offlineReaderProgressCopy,
+  offlineReadingConflictChoiceLabel,
   offlineReadingAvailabilityCopy,
   offlineReadingHasUnsyncedPosition,
   offlineReadingKindCopy,
@@ -37,6 +38,7 @@ export default function OfflineReadingShelf({
   const returnFocusMediaIdRef = useRef<string | null>(null);
   const openSequenceRef = useRef<Promise<void>>(Promise.resolve());
   const [removeId, setRemoveId] = useState<string | null>(null);
+  const [discardId, setDiscardId] = useState<string | null>(null);
   const [purgeConfirm, setPurgeConfirm] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [signedOut, setSignedOut] = useState(false);
@@ -124,10 +126,14 @@ export default function OfflineReadingShelf({
     >
       <div className={styles.dialogBody}>
         <p>
-          {offlineReadingRemoveConfirmation(
-            item.availability.kind === "Ready" &&
-              offlineReadingHasUnsyncedPosition(item.availability.progress),
-          )}
+          {item.availability.kind === "Failed"
+            ? item.availability.recoveryProgress === undefined
+              ? "Remove this failed download from this device."
+              : "Remove this item and its local saved position. A sync already underway may still finish on Nexus."
+            : offlineReadingRemoveConfirmation(
+              item.availability.kind === "Ready" &&
+                offlineReadingHasUnsyncedPosition(item.availability.progress),
+            )}
         </p>
         <div className={styles.actions}>
           <button
@@ -145,6 +151,22 @@ export default function OfflineReadingShelf({
           <button type="button" className={styles.quietAction} onClick={() => setRemoveId(null)}>
             Keep copy
           </button>
+        </div>
+      </div>
+    </Dialog>
+  );
+
+  const discardDialog = discardId === null ? null : (
+    <Dialog open onClose={() => setDiscardId(null)} title="Discard old reading position?">
+      <div className={styles.dialogBody}>
+        <p>The source changed. Your saved device position cannot sync to it. Discard that position to download the new copy.</p>
+        <div className={styles.actions}>
+          <button type="button" className={styles.action} onClick={() => {
+            void controller.discardChangedReaderProgress(discardId).then(() => {
+              setDiscardId(null);
+            }).catch(() => setError("Could not discard the old position."));
+          }}>Discard position</button>
+          <button type="button" className={styles.quietAction} onClick={() => setDiscardId(null)}>Keep position</button>
         </div>
       </div>
     </Dialog>
@@ -174,6 +196,7 @@ export default function OfflineReadingShelf({
           />
         </section>
         {removeDialog}
+        {discardDialog}
       </main>
     );
   }
@@ -222,6 +245,12 @@ export default function OfflineReadingShelf({
                 {availability.kind === "Ready" ? (
                   <p className={styles.rowMeta}>{offlineReaderProgressCopy(availability.progress)}</p>
                 ) : null}
+                {availability.kind === "Failed" && availability.recoveryProgress !== undefined ? (
+                  <p className={styles.notice}>{offlineReaderProgressCopy(availability.recoveryProgress)}</p>
+                ) : null}
+                {availability.kind === "Failed" && availability.recoveryProgress?.kind === "SourceUnavailable" ? (
+                  <p className={styles.notice}>The source may still be unavailable. Your position stays here until sync succeeds or you remove it.</p>
+                ) : null}
                 {mediaKind === "WebArticle" ? (
                   <p className={styles.notice}>{OFFLINE_READING_COPY.textOnlyNotice}</p>
                 ) : null}
@@ -241,14 +270,35 @@ export default function OfflineReadingShelf({
                     Open
                   </button>
                 ) : null}
-                {availability.kind === "Failed" ? (
+                {availability.kind === "Failed" && availability.recoveryProgress === undefined ? (
                   <button
                     type="button"
                     className={styles.action}
                     onClick={() => void controller.retry(mediaId)}
                   >
-                    Retry
+                    {availability.reason === "RecoveryRequired" || availability.reason === "UnsupportedPackage"
+                      ? "Redownload" : "Retry"}
                   </button>
+                ) : null}
+                {availability.kind === "Failed" &&
+                  (availability.recoveryProgress?.kind === "Pending" ||
+                    availability.recoveryProgress?.kind === "SourceUnavailable") ? (
+                  <button type="button" className={styles.action} onClick={() => {
+                    void controller.syncReaderProgress(mediaId).catch(() => setError("Could not sync the saved position. Reconnect and try again."));
+                  }}>Sync position</button>
+                ) : null}
+                {availability.kind === "Failed" && availability.recoveryProgress?.kind === "Conflict" ? (
+                  <div className={styles.actions} aria-label="Choose saved position">
+                    <button type="button" className={styles.action} onClick={() => {
+                      void controller.resolveReaderProgress(mediaId, "Canonical").catch(() => setError("Could not choose the Nexus position."));
+                    }}>{offlineReadingConflictChoiceLabel("Canonical", null)}</button>
+                    <button type="button" className={styles.action} onClick={() => {
+                      void controller.resolveReaderProgress(mediaId, "Device").catch(() => setError("Could not keep the device position."));
+                    }}>{offlineReadingConflictChoiceLabel("Device", null)}</button>
+                  </div>
+                ) : null}
+                {availability.kind === "Failed" && availability.recoveryProgress?.kind === "ContentChanged" ? (
+                  <button type="button" className={styles.action} onClick={() => setDiscardId(mediaId)}>Discard old position</button>
                 ) : null}
                 {availability.kind !== "Removing" ? (
                   <button
@@ -277,6 +327,7 @@ export default function OfflineReadingShelf({
       ) : null}
 
       {removeDialog}
+      {discardDialog}
 
       {purgeConfirm ? (
         <Dialog

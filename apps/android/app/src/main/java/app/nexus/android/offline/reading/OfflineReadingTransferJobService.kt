@@ -6,6 +6,8 @@ import android.app.PendingIntent
 import android.app.job.JobParameters
 import android.app.job.JobService
 import android.content.Intent
+import android.os.Build
+import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import app.nexus.android.MainActivity
 import app.nexus.android.R
@@ -36,6 +38,7 @@ class OfflineReadingTransferJobService : JobService() {
     private val callbackLock = Any()
 
     override fun onStartJob(params: JobParameters): Boolean {
+        if (Build.VERSION.SDK_INT < OFFLINE_READING_MINIMUM_SDK) return false
         // Construction starts fail-closed reconciliation before this process is advertised as live.
         OfflineReadingScheduler.claimJobReconciliation()
         val generation = synchronized(callbackLock) {
@@ -98,6 +101,7 @@ class OfflineReadingTransferJobService : JobService() {
         return true
     }
 
+    @RequiresApi(34)
     override fun onStopJob(params: JobParameters): Boolean {
         val shouldReschedule = synchronized(callbackLock) {
             stopped = true
@@ -148,6 +152,7 @@ class OfflineReadingTransferJobService : JobService() {
         jobFinished(params, reschedule)
     }
 
+    @RequiresApi(34)
     private fun drain(
         params: JobParameters,
         network: android.net.Network,
@@ -242,6 +247,7 @@ class OfflineReadingTransferJobService : JobService() {
 
     private enum class TransferStep { Continue, DeferUntilUnlocked }
 
+    @RequiresApi(34)
     private fun process(
         params: JobParameters,
         network: android.net.Network,
@@ -253,6 +259,7 @@ class OfflineReadingTransferJobService : JobService() {
         }
     }
 
+    @RequiresApi(34)
     private fun processWithOperation(
         params: JobParameters,
         network: android.net.Network,

@@ -71,6 +71,71 @@
   max-inline-size: 100%;
 }
 
+.collection {
+  flex-wrap: wrap;
+}
+
+.collection .search {
+  flex: 1 1 12rem;
+  min-inline-size: min(11rem, 100%);
+}
+
+.collection .filters,
+.collection .controls,
+.collection .summary {
+  flex-wrap: wrap;
+  max-inline-size: 100%;
+}
+
+.collection .filters {
+  flex: 0 0 auto;
+}
+
+.collection .filters > label {
+  flex-wrap: wrap;
+  max-inline-size: 100%;
+}
+
+.collection .filters > label > span {
+  white-space: nowrap;
+}
+
+.collection .filters > label > div {
+  flex: 1 1 9rem;
+  min-inline-size: min(9rem, 100%);
+  max-inline-size: 100%;
+}
+
+.collection .filters > label > div > select {
+  padding-inline: 8px 32px;
+}
+
+.collection .filters > label > div > svg {
+  right: 8px;
+}
+
+.collection .controls,
+.collection .summary {
+  flex: 0 1 auto;
+}
+
+.collection .controls {
+  margin-inline-start: 0;
+}
+
+.summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  margin-inline-start: auto;
+}
+
+.collection .summary > * {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
 .toolbar :where(button, [role="button"]) {
   min-inline-size: var(--size-md);
   min-block-size: var(--size-md);
@@ -104,5 +169,15 @@
   .refinement .filters > :where(label):has(select) {
     flex: 1 1 100%;
     inline-size: 100%;
+  }
+}
+
+@media (pointer: coarse) {
+  .collection :where(button, input, select) {
+    min-block-size: var(--size-xl);
+  }
+
+  .collection :where(div):has(> select) {
+    block-size: var(--size-xl);
   }
 }

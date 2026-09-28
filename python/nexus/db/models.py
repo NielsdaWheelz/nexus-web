@@ -291,7 +291,7 @@ class ResourceVersion(Base):
 
 
 class ResourceMutation(Base):
-    """Generic idempotency ledger for resource mutations."""
+    """Replay receipts, with server-owned inverse effects for writing edits."""
 
     __tablename__ = "resource_mutations"
 
@@ -309,6 +309,9 @@ class ResourceMutation(Base):
     client_mutation_id: Mapped[str] = mapped_column(Text, nullable=False)
     request_hash: Mapped[str] = mapped_column(Text, nullable=False)
     response_json: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    effects_json: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -317,7 +320,7 @@ class ResourceMutation(Base):
 
 
 class ResourceViewState(Base):
-    """Surface-specific view state for resource occurrences."""
+    """Endpoint link order and saved collapse defaults for writing occurrences."""
 
     __tablename__ = "resource_view_states"
 
@@ -340,6 +343,7 @@ class ResourceViewState(Base):
     )
     target_scheme: Mapped[str | None] = mapped_column(Text, nullable=True)
     target_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    order_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     state: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -354,7 +358,7 @@ class ResourceViewState(Base):
 
 
 class ResourceEdge(Base):
-    """One directed connection between two ResourceRefs in the provenance graph."""
+    """A provenance edge or canonically stored undirected neutral user link."""
 
     __tablename__ = "resource_edges"
 
@@ -377,7 +381,6 @@ class ResourceEdge(Base):
     target_scheme: Mapped[str] = mapped_column(Text, nullable=False)
     target_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     source_order_key: Mapped[str | None] = mapped_column(Text, nullable=True)
-    target_order_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     ordinal: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # none_as_null: a bare edge's None snapshot must persist as SQL NULL, not the
     # JSON 'null' scalar, or it fails ck_resource_edges_snapshot_object (which
@@ -1070,6 +1073,9 @@ class ReaderPublication(Base):
         unique=True,
     )
     generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source_issues: Mapped[list[dict[str, object]]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
     changed_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -2872,6 +2878,8 @@ class EpubTocNode(Base):
     href: Mapped[str | None] = mapped_column(Text, nullable=True)
     fragment_idx: Mapped[int | None] = mapped_column(Integer, nullable=True)
     target_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    section_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolution: Mapped[str] = mapped_column(Text, nullable=False)
     depth: Mapped[int] = mapped_column(Integer, nullable=False)
     order_key: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -2900,7 +2908,6 @@ class EpubNavLocation(Base):
     )
     location_id: Mapped[str] = mapped_column(Text, nullable=False, primary_key=True)
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
-    source_node_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     parent_section_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     label: Mapped[str] = mapped_column(Text, nullable=False)
     fragment_idx: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -3097,6 +3104,7 @@ class WorkspaceSession(Base):
         nullable=False,
     )
     device_id: Mapped[str] = mapped_column(Text, nullable=False)
+    order_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     state: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { absent, present, type Presence } from "@/lib/api/presence";
-import type { MediaNavigation } from "@/lib/media/readerNavigation";
+import type { MediaNavigation, ReaderNavigationTextPoint } from "@/lib/media/readerNavigation";
 import type {
   ReaderDocumentMapMarker,
   ReaderMapMarkerPresentation,
@@ -26,20 +26,18 @@ export default function ReaderDocumentMapDetail({
   currentOffset,
   visibleRange,
   destinations,
-  onNavigateSection,
+  onNavigatePoint,
   onActivateMarker,
   onRevealCurrent,
-  onReturn,
 }: {
   navigation: MediaNavigation;
   structure: ReaderDocumentStructure;
   currentOffset: Presence<number>;
   visibleRange: Presence<ReaderDocumentOverviewRange>;
   destinations: readonly ReaderMapMarkerPresentation[];
-  onNavigateSection: (sectionId: string) => void;
+  onNavigatePoint: (point: ReaderNavigationTextPoint) => void;
   onActivateMarker: (marker: ReaderDocumentMapMarker) => void;
   onRevealCurrent: () => void;
-  onReturn: Presence<() => void>;
 }) {
   const currentSection = currentOffset.kind === "Present" ? readerSectionAtPosition(structure, currentOffset.value) : absent<ReaderPositionedSection>();
   const [selection, setSelection] = useState<DetailScope>(() => currentSection.kind === "Present"
@@ -88,7 +86,6 @@ export default function ReaderDocumentMapDetail({
             {selection.kind === "Section" ? <span>{local.kind === "Present" ? `section ${Math.round(local.value * 100)}%` : "outside this section"}</span> : null}
           </>
         )}
-        {onReturn.kind === "Present" ? <button type="button" onClick={onReturn.value}>return to reading position</button> : null}
       </div>
       <div className={styles.content}>
         <div className={styles.outline}>
@@ -96,7 +93,7 @@ export default function ReaderDocumentMapDetail({
             nodes={navigation.toc_nodes}
             sections={navigation.sections}
             activeSectionId={currentSection.kind === "Present" ? present(currentSection.value.section.section_id) : absent()}
-            onNavigate={onNavigateSection}
+            onNavigate={onNavigatePoint}
           />
           {navigation.sections.length === 0 ? <p className={styles.notice}>no sections in this document</p> : null}
         </div>

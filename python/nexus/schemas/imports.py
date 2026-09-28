@@ -25,6 +25,7 @@ from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.import_history import HistoryCoverage, HistoryEntry, SafeFailureCode, Stage
 from nexus.schemas.media import SourceProgress
 from nexus.schemas.presence import Presence, Present
+from nexus.schemas.source_issues import SourceIssue
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 from nexus.services.sealed_handles import UploadSessionHandle
 
@@ -232,6 +233,7 @@ class ImportItem(BaseModel):
     updated_at: datetime
     matched_event: Presence[HistoryEntry]
     capabilities: Capabilities
+    source_issue_count: int = Field(ge=0, strict=True)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -269,10 +271,18 @@ class ImportReadiness(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ImportSourceIssues(BaseModel):
+    generation: int = Field(ge=1, strict=True)
+    issues: list[SourceIssue]
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class ImportDetail(BaseModel):
     item: ImportItem
     readiness: ImportReadiness
     history_coverage: HistoryCoverage
+    source_issues: Presence[ImportSourceIssues]
 
     model_config = ConfigDict(extra="forbid")
 

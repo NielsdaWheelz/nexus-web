@@ -9,7 +9,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.config import Environment, get_settings
+from nexus.config import get_settings
 from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
@@ -27,16 +27,16 @@ from nexus.services.document_embeds import (
     replace_document_embed_artifact,
 )
 from nexus.services.fragment_blocks import insert_fragment_blocks
-from nexus.services.html_apparatus import attach_fragment_locators
+from nexus.services.html_apparatus import attach_fragment_locators, derive_fragment_note_groups
 from nexus.services.media_author_observation_seam import attach_author_observation
 from nexus.services.node_ingest import (
     IngestError,
     IngestResult,
-    local_node_ingest_command,
+    node_ingest_command,
     run_node_ingest,
 )
 from nexus.services.reader_apparatus import replace_media_apparatus
-from nexus.services.reader_publication import replace_reader_publication
+from nexus.services.reader_publication import ReplaceSourceIssues, replace_reader_publication
 from nexus.services.source_publication import SourcePublicationFence, run_source_publication_phase
 from nexus.services.url_normalize import normalize_url_for_display
 from nexus.services.web_article_artifacts import delete_web_article_artifacts
@@ -47,22 +47,6 @@ from nexus.services.web_article_structure import (
 )
 
 logger = get_logger(__name__)
-
-
-def run_web_article_node_ingest(
-    url: str,
-    *,
-    environment: Environment,
-) -> IngestResult | IngestError:
-    """Run the environment-owned Node composition for one accepted URL."""
-    return run_node_ingest(
-        url,
-        command=(
-            local_node_ingest_command()
-            if environment in {Environment.LOCAL, Environment.TEST}
-            else None
-        ),
-    )
 
 
 def materialize_web_article_source(
@@ -92,7 +76,9 @@ def materialize_web_article_source(
     finally:
         snapshot.close()
 
-    ingest_result = run_web_article_node_ingest(url, environment=get_settings().nexus_env)
+    ingest_result = run_node_ingest(
+        url, command=node_ingest_command(get_settings().node_ingest_script)
+    )
     if isinstance(ingest_result, IngestError):
         logger.warning(
             "node_ingest_failed",
@@ -124,19 +110,11 @@ def materialize_web_article_source(
             html=ingest_result.content_html,
             embed_source_html=ingest_result.source_html,
             base_url=ingest_result.base_url,
+            document_url=ingest_result.final_url,
             fragment_idx=0,
             extract_embeds=extract_embeds,
         )
-        source_apparatus = (
-            prepared
-            if ingest_result.source_html == ingest_result.content_html
-            else prepare_web_article_fragment(
-                html=ingest_result.source_html,
-                base_url=ingest_result.base_url,
-                fragment_idx=0,
-                extract_embeds=extract_embeds,
-            )
-        )
+        source_apparatus = prepared
     except Exception as exc:
         raise ApiError(ApiErrorCode.E_SANITIZATION_FAILED, f"Article prep failed: {exc}") from exc
 
@@ -169,6 +147,7 @@ def materialize_web_article_source(
                 db,
                 media_id=media_id,
                 expected_kind="web_article",
+                issues=ReplaceSourceIssues(issues=()),
                 replace_projection=lambda media: _replace_projection(
                     db,
                     media=media,
@@ -306,6 +285,12 @@ def _replace_projection(
             html_sanitized=prepared.html_sanitized,
         ),
         edges=source_apparatus.apparatus_edges,
+        note_groups=derive_fragment_note_groups(
+            prepared.html_sanitized,
+            prepared.canonical_text,
+            fragment.id,
+            source_html=ingest_result.content_html,
+        ),
     )
     return fragment.id
 

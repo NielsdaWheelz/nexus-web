@@ -43,10 +43,13 @@ from nexus.schemas.contributors import (
     ContributorWorkExampleOut,
     ContributorWorkItemOut,
     ExistingAuthorBinding,
+    ExternalContributorWorkItemOut,
     ManualMediaAuthorsRequest,
     MediaAuthorCreditOut,
     MediaAuthorsOut,
     MediaAuthorsPutRequest,
+    MediaContributorWorkItemOut,
+    PodcastContributorWorkItemOut,
     ResourceActionSubjectOut,
 )
 from nexus.schemas.presence import absent, present
@@ -385,6 +388,16 @@ def list_contributor_works(
     )
 
     page = rows[:limit]
+    from nexus.services.media import list_collection_media_for_viewer_by_ids
+
+    media = {
+        item.id: item.summary
+        for item in list_collection_media_for_viewer_by_ids(
+            db,
+            viewer_id=viewer_id,
+            media_ids=[UUID(str(row["media_id"])) for row in page if row["media_id"] is not None],
+        )
+    }
     next_cursor: CollectionCursor | None = None
     if len(rows) > limit and page:
         next_cursor = encode_keyset_cursor(
@@ -392,25 +405,54 @@ def list_contributor_works(
             query=cursor_query,
             after=after_values(plan, page[-1]),
         )
-    return CollectionPage[ContributorWorkItemOut](
-        items=[
-            ContributorWorkItemOut(
-                title=row["title"],
-                href=row["href"],
-                contentKind=row["content_kind"],
-                date=row["date_key"],
-                roleFacts=[
-                    ContributorRoleFactOut(
-                        creditedName=fact["credited_name"],
-                        role=cast(ContributorRole, fact["role"]),
-                        rawRole=fact["raw_role"],
-                    )
-                    for fact in row["role_facts"]
-                ],
-                actionSubject=_work_action_subject(row),
+    items: list[ContributorWorkItemOut] = []
+    for row in page:
+        facts = [
+            ContributorRoleFactOut(
+                creditedName=fact["credited_name"],
+                role=cast(ContributorRole, fact["role"]),
+                rawRole=fact["raw_role"],
             )
-            for row in page
-        ],
+            for fact in row["role_facts"]
+        ]
+        subject = _work_action_subject(row)
+        if row["media_id"] is not None:
+            if subject is None:
+                raise AssertionError("media work has no action subject")
+            items.append(
+                MediaContributorWorkItemOut(
+                    mediaSummary=media[UUID(str(row["media_id"]))],
+                    href=row["href"],
+                    roleFacts=facts,
+                    actionSubject=subject,
+                )
+            )
+        elif row["podcast_id"] is not None:
+            if subject is None:
+                raise AssertionError("podcast work has no action subject")
+            items.append(
+                PodcastContributorWorkItemOut(
+                    title=row["title"],
+                    href=row["href"],
+                    contentKind=row["content_kind"],
+                    date=row["date_key"],
+                    roleFacts=facts,
+                    actionSubject=subject,
+                )
+            )
+        else:
+            items.append(
+                ExternalContributorWorkItemOut(
+                    title=row["title"],
+                    href=row["href"],
+                    contentKind=row["content_kind"],
+                    date=row["date_key"],
+                    roleFacts=facts,
+                    actionSubject=None,
+                )
+            )
+    return CollectionPage[ContributorWorkItemOut](
+        items=items,
         collectionRevision=current_revision,
         nextCursor=present(next_cursor) if next_cursor is not None else absent(),
     )

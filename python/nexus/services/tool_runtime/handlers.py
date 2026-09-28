@@ -27,6 +27,7 @@ from llm_tools import (
 from sqlalchemy.orm import Session
 
 from nexus.errors import ApiError, ApiErrorCode
+from nexus.schemas.search import SearchResultMediaOut
 from nexus.services.agent_tools.app_search import (
     APP_SEARCH_CONTEXT_CHARS,
     APP_SEARCH_LIMIT,
@@ -340,7 +341,11 @@ async def _run_search(
                 excerpt=item.snippet[:300],
                 kind=cast("Any", _kind_for_result_type(item.type)),
                 score=min(1.0, max(0.0, float(item.score))),
-                title=item.title[:150],
+                title=(
+                    item.media_summary.title
+                    if isinstance(item, SearchResultMediaOut)
+                    else item.title
+                )[:150],
                 uri=item.resource_ref,
             )
             for item, citation in zip(response.results, citations, strict=True)
@@ -422,7 +427,11 @@ async def _run_document_search(
                 score=min(1.0, max(0.0, float(item.score))),
                 # The search owner marks matches with trusted <b> tags; tool JSON is plain.
                 text=item.snippet.replace("<b>", "").replace("</b>", "")[:2000],
-                title=item.title[:500],
+                title=(
+                    item.media_summary.title
+                    if isinstance(item, SearchResultMediaOut)
+                    else item.title
+                )[:500],
                 uri=item.resource_ref,
             )
             for ordinal, (item, citation) in enumerate(

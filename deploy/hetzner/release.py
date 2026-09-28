@@ -580,6 +580,22 @@ def release(source_sha: str, workspace: Path) -> None:
         " the API is down from here until `up` succeeds"
     )
     compose(candidate, f"stop --timeout 30 {' '.join(WRITERS)}", timeout=300)
+    compose(candidate, f"stop --timeout 45 {CODEX_AGENT_HOST}", timeout=120)
+    host_container = host(
+        "docker ps --all --quiet"
+        " --filter label=com.docker.compose.project=nexus"
+        f" --filter label=com.docker.compose.service={CODEX_AGENT_HOST}"
+        " --filter label=com.docker.compose.oneoff=False"
+    ).strip()
+    if host_container:
+        if CONTAINER_ID.fullmatch(host_container) is None:
+            raise Failure("Codex native host has ambiguous containers")
+        host_state = inspect(host_container)["State"]
+        if host_state["Status"] != "exited" or host_state["ExitCode"] != 0:
+            raise Failure(
+                "Codex native host did not stop cleanly: "
+                f"status={host_state['Status']} exit_code={host_state['ExitCode']}"
+            )
     if starting_revision:
         backup(candidate, starting_revision)
     elif psql("SELECT count(*) FROM pg_tables WHERE schemaname = 'public'") != "0":

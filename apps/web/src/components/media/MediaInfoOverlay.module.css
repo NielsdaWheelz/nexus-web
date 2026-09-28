@@ -3,6 +3,7 @@
   min-width: 0;
   flex-direction: column;
   gap: var(--space-5);
+  overflow-wrap: anywhere;
 }
 
 .resourceTitle {
@@ -10,23 +11,38 @@
   font-size: var(--text-lg);
   font-weight: var(--weight-semibold);
   line-height: var(--leading-snug);
-  overflow-wrap: anywhere;
 }
 
-.groups,
-.facts {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-4);
+.sheetTitle {
+  flex: 0 0 auto;
   margin: 0;
+  padding: var(--space-2) var(--space-4) var(--space-4);
+  color: var(--ink);
+  font-size: var(--text-lg);
 }
 
 .group {
   min-width: 0;
 }
 
-.role {
+.group h3 {
+  margin: 0 0 var(--space-3);
+  color: var(--ink);
+  font-size: var(--text-base);
+}
+
+.group dl {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.fact {
+  min-width: 0;
+}
+
+.fact dt {
   margin-bottom: var(--space-1);
   color: var(--ink-muted);
   font-size: var(--text-xs);
@@ -34,22 +50,18 @@
   letter-spacing: var(--tracking-wide);
 }
 
-.names {
+.fact dd {
   margin: 0;
   color: var(--ink);
   font-size: var(--text-base);
   line-height: var(--leading-snug);
-  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
-.names a {
+.fact a {
   color: inherit;
-  text-decoration: none;
-}
-
-.names a:hover,
-.names a:focus-visible {
   text-decoration: underline;
+  text-underline-offset: 0.15em;
 }
 
 @media (max-width: 768px) {

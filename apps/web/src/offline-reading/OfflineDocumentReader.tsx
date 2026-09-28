@@ -1,27 +1,36 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import PdfReader, {
-  type PdfReaderDecorationWrites,
+  type PdfReaderNavigationAdapter,
+  type PdfReaderNavigationPlacement,
+  type PdfReaderNavigationTarget,
 } from "@/components/PdfReader";
+import ReaderNavigationStatus from "@/components/reader/ReaderNavigationStatus";
 import TextDocumentReader from "@/components/reader/TextDocumentReader";
 import ReaderDocumentMapDetail from "@/components/reader/ReaderDocumentMapDetail";
 import ReaderDocumentMapOverviewRail from "@/components/reader/ReaderDocumentMapOverviewRail";
+import ReaderSourceIssuesNotice from "@/components/reader/ReaderSourceIssuesNotice";
 import { absent, present, type Presence } from "@/lib/api/presence";
 import { buildCanonicalCursor, validateCanonicalText, type CanonicalCursorResult } from "@/lib/highlights/canonicalCursor";
 import type { EpubFragmentContent } from "@/lib/media/epubFragment";
+import type { ReaderNavigationTextPoint } from "@/lib/media/readerNavigation";
 import type { Fragment } from "@/lib/media/transcriptView";
 import type {
   ReaderDocumentMapMarker,
   ReaderMapMarkerPresentation,
 } from "@/lib/reader/documentMap";
-import { findSourceAnchor, resolveEpubInternalLinkTarget, type EpubRestoreRequest } from "@/lib/reader/epubInternalLinks";
+import { findSourceAnchor, findUniqueSourceLinkOwner, resolveReaderInternalLinkTarget, type EpubRestoreRequest } from "@/lib/reader/epubInternalLinks";
 import {
   captureVisibleCanonicalTextRange,
   isCanonicalTextAnchorVisible,
   isTextViewportAtEnd,
   measureCanonicalTextAnchorViewportDelta,
-  restoreCanonicalTextAnchorViewportPosition,
+  measureSourceAnchorViewportOrigin,
+  restoreTextReaderPlacement,
   scrollToExactCanonicalTextAnchor,
+  type TextReaderPlacement,
 } from "@/lib/reader/canonicalTextAnchor";
+import { useReaderNavigation, type ReaderNavigationAdapter, type ReaderNavigationOutcome } from "@/lib/reader/useReaderNavigation";
+import type { ReaderCursorSnapshot } from "@/lib/reader/readerProgress";
 import {
   buildReaderDocumentStructure,
   readerSectionAtPosition,
@@ -31,11 +40,11 @@ import {
 } from "@/lib/reader/readerDocumentPosition";
 import type {
   PdfHighlightOut,
+  PdfReaderDecorations,
 } from "@/lib/reader/ReaderDecorations";
 import {
   buildTextReaderLocatorAtOffset,
   createDocumentReaderSession,
-  preferredReaderLocator,
   type LoadedDocumentReaderSession,
   type LoadedReaderDocument,
   type DocumentReaderSession,
@@ -50,9 +59,6 @@ import {
 } from "@/lib/offlineReading/OfflineReaderAdapters";
 import {
   OFFLINE_READING_COPY,
-  offlineReaderLocatorContext,
-  offlineReadingConflictChoiceLabel,
-  offlineReadingConflictLocators,
 } from "@/lib/offlineReading/presentation";
 import type {
   OfflineReadingControllerRuntime,
@@ -77,6 +83,10 @@ const offlinePositioner: ReaderScrollPositioner = {
   },
 };
 
+const offlineAuthenticationError = () => false;
+const offlineSignedUrlRefresh = () => undefined;
+const acquireOfflineChromeLock = () => () => undefined;
+
 /**
  * The packaged shelf never reaches the reader-profile service (offline
  * personalization is a non-goal), so it states the reading typography it
@@ -96,7 +106,10 @@ const offlineReaderSurfaceStyle = buildReaderSurfaceStyle(
   OFFLINE_SHELF_READER_PROFILE,
 );
 
-const noOfflinePdfDecorations: PdfReaderDecorationWrites = {
+const noOfflinePdfDecorations: PdfReaderDecorations = {
+  async loadPageHighlights(): Promise<readonly PdfHighlightOut[]> {
+    return [];
+  },
   async createHighlight(): Promise<PdfHighlightOut> {
     throw new Error("Highlights are unavailable in downloaded copies");
   },
@@ -124,248 +137,264 @@ function progressNotice(view: ReaderProgressView): string | null {
   }
 }
 
-function saveStatusMessage(kind: ReaderProgressView["kind"] | "Failed"): string {
-  switch (kind) {
-    case "Conflict":
-      return OFFLINE_READING_COPY.conflictNotice;
-    case "ContentChanged":
-      return OFFLINE_READING_COPY.changedSourceNotice;
-    case "SourceUnavailable":
-      return OFFLINE_READING_COPY.sourceUnavailableNotice;
-    case "Failed":
-      return "Position could not be stored on this device. Try again.";
-    case "Canonical":
-    case "Pending":
-      return "Position stored on this device";
-  }
+function progressSnapshot(view: ReaderProgressView): ReaderCursorSnapshot {
+  if (view.kind === "Canonical") return view.snapshot;
+  const baseline = view.kind === "Conflict" ? view.canonical : view.baseline;
+  return { state: "Positioned", revision: baseline.revision, locator: view.device };
 }
 
+type OfflineNavigationTarget =
+  | { kind: "Text"; destination: EpubRestoreRequest }
+  | { kind: "Pdf"; target: PdfReaderNavigationTarget };
+type OfflineNavigationPlacement =
+  | { kind: "Text"; anchor: OfflineTextAnchor }
+  | { kind: "Pdf"; placement: PdfReaderNavigationPlacement };
+type OfflineNavigationAdapter = ReaderNavigationAdapter<OfflineNavigationTarget, OfflineNavigationPlacement>;
+type OfflineNavigation = ReturnType<typeof useReaderNavigation<OfflineNavigationTarget, OfflineNavigationPlacement>>;
+
 export default function OfflineDocumentReader({
-  controller,
-  mediaId,
-  opened,
-  authoritativeProgress,
-  onClose,
-  onRemoveRequested,
+  controller, mediaId, opened, authoritativeProgress, onClose, onRemoveRequested,
 }: {
   readonly controller: OfflineReadingControllerRuntime;
   readonly mediaId: string;
   readonly opened: OpenedOfflineReading;
   readonly authoritativeProgress: ReaderProgressView | null;
-  /** Leaves the reader for the shelf; the shelf owns the lease close. */
   readonly onClose: () => void;
-  /** Opens the shelf's confirmed Remove dialog for this copy. */
   readonly onRemoveRequested: () => void;
 }) {
   const [attempt, setAttempt] = useState(0);
   const session = useMemo(() => {
-    // `attempt` is a load-identity input: Retry builds a fresh session rather
-    // than reusing the one whose package fetch failed.
     void attempt;
-    const progress = new OfflineReaderProgressPort(controller, mediaId, opened);
     return createDocumentReaderSession({
       mediaId,
       source: new OfflineReaderSource(mediaId, opened),
-      progress,
+      progress: new OfflineReaderProgressPort(controller, mediaId, opened),
     });
   }, [attempt, controller, mediaId, opened]);
   const [load, setLoad] = useState<DocumentLoad>({ kind: "Loading" });
-  const [progress, setProgress] = useState<ReaderProgressView>(opened.progress);
-  const [readerEpoch, setReaderEpoch] = useState(0);
-  const [saveStatus, setSaveStatus] = useState<string | null>(null);
-  const [changedSourceAcknowledged, setChangedSourceAcknowledged] = useState(false);
-  const authoritativeProgressRef = useRef(authoritativeProgress);
-
-  useEffect(() => {
-    authoritativeProgressRef.current = authoritativeProgress;
-    if (authoritativeProgress !== null) setProgress(authoritativeProgress);
-  }, [authoritativeProgress]);
-
   useEffect(() => {
     const abort = new AbortController();
-    let current = true;
     setLoad({ kind: "Loading" });
     session.load(abort.signal).then(
-      (result) => {
-        if (!current) return;
-        setLoad({ kind: "Loaded", loaded: result });
-        setProgress(authoritativeProgressRef.current ?? result.progress);
-      },
-      () => {
-        // A lease that expired, a package that failed verification, or an
-        // undecodable reader document must land on a typed failure with a
-        // valid action -- never an unhandled rejection behind a spinner.
-        if (!current || abort.signal.aborted) return;
-        setLoad({ kind: "Failed" });
-      },
+      (loaded) => { if (!abort.signal.aborted) setLoad({ kind: "Loaded", loaded }); },
+      () => { if (!abort.signal.aborted) setLoad({ kind: "Failed" }); },
     );
-    return () => {
-      current = false;
-      abort.abort();
-    };
+    return () => abort.abort();
   }, [session]);
-
-  if (load.kind === "Failed") {
-    return (
-      <div className={styles.documentReader}>
-        <p role="alert" className={styles.notice}>
-          This downloaded copy could not be opened. Its files may be incomplete
-          or no longer verified on this device.
-        </p>
-        <div className={styles.actions}>
-          <button
-            type="button"
-            className={styles.action}
-            onClick={() => setAttempt((current) => current + 1)}
-          >
-            Try again
-          </button>
-          <button type="button" className={styles.quietAction} onClick={onClose}>
-            Back to downloads
-          </button>
-          <button
-            type="button"
-            className={styles.quietAction}
-            onClick={onRemoveRequested}
-          >
-            Remove downloaded copy
-          </button>
-        </div>
-      </div>
-    );
-  }
-  if (load.kind === "Loading") return <p role="status">Opening verified copy…</p>;
-  const loaded = load.loaded;
-  const document = loaded.document;
-  const preferredLocator = preferredReaderLocator(progress);
-  const sectionLabel = (locator: Extract<ReaderResumeState, { kind: "epub" | "web" }>): string | null => {
-    if (document.kind === "Pdf" || locator.locations.text_offset === null) return null;
-    const structure = buildReaderDocumentStructure(document.navigation);
-    const section = readerSectionAtPosition(structure, readerTextPointOffset(structure, {
-      fragment_id: locator.target.fragment_id, offset: locator.locations.text_offset,
-    }));
-    return section.kind === "Present" ? section.value.section.label : null;
-  };
-
-  const applyProgress = async (next: ReaderProgressView) => {
-    setProgress(next);
-    setReaderEpoch((current) => current + 1);
-  };
-
-  const save = (locator: ReaderResumeState) => {
-    void session.progress.save(mediaId, locator).then((result) => {
-      const next = result.kind === "Canonical" || result.kind === "Conflict" ? result : result.view;
-      setProgress(next);
-      setSaveStatus(
-        saveStatusMessage(
-          result.kind === "DurablyPending" ? result.view.kind : result.kind,
-        ),
-      );
-    }).catch(() => {
-      setSaveStatus(saveStatusMessage("Failed"));
-    });
-  };
-
-  const notice = progressNotice(progress);
-  const conflict = progress.kind === "Conflict"
-    ? offlineReadingConflictLocators(progress)
-    : null;
-
-  return (
+  if (load.kind === "Failed") return (
     <div className={styles.documentReader}>
-      {document.kind === "WebArticle" ? (
-        <p className={styles.notice}>{OFFLINE_READING_COPY.textOnlyNotice}</p>
-      ) : null}
-      {notice === null ? null : (
-        <p role="alert" className={styles.notice}>{notice}</p>
-      )}
-      {progress.kind === "ContentChanged" && !changedSourceAcknowledged ? (
-        <div className={styles.actions} aria-label="Changed source">
-          <button
-            type="button"
-            className={styles.action}
-            onClick={() => setChangedSourceAcknowledged(true)}
-          >
-            {OFFLINE_READING_COPY.continueAction}
-          </button>
-          <button
-            type="button"
-            className={styles.quietAction}
-            onClick={onRemoveRequested}
-          >
-            {OFFLINE_READING_COPY.removeConfirmAction}
-          </button>
-        </div>
-      ) : null}
-      {conflict === null ? null : (
-        <div className={styles.actions} aria-label="Choose saved location">
-          <button
-            type="button"
-            className={styles.action}
-            onClick={() => void session.progress.resolve(mediaId, "Canonical").then(applyProgress)}
-          >
-            {offlineReadingConflictChoiceLabel(
-              "Canonical",
-              offlineReaderLocatorContext(conflict.canonical, sectionLabel),
-            )}
-          </button>
-          <button
-            type="button"
-            className={styles.action}
-            onClick={() => void session.progress.resolve(mediaId, "Device").then(applyProgress)}
-          >
-            {offlineReadingConflictChoiceLabel(
-              "Device",
-              offlineReaderLocatorContext(conflict.device, sectionLabel),
-            )}
-          </button>
-        </div>
-      )}
-      {saveStatus === null ? null : (
-        <p className={styles.saved} role="status">{saveStatus}</p>
-      )}
-
-      {document.kind === "Pdf" ? (
-        <PdfReader
-          key={`pdf:${readerEpoch}`}
-          mediaId={mediaId}
-          resources={{
-            signedUrl: { status: "ready", data: document.document },
-            pageHighlights: { status: "ready", data: [] },
-            requestSignedUrlRefresh: () => undefined,
-          }}
-          decorations={noOfflinePdfDecorations}
-          isMobile
-          mobileChromeEnabled={false}
-          acquireMobileChromeVisibleLock={() => () => undefined}
-          scrollPositioner={offlinePositioner}
-          handleAuthenticationError={() => false}
-          startPageNumber={preferredLocator?.kind === "pdf" ? preferredLocator.page : 1}
-          startPageProgression={
-            preferredLocator?.kind === "pdf"
-              ? preferredLocator.page_progression ?? undefined
-              : undefined
-          }
-          startZoom={
-            preferredLocator?.kind === "pdf"
-              ? preferredLocator.zoom ?? undefined
-              : undefined
-          }
-          onSemanticViewportChange={(viewport) => {
-            if (viewport?.intent === "Reader") save(viewport.primaryLocator);
-          }}
-        />
-      ) : (
-        <OfflineTextReader
-          key={`${readerEpoch}:${document.navigation.generation}`}
-          document={document}
-          session={session}
-          initialLocator={preferredLocator}
-          onSave={save}
-        />
-      )}
+      <p role="alert" className={styles.notice}>This downloaded copy could not be opened. Its files may be incomplete or no longer verified on this device.</p>
+      <div className={styles.actions}>
+        <button type="button" className={styles.action} onClick={() => setAttempt((current) => current + 1)}>Try again</button>
+        <button type="button" className={styles.quietAction} onClick={onClose}>Back to downloads</button>
+        <button type="button" className={styles.quietAction} onClick={onRemoveRequested}>Remove downloaded copy</button>
+      </div>
     </div>
   );
+  if (load.kind === "Loading") return <p role="status">Opening verified copy…</p>;
+  return <LoadedOfflineDocumentReader
+    key={`${opened.leaseId}:${attempt}`}
+    mediaId={mediaId} opened={opened} loaded={load.loaded} session={session}
+    authoritativeProgress={authoritativeProgress} onRemoveRequested={onRemoveRequested}
+  />;
+}
+
+function LoadedOfflineDocumentReader({ mediaId, opened, loaded, session, authoritativeProgress, onRemoveRequested }: {
+  mediaId: string;
+  opened: OpenedOfflineReading;
+  loaded: LoadedDocumentReaderSession;
+  session: DocumentReaderSession;
+  authoritativeProgress: ReaderProgressView | null;
+  onRemoveRequested: () => void;
+}) {
+  const document = loaded.document;
+  const pdfResources = useMemo(() => document.kind === "Pdf" ? {
+    signedUrl: { status: "ready" as const, data: document.document },
+    pageHighlights: { status: "ready" as const, data: [] },
+    requestSignedUrlRefresh: offlineSignedUrlRefresh,
+  } : null, [document]);
+  const [initialSnapshot] = useState(() => progressSnapshot(authoritativeProgress ?? loaded.progress));
+  const [progress, setProgress] = useState(authoritativeProgress ?? loaded.progress);
+  const [saveFailed, setSaveFailed] = useState(false);
+  const failedLocatorRef = useRef<ReaderResumeState | null>(null);
+  const [changedSourceAcknowledged, setChangedSourceAcknowledged] = useState(false);
+  const [resolving, setResolving] = useState(false);
+  const resolvingRef = useRef(false);
+  const resolutionBusyRef = useRef(false);
+  const [applyFailed, setApplyFailed] = useState(false);
+  const [captureUnavailable, setCaptureUnavailable] = useState(false);
+  const [chosenSnapshot, setChosenSnapshot] = useState<ReaderCursorSnapshot | null>(null);
+  const [adapterSource, setAdapterSource] = useState<string | null>(null);
+  const adapterRef = useRef<OfflineNavigationAdapter | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const writeRef = useRef<Promise<void>>(Promise.resolve());
+  const mountedRef = useRef(true);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
+  useEffect(() => { if (authoritativeProgress !== null) setProgress(authoritativeProgress); }, [authoritativeProgress]);
+
+  const save = useCallback((locator: ReaderResumeState): Promise<void> => {
+    // Native progress owns durability; preserve admission order across the bridge.
+    const write = writeRef.current.then(async () => {
+      const result = await session.progress.save(mediaId, locator);
+      if (!mountedRef.current) return;
+      setProgress(result.kind === "Canonical" || result.kind === "Conflict" ? result : result.view);
+      failedLocatorRef.current = null;
+      setSaveFailed(false);
+    });
+    writeRef.current = write.catch(() => {
+      if (!mountedRef.current) return;
+      failedLocatorRef.current = locator;
+      setSaveFailed(true);
+    });
+    return write;
+  }, [mediaId, session]);
+  const adapter = useMemo<OfflineNavigationAdapter>(() => ({
+    capture: () => adapterRef.current?.capture() ?? null,
+    position: (request, signal) => adapterRef.current?.position(request, signal) ?? Promise.resolve({ kind: "Unavailable", reason: "CaptureUnavailable", displaced: false }),
+  }), []);
+  const navigation = useReaderNavigation({
+    visitKey: `${mediaId}:${opened.leaseId}`,
+    source: adapterSource,
+    adapter,
+    captureEligibleLocator: () => resolvingRef.current ? null : adapter.capture()?.locator ?? null,
+    admitProgress: (locator) => { void save(locator).catch(() => undefined); },
+    closeActivity: () => undefined,
+  });
+  const { applyCanonical } = navigation;
+  const initializedRef = useRef(false);
+  useEffect(() => {
+    if (adapterSource === null || initializedRef.current) return;
+    initializedRef.current = true;
+    void applyCanonical(initialSnapshot, "Reset");
+  }, [adapterSource, applyCanonical, initialSnapshot]);
+  const textSource = `${mediaId}:offline:${opened.readerRevisionKey}:${opened.readerGeneration}`;
+  const textAdapterReady = useCallback((next: OfflineNavigationAdapter | null) => {
+    adapterRef.current = next;
+    setAdapterSource(next === null ? null : textSource);
+  }, [textSource]);
+  const pdfAdapterReady = useCallback((next: PdfReaderNavigationAdapter | null) => {
+    adapterRef.current = next === null ? null : {
+      capture() {
+        const checkpoint = next.capture();
+        return checkpoint === null ? null : { ...checkpoint, placement: { kind: "Pdf", placement: checkpoint.placement } };
+      },
+      position(request, signal) {
+        if (request.kind === "Canonical") return next.position(request, signal);
+        if (request.kind === "Target") return request.target.kind === "Pdf"
+          ? next.position({ kind: "Target", target: request.target.target }, signal)
+          : Promise.resolve({ kind: "Unavailable", reason: "TargetUnavailable", displaced: false });
+        const checkpoint = request.checkpoint;
+        if (checkpoint.kind === "Saved") return next.position({ kind: "Checkpoint", checkpoint }, signal);
+        return checkpoint.placement.kind === "Pdf"
+          ? next.position({ kind: "Checkpoint", checkpoint: { ...checkpoint, placement: checkpoint.placement.placement } }, signal)
+          : Promise.resolve({ kind: "Unavailable", reason: "SourceChanged", displaced: false });
+      },
+    };
+    setAdapterSource(next?.source ?? null);
+  }, []);
+  const saveMovement = (locator: ReaderResumeState) => {
+    if (!resolvingRef.current && navigation.eligibility.canAcquireProgress()) void save(locator).catch(() => undefined);
+  };
+
+  const resolveProgress = async (choice: "Canonical" | "Device") => {
+    if (resolutionBusyRef.current) return;
+    const keepInspecting = choice === "Device" && navigation.eligibility.isExploringWithoutOrigin();
+    const held = choice === "Device" && !keepInspecting
+      ? navigation.eligibility.heldReadingLocator() ?? (navigation.eligibility.canAcquireProgress() ? adapter.capture()?.locator ?? null : null)
+      : null;
+    if (choice === "Device" && !keepInspecting && held === null) { setCaptureUnavailable(true); return; }
+    resolvingRef.current = true;
+    resolutionBusyRef.current = true;
+    setResolving(true);
+    setCaptureUnavailable(false);
+    setApplyFailed(false);
+    navigation.cancelPositioning();
+    try {
+      await writeRef.current;
+      if (held !== null) await save(held);
+      // The existing native authority resolves its current conflict. It has no
+      // revision/abort argument; acquisition is fenced until verified arrival.
+      const next = await session.progress.resolve(mediaId, keepInspecting ? "Canonical" : choice);
+      if (!mountedRef.current) return;
+      setProgress(next);
+      if (next.kind === "Conflict") { setApplyFailed(true); resolvingRef.current = false; return; }
+      if (keepInspecting) { setChosenSnapshot(null); resolvingRef.current = false; return; }
+      const snapshot = progressSnapshot(next);
+      setChosenSnapshot(snapshot);
+      const outcome = await applyCanonical(snapshot, "Remote");
+      if (!mountedRef.current) return;
+      if (outcome.kind === "Arrived" || outcome.kind === "Unchanged") {
+        setChosenSnapshot(null);
+        resolvingRef.current = false;
+      }
+      else setApplyFailed(true);
+    } catch {
+      if (mountedRef.current) setApplyFailed(true);
+    } finally {
+      resolutionBusyRef.current = false;
+      if (mountedRef.current) setResolving(false);
+    }
+  };
+  const mode = navigation.state.mode;
+  const origin = mode.kind === "Exploring" && mode.origin.kind === "Present" ? mode.origin.value.locator : null;
+  const structure = document.kind === "Pdf" ? null : buildReaderDocumentStructure(document.navigation);
+  let originLabel: string | null = origin?.kind === "pdf" ? `page ${origin.page}` : null;
+  if (structure && origin && (origin.kind === "epub" || origin.kind === "web") && origin.locations.text_offset !== null) {
+    const section = readerSectionAtPosition(structure, readerTextPointOffset(structure, { fragment_id: origin.target.fragment_id, offset: origin.locations.text_offset }));
+    if (section.kind === "Present") originLabel = section.value.section.label;
+  }
+  const failure = navigation.state.error;
+  const error = failure.kind === "Absent" ? null
+    : failure.value.reason === "SourceChanged" ? "your reading spot is unavailable in this version."
+    : failure.value.action === "Return" ? "couldn't return to your spot. try again."
+    : failure.value.action === "Adopt" ? "couldn't use this reading position. try again."
+    : failure.value.reason === "CaptureUnavailable" ? "couldn't hold your reading spot. try again."
+    : "couldn't open that passage.";
+  const remoteSnapshot = progress.kind === "Conflict" ? progress.canonical : chosenSnapshot;
+  const notice = progressNotice(progress);
+  return <div ref={rootRef} tabIndex={-1} className={styles.documentReader}>
+    {document.kind === "Pdf" ? null : (
+      <ReaderSourceIssuesNotice issues={document.navigation.source_issues} navigation={document.navigation} readable />
+    )}
+    {document.kind === "WebArticle" ? <p className={styles.notice}>{OFFLINE_READING_COPY.textOnlyNotice}</p> : null}
+    {notice !== null && progress.kind !== "Conflict" ? <p role="alert" className={styles.notice}>{notice}</p> : null}
+    {progress.kind === "ContentChanged" && !changedSourceAcknowledged ? <div className={styles.actions} aria-label="Changed source">
+      <button type="button" className={styles.action} onClick={() => setChangedSourceAcknowledged(true)}>{OFFLINE_READING_COPY.continueAction}</button>
+      <button type="button" className={styles.quietAction} onClick={onRemoveRequested}>{OFFLINE_READING_COPY.removeConfirmAction}</button>
+    </div> : null}
+    <ReaderNavigationStatus
+      navigation={mode.kind === "Reading" ? { kind: "Reading", error } : {
+        kind: "Exploring", origin: navigation.state.originUnavailable ? "Unavailable" : mode.origin.kind === "Present" ? "Held" : "Absent",
+        originLabel, positioning: navigation.state.positioning || resolving, error,
+      }}
+      handoff={remoteSnapshot === null ? null : { snapshot: remoteSnapshot, busy: resolving, applyFailed, captureUnavailable }}
+      announcement="" saveFailed={saveFailed}
+      onReturn={() => { if (!resolvingRef.current) void navigation.returnToOrigin(); }}
+      onAdopt={() => !resolvingRef.current && navigation.adoptHere().kind === "Arrived"}
+      onAcceptRemote={() => void resolveProgress("Canonical")}
+      onKeepLocal={() => void resolveProgress("Device")}
+      onRetrySave={() => { if (failedLocatorRef.current) void save(failedLocatorRef.current).catch(() => undefined); }}
+      focusReader={() => {
+        const target = rootRef.current?.querySelector<HTMLElement>('[data-pane-content]') ?? rootRef.current;
+        target?.focus({ preventScroll: true });
+      }}
+    />
+    {document.kind === "Pdf" ? <PdfReader
+      mediaId={mediaId}
+      resources={pdfResources!}
+      decorations={noOfflinePdfDecorations} isMobile mobileChromeEnabled={false}
+      acquireMobileChromeVisibleLock={acquireOfflineChromeLock} scrollPositioner={offlinePositioner} handleAuthenticationError={offlineAuthenticationError}
+      navigationActions={{
+        inspect: (target, occurrence, signal) => navigation.inspect({ kind: "Pdf", target }, occurrence, signal),
+        beginSeek: navigation.beginSeek, cancelPositioning: navigation.cancelPositioning,
+      }}
+      onNavigationAdapterReady={pdfAdapterReady}
+      onSemanticViewportChange={(viewport) => { if (viewport?.intent === "Reader") saveMovement(viewport.primaryLocator); }}
+    /> : <OfflineTextReader
+      document={document} session={session} source={textSource}
+      navigation={navigation} onAdapterReady={textAdapterReady} onSave={saveMovement}
+    />}
+  </div>;
 }
 
 type OfflineTextDocument = Exclude<LoadedReaderDocument, { kind: "Pdf" }>;
@@ -375,11 +404,19 @@ type OfflineTextBody = {
   text: string;
   epubFragment: EpubFragmentContent | null;
 };
-type OfflineTextOrigin = {
+type OfflineTextAnchor = {
   body: OfflineTextBody;
   target: EpubRestoreRequest["target"];
-  topDelta: number;
-  scrollLeft: number;
+  placement: TextReaderPlacement;
+};
+type OfflineTextPosition = {
+  destination: EpubRestoreRequest;
+  anchor: OfflineTextAnchor | null;
+  focus: Presence<HTMLElement>;
+  occurrence: Presence<string>;
+  signal: AbortSignal;
+  displaced: boolean;
+  finish: (outcome: ReaderNavigationOutcome) => void;
 };
 
 function offlineTextBody(fragment: Fragment | EpubFragmentContent): OfflineTextBody {
@@ -388,22 +425,18 @@ function offlineTextBody(fragment: Fragment | EpubFragmentContent): OfflineTextB
     : { id: fragment.id, html: fragment.html_sanitized, text: fragment.canonical_text, epubFragment: null };
 }
 
-function OfflineTextReader({ document, session, initialLocator, onSave }: {
+function OfflineTextReader({ document, session, source, navigation, onAdapterReady, onSave }: {
   document: OfflineTextDocument;
   session: DocumentReaderSession;
-  initialLocator: ReaderResumeState | null;
+  source: string;
+  navigation: OfflineNavigation;
+  onAdapterReady: (adapter: OfflineNavigationAdapter | null) => void;
   onSave: (locator: ReaderResumeState) => void;
 }) {
   const structure = useMemo(() => buildReaderDocumentStructure(document.navigation), [document.navigation]);
   const [body, setBody] = useState(() => offlineTextBody(document.kind === "Epub" ? document.fragment : document.activeFragment));
-  const [request, setRequest] = useState<{
-    generation: number;
-    destination: EpubRestoreRequest;
-    intent: "Restore" | "Preview" | "Return" | "Rollback";
-    origin: OfflineTextOrigin | null;
-    departure: OfflineTextOrigin | null;
-  } | null>(null);
-  const [origin, setOrigin] = useState<OfflineTextOrigin | null>(null);
+  const [request, setRequest] = useState<OfflineTextPosition | null>(null);
+  const requestRef = useRef<OfflineTextPosition | null>(null);
   const [current, setCurrent] = useState<Presence<number>>(absent());
   const [visible, setVisible] = useState<Presence<ReaderDocumentOverviewRange>>(absent());
   const [detailOpen, setDetailOpen] = useState(false);
@@ -413,10 +446,8 @@ function OfflineTextReader({ document, session, initialLocator, onSave }: {
   const viewportRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLElement>(null);
   const cursorRef = useRef<CanonicalCursorResult | null>(null);
-  const generationRef = useRef(0);
-  const loadRef = useRef<AbortController | null>(null);
   const trustedRef = useRef<"forward" | "backward" | null>(null);
-  const currentAnchorRef = useRef<OfflineTextOrigin | null>(null);
+  const currentAnchorRef = useRef<OfflineTextAnchor | null>(null);
   const layoutRef = useRef<{ width: number; height: number; contentHeight: number } | null>(null);
   const bodyRef = useRef(body);
   const saveRef = useRef(onSave);
@@ -446,11 +477,11 @@ function OfflineTextReader({ document, session, initialLocator, onSave }: {
   function capture(saveReading: boolean) {
     const viewport = viewportRef.current;
     const cursor = cursorRef.current;
-    if (!viewport || !cursor) return;
+    if (!viewport || !cursor) return false;
     // Reflow can clamp scrollTop before ResizeObserver runs. That scroll must
     // not replace the source anchor the observer still has to restore.
     const layout = layoutRef.current;
-    if (layout && contentRef.current && (layout.width !== viewport.clientWidth || layout.height !== viewport.clientHeight || layout.contentHeight !== contentRef.current.getBoundingClientRect().height)) return;
+    if (layout && contentRef.current && (layout.width !== viewport.clientWidth || layout.height !== viewport.clientHeight || layout.contentHeight !== contentRef.current.getBoundingClientRect().height)) return false;
     const range = captureVisibleCanonicalTextRange(viewport, cursor);
     const activeBody = bodyRef.current;
     const previous = currentAnchorRef.current;
@@ -464,24 +495,22 @@ function OfflineTextReader({ document, session, initialLocator, onSave }: {
       const target = previous?.body.id === activeBody.id && previous.target.kind === "Anchor" ? previous.target : cursor.length === 0 ? { kind: "Offset" as const, offset: 0 } : null;
       const root = contentRef.current;
       const element = target?.kind === "Anchor" && root ? findSourceAnchor(root, target.anchorId) : target ? root : null;
-      const rect = element?.getBoundingClientRect();
-      const view = viewport.getBoundingClientRect();
-      currentAnchorRef.current = target && rect
-        ? { body: activeBody, target, topDelta: rect.top - view.top, scrollLeft: viewport.scrollLeft }
-        : null;
+      const placement = element && root ? measureSourceAnchorViewportOrigin(viewport, root, target?.kind === "Anchor" ? present(target.anchorId) : absent()) : null;
+      currentAnchorRef.current = target && placement ? { body: activeBody, target, placement } : null;
       setCurrent(absent());
       setVisible(absent());
-      return;
+      return currentAnchorRef.current !== null;
     }
     const fragment = structure.fragmentOffsets.get(activeBody.id)!;
     const topDelta = measureCanonicalTextAnchorViewportDelta(viewport, cursor, offset);
-    if (topDelta !== null) currentAnchorRef.current = { body: activeBody, target: { kind: "Offset", offset }, topDelta, scrollLeft: viewport.scrollLeft };
+    currentAnchorRef.current = null;
+    if (topDelta !== null) currentAnchorRef.current = { body: activeBody, target: { kind: "Offset", offset }, placement: { kind: "CanonicalText", anchorCp: offset, viewportTopDeltaPx: topDelta, scrollLeft: viewport.scrollLeft } };
     setCurrent(present(fragment.start + offset));
     setVisible(structure.length === 0 || !range ? absent() : present({
       start: (fragment.start + range.startOffset) / structure.length,
       end: (fragment.start + range.endOffset) / structure.length,
     }));
-    if (!saveReading || direction === null) return;
+    if (!saveReading || direction === null) return currentAnchorRef.current !== null;
     const locator = buildTextReaderLocatorAtOffset({
       anchorOffset: offset,
       canonicalText: activeBody.text,
@@ -495,62 +524,116 @@ function OfflineTextReader({ document, session, initialLocator, onSave }: {
       positionBucketCodePoints: 1000,
     });
     if (locator !== null) saveRef.current(locator);
+    return currentAnchorRef.current !== null;
   }
   const captureRef = useRef(capture);
   captureRef.current = capture;
 
-  const navigate = useCallback(async (destination: EpubRestoreRequest, intent: "Restore" | "Preview" | "Return", candidate: OfflineTextOrigin | null) => {
-    loadRef.current?.abort();
-    const abort = new AbortController();
-    loadRef.current = abort;
-    const generation = ++generationRef.current;
-    const departure = currentAnchorRef.current;
-    trustedRef.current = null;
-    setError(null);
-    if (!structure.fragmentOffsets.has(destination.fragmentId)) {
-      setError("The requested fragment is unavailable in this copy.");
-      return;
+  const locatorForAnchor = useCallback((anchor: OfflineTextAnchor): ReaderResumeState | null => {
+    const fragment = structure.fragmentOffsets.get(anchor.body.id);
+    if (!fragment) return null;
+    if (anchor.target.kind === "Anchor") {
+      const epub = anchor.body.epubFragment;
+      return epub ? {
+        kind: "epub", target: { fragment_id: epub.fragment_id, href_path: epub.href_path, anchor_id: present(anchor.target.anchorId) },
+        locations: { text_offset: null, progression: null, total_progression: null, position: null },
+        text: { quote: null, quote_prefix: null, quote_suffix: null },
+      } : null;
     }
-    try {
+    return buildTextReaderLocatorAtOffset({
+      anchorOffset: anchor.target.offset, canonicalText: anchor.body.text, fragmentId: anchor.body.id,
+      format: document.kind === "Epub" ? "epub" : "web", documentStartOffset: fragment.start,
+      documentLength: structure.length, isFinalUnit: document.navigation.fragments.at(-1)?.fragment_id === anchor.body.id,
+      epubFragment: anchor.body.epubFragment, epubAnchorId: null, positionBucketCodePoints: 1000,
+    });
+  }, [document, structure]);
+  const adapter = useMemo<OfflineNavigationAdapter>(() => ({
+    capture() {
+      if (!captureRef.current(false)) return null;
+      const anchor = currentAnchorRef.current;
+      const viewport = viewportRef.current;
+      if (!anchor || !viewport || anchor.body !== bodyRef.current || !cursorRef.current) return null;
+      const locator = locatorForAnchor(anchor);
+      if (!locator) return null;
+      const focused = viewport.ownerDocument.activeElement;
+      return { kind: "Captured", source, locator, placement: { kind: "Text", anchor }, occurrence: absent(),
+        focus: focused instanceof HTMLElement && viewport.contains(focused) ? present(focused) : absent() };
+    },
+    async position(position, signal) {
+      if (signal.aborted) return { kind: "Cancelled", displaced: false };
+      let destination: EpubRestoreRequest | null = null;
+      let anchor: OfflineTextAnchor | null = null;
+      let focus: Presence<HTMLElement> = absent();
+      let occurrence: Presence<string> = absent();
+      if (position.kind === "Target") {
+        if (position.target.kind !== "Text") return { kind: "Unavailable", reason: "TargetUnavailable", displaced: false };
+        destination = position.target.destination;
+      } else {
+        const checkpoint = position.kind === "Checkpoint" ? position.checkpoint : null;
+        if (checkpoint && checkpoint.source !== source) return { kind: "Unavailable", reason: "SourceChanged", displaced: false };
+        if (checkpoint?.kind === "Captured") {
+          if (checkpoint.placement.kind !== "Text") return { kind: "Unavailable", reason: "SourceChanged", displaced: false };
+          anchor = checkpoint.placement.anchor;
+          destination = { fragmentId: anchor.body.id, target: anchor.target };
+          focus = checkpoint.focus;
+          occurrence = checkpoint.occurrence;
+        } else {
+          const snapshot = position.kind === "Canonical" ? position.snapshot : null;
+          const locator = checkpoint?.locator ?? (snapshot?.state === "Positioned" ? snapshot.locator : null);
+          if (locator?.kind === "epub" || locator?.kind === "web") {
+            destination = locator.locations.text_offset !== null
+              ? { fragmentId: locator.target.fragment_id, target: { kind: "Offset", offset: locator.locations.text_offset } }
+              : locator.kind === "epub" && locator.target.anchor_id.kind === "Present"
+                ? { fragmentId: locator.target.fragment_id, target: { kind: "Anchor", anchorId: locator.target.anchor_id.value } } : null;
+          } else if (snapshot?.state === "Empty") {
+            const first = document.navigation.fragments[0];
+            if (first) destination = { fragmentId: first.fragment_id, target: { kind: "Offset", offset: 0 } };
+          }
+        }
+      }
+      if (!destination || !structure.fragmentOffsets.has(destination.fragmentId)) return { kind: "Unavailable", reason: "TargetUnavailable", displaced: false };
+      trustedRef.current = null;
       let next = bodyRef.current;
       if (next.id !== destination.fragmentId) {
-        if (intent === "Return" && candidate?.body.id === destination.fragmentId) next = candidate.body;
-        else if (document.kind === "Epub") {
-          const fragment = await session.loadEpubFragment(destination.fragmentId, abort.signal);
-          if (fragment.generation !== document.navigation.generation) throw new Error("Downloaded fragment generation changed");
+        if (document.kind === "Epub") {
+          let fragment: EpubFragmentContent;
+          try { fragment = await session.loadEpubFragment(destination.fragmentId, signal); }
+          catch { return signal.aborted ? { kind: "Cancelled", displaced: false } : { kind: "Unavailable", reason: "TargetUnavailable", displaced: false }; }
+          if (fragment.generation !== document.navigation.generation) return { kind: "Unavailable", reason: "SourceChanged", displaced: false };
           next = offlineTextBody(fragment);
         } else {
           const fragment = document.fragments.find((item) => item.id === destination.fragmentId);
-          if (!fragment) throw new Error("Downloaded web fragment is unavailable");
+          if (!fragment) return { kind: "Unavailable", reason: "TargetUnavailable", displaced: false };
           next = offlineTextBody(fragment);
         }
       }
-      if (abort.signal.aborted || generation !== generationRef.current) return;
-      setBody(next);
-      setRequest({ generation, destination, intent, origin: candidate, departure });
-    } catch {
-      if (!abort.signal.aborted && generation === generationRef.current) setError("The requested location could not be opened.");
-    }
-  }, [document, session, structure]);
-
-  const [initialTarget] = useState(() => {
-    const locator = initialLocator;
-    if (locator?.kind === "epub" || locator?.kind === "web") {
-      if (locator.locations.text_offset !== null) return { fragmentId: locator.target.fragment_id, target: { kind: "Offset" as const, offset: locator.locations.text_offset } };
-      return locator.kind === "epub" && locator.target.anchor_id.kind === "Present"
-        ? { fragmentId: locator.target.fragment_id, target: { kind: "Anchor" as const, anchorId: locator.target.anchor_id.value } }
-        : null;
-    }
-    return { fragmentId: body.id, target: { kind: "Offset" as const, offset: 0 } };
-  });
+      if (signal.aborted) return { kind: "Cancelled", displaced: false };
+      const resolvedDestination = destination;
+      return new Promise<ReaderNavigationOutcome>((resolve) => {
+        const pending: OfflineTextPosition = {
+          destination: resolvedDestination, anchor, focus, occurrence, signal, displaced: next.id !== bodyRef.current.id,
+          finish(outcome) {
+            signal.removeEventListener("abort", cancel);
+            if (requestRef.current === pending) requestRef.current = null;
+            resolve(outcome);
+          },
+        };
+        const cancel = () => pending.finish({ kind: "Cancelled", displaced: pending.displaced });
+        signal.addEventListener("abort", cancel, { once: true });
+        requestRef.current = pending;
+        setBody(next);
+        setRequest(pending);
+      });
+    },
+  }), [document, locatorForAnchor, session, source, structure]);
   useEffect(() => {
-    if (initialTarget) void navigate(initialTarget, "Restore", null);
-    else setError("The saved location has no exact text position.");
+    onAdapterReady(adapter);
     return () => {
-      generationRef.current += 1;
-      loadRef.current?.abort();
+      onAdapterReady(null);
+      const pending = requestRef.current;
+      pending?.finish({ kind: "Cancelled", displaced: pending.displaced });
     };
-  }, [initialTarget, navigate]);
+  }, [adapter, onAdapterReady]);
 
   useLayoutEffect(() => {
     const root = contentRef.current;
@@ -571,20 +654,12 @@ function OfflineTextReader({ document, session, initialLocator, onSave }: {
       if (layout?.width === viewport.clientWidth && layout.height === viewport.clientHeight && layout.contentHeight === nextHeight) return;
       layoutRef.current = { width: viewport.clientWidth, height: viewport.clientHeight, contentHeight: nextHeight };
       const anchor = currentAnchorRef.current;
-      const generation = generationRef.current;
       trustedRef.current = null;
       if (anchor?.body.id === body.id) {
         void offlinePositioner.run((commands) => {
-          if (anchor.target.kind === "Anchor" || cursor.length === 0) {
-            const element = anchor.target.kind === "Anchor" ? findSourceAnchor(root, anchor.target.anchorId) : root;
-            if (element) commands.adjustTop(viewport, element.getBoundingClientRect().top - viewport.getBoundingClientRect().top - anchor.topDelta);
-            viewport.scrollLeft = anchor.scrollLeft;
-          } else {
-            restoreCanonicalTextAnchorViewportPosition(commands, viewport, cursor, anchor.target.offset, anchor.topDelta, anchor.scrollLeft);
-            if (!isCanonicalTextAnchorVisible(viewport, cursor, anchor.target.offset)) scrollToExactCanonicalTextAnchor(commands, viewport, cursor, anchor.target.offset);
-          }
+          restoreTextReaderPlacement(commands, viewport, cursor, root, anchor.placement);
         }).then(() => {
-          if (generation === generationRef.current && cursorRef.current === cursor) captureRef.current(false);
+          if (cursorRef.current === cursor) captureRef.current(false);
         });
       } else captureRef.current(false);
     });
@@ -594,78 +669,64 @@ function OfflineTextReader({ document, session, initialLocator, onSave }: {
   }, [body]);
 
   useLayoutEffect(() => {
-    if (!request || request.generation !== generationRef.current || request.destination.fragmentId !== body.id) return;
+    if (!request || requestRef.current !== request || request.signal.aborted || request.destination.fragmentId !== body.id) return;
     const viewport = viewportRef.current;
     const root = contentRef.current;
     const cursor = cursorRef.current;
-    if (!viewport || !root) return;
-    let arrived = false;
+    if (!viewport || !root || !cursor) {
+      request.finish({ kind: "Unavailable", reason: "PositioningFailed", displaced: request.displaced });
+      return;
+    }
+    const oldTop = viewport.scrollTop;
+    const oldLeft = viewport.scrollLeft;
     const target = request.destination.target;
-    const returnOrigin = request.intent === "Return" || request.intent === "Rollback" ? request.origin : null;
-    const anchor = target.kind === "Anchor" ? findSourceAnchor(root, target.anchorId) : null;
-    const hasArrived = () => {
-      if (!cursor) return false;
-      if (returnOrigin) {
-        const delta = target.kind === "Anchor" ? anchor ? anchor.getBoundingClientRect().top - viewport.getBoundingClientRect().top : null
-          : cursor.length === 0 ? root.getBoundingClientRect().top - viewport.getBoundingClientRect().top
-          : measureCanonicalTextAnchorViewportDelta(viewport, cursor, target.offset);
-        return delta !== null && Math.abs(delta - returnOrigin.topDelta) <= 1 && Math.abs(viewport.scrollLeft - returnOrigin.scrollLeft) <= 1;
-      }
-      if (target.kind === "Anchor") {
-        const rect = anchor?.getBoundingClientRect();
-        const view = viewport.getBoundingClientRect();
-        return !!rect && rect.top >= view.top - 1 && rect.top <= view.bottom;
-      }
-      return cursor.length === 0 ? target.offset === 0 && viewport.scrollTop === 0 : isCanonicalTextAnchorVisible(viewport, cursor, target.offset);
-    };
+    const element = target.kind === "Anchor" ? findSourceAnchor(root, target.anchorId) : root;
+    let arrived = false;
     void offlinePositioner.run((commands) => {
-      if (request.generation !== generationRef.current || !cursor) return;
-      if (target.kind === "Anchor") {
-        if (anchor) {
-          if (returnOrigin) {
-            commands.adjustTop(viewport, anchor.getBoundingClientRect().top - viewport.getBoundingClientRect().top - returnOrigin.topDelta);
-            viewport.scrollLeft = returnOrigin.scrollLeft;
-          } else commands.setTop(viewport, viewport.scrollTop + anchor.getBoundingClientRect().top - viewport.getBoundingClientRect().top - getPaneScrollTopPaddingPx(viewport));
+      if (request.signal.aborted || requestRef.current !== request) return;
+      if (request.anchor) arrived = restoreTextReaderPlacement(commands, viewport, cursor, root, request.anchor.placement);
+      else if (target.kind === "Anchor") {
+        if (element) {
+          const rect = element.getBoundingClientRect();
+          const view = viewport.getBoundingClientRect();
+          if (rect.top < view.top || rect.bottom > view.bottom) commands.setTop(viewport, viewport.scrollTop + rect.top - view.top - getPaneScrollTopPaddingPx(viewport));
+          const positioned = element.getBoundingClientRect();
+          arrived = positioned.top >= view.top - 1 && positioned.top < view.bottom;
         }
-      } else if (target.offset === 0 && cursor.length === 0) {
-        if (returnOrigin) {
-          commands.adjustTop(viewport, root.getBoundingClientRect().top - viewport.getBoundingClientRect().top - returnOrigin.topDelta);
-          viewport.scrollLeft = returnOrigin.scrollLeft;
-        } else commands.setTop(viewport, 0);
-      } else if (returnOrigin) {
-        restoreCanonicalTextAnchorViewportPosition(commands, viewport, cursor, target.offset, returnOrigin.topDelta, returnOrigin.scrollLeft);
-      } else {
-        scrollToExactCanonicalTextAnchor(commands, viewport, cursor, target.offset);
+      } else if (cursor.length === 0 && target.offset === 0) {
+        commands.setTop(viewport, 0);
+        arrived = viewport.scrollTop === 0;
+      } else if (target.offset >= 0 && target.offset <= cursor.length) {
+        if (!isCanonicalTextAnchorVisible(viewport, cursor, target.offset)) scrollToExactCanonicalTextAnchor(commands, viewport, cursor, target.offset);
+        arrived = isCanonicalTextAnchorVisible(viewport, cursor, target.offset);
       }
-      arrived = hasArrived();
+      request.displaced ||= viewport.scrollTop !== oldTop || viewport.scrollLeft !== oldLeft;
       if (arrived) {
-        if (target.kind === "Anchor" || cursor.length === 0) {
-          const element = target.kind === "Anchor" ? anchor : root;
-          if (element) currentAnchorRef.current = { body, target, topDelta: element.getBoundingClientRect().top - viewport.getBoundingClientRect().top, scrollLeft: viewport.scrollLeft };
+        if (request.anchor) currentAnchorRef.current = { ...request.anchor, body };
+        else if (target.kind === "Anchor" || cursor.length === 0) {
+          const placement = measureSourceAnchorViewportOrigin(viewport, root, target.kind === "Anchor" ? present(target.anchorId) : absent());
+          if (placement) currentAnchorRef.current = { body, target, placement };
         } else {
-          const topDelta = measureCanonicalTextAnchorViewportDelta(viewport, cursor, target.offset);
-          if (topDelta !== null) currentAnchorRef.current = { body, target, topDelta, scrollLeft: viewport.scrollLeft };
+          const viewportTopDeltaPx = measureCanonicalTextAnchorViewportDelta(viewport, cursor, target.offset);
+          currentAnchorRef.current = viewportTopDeltaPx === null ? null : {
+            body, target, placement: { kind: "CanonicalText", anchorCp: target.offset, viewportTopDeltaPx, scrollLeft: viewport.scrollLeft },
+          };
         }
       }
     }).then(() => {
-      if (request.generation !== generationRef.current) return;
-      if (arrived && hasArrived()) {
-        if (request.intent === "Preview" && request.origin) setOrigin(request.origin);
-        if (request.intent === "Return") setOrigin(null);
+      if (request.signal.aborted || requestRef.current !== request) return;
+      if (arrived) {
         captureRef.current(false);
-      } else {
-        setError("The exact destination is unavailable in this rendered copy.");
-        if (request.departure) {
-          const departure = request.departure;
-          setBody(departure.body);
-          setRequest({
-            generation: request.generation,
-            destination: { fragmentId: departure.body.id, target: departure.target },
-            intent: "Rollback", origin: departure, departure: null,
-          });
-          return;
-        }
-      }
+        const opener = request.occurrence.kind === "Present" && request.occurrence.value.startsWith(`${body.id}#`)
+          ? findSourceAnchor(root, request.occurrence.value.slice(body.id.length + 1)) : null;
+        const openerLink = opener?.matches("a[href]") ? opener : opener?.querySelector("a[href]");
+        const uniqueOpenerLink = openerLink instanceof HTMLAnchorElement &&
+          (opener === openerLink || opener?.querySelectorAll("a[href]").length === 1) ? openerLink : null;
+        const focused = request.focus.kind === "Present" && request.focus.value.isConnected
+          ? request.focus.value : uniqueOpenerLink ?? viewport;
+        focused.focus({ preventScroll: true });
+        request.finish({ kind: request.displaced ? "Arrived" : "Unchanged" });
+      } else request.finish({ kind: "Unavailable", reason: "TargetUnavailable", displaced: request.displaced });
       setRequest(null);
     });
   }, [body, request]);
@@ -673,14 +734,24 @@ function OfflineTextReader({ document, session, initialLocator, onSave }: {
   function jump(sectionId: string) {
     const section = document.navigation.sections.find((entry) => entry.section_id === sectionId);
     if (!section) throw new Error("Map destination is absent from the publication");
-    const candidate = origin ?? currentAnchorRef.current;
-    void navigate({ fragmentId: section.target.fragment_id, target: section.anchor_id.kind === "Present"
+    void navigation.inspect({ kind: "Text", destination: { fragmentId: section.target.fragment_id, target: section.anchor_id.kind === "Present"
       ? { kind: "Anchor", anchorId: section.anchor_id.value }
-      : { kind: "Offset", offset: section.target.offset } }, "Preview", candidate);
+      : { kind: "Offset", offset: section.target.offset } } });
+  }
+  function jumpPoint(point: ReaderNavigationTextPoint) {
+    void navigation.inspect({
+      kind: "Text",
+      destination: { fragmentId: point.fragment_id, target: { kind: "Offset", offset: point.offset } },
+    });
   }
   function revealCurrent() {
-    const anchor = currentAnchorRef.current;
-    if (anchor) void navigate({ fragmentId: anchor.body.id, target: anchor.target }, "Restore", null);
+    viewportRef.current?.focus({ preventScroll: true });
+  }
+  function continueReading(fragmentId: string) {
+    const eligible = navigation.eligibility.canAcquireProgress();
+    void navigation.inspect({ kind: "Text", destination: { fragmentId, target: { kind: "Offset", offset: 0 } } }).then((outcome) => {
+      if (eligible && outcome.kind === "Arrived") navigation.adoptHere();
+    });
   }
   const index = document.navigation.fragments.findIndex((fragment) => fragment.fragment_id === body.id);
   const next = document.navigation.fragments[index + 1];
@@ -692,7 +763,6 @@ function OfflineTextReader({ document, session, initialLocator, onSave }: {
       {error ? <p role="alert" className={styles.notice}>{error}</p> : null}
       <div className={`${styles.actions} ${styles.readerActions}`}>
         <button type="button" className={styles.action} aria-expanded={detailOpen} onClick={() => {
-          if (detailOpen) setOrigin(null);
           setDetailOpen(!detailOpen);
         }}>document map</button>
         <span>{active.kind === "Present" ? active.value.section.label : "document"}</span>
@@ -703,10 +773,9 @@ function OfflineTextReader({ document, session, initialLocator, onSave }: {
         currentOffset={current}
         visibleRange={visible}
         destinations={destinations}
-        onNavigateSection={jump}
+        onNavigatePoint={jumpPoint}
         onActivateMarker={(marker) => jump(marker.item_id)}
         onRevealCurrent={revealCurrent}
-        onReturn={origin ? present(() => void navigate({ fragmentId: origin.body.id, target: origin.target }, "Return", origin)) : absent()}
       /></div> : null}
       <div className={styles.textWithMap}>
         <TextDocumentReader
@@ -725,16 +794,18 @@ function OfflineTextReader({ document, session, initialLocator, onSave }: {
           onViewportScroll={() => captureRef.current(false)}
           onViewportScrollEnd={() => captureRef.current(trustedRef.current !== null)}
           onTrustedScrollIntent={(direction) => {
-            generationRef.current += 1;
-            loadRef.current?.abort();
-            setRequest(null);
-            setOrigin(null);
+            navigation.cancelPositioning();
             trustedRef.current = direction;
             if (direction === "forward" && document.navigation.fragments.at(-1)?.fragment_id === body.id && viewportRef.current && endRef.current && isTextViewportAtEnd(viewportRef.current, endRef.current)) captureRef.current(true);
           }}
+          onSeekBoundary={(edge) => {
+            const fragment = edge === "Start" ? document.navigation.fragments[0] : document.navigation.fragments.at(-1);
+            if (fragment) void navigation.inspect({ kind: "Text", destination: { fragmentId: fragment.fragment_id, target: { kind: "Offset", offset: edge === "Start" ? 0 : structure.fragmentOffsets.get(fragment.fragment_id)!.length } } });
+          }}
+          onBeginScrollbarSeek={navigation.beginSeek}
           endContent={<nav className={styles.actions} aria-label="Reading order">
-            {previous ? <button type="button" onClick={() => void navigate({ fragmentId: previous.fragment_id, target: { kind: "Offset", offset: 0 } }, "Restore", null)}>previous resource</button> : null}
-            {next ? <button type="button" onClick={() => void navigate({ fragmentId: next.fragment_id, target: { kind: "Offset", offset: 0 } }, "Restore", null)}>continue reading</button> : <span>end of document</span>}
+            {previous ? <button type="button" onClick={() => continueReading(previous.fragment_id)}>previous resource</button> : null}
+            {next ? <button type="button" onClick={() => continueReading(next.fragment_id)}>continue reading</button> : <span>end of document</span>}
           </nav>}
           onContentClick={() => undefined}
           onContentPointerOver={() => undefined}
@@ -742,9 +813,17 @@ function OfflineTextReader({ document, session, initialLocator, onSave }: {
           onContentFocus={() => undefined}
           onContentBlur={() => undefined}
           onInternalLinkClick={(link) => {
-            const destination = resolveEpubInternalLinkTarget(link);
+            const destination = resolveReaderInternalLinkTarget(link, document.kind === "WebArticle" ? body.id : null);
             if (destination.kind === "Absent") return false;
-            void navigate(destination.value, "Restore", null);
+            const mode = navigation.state.mode;
+            const origin = mode.kind === "Exploring" && mode.origin.kind === "Present" && mode.origin.value.kind === "Captured" ? mode.origin.value : null;
+            const target = destination.value.target;
+            if (origin?.occurrence.kind === "Present" && target.kind === "Anchor" && origin.occurrence.value === `${destination.value.fragmentId}#${target.anchorId}`) {
+              void navigation.returnToOrigin();
+            } else {
+              const opener = contentRef.current ? findUniqueSourceLinkOwner(contentRef.current, link) : null;
+              void navigation.inspect({ kind: "Text", destination: destination.value }, opener ? present(`${body.id}#${opener.id}`) : absent());
+            }
             return true;
           }}
         />

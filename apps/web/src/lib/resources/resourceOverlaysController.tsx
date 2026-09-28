@@ -17,6 +17,7 @@ import Button from "@/components/ui/Button";
 import LibrarySettingsDialog from "@/components/LibrarySettingsDialog";
 import AcquisitionControl from "@/components/browse/AcquisitionControl";
 import PodcastSubscriptionSettingsOverlay from "@/components/podcasts/PodcastSubscriptionSettingsOverlay";
+import MediaInfoOverlay from "@/components/media/MediaInfoOverlay";
 import { mapMediaAuthorCredits } from "@/app/(authenticated)/media/[id]/mediaFormatting";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -65,6 +66,14 @@ interface ResourceOverlaySession {
   readonly mutation: ResourceActionMutationBoundary;
 }
 
+interface MetadataSession {
+  readonly key: number;
+  readonly id: string;
+  readonly open: boolean;
+  readonly triggerEl: HTMLButtonElement | null;
+  readonly fallback: () => HTMLElement | null;
+}
+
 type OpenResourceOverlay = (
   id: string,
   mutation: ResourceActionMutationBoundary,
@@ -72,14 +81,17 @@ type OpenResourceOverlay = (
 
 interface ResourceOverlaysContextValue {
   readonly openAuthorsEditor: OpenResourceOverlay;
+  readonly openMediaMetadata: (id: string, triggerEl: HTMLButtonElement | null, fallback: () => HTMLElement | null) => void;
   readonly openLibrarySettings: OpenResourceOverlay;
   readonly openPodcastSettings: OpenResourceOverlay;
   readonly openSubscribe: OpenResourceOverlay;
   readonly authors: ResourceOverlaySession | null;
+  readonly metadata: MetadataSession | null;
   readonly librarySettings: ResourceOverlaySession | null;
   readonly podcastSettings: ResourceOverlaySession | null;
   readonly subscribe: ResourceOverlaySession | null;
   readonly closeAuthors: () => void;
+  readonly closeMediaMetadata: () => void;
   readonly closeLibrarySettings: () => void;
   readonly closePodcastSettings: () => void;
   readonly closeSubscribe: () => void;
@@ -100,6 +112,7 @@ function useResourceOverlaysContext(): ResourceOverlaysContextValue {
 export function useResourceOverlaysController(): Pick<
   ResourceOverlaysContextValue,
   | "openAuthorsEditor"
+  | "openMediaMetadata"
   | "openLibrarySettings"
   | "openPodcastSettings"
   | "openSubscribe"
@@ -108,12 +121,14 @@ export function useResourceOverlaysController(): Pick<
   return useMemo(
     () => ({
       openAuthorsEditor: value.openAuthorsEditor,
+      openMediaMetadata: value.openMediaMetadata,
       openLibrarySettings: value.openLibrarySettings,
       openPodcastSettings: value.openPodcastSettings,
       openSubscribe: value.openSubscribe,
     }),
     [
       value.openAuthorsEditor,
+      value.openMediaMetadata,
       value.openLibrarySettings,
       value.openPodcastSettings,
       value.openSubscribe,
@@ -156,6 +171,15 @@ export function ResourceOverlaysProvider({
   children: ReactNode;
 }) {
   const [authors, openAuthorsEditor, closeAuthors] = useOverlaySession();
+  const [metadata, setMetadata] = useState<MetadataSession | null>(null);
+  const metadataKey = useRef(0);
+  const openMediaMetadata = useCallback<ResourceOverlaysContextValue["openMediaMetadata"]>((id, triggerEl, fallback) => {
+    metadataKey.current += 1;
+    setMetadata({ key: metadataKey.current, id, open: true, triggerEl, fallback });
+  }, []);
+  const closeMediaMetadata = useCallback(() => setMetadata((current) =>
+    current ? { ...current, open: false } : null,
+  ), []);
   const [librarySettings, openLibrarySettings, closeLibrarySettings] =
     useOverlaySession();
   const [podcastSettings, openPodcastSettings, closePodcastSettings] =
@@ -165,28 +189,34 @@ export function ResourceOverlaysProvider({
   const value = useMemo<ResourceOverlaysContextValue>(
     () => ({
       openAuthorsEditor,
+      openMediaMetadata,
       openLibrarySettings,
       openPodcastSettings,
       openSubscribe,
       authors,
+      metadata,
       librarySettings,
       podcastSettings,
       subscribe,
       closeAuthors,
+      closeMediaMetadata,
       closeLibrarySettings,
       closePodcastSettings,
       closeSubscribe,
     }),
     [
       openAuthorsEditor,
+      openMediaMetadata,
       openLibrarySettings,
       openPodcastSettings,
       openSubscribe,
       authors,
+      metadata,
       librarySettings,
       podcastSettings,
       subscribe,
       closeAuthors,
+      closeMediaMetadata,
       closeLibrarySettings,
       closePodcastSettings,
       closeSubscribe,
@@ -218,10 +248,12 @@ function returnFocusToActiveElement(): () => HTMLElement | null {
 export function ResourceActionOverlays() {
   const {
     authors,
+    metadata,
     librarySettings,
     podcastSettings,
     subscribe,
     closeAuthors,
+    closeMediaMetadata,
     closeLibrarySettings,
     closePodcastSettings,
     closeSubscribe,
@@ -240,6 +272,16 @@ export function ResourceActionOverlays() {
           mediaId={authors.id}
           mutation={authors.mutation}
           onClose={closeAuthors}
+        />
+      ) : null}
+      {metadata ? (
+        <MediaInfoOverlay
+          key={metadata.key}
+          open={metadata.open}
+          mediaId={metadata.id}
+          returnFocusTo={() => metadata.triggerEl?.isConnected ? metadata.triggerEl : metadata.fallback()}
+          returnFocusFallback={metadata.fallback}
+          onClose={closeMediaMetadata}
         />
       ) : null}
       {librarySettings ? (

@@ -36,7 +36,8 @@ PDF reader apparatus is intentionally conservative.
   rectangles have exact page geometry.
 - When those native citation destinations resolve to deterministic bracketed
   reference blocks, the same adapter may emit exact `bibliography_entry` targets
-  and `cites_bibliography_entry` edges. This is scoped native-link graph
+  and `cites_bibliography_entry` edges. faithful source text appears in the
+  evidence pane; missing reference bodies appear as unavailable. this is scoped native-link graph
   support, not generic PDF citation parsing.
 - Marker-only PDF apparatus remains `partial` when native citation links exist
   but target materialization cannot be resolved without ambiguity.

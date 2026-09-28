@@ -14,10 +14,13 @@ import BrowseSection, {
 } from "@/components/browse/BrowseSection";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import { X } from "lucide-react";
+import AppliedFilters, { type AppliedFilterChip } from "@/components/ui/AppliedFilters";
 import Input from "@/components/ui/Input";
 import PaneSurface from "@/components/ui/PaneSurface";
 import PaneToolbar from "@/components/ui/PaneToolbar";
 import SelectField from "@/components/ui/SelectField";
+import CollectionFilterEditor from "@/components/workspace/CollectionFilterEditor";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
 import {
@@ -151,6 +154,7 @@ export default function BrowsePaneBody() {
   const [draft, setDraft] = useState(validQueryText ?? "");
   const committedTextRef = useRef(validQueryText);
   const { inputRef, focusInput } = usePaneCollectionInput();
+  const filterTriggerRef = useRef<HTMLButtonElement>(null);
   const draftHelpId = useId();
   const [announcements, setAnnouncements] = useState<{
     readonly queryKey: string;
@@ -268,9 +272,33 @@ export default function BrowsePaneBody() {
     setDraft("");
     replaceQuery({ text: "", kind: "All", source: null, sort: "Relevance" });
   }, [replaceQuery]);
+  const appliedChips: AppliedFilterChip[] = useMemo(() => query ? [
+    ...(query.kind === "All" ? [] : [{
+      id: "kind",
+      label: `Kind: ${browseKindLabel(query.kind)}`,
+    }]),
+    ...(query.source === null ? [] : [{
+      id: "source",
+      label: `Source: ${browseSourceLabel(query.source)}`,
+    }]),
+  ] : [], [query]);
+  const removeFilter = useCallback((id: string) => {
+    if (!query) return;
+    if (id === "kind") {
+      if (query.source !== null) {
+        filterTriggerRef.current?.focus({ preventScroll: true });
+      }
+      replaceQuery(withBrowseKind(query, "All"));
+    } else if (id === "source") {
+      replaceQuery(withBrowseSource(query, null));
+    }
+  }, [query, replaceQuery]);
+  const clearFilters = useCallback(() => {
+    if (query) replaceQuery(withBrowseKind(query, "All"));
+  }, [query, replaceQuery]);
   const toolbar = useMemo(() => query ? (
     <PaneToolbar
-      variant="Refinement"
+      variant="Collection"
       search={
         <form
           className={styles.searchForm}
@@ -285,111 +313,134 @@ export default function BrowsePaneBody() {
             }
           }}
         >
-          <label>
-            Search
-            <Input
-              ref={inputRef}
-              type="search"
-              size="md"
-              value={draft}
-              maxLength={200}
-              onChange={(event) => setDraft(event.currentTarget.value)}
-              onKeyDown={(event) => {
-                if (event.key !== "Escape" || event.defaultPrevented) return;
-                event.preventDefault();
-                event.stopPropagation();
+          <Input
+            ref={inputRef}
+            type="search"
+            aria-label="Search"
+            size="md"
+            value={draft}
+            maxLength={200}
+            onChange={(event) => setDraft(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape" || event.defaultPrevented) return;
+              event.preventDefault();
+              event.stopPropagation();
+              setDraft("");
+            }}
+            aria-describedby={invalidDraft ? draftHelpId : undefined}
+            aria-invalid={invalidDraft || undefined}
+            placeholder="Search across sources"
+          />
+          {draft ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              iconOnly
+              aria-label="Clear text filter"
+              title="Clear text filter"
+              onClick={() => {
                 setDraft("");
+                inputRef.current?.focus({ preventScroll: true });
               }}
-              aria-describedby={invalidDraft ? draftHelpId : undefined}
-              aria-invalid={invalidDraft || undefined}
-            />
-          </label>
-          <Button
-            type="button"
-            variant="secondary"
-            disabled={!draft}
-            onClick={() => setDraft("")}
-          >
-            Clear text
-          </Button>
-          <Button type="submit">Search</Button>
+            >
+              <X size={15} aria-hidden="true" />
+            </Button>
+          ) : null}
+          <Button type="submit" size="sm">Search</Button>
         </form>
       }
       filters={
-        <div className={styles.facets}>
-        <div className={styles.facetGroup} role="group" aria-label="Kind">
-          {BROWSE_KINDS.map((kind) => (
-            <Button
-              key={kind}
+        <>
+          {query.kind === "Video" && query.source === "YouTube" ? (
+            <SelectField
+              layout="Inline"
+              label="Sort results"
               size="sm"
-              variant="pill"
-              aria-pressed={query.kind === kind}
-              onClick={() => replaceQuery(withBrowseKind(query, kind))}
+              value={query.sort}
+              onChange={(event) =>
+                replaceQuery({ ...query, sort: event.target.value as "Relevance" | "Newest" })
+              }
             >
-              {kind === "All" ? "All" : browseKindLabel(kind)}
-            </Button>
-          ))}
-        </div>
-        {browseSourcesForKind(query.kind).length > 1 ? (
-          <div className={styles.facetGroup} role="group" aria-label="Source">
-            <Button
-              size="sm"
-              variant="pill"
-              aria-pressed={query.source === null}
-              onClick={() => replaceQuery(withBrowseSource(query, null))}
-            >
-              All sources
-            </Button>
-            {browseSourcesForKind(query.kind).map((source) => (
-              <Button
-                key={source}
-                size="sm"
-                variant="pill"
-                aria-pressed={query.source === source}
-                onClick={() => replaceQuery(withBrowseSource(query, source))}
-              >
-                {browseSourceLabel(source)}
-              </Button>
-            ))}
-          </div>
-        ) : null}
-        {query.kind === "Video" && query.source === "YouTube" ? (
-          <SelectField
-            layout="Stacked"
-            label="Sort by"
-            value={query.sort}
-            onChange={(event) =>
-              replaceQuery({ ...query, sort: event.target.value as "Relevance" | "Newest" })
+              <option value="Relevance">Relevance</option>
+              <option value="Newest">Newest first</option>
+            </SelectField>
+          ) : <span className={styles.sortLabel}>Order: relevance</span>}
+          <CollectionFilterEditor
+            activeCount={appliedChips.length}
+            triggerRef={filterTriggerRef}
+            onClearFilters={clearFilters}
+            onResetView={
+              draft || query.text || query.kind !== "All" || query.source !== null
+                || query.sort !== "Relevance"
+                ? resetView
+                : undefined
             }
           >
-            <option value="Relevance">Relevance</option>
-            <option value="Newest">Newest</option>
-          </SelectField>
-        ) : <span>Sort by: relevance</span>}
-        </div>
+            <div className={styles.facets}>
+              <div className={styles.facetGroup} role="group" aria-label="Kind">
+                {BROWSE_KINDS.map((kind) => (
+                  <Button
+                    key={kind}
+                    size="sm"
+                    variant="pill"
+                    aria-pressed={query.kind === kind}
+                    onClick={() => replaceQuery(withBrowseKind(query, kind))}
+                  >
+                    {kind === "All" ? "All kinds" : browseKindLabel(kind)}
+                  </Button>
+                ))}
+              </div>
+              {browseSourcesForKind(query.kind).length > 1 ? (
+                <div className={styles.facetGroup} role="group" aria-label="Source">
+                  <Button
+                    size="sm"
+                    variant="pill"
+                    aria-pressed={query.source === null}
+                    onClick={() => replaceQuery(withBrowseSource(query, null))}
+                  >
+                    All sources
+                  </Button>
+                  {browseSourcesForKind(query.kind).map((source) => (
+                    <Button
+                      key={source}
+                      size="sm"
+                      variant="pill"
+                      aria-pressed={query.source === source}
+                      onClick={() => replaceQuery(withBrowseSource(query, source))}
+                    >
+                      {browseSourceLabel(source)}
+                    </Button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </CollectionFilterEditor>
+        </>
       }
-      controls={
-        <>
+      summary={
+        <div className={styles.summary}>
+          {query.text && query.text !== draft ? (
+            <span className={styles.committedQuery}>Search: {query.text}</span>
+          ) : null}
+          <AppliedFilters
+            chips={appliedChips}
+            onRemove={removeFilter}
+            returnFocusTo={filterTriggerRef}
+          />
           {invalidDraft ? (
             <p id={draftHelpId} className={styles.validationHelp}>
               Use 1–200 characters without control characters.
             </p>
           ) : null}
-          <span className={styles.summary}>
-            {query.text ? browseRunSummaryText(runSummary) : "Ready to browse."}
-          </span>
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={!draft && !query.text && query.kind === "All" && query.source === null}
-            onClick={resetView}
-          >
-            Reset view
-          </Button>
-        </>
+          {query.text ? <span>{browseRunSummaryText(runSummary)}</span> : null}
+        </div>
       }
     />
-  ) : undefined, [draft, draftHelpId, inputRef, invalidDraft, normalizedDraft, query, replaceQuery, resetView, runSummary]);
+  ) : undefined, [
+    appliedChips, clearFilters, draft, draftHelpId, inputRef, invalidDraft,
+    normalizedDraft, query, removeFilter, replaceQuery, resetView, runSummary,
+  ]);
   const collection = useMemo(
     () => query && toolbar
       ? { label: "Browse controls", content: toolbar, focusInput }

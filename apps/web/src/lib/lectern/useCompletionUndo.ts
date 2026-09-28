@@ -32,6 +32,7 @@ import type {
   Placement,
   CompletionHandle,
 } from "@/lib/lectern/contract";
+import { parseMediaId } from "@/lib/lectern/contract";
 import type { Presence } from "@/lib/api/presence";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 
@@ -48,7 +49,7 @@ export function CompletionUndoFeedbackOwner() {
   useEffect(() => {
     if (resource.status !== "ready") return;
     for (const item of resource.data.items) {
-      resolve(completionUndoRestoreFeedbackKey(item.mediaId));
+      resolve(completionUndoRestoreFeedbackKey(parseMediaId(item.mediaSummary.mediaId)));
     }
   }, [resolve, resource]);
 
@@ -57,7 +58,7 @@ export function CompletionUndoFeedbackOwner() {
       onCanonicalInstall((event) => {
         if (event.kind !== "snapshot") return;
         for (const item of event.snapshot.items) {
-          resolve(completionUndoRestoreFeedbackKey(item.mediaId));
+          resolve(completionUndoRestoreFeedbackKey(parseMediaId(item.mediaSummary.mediaId)));
         }
       }),
     [onCanonicalInstall, resolve],

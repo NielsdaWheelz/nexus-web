@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 
-export type ReturnFocusTarget = () => HTMLElement | null;
+export type ReturnFocusTarget = () => HTMLElement | {
+  readonly element: HTMLElement;
+  readonly preventScroll: true;
+} | null;
 
 export interface ReturnFocusOptions {
   readonly returnFocusTo?: ReturnFocusTarget;
@@ -18,7 +21,9 @@ export interface ReturnFocusHandle {
   readonly restore: () => void;
 }
 
-function focusTarget(target: HTMLElement | null): boolean {
+function focusTarget(destination: ReturnType<ReturnFocusTarget>): boolean {
+  const target = destination instanceof HTMLElement ? destination : destination?.element;
+  const preventScroll = destination !== null && !(destination instanceof HTMLElement);
   if (!target?.isConnected) return false;
   const focusAfterBrowserSettlement = () => {
     requestAnimationFrame(() => {
@@ -27,18 +32,18 @@ function focusTarget(target: HTMLElement | null): boolean {
         document.activeElement === document.body ||
         document.activeElement === document.documentElement
       ) {
-        target.focus();
+        target.focus({ preventScroll });
       }
     });
   };
   if (!target.closest("[inert]")) {
-    target.focus();
+    target.focus({ preventScroll });
     focusAfterBrowserSettlement();
     return true;
   }
   requestAnimationFrame(() => {
     if (target.isConnected && !target.closest("[inert]")) {
-      target.focus();
+      target.focus({ preventScroll });
       focusAfterBrowserSettlement();
     }
   });
@@ -65,7 +70,7 @@ export function useReturnFocus(
   fallbackRef.current = options?.returnFocusFallback;
   const skipRef = useRef(options?.skip);
   skipRef.current = options?.skip;
-  const returnRef = useRef<HTMLElement | null>(null);
+  const returnRef = useRef<ReturnType<ReturnFocusTarget>>(null);
   const restore = useCallback(() => {
     if (skipRef.current?.()) return;
     const liveTarget = returnFocusToRef.current?.() ?? null;

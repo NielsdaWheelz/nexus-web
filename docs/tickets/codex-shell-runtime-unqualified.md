@@ -63,6 +63,6 @@ prove a model-originated background write before claiming the shared api grant
 works for these jobs. prove the remaining shell-plan lifecycle and denial
 cases, actual auth refresh on an independent disposable credential, all twelve
 background roles with valid recorded output, and model-originated background
-write/list/undo on the final runtime. retain temporary proof code until the
-complete contract passes; do not infer background write authority from valid
-strict json alone.
+write/list/undo on the final runtime. write fresh final-source proofs for the
+unfinished journeys; do not infer background write authority from valid strict
+json alone.

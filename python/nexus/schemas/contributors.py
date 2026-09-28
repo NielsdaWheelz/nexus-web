@@ -6,6 +6,7 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
+from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.services.contributor_taxonomy import (
     MAX_CONTRIBUTOR_NAME_CODE_POINTS,
     MAX_CREDITS_PER_MANAGED_ROLE,
@@ -51,23 +52,6 @@ class ContributorCreditIn(BaseModel):
     raw_role: str | None = Field(default=None, max_length=MAX_RAW_ROLE_LENGTH)
 
     model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=False, extra="forbid")
-
-
-class ContributorCreditOut(BaseModel):
-    """One credit fact, embedded snake-case in the media/search/podcast/library DTOs.
-
-    Handle-less text-fact credits (browse/discovery previews) leave handle/href absent.
-    """
-
-    contributor_handle: str | None = None
-    contributor_display_name: str | None = None
-    href: str | None = None
-    credited_name: str
-    role: ContributorRole
-    raw_role: str | None = None
-    ordinal: int | None = None
-
-    model_config = ConfigDict(from_attributes=True, extra="forbid")
 
 
 class ExistingAuthorBinding(_CamelRequest):
@@ -163,10 +147,35 @@ class ContributorDetailOut(_CamelResponse):
     action_subject: ResourceActionSubjectOut = Field(alias="actionSubject")
 
 
-class ContributorWorkItemOut(_CamelResponse):
+class MediaContributorWorkItemOut(_CamelResponse):
+    kind: Literal["Media"] = "Media"
+    media_summary: MediaSummaryOut = Field(alias="mediaSummary")
+    href: str
+    role_facts: list[ContributorRoleFactOut] = Field(alias="roleFacts")
+    action_subject: ResourceActionSubjectOut = Field(alias="actionSubject")
+
+
+class PodcastContributorWorkItemOut(_CamelResponse):
+    kind: Literal["Podcast"] = "Podcast"
     title: str
     href: str
     content_kind: str = Field(alias="contentKind")
     date: str | None = None
     role_facts: list[ContributorRoleFactOut] = Field(alias="roleFacts")
-    action_subject: ResourceActionSubjectOut | None = Field(alias="actionSubject")
+    action_subject: ResourceActionSubjectOut = Field(alias="actionSubject")
+
+
+class ExternalContributorWorkItemOut(_CamelResponse):
+    kind: Literal["ExternalWork"] = "ExternalWork"
+    title: str
+    href: str
+    content_kind: str = Field(alias="contentKind")
+    date: str | None = None
+    role_facts: list[ContributorRoleFactOut] = Field(alias="roleFacts")
+    action_subject: None = Field(alias="actionSubject")
+
+
+ContributorWorkItemOut = Annotated[
+    MediaContributorWorkItemOut | PodcastContributorWorkItemOut | ExternalContributorWorkItemOut,
+    Field(discriminator="kind"),
+]

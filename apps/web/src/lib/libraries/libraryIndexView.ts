@@ -102,13 +102,13 @@ export type LibrariesSortOptionId =
 export function librariesSortOptionLabel(id: LibrariesSortOptionId): string {
   switch (id) {
     case "created-oldest":
-      return "Created — oldest";
+      return "Oldest created";
     case "created-newest":
-      return "Created — newest";
+      return "Newest created";
     case "name-asc":
-      return "Name — A–Z";
+      return "Name A–Z";
     case "name-desc":
-      return "Name — Z–A";
+      return "Name Z–A";
     default:
       return assertNever(id);
   }

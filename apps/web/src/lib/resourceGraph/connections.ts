@@ -51,7 +51,6 @@ export interface EdgeOut {
   source_ref: string;
   target_ref: string;
   source_order_key: string | null;
-  target_order_key: string | null;
   ordinal: number | null;
   snapshot: Record<string, unknown> | null;
   source_label: string;
@@ -109,7 +108,6 @@ export interface ConnectionOut {
   origin: EdgeOrigin;
   snapshot: Record<string, unknown> | null;
   source_order_key: string | null;
-  target_order_key: string | null;
   ordinal: number | null;
   source_ref: string;
   target_ref: string;
@@ -151,7 +149,6 @@ const CONNECTION_KEYS = [
   "origin",
   "snapshot",
   "source_order_key",
-  "target_order_key",
   "ordinal",
   "source_ref",
   "target_ref",
@@ -356,10 +353,6 @@ export function decodeConnectionOut(
     source_order_key: expectNullableString(
       value.source_order_key,
       `${name}.source_order_key`,
-    ),
-    target_order_key: expectNullableString(
-      value.target_order_key,
-      `${name}.target_order_key`,
     ),
     ordinal: expectNullableInteger(value.ordinal, `${name}.ordinal`),
     source_ref: sourceRef,

@@ -6,6 +6,8 @@ this builds is published inside the caller's fenced transaction.
 
 from __future__ import annotations
 
+import json
+import math
 import posixpath
 import re
 import time
@@ -16,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from html.entities import name2codepoint
 from pathlib import Path
-from typing import TYPE_CHECKING, BinaryIO, Literal, cast
+from typing import TYPE_CHECKING, BinaryIO, Literal, NamedTuple, cast
 from urllib.parse import unquote, urlparse
 from uuid import UUID, uuid5
 from xml.etree import ElementTree as ET
@@ -42,6 +44,13 @@ from nexus.errors import ApiErrorCode, ResourceFailureDimension
 from nexus.ids import new_uuid7
 from nexus.schemas.presence import Presence, Present, absent, nullable_from_presence, present
 from nexus.schemas.publication_dates import PublicationDate, normalize_source_publication_date
+from nexus.schemas.reader_apparatus import NotesGroup
+from nexus.schemas.source_issues import (
+    MissingImage,
+    SourceIssue,
+    UnresolvedNavigationTarget,
+    source_issues_payload,
+)
 from nexus.services.canonicalize import canonicalize_structure
 from nexus.services.epub_sanitize import (
     local_name,
@@ -65,16 +74,20 @@ from nexus.services.html_apparatus import (
     HtmlApparatusTargetLimitExceeded,
     attach_fragment_locators,
     collect_html_apparatus_targets,
+    confirm_html_apparatus_target_refs,
+    derive_fragment_note_groups,
     extract_html_apparatus,
+    prepare_apparatus_bodies,
 )
 from nexus.services.html_tree import inner_html, parse_html_document
+from nexus.services.image_placeholder import replace_image_with_placeholder
 from nexus.services.parser_temp import (
     StorageObjectIntegrityError,
     parser_attempt_directory,
     stream_storage_object_to_file,
     utf8_byte_length,
 )
-from nexus.services.reader_apparatus import replace_media_apparatus
+from nexus.services.reader_apparatus import note_regions_from_publication, replace_media_apparatus
 from nexus.storage.client import StorageError
 from nexus.storage.paths import build_epub_attempt_asset_storage_path
 from nexus.tasks.storage_object_cleanup import reserve_storage_object_write
@@ -104,6 +117,8 @@ _XML_ENTRY_READ_ERRORS = (*_ZIP_ENTRY_READ_ERRORS, ET.ParseError)
 _RESOURCE_ATTRS = frozenset({"src", "href", "xlink:href", "poster"})
 _IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"})
 _SVG_IMAGE_TYPE = "image/svg+xml"
+_SVG_DEFINITION_TAGS = frozenset({"defs", "symbol", "clippath", "lineargradient", "radialgradient"})
+_SVG_INVALID_USE_TARGETS = frozenset({"defs", "clippath", "lineargradient", "radialgradient"})
 
 # The one stored `epub_resources.content_type` vocabulary: this is the write gate.
 SUPPORTED_IMAGE_TYPES = frozenset("image/png image/jpeg image/gif image/svg+xml image/webp".split())
@@ -194,6 +209,12 @@ class _FragmentSpec:
 
 
 @dataclass(frozen=True)
+class _MissingImageRef:
+    marker_ordinal: int
+    resource_path: str
+
+
+@dataclass(frozen=True)
 class EpubExtractionPlan:
     result: EpubExtractionResult
     now: datetime
@@ -203,8 +224,43 @@ class EpubExtractionPlan:
     all_block_specs: tuple[list[FragmentBlockSpec], ...]
     toc_nodes: tuple[EpubStructureTocNode, ...]
     nav_locations: tuple[EpubStructureSection, ...]
+    apparatus_items: tuple[dict[str, object], ...]
+    note_groups: tuple[NotesGroup, ...]
     asset_entries: tuple[_AssetEntry, ...]
     asset_storage_paths: dict[str, str]
+    source_issues: tuple[SourceIssue, ...]
+
+
+@dataclass(frozen=True)
+class _ParsedEpub:
+    result: EpubExtractionResult
+    now: datetime
+    fragment_specs: tuple[_FragmentSpec, ...]
+    all_block_specs: tuple[list[FragmentBlockSpec], ...]
+    toc_nodes: tuple[EpubStructureTocNode, ...]
+    nav_locations: tuple[EpubStructureSection, ...]
+    apparatus_items: tuple[dict[str, object], ...]
+    note_groups: tuple[NotesGroup, ...]
+    asset_entries: tuple[_AssetEntry, ...]
+    source_issues: tuple[SourceIssue, ...]
+
+
+class RetainedEpubFragment(NamedTuple):
+    id: UUID
+    idx: int
+    package_href: str
+    html_sanitized: str
+    canonical_text: str
+
+
+@dataclass(frozen=True)
+class EpubNavigationRepairPlan:
+    toc_nodes: tuple[EpubStructureTocNode, ...]
+    nav_locations: tuple[EpubStructureSection, ...]
+    apparatus_items: tuple[dict[str, object], ...]
+    apparatus_edges: tuple[dict[str, object], ...]
+    note_groups: tuple[NotesGroup, ...]
+    source_issues: tuple[SourceIssue, ...]
 
 
 type _TocEntry = tuple[ET.Element, str, str | None, str | None]
@@ -216,7 +272,7 @@ class _TocWalk:
 
     entries: Callable[[ET.Element], Iterator[_TocEntry]]
     nav_type: str
-    base_dir: str
+    base_href: str
     href_to_frag_idx: dict[str, int]
     media_id: UUID
     nodes: list[EpubStructureTocNode]
@@ -279,17 +335,38 @@ def build_epub_extraction_plan(
         except zipfile.BadZipFile as exc:
             return _error(ApiErrorCode.E_INVALID_FILE_TYPE, f"Invalid ZIP: {exc}")
         try:
-            return _build_plan(
+            parsed = _build_plan(
                 zf,
-                session_factory=session_factory,
                 media_id=media_id,
-                attempt_id=attempt_id,
                 storage_path=storage_path,
-                source_size_bytes=source_size_bytes,
-                storage_client=storage_client,
                 record_progress=record_progress,
                 attempt_directory=attempt_directory,
                 now=now or datetime.now(UTC),
+            )
+            if isinstance(parsed, EpubExtractionError):
+                return parsed
+            content, package = parsed
+            asset_storage_paths = _write_epub_assets(
+                package,
+                session_factory=session_factory,
+                attempt_id=attempt_id,
+                storage_client=storage_client,
+                attempt_directory=attempt_directory,
+            )
+            return EpubExtractionPlan(
+                result=content.result,
+                now=content.now,
+                storage_path=storage_path,
+                source_size_bytes=source_size_bytes,
+                fragment_specs=content.fragment_specs,
+                all_block_specs=content.all_block_specs,
+                toc_nodes=content.toc_nodes,
+                nav_locations=content.nav_locations,
+                apparatus_items=content.apparatus_items,
+                note_groups=content.note_groups,
+                asset_entries=content.asset_entries,
+                asset_storage_paths=asset_storage_paths,
+                source_issues=content.source_issues,
             )
         except _EpubResourceLimitExceeded as exc:
             return _resource_limit(str(exc), dimension=exc.dimension)
@@ -297,6 +374,44 @@ def build_epub_extraction_plan(
             return _error(ApiErrorCode.E_INVALID_FILE_TYPE, f"Extraction failed: {exc}")
         finally:
             zf.close()
+
+
+def prepare_epub_navigation_repair(
+    *,
+    epub_path: Path,
+    media_id: UUID,
+    storage_path: str,
+    retained_fragments: tuple[RetainedEpubFragment, ...],
+) -> EpubNavigationRepairPlan:
+    """Use retained publication coordinates with verified source semantics."""
+    if tuple(fragment.idx for fragment in retained_fragments) != tuple(
+        range(len(retained_fragments))
+    ):
+        raise ValueError("Retained EPUB fragment indexes are not contiguous")
+    with parser_attempt_directory(new_uuid7()) as attempt_directory:
+        with zipfile.ZipFile(epub_path) as zf:
+            parsed = _build_plan(
+                zf,
+                media_id=media_id,
+                storage_path=storage_path,
+                record_progress=lambda _done, _total, _unit: None,
+                attempt_directory=attempt_directory,
+                now=datetime.now(UTC),
+                retained_fragments=retained_fragments,
+            )
+        if isinstance(parsed, EpubExtractionError):
+            raise ValueError(parsed.error_message)
+        content, _package = parsed
+        return EpubNavigationRepairPlan(
+            toc_nodes=content.toc_nodes,
+            nav_locations=content.nav_locations,
+            apparatus_items=content.apparatus_items,
+            apparatus_edges=tuple(
+                edge for spec in content.fragment_specs for edge in spec.apparatus_edges
+            ),
+            note_groups=content.note_groups,
+            source_issues=content.source_issues,
+        )
 
 
 def extract_epub_metadata(epub_path: Path) -> EpubExtractionResult | EpubExtractionError:
@@ -332,16 +447,13 @@ def _open_package_document(
 def _build_plan(
     zf: zipfile.ZipFile,
     *,
-    session_factory: sessionmaker[Session],
     media_id: UUID,
-    attempt_id: UUID,
     storage_path: str,
-    source_size_bytes: int,
-    storage_client: StorageClient,
     record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
     attempt_directory: Path,
     now: datetime,
-) -> EpubExtractionPlan | EpubExtractionError:
+    retained_fragments: tuple[RetainedEpubFragment, ...] | None = None,
+) -> tuple[_ParsedEpub, _Package] | EpubExtractionError:
     """Parse one opened archive and stage its attempt-owned assets."""
     settings = get_settings()
     started = time.monotonic()
@@ -379,19 +491,43 @@ def _build_plan(
         return _error(
             ApiErrorCode.E_SOURCE_NOT_READABLE, "Zero renderable XHTML spine items after extraction"
         )
+    confirmed_target_refs: set[str] = set()
+    for chapter, html_path, _missing_refs in staged:
+        confirmed_target_refs.update(
+            confirm_html_apparatus_target_refs(
+                html_path.read_text(encoding="utf-8"),
+                document_href=chapter.href,
+                external_targets=external_targets,
+            )
+        )
+    external_targets = {
+        key: target
+        for key, target in external_targets.items()
+        if target["extraction_method"] != "html_note_boundary" or key in confirmed_target_refs
+    }
     chapter_total = len(staged)
     record_progress(0, chapter_total, "Chapter")
 
-    sanitized: list[tuple[_ChapterSpec, str, list[dict[str, object]], list[dict[str, object]]]] = []
+    sanitized: list[
+        tuple[
+            _ChapterSpec,
+            str,
+            list[dict[str, object]],
+            list[dict[str, object]],
+            list[_MissingImageRef],
+        ]
+    ] = []
     rendered_text_bytes = 0
-    for chapter_index, (chapter, html_path) in enumerate(staged, start=1):
+    for chapter_index, (chapter, html_path, missing_refs) in enumerate(staged, start=1):
         html_with_apparatus, apparatus_items, apparatus_edges = extract_html_apparatus(
             html_path.read_text(encoding="utf-8"),
             source_kind=f"epub:{chapter.spine_idx}",
             document_href=chapter.href,
             external_targets=external_targets,
+            confirmed_target_refs=confirmed_target_refs,
             source_ref=_chapter_source_ref(chapter),
         )
+        prepare_apparatus_bodies(apparatus_items, sanitize=sanitize_epub_chapter, media_kind="epub")
         try:
             html_sanitized = sanitize_epub_chapter(html_with_apparatus)
         except (ValueError, LxmlError) as exc:
@@ -408,27 +544,31 @@ def _build_plan(
             return _resource_limit(
                 "EPUB rendered text exceeds the 64 MiB limit", dimension="Output"
             )
-        sanitized.append((chapter, html_sanitized, apparatus_items, apparatus_edges))
+        sanitized.append((chapter, html_sanitized, apparatus_items, apparatus_edges, missing_refs))
         record_progress(chapter_index, chapter_total, "Chapter")
 
     if not sanitized:
         return _error(
             ApiErrorCode.E_SOURCE_NOT_READABLE, "Zero renderable chapters after sanitization"
         )
-    del external_targets
-
     # Keep the first mapping if a malformed book repeats an href.
     href_to_frag_idx: dict[str, int] = {}
-    for fragment_idx, (chapter, _html, _items, _edges) in enumerate(sanitized):
+    for fragment_idx, (chapter, _html, _items, _edges, _missing) in enumerate(sanitized):
         href_to_frag_idx.setdefault(chapter.href, fragment_idx)
     toc_nodes = _materialize_toc(zf, opf, manifest, href_to_frag_idx, media_id)
 
     fragment_specs: list[_FragmentSpec] = []
     structure_fragments: list[EpubStructureFragment] = []
     all_block_specs: list[list[FragmentBlockSpec]] = []
-    for fragment_idx, (chapter, html_sanitized, apparatus_items, apparatus_edges) in enumerate(
-        sanitized
-    ):
+    source_issues: list[SourceIssue] = []
+    readable_source = False
+    for fragment_idx, (
+        chapter,
+        html_sanitized,
+        apparatus_items,
+        apparatus_edges,
+        missing_refs,
+    ) in enumerate(sanitized):
         try:
             canonical = canonicalize_structure(html_sanitized)
         except ValueError as exc:
@@ -436,13 +576,42 @@ def _build_plan(
                 ApiErrorCode.E_SANITIZATION_FAILED,
                 f"Canonicalization failed for spine item {chapter.spine_idx}: {exc}",
             )
+        retained = None
+        if retained_fragments is not None:
+            if fragment_idx >= len(retained_fragments):
+                raise ValueError("Retained EPUB has fewer fragments than its source")
+            retained = retained_fragments[fragment_idx]
+            if chapter.href != retained.package_href:
+                raise ValueError("Retained EPUB package href disagrees with its source")
+            published = canonicalize_structure(retained.html_sanitized)
+            if published.text != retained.canonical_text:
+                raise ValueError("Retained EPUB HTML disagrees with canonical text")
+            if canonical.anchors.keys() != published.anchors.keys():
+                raise ValueError("Retained EPUB anchors disagree with its source")
+            html_sanitized, apparatus_items, apparatus_edges = extract_html_apparatus(
+                retained.html_sanitized,
+                source_kind=f"epub:{chapter.spine_idx}",
+                document_href=chapter.href,
+                external_targets=external_targets,
+                confirmed_target_refs=confirmed_target_refs,
+                source_ref=_chapter_source_ref(chapter),
+            )
+            prepare_apparatus_bodies(
+                apparatus_items, sanitize=sanitize_epub_chapter, media_kind="epub"
+            )
+            canonical = canonicalize_structure(html_sanitized)
+            if (
+                canonical.text != retained.canonical_text
+                or canonical.anchors.keys() != published.anchors.keys()
+            ):
+                raise ValueError("Retained EPUB apparatus marking changes published structure")
         rendered_text_bytes += utf8_byte_length(canonical.text)
         if rendered_text_bytes > EPUB_RENDERED_TEXT_MAX_BYTES:
             return _resource_limit(
                 "EPUB rendered text exceeds the 64 MiB limit", dimension="Output"
             )
         fragment = Fragment(
-            id=new_uuid7(),
+            id=retained.id if retained is not None else new_uuid7(),
             media_id=media_id,
             idx=fragment_idx,
             html_sanitized=html_sanitized,
@@ -450,17 +619,73 @@ def _build_plan(
             created_at=now,
         )
         fragment_specs.append(_FragmentSpec(fragment, chapter, apparatus_items, apparatus_edges))
+        retained_image, warning_markers = _retained_image_and_warning_markers(html_sanitized)
+        source_issues.extend(
+            MissingImage(
+                fragment_id=fragment.id,
+                marker_ordinal=ref.marker_ordinal,
+                resource_path=ref.resource_path,
+            )
+            for ref in missing_refs
+            if ref.marker_ordinal in warning_markers
+        )
+        readable_source |= bool(canonical.text.strip()) or retained_image
         structure_fragments.append(
             EpubStructureFragment(fragment.id, fragment_idx, chapter.href, canonical)
         )
         all_block_specs.append(parse_fragment_blocks(canonical.text))
 
-    try:
-        nav_locations = build_epub_structure(
-            media_id=media_id, fragments=structure_fragments, toc_nodes=toc_nodes
+    if not readable_source:
+        return _error(ApiErrorCode.E_SOURCE_NOT_READABLE, "No surviving source text or image")
+    del external_targets
+
+    apparatus_items: list[dict[str, object]] = []
+    note_groups: list[NotesGroup] = []
+    for spec in fragment_specs:
+        apparatus_items.extend(
+            attach_fragment_locators(
+                media_id=media_id,
+                fragment_id=spec.fragment.id,
+                media_kind="epub",
+                canonical_text=spec.fragment.canonical_text,
+                items=spec.apparatus_items,
+                html_sanitized=spec.fragment.html_sanitized,
+            )
         )
+        note_groups.extend(
+            derive_fragment_note_groups(
+                spec.fragment.html_sanitized,
+                spec.fragment.canonical_text,
+                spec.fragment.id,
+                source_html=(
+                    attempt_directory / f"chapter-{spec.chapter.spine_idx}.html"
+                ).read_text(encoding="utf-8"),
+            )
+        )
+
+    try:
+        structure = build_epub_structure(
+            media_id=media_id,
+            fragments=structure_fragments,
+            toc_nodes=toc_nodes,
+            note_regions=note_regions_from_publication(apparatus_items, note_groups),
+        )
+        toc_nodes.extend(structure.supplemental_toc_nodes)
     except ValueError as exc:
         return _error(ApiErrorCode.E_SOURCE_NOT_READABLE, str(exc))
+
+    source_issues.extend(
+        UnresolvedNavigationTarget(node_id=node.node_id, href=node.href)
+        for node in toc_nodes
+        if node.href is not None and not urlparse(node.href).scheme and node.target_offset is None
+    )
+    if len(source_issues) > 10_000:
+        return _resource_limit("EPUB source issues exceed 10000 records", dimension="Output")
+    rendered_text_bytes += len(
+        json.dumps(source_issues_payload(tuple(source_issues)), ensure_ascii=False).encode("utf-8")
+    )
+    if rendered_text_bytes > EPUB_RENDERED_TEXT_MAX_BYTES:
+        return _resource_limit("EPUB output exceeds the 64 MiB limit", dimension="Output")
 
     elapsed_ms = int((time.monotonic() - started) * 1000)
     if elapsed_ms > settings.max_epub_archive_parse_time_ms:
@@ -469,14 +694,9 @@ def _build_plan(
             dimension="Time",
         )
 
-    asset_storage_paths = _write_epub_assets(
-        package,
-        session_factory=session_factory,
-        attempt_id=attempt_id,
-        storage_client=storage_client,
-        attempt_directory=attempt_directory,
-    )
-    return EpubExtractionPlan(
+    if retained_fragments is not None and len(retained_fragments) != len(fragment_specs):
+        raise ValueError("Retained EPUB fragment count disagrees with the source")
+    return _ParsedEpub(
         result=EpubExtractionResult(
             fragment_count=len(fragment_specs),
             toc_node_count=len(toc_nodes),
@@ -490,15 +710,15 @@ def _build_plan(
             edition_isbn=opf_meta.edition_isbn,
         ),
         now=now,
-        storage_path=storage_path,
-        source_size_bytes=source_size_bytes,
         fragment_specs=tuple(fragment_specs),
         all_block_specs=tuple(all_block_specs),
         toc_nodes=tuple(toc_nodes),
-        nav_locations=tuple(nav_locations),
+        nav_locations=tuple(structure.sections),
+        apparatus_items=tuple(apparatus_items),
+        note_groups=tuple(note_groups),
         asset_entries=tuple(package.asset_entries),
-        asset_storage_paths=asset_storage_paths,
-    )
+        source_issues=tuple(source_issues),
+    ), package
 
 
 def _chapter_source_ref(chapter: _ChapterSpec) -> dict[str, object]:
@@ -625,6 +845,8 @@ def publish_epub_extraction_plan(
                 depth=node.depth,
                 order_key=node.order_key,
                 target_offset=node.target_offset,
+                section_id=node.section_id,
+                resolution=node.resolution,
                 created_at=plan.now,
             )
         )
@@ -647,7 +869,6 @@ def publish_epub_extraction_plan(
                 media_id=media_id,
                 location_id=nav.location_id,
                 ordinal=ordinal,
-                source_node_id=nullable_from_presence(nav.source_node_id),
                 label=nav.label,
                 fragment_idx=nav.fragment_idx,
                 href_path=nav.href_path,
@@ -664,26 +885,16 @@ def publish_epub_extraction_plan(
         )
     db.flush()
 
-    apparatus_items: list[dict[str, object]] = []
     apparatus_edges: list[dict[str, object]] = []
-    for fragment, spec in zip(fragments, plan.fragment_specs, strict=True):
-        apparatus_items.extend(
-            attach_fragment_locators(
-                media_id=media_id,
-                fragment_id=fragment.id,
-                media_kind="epub",
-                canonical_text=fragment.canonical_text,
-                items=spec.apparatus_items,
-                html_sanitized=fragment.html_sanitized,
-            )
-        )
+    for spec in plan.fragment_specs:
         apparatus_edges.extend(spec.apparatus_edges)
     replace_media_apparatus(
         db,
         media_id=media_id,
-        items=apparatus_items,
+        items=list(plan.apparatus_items),
         edges=apparatus_edges,
-        status="ready" if apparatus_items else "empty",
+        note_groups=list(plan.note_groups),
+        status="ready" if plan.apparatus_items else "empty",
     )
     return plan.result, old_storage_paths
 
@@ -974,14 +1185,14 @@ def _stage_epub_chapters(
     chapter_specs: list[_ChapterSpec],
     *,
     staging_directory: Path,
-) -> tuple[list[tuple[_ChapterSpec, Path]], dict[str, dict[str, object]]]:
+) -> tuple[list[tuple[_ChapterSpec, Path, list[_MissingImageRef]]], dict[str, dict[str, object]]]:
     """Rewrite each readable spine item once and index its apparatus targets.
 
     Rewritten chapter HTML is spilled to the attempt directory so the later
     marker pass reads exactly the package-relative links indexed here, while
     only one chapter's HTML is retained at a time.
     """
-    staged: list[tuple[_ChapterSpec, Path]] = []
+    staged: list[tuple[_ChapterSpec, Path, list[_MissingImageRef]]] = []
     targets: dict[str, dict[str, object]] = {}
     target_count = 0
     retained_utf8_bytes = 0
@@ -996,11 +1207,13 @@ def _stage_epub_chapters(
         # justify-ignore-error: an unreadable spine entry is not a renderable chapter.
         except _ZIP_ENTRY_READ_ERRORS:
             continue
-        rewritten_html = _rewrite_chapter_resources(_decode_epub_text(raw), chapter.href, package)
+        rewritten_html, missing_refs = _rewrite_chapter_resources(
+            _decode_epub_text(raw), chapter.href, package
+        )
         del raw
         html_path = staging_directory / f"chapter-{chapter.spine_idx}.html"
         html_path.write_text(rewritten_html, encoding="utf-8")
-        staged.append((chapter, html_path))
+        staged.append((chapter, html_path, missing_refs))
         (
             chapter_targets,
             chapter_target_count,
@@ -1024,7 +1237,9 @@ def _stage_epub_chapters(
     return staged, targets
 
 
-def _rewrite_chapter_resources(html: str, chapter_href: str, package: _Package) -> str:
+def _rewrite_chapter_resources(
+    html: str, chapter_href: str, package: _Package
+) -> tuple[str, list[_MissingImageRef]]:
     """Point package-local images at the asset route and drop every other link."""
     chapter_dir = posixpath.dirname(chapter_href)
     try:
@@ -1036,19 +1251,25 @@ def _rewrite_chapter_resources(html: str, chapter_href: str, package: _Package) 
 
     if doc.body is not None:
         materialize_epub_body_anchor(doc.body)
+    missing_refs: list[_MissingImageRef] = []
+    next_marker = 0
     for element in doc.iter():
         if not isinstance(element, HtmlElement):
             continue
         tag = local_name(element.tag)
         for attr in list(element.attrib):
+            if normalized_attr_name(attr) == "data-reader-source-warning":
+                del element.attrib[attr]
+        missing_paths: list[str] = []
+        for attr in list(element.attrib):
             name = normalized_attr_name(attr)
             value = element.attrib.get(attr, "")
             if tag == "img" and name == "srcset":
-                rewritten = _rewrite_srcset(value, chapter_dir, package) or None
+                rewritten = _rewrite_srcset(value, chapter_dir, package, missing_paths) or None
             elif (tag == "img" and name == "src") or (
                 tag == "image" and name in {"href", "xlink:href"}
             ):
-                rewritten = _rewrite_image_resource_url(value, chapter_dir, package)
+                rewritten = _rewrite_image_resource_url(value, chapter_dir, package, missing_paths)
             elif name in _RESOURCE_ATTRS:
                 rewritten = _rewrite_resource_url(value, name, chapter_dir, package.readable_paths)
             else:
@@ -1058,11 +1279,121 @@ def _rewrite_chapter_resources(html: str, chapter_href: str, package: _Package) 
             else:
                 element.attrib[attr] = rewritten
 
+        if tag == "img" and missing_paths:
+            element.set("data-reader-source-warning", str(next_marker))
+            missing_refs.extend(
+                _MissingImageRef(next_marker, path) for path in dict.fromkeys(missing_paths)
+            )
+            next_marker += 1
+            if not element.get("src") and not element.get("srcset"):
+                replace_image_with_placeholder(element)
+        elif tag == "image" and missing_paths:
+            raise _EpubExtractionFailure("Referenced SVG image asset missing from archive")
+
     body = doc.body if doc.body is not None else doc
-    return inner_html(body)
+    return inner_html(body), missing_refs
 
 
-def _rewrite_image_resource_url(raw_url: str, base_dir: str, package: _Package) -> str | None:
+def _retained_image_and_warning_markers(html: str) -> tuple[bool, set[int]]:
+    doc = parse_html_document(html)
+    retained_image = False
+    warning_markers: set[int] = set()
+    state: dict[HtmlElement, tuple[bool, bool, bool]] = {}
+    svg_targets: dict[str, HtmlElement] = {}
+    visible_uses: list[HtmlElement] = []
+    for element in doc.iter():
+        if not isinstance(element, HtmlElement):
+            continue
+        marker = element.get("data-reader-source-warning")
+        if marker is not None:
+            warning_markers.add(int(marker))
+        parent_visible, parent_svg, parent_definition = state.get(
+            element.getparent(), (True, False, False)
+        )
+        visible = (
+            parent_visible
+            and "hidden" not in element.attrib
+            and element.get("aria-hidden", "").lower() != "true"
+        )
+        tag = local_name(element.tag)
+        in_svg = parent_svg or tag == "svg"
+        in_definition = parent_definition or tag in _SVG_DEFINITION_TAGS
+        state[element] = (visible, in_svg, in_definition)
+        if in_svg and element.get("id"):
+            svg_targets.setdefault(element.get("id", ""), element)
+        if not visible:
+            continue
+        if tag == "img" and (element.get("src") or element.get("srcset")):
+            retained_image = True
+        elif in_svg and not in_definition:
+            if _svg_element_has_image(element):
+                retained_image = True
+            elif tag == "use":
+                visible_uses.append(element)
+
+    def referenced_image(target: HtmlElement, seen: set[str]) -> bool:
+        pending = [(target, True)]
+        while pending:
+            element, reference_root = pending.pop()
+            if not state[element][0]:
+                continue
+            tag = local_name(element.tag)
+            if not reference_root and tag in _SVG_DEFINITION_TAGS:
+                continue
+            if _svg_element_has_image(element):
+                return True
+            if tag == "use":
+                href = element.get("href") or element.get("xlink:href") or ""
+                if href.startswith("#") and href not in seen:
+                    seen.add(href)
+                    nested = svg_targets.get(href[1:])
+                    if (
+                        nested is not None
+                        and local_name(nested.tag) not in _SVG_INVALID_USE_TARGETS
+                    ):
+                        pending.append((nested, True))
+            pending.extend((child, False) for child in element if isinstance(child, HtmlElement))
+        return False
+
+    if not retained_image:
+        # A local target's drawable content is independent of which use references it.
+        seen_refs: set[str] = set()
+        for element in visible_uses:
+            href = element.get("href") or element.get("xlink:href") or ""
+            if href in seen_refs:
+                continue
+            seen_refs.add(href)
+            target = svg_targets.get(href[1:]) if href.startswith("#") else None
+            if target is not None and local_name(target.tag) not in _SVG_INVALID_USE_TARGETS:
+                if referenced_image(target, seen_refs):
+                    retained_image = True
+                    break
+    return retained_image, warning_markers
+
+
+def _svg_element_has_image(element: HtmlElement) -> bool:
+    """Require retained drawing data; this does not evaluate SVG paint or layout."""
+    tag = local_name(element.tag)
+    if tag == "image":
+        return bool(element.get("href") or element.get("xlink:href"))
+    if tag == "path":
+        return bool(element.get("d", "").strip())
+    if tag == "circle":
+        return bool(element.get("r", "").strip())
+    if tag == "ellipse":
+        return bool(element.get("rx", "").strip() and element.get("ry", "").strip())
+    if tag == "rect":
+        return bool(element.get("width", "").strip() and element.get("height", "").strip())
+    if tag == "line":
+        return any(element.get(attr, "").strip() for attr in ("x1", "y1", "x2", "y2"))
+    if tag in {"polyline", "polygon"}:
+        return bool(element.get("points", "").strip())
+    return False
+
+
+def _rewrite_image_resource_url(
+    raw_url: str, base_dir: str, package: _Package, missing_paths: list[str]
+) -> str | None:
     if not raw_url or raw_url.startswith("#"):
         return None
     parsed = urlparse(raw_url)
@@ -1071,7 +1402,7 @@ def _rewrite_image_resource_url(raw_url: str, base_dir: str, package: _Package) 
     resolved = _resolve_epub_path(base_dir, parsed.path or "")
     if resolved is None:
         return None
-    key = _ensure_asset_entry(resolved, package)
+    key = _ensure_asset_entry(resolved, package, missing_paths)
     if key is None:
         return None
     rewritten = web_paths.media_asset_url(package.media_id, key)
@@ -1092,19 +1423,71 @@ def _rewrite_resource_url(
     return f"{resolved}#{parsed.fragment}" if parsed.fragment else resolved
 
 
-def _rewrite_srcset(value: str, base_dir: str, package: _Package) -> str:
+def _rewrite_srcset(value: str, base_dir: str, package: _Package, missing_paths: list[str]) -> str:
     parts: list[str] = []
-    for candidate in value.split(","):
-        tokens = candidate.strip().split()
-        if not tokens:
-            continue
-        rewritten = _rewrite_image_resource_url(tokens[0], base_dir, package)
+    for url, descriptor in _srcset_candidates(value):
+        rewritten = _rewrite_image_resource_url(url, base_dir, package, missing_paths)
         if rewritten:
-            parts.append(" ".join([rewritten, *tokens[1:]]))
+            parts.append(f"{rewritten} {descriptor}" if descriptor else rewritten)
     return ", ".join(parts)
 
 
-def _ensure_asset_entry(epub_path: str, package: _Package) -> str | None:
+def _srcset_candidates(value: str) -> Iterator[tuple[str, str]]:
+    """Read HTML image candidates; commas inside a URL are not separators."""
+    whitespace = "\t\n\f\r "
+    position = 0
+    while position < len(value):
+        while position < len(value) and value[position] in whitespace + ",":
+            position += 1
+        if position == len(value):
+            break
+        start = position
+        while position < len(value) and value[position] not in whitespace:
+            position += 1
+        url = value[start:position]
+        if url.endswith(","):
+            url = url.rstrip(",")
+            if url:
+                yield url, ""
+            continue
+
+        while position < len(value) and value[position] in whitespace:
+            position += 1
+        start = position
+        parentheses = 0
+        while position < len(value):
+            char = value[position]
+            if char == "(":
+                parentheses += 1
+            elif char == ")" and parentheses:
+                parentheses -= 1
+            elif char == "," and not parentheses:
+                break
+            position += 1
+        descriptor = value[start:position].strip()
+        if position < len(value):
+            position += 1
+        if descriptor and not _valid_srcset_descriptor(descriptor):
+            continue
+        yield url, descriptor
+
+
+def _valid_srcset_descriptor(value: str) -> bool:
+    if re.fullmatch(r"[0-9]+w", value):
+        try:
+            return int(value[:-1]) > 0
+        except ValueError:
+            return False
+    if not re.fullmatch(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?x", value):
+        return False
+    try:
+        density = float(value[:-1])
+    except ValueError:
+        return False
+    return math.isfinite(density) and density > 0
+
+
+def _ensure_asset_entry(epub_path: str, package: _Package, missing_paths: list[str]) -> str | None:
     """Record one referenced package image, deriving its stable asset key once."""
     if epub_path in package.asset_key_map:
         return package.asset_key_map[epub_path]
@@ -1113,18 +1496,31 @@ def _ensure_asset_entry(epub_path: str, package: _Package) -> str | None:
     )
     if manifest_item is None:
         if posixpath.splitext(epub_path)[1].lower() in _IMAGE_EXTENSIONS:
-            raise _EpubExtractionFailure(
-                f"Referenced EPUB image asset missing from OPF manifest: {epub_path}"
-            )
+            try:
+                package.zf.getinfo(epub_path)
+            except KeyError:
+                if epub_path.lower().endswith(".svg"):
+                    raise _EpubExtractionFailure(
+                        f"Referenced EPUB image asset missing from OPF manifest: {epub_path}"
+                    ) from None
+                missing_paths.append(epub_path)
+                return None
+            else:
+                raise _EpubExtractionFailure(
+                    f"Referenced EPUB image asset missing from OPF manifest: {epub_path}"
+                )
         return None
     if manifest_item.media_type not in SUPPORTED_IMAGE_TYPES:
         return None
     try:
         info = package.zf.getinfo(epub_path)
     except KeyError as exc:
-        raise _EpubExtractionFailure(
-            f"Referenced EPUB image asset missing from archive: {epub_path}"
-        ) from exc
+        if manifest_item.media_type == _SVG_IMAGE_TYPE:
+            raise _EpubExtractionFailure(
+                f"Referenced EPUB image asset missing from archive: {epub_path}"
+            ) from exc
+        missing_paths.append(epub_path)
+        return None
 
     key = re.sub(r"[^a-zA-Z0-9_./-]", "_", epub_path.lstrip("/")) or "asset"
     if key in package.asset_key_map.values():
@@ -1163,11 +1559,10 @@ def _materialize_toc(
     href_to_frag_idx: dict[str, int],
     media_id: UUID,
 ) -> list[EpubStructureTocNode]:
-    """Parse EPUB 3 navigation, falling back to the NCX every EPUB 2 book carries."""
-    nodes = _parse_epub3_nav(zf, opf, manifest, href_to_frag_idx, media_id)
-    if any(node.nav_type == "toc" for node in nodes):
-        return nodes
-    return nodes + _parse_ncx_toc(zf, opf, manifest, href_to_frag_idx, media_id)
+    """Select the navigation authority declared by the package format."""
+    if opf.get("version", "").split(".", 1)[0] == "3":
+        return _parse_epub3_nav(zf, opf, manifest, href_to_frag_idx, media_id)
+    return _parse_ncx_toc(zf, opf, manifest, href_to_frag_idx, media_id)
 
 
 def _is_tag(element: ET.Element, name: str) -> bool:
@@ -1232,7 +1627,7 @@ def _walk_toc(
     sibling_ids: dict[str, int] = {}
     for ordinal, (element, label, href, nav_id) in enumerate(walk.entries(parent)):
         canonical_href, fragment_idx = _resolve_nav_target(
-            href, walk.base_dir, walk.href_to_frag_idx
+            href, walk.base_href, walk.href_to_frag_idx
         )
         raw_id = _ensure_sibling_unique(_node_id_token(nav_id, href, label), sibling_ids)
         node_path = f"{parent_path}/{raw_id}" if parent_path else f"{walk.nav_type}/{raw_id}"
@@ -1289,15 +1684,13 @@ def _parse_epub3_nav(
             nav_type = "landmarks"
         elif "page-list" in tokens or "pagebreak" in tokens:
             nav_type = "page_list"
-        elif not nodes:
-            nav_type = "toc"
         else:
             continue
         _walk_toc(
             _TocWalk(
                 entries=_nav_entries,
                 nav_type=nav_type,
-                base_dir=posixpath.dirname(nav_href),
+                base_href=nav_href,
                 href_to_frag_idx=href_to_frag_idx,
                 media_id=media_id,
                 nodes=nodes,
@@ -1338,7 +1731,7 @@ def _parse_ncx_toc(
         _TocWalk(
             entries=_ncx_entries,
             nav_type="toc",
-            base_dir=posixpath.dirname(ncx_href),
+            base_href=ncx_href,
             href_to_frag_idx=href_to_frag_idx,
             media_id=media_id,
             nodes=nodes,
@@ -1349,14 +1742,18 @@ def _parse_ncx_toc(
 
 
 def _resolve_nav_target(
-    href: str | None, base_dir: str, href_to_frag_idx: dict[str, int]
+    href: str | None, base_href: str, href_to_frag_idx: dict[str, int]
 ) -> tuple[str | None, int | None]:
     if not href:
         return None, None
     parsed = urlparse(href)
     if parsed.scheme:
         return href, None
-    resolved_path = _resolve_epub_path(base_dir, parsed.path) if parsed.path else None
+    if parsed.netloc:
+        return None, None
+    resolved_path = (
+        _resolve_epub_path(posixpath.dirname(base_href), parsed.path) if parsed.path else base_href
+    )
     canonical_href = resolved_path
     if canonical_href and parsed.fragment:
         canonical_href = f"{canonical_href}#{parsed.fragment}"

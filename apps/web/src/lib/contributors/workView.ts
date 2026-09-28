@@ -99,13 +99,13 @@ export type AuthorWorksSortOptionId =
 export function authorWorksSortOptionLabel(id: AuthorWorksSortOptionId): string {
   switch (id) {
     case "published-newest":
-      return "Published — newest";
+      return "Newest published";
     case "published-oldest":
-      return "Published — oldest";
+      return "Oldest published";
     case "title-asc":
-      return "Title — A–Z";
+      return "Title A–Z";
     case "title-desc":
-      return "Title — Z–A";
+      return "Title Z–A";
     default:
       return assertNever(id);
   }

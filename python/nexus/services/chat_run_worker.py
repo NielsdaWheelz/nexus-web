@@ -247,9 +247,7 @@ class ChatStepRuntime:
     def _write(self, payload: dict[str, object]) -> None:
         if not update_running_job_payload(
             self.db,
-            job_id=self.execution_context.job_id,
-            worker_id=self.execution_context.worker_id,
-            attempt_no=self.execution_context.attempt_no,
+            context=self.execution_context,
             payload=payload,
         ):
             self.db.rollback()

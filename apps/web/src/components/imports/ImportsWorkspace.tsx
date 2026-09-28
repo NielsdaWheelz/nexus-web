@@ -18,6 +18,7 @@ import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import PaneToolbar from "@/components/ui/PaneToolbar";
+import CollectionFilterEditor from "@/components/workspace/CollectionFilterEditor";
 import Pill from "@/components/ui/Pill";
 import ResourceList from "@/components/ui/ResourceList";
 import SelectField from "@/components/ui/SelectField";
@@ -234,6 +235,7 @@ function ImportsWorkspaceView({
   );
   const listRef = useRef<HTMLDivElement>(null);
   const { inputRef, focusInput } = usePaneCollectionInput();
+  const filterTriggerRef = useRef<HTMLButtonElement>(null);
   const statusId = useId();
 
   const listSettled = page.status !== "loading";
@@ -296,7 +298,7 @@ function ImportsWorkspaceView({
     setDraft("");
     onStateChange(
       importsViewSelection(
-        withoutImportsFilters(state),
+        { ...withoutImportsFilters(state), q: absent() },
         view,
         formatLocalDateInTimeZone(new Date(), display.displayTimeZone),
       ),
@@ -321,73 +323,116 @@ function ImportsWorkspaceView({
     display,
     new Date(),
   );
-  const empty = importsEmptyCopy(view, chips.length > 0);
+  const structuredChips = chips.filter((chip) => chip.id !== "q");
+  const empty = importsEmptyCopy(view, {
+    hasSearch: state.q.kind === "Present",
+    hasFilters: structuredChips.length > 0,
+  });
   const datesBound = importsDateFilterLabel(importsDateBounds(state));
   const sections = importStageSections(page.groups, page.items);
   const grouped = view === "NeedsAttention" && sections.length > 0;
-  const lastReadCount = `Showing ${page.items.length} of ${page.matchedCount} matching imports from the last read`;
-  const resultStatus =
-    page.status === "loading"
-      ? "Loading imports"
-      : page.status === "error"
-        ? "Imports failed to load"
-        : page.refreshFailed || loadState.kind === "Failed"
-          ? `Last update failed. ${lastReadCount}`
-          : lastReadCount;
+  const defaultState = importsViewSelection(
+    { ...withoutImportsFilters(state), q: absent() },
+    view,
+    formatLocalDateInTimeZone(new Date(), display.displayTimeZone),
+  );
+  const defaultFrom = text(defaultState.from);
+  const resetAvailable =
+    draft !== "" ||
+    state.q.kind === "Present" ||
+    state.mediaKind.kind === "Present" ||
+    state.stage.kind === "Present" ||
+    state.failureCode.kind === "Present" ||
+    state.currentState.kind === "Present" ||
+    state.hadFailures.kind === "Present" ||
+    text(state.from) !== defaultFrom ||
+    state.before.kind === "Present";
+  const clearFilters = useCallback(() => {
+    onStateChange(withoutImportsFilters(state));
+  }, [onStateChange, state]);
+  const countLabel = state.q.kind === "Present" ? "matching imports" : "imports";
+  const loadedCount = page.items.length === page.matchedCount
+    ? `${page.items.length} ${countLabel}`
+    : `${page.items.length} of ${page.matchedCount} ${countLabel}`;
+  let resultStatus = loadedCount;
+  if (page.status === "loading") {
+    resultStatus = "Loading imports";
+  } else if (page.status === "error") {
+    resultStatus = "Results unavailable";
+  } else if (page.error !== null) {
+    resultStatus = `${loadedCount}; loading failed`;
+  } else if (page.refreshFailed || loadState.kind === "Failed") {
+    resultStatus = `Update failed; showing previous results · ${loadedCount}`;
+  } else if (page.loadingMore) {
+    resultStatus = `${loadedCount}; loading more`;
+  }
+  const announceResultStatus =
+    page.status === "ready" &&
+    page.error === null &&
+    !page.refreshFailed &&
+    loadState.kind !== "Failed";
   const collectionContent = useMemo(
     () => (
-      <div className={styles.collectionControls}>
-        <PaneToolbar
-          variant="Refinement"
-          search={
-            <form
-              className={styles.search}
-              onSubmit={(event) => {
+      <PaneToolbar
+        variant="Collection"
+        search={
+          <form
+            className={styles.search}
+            onSubmit={(event) => {
+              event.preventDefault();
+              commitQuery();
+            }}
+          >
+            <Input
+              ref={inputRef}
+              type="search"
+              size="sm"
+              aria-label="Search imports"
+              aria-describedby={statusId}
+              aria-keyshortcuts="Escape"
+              placeholder="Search titles, files and sources"
+              value={draft}
+              autoComplete="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              data-pane-collection-input="true"
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Escape" || event.defaultPrevented) return;
                 event.preventDefault();
-                commitQuery();
+                event.stopPropagation();
+                setDraft("");
               }}
-            >
-              <Input
-                ref={inputRef}
-                type="search"
+            />
+            {draft || state.q.kind === "Present" ? (
+              <Button
+                variant="ghost"
                 size="sm"
-                aria-label="Search imports"
-                aria-describedby={statusId}
-                aria-keyshortcuts="Escape"
-                placeholder="Search titles, files and sources"
-                value={draft}
-                autoComplete="off"
-                autoCapitalize="none"
-                spellCheck={false}
-                data-pane-collection-input="true"
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key !== "Escape" || event.defaultPrevented) return;
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setDraft("");
-                }}
-              />
-              {draft || state.q.kind === "Present" ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  type="button"
-                  aria-label="Clear text filter"
-                  title="Clear text filter"
-                  onClick={clearQuery}
-                >
-                  <X size={15} aria-hidden="true" />
-                </Button>
-              ) : null}
-              <button type="submit" className="sr-only" tabIndex={-1}>
-                Apply search
-              </button>
-            </form>
-          }
-          filters={
-            <>
+                iconOnly
+                type="button"
+                aria-label="Clear text filter"
+                title="Clear text filter"
+                onClick={clearQuery}
+              >
+                <X size={15} aria-hidden="true" />
+              </Button>
+            ) : null}
+            <button type="submit" className="sr-only" tabIndex={-1}>
+              Apply search
+            </button>
+          </form>
+        }
+        filters={
+          <>
+            <span className={styles.sortLabel}>
+              Order: {IMPORTS_ORDER_LABEL[view]}
+            </span>
+            <CollectionFilterEditor
+              activeCount={structuredChips.length}
+              triggerRef={filterTriggerRef}
+              onClearFilters={clearFilters}
+              onResetView={resetAvailable ? resetView : undefined}
+            >
               <SelectField
                 layout="Inline"
                 label="Type"
@@ -522,41 +567,36 @@ function ImportsWorkspaceView({
                   </div>
                 </>
               )}
-              <span className={styles.sortLabel}>
-                Order: {IMPORTS_ORDER_LABEL[view]}
-              </span>
-            </>
-          }
-          controls={
-            <>
-              <span
-                id={statusId}
-                className={styles.resultStatus}
-                role="status"
-                aria-live="polite"
-              >
-                {resultStatus}
-              </span>
-              <Button variant="secondary" size="sm" onClick={resetView}>
-                Reset view
-              </Button>
-              <Button variant="secondary" size="sm" onClick={() => void refresh()}>
-                Refresh
-              </Button>
-            </>
-          }
-        />
-        <AppliedFilters
-          chips={chips.map((chip) => ({ id: chip.id, label: chip.label }))}
-          onRemove={(id) =>
-            onStateChange(withoutImportsFilter(state, id as ImportsFilterField))
-          }
-          onClearAll={() => onStateChange(withoutImportsFilters(state))}
-        />
-      </div>
+            </CollectionFilterEditor>
+          </>
+        }
+        summary={
+          <div className={styles.summary}>
+            <AppliedFilters
+              chips={chips.map((chip) => ({ id: chip.id, label: chip.label }))}
+              onRemove={(id) =>
+                onStateChange(withoutImportsFilter(state, id as ImportsFilterField))
+              }
+              returnFocusTo={filterTriggerRef}
+            />
+            <span
+              id={statusId}
+              className={styles.resultStatus}
+              role={announceResultStatus ? "status" : undefined}
+              aria-live={announceResultStatus ? "polite" : undefined}
+            >
+              {resultStatus}
+            </span>
+            <Button variant="ghost" size="sm" onClick={() => void refresh()}>
+              Refresh
+            </Button>
+          </div>
+        }
+      />
     ),
     [
       chips,
+      clearFilters,
       clearQuery,
       commitQuery,
       datesBound,
@@ -564,8 +604,11 @@ function ImportsWorkspaceView({
       inputRef,
       onStateChange,
       refresh,
+      resetAvailable,
       resetView,
       resultStatus,
+      announceResultStatus,
+      structuredChips.length,
       state,
       statusId,
       update,
@@ -682,6 +725,24 @@ function ImportsWorkspaceView({
                   actions={[{ label: "Try again", onClick: page.retry }]}
                 />
               ) : null}
+              {page.status === "ready" && page.error !== null ? (
+                <FeedbackNotice
+                  content={{
+                    ...importsLoadErrorMessage(page.error),
+                    title: "More imports couldn’t be loaded",
+                    message: page.error.code === "E_INVALID_CURSOR"
+                      ? "Refresh this view to start loading again."
+                      : "Retry from the current imports.",
+                  }}
+                  announcement="Assertive"
+                  actions={[{
+                    label: page.error.code === "E_INVALID_CURSOR" ? "Refresh" : "Retry",
+                    onClick: page.error.code === "E_INVALID_CURSOR"
+                      ? () => void refresh()
+                      : page.retry,
+                  }]}
+                />
+              ) : null}
               {/* A read that failed over facts the reader still has is a
                   freshness fact, not a failure of the list: the counts or the
                   rows below are the last update, and the assertive error above
@@ -707,21 +768,21 @@ function ImportsWorkspaceView({
             <div className={styles.empty}>
               <strong>{empty.title}</strong>
               <p>{empty.body}</p>
-              {chips.length === 0 ? null : (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => onStateChange(withoutImportsFilters(state))}
-                >
+              {structuredChips.length > 0 ? (
+                <Button variant="secondary" size="sm" onClick={clearFilters}>
                   Clear filters
                 </Button>
-              )}
+              ) : state.q.kind === "Present" ? (
+                <Button variant="secondary" size="sm" onClick={clearQuery}>
+                  Clear search
+                </Button>
+              ) : null}
             </div>
             )
           }
           footer={
             <LoadMoreFooter
-              hasMore={page.hasMore}
+              hasMore={page.hasMore && page.error === null}
               loading={page.loadingMore}
               onLoadMore={page.loadMore}
             />

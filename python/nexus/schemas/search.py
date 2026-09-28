@@ -9,7 +9,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
-from nexus.schemas.contributors import ContributorCreditOut
+from nexus.schemas.contributor_credit import ContributorCreditOut
+from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.presence import Presence
 from nexus.schemas.publication_dates import PublicationDate
 from nexus.schemas.retrieval import (
@@ -75,10 +76,6 @@ class SearchResultBaseOut(BaseModel):
 
     score: float
     snippet: str
-    title: str
-    source_label: str | None = None
-    media_id: UUID | None = None
-    media_kind: str | None = None
     resource_ref: str
     owner_resource_ref: str
     action_subject_ref: str = Field(alias="actionSubjectRef")
@@ -89,7 +86,14 @@ class SearchResultBaseOut(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
-class SearchResultLocatorBackedOut[ResultTypeT: LocatorBackedResultType](SearchResultBaseOut):
+class SearchResultTitledOut(SearchResultBaseOut):
+    title: str
+    source_label: str | None = None
+    media_id: UUID | None = None
+    media_kind: str | None = None
+
+
+class SearchResultLocatorBackedOut[ResultTypeT: LocatorBackedResultType](SearchResultTitledOut):
     """Envelope for the variants carrying a locator bound to their result type."""
 
     type: ResultTypeT
@@ -106,10 +110,10 @@ class SearchResultMediaOut(SearchResultBaseOut):
 
     type: Literal["media", "episode", "video"]
     id: UUID
-    source: SearchResultSourceOut
+    media_summary: MediaSummaryOut = Field(alias="mediaSummary")
 
 
-class SearchResultPodcastOut(SearchResultBaseOut):
+class SearchResultPodcastOut(SearchResultTitledOut):
     """A visible podcast hit."""
 
     type: Literal["podcast"]
@@ -144,7 +148,7 @@ class SearchResultContributorIdentityOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class SearchResultContributorOut(SearchResultBaseOut):
+class SearchResultContributorOut(SearchResultTitledOut):
     """A contributor identity hit."""
 
     type: Literal["contributor"]
@@ -172,7 +176,7 @@ class SearchResultHighlightOut(SearchResultLocatorBackedOut[Literal["highlight"]
     citation_label: str | None = None
 
 
-class SearchResultPageOut(SearchResultBaseOut):
+class SearchResultPageOut(SearchResultTitledOut):
     """A note page."""
 
     type: Literal["page"]
@@ -206,14 +210,14 @@ class SearchResultReaderApparatusItemOut(
     apparatus_kind: str
 
 
-class SearchResultConversationOut(SearchResultBaseOut):
+class SearchResultConversationOut(SearchResultTitledOut):
     """A visible conversation."""
 
     type: Literal["conversation"]
     id: UUID
 
 
-class ConversationArtifactSearchOut(SearchResultBaseOut):
+class ConversationArtifactSearchOut(SearchResultTitledOut):
     """A current Conversation Dossier claim; the exact revision ref preserves
     historical selection while activation opens the conversation subject."""
 

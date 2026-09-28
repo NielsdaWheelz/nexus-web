@@ -19,6 +19,7 @@ export default function PaneCollectionBar({
   rowStatus,
   filters,
   controls,
+  appliedFilters,
 }: {
   readonly inputRef: RefObject<HTMLInputElement | null>;
   readonly inputLabel: string;
@@ -29,6 +30,7 @@ export default function PaneCollectionBar({
   readonly rowStatus: RowStatus;
   readonly filters?: ReactNode;
   readonly controls?: ReactNode;
+  readonly appliedFilters?: ReactNode;
 }) {
   const statusId = useId();
   const handleInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -39,7 +41,7 @@ export default function PaneCollectionBar({
   };
   return (
     <PaneToolbar
-      variant="Refinement"
+      variant="Collection"
       search={
         <div className={styles.search}>
           <Input
@@ -76,16 +78,17 @@ export default function PaneCollectionBar({
         </div>
       }
       filters={filters}
-      controls={
-        <>
+      controls={controls}
+      summary={
+        <div className={styles.summary}>
+          {appliedFilters}
           <PaneFilterRowsStatus
             id={statusId}
             status={rowStatus}
             query={query}
             visible
           />
-          {controls}
-        </>
+        </div>
       }
     />
   );

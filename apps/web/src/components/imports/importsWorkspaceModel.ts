@@ -337,12 +337,13 @@ export function withoutImportsFilter(
   return { ...state, [field]: absent() };
 }
 
+/** Clear structured constraints without changing committed text or pane identity. */
 export function withoutImportsFilters(
   state: ImportsUrlState,
 ): ImportsUrlState {
   return {
     view: state.view,
-    q: absent(),
+    q: state.q,
     mediaKind: absent(),
     stage: absent(),
     failureCode: absent(),

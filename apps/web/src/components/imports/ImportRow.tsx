@@ -303,8 +303,8 @@ export default function ImportRow({
       }
       status={
         <span className={styles.rowStatus}>
-          <Pill tone={STATE_TONE[item.state.kind]} size="sm">
-            {importStateLabel(item.state)}
+          <Pill tone={item.sourceIssueCount > 0 ? "warning" : STATE_TONE[item.state.kind]} size="sm">
+            {importStateLabel(item)}
           </Pill>
           <span className={styles.rowStatusLine}>{importStatusLine(item)}</span>
           {reason === null ? null : (

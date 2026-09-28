@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Response
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok
 from nexus.schemas.resource_action_snapshots import ResourceActionSnapshotResolveRequest
@@ -34,6 +34,7 @@ from nexus.services.resource_items import locators as locator_service
 
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 DbDep = Annotated[Session, Depends(get_db)]
+ReadDbDep = Annotated[Session, Depends(get_repeatable_read_db)]
 
 router = APIRouter(prefix="/resource-items", tags=["resource-items"])
 
@@ -93,7 +94,7 @@ def search_openable_resources(
 
 
 @router.get("/{resource_ref}/surface")
-def get_resource_surface(resource_ref: str, viewer: ViewerDep, db: DbDep) -> dict:
+def get_resource_surface(resource_ref: str, viewer: ViewerDep, db: ReadDbDep) -> dict:
     return ok(
         surfaces.get_surface(db, viewer_id=viewer.user_id, source=_parse_ref(resource_ref)),
         by_alias=True,

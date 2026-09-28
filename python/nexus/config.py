@@ -91,6 +91,10 @@ class Settings(BaseSettings):
     """
 
     nexus_env: Environment = Field(default=Environment.LOCAL, alias="NEXUS_ENV")
+    node_ingest_script: Path = Field(
+        default=Path(__file__).resolve().parents[2] / "node/ingest/ingest.mjs",
+        alias="NODE_INGEST_SCRIPT",
+    )
     database_url: Annotated[str, Field(alias="DATABASE_URL")]
     database_pool_size: int = Field(default=10, alias="DATABASE_POOL_SIZE", ge=1)
     database_max_overflow: int = Field(default=20, alias="DATABASE_MAX_OVERFLOW", ge=0)
@@ -702,6 +706,8 @@ class Settings(BaseSettings):
             raise ValueError("OPENAI_API_KEY is required for transcript embeddings")
 
     def _validate_ingest_runtime_and_paths(self) -> None:
+        if not self.node_ingest_script.is_absolute():
+            raise ValueError("NODE_INGEST_SCRIPT must be an absolute path")
         if (
             not self.codex_agent_socket.is_absolute()
             or Path(os.path.normpath(str(self.codex_agent_socket))) != self.codex_agent_socket

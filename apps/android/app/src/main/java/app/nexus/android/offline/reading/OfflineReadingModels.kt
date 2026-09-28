@@ -7,8 +7,8 @@ import java.time.Instant
 import java.util.UUID
 
 internal const val OFFLINE_READING_PACKAGE_SCHEMA_VERSION = 1
-internal const val OFFLINE_READING_READER_CONTRACT_VERSION = 2
-internal const val OFFLINE_READING_READER_BUNDLE_VERSION = 2
+internal const val OFFLINE_READING_READER_CONTRACT_VERSION = 4
+internal const val OFFLINE_READING_READER_BUNDLE_VERSION = 4
 internal const val OFFLINE_READING_FILESYSTEM_OVERHEAD_BYTES = 16L * 1024L * 1024L
 internal const val OFFLINE_READING_MINIMUM_SDK = 34
 
@@ -281,7 +281,10 @@ internal sealed interface OfflineReadingBindingView {
 }
 
 internal sealed interface OfflineReadingAvailability {
-    data class Transfer(val state: ReadingTransferState) : OfflineReadingAvailability
+    data class Transfer(
+        val state: ReadingTransferState,
+        val recoveryProgress: NativeReaderProgressView? = null,
+    ) : OfflineReadingAvailability
 
     data class Ready(
         val sizeBytes: Long,

@@ -18,9 +18,13 @@ from nexus.schemas.media import (
     ReaderNavigationSectionOut,
     ReaderNavigationTocNodeOut,
 )
-from nexus.schemas.presence import absent, presence_from_nullable, present
+from nexus.schemas.presence import Presence, Present, absent, presence_from_nullable, present
 from nexus.services.capabilities import is_document_status_ready
 from nexus.services.epub_read import read_epub_navigation
+from nexus.services.reader_publication import (
+    read_publication_generation,
+    read_publication_source_issues,
+)
 from nexus.services.reader_structure import DocumentPoint, SectionRangeInput, resolve_section_ends
 
 
@@ -44,9 +48,10 @@ def get_media_navigation_for_viewer(
         raise error
     if not is_document_status_ready(str(row.processing_status)) or row.generation is None:
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
-    return read_media_navigation(
-        db, media_id=media_id, kind=row.kind, generation=int(row.generation)
-    )
+    generation = read_publication_generation(db, media_id=media_id)
+    if generation is None:
+        raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
+    return read_media_navigation(db, media_id=media_id, kind=row.kind, generation=generation)
 
 
 def read_media_navigation(
@@ -59,6 +64,7 @@ def read_media_navigation(
     """Navigation for an authorized, captured source publication."""
     if kind == "epub":
         return read_epub_navigation(db, media_id=media_id, generation=generation)
+    from nexus.services.reader_apparatus import read_note_regions
     from nexus.services.web_article_structure import build_web_article_index_blocks
 
     fragment_rows = (
@@ -80,16 +86,33 @@ def read_media_navigation(
         for row in fragment_rows
     ]
     fragment_ids = {fragment.fragment_idx: fragment.fragment_id for fragment in fragments}
+    note_regions = read_note_regions(db, media_id)
     inputs: list[SectionRangeInput] = []
     labels: dict[str, str] = {}
     anchors: dict[str, str | None] = {}
+    toc_specs: list[tuple[str, str, Presence[str], NavigationTextPointOut, str | None]] = []
     for fragment in fragment_rows:
         headings = build_web_article_index_blocks(
             html_sanitized=fragment["html_sanitized"],
             canonical_text=fragment["canonical_text"],
             fragment_idx=fragment["idx"],
+            fragment_id=fragment["id"],
+            note_regions=note_regions,
         )
         for heading in headings:
+            if heading.heading_id is None:
+                continue
+            toc_specs.append(
+                (
+                    heading.heading_id,
+                    heading.heading_label or "",
+                    heading.toc_parent_id,
+                    NavigationTextPointOut(
+                        fragment_id=fragment_ids[fragment["idx"]], offset=heading.start_offset
+                    ),
+                    heading.section_id,
+                )
+            )
             if heading.section_id is None:
                 continue
             container_end = heading.container_end_offset
@@ -104,9 +127,7 @@ def read_media_navigation(
                     owns_container=heading.owns_container,
                 )
             )
-            labels[heading.section_id] = fragment["canonical_text"][
-                heading.start_offset : heading.end_offset
-            ].strip()
+            labels[heading.section_id] = heading.heading_label or ""
             anchors[heading.section_id] = heading.anchor_id
     sections: list[ReaderNavigationSectionOut] = []
     nodes: dict[str, ReaderNavigationTocNodeOut] = {}
@@ -141,21 +162,27 @@ def read_media_navigation(
                     else absent(),
                 )
             )
-            nodes[section.section_id] = ReaderNavigationTocNodeOut(
-                id=section.section_id,
-                label=labels[section.section_id],
-                section_id=present(section.section_id),
-                children=[],
-            )
-        for section in inputs:
-            if section.parent_section_id.kind == "Present":
-                nodes[section.parent_section_id.value].children.append(nodes[section.section_id])
-            else:
-                roots.append(nodes[section.section_id])
+    section_targets = {section.section_id: section.target for section in sections}
+    for heading_id, label, _parent_id, target, section_id in toc_specs:
+        if section_id is not None and section_targets.get(section_id) != target:
+            raise ValueError("Web TOC section linkage disagrees with its target")
+        nodes[heading_id] = ReaderNavigationTocNodeOut(
+            id=heading_id,
+            label=label,
+            target=present(target),
+            section_id=presence_from_nullable(section_id),
+            children=[],
+        )
+    for heading_id, _label, parent_id, _target, _section_id in toc_specs:
+        if isinstance(parent_id, Present) and parent_id.value in nodes:
+            nodes[parent_id.value].children.append(nodes[heading_id])
+        else:
+            roots.append(nodes[heading_id])
     return MediaNavigationOut(
         media_id=media_id,
         kind="web_article",
         generation=generation,
+        source_issues=read_publication_source_issues(db, media_id=media_id, generation=generation),
         fragments=fragments,
         sections=sections,
         toc_nodes=roots,

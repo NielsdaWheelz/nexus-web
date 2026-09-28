@@ -129,7 +129,11 @@ _PODCAST_BLOB = """concat_ws(' ', p.title, COALESCE(p.description, ''),
 
 
 def _media_sql(ident: str, filters: str, scope: str) -> str:
-    match, score, snippet = _fts(_MEDIA_BLOB, "m.title")
+    match, score, _ = _fts(_MEDIA_BLOB, "m.title")
+    snippet = f"""CASE WHEN :has_query
+                       AND to_tsvector('english', COALESCE(m.description, '')) @@ {_TSQUERY}
+                      THEN ts_headline('english', m.description, {_TSQUERY}, {_HEADLINE})
+                      ELSE '' END"""
     return f"""
         WITH {_MEDIA_CTES}
         SELECT m.id, m.title, m.kind, m.original_published_date, mcc.contributor_credits,
@@ -190,7 +194,7 @@ def _credit_filter(
 def _media_row(row: Row, score: _SearchScore, q: str | None, kind: str) -> _RankedMediaResult:
     return _RankedMediaResult(
         id=row["id"],
-        snippet=_truncate_snippet(str(row["snippet"] or row["title"])),
+        snippet=_truncate_snippet(str(row["snippet"] or "")),
         source=_source(row, row["id"], row["kind"]),
         score=score,
         result_type=_MEDIA_TYPES[kind],

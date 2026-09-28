@@ -15,14 +15,14 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import NoteBodyEditor, {
-  type NoteBodyChange,
   type NotePulseEditorTarget,
 } from "@/components/notes/NoteBodyEditor";
 import ResourceSurfaceBodyEditor from "@/components/resource-surface/ResourceSurfaceBodyEditor";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { createRandomId } from "@/lib/createRandomId";
+import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { WritingUnknownOutcomeError } from "@/lib/notes/writingSession";
 import { activateResource } from "@/lib/resources/activation";
 import { fetchResourceSurface } from "@/lib/resourceSurface/api";
 import {
@@ -31,13 +31,11 @@ import {
   type ResourceSurfaceSession,
 } from "@/lib/resourceSurface/useResourceSurfaceSession";
 import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHandoff";
+import { draftNoteRef } from "@/lib/resourceSurface/dailySurfacePersistence";
 import {
-  draftNoteRef,
-  provisionalDailyOccurrence,
-} from "@/lib/resourceSurface/dailySurfacePersistence";
-import {
-  dailyDraftKey,
+  DailyDraftStorageError,
   readDailyDraft,
+  readDailyDraftRaw,
   subscribeDailyDraft,
 } from "@/lib/notes/dailyDraftStore";
 import { getPaneScrollContainer } from "@/lib/reader/paneScroll";
@@ -51,10 +49,6 @@ import type {
   WorkspaceTargetDisposition,
 } from "@/lib/workspace/targetActivation";
 import styles from "./ResourceSurfaceEditor.module.css";
-
-const EMPTY_NOTE_BODY = {
-  type: "paragraph",
-} as Record<string, unknown>;
 
 export type ResourceSurfaceOperation =
   "Load" | "Save" | "OpenLinkedObject" | "Edit";
@@ -135,7 +129,7 @@ function resourceSurfaceErrorMessage(
         tone: "Danger",
         title,
         message:
-          "This resource changed elsewhere. Reload it, then retry your saved draft.",
+          "This resource changed elsewhere. Copy your draft and review both versions before reapplying.",
         requestId,
       };
     default:
@@ -151,6 +145,7 @@ export interface DailyResourceSurfaceEditorSource {
   onDeliveryClaimed: (delivery: PaneEntryDelivery) => void;
 }
 
+const DAILY_STORAGE_UNAVAILABLE = Symbol("daily storage unavailable");
 const serverDailyDraftSnapshot = () => null;
 
 function useDailyDraftSnapshot(daily?: DailyResourceSurfaceEditorSource) {
@@ -163,25 +158,24 @@ function useDailyDraftSnapshot(daily?: DailyResourceSurfaceEditorSource) {
         : () => undefined,
     [accountId, localDate],
   );
-  const getSnapshot = useCallback(
-    () =>
-      accountId && localDate && typeof window !== "undefined"
-        ? window.localStorage.getItem(dailyDraftKey(accountId, localDate))
-        : null,
-    [accountId, localDate],
-  );
-  const raw = useSyncExternalStore(
-    subscribe,
-    getSnapshot,
-    serverDailyDraftSnapshot,
-  );
-  return useMemo(
-    () =>
-      accountId && localDate && raw !== null
-        ? readDailyDraft(accountId, localDate)
-        : null,
-    [accountId, localDate, raw],
-  );
+  const getSnapshot = useCallback(() => {
+    if (!accountId || !localDate) return null;
+    try { return readDailyDraftRaw(accountId, localDate); }
+    catch (error) {
+      if (error instanceof DailyDraftStorageError) return DAILY_STORAGE_UNAVAILABLE;
+      throw error;
+    }
+  }, [accountId, localDate]);
+  const raw = useSyncExternalStore(subscribe, getSnapshot, serverDailyDraftSnapshot);
+  return useMemo(() => {
+    if (!accountId || !localDate || raw === null) return { draft: null, storageUnavailable: false };
+    if (raw === DAILY_STORAGE_UNAVAILABLE) return { draft: null, storageUnavailable: true };
+    try { return { draft: readDailyDraft(accountId, localDate), storageUnavailable: false }; }
+    catch (error) {
+      if (error instanceof DailyDraftStorageError) return { draft: null, storageUnavailable: true };
+      throw error;
+    }
+  }, [accountId, localDate, raw]);
 }
 
 type ResourceSurfaceEditorProps = (
@@ -423,6 +417,7 @@ function LoadedResourceSurfaceEditor({
   onSourceBodyMutationStarted?: () => MountedEditorMutationLease | null;
   onSourceBodyEditAborted?: () => void;
 }) {
+  const { accountId } = useAuthenticatedAccount();
   const editorSessionKey = daily
     ? `daily:${daily.accountId}:${daily.localDate}`
     : sourceRef!;
@@ -457,6 +452,7 @@ function LoadedResourceSurfaceEditor({
   );
   const reportError = useCallback((error: unknown) => {
     if (handleUnauthenticatedApiError(error)) return;
+    if (error instanceof WritingUnknownOutcomeError) return;
     try {
       resourceSurfaceErrorMessage(error, "Save");
     } catch (caughtDefect: unknown) {
@@ -479,9 +475,7 @@ function LoadedResourceSurfaceEditor({
   const claimDelivery = useCallback(
     (delivery: PaneEntryDelivery, noteId: string) => {
       const noteRef = draftNoteRef(noteId);
-      const canonical = sessionRef.current?.surface?.orderedItems.find(
-        (row) => row.target.item.ref === noteRef,
-      );
+      const canonical = sessionRef.current?.outline.rows.find((row) => row.target.item.ref === noteRef);
       setBodyFocus((current) => ({
         occurrenceId: canonical?.occurrenceId ?? `daily-provisional:${noteId}`,
         serial: current.serial + 1,
@@ -499,7 +493,8 @@ function LoadedResourceSurfaceEditor({
             localDate: daily.localDate,
           },
           delivery: daily.delivery,
-          draftSnapshot: dailyDraft,
+          draftSnapshot: dailyDraft.draft,
+          storageUnavailable: dailyDraft.storageUnavailable,
           ...(initialSurface && daily.materializedSourceRef
             ? {
                 initialMaterialized: {
@@ -515,6 +510,7 @@ function LoadedResourceSurfaceEditor({
           onSourceBodyMutationStarted,
         }
       : {
+          accountId,
           sourceRef: sourceRef!,
           initialSurface: initialSurface!,
           onError: reportError,
@@ -557,9 +553,14 @@ function LoadedResourceSurfaceEditor({
     if (surface) onSurfaceChangeRef.current?.(surface);
   }, [surface]);
   const dailyTitle = "title" in session ? session.title : null;
+  const rootReturnSerial = session.outline.rootFocusRequest?.serial ?? 0;
   useEffect(() => {
     if (dailyIdentity) onDailyTitleChange?.(dailyTitle);
   }, [dailyIdentity, dailyTitle, onDailyTitleChange]);
+
+  useEffect(() => {
+    if (rootReturnSerial && surface?.source.content.kind === "page_title") titleRef.current?.focus();
+  }, [rootReturnSerial, surface?.source.content.kind, titleRef]);
 
   useEffect(() => {
     if (!focusMastheadSerial) return;
@@ -568,56 +569,15 @@ function LoadedResourceSurfaceEditor({
     titleRef.current?.select();
   }, [focusMastheadSerial, titleRef]);
 
+  const firstOutlineRowId = session.outline.rows[0]?.occurrenceId ?? null;
   useEffect(() => {
     if (!focusBodySerial) return;
     sourceBodyChangedSinceFocusRef.current = false;
-    const first = surface?.orderedItems[0];
     setBodyFocus({
-      occurrenceId: first?.occurrenceId ?? null,
+      occurrenceId: firstOutlineRowId,
       serial: focusBodySerial,
     });
-  }, [focusBodySerial, setBodyFocus, surface]);
-
-  const insertNote = useCallback(
-    (position: { kind: "start" } | { kind: "after"; occurrenceId: string }) => {
-      const noteId = createRandomId();
-      const occurrenceId = session.command({
-        type: "insert_note",
-        noteId,
-        position,
-        bodyPmJson: EMPTY_NOTE_BODY,
-      });
-      if (occurrenceId === null) return;
-      setBodyFocus((current) => ({
-        occurrenceId,
-        serial: current.serial + 1,
-      }));
-    },
-    [session, setBodyFocus],
-  );
-
-  const splitNote = useCallback(
-    (input: {
-      occurrenceId: string;
-      leftBodyPmJson: Record<string, unknown>;
-      rightBodyPmJson: Record<string, unknown>;
-    }) => {
-      const noteId = createRandomId();
-      const occurrenceId = session.command({
-        type: "split_note",
-        occurrenceId: input.occurrenceId,
-        noteId,
-        leftBodyPmJson: input.leftBodyPmJson,
-        rightBodyPmJson: input.rightBodyPmJson,
-      });
-      if (occurrenceId === null) return;
-      setBodyFocus((current) => ({
-        occurrenceId,
-        serial: current.serial + 1,
-      }));
-    },
-    [session, setBodyFocus],
-  );
+  }, [firstOutlineRowId, focusBodySerial, setBodyFocus]);
 
   const onTitleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -628,7 +588,7 @@ function LoadedResourceSurfaceEditor({
       )
         return;
       event.preventDefault();
-      const first = surface?.orderedItems[0];
+      const first = session.outline.rows[0];
       if (first?.target.content.kind === "note_body") {
         setBodyFocus((current) => ({
           occurrenceId: first.occurrenceId,
@@ -636,9 +596,9 @@ function LoadedResourceSurfaceEditor({
         }));
         return;
       }
-      insertNote({ kind: "start" });
+      session.outline.insert({ kind: "start" });
     },
-    [insertNote, setBodyFocus, surface],
+    [session.outline, setBodyFocus],
   );
 
   const activate = useCallback(
@@ -685,14 +645,6 @@ function LoadedResourceSurfaceEditor({
   );
 
   const dailySession = "provisional" in session ? session : null;
-  const provisional = dailySession?.provisional ?? null;
-  const orderedItems = useMemo(
-    () => [
-      ...(surface?.orderedItems ?? []),
-      ...(provisional ? [provisionalDailyOccurrence(provisional)] : []),
-    ],
-    [provisional, surface],
-  );
   if (defectState !== null) throw defectState.error;
 
   const source = surface?.source ?? null;
@@ -714,28 +666,29 @@ function LoadedResourceSurfaceEditor({
         aria-label="Page title"
         readOnly={!editable}
       />
-    ) : source?.content.kind === "note_body" &&
-      "updateSourceNoteBody" in session ? (
+    ) : source?.content.kind === "note_body" ? (
       <NoteBodyEditor
         resourceKey={editorSessionKey}
-        initialBodyPmJson={source.content.bodyPmJson}
-        fallbackBodyText={source.content.bodyText}
+        document={session.bodyDocument(source.item.ref)}
+        restoreSelection={session.restoreSelection(source.item.ref)}
         editable={editable}
         ariaLabel="Note content"
         notePulseTarget={notePulseTarget}
-        focusRequest={focusBodySerial}
-        onBodyChange={(change: NoteBodyChange) => {
+        focusRequest={focusBodySerial + rootReturnSerial}
+        onEdit={(edit) => {
           sourceBodyChangedSinceFocusRef.current = true;
-          session.updateSourceNoteBody(change);
+          session.editBody({ occurrenceId: source.item.ref, edit });
         }}
+        onSelectionChange={(selection) => session.selection({ occurrenceId: source.item.ref, selection })}
+        onHistoryBoundary={() => session.boundary(source.item.ref)}
+        onUndoRequest={() => session.undo(source.item.ref)}
+        onRedoRequest={() => session.redo(source.item.ref)}
+        onFlushRequest={session.flush}
         onFocusChange={(focused) => {
           if (!focused && !sourceBodyChangedSinceFocusRef.current) {
             onSourceBodyEditAborted?.();
           }
         }}
-        onBlurFlush={(change: NoteBodyChange) =>
-          session.updateSourceNoteBody({ ...change, flush: true })
-        }
         onOpenObject={openObject}
         onFeedback={setFeedback}
         onError={(error) => presentFailure(error, "Edit")}
@@ -752,8 +705,25 @@ function LoadedResourceSurfaceEditor({
       <div aria-label="Page title loading" aria-busy="true" />
     );
 
-  const failed = session.status === "failed";
-  const recovery = failed || session.hasRecoveredDraft;
+  const failed =
+    session.status === "storage_failed" ||
+    session.status === "network_failed" ||
+    session.status === "conflict" ||
+    session.status === "server_failed";
+  const recovery = failed || session.hasRecoveredDraft || session.status === "recovered";
+  const recoveryMessage = session.status === "storage_failed" || !session.localRetained
+    ? "Device storage is unavailable. Keep this page open and copy any unsaved text before leaving."
+    : session.status === "network_failed"
+      ? "Changes are kept on this device. The server outcome is unknown; retry sends the same request."
+      : session.status === "conflict"
+        ? "This note changed elsewhere. Your version is kept here. Copy it before reviewing the remote version."
+        : session.status === "server_failed"
+          ? "The server rejected this change. Your draft is kept on this device."
+          : session.recoveryCandidates.length > 0
+            ? "Unsaved work from another session is available. Choose what to recover."
+            : session.status === "recovered"
+              ? "Recovered unsaved changes are open. Review them before retrying."
+              : "An older draft is available for export. Copy it before continuing.";
   return (
     <div ref={surfaceRootRef} className={styles.surface}>
       {recovery ? (
@@ -762,37 +732,57 @@ function LoadedResourceSurfaceEditor({
           data-state={failed ? "failed" : "recovered"}
         >
           <span
-            role={
-              recoveryCopyFeedback ? undefined : failed ? "alert" : "status"
-            }
-            aria-live={
-              recoveryCopyFeedback ? undefined : failed ? "assertive" : "polite"
-            }
+            role={recoveryCopyFeedback ? undefined : failed ? "alert" : "status"}
+            aria-live={recoveryCopyFeedback ? undefined : failed ? "assertive" : "polite"}
           >
-            {failed
-              ? "Changes are saved here until you retry."
-              : "Recovered unsaved changes."}
+            {recoveryMessage}
           </span>
           <span className={styles.recoveryActions}>
-            <Button size="sm" variant="secondary" onClick={session.retry}>
-              Retry
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => void session.reload()}
-            >
-              Reload
-            </Button>
+            {session.status !== "conflict" && (failed || session.status === "recovered") ? (
+              <Button size="sm" variant="secondary" onClick={session.retry}>
+                Retry save
+              </Button>
+            ) : null}
+            {session.status === "conflict" ? (
+              <Button size="sm" variant="secondary" onClick={() => void session.reload().catch((error) => presentFailure(error, "Load"))}>
+                Refresh remote
+              </Button>
+            ) : null}
             <Button size="sm" variant="ghost" onClick={copyRecovery}>
-              Copy
+              Copy recovery data
             </Button>
           </span>
+          {session.recoveryCandidates.map((candidate, index) => (
+            <span className={styles.recoveryActions} key={candidate.key + ":" + (candidate.noteRef ?? candidate.operationId ?? index)}>
+              <span>
+                {candidate.legacy
+                  ? "Previous writing format — copy recovery data"
+                  : candidate.corrupt
+                  ? "Unreadable retained draft"
+                  : candidate.noteRef
+                    ? "Note draft " + candidate.noteRef
+                    : "Pending surface change " + (index + 1)}
+              </span>
+              {!candidate.corrupt && !candidate.legacy ? (
+                <Button size="sm" variant="secondary" onClick={() => {
+                  void session.recover(candidate).then((recovered) => {
+                    if (!recovered) setRecoveryCopyFeedback({
+                      tone: "Warning",
+                      title: "Draft wasn’t recovered",
+                      message: "It changed or cannot be applied here. Copy the recovery data before trying again.",
+                    });
+                  }).catch((error: unknown) => presentFailure(error, "Edit"));
+                }}>
+                  Recover
+                </Button>
+              ) : null}
+            </span>
+          ))}
           {recoveryCopyFeedback ? (
             <FeedbackNotice
               content={recoveryCopyFeedback}
               announcement="Assertive"
-              actions={[{ label: "Retry", onClick: copyRecovery }]}
+              actions={[{ label: "Retry copy", onClick: copyRecovery }]}
             />
           ) : null}
         </div>
@@ -802,35 +792,29 @@ function LoadedResourceSurfaceEditor({
       ) : null}
       <div className={styles.masthead}>{masthead}</div>
       <ResourceSurfaceBodyEditor
-        sourceRef={surface?.source.item.ref}
         editorSessionKey={editorSessionKey}
-        orderedItems={orderedItems}
+        outline={session.outline}
         rowFilterQuery={rowFilterQuery}
         editable={editable}
         structuralEditing={
-          surface !== null || Boolean(daily && orderedItems.length === 0)
+          surface !== null || Boolean(daily && session.outline.rows.length === 0)
         }
         focusRequest={bodyFocus}
-        onInsertNote={insertNote}
-        onSplitNote={splitNote}
-        onMoveOccurrence={({ occurrenceId, position }) =>
-          session.command({ type: "move_occurrence", occurrenceId, position })
-        }
-        onRemoveOccurrence={(occurrenceId) =>
-          session.command({ type: "remove_occurrence", occurrenceId })
-        }
-        onInsertResource={({ targetRef, position }) =>
-          session.command({ type: "insert_resource", targetRef, position })
-        }
-        onBodyChange={(change) => session.updateBody(change)}
-        onBodyBlur={(change) => session.updateBody({ ...change, flush: true })}
+        bodyDocument={session.bodyDocument}
+        restoreSelection={session.restoreSelection}
+        onBodyEdit={session.editBody}
+        onSelectionChange={session.selection}
+        onHistoryBoundary={session.boundary}
+        onUndo={session.undo}
+        onRedo={session.redo}
+        onFlush={session.flush}
         onActivate={activate}
         onOpenObject={openObject}
         onFeedback={setFeedback}
         inputHandoff={
-          dailyDraft && dailySession?.inputHandoff.kind === "Buffered"
+          dailyDraft.draft && dailySession?.inputHandoff.kind === "Buffered"
             ? {
-                noteRef: draftNoteRef(dailyDraft.noteId),
+                noteRef: draftNoteRef(dailyDraft.draft.noteId),
                 handoff: dailySession.inputHandoff,
               }
             : null

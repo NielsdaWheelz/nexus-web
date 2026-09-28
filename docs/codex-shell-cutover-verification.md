@@ -2,6 +2,9 @@
 
 status: staged; release qualification incomplete · observed 2026-09-27
 
+the receipts below attest to the pinned pre-main-integration sources, not the
+later merge tree. the integrated source requires its own release qualification.
+
 ## pinned cohort
 
 nexus api/worker/host `d6b06991c2b49ac6d5d0b1c9880be7f94d35e7b5`; web
@@ -74,8 +77,10 @@ anthropic's 20 nexus cells remain blocked by the owner's refusal to acknowledge
 standard retention. four xai cells have an explicit owner waiver, not a pass.
 actual codex auth refresh, the twelve background roles and background
 write/list/undo, and remaining lifecycle/denial cases remain open; see the
-linked tickets in `docs/outstanding-issues.md`. temporary proofs stay until
-acceptance. no production deployment or reset occurred.
+linked tickets in `docs/outstanding-issues.md`. nonsecret receipts remain;
+disposable tracked proof files were removed from the merge target because one
+used a retired contract. unfinished journeys need fresh final-source proof.
+no production deployment or reset occurred.
 on final backend `d6b06991c`, a note dossier produced a cited revision but
 ignored a persisted user instruction to create a note. the generation had
 `CodexShell` authority and zero tool positions/effects; this is a failed

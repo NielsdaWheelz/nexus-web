@@ -217,7 +217,24 @@ class RepairSourceRecovery(_HistoryModel):
     job_id: UUID
 
 
-SourceRecovery = Annotated[RetrySourceRecovery | RepairSourceRecovery, Field(discriminator="kind")]
+class ReprocessSourceRecovery(_HistoryModel):
+    kind: Literal["ReprocessSource"] = "ReprocessSource"
+    new_source_attempt_id: UUID
+
+
+class CorrectSourceTypeRecovery(_HistoryModel):
+    kind: Literal["CorrectSourceType"] = "CorrectSourceType"
+    new_source_attempt_id: UUID
+    source_type: Literal["remote_epub_url"]
+
+
+SourceRecovery = Annotated[
+    RetrySourceRecovery
+    | RepairSourceRecovery
+    | ReprocessSourceRecovery
+    | CorrectSourceTypeRecovery,
+    Field(discriminator="kind"),
+]
 
 
 class SucceededSourceBaselineOutcome(_HistoryModel):

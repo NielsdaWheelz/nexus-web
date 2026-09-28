@@ -338,7 +338,6 @@ def _existing_link_id(
             ResourceEdge.ordinal.is_(None),
             ResourceEdge.snapshot.is_(None),
             ResourceEdge.source_order_key.is_(None),
-            ResourceEdge.target_order_key.is_(None),
             or_(_oriented(a, b), _oriented(b, a)),
         )
     ).scalar_one_or_none()

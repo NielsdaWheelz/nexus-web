@@ -45,6 +45,22 @@ an edition fallback. the shared media response and reader's media info show both
 provider scheduling timestamps, acquisition, and consumption keep their own
 contracts. `services/metadata_enrichment.py` owns tool limits and acceptance.
 
+stored-media collection responses carry one `MediaSummaryOut`: media identity,
+title, ordered credits, original publication, processing status, and optional
+modality-specific duration. `services/media.py` composes it in batches from
+visible media; `consumption/projection.py` supplies audio duration and current
+position. rows show only author-role credits, original publication, time, and
+failure. publisher and all credits remain in full media metadata. the shared
+`presentMedia` projects each eligible occurrence without a detail request.
+
+the `MediaMetadata` capability appears on every visible stored-media resource,
+including pending and failed media. its canonical `metadata…` action opens one
+self-loading overlay through `resourceOverlaysController`, using `GET /media/{id}`.
+the overlay groups publication, source, reading/listening, activity, and
+availability facts; it does not aggregate related-resource histories. the
+invoking menu trigger owns focus return, with pane chrome as fallback. an old
+request cannot install into a newer overlay session.
+
 author works sort oldest first by default on `media.original_published_date`.
 podcasts and catalogue-only gutenberg works have unknown publication dates and
 sort last in either date direction. the gutenberg `issued` date remains a

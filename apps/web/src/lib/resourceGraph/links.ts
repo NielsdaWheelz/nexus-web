@@ -7,7 +7,7 @@
 
 import type { ApiPath } from "@/lib/api/client";
 import { apiFetch } from "@/lib/api/client";
-import { createRandomId } from "@/lib/createRandomId";
+import { decodeNoteBodyValue } from "@/lib/notes/prosemirror/schema";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
 import type { ResourceTarget } from "@/lib/resources/resourceTargets";
@@ -15,6 +15,7 @@ import { decodeConnectionOut, type ConnectionOut } from "./connections";
 import {
   expectBoolean,
   expectExactRecord,
+  expectFiniteNumber,
   expectNullableString,
   expectString,
 } from "@/lib/validation";
@@ -80,6 +81,20 @@ export interface CreateLinkOut {
   connection: ConnectionOut;
 }
 
+/** Committed generic link actions invalidate the same graph used by writing surfaces. */
+export type LinkMutation =
+  | { kind: "created"; sourceRef: string; targetRef: string }
+  | { kind: "deleted"; linkId: string };
+
+const linkMutationListeners = new Set<(mutation: LinkMutation) => void>();
+
+export function subscribeLinkMutations(
+  listener: (mutation: LinkMutation) => void,
+): () => void {
+  linkMutationListeners.add(listener);
+  return () => { linkMutationListeners.delete(listener); };
+}
+
 export async function createLink(
   input: CreateLinkInput,
 ): Promise<CreateLinkOut> {
@@ -99,7 +114,7 @@ export async function createLink(
     ["created", "created_source_ref", "connection"],
     "CreateLinkOut",
   );
-  return {
+  const result = {
     created: expectBoolean(value.created, "CreateLinkOut.created"),
     created_source_ref: expectNullableString(
       value.created_source_ref,
@@ -110,55 +125,49 @@ export async function createLink(
       "CreateLinkOut.connection",
     ),
   };
+  const mutation: LinkMutation = { kind: "created", sourceRef: result.connection.source_ref, targetRef: result.connection.target_ref };
+  for (const listener of linkMutationListeners) listener(mutation);
+  return result;
 }
 
 export async function deleteLink(linkId: string): Promise<void> {
   await apiFetch(`/api/resource-graph/links/${linkId}` as ApiPath, {
     method: "DELETE",
   });
-}
-
-export interface PutLinkNoteInput {
-  noteBlockId: string;
-  bodyPmJson: Record<string, unknown>;
+  const mutation: LinkMutation = { kind: "deleted", linkId };
+  for (const listener of linkMutationListeners) listener(mutation);
 }
 
 export interface LinkNoteOut {
   note_block_id: string;
+  body_pm_json: Record<string, unknown>;
+  body_text: string;
+  version_by_lane: { body: number; links: number };
   connection: ConnectionOut;
 }
 
-export async function putLinkNote(
-  linkId: string,
-  body: PutLinkNoteInput,
-): Promise<LinkNoteOut> {
-  const response = await apiFetch<{ data: unknown }>(
-    `/api/resource-graph/links/${linkId}/note` as ApiPath,
-    {
-      method: "PUT",
-      body: JSON.stringify({
-        client_mutation_id: createRandomId("link-note"),
-        note_block_id: body.noteBlockId,
-        body_pm_json: body.bodyPmJson,
-      }),
-    },
-  );
+export function decodeLinkNoteOut(raw: unknown): LinkNoteOut {
   const value = expectExactRecord(
-    response.data,
-    ["note_block_id", "connection"],
+    raw,
+    ["note_block_id", "body_pm_json", "body_text", "version_by_lane", "connection"],
     "LinkNoteOut",
   );
+  const noteBody = decodeNoteBodyValue(value.body_pm_json, value.body_text, "LinkNoteOut");
+  const versions = expectExactRecord(
+    value.version_by_lane,
+    ["body", "links"],
+    "LinkNoteOut.version_by_lane",
+  );
+  const bodyVersion = expectFiniteNumber(versions.body, "LinkNoteOut.version_by_lane.body");
+  const edgeVersion = expectFiniteNumber(versions.links, "LinkNoteOut.version_by_lane.links");
+  if (!Number.isInteger(bodyVersion) || bodyVersion < 1 || !Number.isInteger(edgeVersion) || edgeVersion < 0) {
+    throw new TypeError("LinkNoteOut.version_by_lane is invalid");
+  }
   return {
-    note_block_id: expectString(
-      value.note_block_id,
-      "LinkNoteOut.note_block_id",
-    ),
+    note_block_id: expectString(value.note_block_id, "LinkNoteOut.note_block_id"),
+    body_pm_json: noteBody.bodyPmJson,
+    body_text: noteBody.bodyText,
+    version_by_lane: { body: bodyVersion, links: edgeVersion },
     connection: decodeConnectionOut(value.connection, "LinkNoteOut.connection"),
   };
-}
-
-export async function deleteLinkNote(linkId: string): Promise<void> {
-  await apiFetch(`/api/resource-graph/links/${linkId}/note` as ApiPath, {
-    method: "DELETE",
-  });
 }

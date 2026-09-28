@@ -82,6 +82,7 @@ ServerActionAvailabilityOut = Annotated[
 SimpleResourceActionCapabilityKind = Literal[
     "Open",
     "OpenInNewPane",
+    "MediaMetadata",
     "Share",
     "Chat",
     "PlayNext",

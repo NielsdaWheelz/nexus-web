@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import NoteBlock
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
-from nexus.schemas.resource_items import is_object_type
+from nexus.schemas.resource_items import ExpectedNoteBody, is_object_type
 from nexus.services.resource_graph.edges import replace_edges_for_origin
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.schemas import EdgeCreate
@@ -106,6 +106,22 @@ def get_note_block_for_owner_or_404(db: Session, viewer_id: UUID, block_id: UUID
     return block
 
 
+def require_expected_body(
+    db: Session, *, viewer_id: UUID, block_id: UUID, expected_body: ExpectedNoteBody
+) -> None:
+    """Check the same canonical body lane used by ordinary note mutations."""
+    block = db.get(NoteBlock, block_id)
+    if expected_body.kind == "absent":
+        if block is not None:
+            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Note body already exists")
+        return
+    if block is None or block.user_id != viewer_id:
+        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Note body does not exist")
+    current = versions.ensure_version(db, viewer_id=viewer_id, ref=note_ref(block_id), lane="body")
+    if current.version != expected_body.version:
+        raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Note body version is stale")
+
+
 def upsert_note_body(
     db: Session, *, viewer_id: UUID, block_id: UUID, body_pm_json: dict[str, Any]
 ) -> NoteBlock:
@@ -119,7 +135,7 @@ def upsert_note_body(
         )
         db.add(block)
         db.flush()
-        for lane in ("body", "outgoing_edges"):
+        for lane in ("body", "links"):
             versions.ensure_version(db, viewer_id=viewer_id, ref=note_ref(block.id), lane=lane)
         sync_note_body_edges(db, viewer_id=viewer_id, block=block)
         return block

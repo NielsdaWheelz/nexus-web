@@ -1669,9 +1669,7 @@ def _dispatch_key(build_id: UUID) -> str:
 
 
 def _running_claim_is_current(db: Session, ctx: JobExecutionContext) -> bool:
-    return running_job_claim_is_current(
-        db, job_id=ctx.job_id, worker_id=ctx.worker_id, attempt_no=ctx.attempt_no
-    )
+    return running_job_claim_is_current(db, context=ctx)
 
 
 def _attempt_can_write(db: Session, *, build_id: UUID, ctx: JobExecutionContext) -> bool:

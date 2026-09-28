@@ -3,6 +3,15 @@ import type { CanonicalCursorResult } from "@/lib/highlights/canonicalCursor";
 import type { PaneFindResultKey } from "@/lib/panes/paneSearch";
 import type { PaneFindAdapter } from "@/lib/panes/usePaneFind";
 import { createPaneFindHighlightOwner } from "./paneFindHighlightRegistry";
+import type { ReaderNavigationOutcome } from "./useReaderNavigation";
+
+/** Find owns matches; the mounted reader owns every movement and return. */
+export interface ReaderTextFindNavigation {
+  inspect(
+    target: { fragmentId: string; startOffset: number; endOffset: number },
+    signal: AbortSignal,
+  ): Promise<ReaderNavigationOutcome>;
+}
 
 export interface CanonicalTextFindAdapter<TError>
   extends PaneFindAdapter<TError> {

@@ -231,7 +231,7 @@ export default function BrowsePreviewPaneBody() {
   const { playPreviewAudio } = usePlayerCommands();
   const preview = resource.status === "ready" ? resource.data : null;
   const ownedHref =
-    preview?.resolution.kind === "InNexus"
+    preview?.resolution.kind === "InNexusMedia" || preview?.resolution.kind === "InNexusPodcast"
       ? preview.resolution.href
       : null;
   const backToBrowse = () => {

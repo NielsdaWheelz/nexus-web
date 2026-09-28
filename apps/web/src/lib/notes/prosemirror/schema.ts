@@ -12,6 +12,29 @@ function requiredDomAttribute(dom: HTMLElement, name: string): string | false {
   return value ? value : false;
 }
 
+export function isSafeNoteBodyHref(href: unknown): href is string {
+  if (typeof href !== "string" || !href ||
+      /\s/u.test(href) || /[\u0000-\u001f\u007f\\]/u.test(href)) {
+    return false;
+  }
+  if (href.startsWith("/")) return !href.startsWith("//");
+  if (/^mailto:/iu.test(href)) {
+    try {
+      const parsed = new URL(href);
+      return parsed.host.length === 0 && parsed.pathname.length > 0;
+    } catch {
+      return false;
+    }
+  }
+  const authority = /^https?:\/\/([^/?#]+)/iu.exec(href)?.[1];
+  if (!authority || authority.includes("%")) return false;
+  try {
+    return Boolean(new URL(href).host);
+  } catch {
+    return false;
+  }
+}
+
 export const noteBodyNodeSpecs = {
   note_body_doc: {
     content: "block_body",
@@ -173,6 +196,17 @@ export const noteBodyMarkSpecs = {
     parseDOM: [{ tag: "code" }],
     toDOM: () => ["code", 0],
   },
+  underline: {
+    parseDOM: [
+      { tag: "u" },
+      {
+        style: "text-decoration",
+        getAttrs: (value) =>
+          /(?:^|\s)underline(?:\s|$)/u.test(value) ? null : false,
+      },
+    ],
+    toDOM: () => ["u", 0],
+  },
   link: {
     attrs: {
       href: {},
@@ -184,17 +218,30 @@ export const noteBodyMarkSpecs = {
         tag: "a[href]",
         getAttrs: (dom) => {
           if (!(dom instanceof HTMLAnchorElement)) return false;
+          const href = dom.getAttribute("href");
+          if (!href || !isSafeNoteBodyHref(href)) return false;
           return {
-            href: dom.getAttribute("href"),
+            href,
             title: dom.getAttribute("title"),
           };
         },
       },
     ],
-    toDOM: (mark) => ["a", mark.attrs, 0],
+    toDOM: (mark) =>
+      isSafeNoteBodyHref(mark.attrs.href)
+        ? ["a", mark.attrs, 0]
+        : ["span", 0],
   },
   strikethrough: {
-    parseDOM: [{ tag: "s" }, { tag: "del" }],
+    parseDOM: [
+      { tag: "s" },
+      { tag: "del" },
+      {
+        style: "text-decoration",
+        getAttrs: (value) =>
+          /(?:^|\s)line-through(?:\s|$)/u.test(value) ? null : false,
+      },
+    ],
     toDOM: () => ["s", 0],
   },
 } satisfies Record<string, MarkSpec>;
@@ -222,18 +269,15 @@ export function emptyNoteBody(): NoteBodyValue {
 }
 
 export function createNoteBodyDoc(input: {
-  bodyPmJson?: Record<string, unknown>;
-  fallbackBodyText?: string;
+  bodyPmJson: Record<string, unknown>;
 }): ProseMirrorNode {
-  const body = noteBodyNodeFromJson(
-    input.bodyPmJson,
-    input.fallbackBodyText ?? "",
-  );
+  const body = decodeNoteBodyNode(input.bodyPmJson, "note body");
   return noteBodySchema.nodes.note_body_doc!.create(null, body);
 }
 
 export function noteBodyValueFromDoc(doc: ProseMirrorNode): NoteBodyValue {
-  const body = doc.firstChild ?? paragraphFromText("");
+  const body = doc.firstChild;
+  if (!body) throw new TypeError("note body document must contain one block");
   return noteBodyValueFromNode(body);
 }
 
@@ -242,6 +286,7 @@ function decodeNoteBodyNode(raw: unknown, name: string): ProseMirrorNode {
   let body: ProseMirrorNode;
   try {
     body = noteBodySchema.nodeFromJSON(bodyPmJson);
+    body.check();
   } catch {
     throw new TypeError(`${name} must be a valid note body`);
   }
@@ -265,14 +310,6 @@ export function decodeNoteBodyValue(
     throw new TypeError(`${name}.bodyText must match bodyPmJson`);
   }
   return value;
-}
-
-function noteBodyNodeFromJson(
-  bodyPmJson: Record<string, unknown> | undefined,
-  fallbackBodyText = "",
-): ProseMirrorNode {
-  if (bodyPmJson === undefined) return paragraphFromText(fallbackBodyText);
-  return decodeNoteBodyNode(bodyPmJson, "note body");
 }
 
 function noteBodyValueFromNode(body: ProseMirrorNode): NoteBodyValue {

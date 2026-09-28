@@ -16,7 +16,7 @@ import zipfile
 from collections.abc import Mapping, Sequence
 from functools import partial
 from pathlib import Path
-from typing import Any, TypedDict, cast
+from typing import Any, TypedDict
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, text
@@ -32,8 +32,9 @@ from nexus.db.models import (
     NoteBlock,
     Page,
 )
-from nexus.db.retries import retry_read_committed
-from nexus.errors import ApiError, ApiErrorCode, NotFoundError
+from nexus.db.retries import retry_read_committed, retry_serializable
+from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
+from nexus.schemas.resource_items import AbsentExpectedBody
 from nexus.services import notes as notes_service
 from nexus.services.highlights import (
     delete_highlight_rows,
@@ -80,13 +81,13 @@ class VaultSyncResult(TypedDict):
 
 class _ParsedPageBlock(TypedDict):
     id: UUID
-    parent_id: UUID | None
+    body_version: int
     body: str
 
 
 _BLOCK_MARKER_RE = re.compile(
     r"^<!-- nexus:block id=\"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
-    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\" parent=\"([^\"]*)\" -->$"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\" body-version=\"([0-9]+)\" -->$"
 )
 _HIGHLIGHT_NOTE_MARKER_RE = re.compile(
     r"^<!-- nexus:highlight-note id=\"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-"
@@ -195,12 +196,16 @@ def sync_vault_files(
                 partial(_sync_highlight_content_attempt, db, viewer_id, parsed),
             )
         else:
-            changed, conflict_reason = retry_read_committed(
+            changed, conflict_reason = retry_serializable(
                 db,
                 "sync_vault_page",
                 partial(_sync_page_content_attempt, db, viewer_id, parsed),
             )
 
+        # Each file owns its attempt. Refused/no-op reads must not lend their
+        # isolation level to the next file or the next watch iteration.
+        if db.in_transaction():
+            db.rollback()
         if conflict_reason is not None:
             conflicts.append(
                 {
@@ -212,11 +217,9 @@ def sync_vault_files(
         elif changed:
             delete_paths.append(path)
 
-    return {
-        "files": export_vault_files(db, viewer_id),
-        "delete_paths": delete_paths,
-        "conflicts": conflicts,
-    }
+    files = export_vault_files(db, viewer_id)
+    db.rollback()
+    return {"files": files, "delete_paths": delete_paths, "conflicts": conflicts}
 
 
 def watch_vault(
@@ -584,7 +587,7 @@ def _sync_page_content_attempt(
 def _ensure_page_versions(db: Session, viewer_id: UUID, page_id: UUID) -> None:
     ref = ResourceRef(scheme="page", id=page_id)
     versions.ensure_version(db, viewer_id=viewer_id, ref=ref, lane="title")
-    versions.ensure_version(db, viewer_id=viewer_id, ref=ref, lane="outgoing_edges")
+    versions.ensure_version(db, viewer_id=viewer_id, ref=ref, lane="links")
 
 
 def _load_vault_highlights(db: Session, viewer_id: UUID) -> list[Highlight]:
@@ -644,7 +647,7 @@ def _page_file(db: Session, page: Page) -> tuple[str, str]:
         "server_updated_at": page.updated_at.isoformat(),
         "deleted": False,
     }
-    body = _page_blocks_markdown(_editable_page_nodes(db, page.user_id, page.id))
+    body = _page_blocks_markdown(db, _editable_page_nodes(db, page.user_id, page.id))
     return f"Pages/{slug}--{page_handle}.md", _write_frontmatter(metadata, body)
 
 
@@ -654,202 +657,36 @@ def _apply_page_body_from_vault(
     page: Page,
     body: str,
 ) -> tuple[bool, str | None, set[UUID]]:
-    text_body = body.strip()
-    surface = graph_adjacency.load_page_surface(db, user_id=viewer_id, page_id=page.id)
-    nodes = _editable_page_nodes_from_surface(db, viewer_id, surface)
-    current_body = _page_blocks_markdown(nodes).strip()
-
-    parsed_blocks = _parse_marked_page_blocks(text_body)
-    if parsed_blocks:
-        return _apply_marked_page_blocks(db, viewer_id, surface, nodes, parsed_blocks)
-
-    if not nodes:
-        if not text_body:
-            return False, None, set()
-        block = upsert_note_body(
-            db,
-            viewer_id=viewer_id,
-            block_id=uuid4(),
-            body_pm_json=_vault_body_pm_json(text_body),
-        )
-        graph_adjacency.replace_ordered_targets(
-            db,
-            user_id=viewer_id,
-            source=ResourceRef(scheme="page", id=page.id),
-            targets=[
-                graph_adjacency.OrderedTarget(
-                    target=ResourceRef(scheme="note_block", id=block.id),
-                    source_order_key="0000000001",
-                )
-            ],
-        )
-        versions.bump_version(
-            db,
-            viewer_id=viewer_id,
-            ref=ResourceRef(scheme="page", id=page.id),
-            lane="outgoing_edges",
-        )
-        return True, None, {block.id}
-
-    flat_nodes = _flatten_page_nodes(nodes)
-    if len(flat_nodes) == 1:
-        if text_body == current_body:
-            return False, None, set()
-        upsert_note_body(
-            db,
-            viewer_id=viewer_id,
-            block_id=flat_nodes[0].block.id,
-            body_pm_json=_vault_body_pm_json(text_body),
-        )
-        return True, None, {flat_nodes[0].block.id}
-
-    fallback_blocks = [part.strip() for part in re.split(r"\n{2,}", text_body) if part.strip()]
-    if len(fallback_blocks) != len(nodes):
-        return (
-            False,
-            "Vault page sync needs exported block markers for this multi-block page",
-            set(),
-        )
-
-    changed = False
-    changed_block_ids: set[UUID] = set()
-    for node, block_body in zip(nodes, fallback_blocks, strict=True):
-        if block_body == _block_vault_body(node.block).strip():
+    nodes = _flatten_page_nodes(_editable_page_nodes(db, viewer_id, page.id))
+    if not nodes and not body.strip():
+        return False, None, set()
+    parsed = _parse_marked_page_blocks(body.strip())
+    if [item["id"] for item in parsed] != [node.block.id for node in nodes]:
+        return False, "Vault relation markers cannot be edited; use link actions in Nexus", set()
+    if not parsed:
+        return False, "Vault note edits need exported body-version markers", set()
+    changed: set[UUID] = set()
+    for item, node in zip(parsed, nodes, strict=True):
+        if item["body"] == _block_vault_body(node.block).strip():
             continue
-        upsert_note_body(
+        current = versions.ensure_version(
             db,
             viewer_id=viewer_id,
-            block_id=node.block.id,
-            body_pm_json=_vault_body_pm_json(block_body),
+            ref=ResourceRef(scheme="note_block", id=node.block.id),
+            lane="body",
         )
-        changed = True
-        changed_block_ids.add(node.block.id)
-    return changed, None, changed_block_ids
-
-
-def _apply_marked_page_blocks(
-    db: Session,
-    viewer_id: UUID,
-    surface: graph_adjacency.PageSurface,
-    nodes: list[graph_adjacency.SurfaceNote],
-    parsed_blocks: list[_ParsedPageBlock],
-) -> tuple[bool, str | None, set[UUID]]:
-    current_nodes = _flatten_page_nodes(nodes)
-    blocks_by_id = {node.block.id: node.block for node in current_nodes}
-    parsed_ids = [parsed_block["id"] for parsed_block in parsed_blocks]
-    if len(set(parsed_ids)) != len(parsed_ids):
-        return False, "Vault page contains duplicate note block markers", set()
-    if set(parsed_ids) != set(blocks_by_id):
-        return False, "Vault page block markers must match the editable page blocks", set()
-
-    parsed_id_set = set(parsed_ids)
-    for parsed_block in parsed_blocks:
-        parent_id = parsed_block["parent_id"]
-        if (
-            parent_id is not None
-            and parent_id not in parsed_id_set
-            and parent_id not in blocks_by_id
-        ):
-            return False, "Vault page contains a note block parent that is not on this page", set()
-
-    changed = False
-    changed_block_ids: set[UUID] = set()
-    for parsed_block in parsed_blocks:
-        block = blocks_by_id[parsed_block["id"]]
-        if _block_vault_body(block).strip() == parsed_block["body"]:
-            continue
-        upsert_note_body(
-            db,
-            viewer_id=viewer_id,
-            block_id=block.id,
-            body_pm_json=_vault_body_pm_json(parsed_block["body"]),
-        )
-        changed = True
-        changed_block_ids.add(block.id)
-
-    current_by_parent = _children_by_parent_from_surface(surface)
-    desired_by_parent: dict[ResourceRef, list[dict[str, Any]]] = {}
-    collapsed_by_id = {node.block.id: node.collapsed for node in current_nodes}
-    page_ref = ResourceRef(scheme="page", id=surface.page.id)
-    for parsed_block in parsed_blocks:
-        parent = (
-            page_ref
-            if parsed_block["parent_id"] is None
-            else ResourceRef(scheme="note_block", id=parsed_block["parent_id"])
-        )
-        desired_by_parent.setdefault(parent, []).append(
-            {
-                "block_id": parsed_block["id"],
-                "source_order_key": "0000000000",
-                "collapsed": collapsed_by_id[parsed_block["id"]],
-            }
-        )
-
-    for parent in set(current_by_parent) | set(desired_by_parent):
-        desired = desired_by_parent.get(parent, [])
-        inserted = False
-        next_children: list[dict[str, Any]] = []
-        for child in current_by_parent.get(parent, []):
-            if child["block_id"] in parsed_id_set:
-                if not inserted and desired:
-                    next_children.extend(desired)
-                    inserted = True
-                continue
-            next_children.append(child)
-        if desired and not inserted:
-            next_children.extend(desired)
-        _renumber_child_payload(next_children)
-        if next_children == current_by_parent.get(parent, []):
-            continue
-        graph_adjacency.replace_ordered_targets(
-            db,
-            user_id=viewer_id,
-            source=parent,
-            targets=[
-                graph_adjacency.OrderedTarget(
-                    target=ResourceRef(scheme="note_block", id=cast(UUID, child["block_id"])),
-                    source_order_key=cast(str, child["source_order_key"]),
-                )
-                for child in next_children
-            ],
-        )
-        for child in next_children:
-            graph_adjacency.set_collapsed(
+        if current.version != item["body_version"]:
+            return False, "Server note changed since this file was exported", set()
+        changed.add(node.block.id)
+    for item in parsed:
+        if item["id"] in changed:
+            upsert_note_body(
                 db,
-                user_id=viewer_id,
-                parent=parent,
-                block_id=cast(UUID, child["block_id"]),
-                collapsed=cast(bool, child["collapsed"]),
+                viewer_id=viewer_id,
+                block_id=item["id"],
+                body_pm_json=_vault_body_pm_json(item["body"]),
             )
-        versions.bump_version(db, viewer_id=viewer_id, ref=parent, lane="outgoing_edges")
-        changed = True
-    return changed, None, changed_block_ids
-
-
-def _children_by_parent_from_surface(
-    surface: graph_adjacency.PageSurface,
-) -> dict[ResourceRef, list[dict[str, Any]]]:
-    out: dict[ResourceRef, list[dict[str, Any]]] = {}
-
-    def visit(node: graph_adjacency.SurfaceNote) -> None:
-        out.setdefault(node.parent, []).append(
-            {
-                "block_id": node.block.id,
-                "source_order_key": node.source_order_key,
-                "collapsed": node.collapsed,
-            }
-        )
-        for child in node.children:
-            visit(child)
-
-    for root in surface.roots:
-        visit(root)
-    return out
-
-
-def _renumber_child_payload(children: list[dict[str, Any]]) -> None:
-    for index, child in enumerate(children):
-        child["source_order_key"] = f"{index + 1:010d}"
+    return bool(changed), None, changed
 
 
 def _vault_body_pm_json(markdown: str) -> dict[str, Any]:
@@ -881,23 +718,13 @@ def _editable_page_nodes_from_surface(
         db, viewer_id=viewer_id, block_ids=block_ids
     )
 
-    def keep(nodes: list[graph_adjacency.SurfaceNote]) -> list[graph_adjacency.SurfaceNote]:
-        out: list[graph_adjacency.SurfaceNote] = []
-        for node in nodes:
-            if node.block.id in highlight_note_ids:
-                continue
-            out.append(
-                graph_adjacency.SurfaceNote(
-                    block=node.block,
-                    parent=node.parent,
-                    source_order_key=node.source_order_key,
-                    collapsed=node.collapsed,
-                    children=keep(node.children),
-                )
-            )
-        return out
-
-    return keep(surface.roots)
+    # Export canonical bodies, not an ownership hierarchy. Skipping an annotation
+    # must not hide other notes reached through it.
+    return [
+        graph_adjacency.SurfaceNote(block=node.block, order_key=node.order_key)
+        for node in _flatten_page_nodes(surface.roots)
+        if node.block.id not in highlight_note_ids
+    ]
 
 
 def _block_vault_body(block: NoteBlock) -> str:
@@ -947,13 +774,15 @@ def _vault_markdown_from_pm_json(value: object) -> str:
     return "\n".join(line.rstrip() for line in "".join(parts).splitlines()).strip()
 
 
-def _page_blocks_markdown(nodes: list[graph_adjacency.SurfaceNote]) -> str:
+def _page_blocks_markdown(db: Session, nodes: list[graph_adjacency.SurfaceNote]) -> str:
     sections: list[str] = []
 
     def visit(node: graph_adjacency.SurfaceNote) -> None:
         block = node.block
-        parent = "" if node.parent.scheme == "page" else str(node.parent.id)
-        marker = f'<!-- nexus:block id="{block.id}" parent="{parent}" -->'
+        version = versions.versions_for_ref(
+            db, viewer_id=block.user_id, ref=ResourceRef(scheme="note_block", id=block.id)
+        ).get("body", 1)
+        marker = f'<!-- nexus:block id="{block.id}" body-version="{version}" -->'
         body = _block_vault_body(block).strip()
         sections.append(f"{marker}\n{body}" if body else marker)
         for child in node.children:
@@ -1020,7 +849,7 @@ def _parse_marked_page_blocks(body: str) -> list[_ParsedPageBlock]:
     return [
         {
             "id": UUID(groups[0]),
-            "parent_id": UUID(groups[1]) if groups[1] else None,
+            "body_version": int(groups[1]),
             "body": block_body,
         }
         for groups, block_body in _parse_marked_sections(
@@ -1054,6 +883,7 @@ def _sync_highlight_note_body_from_vault(
     highlight_id: UUID,
     body: str,
 ) -> None:
+    """Only additions are safe: exported vault files carry no note body base."""
     blocks = graph_highlight_notes.note_blocks_for_highlight(
         db, viewer_id=viewer_id, highlight_id=highlight_id
     )
@@ -1067,15 +897,15 @@ def _sync_highlight_note_body_from_vault(
                 "Vault highlight contains duplicate note markers",
             )
         if set(parsed_ids) != set(blocks_by_id):
-            raise ApiError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "Vault highlight note markers must match linked notes",
+            raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Vault note attachments changed")
+        if any(
+            note_body != _block_vault_body(blocks_by_id[note_id]).strip()
+            for note_id, note_body in parsed_notes
+        ):
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT,
+                "Vault note edit needs an exported body version",
             )
-        _patch_existing_note_block_bodies_from_vault(
-            db,
-            viewer_id,
-            {note_id: note_body for note_id, note_body in parsed_notes},
-        )
         return
 
     if len(blocks) > 1:
@@ -1084,22 +914,17 @@ def _sync_highlight_note_body_from_vault(
             "Vault highlight sync needs exported note markers for this multi-note highlight",
         )
     existing = blocks[0] if blocks else None
-    if not body:
-        if existing is not None:
-            notes_service.delete_highlight_note_in_current_transaction(
-                db,
-                viewer_id,
-                highlight_id=highlight_id,
-                note_block_id=existing.id,
+    if existing is not None:
+        if body != _block_vault_body(existing).strip():
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT,
+                "Vault note edit needs an exported body version",
             )
         return
-    _save_highlight_note_body_from_vault(
-        db,
-        viewer_id,
-        highlight_id=highlight_id,
-        block_id=existing.id if existing is not None else uuid4(),
-        body=body,
-    )
+    if body:
+        _save_highlight_note_body_from_vault(
+            db, viewer_id, highlight_id=highlight_id, block_id=uuid4(), body=body
+        )
 
 
 def _save_highlight_note_body_from_vault(
@@ -1116,28 +941,12 @@ def _save_highlight_note_body_from_vault(
         highlight_id=highlight_id,
         block_id=block_id,
         body_pm_json=_vault_body_pm_json(body),
+        expected_body=AbsentExpectedBody(kind="absent"),
         client_mutation_id=_vault_mutation_id(
             "highlight-note",
             {"highlight_id": highlight_id, "block_id": block_id, "body": body},
         ),
     )
-
-
-def _patch_existing_note_block_bodies_from_vault(
-    db: Session,
-    viewer_id: UUID,
-    body_by_block_id: Mapping[UUID, str],
-) -> None:
-    if not body_by_block_id:
-        return
-    for block_id, body in body_by_block_id.items():
-        upsert_note_body(
-            db,
-            viewer_id=viewer_id,
-            block_id=block_id,
-            body_pm_json=_vault_body_pm_json(body),
-        )
-        enqueue_note_reindex(db, note_block_id=block_id, reason="vault_highlight_note_sync")
 
 
 def _parse_marked_highlight_notes(body: str) -> list[tuple[UUID, str]]:

@@ -27,6 +27,7 @@ from nexus.services.pdf_ingest import (
 )
 from nexus.services.reader_publication import (
     ReaderPublicationSourceFile,
+    ReplaceSourceIssues,
     replace_reader_publication,
     superseded_reader_source_paths,
     unpublished_reader_source_paths,
@@ -128,6 +129,7 @@ def publish_pdf_source(
         media_id=media_id,
         expected_kind="pdf",
         replace_projection=replace_projection,
+        issues=ReplaceSourceIssues(issues=()),
         source_file=source_file,
     )
     return response, superseded_source_paths

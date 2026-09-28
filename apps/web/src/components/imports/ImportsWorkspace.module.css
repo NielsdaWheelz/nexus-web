@@ -17,13 +17,6 @@
   font-size: var(--text-xs);
 }
 
-.collectionControls {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  min-width: 0;
-}
-
 .search {
   display: flex;
   min-width: 0;
@@ -33,13 +26,26 @@
 }
 
 .search input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
   min-width: 0;
 }
 
 .sortLabel,
 .resultStatus {
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   color: var(--ink-muted);
+}
+
+.sortLabel {
+  white-space: normal;
 }
 
 /* The date pair is named by what the server bounds with it. */
@@ -208,9 +214,7 @@
    are sized by width in their own primitives, so both axes are set. */
 @media (pointer: coarse) {
   .workspace :is(button, [role="button"], select, label),
-  .collectionControls :is(button, [role="button"], select, label),
   .workspace input:not([type="checkbox"]),
-  .collectionControls input:not([type="checkbox"]),
   .inspectorActions button {
     min-width: var(--size-xl);
     min-height: var(--size-xl);

@@ -163,6 +163,50 @@ button.primary:disabled {
   pointer-events: auto;
 }
 
+.evidence {
+  min-width: 0;
+  grid-column: 1 / -1;
+  grid-row: 3;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  overflow-wrap: anywhere;
+}
+
+.row[data-media-identity="true"] .secondary {
+  display: contents;
+}
+
+.row[data-media-identity="true"] .supporting {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  overflow: visible;
+  white-space: normal;
+}
+
+.row[data-media-identity="true"] .state,
+.row[data-media-identity="true"] .evidence,
+.row[data-media-identity="true"] .expanded {
+  grid-column: 1 / -1;
+  grid-row: auto;
+  max-width: none;
+  overflow: visible;
+  white-space: normal;
+}
+
+.row[data-media-identity="true"] .stateSeparator {
+  display: none;
+}
+
+.row[data-media-failed="true"] .state {
+  color: var(--danger);
+}
+
+.row[data-media-identity="true"] .primaryControl,
+.row[data-media-identity="true"] .actions {
+  grid-row: 1;
+}
+
 .primary:focus-visible::after {
   content: "";
   position: absolute;

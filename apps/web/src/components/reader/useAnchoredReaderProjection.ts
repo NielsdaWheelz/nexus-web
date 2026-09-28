@@ -26,11 +26,11 @@ export interface AnchoredReaderRow {
   id: string;
   exact: string;
   color: HighlightColor;
-	  linked_note_blocks?: {
-	    note_block_id: string;
-	    body_pm_json?: Record<string, unknown>;
-	    body_text: string;
-	  }[];
+  linked_note_blocks?: {
+    note_block_id: string;
+    body_pm_json?: Record<string, unknown>;
+    body_text: string;
+  }[];
   anchor?: {
     fragment_id?: string;
     start_offset: number;
@@ -240,6 +240,7 @@ export function useAnchoredReaderProjection({
   const [viewportState, setViewportState] = useState({
     scrollTop: 0,
     clientHeight: 0,
+    top: 0,
   });
 
   const orderedRows = useMemo(() => {
@@ -287,8 +288,10 @@ export function useAnchoredReaderProjection({
   }, [rows]);
 
   const syncViewportState = useCallback((scrollParent: HTMLElement) => {
+    const top = scrollParent.getBoundingClientRect().top;
     setViewportState((previous) => {
       if (
+        previous.top === top &&
         previous.scrollTop === scrollParent.scrollTop &&
         previous.clientHeight === scrollParent.clientHeight
       ) {
@@ -298,6 +301,7 @@ export function useAnchoredReaderProjection({
       return {
         scrollTop: scrollParent.scrollTop,
         clientHeight: scrollParent.clientHeight,
+        top,
       };
     });
   }, []);

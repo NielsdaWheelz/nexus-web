@@ -43,6 +43,36 @@ and aria-hidden; the downloaded reader keeps its `document map` toggle. the
 owner waived physical touch and screen-reader checks for that change, so this
 review stays open.
 
+2026-09-26 source-note work exercised actual hosted android touch: marker
+activation opened the full evidence body, dismissal returned focus to the
+marker, and the cursor did not move. talkback 15 was enabled and its native
+touch/double-tap opened the pane. a dispatched linear swipe did not yield a
+stable accessibility hierarchy (`could not get idle state`); spoken output and
+linear focus order were not observed. this is bounded interaction evidence, not
+screen-reader acceptance. these checks used the pre-rebase feature commit
+`16099bdd84f4a20c443b6f066f23bc2a2334056e`. its installed apk and navigation receipts are in
+[the reader verification](../reader-source-notes-verification.md).
+the same installed artifact passed a post-freeze hosted compact touch
+check 3/3: complete ordered source bodies opened, dismissal focused the exact
+marker, and canonical cursor revision stayed unchanged. this still does not
+establish spoken announcements or linear assistive focus.
+
+2026-09-27 intermediate integrated debug apk sha256
+`2506cb69aa27304ef1eea3ee6df50626d3b5f516f0562ad4b12b07098b61b0f7`
+matched the installed emulator-5558 package. with no default network, emulator
+touch events opened a verified downloaded pillow footnote and returned within
+0.4 px. talkback bound as a spoken-feedback service; `uiautomator` exposed the
+visible marker as a focusable, clickable link. the emulator recorder has no
+audio option, and neither spoken output nor sequential focus traversal was
+observed. talkback was returned to its original disabled state. operator
+assistive-technology acceptance remains open.
+
+the final debug apk sha256
+`df2faeccf6aead2ecb651656db6d81da70ff2d1d2fe9bf13b730bf6b36e835c5`
+matched the installed package on the same emulator. no-network touch again
+opened the downloaded source note and returned within 0.4 px; accessibility
+was disabled as at baseline. spoken and linear focus checks remain open.
+
 proposed fix: perform and record the operator review; correct any defects at
 the owning control. cover the live and downloaded readers, named map disclosure,
 outline and coincident-member selection, current position, return,

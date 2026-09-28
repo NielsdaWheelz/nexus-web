@@ -25,6 +25,7 @@ import {
   type MediaActionCapabilities,
 } from "@/lib/media/mediaActionCapabilities";
 import { MEDIA_KINDS, type MediaKind } from "@/lib/media/kind";
+import { decodeMediaDuration, type MediaDuration } from "@/lib/media/mediaSummary";
 import type { MediaPlaybackSource } from "@/lib/media/playback";
 import {
   decodeTranscriptCoverage,
@@ -74,6 +75,8 @@ const MEDIA_DETAIL_KEYS = [
   "author_mode",
   "original_published_date",
   "edition_published_date",
+  "edition_isbn",
+  "duration",
   "publisher",
   "language",
   "description",
@@ -119,6 +122,8 @@ export interface MediaDetail {
   author_mode: "automatic" | "manual";
   original_published_date: Presence<PublicationDate>;
   edition_published_date: Presence<PublicationDate>;
+  edition_isbn: Presence<string>;
+  duration: Presence<MediaDuration>;
   publisher: string | null;
   language: string | null;
   description: string | null;
@@ -304,6 +309,10 @@ export function decodeMediaDetail(
       value.edition_published_date,
       (date) => decodePublicationDateOnly(date, "MediaOut.edition_published_date"),
     ),
+    edition_isbn: decodePresence(value.edition_isbn, (isbn) =>
+      expectString(isbn, "MediaOut.edition_isbn.value"),
+    ),
+    duration: decodePresence(value.duration, decodeMediaDuration),
     publisher: expectNullableString(value.publisher, "MediaOut.publisher"),
     language: expectNullableString(value.language, "MediaOut.language"),
     description: expectNullableString(

@@ -35,7 +35,7 @@ from nexus.services.html_apparatus import attach_fragment_locators
 from nexus.services.media_author_observation_seam import attach_author_observation
 from nexus.services.media_processing_state import mark_ready_for_reading
 from nexus.services.reader_apparatus import replace_media_apparatus
-from nexus.services.reader_publication import replace_reader_publication
+from nexus.services.reader_publication import ReplaceSourceIssues, replace_reader_publication
 from nexus.services.source_publication import SourcePublicationFence, run_source_publication_phase
 from nexus.services.web_article_artifacts import delete_web_article_artifacts
 from nexus.services.web_article_structure import (
@@ -219,6 +219,7 @@ def materialize_x_author_thread_media(
             db,
             media_id=media.id,
             expected_kind="web_article",
+            issues=ReplaceSourceIssues(issues=()),
             replace_projection=lambda locked_media: _replace_thread_projection(
                 db,
                 viewer_id=viewer_id,
@@ -424,6 +425,7 @@ def _replace_post_artifacts(
         db,
         media_id=media.id,
         expected_kind="web_article",
+        issues=ReplaceSourceIssues(issues=()),
         replace_projection=lambda locked_media: _replace_post_projection(
             db, viewer_id=viewer_id, media=locked_media, snapshot=snapshot, now=now
         ),
@@ -499,6 +501,7 @@ def _replace_thread_projection(
             )
         ],
         edges=[edge for prepared in prepared_fragments for edge in prepared.apparatus_edges],
+        note_groups=[],
     )
 
 
@@ -542,6 +545,7 @@ def _replace_post_projection(
             items=prepared.apparatus_items,
         ),
         edges=prepared.apparatus_edges,
+        note_groups=[],
     )
     bump_all_collection_families(
         db, families=(CollectionFamily.AuthorWorks, CollectionFamily.LibraryEntries)
@@ -563,6 +567,7 @@ def _build_fragment(
         prepared = prepare_web_article_fragment(
             html=html,
             base_url=base_url,
+            document_url=base_url,
             fragment_idx=idx,
             extract_embeds=bool(quote_occurrences),
         )

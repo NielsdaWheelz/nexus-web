@@ -26,10 +26,32 @@ _STALE_SOURCE_ATTEMPTS = """
     FROM media_source_attempts msa
     JOIN media m ON m.id = msa.media_id
     WHERE msa.status IN ('accepted', 'queued', 'running')
-      AND m.processing_status = 'extracting'
-      AND m.processing_started_at IS NOT NULL
-      AND m.processing_started_at
-          < now() - (CAST(:stale_seconds AS integer) * interval '1 second')
+      AND (
+          (msa.status = 'accepted' AND msa.job_id IS NULL AND (
+              msa.source_type NOT IN (
+                  'uploaded_pdf_file', 'uploaded_epub_file',
+                  'browser_pdf_capture', 'browser_epub_capture',
+                  'browser_article_capture', 'email_message')
+              OR (msa.source_type IN (
+                  'uploaded_pdf_file', 'uploaded_epub_file',
+                  'browser_pdf_capture', 'browser_epub_capture')
+                  AND EXISTS (SELECT 1 FROM media_file mf WHERE mf.media_id = msa.media_id))
+              OR (msa.source_type = 'browser_article_capture'
+                  AND EXISTS (SELECT 1 FROM media_upload_sessions mus
+                              WHERE mus.published_source_attempt_id = msa.id))
+              OR (msa.source_type = 'email_message'
+                  AND EXISTS (SELECT 1 FROM background_jobs storage_job
+                      WHERE storage_job.kind = 'storage_object_cleanup'
+                        AND storage_job.payload @> jsonb_build_object(
+                            'ownerKind', 'Media', 'mediaId', msa.media_id::text,
+                            'storagePath', msa.source_payload->>'storage_path',
+                            'checkpoint', jsonb_build_object('kind', 'Retained'))))
+          ))
+          OR (m.processing_status = 'extracting'
+              AND m.processing_started_at IS NOT NULL
+              AND m.processing_started_at
+                  < now() - (CAST(:stale_seconds AS integer) * interval '1 second'))
+      )
       AND NOT EXISTS (
           SELECT 1
           FROM media_source_attempts newer
@@ -37,7 +59,14 @@ _STALE_SOURCE_ATTEMPTS = """
             AND (newer.attempt_no, newer.created_at, newer.id)
               > (msa.attempt_no, msa.created_at, msa.id)
       )
-    ORDER BY m.processing_started_at ASC, msa.id ASC
+      AND NOT EXISTS (
+          SELECT 1 FROM background_jobs j
+          WHERE j.kind = 'ingest_media_source'
+            AND j.status IN ('pending', 'failed', 'running', 'dead')
+            AND j.payload @> jsonb_build_object(
+                'media_id', msa.media_id::text, 'attempt_id', msa.id::text)
+      )
+    ORDER BY msa.created_at ASC, msa.id ASC
     LIMIT :limit
 """
 
@@ -54,6 +83,13 @@ _STALE_CONTENT_INDEX_STATES = """
               AND cis.updated_at
                   < now() - (CAST(:stale_seconds AS integer) * interval '1 second')
           )
+      )
+      AND NOT EXISTS (
+          SELECT 1 FROM background_jobs j
+          WHERE j.kind = 'media_content_reindex_job'
+            AND j.status IN ('pending', 'failed', 'running', 'dead')
+            AND j.payload @> jsonb_build_object(
+                'media_id', cis.owner_id::text, 'revision', cis.revision)
       )
     ORDER BY cis.updated_at ASC, cis.owner_id ASC
     LIMIT :limit

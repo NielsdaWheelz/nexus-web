@@ -1,5 +1,9 @@
 # collection controls: implementation contract
 
+presentation and verification authority: the 2026-09-25
+[compact-controls plan](pane-controls-plan.md) supersedes those portions for
+the next change. existing domain, retrieval and data contracts remain in force.
+
 status: implemented and live-verified in `feat/collection-controls`
 origin: 2026-09-22 user request and adversarial council review
 authority: this plan supersedes implementation proposals in the

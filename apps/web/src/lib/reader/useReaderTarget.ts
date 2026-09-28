@@ -17,7 +17,7 @@ export interface ReaderTargetState {
   target: ReaderTarget | null;
   status: "idle" | "pending" | "active" | "dismissed";
   setTarget: (target: ReaderTarget) => void;
-  markActive: () => void;
+  markActive: (expectedTarget: ReaderTarget) => void;
   clearTarget: () => void;
   passageResolution: ReturnType<typeof usePassageResolution>;
 }
@@ -73,47 +73,64 @@ export function useReaderTarget(mediaId: string): ReaderTargetState {
   }>(() => ({ target: null, status: "idle" }));
   const stateRef = useRef(state);
   const mediaIdRef = useRef(mediaId);
+  const hashRef = useRef<string | null>(null);
   stateRef.current = state;
+  const publish = useCallback((next: typeof state) => {
+    if (stateRef.current.target === next.target && stateRef.current.status === next.status) return;
+    stateRef.current = next;
+    setState(next);
+  }, []);
+  const resolvedPassage = passageResolution.status === "ready" ? passageResolution.data : null;
 
   useEffect(() => {
     const mediaChanged = mediaIdRef.current !== mediaId;
     mediaIdRef.current = mediaId;
     const hash = paneHash;
+    const hashChanged = hashRef.current !== hash;
+    hashRef.current = hash;
+    const publishPending = (next: ReaderTarget) => {
+      const current = stateRef.current;
+      if (!mediaChanged && !hashChanged &&
+          current.target?.kind === next.kind && current.target.value === next.value &&
+          current.target.origin === next.origin &&
+          (current.status === "pending" || current.status === "active")) return;
+      publish({ target: next, status: "pending" });
+    };
     const parsed = parseReaderTargetHash(hash);
     if (parsed) {
-      setState({ target: { ...parsed, origin: "hash" }, status: "pending" });
+      publishPending({ ...parsed, origin: "hash" });
       return;
     }
     if (passageAnchorIdFromHash(hash)) {
-      if (passageResolution.status === "ready" && passageResolution.data.kind === "Present") {
-        const passage = passageResolution.data.value;
+      if (resolvedPassage?.kind === "Present") {
+        const passage = resolvedPassage.value;
         if (passage.kind === "FragmentTextOffsets") {
-          setState({ target: { kind: "text", value: `${passage.fragmentId}:${passage.startOffset}:${passage.endOffset}`, origin: "passage" }, status: "pending" });
+          publishPending({ kind: "text", value: `${passage.fragmentId}:${passage.startOffset}:${passage.endOffset}`, origin: "passage" });
         } else if (passage.kind === "TimeRange") {
-          setState({ target: { kind: "t", value: String(passage.startMs), origin: "passage" }, status: "pending" });
+          publishPending({ kind: "t", value: String(passage.startMs), origin: "passage" });
         } else if (passage.kind === "PdfPage") {
-          setState({ target: { kind: "page", value: String(passage.pageNumber), origin: "passage" }, status: "pending" });
+          publishPending({ kind: "page", value: String(passage.pageNumber), origin: "passage" });
         }
       } else {
-        setState({ target: null, status: "idle" });
+        publish({ target: null, status: "idle" });
       }
       return;
     }
     if (hash && stateRef.current.target?.origin === "passage") {
-      setState({ target: null, status: "idle" });
+      publish({ target: null, status: "idle" });
     }
     const pendingPulse = consumePendingReaderPulse(mediaId);
     if (pendingPulse) {
       const pendingTarget = targetFromPulse(pendingPulse);
       if (pendingTarget) {
-        setState({ target: pendingTarget, status: "pending" });
+        publish({ target: pendingTarget, status: "pending" });
         return;
       }
     }
     if (mediaChanged) {
-      setState({ target: null, status: "idle" });
+      publish({ target: null, status: "idle" });
     }
-  }, [mediaId, paneHash, passageResolution]);
+  }, [mediaId, paneHash, publish, resolvedPassage]);
 
   const onReaderPulse = useCallback(
     (detail: ReaderPulseTarget) => {
@@ -121,31 +138,31 @@ export function useReaderTarget(mediaId: string): ReaderTargetState {
       consumePendingReaderPulse(mediaId, detail);
       const next = targetFromPulse(detail);
       if (!next) return;
-      setState((current) => {
-        // The pulse channel still owns the visual pulse. Preserve a matching
-        // hash target until markActive consumes its canonical URL obligation.
-        if (
-          current.status === "pending" &&
-          current.target?.origin === "hash" &&
-          current.target.kind === next.kind &&
-          current.target.value === next.value
-        ) {
-          return current;
-        }
-        return { target: next, status: "pending" };
-      });
+      const current = stateRef.current;
+      // The pulse channel still owns the visual pulse. Preserve a matching
+      // hash target until markActive consumes its canonical URL obligation.
+      if (
+        current.status === "pending" &&
+        current.target?.origin === "hash" &&
+        current.target.kind === next.kind &&
+        current.target.value === next.value
+      ) {
+        return;
+      }
+      publish({ target: next, status: "pending" });
     },
-    [mediaId],
+    [mediaId, publish],
   );
   useReaderPulseHighlight(onReaderPulse);
 
   const setTarget = useCallback((next: ReaderTarget) => {
-    setState({ target: next, status: "pending" });
-  }, []);
+    publish({ target: next, status: "pending" });
+  }, [publish]);
 
-  const markActive = useCallback(() => {
+  const markActive = useCallback((expectedTarget: ReaderTarget) => {
     const prev = stateRef.current.target;
-    setState((s) => ({ ...s, status: "active" }));
+    if (prev !== expectedTarget || stateRef.current.status !== "pending") return;
+    publish({ target: prev, status: "active" });
     if (prev?.origin === "hash" || prev?.origin === "passage") {
       const pathname = paneRuntime?.pathname ?? window.location.pathname;
       const search =
@@ -156,11 +173,11 @@ export function useReaderTarget(mediaId: string): ReaderTargetState {
           : window.location.search;
       router.replace(pathname + search);
     }
-  }, [paneRuntime?.pathname, paneRuntime?.searchParams, router]);
+  }, [paneRuntime?.pathname, paneRuntime?.searchParams, publish, router]);
 
   const clearTarget = useCallback(() => {
-    setState({ target: null, status: "dismissed" });
-  }, []);
+    publish({ target: null, status: "dismissed" });
+  }, [publish]);
 
   return { target: state.target, status: state.status, setTarget, markActive, clearTarget, passageResolution };
 }

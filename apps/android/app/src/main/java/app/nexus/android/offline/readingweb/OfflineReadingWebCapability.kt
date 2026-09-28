@@ -131,7 +131,8 @@ internal fun offlineReadingCommandAllowed(kind: String, offlineDocument: Boolean
         setOf(
             "ConnectOffline", "GetSnapshot", "Cancel", "Retry", "Remove",
             "OpenReading", "CloseReading", "SaveReaderProgress",
-            "ResolveReaderProgress", "SetNetworkPolicy", "OpenHosted",
+            "ResolveReaderProgress", "SyncReaderProgress", "DiscardChangedReaderProgress",
+            "SetNetworkPolicy", "OpenHosted",
             "LogoutAndPurge",
         )
     } else {
@@ -249,7 +250,8 @@ internal fun offlineReadingCommandIsValid(root: JSONObject, kind: String): Boole
             require(root.requireBoundedString("requestedTitle", 1, 512).isNotBlank())
             OfflineReadingMediaKind.valueOf(root.requireBoundedString("mediaKind", 3, 10))
         }
-        "Cancel", "Retry", "Remove", "OpenReading", "OpenDownloadedCopy" -> {
+        "Cancel", "Retry", "Remove", "OpenReading", "OpenDownloadedCopy",
+        "SyncReaderProgress", "DiscardChangedReaderProgress" -> {
             root.requireExactKeys("protocolVersion", "requestId", "kind", "mediaId")
             root.requireCanonicalUuid("mediaId")
         }
@@ -541,6 +543,16 @@ internal class OfflineReadingWebCapability(
                     )
                     reply(message.replyProxy, requestId, outcome("ReaderProgressSaved", "result" to progressJson(result, true)))
                 }
+                "DiscardChangedReaderProgress" -> {
+                    root.requireExactKeys("protocolVersion", "requestId", "kind", "mediaId")
+                    store.discardChangedReaderProgress(root.requireCanonicalUuid("mediaId"))
+                    reply(message.replyProxy, requestId, accepted())
+                }
+                "SyncReaderProgress" -> {
+                    root.requireExactKeys("protocolVersion", "requestId", "kind", "mediaId")
+                    val scheduled = store.synchronizeReaderProgress(root.requireCanonicalUuid("mediaId"))
+                    reply(message.replyProxy, requestId, if (scheduled) accepted() else rejected("Failed"))
+                }
                 "SetNetworkPolicy" -> {
                     root.requireExactKeys("protocolVersion", "requestId", "kind", "policy")
                     val policy = NetworkPolicy.valueOf(
@@ -678,6 +690,7 @@ internal class OfflineReadingWebCapability(
                         replyProxy = message.replyProxy
                         sessionState = OfflineReadingSessionState.Connected
                         reply(message.replyProxy, requestId, connected(snapshot))
+                        store.synchronizeReaderProgress()
                     }
                 }
             }
@@ -898,7 +911,9 @@ internal class OfflineReadingWebCapability(
         readerGeneration: Long? = null,
         readerRevisionKey: String? = null,
     ): JSONObject = when (value) {
-        is OfflineReadingAvailability.Transfer -> transferJson(value.state)
+        is OfflineReadingAvailability.Transfer ->
+            if (value.recoveryProgress == null) transferJson(value.state)
+            else transferJson(value.state).put("recoveryProgress", progressJson(value.recoveryProgress, false))
         is OfflineReadingAvailability.Ready -> outcome(
             "Ready",
             "sizeBytes" to value.sizeBytes,

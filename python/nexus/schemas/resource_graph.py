@@ -13,7 +13,11 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from nexus.schemas.highlights import HIGHLIGHT_COLORS, PdfQuadIn
-from nexus.schemas.resource_items import ResourceActivationOut, validate_note_body_pm_json
+from nexus.schemas.resource_items import (
+    ExpectedNoteBody,
+    ResourceActivationOut,
+    validate_note_body_pm_json,
+)
 from nexus.services.resource_graph.refs import ResourceScheme
 from nexus.services.resource_graph.schemas import Connection as Connection
 from nexus.services.resource_graph.schemas import ConnectionEndpoint as ConnectionEndpoint
@@ -83,7 +87,6 @@ class ConnectionOut(ResourceGraphModel):
     origin: EdgeOrigin
     snapshot: dict[str, Any] | None
     source_order_key: str | None
-    target_order_key: str | None
     ordinal: int | None
     source_ref: str
     target_ref: str
@@ -175,6 +178,7 @@ class CreateLinkOut(ResourceGraphModel):
 class PutLinkNoteRequest(ResourceGraphModel):
     client_mutation_id: str = Field(..., min_length=1, max_length=120)
     note_block_id: UUID
+    expected_body: ExpectedNoteBody
     body_pm_json: dict[str, Any]
 
     @field_validator("body_pm_json")
@@ -188,6 +192,9 @@ class PutLinkNoteRequest(ResourceGraphModel):
 
 class LinkNoteOut(ResourceGraphModel):
     note_block_id: UUID
+    body_pm_json: dict[str, Any]
+    body_text: str
+    version_by_lane: dict[str, int]
     connection: ConnectionOut
 
 
@@ -238,7 +245,6 @@ def connection_out(item: Connection) -> ConnectionOut:
         origin=item.origin,
         snapshot=snapshot_to_jsonb(item.snapshot) if item.snapshot is not None else None,
         source_order_key=item.source_order_key,
-        target_order_key=item.target_order_key,
         ordinal=item.ordinal,
         source_ref=item.source_ref.uri,
         target_ref=item.target_ref.uri,

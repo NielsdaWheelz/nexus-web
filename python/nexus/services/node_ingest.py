@@ -11,10 +11,6 @@ from typing import Any
 
 from nexus.errors import ApiErrorCode
 
-_PRODUCTION_NODE_EXECUTABLE = "/usr/local/bin/node"
-_PRODUCTION_NODE_INGEST_SCRIPT = Path("/app/node/ingest/ingest.mjs")
-_LOCAL_NODE_INGEST_SCRIPT = Path(__file__).resolve().parents[3] / "node/ingest/ingest.mjs"
-
 DEFAULT_NODE_TIMEOUT_MS = 30_000
 SUBPROCESS_TIMEOUT_S = 40
 _PROTOCOL_VERSION = 1
@@ -70,14 +66,14 @@ class NodeIngestProtocolDefect(RuntimeError):
     """The owned Node process violated its closed result contract."""
 
 
-def local_node_ingest_command() -> NodeIngestCommand:
-    """Resolve the checked-out ingress command for local and test composition."""
+def node_ingest_command(script: Path) -> NodeIngestCommand:
+    """Compose the executable on the runtime's PATH with its declared script."""
     executable = shutil.which("node")
     if executable is None:
-        raise NodeIngestProtocolDefect("local Node.js executable is unavailable")
+        raise NodeIngestProtocolDefect("Node.js executable is unavailable")
     return NodeIngestCommand(
         executable=Path(executable).resolve(strict=True).as_posix(),
-        script=_LOCAL_NODE_INGEST_SCRIPT,
+        script=script,
     )
 
 
@@ -85,18 +81,15 @@ def run_node_ingest(
     url: str,
     timeout_ms: int = DEFAULT_NODE_TIMEOUT_MS,
     *,
-    command: NodeIngestCommand | None = None,
+    command: NodeIngestCommand,
 ) -> IngestResult | IngestError:
-    """Run the image-baked production ingress or an explicit local/test seam."""
-    resolved = command or NodeIngestCommand(
-        executable=_PRODUCTION_NODE_EXECUTABLE, script=_PRODUCTION_NODE_INGEST_SCRIPT
-    )
-    if not resolved.script.is_file():
+    """Run the explicitly composed ingress command."""
+    if not command.script.is_file():
         raise NodeIngestProtocolDefect("Node ingest script is unavailable")
     request = json.dumps({"url": url, "timeout_ms": timeout_ms}).encode("utf-8")
     try:
         proc = subprocess.Popen(
-            [resolved.executable, str(resolved.script)],
+            [command.executable, str(command.script)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

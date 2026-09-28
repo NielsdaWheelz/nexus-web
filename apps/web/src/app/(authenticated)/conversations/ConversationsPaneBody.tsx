@@ -176,16 +176,6 @@ export default function ConversationsPaneBody() {
   // no flag — the requested and committed identities differ on their own.
   const refreshPendingRef = useRef(false);
   const sortSelectRef = useRef<HTMLSelectElement | null>(null);
-  // Set before a view replacement the user initiated from the sort control, so
-  // the commit that answers it returns focus there.
-  const pendingCommitFocusRef = useRef(false);
-  const focusPendingSortControl = useCallback(() => {
-    if (!pendingCommitFocusRef.current) return;
-    pendingCommitFocusRef.current = false;
-    const element = sortSelectRef.current;
-    if (element === null) return;
-    requestAnimationFrame(() => element.focus());
-  }, []);
   const setView = useCallback(
     (next: UpdatedTitleIndexView) => {
       capturePaneScroll();
@@ -235,7 +225,6 @@ export default function ConversationsPaneBody() {
       setController(committed);
       setChainEpoch((epoch) => epoch + 1);
       setFeedback(null);
-      focusPendingSortControl();
 
       if (revalidation.isPending(firstPageVersion)) {
         completedConversationsRevalidationVersionRef.current = firstPageVersion;
@@ -258,7 +247,7 @@ export default function ConversationsPaneBody() {
         revalidation.reject(firstPage.error);
       }
     }
-  }, [revalidation, firstPage, firstPageVersion, focusPendingSortControl, view]);
+  }, [revalidation, firstPage, firstPageVersion, view]);
 
   // A newly requested view retires the previous view's rejection.
   useEffect(() => setViewInvalid(false), [requestedViewKey]);
@@ -469,12 +458,12 @@ export default function ConversationsPaneBody() {
       invalidView || view === null ? undefined : (
         <>
           <SelectField
-            layout="Stacked"
-            label="Sort by"
+            layout="Inline"
+            label="Sort chats"
+            size="sm"
             ref={sortSelectRef}
             value={updatedTitleSortOptionOf(view)}
             onChange={(event) => {
-              pendingCommitFocusRef.current = true;
               setView(
                 updatedTitleViewForSortOption(
                   event.target.value as UpdatedTitleSortOptionId,
@@ -508,16 +497,18 @@ export default function ConversationsPaneBody() {
                 onClearQuery={clearQuery}
                 rowStatus={rowStatus}
                 filters={domainFilterControls}
-                controls={
+                controls={view.kind !== "Canonical" ? (
                   <Button
-                    variant="secondary"
+                    variant="ghost"
                     size="sm"
-                    onClick={resetView}
-                    disabled={view.kind === "Canonical" && !filterQuery.trim()}
+                    onClick={() => {
+                      sortSelectRef.current?.focus({ preventScroll: true });
+                      resetView();
+                    }}
                   >
                     Reset view
                   </Button>
-                }
+                ) : undefined}
               />
             ),
             focusInput,
@@ -597,6 +588,7 @@ export default function ConversationsPaneBody() {
                 kind: "Valid",
                 view: CANONICAL_UPDATED_TITLE_INDEX_VIEW,
               });
+              requestAnimationFrame(() => sortSelectRef.current?.focus({ preventScroll: true }));
             },
           },
         ]}

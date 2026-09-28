@@ -25,6 +25,12 @@ was also refused ("pull access denied for minio/mc"), so `make dev` fails on a
 host without a cached image. the stack created the bucket with the `mc` bundled
 in the minio server image instead.
 
+2026-09-25 pane-controls isolated mac stack: the same pinned `minio/mc`
+init tag in `docker/docker-compose.yml:36` again returned pull access denied.
+the disposable bucket was provisioned with boto3; the browser → bff → api →
+postgres proof ran, but this workaround does not qualify `make dev` on a fresh
+host.
+
 prerequisite and fix: establish the registry's supported distribution and access
 contract, then select a supported, pinned, accessible image for the ordinary
 local s3 development owner in a focused change. preserve local bucket setup and

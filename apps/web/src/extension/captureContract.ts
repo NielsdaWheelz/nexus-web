@@ -149,6 +149,7 @@ export interface ArticlePacket {
   base_url: string;
   title: string;
   content_html: string;
+  /** bounded complete source note and embed subtrees; empty when none exist */
   source_html: string;
   byline: Presence<string>;
   excerpt: Presence<string>;

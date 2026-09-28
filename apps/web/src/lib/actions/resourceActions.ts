@@ -11,6 +11,7 @@ import {
   GitFork,
   Highlighter,
   History,
+  Info,
   Library,
   Link2,
   ListMinus,
@@ -76,6 +77,11 @@ export const RESOURCE_ACTION_CATALOG = {
   "ResourceOperation.OpenSource": {
     label: "Open source",
     icon: ExternalLink,
+    group: "Navigate",
+  },
+  "ResourceAction.Media.Metadata": {
+    label: "metadata…",
+    icon: Info,
     group: "Navigate",
   },
   "ResourceOperation.Media.Playback": {

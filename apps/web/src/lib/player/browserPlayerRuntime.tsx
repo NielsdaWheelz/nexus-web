@@ -1108,7 +1108,7 @@ export function BrowserPlayerRuntimeProvider({
           overlayRef.current.has(descriptor.mediaId) ||
           snapshot.items.some(
             (row) =>
-              row.mediaId === descriptor.mediaId &&
+              row.mediaSummary.mediaId === descriptor.mediaId &&
               row.activation.kind === "FooterAudio",
           );
         const startPositionMs = hasResumeSource

@@ -5,7 +5,7 @@ canonicalization, so every rule here is part of the persisted byte contract.
 """
 
 import re
-from urllib.parse import quote, urljoin, urlparse
+from urllib.parse import quote, urldefrag, urljoin, urlparse
 
 from lxml.etree import ParserError
 from lxml.html import HtmlElement
@@ -42,10 +42,11 @@ def sanitize_html(
     html: str,
     base_url: str,
     *,
+    document_url: str | None,
     allow_reader_apparatus_attrs: bool = False,
     allow_document_embed_attrs: bool = False,
 ) -> str:
-    """Sanitize extracted article HTML into the stored fragment shape."""
+    """Resolve assets against base_url; only document_url identifies local links."""
     if not html or not html.strip():
         return ""
     try:
@@ -55,11 +56,13 @@ def sanitize_html(
     body = doc.body
     if body is None:
         return ""
+    document_url = urldefrag(document_url).url if document_url is not None else None
     for child in list(body):
         if isinstance(child, HtmlElement):
             _sanitize_element(
                 child,
                 base_url,
+                document_url=document_url,
                 allow_reader_apparatus_attrs=allow_reader_apparatus_attrs,
                 allow_document_embed_attrs=allow_document_embed_attrs,
             )
@@ -71,6 +74,7 @@ def _sanitize_element(
     element: HtmlElement,
     base_url: str,
     *,
+    document_url: str | None,
     allow_reader_apparatus_attrs: bool,
     allow_document_embed_attrs: bool,
 ) -> None:
@@ -79,6 +83,7 @@ def _sanitize_element(
             _sanitize_element(
                 child,
                 base_url,
+                document_url=document_url,
                 allow_reader_apparatus_attrs=allow_reader_apparatus_attrs,
                 allow_document_embed_attrs=allow_document_embed_attrs,
             )
@@ -98,23 +103,24 @@ def _sanitize_element(
             keep = allow_reader_apparatus_attrs
         elif name in DOCUMENT_EMBED_ATTRS:
             keep = allow_document_embed_attrs and tag in {"figure", "figcaption"}
+        elif name == "id" or name == "aria-labelledby" or (name == "name" and tag == "a"):
+            keep = name == "aria-labelledby" or _valid_target(element.attrib[attr])
         else:
             keep = (
                 not EVENT_HANDLER_RE.match(name)
-                and name not in {"style", "class", "id"}
-                and not (name == "name" and tag == "a")
+                and name not in {"style", "class"}
                 and name in allowed
             )
         if not keep:
             del element.attrib[attr]
 
     if tag == "a":
-        _sanitize_link(element, base_url)
+        _sanitize_link(element, base_url, document_url)
     elif tag == "img":
         _sanitize_image(element, base_url)
 
 
-def _sanitize_link(element: HtmlElement, base_url: str) -> None:
+def _sanitize_link(element: HtmlElement, base_url: str, document_url: str | None) -> None:
     href = element.get("href", "")
     if not href:
         return
@@ -122,11 +128,19 @@ def _sanitize_link(element: HtmlElement, base_url: str) -> None:
     if urlparse(absolute_url).scheme.lower() in FORBIDDEN_SCHEMES:
         del element.attrib["href"]
         return
+    source_url, fragment = urldefrag(absolute_url)
+    if document_url is not None and source_url == document_url and "#" in href:
+        element.set("href", f"#{fragment}")
+        return
     element.set("href", absolute_url)
     rel_values = set(element.get("rel", "").split()) | {"noopener", "noreferrer"}
     element.set("rel", " ".join(sorted(rel_values)))
     element.set("target", "_blank")
     element.set("referrerpolicy", "no-referrer")
+
+
+def _valid_target(value: str) -> bool:
+    return bool(value) and not any(char.isspace() or ord(char) < 32 for char in value)
 
 
 def _sanitize_image(element: HtmlElement, base_url: str) -> None:

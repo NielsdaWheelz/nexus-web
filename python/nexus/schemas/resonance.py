@@ -9,11 +9,9 @@ from typing import Annotated, Literal, Self
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
-from nexus.db.models import MediaKind
 from nexus.schemas.consumption import ConsumptionOut
+from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.presence import Presence, Present
-from nexus.schemas.publication_dates import PublicationDate
-from nexus.schemas.reading_time import ReadingTimeEstimateOut
 from nexus.services.resource_graph.refs import (
     ResourceRefParseFailure,
     ResourceScheme,
@@ -51,9 +49,7 @@ class ResonanceModel(BaseModel):
 class MediaSlateTargetOut(ResonanceModel):
     kind: Literal["Media"] = "Media"
     ref: MediaResourceRefUri
-    media_kind: MediaKind
-    title: str
-    subtitle: Presence[str]
+    media_summary: MediaSummaryOut
     image_url: Presence[str]
     href: InternalHref
 
@@ -75,30 +71,15 @@ SlateTargetOut = Annotated[
 
 class SlateItemOut(ResonanceModel):
     target: SlateTargetOut
-    publication_date: Presence[PublicationDate]
     consumption: Presence[ConsumptionOut]
-    reading_time_estimate: Presence[ReadingTimeEstimateOut]
 
     @model_validator(mode="after")
     def validate_target_facts(self) -> Self:
         if isinstance(self.target, PodcastSlateTargetOut):
-            if any(
-                isinstance(value, Present)
-                for value in (
-                    self.publication_date,
-                    self.consumption,
-                    self.reading_time_estimate,
-                )
-            ):
-                raise ValueError("Podcast targets have no publication, consumption or reading time")
+            if isinstance(self.consumption, Present):
+                raise ValueError("Podcast targets have no consumption")
         elif not isinstance(self.consumption, Present):
             raise ValueError("Media targets require consumption")
-        elif isinstance(self.reading_time_estimate, Present) and self.target.media_kind not in (
-            MediaKind.web_article,
-            MediaKind.epub,
-            MediaKind.pdf,
-        ):
-            raise ValueError("Reading time requires a document target")
         return self
 
 
@@ -112,12 +93,17 @@ class QuickReadsOut(ResonanceModel):
     @model_validator(mode="after")
     def validate_quick_reads(self) -> Self:
         for item in self.items:
-            estimate = item.reading_time_estimate
+            duration = (
+                item.target.media_summary.duration
+                if isinstance(item.target, MediaSlateTargetOut)
+                else None
+            )
             if (
                 not isinstance(item.target, MediaSlateTargetOut)
-                or not isinstance(estimate, Present)
-                or not isinstance(estimate.value.remaining_minutes, Present)
-                or estimate.value.remaining_minutes.value <= 0
+                or not isinstance(duration, Present)
+                or duration.value.modality != "Read"
+                or not isinstance(duration.value.estimate.remaining_minutes, Present)
+                or duration.value.estimate.remaining_minutes.value <= 0
             ):
                 raise ValueError("Quick reads require documents with positive known remaining time")
         return self

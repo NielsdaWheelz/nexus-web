@@ -151,7 +151,7 @@ def get_reader_document_map(
             text(
                 """
                 SELECT count(*) FROM epub_toc_nodes
-                WHERE media_id = :media_id AND href IS NOT NULL AND target_offset IS NULL
+                WHERE media_id = :media_id AND href IS NOT NULL AND resolution = 'Unresolved'
                 """
             ),
             {"media_id": media_id},
@@ -165,7 +165,15 @@ def get_reader_document_map(
         counts.passages
         or counts.document
         or embed_rows
-        or (navigation is not None and navigation.sections)
+        or (
+            navigation is not None
+            and (
+                navigation.sections
+                or navigation.toc_nodes
+                or navigation.landmarks
+                or navigation.page_list
+            )
+        )
     )
     partial = navigation_partial or apparatus.status in ("partial", "failed")
     status: ReaderDocumentMapStatus = (

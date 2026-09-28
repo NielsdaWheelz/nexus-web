@@ -62,3 +62,25 @@
   align-items: center;
   color: var(--accent);
 }
+
+.duration {
+  font-variant-numeric: tabular-nums;
+}
+
+:global([data-media-identity="true"]) .supportLine {
+  display: block;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+:global([data-media-identity="true"]) .supportItem,
+:global([data-media-identity="true"]) .contributorList {
+  display: inline;
+  max-width: none;
+  overflow: visible;
+  white-space: normal;
+}
+
+:global([data-media-identity="true"]) .supportSeparator {
+  display: inline;
+}

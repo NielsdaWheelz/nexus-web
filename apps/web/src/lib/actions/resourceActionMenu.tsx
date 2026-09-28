@@ -44,7 +44,7 @@ import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import { deleteMemberLibrary } from "@/lib/libraries/client";
 import type { useWorkspaceStore } from "@/lib/workspace/store";
-import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
+import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import {
   publishImportsInvalidation,
   repairSearchImport,
@@ -67,6 +67,7 @@ import {
   type usePlayerSession,
 } from "@/lib/player/globalPlayer";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import type { ActionSelectDetail } from "@/lib/ui/actionDescriptor";
 import {
   createDossierBuild,
   learnDossierFromHighlight,
@@ -94,6 +95,9 @@ export interface ResourceActionPorts {
   readonly openAuthorsEditor: ReturnType<
     typeof useResourceOverlaysController
   >["openAuthorsEditor"];
+  readonly openMediaMetadata: ReturnType<
+    typeof useResourceOverlaysController
+  >["openMediaMetadata"];
   readonly openLibrarySettings: ReturnType<
     typeof useResourceOverlaysController
   >["openLibrarySettings"];
@@ -131,7 +135,8 @@ export interface ResourceActionCommand {
   readonly confirmation?: ResourceActionConfirmation;
   readonly openOnly: boolean;
   readonly reconcile: ResourceActionReconciliationScope;
-  readonly execute: (ports: ResourceActionPorts) => void | Promise<void>;
+  readonly execute: (ports: ResourceActionPorts, detail: ActionSelectDetail) => void | Promise<void>;
+  readonly detail: ActionSelectDetail;
 }
 
 export const RESOURCE_ACTION_BLOCKED_REASON_COPY = {
@@ -274,6 +279,7 @@ interface CommandOptions {
   readonly blocked?: BlockedReason;
   readonly confirmation?: ResourceActionConfirmation;
   readonly openOnly?: boolean;
+  readonly restoreFocusOnClose?: boolean;
   readonly reconcile?: ResourceActionReconciliationScope;
 }
 
@@ -339,16 +345,18 @@ export function resourceActionDescriptors({
       tone: entry.group === "Danger" ? "danger" : "default",
       disabled: disabledReason !== undefined || undefined,
       disabledReason,
+      restoreFocusOnClose: options.restoreFocusOnClose,
       state:
         options.checked === undefined
           ? undefined
           : { kind: "toggle", pressed: options.checked },
-      onSelect: () =>
+      onSelect: (detail) =>
         invoke({
           ref,
           id: actionId,
           label,
           execute,
+          detail,
           confirmation:
             options.confirmation ??
             ("confirmation" in entry ? entry.confirmation : undefined),
@@ -513,6 +521,20 @@ export function resourceActionDescriptors({
           href: capability.href,
         };
       }
+      case "MediaMetadata":
+        return make(
+          capability,
+          "ResourceAction.Media.Metadata",
+          (ports, detail) => {
+            const paneId = detail.triggerEl?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId
+              ?? detail.triggerEl?.closest<HTMLElement>("[data-pane-chrome-for]")?.dataset.paneChromeFor
+              ?? ports.activePaneId;
+            ports.openMediaMetadata(id(), detail.triggerEl, () =>
+              findPaneChromeFocusTarget(paneId),
+            );
+          },
+          { openOnly: true, restoreFocusOnClose: false },
+        );
       case "Playback": {
         const playback = environment.playbackByRef.get(ref) ?? "Idle";
         return make(
@@ -591,7 +613,7 @@ export function resourceActionDescriptors({
               ports.lectern.getCanonicalSnapshot() ?? { items: [] };
             const completedItemId =
               preCompletionSnapshot.items.find(
-                (item) => item.mediaId === mediaId,
+                (item) => item.mediaSummary.mediaId === mediaId,
               )?.itemId ?? null;
             const result = await ports.lectern.ensureMediaFinished(mediaId);
             ports.offerCompletionUndo({

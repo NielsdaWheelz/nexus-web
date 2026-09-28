@@ -46,7 +46,8 @@ _DUE_SQL = """
 _LIVE_ATTEMPT_SQL = """
     SELECT * FROM background_jobs
     WHERE id = :job_id AND status = 'running' AND claimed_by = :worker_id
-      AND attempts = :attempt_no AND lease_expires_at > clock_timestamp()
+      AND attempts = :attempt_no AND execution_id = :execution_id
+      AND lease_expires_at > clock_timestamp()
     FOR UPDATE
 """
 
@@ -443,32 +444,23 @@ def lock_job(db: Session, job_id: UUID) -> JobRow | None:
     )
 
 
-def lock_running_job_attempt(
-    db: Session, *, job_id: UUID, worker_id: str, attempt_no: int
-) -> JobRow | None:
-    """Lock one exact live attempt as terminal-write authority for this transaction."""
-    return _fetch_job(
-        db, _LIVE_ATTEMPT_SQL, job_id=job_id, worker_id=worker_id, attempt_no=attempt_no
-    )
-
-
 def lock_running_job_claim(db: Session, *, context: JobExecutionContext) -> bool:
     """Fence one effect transaction to the exact live running attempt."""
     return _lock_context_attempt(db, context) is not None
 
 
 def _lock_context_attempt(db: Session, context: JobExecutionContext) -> JobRow | None:
-    return lock_running_job_attempt(
+    return _fetch_job(
         db,
+        _LIVE_ATTEMPT_SQL,
         job_id=context.job_id,
         worker_id=context.worker_id,
         attempt_no=context.attempt_no,
+        execution_id=context.execution_id,
     )
 
 
-def running_job_claim_is_current(
-    db: Session, *, job_id: UUID, worker_id: str, attempt_no: int
-) -> bool:
+def running_job_claim_is_current(db: Session, *, context: JobExecutionContext) -> bool:
     """Whether this exact running attempt still owns an unexpired lease."""
     return bool(
         db.execute(
@@ -477,11 +469,17 @@ def running_job_claim_is_current(
                 SELECT EXISTS(
                     SELECT 1 FROM background_jobs
                     WHERE id = :job_id AND status = 'running' AND claimed_by = :worker_id
-                      AND attempts = :attempt_no AND lease_expires_at > now()
+                      AND attempts = :attempt_no AND execution_id = :execution_id
+                      AND lease_expires_at > clock_timestamp()
                 )
                 """
             ),
-            {"job_id": job_id, "worker_id": worker_id, "attempt_no": attempt_no},
+            {
+                "job_id": context.job_id,
+                "worker_id": context.worker_id,
+                "attempt_no": context.attempt_no,
+                "execution_id": context.execution_id,
+            },
         ).scalar_one()
     )
 
@@ -557,7 +555,7 @@ def _renew_lease(db: Session, *, context: JobExecutionContext, lease_seconds: in
 
 
 def update_running_job_payload(
-    db: Session, *, job_id: UUID, worker_id: str, attempt_no: int, payload: Mapping[str, Any]
+    db: Session, *, context: JobExecutionContext, payload: Mapping[str, Any]
 ) -> bool:
     """Lease-fenced durable checkpoint write of a running job's whole payload."""
     updated = db.execute(
@@ -566,14 +564,16 @@ def update_running_job_payload(
             UPDATE background_jobs
             SET payload = CAST(:payload AS jsonb), updated_at = now()
             WHERE id = :job_id AND status = 'running' AND claimed_by = :worker_id
-              AND attempts = :attempt_no AND lease_expires_at > now()
+              AND attempts = :attempt_no AND execution_id = :execution_id
+              AND lease_expires_at > clock_timestamp()
             RETURNING id
             """
         ),
         {
-            "job_id": job_id,
-            "worker_id": worker_id,
-            "attempt_no": attempt_no,
+            "job_id": context.job_id,
+            "worker_id": context.worker_id,
+            "attempt_no": context.attempt_no,
+            "execution_id": context.execution_id,
             "payload": json.dumps(dict(payload)),
         },
     ).first()
@@ -583,17 +583,12 @@ def update_running_job_payload(
 def reschedule_running_job(
     db: Session,
     *,
-    job_id: UUID,
-    worker_id: str,
-    attempt_no: int,
+    context: JobExecutionContext,
     schedule: RescheduleSchedule,
     payload: Mapping[str, Any] | None = None,
 ) -> bool:
     """Return one running attempt to pending at a new time, refunding its attempt."""
-    if (
-        lock_running_job_attempt(db, job_id=job_id, worker_id=worker_id, attempt_no=attempt_no)
-        is None
-    ):
+    if _lock_context_attempt(db, context) is None:
         return False
     db.execute(
         text(
@@ -611,29 +606,24 @@ def reschedule_running_job(
             """
         ),
         {
-            "job_id": job_id,
+            "job_id": context.job_id,
             "instant": schedule.instant if isinstance(schedule, ScheduleAt) else None,
             "delay_seconds": None if isinstance(schedule, ScheduleAt) else schedule.seconds,
             "payload": None if payload is None else json.dumps(dict(payload)),
         },
     )
-    _release_heavy_capacity(db, job_id)
+    _release_heavy_capacity(db, context.job_id)
     return True
 
 
 def complete_job(
     db: Session,
     *,
-    job_id: UUID,
-    worker_id: str,
-    attempt_no: int,
+    context: JobExecutionContext,
     result_payload: Mapping[str, Any] | None = None,
 ) -> bool:
     """Mark one exact live running attempt succeeded and clear its failure history."""
-    if (
-        lock_running_job_attempt(db, job_id=job_id, worker_id=worker_id, attempt_no=attempt_no)
-        is None
-    ):
+    if _lock_context_attempt(db, context) is None:
         return False
     db.execute(
         text(
@@ -645,18 +635,16 @@ def complete_job(
             WHERE id = :job_id
             """
         ),
-        {"job_id": job_id, "result": _json_or_none(result_payload)},
+        {"job_id": context.job_id, "result": _json_or_none(result_payload)},
     )
-    _release_heavy_capacity(db, job_id)
+    _release_heavy_capacity(db, context.job_id)
     return True
 
 
 def fail_job(
     db: Session,
     *,
-    job_id: UUID,
-    worker_id: str,
-    attempt_no: int,
+    context: JobExecutionContext,
     error_code: str,
     error_message: str,
     retry_delays_seconds: Sequence[int],
@@ -664,7 +652,7 @@ def fail_job(
     force_dead: bool = False,
 ) -> JobRow | None:
     """Apply the retry-or-dead transition to one exact live running attempt."""
-    owned = lock_running_job_attempt(db, job_id=job_id, worker_id=worker_id, attempt_no=attempt_no)
+    owned = _lock_context_attempt(db, context)
     if owned is None:
         return None
     is_dead = force_dead or owned.attempts >= owned.max_attempts
@@ -680,7 +668,7 @@ def fail_job(
         WHERE id = :job_id
         RETURNING *
         """,
-        job_id=job_id,
+        job_id=context.job_id,
         status=DEAD if is_dead else FAILED,
         error_code=error_code,
         last_error=error_message[:1000],
@@ -688,7 +676,7 @@ def fail_job(
         is_dead=is_dead,
         result=_json_or_none(result_payload),
     )
-    _release_heavy_capacity(db, job_id)
+    _release_heavy_capacity(db, context.job_id)
     if not is_dead:
         _notify(db, owned.kind)
     return failed

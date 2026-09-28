@@ -1,7 +1,7 @@
 "use client";
 
 import { Play } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useId, useMemo, useRef, useState } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import QuickReadsSection from "@/components/collections/QuickReadsSection";
 import ReadingSlateSection from "@/components/collections/ReadingSlateSection";
@@ -29,10 +29,7 @@ import type {
   LecternItemId,
   LecternSnapshot,
 } from "@/lib/lectern/contract";
-import {
-  assumeMediaId,
-  lecternActivityFacts,
-} from "@/lib/lectern/contract";
+import { assumeMediaId } from "@/lib/lectern/contract";
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import {
   CANONICAL_LECTERN_VIEW,
@@ -64,9 +61,9 @@ const LECTERN_FILTER_UNIT = { singular: "item", plural: "items" };
 
 /** The presented row text the local Filter matches: title and podcast show. */
 function lecternFilterFields(item: LecternItem): string[] {
-  return item.subtitle.kind === "Present"
-    ? [item.title, item.subtitle.value]
-    : [item.title];
+  return item.playerDisplay.kind === "Present" && item.playerDisplay.value.subtitle.kind === "Present"
+    ? [item.mediaSummary.title, item.playerDisplay.value.subtitle.value]
+    : [item.mediaSummary.title];
 }
 
 function PlaybackButton({
@@ -207,14 +204,6 @@ export default function LecternPaneBody() {
     [items, view],
   );
   const sortSelectRef = useRef<HTMLSelectElement | null>(null);
-  // Invalid-view recovery removes its own button and returns focus to Sort by.
-  const pendingCommitFocusRef = useRef(false);
-  useEffect(() => {
-    const select = sortSelectRef.current;
-    if (!pendingCommitFocusRef.current || select === null) return;
-    pendingCommitFocusRef.current = false;
-    select.focus();
-  }, [view]);
   const presentFailure = useCallback(
     (error: unknown, operation: LecternErrorOperation) => {
       try {
@@ -330,8 +319,9 @@ export default function LecternPaneBody() {
       view === null ? undefined : (
         <>
           <SelectField
-            layout="Stacked"
-            label="Sort by"
+            layout="Inline"
+            label="Sort Lectern items"
+            size="sm"
             ref={sortSelectRef}
             value={lecternSortOptionOf(view)}
             onChange={(event) =>
@@ -412,16 +402,18 @@ export default function LecternPaneBody() {
                 onClearQuery={clearQuery}
                 rowStatus={rowStatus}
                 filters={domainFilterControls}
-                controls={
+                controls={view.kind !== "Custom" ? (
                   <Button
-                    variant="secondary"
+                    variant="ghost"
                     size="sm"
-                    onClick={resetToCanonicalView}
-                    disabled={view.kind === "Custom" && !filterQuery.trim()}
+                    onClick={() => {
+                      sortSelectRef.current?.focus({ preventScroll: true });
+                      resetToCanonicalView();
+                    }}
                   >
                     Reset view
                   </Button>
-                }
+                ) : undefined}
               />
             ),
             focusInput,
@@ -459,9 +451,7 @@ export default function LecternPaneBody() {
     },
   });
 
-  const queueRows = visibleItems.map((item) =>
-    presentLecternItem(item, lecternActivityFacts(item)),
-  );
+  const queueRows = visibleItems.map(presentLecternItem);
   const queueControls = Object.fromEntries(
     visibleItems.flatMap((item) => {
       if (item.activation.kind !== "FooterAudio") return [];
@@ -470,7 +460,7 @@ export default function LecternPaneBody() {
           item.itemId,
           <PlaybackButton
             key="play"
-            title={item.title}
+            title={item.mediaSummary.title}
             consumption={item.consumption}
             onPlay={() => playAudio(descriptorFromLecternItem(item))}
           />,
@@ -508,8 +498,8 @@ export default function LecternPaneBody() {
             content={{ tone: "Danger", title: "Invalid Lectern view" }}
             announcement="Assertive"
             actions={[{ label: "Reset view", onClick: () => {
-              pendingCommitFocusRef.current = true;
               resetToCanonicalView();
+              requestAnimationFrame(() => sortSelectRef.current?.focus({ preventScroll: true }));
             } }]}
           />
         ) : (
