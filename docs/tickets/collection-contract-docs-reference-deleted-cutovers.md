@@ -10,8 +10,8 @@ area: library / lectern documentation
 behavior and presentation to deleted lectern lifecycle, resonance reading-slate,
 android playback/protocol and lectern editorial contracts.
 `docs/modules/library.md:349–350` still links the deleted entry-view-continuity
-contract. the same module docs retain absent placement, universal-link,
-browse and offline-reading references.
+contract. the same module docs retain absent universal-link, browse and
+offline-reading references.
 
 quick reads corrected the reading-time owner in architecture and module docs,
 documented current duration/slate behavior, and removed library-sorting links.

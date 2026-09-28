@@ -103,7 +103,7 @@ class LibraryOut(_CamelRow):
     owner_user_handle: UserHandle
     is_default: bool
     role: LibraryRole
-    system_key: str | None = None
+    system_key: str | None
     can_rename: bool
     can_delete: bool
     can_edit_entries: bool

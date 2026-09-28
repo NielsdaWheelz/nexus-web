@@ -18,7 +18,7 @@ calibration (chat tools, 2026-09-21): a spec that describes the current structur
 
 verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, one alembic head) plus one named manual check per module. there are no automated tests; that is a known, accepted trade.
 
-wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the routes it rewrites and deletes their web decoders. the generated `apps/web/src/lib/api/wire.gen.ts` is excluded from line counts and targets. untyped JSON routes: 174 of 219 operations (2026-09-28; 9 typed, 24 without a body, 12 binary or SSE).
+wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the routes it rewrites and deletes their web decoders. the generated `apps/web/src/lib/api/wire.gen.ts` is excluded from line counts and targets. untyped JSON routes: 166 of 218 operations (2026-09-28; 16 typed, 24 without a body, 12 binary or SSE).
 
 ## inventory and targets
 
@@ -40,11 +40,11 @@ wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the 
 | dossiers (engine 3.4k, ten subject bindings, web document runtime) | 14.6k | 5k | reauthor: one engine, one binding table | python first pass landed (size/dossiers-py): 12.0k→7.4k, −39%; web document runtime 7.2k open |
 | oracle-atlas (oracle, plates, concordance, corpus ops, atlas, manifests, deploy plate train) | 12.6k | 0–4k | deferred by owner 2026-09-21; keep and reauthor: delete, or keep at 4k | open |
 | synapse-connections (resonance, synapse, dawn write, connections surface, reading slate) | 7.8k | 2k | keep synapse + connections; DELETE dawn write (decided 2026-09-21); reading slate deferred | dawn write deleted (size/dawn); rest open; python synapse+resonance first pass landed (size/synapse-py): 3.5k→2.6k, −25%; _evidence.py is 414 lines of frozen slate SQL; web connections/slate 4k open |
-| search-browse-nexus (index, 11 retrievers, browse adapters, nexus launcher, switchboard, /search) | 26.4k | 8k | reauthor: one search UI, one retriever | python search/index/retrieval first pass landed (size/search-py) at 6.0k of 9.0k, −33%; per-hit evidence re-proof removed (cleanup/search-locators): locator_resolver + search/chunks 1,338→1,240 (−98), 3 fewer statements per ranked chunk hit; nexus launcher reauthored (size/nexus-launcher-web): 9,392→3,542, −62%, one controller and one set of workflow pages for desktop and mobile, history href allowlist and selection journal deleted, 191 of the remainder the held dead `lib/nexus/performance.ts`; browse and the other web search UIs open |
+| search-browse-nexus (index, 11 retrievers, browse adapters, nexus launcher, switchboard, /search) | 26.4k | 8k | reauthor: one search UI, one retriever | python search/index/retrieval first pass landed (size/search-py) at 6.0k of 9.0k, −33%; per-hit evidence re-proof removed (cleanup/search-locators): locator_resolver + search/chunks 1,338→1,240 (−98), 3 fewer statements per ranked chunk hit; nexus launcher reauthored (size/nexus-launcher-web): 9,392→3,351, −64%, one controller and one set of workflow pages for desktop and mobile, history href allowlist and selection journal deleted (the 191-line `lib/nexus/performance.ts` went with #408); browse and the other web search UIs open |
 | podcasts (subscriptions, sync, refresh runs, backfill, transcription, OPML, detail panes) | 14.1k | 6k | reauthor; drop refresh-run ledger, OPML | python first pass landed (size/podcasts-py): 10.9k→7.1k, −35%; OPML and the refresh-run ledger deleted (0239); web 7.0k open |
 | player (browser + android runtimes, protocol, lectern, walknotes, native player) | 21.3k | 6k | one runtime behind one transport; deferred by owner 2026-09-21; keep and reauthor walknotes | open |
 | consumption-stats (spans, projection, stats pane, outbox, exclusions) | 12.2k | 3k | reauthor; keep stats + exclusions | python first pass landed (size/consumption-py): 6.0k→4.6k, −23%; web 6.0k and android outbox open |
-| library (libraries, entries, listing, placement 3.2k) | 15.5k | 5k | reauthor | python first pass landed (size/library-py, with sharing below): 5.9k→4.3k, −28%; web 9.6k open |
+| library (libraries, entries, listing, placement 3.2k) | 12.5k | 5k | reauthor | python first pass landed (size/library-py, with sharing below): 5.9k→4.3k, −28%; placement web reauthored (cleanup/library-placement): 1,759→402 lines, −77%; 13-phase machine, commit barrier and placement lease deleted; placement + create routes typed; web ~8.2k open |
 | library-sharing (memberships, invitations, governance) | 5.0k | 2k | keep, reauthor | python landed in size/library-py: invitations+membership governance now one services/library_sharing.py (624 lines); web sharing UI open |
 | resource-sharing (grants, public /s reader, share overlay) | 7.2k | 2.5k | keep grants + link; /s reader reuses the reader | open |
 | notes-pages (daily pages, two body editors, highlights service) | 11.2k | 4k | one editor | python first pass landed (size/notes-py): 3.5k→2.4k, −30%; web 8.7k (two body editors) open |
@@ -60,7 +60,7 @@ wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the 
 | substrate: ui primitives (+3.5k css, fonts/legal) | 14.3k | 6k | reauthor css | open |
 | substrate: jobs/worker | 6.6k | 2k | reauthor | first pass landed (size/jobs-py): 6.4k→4.0k, −38%; queue.py 1,027 (310 SQL lines) and worker.py 707 are the remaining mass |
 | codex agent host (+ deploy isolation) | 4.4k | 2k | keep; declare isolation in compose, not python | open |
-| telemetry | 1.5k | 0.5k | delete rum; keep client-defects + release backup tooling | open |
+| telemetry (WebVitalsReporter, lib/nexus/performance.ts, clientDefects.ts, api/telemetry/client-defects, routes+schemas/telemetry.py, release_backup.py, env-prod-backup.example) | 0.6k | 0.5k | delete rum; keep client-defects + release backup tooling | rum deleted (cleanup/delete-write-only-telemetry): web-vitals reporter/route/schema and nexus user timing with its call sites in 9 files; 868→592 over the named files (the old 1.5k is not reproducible); client-defects + release_backup remain, release_backup.py 441 is the mass |
 | android shell/build, scripts/config | 5.0k | 4k | keep | open |
 | TOTAL | 544.6k | ~140k | | |
 

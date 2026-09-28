@@ -2096,20 +2096,17 @@ they open over Resume and never become panes.
   canonical `/lectern` request is explicit home intent: restore preserves the saved
   layout, then reuses or appends and activates Lectern; it is not a neutral alias for
   the previously active pane.
-- **Measurement loop.** `nexus:web-vitals` → `WebVitalsReporter` subscriber →
-  `sendBeacon` → BFF `/api/telemetry/web-vitals` → FastAPI `/telemetry/web-vitals` →
-  structlog `rum.web_vital` (request-id-correlated). The workspace pane boundary
-  separately emits one bounded, authenticated structural failure through
-  `/api/telemetry/client-defects`; the BFF injects the serving release and
-  FastAPI logs `rum.client_defect`. It carries pane/visit, phase, command/run,
-  structural error code, request ID, and React component stack, never exception
-  messages, request bodies, draft text, tokens, or provider payloads. Kept
-  constraints: nonce-CSP + **streaming only** — no PPR, no `next/dynamic`, no
-  server-emitted `modulepreload` (chunk URLs are unknown server-side); `React.lazy` +
-  runtime `preloadPane` (warming all restored visible panes) stays the splitting
-  mechanism. The standard `nexus_auth`, `nexus_openables`, `nexus_api`, and
-  `nexus_bff` Server-Timing phases separate auth, service, remaining API, BFF,
-  response-transfer, and client-commit time during manual diagnosis.
+- **Measurement.** The workspace pane boundary emits one bounded, authenticated
+  structural failure through `/api/telemetry/client-defects`; the BFF injects the
+  serving release and FastAPI logs `rum.client_defect`. It carries pane/visit,
+  phase, command/run, structural error code, request ID, and React component
+  stack, never exception messages, request bodies, draft text, tokens, or
+  provider payloads. Kept constraints: nonce-CSP + **streaming only** — no PPR,
+  no `next/dynamic`, no server-emitted `modulepreload` (chunk URLs are unknown
+  server-side); `React.lazy` + runtime `preloadPane` (warming all restored
+  visible panes) stays the splitting mechanism. The standard `nexus_auth`,
+  `nexus_openables`, `nexus_api`, and `nexus_bff` Server-Timing phases separate
+  auth, service, remaining API, and BFF time during manual diagnosis.
 - **BFF / proxy / auth / SSE** (`lib/api/*`, `lib/auth/*`, `lib/supabase/*`): covered
   in §5. The browser holds **no** Supabase client and no tokens; `lib/auth/dal.ts`
   `verifySession()` is the one verified-session boundary for protected pages/
