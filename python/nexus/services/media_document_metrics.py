@@ -31,22 +31,6 @@ def media_word_count_rows_sql() -> str:
     """
 
 
-def load_media_word_counts(db: Session, media_ids: list[UUID]) -> dict[UUID, int]:
-    """One entry per distinct input id, in input order; a vanished row counts 0."""
-    distinct_ids = list(dict.fromkeys(media_ids))
-    if not distinct_ids:
-        return {}
-    rows = db.execute(
-        text(f"""
-            SELECT media_id, word_count FROM ({media_word_count_rows_sql()}) counts
-            WHERE media_id = ANY(:media_ids)
-        """),
-        {"media_ids": distinct_ids},
-    ).all()
-    counts = {UUID(str(row[0])): int(row[1] or 0) for row in rows}
-    return {media_id: counts.get(media_id, 0) for media_id in distinct_ids}
-
-
 def load_media_summary_metrics(db: Session, media_id: UUID) -> MediaSummaryMetrics:
     """Word count, plus PDF page count or timed-media fragment count where one exists."""
     row = db.execute(

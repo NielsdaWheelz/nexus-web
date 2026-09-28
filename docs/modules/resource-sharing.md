@@ -10,7 +10,7 @@ Android/web capture ([sharing.md](sharing.md)).
 `resource_grants` is the only access-grant table, owned by
 `services/resource_grants.py`. A row gives its creator and exactly one audience
 (a grantee user, or the holder of its raw `share_token`) read access to one
-media or highlight. The database enforces the shape (0248): the subject scheme
+media or highlight. The database enforces the shape (0249): the subject scheme
 is `media` or `highlight`, exactly one audience column is set, and a creator
 holds one grant per subject and audience. A grant is also:
 

@@ -724,10 +724,7 @@ export function resourceActionDescriptors({
                 returnFocusFallback: present(() =>
                   findPaneLandmarkFocusTarget(ports.activePaneId),
                 ),
-                mutation: ports.createOverlayMutationBoundary(
-                  ref,
-                  "RelationshipAction.LibraryPlacement",
-                ),
+                reconcileActions: () => ports.reconcile(subjectScope),
               },
             });
           },

@@ -68,8 +68,7 @@ and exposes one authorized **Manage members** activation into that tab.
 placement is a separate top-level `Libraries…` resource relationship action
 backed by `LibraryEntryEditor`; it never appears inside Share. Library entries
 are organization references rather than access-grant provenance. See
-[resource-sharing.md](resource-sharing.md) and
-[library-placement-resource-action-hard-cutover.md](../cutovers/library-placement-resource-action-hard-cutover.md).
+[resource-sharing.md](resource-sharing.md).
 
 The admin member and pending-invitation reads return exact
 `{data, page: {nextCursor: Presence<string>}}` envelopes. Members traverse
@@ -82,10 +81,15 @@ boundary.
 
 Library entry mutations are commands, not refreshed read models. Media add and
 reorder are bodyless commands. Media removal and idempotent Podcast placement
-add/removal return typed `libraryEntriesCollectionRevision`; the placement
-editor reconciles the canonical resource-action snapshot before reading the
-authoritative placement inventory. Agent filing receives only
-inserted/already-present truth for Undo and never hydrates an entry payload.
+add/removal return typed `libraryEntriesCollectionRevision`. After a
+successful write the placement editor reconciles the subject's action snapshot
+and rereads the placement inventory. Every placement write is idempotent, so a
+transport failure is retried by resending the write; because that write may
+have committed, it also reconciles the snapshot. A refused write rereads the
+inventory and offers no retry, and a missing target ends the editor. An idle
+editor rereads when the placement bus publishes a change made after its read.
+Agent filing receives only inserted/already-present truth for Undo and never
+hydrates an entry payload.
 
 ## System libraries
 

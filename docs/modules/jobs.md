@@ -93,13 +93,8 @@ kind is a frozen `JobDefinition`:
   rows a queue-envelope outcome records. `jobs/history_projections.py` applies
   it inside the same transaction that commits the queue transition, so an
   automatic retry, a dead-letter, a reclaimed expired lease, or a reschedule is
-  recorded with the transition it documents. It is not part of the
-  task-contract digest, and it never aborts a queue transition: its failure-code
-  input is total.
-
-`get_task_contract_digest()` is a stable SHA-256 fingerprint over the registry's
-kind/attempts/delays/lease policy. API `/version` and each worker heartbeat expose
-it for exact release proof. It changes only when that contract changes.
+  recorded with the transition it documents. It never aborts a queue
+  transition: its failure-code input is total.
 
 `oracle_reading_generate` has one canonical producer and one exact payload:
 `{"reading_id": "<canonical-lowercase-uuid>"}`. Its registry adapter passes a
@@ -186,8 +181,8 @@ Only the background lane can claim or schedule production periodic work.
 Production deploys exactly `worker-interactive` and `worker-background`; there
 is no undifferentiated `worker` service.
 
-Every registry definition owns one closed `Light | Heavy` resource class, and
-that class is part of the task-contract digest. `ingest_media_source` and
+Every registry definition owns one closed `Light | Heavy` resource class.
+`ingest_media_source` and
 `media_content_reindex_job` are Heavy; all other kinds are Light. Queue-owned
 capacity admission permits one Heavy running attempt
 globally while leaving eligible Light work claimable. Domain handlers never

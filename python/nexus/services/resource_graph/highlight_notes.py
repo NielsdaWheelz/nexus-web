@@ -63,13 +63,6 @@ def note_blocks_for_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) 
     )
 
 
-def first_note_block_for_highlight(
-    db: Session, viewer_id: UUID, highlight_id: UUID
-) -> NoteBlock | None:
-    blocks = note_blocks_for_highlight(db, viewer_id, highlight_id)
-    return blocks[0] if blocks else None
-
-
 def note_block_ids_with_highlight_notes(
     db: Session, viewer_id: UUID, block_ids: list[UUID]
 ) -> set[UUID]:

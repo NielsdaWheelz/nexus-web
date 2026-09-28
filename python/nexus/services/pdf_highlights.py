@@ -32,9 +32,9 @@ from nexus.services.pdf_highlight_geometry import (
     canonicalize_geometry,
     validate_exact_length,
 )
-from nexus.services.pdf_quote_match import PREFIX_SUFFIX_WINDOW
 from nexus.services.pdf_readiness import is_pdf_quote_text_ready
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.text_quote import PREFIX_SUFFIX_WINDOW
 
 
 def create_pdf_highlight(

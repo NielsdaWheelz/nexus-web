@@ -160,6 +160,23 @@ export function libraryRequestErrorMessage(
         message: "This item must remain in at least one library.",
         requestId,
       };
+    case "E_PODCAST_REPLACES_EPISODES":
+      if (request !== "PlacementMutation") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message:
+          "Remove individually filed episodes before adding this podcast to the library.",
+        requestId,
+      };
+    case "E_PODCAST_SUBSCRIPTION_REQUIRED":
+      if (request !== "PlacementMutation") throw error;
+      return {
+        tone: "Danger",
+        title,
+        message: "Subscribe to this podcast before adding it to a library.",
+        requestId,
+      };
     case "E_MEDIA_DELETING":
       if (!ENTRY_REQUESTS[request] || request === "EntryRead") throw error;
       return {

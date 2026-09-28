@@ -417,13 +417,13 @@ function DownloadsPanel({
 export default function DownloadsOverlay({
   open,
   onClose,
-  audio = null,
-  reading = { kind: "Unavailable" },
+  audio,
+  reading,
 }: {
   readonly open: boolean;
   readonly onClose: () => void;
-  readonly audio?: ReadyOfflineMedia | null;
-  readonly reading?: OfflineReadingCapability;
+  readonly audio: ReadyOfflineMedia | null;
+  readonly reading: OfflineReadingCapability;
 }) {
   const isMobile = useIsMobileViewport();
   const mobileCloseButtonRef = useRef<HTMLButtonElement | null>(null);

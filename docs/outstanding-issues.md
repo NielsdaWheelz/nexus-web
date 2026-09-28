@@ -30,8 +30,14 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
+- [open] web / python comments · 2026-09-28 pr-06 library placement · 25 code comments cite deleted `docs/cutovers/` files as rule owners: [ticket](tickets/code-comments-cite-deleted-cutovers.md).
+- [open] ingest-imports web · 2026-09-28 pr-06 library placement · Add Content still rereads and decides settlement-unknown placement writes and publishes the bus by hand, where the overlay now resends: [ticket](tickets/add-content-placement-unknown-machine.md).
 - [open] typed wire / resource graph · 2026-09-28 typed-wire foundation · `ResourceActivationOut` is camelCase on routes and snake_case in the chat SSE frame; the wire dump will reject the first route typed with it: [ticket](tickets/resource-activation-has-two-wire-casings.md).
 - [open] typed wire / sse · 2026-09-28 typed-wire foundation · chat tool_* frames and the media snapshot have no wire model, so their web decoders stay: [ticket](tickets/sse-payloads-without-wire-models.md).
+- [open] content index / schema · 2026-09-28 cleanup pr 05 · the four `evidence_spans` block-pointer columns, their fks, indexes and checks lost their last reader with the snapshot re-proof; drop them with a migration: [ticket](tickets/evidence-span-block-pointers-write-only.md).
+- [open] resource graph / citations · 2026-09-28 cleanup pr 05 · a citation target on a geometry-less pdf span raises a `ValidationError` in `reader_targets` instead of opening the media: [ticket](tickets/citation-target-pdf-without-geometry.md).
+- [open] search / locator resolver · 2026-09-28 cleanup pr 05 review · `evidence_resolution` and `locator_from_resolution` each build the span's text quote, with different missing-prefix normalization: [ticket](tickets/evidence-locator-rebuilds-text-quote.md).
+- [open] collections / offline audio · 2026-09-27 cleanup pr 01 · episode rows lost download status in #385; CollectionRow's localAvailability path is dead until restored or deleted: [ticket](tickets/media-rows-lost-offline-download-status.md).
 - [open] android / offline-hosted handoff · 2026-09-26 reader navigation acceptance · shelf-to-hosted bootstrap can fail in mobile viewport and leave a late bridge reply; cold restart recovers: [ticket](tickets/android-offline-to-hosted-deep-link-transient-boundary.md).
 - [open] reader / accessibility · 2026-09-26 reader navigation acceptance · talkback exposed the held-position live region, but its spoken words could not be independently observed: [ticket](tickets/reader-navigation-talkback-spoken-announcement-unverified.md).
 - [blocked] conversation and artifact find / live acceptance · 2026-09-26 reader navigation acceptance · the isolated generation catalog needs an unavailable codex host, so no ordinary chat or dossier exists: [ticket](tickets/generic-pane-find-live-acceptance-blocked.md).
@@ -311,3 +317,7 @@ unexpected timeouts. See
 - [open] 2026-09-27 epub apparatus identity · one note with distinct id/name aliases can become two target items with one dom stamp: [ticket](tickets/epub-note-id-name-alias-duplicates-target.md).
 - [open] 2026-09-26 notes bullets cache review · non-note card labels lack a revision for ordering concurrent reads: [ticket](tickets/resource-surface-card-labels-have-no-revision.md).
 - [open] 2026-09-25 notes writing live action probe · overlapping pdf highlight overlays block pointer access to a covered highlight: [ticket](tickets/pdf-overlapping-highlights-block-pointer-action.md).
+- [deferred] jobs / content indexing · 2026-09-27 backend dead-code sweep · reindex payload `request_id` is write-only but stored in never-pruned jobs; strip it with a migration: [ticket](tickets/reindex-payload-request-id-is-write-only.md).
+- [open] errors / web · 2026-09-27 backend dead-code sweep · two api error codes are never raised but web still switches on them: [ticket](tickets/unraised-api-error-codes-kept-by-web.md).
+- [open] 2026-09-28 chat admission / oracle web · web keeps E_RATE_LIMITED / E_RATE_LIMITER_UNAVAILABLE arms until the backend with 0248 ships: [ticket](tickets/web-rate-limit-copy-outlives-limiter.md).
+- [open] 2026-09-28 sse transport · the listen cap's 429 E_RATE_LIMITED is misnamed and the sse client treats it as fatal: [ticket](tickets/sse-listen-cap-rejection-is-misnamed-and-fatal.md).

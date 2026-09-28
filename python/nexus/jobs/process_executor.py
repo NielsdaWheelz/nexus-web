@@ -461,27 +461,15 @@ def _prune_stale_parser_temp(
     return {"removed_directories": removed}
 
 
-def _initialize_child_runtime(runtime: str) -> None:
-    """Install the dependencies a background handler previously inherited."""
-    if runtime == "Base":
-        return
-    from nexus.config import get_settings
-    from nexus.db.session import get_session_factory
-    from nexus.services.generation_policy import validate_policy
-    from nexus.services.rate_limit import RateLimiter, set_rate_limiter
-
-    validate_policy()
-    set_rate_limiter(
-        RateLimiter(session_factory=get_session_factory(), rpm_limit=get_settings().rate_limit_rpm)
-    )
-
-
 def _child_result(request: dict[str, Any]) -> dict[str, Any]:
     """Run the requested handler in this child and encode its outcome."""
     from nexus.jobs.registry import resolve_job_handler
 
     _raise_oom_score_adj(int(request["oom_score_adj"]))
-    _initialize_child_runtime(str(request["runtime"]))
+    if request["runtime"] == "Llm":
+        from nexus.services.generation_policy import validate_policy
+
+        validate_policy()
     identity = request["context"]
     context = JobExecutionContext(
         job_id=UUID(identity["job_id"]),

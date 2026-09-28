@@ -18,7 +18,7 @@ calibration (chat tools, 2026-09-21): a spec that describes the current structur
 
 verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, one alembic head) plus one named manual check per module. there are no automated tests; that is a known, accepted trade.
 
-wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the routes it rewrites and deletes their web decoders. the generated `apps/web/src/lib/api/wire.gen.ts` is excluded from line counts and targets. untyped JSON routes: 172 of 219 operations (2026-09-28; 11 typed, 24 without a body, 12 binary or SSE).
+wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the routes it rewrites and deletes their web decoders. the generated `apps/web/src/lib/api/wire.gen.ts` is excluded from line counts and targets. untyped JSON routes: 163 of 217 operations (2026-09-28; 18 typed, 24 without a body, 12 binary or SSE).
 
 ## inventory and targets
 
@@ -40,19 +40,19 @@ wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the 
 | dossiers (engine 3.4k, ten subject bindings, web document runtime) | 14.6k | 5k | reauthor: one engine, one binding table | python first pass landed (size/dossiers-py): 12.0k→7.4k, −39%; web document runtime 7.2k open |
 | oracle-atlas (oracle, plates, concordance, corpus ops, atlas, manifests, deploy plate train) | 12.6k | 0–4k | deferred by owner 2026-09-21; keep and reauthor: delete, or keep at 4k | open |
 | synapse-connections (resonance, synapse, dawn write, connections surface, reading slate) | 7.8k | 2k | keep synapse + connections; DELETE dawn write (decided 2026-09-21); reading slate deferred | dawn write deleted (size/dawn); rest open; python synapse+resonance first pass landed (size/synapse-py): 3.5k→2.6k, −25%; _evidence.py is 414 lines of frozen slate SQL; web connections/slate 4k open |
-| search-browse-nexus (index, 11 retrievers, browse adapters, nexus launcher, switchboard, /search) | 26.4k | 8k | reauthor: one search UI, one retriever | python search/index/retrieval first pass landed (size/search-py) at 6.0k of 9.0k, −33%; browse and the three web search UIs open |
+| search-browse-nexus (index, 11 retrievers, browse adapters, nexus launcher, switchboard, /search) | 26.4k | 8k | reauthor: one search UI, one retriever | python search/index/retrieval first pass landed (size/search-py) at 6.0k of 9.0k, −33%; per-hit evidence re-proof removed (cleanup/search-locators): locator_resolver + search/chunks 1,338→1,240 (−98), 3 fewer statements per ranked chunk hit; browse and the three web search UIs open |
 | podcasts (subscriptions, sync, refresh runs, backfill, transcription, OPML, detail panes) | 14.1k | 6k | reauthor; drop refresh-run ledger, OPML | python first pass landed (size/podcasts-py): 10.9k→7.1k, −35%; OPML and the refresh-run ledger deleted (0239); web 7.0k open |
 | player (browser + android runtimes, protocol, lectern, walknotes, native player) | 21.3k | 6k | one runtime behind one transport; deferred by owner 2026-09-21; keep and reauthor walknotes | open |
 | consumption-stats (spans, projection, stats pane, outbox, exclusions) | 12.2k | 3k | reauthor; keep stats + exclusions | python first pass landed (size/consumption-py): 6.0k→4.6k, −23%; web 6.0k and android outbox open |
-| library (libraries, entries, listing, placement 3.2k) | 15.5k | 5k | reauthor | python first pass landed (size/library-py, with sharing below): 5.9k→4.3k, −28%; web 9.6k open |
+| library (libraries, entries, listing, placement 3.2k) | 12.5k | 5k | reauthor | python first pass landed (size/library-py, with sharing below): 5.9k→4.3k, −28%; placement web reauthored (cleanup/library-placement): 1,759→402 lines, −77%; 13-phase machine, commit barrier and placement lease deleted; placement + create routes typed; web ~8.2k open |
 | library-sharing (memberships, invitations, governance) | 5.0k | 2k | keep, reauthor | python landed in size/library-py: invitations+membership governance now one services/library_sharing.py (624 lines); web sharing UI open |
-| resource-sharing (grants, public /s reader, share overlay) | 7.2k | 2.5k | keep grants + link; /s reader reuses the reader | landed (size/resource-sharing, mig 0248): 7,081→2,841, −60%; typed wire, one-shot public document, loosened gate, CHECK + unique grants; /s reuses reader primitives, not the reader panes |
+| resource-sharing (grants, public /s reader, share overlay) | 2.8k | 2.5k | keep grants + link; /s reader reuses the reader | landed (size/resource-sharing, mig 0249): 7,081→2,841, −60%; typed wire, one-shot public document, loosened gate, CHECK + unique grants; /s reuses reader primitives, not the reader panes |
 | notes-pages (daily pages, two body editors, highlights service) | 11.2k | 4k | one editor | python first pass landed (size/notes-py): 3.5k→2.4k, −30%; web 8.7k (two body editors) open |
 | authors (contributors, credits, taxonomy, author pane) | 6.0k | 2k | reauthor | python first pass landed (size/contributors-py): 3.2k→2.0k, −39%; web 4.0k open |
 | offline-android (delivery, packages, downloads, two kotlin stores) | 17.6k | 8k | one store | open |
 | vault (export/sync/watch CLI + pane) | 1.9k | 0–1k | deferred by owner 2026-09-21; keep and reauthor: keep at 1k or delete | open |
 | billing-settings (billing, entitlements, quota, 7 settings panes) | 4.4k | 2k | keep, reauthor | open |
-| auth-extension (auth, users, sessions, extension 2.8k of which 2.3k vendored Readability) | 4.9k | 2k | deferred by owner 2026-09-21; keep and reauthor extension; keep auth | capture routing 351→334 lines: one permission/classification owner fixes denied inspection and duplicate prompts; auth and the remaining extension remain open |
+| auth-extension (auth, users, sessions, extension 2.8k of which 2.3k vendored Readability) | 4.7k | 2k | deferred by owner 2026-09-21; keep and reauthor extension; keep auth | capture routing 351→334 lines: one permission/classification owner fixes denied inspection and duplicate prompts; postgres rate limiter and stream-token jti claims deleted (cleanup/delete-rate-limiter, mig 0248): tokens are stateless signed JWTs, stream_tokens.py 276→192; auth and the remaining extension remain open |
 | substrate: resource graph (refs, edges, citations) | 5.2k | 2k | reauthor | first pass landed (size/resource-graph-py): 6.6k→4.9k, −25%; two blocks await the action-menu rewrite |
 | substrate: action menu (snapshot→menu→runtime/cache) | 11.4k | 1.5k | one catalog + one menu | catalog/environment/menu/runtime core: 3,265→2,168 lines and 104,151→70,217 bytes; direct capability-to-command projection replaces intent/plan/dispatch layers. cache, mutation leases, editor handoff and remaining substrate stay open |
 | substrate: workspace/panes (store, host, memento, mobile chrome, pane find, route model) | 20.7k | 6k | reauthor | open |
@@ -72,5 +72,6 @@ wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the 
 
 ## decision log
 
+- 2026-09-27 · owner: delete the postgres rate limiter and the stream-token jti replay table. stream and package tokens stay short-lived signed JWTs without one-use claims; the SSE LISTEN cap (429 `E_RATE_LIMITED`) stays.
 - 2026-09-21 · owner: target 50–100k; "reauthor to target" approved for everything; kill dawn write; oracle/atlas, x/email/arxiv ingest, reading slate, walknotes, vault, extension deferred (keep, reauthor).
 - 2026-09-18 · owner: fork graph kept; System appearance dropped; see `docs/outstanding-issues.md` history for the rest.

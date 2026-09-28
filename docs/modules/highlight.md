@@ -90,7 +90,7 @@ candidate, or an existing apparatus/index row) is a separate table,
 `passage_anchors` — user-owned, keyed by owner (`media`/`note_block`) plus an
 immutable `anchor_key` hash of the normalized quote, with a replaceable
 `locator_hint`. It shares the highlight module's quote-matching primitives
-(`services/text_quote.py`, `services/pdf_quote_match.py`, and the shared
+(`services/text_quote.py` and the shared
 `services/locator_resolver.py` that both Highlights and passage anchors call)
 but is not a highlight row and never becomes a visible Highlight on its own —
 a search-derived PDF passage in particular is a passage anchor, never a

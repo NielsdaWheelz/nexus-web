@@ -39,11 +39,11 @@ from nexus.services.offline_reading_packages import (
     serialize_offline_reader_document,
 )
 from nexus.services.reader_publication import (
-    ReaderPublicationObjectReader,
     ReaderPublicationObjectReference,
     ReaderPublicationProjection,
     capture_current,
 )
+from nexus.storage.client import StorageClient, get_storage_client
 
 _DROP_ELEMENTS = frozenset(
     {
@@ -122,9 +122,8 @@ def build_offline_reading_archive_file(
         captured = capture_current(
             session_factory,
             media_id=media_id,
-            assemble=lambda projection, objects: _assemble_publication_to_file(
+            assemble=lambda projection: _assemble_publication_to_file(
                 projection,
-                objects,
                 output_path=Path(path),
                 staging_parent=Path(directory),
                 checkpoint=checkpoint,
@@ -146,7 +145,6 @@ def build_offline_reading_archive_file(
 
 def _assemble_publication_to_file(
     projection: ReaderPublicationProjection,
-    objects: ReaderPublicationObjectReader,
     *,
     output_path: Path,
     staging_parent: Path,
@@ -172,11 +170,12 @@ def _assemble_publication_to_file(
         )
         entries.append(reader_entry)
         members[reader_entry.path] = reader_path
+        storage = get_storage_client()
         for member in external_members:
             checkpoint()
             entry, member_path = _stage_reference(
                 attempt_path,
-                objects,
+                storage,
                 member,
                 checkpoint=checkpoint,
             )
@@ -485,7 +484,7 @@ def _one_reference(
 
 def _stage_reference(
     root: Path,
-    objects: ReaderPublicationObjectReader,
+    storage: StorageClient,
     member: _ProjectedExternalMember,
     *,
     checkpoint: Callable[[], None],
@@ -503,7 +502,7 @@ def _stage_reference(
     digest = hashlib.sha256()
     length = 0
     with destination.open("xb") as output:
-        for chunk in objects.stream(member.reference):
+        for chunk in storage.stream_object(member.reference.storage_path):
             checkpoint()
             if not isinstance(chunk, bytes):
                 raise AssertionError("storage stream yielded a non-bytes chunk")

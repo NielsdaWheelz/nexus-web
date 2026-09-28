@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import RowMapping, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import highlight_readability_sql, visible_media_ids_cte_sql
@@ -22,7 +22,7 @@ from nexus.services.contributor_credits import (
     contributor_credits_rollup_cte_sql,
     credit_target_filter_exists_sql,
 )
-from nexus.services.locator_resolver import locator_from_resolution, resolve_evidence_span
+from nexus.services.locator_resolver import evidence_resolution, locator_from_resolution
 from nexus.services.resource_graph.highlight_notes import highlight_excerpts_for_note_blocks
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search.projection import _snippet_around_query, _truncate_snippet
@@ -175,10 +175,18 @@ def _ann_limit(limit: int) -> int:
     return max(MIN_ANN_CANDIDATES, int(limit) * ANN_CANDIDATE_MULTIPLIER)
 
 
-def _require_resolved_evidence(resolution: dict[str, Any]) -> None:
-    resolver = resolution.get("resolver")
-    if not isinstance(resolver, dict) or resolver.get("status") != "resolved":
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result is stale")
+def _span_locator(row: RowMapping, *, owner_id: UUID, media_kind: str) -> dict[str, Any] | None:
+    """The retrieval locator of the row's evidence span, or None when it does not resolve."""
+    resolution = evidence_resolution(
+        evidence_span_id=row["span_id"],
+        owner_id=owner_id,
+        span_text=row["span_text"],
+        selector=row["selector"],
+        resolver_kind=row["resolver_kind"],
+    )
+    if resolution["resolver"]["status"] != "resolved":
+        return None
+    return locator_from_resolution(resolution, media_id=owner_id, media_kind=media_kind)
 
 
 # =============================================================================
@@ -260,10 +268,12 @@ def search_content_chunks(
                 FROM ranked_candidates ranked JOIN content_chunks cc ON cc.id = ranked.id
             ), media_contributor_credits AS ({rollup})
             SELECT cc.id, cc.owner_id AS media_id, m.kind, m.title, m.original_published_date,
-                   mcc.contributor_credits, cc.chunk_text, {snippet} AS snippet,
-                   cc.source_kind, cc.primary_evidence_span_id, ranked.raw_score
+                   mcc.contributor_credits, cc.chunk_text, {snippet} AS snippet, cc.source_kind,
+                   es.id AS span_id, es.span_text, es.selector, es.citation_label,
+                   es.resolver_kind, ranked.raw_score
             FROM ranked_candidates ranked
             JOIN content_chunks cc ON cc.id = ranked.id
+            JOIN evidence_spans es ON es.id = cc.primary_evidence_span_id
             JOIN media m ON m.id = cc.owner_id
             LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
             ORDER BY ranked.raw_score DESC, ranked.id ASC
@@ -290,13 +300,8 @@ def search_content_chunks(
 
     results: list[InternalSearchResult] = []
     for row in db.execute(text(statement), params).mappings():
-        span_id = row["primary_evidence_span_id"]
-        if span_id is None:
-            continue
-        try:
-            resolution = resolve_evidence_span(db, viewer_id=viewer_id, evidence_span_id=span_id)
-            _require_resolved_evidence(resolution)
-        except NotFoundError:
+        locator = _span_locator(row, owner_id=row["media_id"], media_kind=row["kind"])
+        if locator is None:
             continue
         chunk_text = str(row["chunk_text"] or "")
         snippet_text = _truncate_snippet(str(row["snippet"] or chunk_text))
@@ -308,11 +313,9 @@ def search_content_chunks(
                 id=row["id"],
                 snippet=snippet_text,
                 source_kind=str(row["source_kind"]),
-                evidence_span_ids=[span_id],
-                citation_label=str(resolution["citation_label"]),
-                locator=locator_from_resolution(
-                    resolution, media_id=row["media_id"], media_kind=str(row["kind"] or "")
-                ),
+                evidence_span_ids=[row["span_id"]],
+                citation_label=row["citation_label"],
+                locator=locator,
                 source=_build_search_source(
                     row["media_id"],
                     row["kind"],
@@ -343,14 +346,16 @@ def resolve_content_chunk(
                  media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
             SELECT cc.id, cc.owner_id AS media_id, m.kind, m.title, m.original_published_date,
                    mcc.contributor_credits, cc.chunk_text, cc.source_kind,
-                   cc.primary_evidence_span_id
+                   es.id AS span_id, es.span_text, es.selector, es.citation_label,
+                   es.resolver_kind
             FROM content_chunks cc
+            JOIN evidence_spans es ON es.id = cc.primary_evidence_span_id
             JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
             JOIN visible_media vm ON vm.media_id = cc.owner_id
             JOIN content_index_states mcis ON mcis.owner_kind = cc.owner_kind
                 AND mcis.owner_id = cc.owner_id AND mcis.status = 'ready'
             LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
-            WHERE cc.id = :id AND cc.owner_kind = 'media' AND vm.media_id IS NOT NULL
+            WHERE cc.id = :id
             """
             ),
             {"viewer_id": viewer_id, "id": result_id},
@@ -358,24 +363,19 @@ def resolve_content_chunk(
         .mappings()
         .first()
     )
-    span_id = None if row is None else row["primary_evidence_span_id"]
-    if row is None or span_id is None:
+    if row is None or (evidence_span_ids and row["span_id"] not in evidence_span_ids):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-    if evidence_span_ids and span_id not in evidence_span_ids:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-    resolution = resolve_evidence_span(db, viewer_id=viewer_id, evidence_span_id=span_id)
-    _require_resolved_evidence(resolution)
-    # The reopen row reports the media kind where discovery reports the chunk's.
-    media_kind = str(row["kind"])
+    media_kind = row["kind"]
+    locator = _span_locator(row, owner_id=row["media_id"], media_kind=media_kind)
+    if locator is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result is stale")
     return _RankedContentChunkResult(
         id=row["id"],
         snippet=_truncate_snippet(str(row["chunk_text"] or "")),
         source_kind=str(row["source_kind"]),
-        evidence_span_ids=[span_id],
-        citation_label=str(resolution["citation_label"]),
-        locator=locator_from_resolution(
-            resolution, media_id=row["media_id"], media_kind=media_kind
-        ),
+        evidence_span_ids=[row["span_id"]],
+        citation_label=row["citation_label"],
+        locator=locator,
         source=_build_search_source(
             row["media_id"],
             media_kind,
@@ -397,7 +397,8 @@ def resolve_evidence_span_result(
                 f"""
             WITH visible_media AS ({visible_media_ids_cte_sql()}),
                  media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
-            SELECT es.id, es.owner_kind, es.owner_id, es.span_text, es.citation_label,
+            SELECT es.id AS span_id, es.owner_kind, es.owner_id, es.span_text, es.selector,
+                   es.citation_label, es.resolver_kind,
                    m.kind, m.title, m.original_published_date, mcc.contributor_credits
             FROM evidence_spans es
             LEFT JOIN media m ON m.id = es.owner_id AND es.owner_kind = 'media'
@@ -416,17 +417,16 @@ def resolve_evidence_span_result(
     )
     if row is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-    resolution = resolve_evidence_span(db, viewer_id=viewer_id, evidence_span_id=row["id"])
-    _require_resolved_evidence(resolution)
-    owned_by_media = str(row["owner_kind"]) == "media"
-    source_kind = str(row["kind"] or "note") if owned_by_media else str(row["owner_kind"])
+    owned_by_media = row["owner_kind"] == "media"
+    source_kind = row["kind"] if owned_by_media else row["owner_kind"]
+    locator = _span_locator(row, owner_id=row["owner_id"], media_kind=source_kind)
+    if locator is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result is stale")
     return _RankedEvidenceSpanResult(
-        id=row["id"],
-        snippet=_truncate_snippet(str(row["span_text"] or "")),
-        citation_label=str(row["citation_label"] or resolution.get("citation_label") or ""),
-        locator=locator_from_resolution(
-            resolution, media_id=row["owner_id"], media_kind=source_kind
-        ),
+        id=row["span_id"],
+        snippet=_truncate_snippet(row["span_text"]),
+        citation_label=row["citation_label"],
+        locator=locator,
         source=_build_search_source(
             row["owner_id"],
             source_kind,

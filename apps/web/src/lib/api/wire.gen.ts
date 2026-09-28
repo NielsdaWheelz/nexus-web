@@ -1705,7 +1705,7 @@ export interface paths {
         };
         /**
          * Get Proxied Image
-         * @description Proxy an external image with SSRF validation, ETag caching and 304s.
+         * @description Proxy one external image behind SSRF validation; the browser caches it for a day.
          */
         get: operations["get_proxied_image_media_image_get"];
         put?: never;
@@ -1835,23 +1835,6 @@ export interface paths {
         put?: never;
         /** Record Upload Transport Failure */
         post: operations["record_upload_transport_failure_media_uploads__session_handle__transport_failure_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/media/{media_handle}/intelligence": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Media Intelligence */
-        get: operations["get_media_intelligence_media__media_handle__intelligence_get"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2440,29 +2423,12 @@ export interface paths {
         };
         /**
          * Get Offline Reading Package
-         * @description Consume one package token and transfer one verified immutable ZIP.
+         * @description Verify one package token and transfer one verified immutable ZIP.
          *
          *     The handler is async so the request can observe its own client disconnect
          *     while assembly runs; every blocking database call stays on a worker thread.
          */
         get: operations["get_offline_reading_package_offline_reading_packages__media_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/oracle/corpus": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Oracle Corpus Status */
-        get: operations["get_oracle_corpus_status_oracle_corpus_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3444,6 +3410,14 @@ export interface components {
              */
             kind: "absent";
         };
+        /** AbsentLibraryPlacementRelationOut */
+        AbsentLibraryPlacementRelationOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Absent";
+        };
         /**
          * ActivityRecordIn
          * @description Trusted backend activity record; the BFF alone injects ``deviceId``.
@@ -3556,6 +3530,14 @@ export interface components {
              */
             mode: "automatic";
         };
+        /** AvailableLibraryPlacementAvailabilityOut */
+        AvailableLibraryPlacementAvailabilityOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Available";
+        };
         /** BillingAccountOut */
         BillingAccountOut: {
             /** Billing Enabled */
@@ -3631,6 +3613,19 @@ export interface components {
         BillingWebhookOut: {
             /** Processed */
             processed: boolean;
+        };
+        /** BlockedLibraryPlacementAvailabilityOut */
+        BlockedLibraryPlacementAvailabilityOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Blocked";
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "RequiresAdmin" | "RequiresSubscription" | "SystemManaged" | "Inherited";
         };
         /** Body_transcribe_walknote_audio_walknotes_transcribe_audio_post */
         Body_transcribe_walknote_audio_walknotes_transcribe_audio_post: {
@@ -4215,6 +4210,22 @@ export interface components {
         Data_CreateResourceShareOut_: {
             data: components["schemas"]["CreateResourceShareOut"];
         };
+        /** Data[LibraryEntryRemovalOut] */
+        Data_LibraryEntryRemovalOut_: {
+            data: components["schemas"]["LibraryEntryRemovalOut"];
+        };
+        /** Data[LibraryOut] */
+        Data_LibraryOut_: {
+            data: components["schemas"]["LibraryOut"];
+        };
+        /** Data[PodcastPlacementAdditionOut] */
+        Data_PodcastPlacementAdditionOut_: {
+            data: components["schemas"]["PodcastPlacementAdditionOut"];
+        };
+        /** Data[PodcastPlacementRemovalOut] */
+        Data_PodcastPlacementRemovalOut_: {
+            data: components["schemas"]["PodcastPlacementRemovalOut"];
+        };
         /** Data[PublicSectionOut] */
         Data_PublicSectionOut_: {
             data: components["schemas"]["PublicSectionOut"];
@@ -4226,6 +4237,19 @@ export interface components {
         /** Data[ResourceShareSnapshotOut] */
         Data_ResourceShareSnapshotOut_: {
             data: components["schemas"]["ResourceShareSnapshotOut"];
+        };
+        /** Data[list[LibraryPlacementOptionOut]] */
+        Data_list_LibraryPlacementOptionOut__: {
+            /** Data */
+            data: components["schemas"]["LibraryPlacementOptionOut"][];
+        };
+        /** DirectLibraryPlacementRelationOut */
+        DirectLibraryPlacementRelationOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Direct";
         };
         /** DirectNaturalEndOrigin */
         DirectNaturalEndOrigin: {
@@ -4554,6 +4578,16 @@ export interface components {
              */
             kind: "Ineligible";
         };
+        /** InheritedLibraryPlacementRelationOut */
+        InheritedLibraryPlacementRelationOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Inherited";
+            /** Provenance */
+            provenance: components["schemas"]["LibraryIdentityOut"][];
+        };
         /** InsertNoteSurfaceCommand */
         InsertNoteSurfaceCommand: {
             /** Body Pm Json */
@@ -4637,6 +4671,80 @@ export interface components {
         LibraryEntryOrderRequest: {
             /** Entry Ids */
             entry_ids: string[];
+        };
+        /** LibraryEntryRemovalOut */
+        LibraryEntryRemovalOut: {
+            /** Libraryentriescollectionrevision */
+            libraryEntriesCollectionRevision: number;
+        };
+        /** LibraryIdentityOut */
+        LibraryIdentityOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+        };
+        /** LibraryLibraryPlacementDestinationOut */
+        LibraryLibraryPlacementDestinationOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Library";
+            library: components["schemas"]["LibraryIdentityOut"];
+        };
+        /** LibraryOut */
+        LibraryOut: {
+            /** Candelete */
+            canDelete: boolean;
+            /** Caneditentries */
+            canEditEntries: boolean;
+            /** Canmanagemembers */
+            canManageMembers: boolean;
+            /** Canrename */
+            canRename: boolean;
+            /** Cantransferownership */
+            canTransferOwnership: boolean;
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Isdefault */
+            isDefault: boolean;
+            /** Name */
+            name: string;
+            /** Owneruserhandle */
+            ownerUserHandle: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "admin" | "member";
+            /** Systemkey */
+            systemKey: string | null;
+            /**
+             * Updatedat
+             * Format: date-time
+             */
+            updatedAt: string;
+        };
+        /** LibraryPlacementOptionOut */
+        LibraryPlacementOptionOut: {
+            /** Availability */
+            availability: components["schemas"]["AvailableLibraryPlacementAvailabilityOut"] | components["schemas"]["BlockedLibraryPlacementAvailabilityOut"];
+            /** Destination */
+            destination: components["schemas"]["SavedInNexusLibraryPlacementDestinationOut"] | components["schemas"]["LibraryLibraryPlacementDestinationOut"];
+            /** Relation */
+            relation: components["schemas"]["AbsentLibraryPlacementRelationOut"] | components["schemas"]["DirectLibraryPlacementRelationOut"] | components["schemas"]["InheritedLibraryPlacementRelationOut"];
         };
         /** LinkAudienceIn */
         LinkAudienceIn: {
@@ -5525,6 +5633,26 @@ export interface components {
              * @enum {string}
              */
             state: "all" | "unplayed" | "in_progress" | "played";
+        };
+        /** PodcastPlacementAdditionOut */
+        PodcastPlacementAdditionOut: {
+            /** Libraryentriescollectionrevision */
+            libraryEntriesCollectionRevision: number;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "Added" | "AlreadyPresent";
+        };
+        /** PodcastPlacementRemovalOut */
+        PodcastPlacementRemovalOut: {
+            /** Libraryentriescollectionrevision */
+            libraryEntriesCollectionRevision: number;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "Removed" | "AlreadyAbsent";
         };
         /** PodcastRefreshLibraryScope */
         PodcastRefreshLibraryScope: {
@@ -6492,6 +6620,14 @@ export interface components {
              * @enum {string}
              */
             tool_authority: "ReadOnly" | "AdditiveWrites";
+        };
+        /** SavedInNexusLibraryPlacementDestinationOut */
+        SavedInNexusLibraryPlacementDestinationOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "SavedInNexus";
         };
         /**
          * SearchPageInfo
@@ -10309,9 +10445,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_LibraryOut_"];
                 };
             };
             /** @description Validation Error */
@@ -10864,9 +10998,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_PodcastPlacementAdditionOut_"];
                 };
             };
             /** @description Validation Error */
@@ -10898,9 +11030,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_PodcastPlacementRemovalOut_"];
                 };
             };
             /** @description Validation Error */
@@ -11625,39 +11755,6 @@ export interface operations {
             };
         };
     };
-    get_media_intelligence_media__media_handle__intelligence_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_handle: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_media_media__media_id__get: {
         parameters: {
             query?: never;
@@ -12012,9 +12109,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_list_LibraryPlacementOptionOut__"];
                 };
             };
             /** @description Validation Error */
@@ -12079,9 +12174,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_LibraryEntryRemovalOut_"];
                 };
             };
             /** @description Validation Error */
@@ -12631,9 +12724,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_LibraryEntryRemovalOut_"];
                 };
             };
             /** @description Validation Error */
@@ -13081,28 +13172,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_oracle_corpus_status_oracle_corpus_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
                 };
             };
         };
@@ -13687,9 +13756,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_list_LibraryPlacementOptionOut__"];
                 };
             };
             /** @description Validation Error */

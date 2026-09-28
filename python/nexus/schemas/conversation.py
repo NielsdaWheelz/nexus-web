@@ -787,7 +787,6 @@ ChatDestination = Annotated[
 
 
 ChatAdmissionRejectionCode = Literal[
-    "E_RATE_LIMITED",
     "E_MESSAGE_TOO_LONG",
     "E_CATALOG_DEFINITION_STALE",
     "E_INVALID_GENERATION_SELECTION",

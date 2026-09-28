@@ -68,7 +68,7 @@ function placementDescription(option: LibraryPlacementOption): string | undefine
 
 /**
  * Pure adapter from the canonical placement contract to the shared chooser.
- * Fetching, commands, and reconciliation remain owned by useLibraryPlacement.
+ * Fetching, commands, and reconciliation are owned by its caller.
  */
 export default function LibraryEntryEditor({
   placements,

@@ -38,6 +38,7 @@ from nexus.oracle.manifest import (
     OraclePlateManifestEntry,
     oracle_plate_storage_slug,
 )
+from nexus.runtime_health import get_runtime_identity
 from nexus.services import library_entries, library_governance, oracle_plates
 from nexus.services.content_indexing import request_media_content_reindex
 from nexus.services.image_validation import MAX_IMAGE_BYTES, MAX_IMAGE_DIMENSION
@@ -847,18 +848,12 @@ def require_oracle_corpus_unpublished(db: Session) -> None:
         raise ValueError("Oracle corpus must be unpublished before support reconciliation")
 
 
-def get_oracle_corpus_readiness(
-    db: Session, *, expected_manifest_digest: str | None = None
-) -> OracleCorpusReadiness:
+def get_oracle_corpus_readiness(db: Session) -> OracleCorpusReadiness:
     """Fail closed unless support and the baked current publication marker are ready."""
     support = _get_oracle_corpus_support_readiness(db)
-    if expected_manifest_digest is None:
-        from nexus.runtime_health import get_runtime_identity
-
-        expected_manifest_digest = get_runtime_identity().expected_oracle_manifest_digest
     published = oracle_publication_matches(
         db,
-        expected_manifest_digest=expected_manifest_digest,
+        expected_manifest_digest=get_runtime_identity().expected_oracle_manifest_digest,
         embedding_provider=current_transcript_embedding_provider(),
         embedding_model=current_transcript_embedding_model(),
     )

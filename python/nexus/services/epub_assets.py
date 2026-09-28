@@ -13,12 +13,7 @@ from nexus.db.models import Media, MediaKind
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.services.capabilities import is_document_status_ready
 from nexus.services.epub_ingest import SUPPORTED_IMAGE_TYPES
-from nexus.storage.client import (
-    StorageClient,
-    StorageError,
-    get_storage_client,
-    read_object_checked,
-)
+from nexus.storage.client import StorageError, get_storage_client, read_object_checked
 
 _ASSET_KEY_RE = re.compile(r"^[a-zA-Z0-9_./-]+$")
 _SVG_CONTENT_TYPE = "image/svg+xml"
@@ -78,7 +73,6 @@ def get_epub_asset_for_viewer(
     viewer_id: UUID,
     media_id: UUID,
     asset_key: str,
-    storage_client: StorageClient | None = None,
 ) -> EpubAssetOut:
     """Authorize, resolve metadata, release the session, then read the exact bytes."""
     with session_factory() as db:
@@ -116,9 +110,7 @@ def get_epub_asset_for_viewer(
         size_bytes = int(row["size_bytes"])
 
     try:
-        data = read_object_checked(
-            storage_client or get_storage_client(), storage_path, expected_size=size_bytes
-        )
+        data = read_object_checked(get_storage_client(), storage_path, expected_size=size_bytes)
     except StorageError as exc:
         raise ApiError(
             ApiErrorCode.E_STORAGE_ERROR, "Stored EPUB asset object is missing or unreadable"

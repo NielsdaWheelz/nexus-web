@@ -50,14 +50,16 @@ Manual episode downloads are a device capability, not Podcast domain state.
 private `GET /media/{media_id}/offline-download-spec` contract from the
 episode's HTTPS `external_playback_url`; compact episode DTOs carry only
 `offline_download_eligible`, never the URL or local state. The web
-`OfflineMediaProvider` owns command lifecycle and keyed subscriptions. Android
-`OfflineMediaStore` alone owns the durable Media3 index and bytes.
+`OfflineMediaProvider` owns the command lifecycle and one ordered inventory; a
+new download's title comes from the spec. Android `OfflineMediaStore` alone
+owns the durable Media3 index and bytes.
 
-Episode rows thread their keyed local availability through the episode
-presenter. That state is independent of subscription, Library, Lectern,
-listening, transcript, and later enclosure freshness. A Ready snapshot stays
-removable even if the canonical episode later loses eligibility. There is no
-server download table, migration, archive copy, or browser/PWA path.
+Episode rows do not show local download state; the resource menu (Download,
+Cancel, Remove, Retry) and the Downloads sheet read the inventory. Local state
+is independent of subscription, Library, Lectern, listening, transcript, and
+later enclosure freshness. A Ready snapshot stays removable even if the
+canonical episode later loses eligibility. There is no server download table,
+migration, archive copy, or browser/PWA path.
 
 ## Browse Acquisition Boundary
 

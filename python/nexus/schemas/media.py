@@ -32,19 +32,6 @@ _CAMEL_CONFIG = ConfigDict(alias_generator=to_camel, populate_by_name=True, extr
 
 MediaSourceAttemptStatus = Literal["accepted", "queued", "running", "succeeded", "failed"]
 MediaReadState = Literal["unread", "in_progress", "finished"]
-MediaIntelligenceStatus = Literal[
-    "building", "ready", "stale", "failed", "suspended", "not_available"
-]
-
-
-class MediaIntelligenceOut(_Strict):
-    """The Media Abstract: a current-only, read-only intelligence projection."""
-
-    media_id: UUID
-    status: MediaIntelligenceStatus
-    content_fingerprint: str
-    summary_md: str | None = None
-    model_name: str | None = None
 
 
 class CapabilitiesOut(BaseModel):

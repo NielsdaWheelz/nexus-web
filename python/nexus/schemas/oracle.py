@@ -370,17 +370,3 @@ class ConcordanceEntryOut(BaseModel):
     shared_plate: bool
     shared_theme: bool
     shared_passage_count: int
-
-
-class OracleCorpusStatusOut(BaseModel):
-    """Read-only Oracle Corpus library readiness for discovery/inspection surfaces."""
-
-    library_ref: str | None
-    library_id: UUID | None
-    status: str
-    work_count: int
-    ready_media_count: int
-    anchor_count: int
-    resolved_anchor_count: int
-    plate_count: int
-    ready_plate_count: int

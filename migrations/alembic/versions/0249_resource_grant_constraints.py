@@ -1,7 +1,7 @@
 """Enforce the resource_grants row shape and one grant per creator, subject and audience.
 
-Revision ID: 0248
-Revises: 0247
+Revision ID: 0249
+Revises: 0248
 """
 
 from collections.abc import Sequence
@@ -9,8 +9,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0248"
-down_revision: str | Sequence[str] | None = "0247"
+revision: str = "0249"
+down_revision: str | Sequence[str] | None = "0248"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -43,7 +43,7 @@ def upgrade() -> None:
     )
     if blocked:
         raise RuntimeError(
-            f"0248 blocked: {blocked} resource_grants rows are malformed or duplicate; "
+            f"0249 blocked: {blocked} resource_grants rows are malformed or duplicate; "
             f"sample ids: {', '.join(str(grant_id) for grant_id in sample_ids)}. "
             "resolve them by hand and retry"
         )
@@ -76,5 +76,5 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     raise NotImplementedError(
-        "0248 requires restoring the previous application and database together"
+        "0249 requires restoring the previous application and database together"
     )
