@@ -1,6 +1,6 @@
 # consumption state carries four write-only timestamps
 
-status: deferred (a later release drops the columns) · origin: 2026-09-28, consumption-stats reauthoring · area: consumption / schema
+status: deferred (a later release drops the columns) · origin: 2026-09-28, size/consumption-stats reauthoring · area: consumption / schema
 
 `consumption_overrides.created_at`, `reader_engagement_states.created_at`,
 `reader_media_state.created_at` and `reader_media_state.updated_at` have no
