@@ -27,7 +27,7 @@ status: open · origin: 2026-09-28 cleanup campaign · area: release / productio
 1. run every linked preflight read-only against production, and resolve each one before releasing.
 2. confirm the release backup verifies. it is the only copy of what 0242–0252 delete.
 3. run `deploy/hetzner/deploy.sh <main sha>` from a clean checkout.
-4. after the release, finish [billing-0252-release-steps](billing-0252-release-steps.md). three web compatibility
+4. after the release, run the three processing repairs and then land #387 ([processing-repairs-await-release-then-387](processing-repairs-await-release-then-387.md)), and finish [billing-0252-release-steps](billing-0252-release-steps.md). three web compatibility
    arms ([web-rate-limit-copy-outlives-limiter](web-rate-limit-copy-outlives-limiter.md),
    [web-make-current-arm-outlives-revision-history](web-make-current-arm-outlives-revision-history.md),
    [web-failed-quota-transcript-state-outlives-0252](web-failed-quota-transcript-state-outlives-0252.md))
