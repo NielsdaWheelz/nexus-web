@@ -18,7 +18,7 @@ calibration (chat tools, 2026-09-21): a spec that describes the current structur
 
 verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, one alembic head) plus one named manual check per module. there are no automated tests; that is a known, accepted trade.
 
-wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the routes it rewrites and deletes their web decoders. the generated `apps/web/src/lib/api/wire.gen.ts` is excluded from line counts and targets. untyped JSON routes: 176 of 219 operations (2026-09-28; 7 typed, 24 without a body, 12 binary or SSE).
+wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the routes it rewrites and deletes their web decoders. the generated `apps/web/src/lib/api/wire.gen.ts` is excluded from line counts and targets. untyped JSON routes: 178 of 221 operations (2026-09-28; 7 typed, 24 without a body, 12 binary or SSE).
 
 ## inventory and targets
 

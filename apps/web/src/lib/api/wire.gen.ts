@@ -865,6 +865,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/generation-effects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Recent Generation Effects */
+        get: operations["recent_generation_effects_generation_effects_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/generation-effects/{position_id}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Undo Background Generation Write */
+        post: operations["undo_background_generation_write_generation_effects__position_id__undo_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/highlights/{highlight_id}": {
         parameters: {
             query?: never;
@@ -5110,7 +5144,7 @@ export interface components {
              * Code
              * @enum {string}
              */
-            code: "catalog_refresh_failed" | "codex_host_unavailable" | "credential_unavailable";
+            code: "catalog_refresh_failed" | "codex_host_unavailable" | "credential_unavailable" | "required_tool_unavailable";
             /** Explanation */
             explanation: string;
             /**
@@ -5796,11 +5830,8 @@ export interface components {
         ProviderApiSelection: {
             /** Model Ref */
             model_ref: string;
-            /**
-             * Reasoning
-             * @enum {string}
-             */
-            reasoning: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+            /** Reasoning */
+            reasoning: string;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -7179,7 +7210,7 @@ export interface components {
              * Code
              * @enum {string}
              */
-            code: "catalog_refresh_failed" | "codex_host_unavailable" | "credential_unavailable";
+            code: "catalog_refresh_failed" | "codex_host_unavailable" | "credential_unavailable" | "required_tool_unavailable";
             /** Explanation */
             explanation: string;
             /**
@@ -9383,6 +9414,69 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    recent_generation_effects_generation_effects_get: {
+        parameters: {
+            query?: {
+                generation_id?: string | null;
+                before?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    undo_background_generation_write_generation_effects__position_id__undo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                position_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
