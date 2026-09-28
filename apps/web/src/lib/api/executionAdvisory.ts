@@ -1,19 +1,10 @@
 import { isRecord } from "@/lib/validation";
+import type { Schema } from "./wire";
 
 /** Queue/coordination liveness. It is advisory-only and never a run status. */
-export type DurableExecutionPhase =
-  | "Queued"
-  | "Running"
-  | "Recovering"
-  | "Suspended";
-
-export interface DurableExecution {
-  phase: DurableExecutionPhase;
-}
-
-export interface ChatRunExecution extends DurableExecution {
-  cancel_requested: boolean;
-}
+export type DurableExecutionPhase = Schema<"DurableExecutionPhase">;
+export type DurableExecution = Schema<"DurableExecutionOut">;
+export type ChatRunExecution = Schema<"ChatRunExecutionOut">;
 
 export const EXECUTION_ADVISORY_EVENT_TYPE = "ExecutionAdvisory";
 

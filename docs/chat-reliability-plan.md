@@ -2,6 +2,7 @@
 
 status: implementation candidate; release qualification incomplete · 2026-09-27
 baseline: remote `main` at `fbd08ba68a699aa497c8281044a59f8709cf43ef`
+integration baseline: remote `main` at `4da38ace7653f7abb99e9b83324ab9bbb6bd8175` (migration head `0250`)
 scope: one combined release from the currently deployed `7dc68929b4d5ddfd77eb1a50228d477fa0148b5d`, subject to a fresh preflight
 
 implementation evidence and remaining gates: [verification receipt](chat-reliability-verification.md).
@@ -235,6 +236,12 @@ verified backup, forward migration, aligned api/worker/host/browser images, exac
 check and browser/webview reload. an old image alone cannot roll back the
 destructive reset after new writes.
 
+main now also includes dossier migration `0250`. before any combined release,
+run its stored-json guard and revision-loss counts read-only in production,
+record the result, then verify a backup. the migration deletes prior dossier
+revisions and cannot be rolled back by deploying an older image alone. see the
+[0250 preflight ticket](tickets/dossier-latest-revision-0250-production-preflight.md).
+
 ## implementation order and file ownership
 
 work in a fresh branch from current remote main; keep the dirty local main
@@ -282,6 +289,7 @@ with exact source, images, native revision, results and limits.
 | diagnostics | first safe cause survives normalization; a browser defect log retains distinct ingestion and origin request ids; no bearer or prompt appears |
 | original crash | if reproduced, first failing owner is fixed and replayed; otherwise keep its ticket open and report the fresh browser journey separately |
 | migration | exact production ancestry, backup and quiescence; suspended old work is settled or handled by the newly reviewed allowlisted abandonment operation; domain data/effects/undo survive and post-cutover history is readable |
+| dossier migration `0250` | production guard returns no invalid stored rows; revision and edge losses are counted and accepted; backup and post-migration head uniqueness are verified |
 
 the combined release also inherits, without weakening, the
 [shell cutover](codex-shell-cutover-plan.md) and
@@ -303,6 +311,9 @@ deployable while a required configured cell or runtime boundary is unqualified.
   shell and external-network effects have no equivalent nexus replay/undo.
 - the approved `0246` cutover removes old chat history. the backup can recover
   it only through a separate restore with consequences for later writes.
+- main's `0250` cutover also deletes prior dossier revisions and related edges.
+  a backend rollback after that migration requires restoring the backup and
+  losing later writes.
 - uncertain external work can remain paused indefinitely. operator evidence,
   not a retry button or elapsed time, is required to settle it.
 - a narrow chat revision and coordinated reload add one protocol boundary so
@@ -322,6 +333,6 @@ and the updated [chat](modules/chat.md) and [llm](modules/llms.md) module docs.
 the [outstanding-issues register](outstanding-issues.md) tracks inherited
 model and shell release gates.
 
-this plan authorizes no production merge, migration, reset, or deployment.
+this plan authorizes no production migration, reset, or deployment.
 those actions retain their separately approved owners. close only tickets
 whose stated evidence has actually passed.

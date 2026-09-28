@@ -2,21 +2,28 @@
 
 status: implementation candidate; release blocked · 2026-09-27
 implementation source: `1ef156931` on `feature/chat-reliability-main-plan`, based on remote `main` `fbd08ba68a699aa497c8281044a59f8709cf43ef`
+current-main integration: `f70026920a83e8b2de56be5dc8fdfac440e4afef` applies the chat delta to remote `main` `4da38ace7653f7abb99e9b83324ab9bbb6bd8175`; generated wire was refreshed
 production observed: source `7dc68929b4d5ddfd77eb1a50228d477fa0148b5d`, database `0241`
 
 the implementation source contains the chat revision, catalog-independent
 history reads, persisted run-owned stop state, safe dead-job settlement, host
 first-cause logging, and a reviewed-identity gate for migration `0246`. the
 old pane crash remains unattributed. no production image, migration, reset,
-merge, or deployment was made. the final source has no built image or observed
+or deployment was made. the integrated source has no built image or observed
 native codex revision; the older shell-cohort receipt is not qualification for
 this commit.
+
+the integration kept main's removed web-vitals route and dossier cutover while
+retaining the distinct origin request id in client-defect telemetry. static
+checks passed on the integrated tree with migration head `0250`. the behavioral
+observations below belong to the earlier implementation source; they do not
+qualify a final-tree paid or native reply.
 
 ## observed on this source
 
 | boundary | result | evidence and limit |
 | --- | --- | --- |
-| static | passed | `./scripts/test` passed after locked dependencies were installed in the isolated worktree: ruff, pyright, web lint/type checks, offline and extension builds, and one alembic head `0247`. |
+| static | passed on original and integrated trees | `./scripts/test` passed on the original candidate at head `0247` and on the current-main integration at head `0250`: ruff, pyright, web lint/type checks, offline and extension builds, generated wire, and one alembic head. |
 | saved history during catalog outage | passed locally | fresh api on disposable postgresql `0247` started with no codex socket; authenticated run, list and tree reads and unrelated `/version` returned 200; `/llm-catalog` returned typed 503. authenticated next.js new and existing panes rendered without a page exception. catalog recovery after the host returns was not observed. |
 | accepted command read | passed in disposable asgi proof | response hydration used frozen selection after a simulated catalog failure. a final-tree paid send and reply were not run. |
 | stop and replay | passed locally; native drain not run | disposable postgresql proof covered eight valid-spec dead-job and duplicate-stop states. no-step, undispatched prepared and completed memo settled without renewing attempts; uncertain work stayed dead. a concurrent owner-lock proof rejected child arm before model call or bearer mint when stop committed first. uds cancel control returned 204; no real native process drain was observed. |
@@ -39,6 +46,9 @@ original, nonreproducible production pane crash.
   state. an allowlisted, evidence-backed disposition and verified backup are
   required; see the [chat](tickets/model-history-cutover-blocked-by-uncertain-work.md)
   and [media](tickets/model-cutover-dead-media-generations.md) tickets.
+- main now includes destructive dossier migration `0250`. its production
+  stored-json guard, deletion counts, backup, and post-migration head check
+  remain open; see the [preflight ticket](tickets/dossier-latest-revision-0250-production-preflight.md).
 - the final commit needs authenticated new and existing chat replies, same-run
   stream-loss/reload and native process-drain observations on an actual pinned
   host. the original crash needs its initiating exception before anyone can
@@ -69,6 +79,10 @@ original, nonreproducible production pane crash.
   nexus records its domain-api effects, while shell and public-network effects
   have no equivalent nexus undo. the approved `0246` history reset is
   destructive, so an old image alone is not rollback after new writes.
+- merging the code before live release qualification keeps the correction
+  reviewable on main but does not make that tree deployable. production still
+  needs the listed preflight and exact-source journey; `0250` also makes
+  backup restoration part of backend rollback.
 - deleting the temporary behavioral proofs leaves static checks as the only
   continuous repository gate. live qualification must be repeated for the
   exact release source.

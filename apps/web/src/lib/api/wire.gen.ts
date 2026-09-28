@@ -3708,6 +3708,15 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /**
+         * ChatRunExecutionOut
+         * @description The queue phase and the run's durable stop intent in one observation.
+         */
+        ChatRunExecutionOut: {
+            /** Cancel Requested */
+            cancel_requested: boolean;
+            phase: components["schemas"]["DurableExecutionPhase"];
+        };
         /** ChatRunMetaEventPayload */
         ChatRunMetaEventPayload: {
             /**
