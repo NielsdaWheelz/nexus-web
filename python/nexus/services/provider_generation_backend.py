@@ -11,20 +11,23 @@ from typing import TYPE_CHECKING, assert_never
 from uuid import UUID
 
 import httpx
+from provider_runtime import GenerateIntent as RuntimeGenerateIntent
 from provider_runtime import (
-    AssistantMessage,
     ProviderTarget,
     SystemMessage,
     ToolResultMessage,
     UserMessage,
 )
-from provider_runtime import GenerateIntent as RuntimeGenerateIntent
 from provider_runtime import TextOutput as RuntimeTextOutput
 from provider_runtime.types import Absent as RuntimeAbsent
 from provider_runtime.types import (
     CancelSignal,
     ContinuationDelta,
+    ContinuationTooLarge,
+    ContinueGeneration,
+    Failed,
     PromptBlock,
+    ProviderRequest,
     StreamOutcome,
     StreamStart,
     StrictJsonOutput,
@@ -83,7 +86,7 @@ class ProviderTurnRequest:
     spec: GenerationSpec
     request_fingerprint: str
     route_request_identity: Mapping[str, object]
-    runtime_intent: RuntimeGenerateIntent = field(repr=False)
+    runtime_request: ProviderRequest = field(repr=False)
     model_tools: ProviderModelTools | None = field(repr=False)
 
 
@@ -110,7 +113,7 @@ class ProviderGenerationBackend:
             turn_seq=1,
             spec=spec,
             dispatch=dispatch,
-            runtime_intent=RuntimeGenerateIntent(
+            runtime_request=RuntimeGenerateIntent(
                 target=target,
                 messages=(
                     SystemMessage(blocks=(PromptBlock(intent.instructions),)),
@@ -133,18 +136,15 @@ class ProviderGenerationBackend:
         *,
         generation_id: UUID,
         spec: GenerationSpec,
-        intent: GenerationIntent,
         source_turn_seq: int,
         canonical_continuation: bytes,
         tool_results: tuple[ProviderToolResult, ...],
         model_tools: ProviderModelTools,
     ) -> ProviderTurnRequest:
-        dispatch, selection = _frozen_request(spec, model_tools)
+        dispatch, _selection = _frozen_request(spec, model_tools)
         target = ProviderTarget(provider=dispatch.provider, model=dispatch.model_id)
         decoded = decode_provider_turn_continuation(
             canonical_continuation,
-            spec=spec,
-            expected_source_turn_seq=source_turn_seq,
             target=target,
             codec_id=dispatch.continuation_codec,
         )
@@ -166,31 +166,16 @@ class ProviderGenerationBackend:
             turn_seq=source_turn_seq + 1,
             spec=spec,
             dispatch=dispatch,
-            runtime_intent=RuntimeGenerateIntent(
-                target=target,
-                messages=(
-                    SystemMessage(blocks=(PromptBlock(intent.instructions),)),
-                    UserMessage(blocks=(PromptBlock(intent.input),)),
-                    AssistantMessage(
-                        text=decoded.assistant_text,
-                        tool_calls=decoded.tool_calls,
-                        continuation=decoded.native_continuation,
-                    ),
-                    *(
-                        ToolResultMessage(
-                            call_id=result.provider_call_id,
-                            output=result.output,
-                            is_error=result.is_error,
-                        )
-                        for result in tool_results
-                    ),
+            runtime_request=ContinueGeneration(
+                continuation=decoded.artifact,
+                tool_results=tuple(
+                    ToolResultMessage(
+                        call_id=result.provider_call_id,
+                        output=result.output,
+                        is_error=result.is_error,
+                    )
+                    for result in tool_results
                 ),
-                max_output_tokens=spec.effective_output_budget_tokens,
-                reasoning=selection.reasoning,
-                tools=model_tools.publication.tools,
-                tool_choice="auto",
-                output=_runtime_output(intent),
-                provider_options={},
             ),
             model_tools=model_tools,
             continuation_fingerprint=provider_turn_continuation_fingerprint(canonical_continuation),
@@ -204,7 +189,7 @@ class ProviderGenerationBackend:
 
         bounds = turn.spec.bounds
         source = self._runtime.stream(
-            turn.runtime_intent,
+            turn.runtime_request,
             cancel=_DeadlineCancelSignal(
                 deadline_at=time.monotonic() + bounds.transport_deadline_seconds, parent=cancel
             ),
@@ -229,6 +214,11 @@ class ProviderGenerationBackend:
                         pass
                     case TextDelta(text=text):
                         stream_bytes += len(text.encode("utf-8"))
+                        if stream_bytes > bounds.stream.max_stream_bytes:
+                            raise ProviderGenerationDefect(
+                                origin="provider_stream",
+                                message="ProviderRuntime stream exceeded its frozen byte bound",
+                            )
                         yield ProviderTextDelta(
                             turn_seq=turn.turn_seq, provider_seq=envelope.seq, text=text
                         )
@@ -245,6 +235,11 @@ class ProviderGenerationBackend:
                                 )
                             )
                         )
+                        if stream_bytes > bounds.stream.max_stream_bytes:
+                            raise ProviderGenerationDefect(
+                                origin="provider_stream",
+                                message="ProviderRuntime stream exceeded its frozen byte bound",
+                            )
                         completed_calls.append((envelope.seq, tool_call))
                     case ContinuationDelta(artifact=artifact):
                         if isinstance(observed_continuation, RuntimePresent):
@@ -291,11 +286,6 @@ class ProviderGenerationBackend:
                         )
                     case other:
                         assert_never(other)
-                if stream_bytes > bounds.stream.max_stream_bytes:
-                    raise ProviderGenerationDefect(
-                        origin="provider_stream",
-                        message="ProviderRuntime stream exceeded its frozen byte bound",
-                    )
         finally:
             if isinstance(source, AsyncGenerator):
                 await source.aclose()
@@ -358,7 +348,7 @@ def _turn_request(
     turn_seq: int,
     spec: GenerationSpec,
     dispatch: ProviderDispatchTargetSnapshot,
-    runtime_intent: RuntimeGenerateIntent,
+    runtime_request: ProviderRequest,
     model_tools: ProviderModelTools | None,
     continuation_fingerprint: str | None,
     tool_results: tuple[ProviderToolResult, ...],
@@ -369,7 +359,7 @@ def _turn_request(
         else {"kind": "Absent"}
     )
     request_facts: dict[str, object] = {
-        "schema_version": "nexus-provider-request.v1",
+        "schema_version": "nexus-provider-request.v2",
         "generation_id": str(generation_id),
         "generation_spec_fingerprint": spec.fingerprint,
         "turn_seq": turn_seq,
@@ -394,7 +384,7 @@ def _turn_request(
     canonical = canonical_json_bytes(
         freeze_json_object(request_facts, context="provider request identity")
     )
-    request_fingerprint = hashlib.sha256(b"nexus.provider-request.v1\0" + canonical).hexdigest()
+    request_fingerprint = hashlib.sha256(b"nexus.provider-request.v2\0" + canonical).hexdigest()
     return ProviderTurnRequest(
         generation_id=generation_id,
         turn_seq=turn_seq,
@@ -413,7 +403,7 @@ def _turn_request(
             "correlation": dispatch.correlation,
             "continuation_fingerprint": continuation_presence,
         },
-        runtime_intent=runtime_intent,
+        runtime_request=runtime_request,
         model_tools=model_tools,
     )
 
@@ -425,18 +415,28 @@ def _successor(
     completed_calls: tuple[ToolCall, ...],
     observed_continuation: RuntimePresent[object] | RuntimeAbsent,
 ) -> Present[ProviderTurnContinuation] | Absent:
+    if isinstance(outcome, Failed) and isinstance(outcome.failure, ContinuationTooLarge):
+        if isinstance(observed_continuation, RuntimePresent):
+            raise ProviderGenerationDefect(
+                origin="provider_stream", message="failed provider terminal carried continuation"
+            )
+        return Absent()
     if not isinstance(outcome, Succeeded):
-        if completed_calls:
+        if completed_calls or isinstance(observed_continuation, RuntimePresent):
             raise ProviderGenerationDefect(
                 origin="provider_stream",
-                message="provider proposed tools without a successful model turn",
+                message="provider emitted tool state without a successful model turn",
             )
         return Absent()
     content = outcome.response.content
     if isinstance(content, StructuredContent):
-        if completed_calls:
+        if (
+            completed_calls
+            or isinstance(observed_continuation, RuntimePresent)
+            or isinstance(outcome.response.continuation, RuntimePresent)
+        ):
             raise ProviderGenerationDefect(
-                origin="provider_stream", message="strict provider terminal carried tool proposals"
+                origin="provider_stream", message="strict provider terminal carried tool state"
             )
         return Absent()
     if not isinstance(content, TextContent):
@@ -447,7 +447,17 @@ def _successor(
             message="provider tool stream differs from its terminal response",
         )
     if not content.tool_calls:
+        if isinstance(observed_continuation, RuntimePresent) or isinstance(
+            outcome.response.continuation, RuntimePresent
+        ):
+            raise ProviderGenerationDefect(
+                origin="provider_stream", message="tool-free provider terminal carried continuation"
+            )
         return Absent()
+    if not isinstance(outcome.response.continuation, RuntimePresent):
+        raise ProviderGenerationDefect(
+            origin="provider_stream", message="tool-bearing provider terminal lacks continuation"
+        )
     if observed_continuation != outcome.response.continuation:
         raise ProviderGenerationDefect(
             origin="provider_stream",
@@ -460,13 +470,11 @@ def _successor(
         )
     return Present(
         value=encode_provider_turn_continuation(
-            spec=turn.spec,
             source_turn_seq=turn.turn_seq,
-            target=turn.runtime_intent.target,
+            target=ProviderTarget(provider=dispatch.provider, model=dispatch.model_id),
             codec_id=dispatch.continuation_codec,
-            assistant_text=content.text,
             tool_calls=content.tool_calls,
-            native_continuation=outcome.response.continuation,
+            artifact=outcome.response.continuation.value,
         )
     )
 

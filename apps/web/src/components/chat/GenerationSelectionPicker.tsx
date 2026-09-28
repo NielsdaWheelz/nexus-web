@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import SelectField from "@/components/ui/SelectField";
 import { assertNever } from "@/lib/assertNever";
 import type {
@@ -8,7 +8,7 @@ import type {
   GenerationRoute,
 } from "@/lib/conversations/generationCatalog";
 import {
-  changeGenerationEffort,
+  changeGenerationThinking,
   changeGenerationModel,
   changeGenerationRoute,
   routeForSelection,
@@ -35,12 +35,11 @@ export default function GenerationSelectionPicker({
   onChange,
   disabled = false,
 }: GenerationSelectionPickerProps) {
-  const effortName = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const providerRef = useRef<HTMLSelectElement>(null);
   const modelRef = useRef<HTMLSelectElement>(null);
-  const effortRef = useRef<HTMLInputElement>(null);
-  const focusedField = useRef<"provider" | "model" | "effort" | null>(null);
+  const thinkingRef = useRef<HTMLSelectElement>(null);
+  const focusedField = useRef<"provider" | "model" | "thinking" | null>(null);
 
   let route: GenerationRoute | null = null;
   let modelKey: string | null = null;
@@ -50,12 +49,12 @@ export default function GenerationSelectionPicker({
     case "ModelRequired":
       route = value.route;
       break;
-    case "EffortRequired":
+    case "ThinkingRequired":
       route = value.route;
       modelKey = value.modelKey;
       break;
     case "Selected":
-      route = routeForSelection(value.selection);
+      route = routeForSelection(catalog, value.selection);
       modelKey = value.selection.route === "CodexPersonal"
         ? value.selection.model
         : value.selection.model_ref;
@@ -63,10 +62,10 @@ export default function GenerationSelectionPicker({
     default:
       assertNever(value);
   }
-  const effortKey = value.kind === "Selected" ? value.selection.reasoning : null;
+  const reasoningKey = value.kind === "Selected" ? value.selection.reasoning : null;
   const routes = catalog.routes.filter((candidate) =>
     candidate.models.some((model) =>
-      model.reasoning.some((effort) => effort.chat_state.kind === "Selectable"),
+      model.reasoning.some((choice) => choice.chat_state.kind === "Selectable"),
     ),
   );
   const currentRoute = catalog.routes.find(
@@ -76,26 +75,26 @@ export default function GenerationSelectionPicker({
     (candidate) => route !== null && routeKey(candidate.route) === routeKey(route),
   );
   const models = currentRoute?.models.filter((model) =>
-    model.reasoning.some((effort) => effort.chat_state.kind === "Selectable"),
+    model.reasoning.some((choice) => choice.chat_state.kind === "Selectable"),
   ) ?? [];
   const currentModel = currentRoute?.models.find((model) => model.key === modelKey);
   const selectableModel = models.find((model) => model.key === modelKey);
-  const efforts = selectableModel?.reasoning.filter(
-    (effort) => effort.chat_state.kind === "Selectable",
+  const choices = selectableModel?.reasoning.filter(
+    (choice) => choice.chat_state.kind === "Selectable",
   ) ?? [];
-  const currentEffort = currentModel?.reasoning.find((effort) => effort.key === effortKey);
-  const selectableEffort = efforts.find((effort) => effort.key === effortKey);
+  const currentChoice = currentModel?.reasoning.find((choice) => choice.key === reasoningKey);
+  const selectedChoice = choices.find((choice) => choice.key === reasoningKey);
 
   // Refresh and singleton transitions can remove the focused control.
   useLayoutEffect(() => {
     if (focusedField.current === null || rootRef.current?.contains(document.activeElement)) return;
-    const next =
-      focusedField.current === "effort"
-        ? effortRef.current ?? modelRef.current ?? providerRef.current
+    const candidates =
+      focusedField.current === "thinking"
+        ? [thinkingRef.current, modelRef.current, providerRef.current]
         : focusedField.current === "model"
-          ? modelRef.current ?? effortRef.current ?? providerRef.current
-          : providerRef.current;
-    next?.focus();
+          ? [modelRef.current, thinkingRef.current, providerRef.current]
+          : [providerRef.current];
+    candidates.find((control) => control !== null && !control.disabled)?.focus();
   }, [catalog, value]);
 
   return (
@@ -103,14 +102,16 @@ export default function GenerationSelectionPicker({
       ref={rootRef}
       className={styles.root}
       onFocusCapture={(event) => {
-        if (event.target instanceof HTMLSelectElement) {
-          focusedField.current = event.target === providerRef.current ? "provider" : "model";
-        } else if (event.target instanceof HTMLInputElement) {
-          focusedField.current = "effort";
-        }
+        if (!(event.target instanceof HTMLSelectElement)) return;
+        if (event.target === providerRef.current) focusedField.current = "provider";
+        else if (event.target === modelRef.current) focusedField.current = "model";
+        else if (event.target === thinkingRef.current) focusedField.current = "thinking";
       }}
-      onBlurCapture={() => {
-        focusedField.current = null;
+      onBlurCapture={(event) => {
+        if (
+          event.relatedTarget !== null &&
+          !event.currentTarget.contains(event.relatedTarget)
+        ) focusedField.current = null;
       }}
     >
       <div className={styles.field}>
@@ -177,38 +178,41 @@ export default function GenerationSelectionPicker({
         )}
       </div>
 
-      <fieldset className={styles.effortField} disabled={disabled || selectableModel === undefined}>
-        <legend>effort</legend>
-        {selectableEffort !== undefined && efforts.length === 1 ? (
-          <strong className={styles.staticEffort}>{selectableEffort.label}</strong>
-        ) : (
-          <div className={styles.efforts}>
-            {effortKey !== null && selectableEffort === undefined ? (
-              <span className={styles.unavailableEffort}>
-                {currentEffort?.label ?? effortKey}
-              </span>
-            ) : null}
-            {efforts.map((effort, index) => (
-              <label key={effort.key} className={styles.effortOption}>
-                <input
-                  ref={index === 0 ? effortRef : undefined}
-                  type="radio"
-                  name={effortName}
-                  value={effort.key}
-                  checked={effort.key === effortKey}
-                  onChange={() => {
-                    if (route === null || modelKey === null) {
-                      throw new TypeError("effort choice requires a model");
-                    }
-                    onChange(changeGenerationEffort(catalog, route, modelKey, effort.key));
-                  }}
-                />
-                <span>{effort.label}</span>
-              </label>
-            ))}
+      <div className={`${styles.field} ${styles.thinkingField}`}>
+        {selectedChoice !== undefined && choices.length === 1 ? (
+          <div className={styles.staticField}>
+            <span>thinking</span>
+            <strong>{selectedChoice.label}</strong>
           </div>
+        ) : (
+          <SelectField
+            ref={thinkingRef}
+            layout="Stacked"
+            label="thinking"
+            size="lg"
+            value={reasoningKey ?? ""}
+            disabled={disabled || selectableModel === undefined}
+            onChange={(event) => {
+              if (route === null || modelKey === null) {
+                throw new TypeError("thinking choice requires a model");
+              }
+              onChange(changeGenerationThinking(catalog, route, modelKey, event.target.value));
+            }}
+          >
+            {reasoningKey === null ? <option value="" disabled>choose thinking</option> : null}
+            {reasoningKey !== null && selectedChoice === undefined ? (
+              <option value={reasoningKey} disabled>
+                {currentChoice?.label ?? reasoningKey}
+              </option>
+            ) : null}
+            {choices.map((choice) => (
+              <option key={choice.key} value={choice.key}>
+                {choice.label}
+              </option>
+            ))}
+          </SelectField>
         )}
-      </fieldset>
+      </div>
     </div>
   );
 }

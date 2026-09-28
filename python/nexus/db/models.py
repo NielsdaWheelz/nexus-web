@@ -1972,6 +1972,23 @@ class LLMCall(Base):
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
 
+class GenerationApiCredential(Base):
+    """One account-bound bearer admission for a native generation attempt."""
+
+    __tablename__ = "generation_api_credentials"
+
+    generation_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("llm_calls.id"), primary_key=True
+    )
+    token_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    job_execution_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    closed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+
 class LLMModelTurn(Base):
     """One independently accepted or billable model call within a generation."""
 
@@ -2078,6 +2095,7 @@ class LLMToolPosition(Base):
         TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
     )
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    reverted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
 
 class Message(Base):
@@ -2311,8 +2329,8 @@ class MessageToolCall(Base):
 class AssistantWriteAuthorship(Base):
     """Durable machine authorship for one concrete additive-write target.
 
-    The generation position is the provenance owner and deliberately outlives
-    the optional Chat projection.  ``target_kind`` + ``target_id`` is a
+    The copied effect identity and position facts outlive the generation
+    ledger and Chat projection. ``target_kind`` + ``target_id`` is a
     validated polymorphic pointer rather than a foreign key: Undo or a later
     user deletion may remove the target while its authorship fact remains.
     """
@@ -2322,9 +2340,13 @@ class AssistantWriteAuthorship(Base):
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
     tool_position_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("llm_tool_positions.id"),
         nullable=False,
     )
+    generation_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    generation_seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    tool_position: Mapped[int] = mapped_column(Integer, nullable=False)
+    canonical_tool_id: Mapped[str] = mapped_column(Text, nullable=False)
+    reverted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     target_kind: Mapped[str] = mapped_column(Text, nullable=False)
     target_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(

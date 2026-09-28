@@ -192,6 +192,12 @@ export interface DossierCancelledFacts {
 export type DossierBuildToolPlan =
   | { kind: "NoModelTools" }
   | {
+      kind: "CodexShell";
+      planId: string;
+      planRevision: string;
+      effectMode: "AdditiveWrites";
+    }
+  | {
       kind: "ExactModelTools";
       planId: string;
       planRevision: string;

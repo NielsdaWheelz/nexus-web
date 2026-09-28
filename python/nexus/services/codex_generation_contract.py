@@ -1,4 +1,4 @@
-"""Strict private v2/v3 wire contract for Codex generations over the UDS."""
+"""Strict private wire contract for Codex generations over the UDS."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import hashlib
 import json
 from datetime import datetime
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Annotated, Literal, Self, assert_never
+from typing import TYPE_CHECKING, Annotated, Literal, Self
 from uuid import UUID
 
 from provider_runtime import Absent as RuntimeAbsent
@@ -14,17 +14,20 @@ from provider_runtime import Present as RuntimePresent
 from pydantic import (
     Field,
     JsonValue,
+    SecretStr,
     StringConstraints,
     ValidationInfo,
+    field_serializer,
     field_validator,
     model_validator,
 )
 
 from nexus.schemas.presence import Absent, Presence, Present
+from nexus.services.codex_generation_health_contract import EXECUTION_POLICY_REVISION
 from nexus.services.generation_spec import (
-    BearerToolGrant,
     CodexDispatchTargetSnapshot,
     CodexPersonalSelection,
+    CodexShell,
     GenerationIntent,
     GenerationSpecWire,
     JsonSchemaOutput,
@@ -32,35 +35,24 @@ from nexus.services.generation_spec import (
     TextOutput,
     TextOutputSnapshot,
     WireTaggedModel,
-    utf8_size,
     validate_intent_bounds,
 )
 
 if TYPE_CHECKING:
     from provider_runtime.agent_runtime import AgentModelCatalog, AgentModelFacts
 
-COMMAND_SCHEMA_VERSION = "nexus-generation-command.v3"
-COMMAND_DRAFT_SCHEMA_VERSION = "nexus-generation-command-draft.v1"
+COMMAND_SCHEMA_VERSION = "nexus-generation-command.v5"
+COMMAND_DRAFT_SCHEMA_VERSION = "nexus-generation-command-draft.v2"
 ADMISSION_SCHEMA_VERSION = "nexus-generation-admission.v2"
-EVENT_SCHEMA_VERSION = "nexus-generation-event.v2"
-HEALTH_SCHEMA_VERSION = "nexus-generation-health.v2"
-MODEL_CATALOG_SCHEMA_VERSION = "nexus-codex-model-catalog.v1"
+EVENT_SCHEMA_VERSION = "nexus-generation-event.v3"
+HEALTH_SCHEMA_VERSION = "nexus-generation-health.v4"
+MODEL_CATALOG_SCHEMA_VERSION = "nexus-codex-model-catalog.v3"
 MAX_OUTPUT_SCHEMA_BYTES = 64 * 1024
-MAX_TOOL_GRANT_BYTES = 16 * 1024
-MAX_MODEL_TOOL_PLAN_BYTES = 64 * 1024
 MAX_MODEL_CATALOG_BODY_BYTES = 2 * 1024 * 1024
 MAX_ADMISSION_BODY_BYTES = 4 * 1024
 COMMAND_ENVELOPE_BYTES = 4 * 1024
 MAX_COMMAND_BODY_BYTES = (
-    6
-    * (
-        32 * 1024
-        + 1024 * 1024
-        + MAX_OUTPUT_SCHEMA_BYTES
-        + MAX_TOOL_GRANT_BYTES
-        + MAX_MODEL_TOOL_PLAN_BYTES
-    )
-    + COMMAND_ENVELOPE_BYTES
+    6 * (32 * 1024 + 1024 * 1024 + MAX_OUTPUT_SCHEMA_BYTES) + COMMAND_ENVELOPE_BYTES
 )
 
 CatalogKey = Annotated[str, StringConstraints(min_length=1, max_length=256)]
@@ -77,6 +69,12 @@ class CodexCatalogReasoning(WireTaggedModel):
     native_wire_value: CatalogKey
 
 
+class CodexExecutionFacts(WireTaggedModel):
+    mode: Literal["contained", "remote_shell"]
+    final_outputs: tuple[Literal["text", "json_schema"], ...] = Field(min_length=1)
+    description: Annotated[str, StringConstraints(min_length=1, max_length=1000)]
+
+
 class CodexCatalogModel(WireTaggedModel):
     key: CatalogKey
     dispatch_model: CatalogKey
@@ -85,6 +83,7 @@ class CodexCatalogModel(WireTaggedModel):
     source_max_output_tokens: Presence[int]
     input_modalities: tuple[Literal["text", "image"], ...] = Field(min_length=1)
     reasoning: tuple[CodexCatalogReasoning, ...] = Field(min_length=1, max_length=16)
+    execution: tuple[CodexExecutionFacts, ...] = Field(min_length=1, max_length=2)
     source_default_reasoning: Presence[CatalogKey]
     row_fingerprint: Sha256Hex
 
@@ -95,6 +94,10 @@ class CodexCatalogModel(WireTaggedModel):
         reasoning_keys = tuple(item.key for item in self.reasoning)
         if len(set(reasoning_keys)) != len(reasoning_keys):
             raise ValueError("Codex catalog reasoning keys must be unique")
+        if len({item.mode for item in self.execution}) != len(self.execution):
+            raise ValueError("Codex catalog execution modes must be unique")
+        if any(len(set(item.final_outputs)) != len(item.final_outputs) for item in self.execution):
+            raise ValueError("Codex catalog final output kinds must be unique")
         for capacity in (self.source_context_window, self.source_max_output_tokens):
             if isinstance(capacity, Present) and capacity.value <= 0:
                 raise ValueError("Codex catalog source capacities must be positive")
@@ -109,12 +112,13 @@ class CodexCatalogModel(WireTaggedModel):
 class CodexModelCatalog(WireTaggedModel):
     """Secret-free authenticated AgentRuntime catalog crossing the private UDS."""
 
-    schema_version: Literal["nexus-codex-model-catalog.v1"] = MODEL_CATALOG_SCHEMA_VERSION
+    schema_version: Literal["nexus-codex-model-catalog.v3"] = MODEL_CATALOG_SCHEMA_VERSION
     backend_contract_revision: CatalogRevision
     definition_revision: Sha256Hex
     native_revision: Presence[CatalogRevision]
     observed_at: datetime
     models: tuple[CodexCatalogModel, ...] = Field(max_length=512)
+    execution_policy_revision: CatalogRevision
 
     @field_validator("observed_at")
     @classmethod
@@ -140,6 +144,7 @@ def codex_model_catalog_to_wire(catalog: AgentModelCatalog) -> CodexModelCatalog
         native_revision=_to_wire(catalog.native_revision),
         observed_at=catalog.observed_at,
         models=tuple(_codex_model_to_wire(model) for model in catalog.models),
+        execution_policy_revision=EXECUTION_POLICY_REVISION,
     )
 
 
@@ -158,6 +163,14 @@ def _codex_model_to_wire(model: AgentModelFacts) -> CodexCatalogModel:
                 native_wire_value=reasoning.native_wire_value,
             )
             for reasoning in model.reasoning
+        ),
+        execution=tuple(
+            CodexExecutionFacts(
+                mode=execution.mode,
+                final_outputs=execution.final_outputs,
+                description=execution.description,
+            )
+            for execution in model.execution
         ),
         source_default_reasoning=_to_wire(model.source_default_reasoning),
         row_fingerprint=model.row_fingerprint,
@@ -188,13 +201,8 @@ class _GenerationCommandFacts(WireTaggedModel):
             instructions_max_bytes=self.spec.bounds.instructions_max_bytes,
             input_max_bytes=self.spec.bounds.input_max_bytes,
         )
-        plan = self.spec.model_tool_plan_snapshot
-        if isinstance(plan, Present):
-            if plan.value.exposure.type != "Native":
-                raise ValueError("Codex ModelTools requires Native tool exposure")
-            plan_bytes = len(_canonical_json_bytes(plan.value.model_dump(mode="json")))
-            if plan_bytes > MAX_MODEL_TOOL_PLAN_BYTES:
-                raise ValueError(f"model tool plan bytes exceed {MAX_MODEL_TOOL_PLAN_BYTES} bytes")
+        if not isinstance(self.spec.authority, CodexShell):
+            raise ValueError("Codex generation requires shell authority")
         if isinstance(self.intent.output, JsonSchemaOutput):
             schema_bytes = len(_canonical_json_bytes(self.intent.output.schema_))
             if schema_bytes > MAX_OUTPUT_SCHEMA_BYTES:
@@ -215,42 +223,43 @@ class _GenerationCommandFacts(WireTaggedModel):
 
 
 class GenerationCommandDraft(_GenerationCommandFacts):
-    """Grant-free command admitted before any durable child or SDK work."""
+    """Grant-free command admitted before any durable child or native work."""
 
-    schema_version: Literal["nexus-generation-command-draft.v1"] = COMMAND_DRAFT_SCHEMA_VERSION
+    schema_version: Literal["nexus-generation-command-draft.v2"] = COMMAND_DRAFT_SCHEMA_VERSION
+
+
+class GenerationApiAccess(WireTaggedModel):
+    generation_id: UUID
+    token: SecretStr = Field(repr=False)
+
+    @field_serializer("token", when_used="json")
+    def _private_wire_token(self, token: SecretStr) -> str:
+        return token.get_secret_value()
 
 
 class GenerationCommand(_GenerationCommandFacts):
     """The sole dispatchable command, created only after host admission."""
 
-    schema_version: Literal["nexus-generation-command.v3"] = COMMAND_SCHEMA_VERSION
-    tool_grant: BearerToolGrant | None = None
+    schema_version: Literal["nexus-generation-command.v5"] = COMMAND_SCHEMA_VERSION
+    api_access: GenerationApiAccess = Field(repr=False)
 
     @model_validator(mode="after")
-    def _dispatch_authority_is_exact(self) -> Self:
-        plan = self.spec.model_tool_plan_snapshot
-        if isinstance(plan, Present) and self.tool_grant is None:
-            raise ValueError("ModelTools generation requires a bearer grant")
-        if isinstance(plan, Absent) and self.tool_grant is not None:
-            raise ValueError("NoModelTools generation forbids a bearer grant")
-        if self.tool_grant is not None:
-            grant_bytes = utf8_size(self.tool_grant.token.get_secret_value())
-            if grant_bytes > MAX_TOOL_GRANT_BYTES:
-                raise ValueError(f"grant bytes exceed {MAX_TOOL_GRANT_BYTES} bytes")
+    def _access_matches_generation(self) -> Self:
+        if self.api_access.generation_id != self.request_id:
+            raise ValueError("generation API credential belongs to another generation")
         return self
 
 
 class GenerationAdmissionRequest(WireTaggedModel):
     """Grant-free immutable identity used to reserve the sole host slot."""
 
-    schema_version: Literal["nexus-generation-admission-request.v2"] = (
-        "nexus-generation-admission-request.v2"
+    schema_version: Literal["nexus-generation-admission-request.v3"] = (
+        "nexus-generation-admission-request.v3"
     )
     request_id: UUID
     generation_spec_fingerprint: Sha256Hex
     request_fingerprint: Sha256Hex
     turn_timeout_seconds: int = Field(gt=0)
-    model_tool_plan_fingerprint: Sha256Hex
 
 
 class GenerationAdmission(WireTaggedModel):
@@ -279,7 +288,7 @@ FailureKind = Literal[
     "credential_unavailable",
     "credential_rejected",
     "executable_unavailable",
-    "sdk_unavailable",
+    "transport_unavailable",
     "session_unavailable",
     "invalid_request",
     "runtime_defect",
@@ -288,6 +297,8 @@ FailureKind = Literal[
 
 class GenerationFailure(WireTaggedModel):
     kind: FailureKind
+    stage: Annotated[str, StringConstraints(min_length=1, max_length=64)] | None = None
+    cause_code: Annotated[str, StringConstraints(min_length=1, max_length=128)] | None = None
 
 
 class GenerationUsage(WireTaggedModel):
@@ -300,9 +311,9 @@ class GenerationUsage(WireTaggedModel):
 
 
 class GenerationSessionRef(WireTaggedModel):
-    schema_version: Literal["agent-session-ref.v1"]
+    schema_version: Literal["agent-session-ref.v2"]
     backend: Literal["codex"]
-    transport: Literal["sdk"]
+    transport: Literal["app_server"]
     native_session_id: Annotated[str, StringConstraints(min_length=1, max_length=256)]
     profile_key: Literal["codex-personal"]
     state_root_fingerprint: Sha256Hex
@@ -361,8 +372,8 @@ class GenerationTerminal(WireTaggedModel):
     session_ref: GenerationSessionRef | None
     usage: GenerationUsage | None
     accepted_at: AcceptedAt
-    sdk_version: Annotated[str, StringConstraints(min_length=1, max_length=128)]
-    runtime_version: Annotated[str, StringConstraints(min_length=1, max_length=128)]
+    native_version: Annotated[str, StringConstraints(min_length=1, max_length=128)]
+    library_contract_revision: Annotated[str, StringConstraints(min_length=1, max_length=128)]
 
     @field_validator("accepted_at")
     @classmethod
@@ -396,21 +407,22 @@ GenerationEvent = Annotated[
 
 
 class GenerationFrame(WireTaggedModel):
-    schema_version: Literal["nexus-generation-event.v2"] = EVENT_SCHEMA_VERSION
+    schema_version: Literal["nexus-generation-event.v3"] = EVENT_SCHEMA_VERSION
     request_id: UUID
     sequence: int = Field(ge=0)
     event: GenerationEvent
 
 
 class GenerationHealth(WireTaggedModel):
-    schema_version: Literal["nexus-generation-health.v2"] = HEALTH_SCHEMA_VERSION
+    schema_version: Literal["nexus-generation-health.v4"] = HEALTH_SCHEMA_VERSION
     status: Literal["ready"] = "ready"
     backend: Literal["codex"] = "codex"
-    transport: Literal["sdk"] = "sdk"
+    transport: Literal["app_server"] = "app_server"
     auth_profile: Literal["codex-personal"] = "codex-personal"
-    command_schema_version: Literal["nexus-generation-command.v3"] = COMMAND_SCHEMA_VERSION
-    sdk_version: Annotated[str, StringConstraints(min_length=1, max_length=128)]
-    runtime_version: Annotated[str, StringConstraints(min_length=1, max_length=128)]
+    command_schema_version: Literal["nexus-generation-command.v5"] = COMMAND_SCHEMA_VERSION
+    native_version: Annotated[str, StringConstraints(min_length=1, max_length=128)]
+    library_contract_revision: Annotated[str, StringConstraints(min_length=1, max_length=128)]
+    execution_policy_revision: Annotated[str, StringConstraints(min_length=1, max_length=128)]
 
 
 def capacity_rejection_bytes() -> bytes:
@@ -447,7 +459,7 @@ FAILURE_KIND_TO_NORMALIZED: MappingProxyType[str, NormalizedFailureCode] = Mappi
         "policy_violation": "policy_violation",
         "approval_unanswered": "policy_violation",
         "executable_unavailable": "runtime_unavailable",
-        "sdk_unavailable": "runtime_unavailable",
+        "transport_unavailable": "runtime_unavailable",
         "session_unavailable": "runtime_unavailable",
         "backend_failed": "runtime_unavailable",
         "capacity_unavailable": "capacity_unavailable",
@@ -475,7 +487,12 @@ def retained_terminal_error_detail(terminal: GenerationTerminal) -> str | None:
     if terminal.failure is None:
         raise AssertionError("failed generation terminal has no failure kind")
     normalized_failure(terminal.failure.kind)
-    return f"codex generation failed: {terminal.failure.kind}"
+    detail = f"codex generation failed: {terminal.failure.kind}"
+    if terminal.failure.stage is not None:
+        detail += f"; stage={terminal.failure.stage}"
+    if terminal.failure.cause_code is not None:
+        detail += f"; cause={terminal.failure.cause_code}"
+    return detail
 
 
 def generation_draft_fingerprint(draft: GenerationCommandDraft) -> str:
@@ -498,31 +515,23 @@ def generation_command_draft(command: GenerationCommand) -> GenerationCommandDra
 
 
 def generation_command_from_draft(
-    draft: GenerationCommandDraft, *, tool_grant: BearerToolGrant | None
+    draft: GenerationCommandDraft, *, api_access: GenerationApiAccess
 ) -> GenerationCommand:
     """Create the only dispatchable command after successful host admission."""
 
     return GenerationCommand(
-        request_id=draft.request_id, spec=draft.spec, intent=draft.intent, tool_grant=tool_grant
+        request_id=draft.request_id, spec=draft.spec, intent=draft.intent, api_access=api_access
     )
 
 
 def generation_admission_request(draft: GenerationCommandDraft) -> GenerationAdmissionRequest:
     """Project a grant-free draft onto its replay-stable admission identity."""
 
-    plan = draft.spec.model_tool_plan_snapshot
-    if isinstance(plan, Present):
-        plan_fingerprint = _digest(plan.value.model_dump(mode="json"))
-    elif isinstance(plan, Absent):
-        plan_fingerprint = _digest(plan.model_dump(mode="json"))
-    else:
-        assert_never(plan)
     return GenerationAdmissionRequest(
         request_id=draft.request_id,
         generation_spec_fingerprint=draft.spec.fingerprint,
         request_fingerprint=generation_draft_fingerprint(draft),
         turn_timeout_seconds=draft.spec.bounds.turn_timeout_seconds,
-        model_tool_plan_fingerprint=plan_fingerprint,
     )
 
 

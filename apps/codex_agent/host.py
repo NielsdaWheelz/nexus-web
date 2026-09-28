@@ -1,17 +1,15 @@
-"""Strict v3 Codex generation host over a private Unix-domain socket."""
+"""Strict Codex generation host over a private Unix-domain socket."""
 
 from __future__ import annotations
 
 import asyncio
 import importlib.metadata
-import ipaddress
-import re
+import json
 from collections.abc import AsyncIterator, Callable, Coroutine
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Protocol, assert_never
-from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 from apps.codex_agent.capacity import (
@@ -31,10 +29,8 @@ from apps.codex_agent.credential_state import (
     validate_enrolled_auth_file,
     validate_runtime_auth_link,
 )
-from apps.codex_agent.health_contract import (
-    PINNED_CODEX_VERSION,
-    expected_health_identity,
-)
+from apps.codex_agent.exec_server import ExecServer, start_exec_server
+from apps.codex_agent.native_server import NativeCodexServer, start_native_codex_server
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from provider_runtime import Absent as RuntimeAbsent
@@ -66,8 +62,6 @@ from provider_runtime.agent_runtime import (
     ExecutableUnavailable,
     InvalidAgentRequest,
     JsonSchemaAgentOutput,
-    McpConfigurationError,
-    McpUnavailable,
     SdkUnavailable,
     SessionMismatch,
     SessionUnavailable,
@@ -77,15 +71,10 @@ from provider_runtime.agent_runtime import (
     ref_to_json,
     thaw_json_value,
 )
-from provider_runtime.agent_runtime.tool_projection import (
-    CanonicalMcpToolObservation,
-    RejectedMcpToolObservation,
-)
 from provider_runtime.types import CancelSignal
 from pydantic import ValidationError
 from starlette.types import Receive, Scope, Send
 
-from nexus.schemas.presence import Present as NexusPresent
 from nexus.services.codex_generation_contract import (
     MAX_ADMISSION_BODY_BYTES,
     MAX_COMMAND_BODY_BYTES,
@@ -111,14 +100,19 @@ from nexus.services.codex_generation_contract import (
     generation_admission_request,
     generation_command_draft,
 )
+from nexus.services.codex_generation_health_contract import (
+    EXECUTION_POLICY_REVISION,
+    LIBRARY_CONTRACT_REVISION,
+    PINNED_CODEX_VERSION,
+    expected_health_identity,
+)
 from nexus.services.codex_generation_operations import (
-    CodexModelToolPlanRegistry,
     ResolvedCodexGeneration,
     resolve_codex_generation,
 )
 
-_SDK_DISTRIBUTION = "openai-codex"
 _RUNTIME_DISTRIBUTION = "openai-codex-cli-bin"
+_GENERATION_API_URL = "http://172.30.0.4:8000/agent-api"
 _SYNTHESIS_TEXT_RUN_BYTES = 32 * 1024
 _CATALOG_DEADLINE_SECONDS = 90.0
 _GENERATION_ADMISSION_START_GRACE_SECONDS = 15.0
@@ -137,14 +131,14 @@ type _RelayedFrame = bytes | None
 
 @dataclass(frozen=True, slots=True)
 class RuntimeVersions:
-    sdk: str
-    runtime: str
+    native: str
+    library_contract_revision: str
 
 
 def resolve_runtime_versions() -> RuntimeVersions:
     return RuntimeVersions(
-        sdk=importlib.metadata.version(_SDK_DISTRIBUTION),
-        runtime=importlib.metadata.version(_RUNTIME_DISTRIBUTION),
+        native=importlib.metadata.version(_RUNTIME_DISTRIBUTION),
+        library_contract_revision=LIBRARY_CONTRACT_REVISION,
     )
 
 
@@ -154,7 +148,7 @@ class AgentRuntimePort(Protocol):
         backend: Literal["codex"],
         auth: CredentialRef,
         *,
-        transport: Literal["sdk"] = "sdk",
+        transport: Literal["app_server"],
     ) -> AgentModelCatalog: ...
 
     async def open_session(self, request: AgentSessionRequest) -> AgentSession: ...
@@ -377,28 +371,22 @@ def create_codex_agent_app(
     working_directory_root: Path,
     credential_file: Path,
     versions: RuntimeVersions,
-    model_tool_registry: CodexModelToolPlanRegistry,
-    mcp_origin: str | None = None,
-    model_tool_network_attested: bool = False,
     capacity_paths: CapacityPaths = PRODUCTION_CAPACITY_PATHS,
 ) -> FastAPI:
-    if not isinstance(model_tool_registry, CodexModelToolPlanRegistry):
-        raise TypeError("model_tool_registry must be CodexModelToolPlanRegistry")
     if versions != RuntimeVersions(
-        sdk=PINNED_CODEX_VERSION,
-        runtime=PINNED_CODEX_VERSION,
+        native=PINNED_CODEX_VERSION,
+        library_contract_revision=LIBRARY_CONTRACT_REVISION,
     ):
-        raise ValueError("Codex credential persistence is qualified only for pinned 0.144.4")
+        raise ValueError("Codex native runtime identity differs from its pinned contract")
     _validate_host_configuration(
         working_directory_root=working_directory_root,
         credential_file=credential_file,
-        mcp_origin=mcp_origin,
-        model_tool_network_attested=model_tool_network_attested,
     )
     validate_enrolled_auth_file(credential_file)
     health_identity = GenerationHealth(
-        sdk_version=versions.sdk,
-        runtime_version=versions.runtime,
+        native_version=versions.native,
+        library_contract_revision=versions.library_contract_revision,
+        execution_policy_revision=EXECUTION_POLICY_REVISION,
     )
     if health_identity.model_dump(mode="json") != expected_health_identity():
         raise ValueError("Codex generation health identity differs from its probe contract")
@@ -443,10 +431,11 @@ def create_codex_agent_app(
             return codex_model_catalog_to_wire(catalog)
         finally:
             try:
-                remove_ephemeral_runtime_paths(
-                    runtime_paths,
-                    root=working_directory_root,
-                )
+                if lifecycle.ready:
+                    remove_ephemeral_runtime_paths(
+                        runtime_paths,
+                        root=working_directory_root,
+                    )
             finally:
                 slot.release()
 
@@ -476,7 +465,6 @@ def create_codex_agent_app(
         if request.headers.get("accept", "").strip().lower() != "application/x-ndjson":
             raise HTTPException(status_code=406, detail="accept must be application/x-ndjson")
         command = await _read_command(request)
-        has_model_tools = isinstance(command.spec.model_tool_plan_snapshot, NexusPresent)
         if not lifecycle.ready:
             raise HTTPException(status_code=503, detail="Codex generation host is not ready")
         admission_header = request.headers.get("nexus-generation-admission")
@@ -492,9 +480,6 @@ def create_codex_agent_app(
                 status_code=409,
                 detail="generation admission does not match",
             ) from error
-        if has_model_tools and not model_tool_network_attested:
-            slot.release()
-            raise HTTPException(status_code=422, detail="ModelTools network is not attested")
 
         try:
             runtime_paths = create_ephemeral_runtime_paths(
@@ -525,8 +510,6 @@ def create_codex_agent_app(
             runtime_paths=runtime_paths,
             working_directory_root=working_directory_root,
             credential_file=credential_file,
-            model_tool_registry=model_tool_registry,
-            mcp_origin=mcp_origin,
             versions=versions,
         )
         try:
@@ -569,13 +552,6 @@ def create_codex_agent_app(
         lifecycle.interrupt(request_id, "cancelled")
         return Response(status_code=204)
 
-    @app.post("/v2/generations/{request_id}/policy-violation")
-    async def policy_violation(request_id: UUID, request: Request) -> Response:
-        await _require_empty_body(request)
-        admissions.cancel(request_id)
-        lifecycle.interrupt(request_id, "policy_violation")
-        return Response(status_code=204)
-
     return app
 
 
@@ -588,6 +564,7 @@ async def _read_authenticated_catalog(
 ) -> AgentModelCatalog:
     credential_identity = enrolled_auth_identity(credential_file)
     runtime_auth_link: Path | None = None
+    native_server: NativeCodexServer | None = None
     runtime: AgentRuntimePort | None = None
     catalog: AgentModelCatalog | None = None
     operation_error: BaseException | None = None
@@ -595,12 +572,18 @@ async def _read_authenticated_catalog(
     runtime_close_unproven = asyncio.Event()
     try:
         runtime_auth_link = link_runtime_auth(credential_file, runtime_paths)
-        runtime = runtime_factory(AgentRuntimeConfig(state_root_base=runtime_paths.state_root_base))
+        native_server = await start_native_codex_server(runtime_paths)
+        runtime = runtime_factory(
+            AgentRuntimeConfig(
+                state_root_base=runtime_paths.state_root_base,
+                codex_endpoints={"codex-personal": native_server.socket_target},
+            )
+        )
         async with asyncio.timeout(_CATALOG_DEADLINE_SECONDS):
             catalog = await runtime.model_catalog(
                 "codex",
                 CredentialRef(kind="local_account", profile_key="codex-personal"),
-                transport="sdk",
+                transport="app_server",
             )
     except BaseException as error:
         operation_error = error
@@ -614,7 +597,12 @@ async def _read_authenticated_catalog(
                 )
             except BaseException as error:
                 cleanup_error = error
-        if runtime_auth_link is not None:
+        if native_server is not None:
+            try:
+                await native_server.stop()
+            except BaseException as error:
+                cleanup_error = cleanup_error or error
+        if runtime_auth_link is not None and native_server is not None and native_server.stopped:
             try:
                 validate_runtime_auth_link(runtime_auth_link, credential_file)
                 sync_enrolled_auth_file(
@@ -624,7 +612,11 @@ async def _read_authenticated_catalog(
             except BaseException as error:
                 cleanup_error = cleanup_error or error
 
-    if cleanup_error is not None or runtime_close_unproven.is_set():
+    if (
+        cleanup_error is not None
+        or runtime_close_unproven.is_set()
+        or (runtime_auth_link is not None and native_server is None)
+    ):
         lifecycle.fail("authenticated catalog runtime cleanup was not proven")
         raise HTTPException(
             status_code=503,
@@ -651,53 +643,11 @@ def _validate_host_configuration(
     *,
     working_directory_root: Path,
     credential_file: Path,
-    mcp_origin: str | None,
-    model_tool_network_attested: bool,
 ) -> None:
     if not working_directory_root.is_absolute():
         raise ValueError("Codex generation working-directory root must be absolute")
     if not credential_file.is_absolute():
         raise ValueError("Codex generation credential file must be absolute")
-    if type(model_tool_network_attested) is not bool:
-        raise ValueError("model_tool_network_attested must be bool")
-    if not model_tool_network_attested:
-        return
-    parsed = urlsplit(mcp_origin) if isinstance(mcp_origin, str) else None
-    if (
-        parsed is None
-        or parsed.scheme != "https"
-        or not parsed.hostname
-        or parsed.netloc != parsed.hostname
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.path != "/internal/agent-tools/mcp"
-        or bool(parsed.query)
-        or bool(parsed.fragment)
-        or not _is_public_dns_hostname(parsed.hostname)
-    ):
-        raise ValueError("attested ModelTools requires the canonical public HTTPS MCP endpoint")
-
-
-def _is_public_dns_hostname(hostname: str) -> bool:
-    if hostname != hostname.lower() or len(hostname) > 253:
-        return False
-    try:
-        ipaddress.ip_address(hostname)
-    except ValueError:
-        pass
-    else:
-        return False
-    if (
-        "." not in hostname
-        or hostname.endswith(".")
-        or hostname == "localhost"
-        or hostname.endswith((".localhost", ".local", ".internal"))
-    ):
-        return False
-    return all(
-        re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) is not None
-        for label in hostname.split(".")
-    )
 
 
 async def _own_admitted_turn(
@@ -716,8 +666,6 @@ async def _own_admitted_turn(
     runtime_paths: EphemeralRuntimePaths,
     working_directory_root: Path,
     credential_file: Path,
-    model_tool_registry: CodexModelToolPlanRegistry,
-    mcp_origin: str | None,
     versions: RuntimeVersions,
 ) -> None:
     credential_identity: CredentialFileIdentity | None = None
@@ -738,8 +686,6 @@ async def _own_admitted_turn(
             credential_file=credential_file,
             credential_identity=credential_identity,
             runtime_close_unproven=runtime_close_unproven,
-            model_tool_registry=model_tool_registry,
-            mcp_origin=mcp_origin,
             versions=versions,
         ):
             await relay.put(line)
@@ -790,7 +736,7 @@ async def _own_admitted_turn(
             lifecycle.fail("turn_runtime_close_unproven")
         try:
             try:
-                if execution_released_observed:
+                if execution_released_observed and not runtime_close_unproven.is_set():
                     if credential_identity is None:
                         lifecycle.fail("turn_credential_state_invalid")
                     else:
@@ -811,10 +757,11 @@ async def _own_admitted_turn(
         finally:
             try:
                 try:
-                    remove_ephemeral_runtime_paths(
-                        runtime_paths,
-                        root=working_directory_root,
-                    )
+                    if not runtime_close_unproven.is_set():
+                        remove_ephemeral_runtime_paths(
+                            runtime_paths,
+                            root=working_directory_root,
+                        )
                 except BaseException:
                     lifecycle.fail("turn_workspace_cleanup_failed")
                     raise
@@ -960,39 +907,25 @@ async def _run_turn(
     credential_file: Path,
     credential_identity: CredentialFileIdentity,
     runtime_close_unproven: asyncio.Event,
-    model_tool_registry: CodexModelToolPlanRegistry,
-    mcp_origin: str | None,
     versions: RuntimeVersions,
 ) -> AsyncIterator[bytes]:
     bounds = command.spec.bounds
     sequence = 0
     budget = _StreamBudget(command)
     runtime: AgentRuntimePort | None = None
+    native_server: NativeCodexServer | None = None
+    exec_server: ExecServer | None = None
     runtime_auth_link: Path | None = None
     session: AgentSession | None = None
     operation: ResolvedCodexGeneration | None = None
     terminal: GenerationTerminal | None = None
     terminal_seen = False
     credential_sync_failed = False
+    failure_stage = "credential_link"
     synthesis_text: list[str] = []
     synthesis_text_bytes = 0
-    secret_table: dict[str, str] = {}
-
-    credential: CredentialRef | None = None
-    if command.tool_grant is not None:
-        reference_name = f"generation-{command.request_id.hex}-{uuid4().hex}"
-        credential = CredentialRef(
-            kind="secret_reference",
-            profile_key="codex-personal",
-            name=reference_name,
-        )
-        secret_table[reference_name] = f"Bearer {command.tool_grant.token.get_secret_value()}"
-
-    async def resolve_secret(name: str) -> str:
-        try:
-            return secret_table[name]
-        except KeyError as error:
-            raise CredentialUnavailable("generation tool grant is unavailable") from error
+    bearer = command.api_access.token.get_secret_value()
+    native_tool_ids: dict[str, str] = {}
 
     def serialize(event: GenerationEvent) -> bytes:
         return (
@@ -1020,29 +953,33 @@ async def _run_turn(
             lines.append(line)
         return lines
 
-    def flush_synthesis_text() -> list[GenerationEvent]:
-        nonlocal synthesis_text_bytes
-        if not synthesis_text:
-            return []
-        text = "".join(synthesis_text)
-        synthesis_text.clear()
-        synthesis_text_bytes = 0
-        return [GenerationText(text=text)]
-
     try:
         runtime_auth_link = link_runtime_auth(credential_file, runtime_paths)
+        failure_stage = "native_start"
+        native_server = await start_native_codex_server(runtime_paths)
+        failure_stage = "execution_start"
+        access = command.api_access
+        exec_server = await start_exec_server(
+            runtime_paths,
+            api_environment={
+                "NEXUS_AGENT_API_URL": _GENERATION_API_URL,
+                "NEXUS_AGENT_API_SPEC_URL": f"{_GENERATION_API_URL}/openapi.json",
+                "NEXUS_AGENT_API_TOKEN": access.token.get_secret_value(),
+                "NEXUS_GENERATION_ID": str(access.generation_id),
+            },
+        )
+        failure_stage = "operation_resolution"
         operation = resolve_codex_generation(
             command,
-            working_directory=runtime_paths.working_directory,
-            model_tool_registry=model_tool_registry,
-            mcp_origin=mcp_origin,
-            tool_credential=credential,
+            working_directory=Path(exec_server.cwd),
+            exec_server_url=exec_server.url,
         )
+        failure_stage = "session_open"
         runtime = runtime_factory(
             AgentRuntimeConfig(
                 state_root_base=runtime_paths.state_root_base,
+                codex_endpoints={"codex-personal": native_server.socket_target},
                 max_turn_seconds=float(bounds.turn_timeout_seconds),
-                secret_resolver=resolve_secret if credential is not None else None,
             )
         )
         try:
@@ -1051,11 +988,14 @@ async def _run_turn(
         except TimeoutError:
             terminal = _failed_terminal(
                 "session_unavailable",
+                stage="session_open",
+                cause_code="deadline_expired",
                 session=None,
                 accepted_at=accepted_at,
                 versions=versions,
             )
         else:
+            failure_stage = "turn"
             async for event in runtime.stream_turn(
                 session, operation.turn, approvals=None, cancel=control.cancel
             ):
@@ -1077,42 +1017,19 @@ async def _run_turn(
                     )
                     continue
                 if isinstance(event, AgentText):
-                    if isinstance(operation.model_tool_plan_snapshot, NexusPresent):
-                        # ModelTools text is never held: each provider event is relayed now and
-                        # split at the named byte run. Immediate event-granular relay is a
-                        # strict implementation of the policy's maximum flush interval.
-                        flush_bytes = bounds.stream.text_flush_bytes
-                        maximum = (
-                            flush_bytes.value
-                            if isinstance(flush_bytes, NexusPresent)
-                            else _SYNTHESIS_TEXT_RUN_BYTES
+                    synthesis_text_bytes += len(event.text.encode())
+                    if synthesis_text_bytes > bounds.stream.max_stream_bytes:
+                        terminal = _failed_terminal(
+                            "output_limit_exceeded",
+                            session=session,
+                            accepted_at=accepted_at,
+                            versions=versions,
                         )
-                        for piece in _split_utf8(event.text, maximum):
-                            for line in relay([GenerationText(text=piece)]):
-                                yield line
-                    else:
-                        for piece in _split_utf8(event.text, _SYNTHESIS_TEXT_RUN_BYTES):
-                            piece_bytes = len(piece.encode())
-                            if (
-                                synthesis_text
-                                and synthesis_text_bytes + piece_bytes > _SYNTHESIS_TEXT_RUN_BYTES
-                            ):
-                                for line in relay(flush_synthesis_text()):
-                                    yield line
-                            synthesis_text.append(piece)
-                            synthesis_text_bytes += piece_bytes
-                            if synthesis_text_bytes == _SYNTHESIS_TEXT_RUN_BYTES:
-                                for line in relay(flush_synthesis_text()):
-                                    yield line
-                    if terminal is not None:
                         break
+                    synthesis_text.append(event.text)
                     continue
 
-                for line in relay(flush_synthesis_text()):
-                    yield line
-                wire, forbidden = _event_to_wire(event, operation)
-                for line in relay([wire]):
-                    yield line
+                wire, forbidden = _event_to_wire(event, native_tool_ids=native_tool_ids)
                 if forbidden:
                     control.interrupt("policy_violation")
                     terminal = _failed_terminal(
@@ -1122,6 +1039,8 @@ async def _run_turn(
                         versions=versions,
                     )
                     break
+                for line in relay([wire]):
+                    yield line
                 if terminal is not None:
                     break
             if terminal is None:
@@ -1131,30 +1050,37 @@ async def _run_turn(
                     accepted_at=accepted_at,
                     versions=versions,
                 )
-            elif terminal_seen:
-                for line in relay(flush_synthesis_text()):
-                    yield line
     except CredentialStateUnavailable:
         terminal = _failed_terminal(
             "credential_unavailable",
+            stage=failure_stage,
+            cause_code="credential_state_unavailable",
             session=session,
             accepted_at=accepted_at,
             versions=versions,
         )
     except TurnNotStarted as error:
         terminal = _turn_not_started_terminal(
-            error, session=session, accepted_at=accepted_at, versions=versions
-        )
-    except AgentRuntimeError as error:
-        terminal = _failed_terminal(
-            _runtime_error_kind(error),
+            error,
+            stage=failure_stage,
             session=session,
             accepted_at=accepted_at,
             versions=versions,
         )
-    except AgentRuntimeDefect:
+    except AgentRuntimeError as error:
+        terminal = _failed_terminal(
+            _runtime_error_kind(error),
+            stage=failure_stage,
+            cause_code=error.code,
+            session=session,
+            accepted_at=accepted_at,
+            versions=versions,
+        )
+    except AgentRuntimeDefect as error:
         terminal = _failed_terminal(
             "runtime_defect",
+            stage=failure_stage,
+            cause_code=error.code,
             session=session,
             accepted_at=accepted_at,
             versions=versions,
@@ -1162,33 +1088,71 @@ async def _run_turn(
     except Exception:
         terminal = _failed_terminal(
             "runtime_defect",
+            stage=failure_stage,
+            cause_code="unexpected_failure",
             session=session,
             accepted_at=accepted_at,
             versions=versions,
         )
     finally:
-        # A completed/interrupted turn has no authority to resolve another MCP
-        # request while its process tree is being reaped.
-        secret_table.clear()
-        if runtime is not None:
-            try:
-                if operation is None:
-                    raise AssertionError("Codex runtime exists without resolved transport facts")
-                await close_runtime_before_release(
-                    runtime,
-                    operation.runtime_close_timeout_seconds,
-                    runtime_close_unproven=runtime_close_unproven,
-                )
-            except Exception:
-                if control.reason != "policy_violation":
+        cleanup_cancelled = False
+        try:
+            if runtime is not None:
+                try:
+                    if operation is None:
+                        raise AssertionError(
+                            "Codex runtime exists without resolved transport facts"
+                        )
+                    await close_runtime_before_release(
+                        runtime,
+                        operation.runtime_close_timeout_seconds,
+                        runtime_close_unproven=runtime_close_unproven,
+                    )
+                except Exception:
+                    if control.reason != "policy_violation":
+                        terminal = _failed_terminal(
+                            "runtime_defect",
+                            stage="runtime_close",
+                            cause_code="client_teardown_unproven",
+                            session=session,
+                            accepted_at=accepted_at,
+                            versions=versions,
+                        )
+        finally:
+            if exec_server is not None:
+                try:
+                    await exec_server.stop()
+                except asyncio.CancelledError:
+                    cleanup_cancelled = True
+                except Exception:
+                    runtime_close_unproven.set()
                     terminal = _failed_terminal(
                         "runtime_defect",
+                        stage="execution_stop",
+                        cause_code="execution_teardown_unproven",
                         session=session,
                         accepted_at=accepted_at,
                         versions=versions,
                     )
+            if native_server is not None:
+                try:
+                    await native_server.stop()
+                except asyncio.CancelledError:
+                    cleanup_cancelled = True
+                except Exception:
+                    runtime_close_unproven.set()
+                    terminal = _failed_terminal(
+                        "runtime_defect",
+                        stage="native_stop",
+                        cause_code="native_teardown_unproven",
+                        session=session,
+                        accepted_at=accepted_at,
+                        versions=versions,
+                    )
+            if cleanup_cancelled:
+                raise asyncio.CancelledError()
 
-    if runtime_auth_link is not None:
+    if runtime_auth_link is not None and native_server is not None and native_server.stopped:
         try:
             validate_runtime_auth_link(runtime_auth_link, credential_file)
             sync_enrolled_auth_file(
@@ -1199,6 +1163,8 @@ async def _run_turn(
             credential_sync_failed = True
             terminal = _failed_terminal(
                 "runtime_defect",
+                stage="credential_sync",
+                cause_code="credential_state_unavailable",
                 session=session,
                 accepted_at=accepted_at,
                 versions=versions,
@@ -1220,6 +1186,26 @@ async def _run_turn(
             accepted_at=accepted_at,
             versions=versions,
         )
+    if terminal.status == "succeeded":
+        if terminal.structured_output is not None and bearer in json.dumps(
+            terminal.structured_output, ensure_ascii=False
+        ):
+            terminal = _failed_terminal(
+                "policy_violation",
+                stage="final_filter",
+                cause_code="bearer_in_structured_output",
+                session=session,
+                accepted_at=accepted_at,
+                versions=versions,
+            )
+        else:
+            terminal = terminal.model_copy(
+                update={"final_text": terminal.final_text.replace(bearer, "[redacted]")}
+            )
+            text = "".join(synthesis_text).replace(bearer, "[redacted]")
+            for piece in _split_utf8(text, _SYNTHESIS_TEXT_RUN_BYTES):
+                for item in relay([GenerationText(text=piece)]):
+                    yield item
     line = serialize(terminal)
     if not budget.admits_terminal(line):
         terminal = _failed_terminal(
@@ -1269,56 +1255,37 @@ async def close_runtime_before_release(
 
 def _event_to_wire(
     event: AgentEvent,
-    operation: ResolvedCodexGeneration,
+    *,
+    native_tool_ids: dict[str, str],
 ) -> tuple[GenerationEvent, bool]:
     if isinstance(event, AgentToolUse):
-        published = operation.published_model_tools
-        if published is None:
-            return (
-                GenerationToolUse(
-                    tool_call_id=event.tool_call_id,
-                    name=event.name[:256],
-                    phase=event.phase,
-                    succeeded=event.succeeded,
-                ),
-                True,
-            )
-        observation = published.observe(event)
-        if isinstance(observation, CanonicalMcpToolObservation):
-            return (
-                GenerationToolUse(
-                    tool_call_id=observation.tool_call_id,
-                    name=str(observation.tool_id),
-                    phase=observation.phase,
-                    succeeded=observation.succeeded,
-                ),
-                False,
-            )
-        if isinstance(observation, RejectedMcpToolObservation):
-            return (
-                GenerationToolUse(
-                    tool_call_id=observation.tool_call_id,
-                    name=observation.raw_name,
-                    phase=event.phase,
-                    succeeded=event.succeeded,
-                ),
-                True,
-            )
-        raise AssertionError("MCP observation union was not exhaustive")
+        tool_id = native_tool_ids.get(event.tool_call_id)
+        if tool_id is None:
+            tool_id = f"native-tool-{len(native_tool_ids) + 1}"
+            native_tool_ids[event.tool_call_id] = tool_id
+        return (
+            GenerationToolUse(
+                tool_call_id=tool_id,
+                name="native_tool",
+                phase=event.phase,
+                succeeded=event.succeeded,
+            ),
+            False,
+        )
     if isinstance(event, AgentUsage):
         return GenerationUsageEvent(usage=_usage(event.usage)), False
     if isinstance(event, AgentPermissionRequest):
         return (
             GenerationPermissionRequest(
                 operation=event.request.operation,
-                summary=event.request.summary[:1_000],
-                tool_name=event.request.tool_name,
+                summary="native approval request denied",
+                tool_name=("native_tool" if event.request.operation == "tool_use" else None),
                 decision=event.decision,
             ),
             True,
         )
     if isinstance(event, AgentNative):
-        return GenerationNative(native_type=event.native_type), False
+        return GenerationNative(native_type="native_activity"), False
     raise AssertionError("event conversion received terminal, text, or unknown event")
 
 
@@ -1352,8 +1319,8 @@ def _terminal_to_wire(
         session_ref=_session_ref(terminal.session_ref),
         usage=_optional_usage(terminal.usage),
         accepted_at=accepted_at,
-        sdk_version=versions.sdk,
-        runtime_version=versions.runtime,
+        native_version=versions.native,
+        library_contract_revision=versions.library_contract_revision,
     )
 
 
@@ -1374,6 +1341,8 @@ def _failure_to_wire(
 def _failed_terminal(
     kind: FailureKind,
     *,
+    stage: str | None = None,
+    cause_code: str | None = None,
     session: AgentSession | None = None,
     session_ref: AgentSessionRef | None = None,
     accepted_at: str,
@@ -1384,14 +1353,14 @@ def _failed_terminal(
         ref = session.ref
     return GenerationTerminal(
         status="failed",
-        failure=GenerationFailure(kind=kind),
+        failure=GenerationFailure(kind=kind, stage=stage, cause_code=cause_code),
         final_text="",
         structured_output=None,
         session_ref=_session_ref(ref) if ref is not None else None,
         usage=None,
         accepted_at=accepted_at,
-        sdk_version=versions.sdk,
-        runtime_version=versions.runtime,
+        native_version=versions.native,
+        library_contract_revision=versions.library_contract_revision,
     )
 
 
@@ -1410,14 +1379,15 @@ def _cancelled_terminal(
         session_ref=_session_ref(ref) if ref is not None else None,
         usage=None,
         accepted_at=accepted_at,
-        sdk_version=versions.sdk,
-        runtime_version=versions.runtime,
+        native_version=versions.native,
+        library_contract_revision=versions.library_contract_revision,
     )
 
 
 def _turn_not_started_terminal(
     error: TurnNotStarted,
     *,
+    stage: str,
     session: AgentSession | None,
     accepted_at: str,
     versions: RuntimeVersions,
@@ -1427,6 +1397,8 @@ def _turn_not_started_terminal(
     kind: FailureKind = "turn_timeout" if error.reason == "turn_timeout" else "runtime_defect"
     return _failed_terminal(
         kind,
+        stage=stage,
+        cause_code=error.code,
         session=session,
         accepted_at=accepted_at,
         versions=versions,
@@ -1441,12 +1413,12 @@ def _runtime_error_kind(error: AgentRuntimeError) -> FailureKind:
     if isinstance(error, ExecutableUnavailable):
         return "executable_unavailable"
     if isinstance(error, SdkUnavailable):
-        return "sdk_unavailable"
-    if isinstance(error, SessionUnavailable | SessionMismatch | McpUnavailable):
+        return "transport_unavailable"
+    if isinstance(error, SessionUnavailable | SessionMismatch):
         return "session_unavailable"
     if isinstance(
         error,
-        InvalidAgentRequest | UnsupportedCapability | McpConfigurationError | ConcurrentTurn,
+        InvalidAgentRequest | UnsupportedCapability | ConcurrentTurn,
     ):
         return "invalid_request"
     raise AssertionError("unmapped AgentRuntimeError")
@@ -1456,7 +1428,9 @@ def _session_ref(ref: AgentSessionRef) -> GenerationSessionRef:
     return GenerationSessionRef.model_validate(thaw_json_value(ref_to_json(ref)))
 
 
-def _optional_usage(value: RuntimePresent[TokenUsage] | RuntimeAbsent) -> GenerationUsage | None:
+def _optional_usage(
+    value: RuntimePresent[TokenUsage] | RuntimeAbsent,
+) -> GenerationUsage | None:
     return _usage(value.value) if isinstance(value, RuntimePresent) else None
 
 

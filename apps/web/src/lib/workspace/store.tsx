@@ -778,10 +778,12 @@ export function WorkspaceStoreProvider({
   children,
   workspacePrimaryMetrics,
   initialState,
+  persistInitialState,
 }: {
   children: React.ReactNode;
   workspacePrimaryMetrics: WorkspacePrimaryMetrics;
   initialState: WorkspaceState;
+  persistInitialState: boolean;
 }) {
   const [mounted, setMounted] = useState(false);
   // Seed from the server-restored state (the data root already merged the saved session
@@ -839,7 +841,7 @@ export function WorkspaceStoreProvider({
   const returnMemento = usePaneReturnMementoCommands();
   const feedback = useFeedback();
 
-  useWorkspaceSession(state, mounted);
+  useWorkspaceSession(state, mounted, persistInitialState);
 
   useLayoutEffect(() => {
     returnMemento.reconcileVisitTopology(paneReturnTopology(state));

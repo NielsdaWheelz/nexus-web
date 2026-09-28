@@ -516,6 +516,12 @@ def _source_identity(item: Mapping[str, Any]) -> tuple[str, ...] | None:
         if marker
         else ""
     )
+    if marker and source.get("package_href") and source.get("target_id"):
+        # Old EPUB markers recorded only the local id. The current extractor
+        # records the resolved href as well; these denote the same authored link.
+        local_ref = f"{source['package_href']}#{source['target_id']}"
+        if target == local_ref:
+            target = str(source["target_id"])
     if source.get("target_ids"):
         target = json.dumps(source["target_ids"])
     if authored:
@@ -802,6 +808,7 @@ def _source_body_html(
 def enrich_media_apparatus_bodies(db: Session, *, media_id: UUID) -> None:
     """Enrich uniquely stamped current nodes without replacing any source bytes or ids."""
     from nexus.services.canonicalize import generate_canonical_text
+    from nexus.services.html_apparatus import is_empty_apparatus_return_body
     from nexus.services.reader_publication import (
         PreserveSourceIssues,
         ReaderDocumentKind,
@@ -811,15 +818,16 @@ def enrich_media_apparatus_bodies(db: Session, *, media_id: UUID) -> None:
     kind = db.scalar(text("SELECT kind FROM media WHERE id=:id"), {"id": media_id})
     if kind not in {"web_article", "epub"}:
         return
-    keys = set(
-        db.scalars(
+    labels = {
+        str(row["stable_key"]): (row["label"], row["source_ref"])
+        for row in db.execute(
             text("""
-        SELECT stable_key FROM reader_apparatus_items
+        SELECT stable_key, label, source_ref FROM reader_apparatus_items
         WHERE media_id=:id AND body_html_sanitized IS NULL AND kind NOT LIKE '%\\_ref' ESCAPE '\\'
     """),
             {"id": media_id},
-        )
-    )
+        ).mappings()
+    }
     candidates: dict[str, list[str]] = defaultdict(list)
     for html in db.scalars(
         text("SELECT html_sanitized FROM fragments WHERE media_id=:id"), {"id": media_id}
@@ -827,7 +835,17 @@ def enrich_media_apparatus_bodies(db: Session, *, media_id: UUID) -> None:
         root = parse_html_document(html)
         for element in root.xpath("//*[@data-reader-apparatus-item-id]"):
             key = element.get("data-reader-apparatus-item-id")
-            if key in keys:
+            if key in labels:
+                label, source = labels[key]
+                document_href = (
+                    source.get("package_href") or source.get("target_href")
+                    if isinstance(source, dict)
+                    else None
+                )
+                if isinstance(document_href, str) and is_empty_apparatus_return_body(
+                    root, element, label, document_href
+                ):
+                    continue
                 candidates[key].append(inner_html(element))
     updates = {
         key: values[0]

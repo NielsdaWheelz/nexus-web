@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import errno
 import os
+import signal
 import socket
 import stat
 import sys
 from pathlib import Path
+from types import FrameType
 from typing import Never
 
 from apps.codex_agent import sandbox_health
@@ -16,8 +18,8 @@ from apps.codex_agent.auth_environment import (
     reject_ambient_codex_home,
     reject_subscription_api_key_auth,
 )
-from apps.codex_agent.confined_runtime import create_confined_runtime
 from apps.codex_agent.credential_state import (
+    EphemeralRuntimePaths,
     create_ephemeral_runtime_paths,
     enrolled_auth_identity,
     link_runtime_auth,
@@ -27,6 +29,7 @@ from apps.codex_agent.credential_state import (
     sync_enrolled_auth_file,
     validate_runtime_auth_link,
 )
+from apps.codex_agent.native_server import start_native_codex_server
 from apps.codex_agent.path_environment import required_absolute_path
 from provider_runtime.agent_runtime import (
     AgentRuntime,
@@ -37,34 +40,32 @@ from provider_runtime.agent_runtime import (
 _SOCKET_ENV = "NEXUS_CODEX_AGENT_SOCKET"
 _CREDENTIAL_FILE_ENV = "NEXUS_CODEX_CREDENTIAL_FILE"
 _WORKING_DIRECTORY_ROOT_ENV = "NEXUS_CODEX_WORKING_DIRECTORY_ROOT"
-_MCP_ORIGIN_ENV = "NEXUS_CODEX_MCP_ORIGIN"
-_MODEL_TOOL_NETWORK_ATTESTED_ENV = "NEXUS_CODEX_MODEL_TOOL_NETWORK_ATTESTED"
 _SERVE_AFTER_AUTH_ARGUMENT = "_serve-after-authenticated-bootstrap"
 
 
 async def _authenticated_bootstrap() -> None:
     """Authenticate once, sync the durable credential, and release probe state."""
 
-    socket_path, credential_file, working_directory_root, _mcp_origin, _attested = (
-        _runtime_configuration()
-    )
+    socket_path, credential_file, working_directory_root = _runtime_configuration()
     _prepare_runtime_boundary(socket_path, credential_file, working_directory_root)
     probe_paths = create_ephemeral_runtime_paths(working_directory_root, "startup-auth")
     credential_identity = enrolled_auth_identity(credential_file)
     probe_auth_link: Path | None = None
+    native_exit_proven = asyncio.Event()
     try:
         probe_auth_link = link_runtime_auth(credential_file, probe_paths)
-        await _probe_chatgpt_auth(probe_paths.state_root_base)
+        await _probe_chatgpt_auth(probe_paths, native_exit_proven=native_exit_proven)
     finally:
-        try:
-            if probe_auth_link is not None:
-                validate_runtime_auth_link(probe_auth_link, credential_file)
-                sync_enrolled_auth_file(
-                    credential_file,
-                    expected_identity=credential_identity,
-                )
-        finally:
-            remove_ephemeral_runtime_paths(probe_paths, root=working_directory_root)
+        if probe_auth_link is None or native_exit_proven.is_set():
+            try:
+                if probe_auth_link is not None:
+                    validate_runtime_auth_link(probe_auth_link, credential_file)
+                    sync_enrolled_auth_file(
+                        credential_file,
+                        expected_identity=credential_identity,
+                    )
+            finally:
+                remove_ephemeral_runtime_paths(probe_paths, root=working_directory_root)
     _validate_directories(socket_path, working_directory_root)
     require_writable_credential_mount(credential_file)
 
@@ -81,13 +82,7 @@ async def _serve_after_authenticated_bootstrap() -> None:
         turn_lifecycle,
     )
 
-    from nexus.services.codex_generation_operations import (
-        compose_codex_model_tool_plan_registry,
-    )
-
-    socket_path, credential_file, working_directory_root, mcp_origin, attested = (
-        _runtime_configuration()
-    )
+    socket_path, credential_file, working_directory_root = _runtime_configuration()
     _prepare_runtime_boundary(socket_path, credential_file, working_directory_root)
     versions = resolve_runtime_versions()
 
@@ -96,12 +91,11 @@ async def _serve_after_authenticated_bootstrap() -> None:
         working_directory_root=working_directory_root,
         credential_file=credential_file,
         versions=versions,
-        model_tool_registry=compose_codex_model_tool_plan_registry(),
-        mcp_origin=mcp_origin,
-        model_tool_network_attested=attested,
     )
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     owned_identity: tuple[int, int] | None = None
+    prior_sigterm = signal.getsignal(signal.SIGTERM)
+    sigterm_held = False
     try:
         listener.bind(str(socket_path))
         os.chmod(socket_path, 0o660)
@@ -116,29 +110,34 @@ async def _serve_after_authenticated_bootstrap() -> None:
                 timeout_graceful_shutdown=int(CODEX_AGENT_HOST_REQUEST_DRAIN_SECONDS),
             )
         )
+
+        def hold_sigterm(_signum: int, _frame: FrameType | None) -> None:
+            server.should_exit = True
+
+        # Uvicorn re-raises SIGTERM after its own shutdown. Hold it until the
+        # socket and any native turn have been cleaned up by this host.
+        signal.signal(signal.SIGTERM, hold_sigterm)
+        sigterm_held = True
         await server.serve(sockets=[listener])
     finally:
-        listener.close()
-        _unlink_owned_socket(socket_path, owned_identity)
-        # The server has stopped listening and cancelled any in-flight request; the
-        # admitted turn it interrupted is still closing its runtime. Reap it here so the
-        # native process tree never outlives this container's graceful stop.
-        await turn_lifecycle(app).drain(CODEX_AGENT_HOST_TEARDOWN_DEADLINE_SECONDS)
+        try:
+            listener.close()
+            _unlink_owned_socket(socket_path, owned_identity)
+            # The server has stopped listening and cancelled any in-flight request; the
+            # admitted turn it interrupted is still closing its runtime. Reap it here so the
+            # native process tree never outlives this container's graceful stop.
+            if not await turn_lifecycle(app).drain(CODEX_AGENT_HOST_TEARDOWN_DEADLINE_SECONDS):
+                raise RuntimeError("Codex native turn teardown did not finish")
+        finally:
+            if sigterm_held:
+                signal.signal(signal.SIGTERM, prior_sigterm)
 
 
-def _runtime_configuration() -> tuple[Path, Path, Path, str, bool]:
+def _runtime_configuration() -> tuple[Path, Path, Path]:
     socket_path = required_absolute_path(_SOCKET_ENV)
     credential_file = required_absolute_path(_CREDENTIAL_FILE_ENV)
     working_directory_root = required_absolute_path(_WORKING_DIRECTORY_ROOT_ENV)
-    mcp_origin = _required_environment(_MCP_ORIGIN_ENV)
-    model_tool_network_attested = _required_model_tool_network_attestation()
-    return (
-        socket_path,
-        credential_file,
-        working_directory_root,
-        mcp_origin,
-        model_tool_network_attested,
-    )
+    return socket_path, credential_file, working_directory_root
 
 
 def _prepare_runtime_boundary(
@@ -157,33 +156,34 @@ def _prepare_runtime_boundary(
 
 
 def runtime_factory(config: AgentRuntimeConfig) -> AgentRuntime:
-    return create_confined_runtime(config)
+    return AgentRuntime(config)
 
 
-async def _probe_chatgpt_auth(state_root: Path) -> None:
-    runtime = create_confined_runtime(AgentRuntimeConfig(state_root_base=state_root))
+async def _probe_chatgpt_auth(
+    paths: EphemeralRuntimePaths, *, native_exit_proven: asyncio.Event
+) -> None:
+    native = await start_native_codex_server(paths)
+    runtime = AgentRuntime(
+        AgentRuntimeConfig(
+            state_root_base=paths.state_root_base,
+            codex_endpoints={"codex-personal": native.socket_target},
+        )
+    )
     try:
         await runtime.model_catalog(
             "codex",
             CredentialRef(kind="local_account", profile_key="codex-personal"),
-            transport="sdk",
+            transport="app_server",
         )
     finally:
-        await runtime.close()
-
-
-def _required_environment(name: str) -> str:
-    value = os.environ.get(name)
-    if value is None or not value:
-        raise RuntimeError(f"{name} is required")
-    return value
-
-
-def _required_model_tool_network_attestation() -> bool:
-    value = _required_environment(_MODEL_TOOL_NETWORK_ATTESTED_ENV)
-    if value != "true":
-        raise RuntimeError(f"{_MODEL_TOOL_NETWORK_ATTESTED_ENV} must be exactly 'true'")
-    return True
+        try:
+            await runtime.close()
+        finally:
+            try:
+                await native.stop()
+            finally:
+                if native.stopped:
+                    native_exit_proven.set()
 
 
 def _validate_directories(

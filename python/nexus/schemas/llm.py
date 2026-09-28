@@ -31,7 +31,10 @@ def _aware(value: datetime) -> datetime:
 
 
 ReadinessCode = Literal[
-    "catalog_refresh_failed", "codex_host_unavailable", "credential_unavailable"
+    "catalog_refresh_failed",
+    "codex_host_unavailable",
+    "credential_unavailable",
+    "required_tool_unavailable",
 ]
 
 
@@ -115,7 +118,7 @@ GenerationRoute = Annotated[CodexPersonalRoute | ProviderApiRoute, Field(discrim
 
 
 class GenerationReasoningRow(_StrictGenerationModel):
-    key: str = Field(min_length=1, max_length=64, pattern=r"^[^\s]+$")
+    key: str = Field(pattern=r"^[!-~]{1,64}$")
     label: str = Field(min_length=1, max_length=256)
     readiness: Readiness
     chat_state: SelectionState

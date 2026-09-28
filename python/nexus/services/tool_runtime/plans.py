@@ -19,6 +19,7 @@ from llm_tools import (
     WEB_SEARCH_SPEC,
     CapabilityProfile,
     HostTable,
+    HttpApi,
     Native,
     ProfileId,
     RunLimits,
@@ -33,7 +34,7 @@ from llm_tools import (
 from nexus.services.tool_runtime.declarations import NEXUS_TOOL_DECLARATIONS
 from nexus.services.tool_runtime.plan_revisions import TOOL_PLAN_AUTHORITY_REVISIONS
 
-type ToolExposureName = Literal["HostTable", "Native"]
+type ToolExposureName = Literal["HostTable", "Native", "HttpApi"]
 
 _NEXUS_READ_TOOL_IDS: Final[tuple[ToolId, ...]] = tuple(
     ToolId(value)
@@ -112,7 +113,9 @@ def _exposure_name(plan: ToolPlan) -> ToolExposureName:
         return "Native"
     if isinstance(plan.exposure, HostTable):
         return "HostTable"
-    raise ValueError("Nexus tool plans support only Native or HostTable exposure")
+    if isinstance(plan.exposure, HttpApi):
+        return "HttpApi"
+    raise ValueError("Nexus tool plan has an unsupported exposure")
 
 
 def _definition_json(
@@ -160,7 +163,7 @@ def _definition(
     )
     plan = ToolPlan(
         profile=profile.id,
-        exposure=Native() if exposure == "Native" else HostTable(),
+        exposure={"Native": Native, "HostTable": HostTable, "HttpApi": HttpApi}[exposure](),
     )
     return ToolPlanDefinition(
         plan_id=plan_id,
@@ -187,33 +190,13 @@ CHAT_READ_ADDITIVE_WRITE_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definitio
     exposure="Native",
     max_live_writes=8,
 )
-LIBRARY_DOSSIER_READ_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
-    "LibraryDossierRead",
-    "library_dossier_read",
-    _NEXUS_READ_TOOL_IDS,
-    RunLimits(
-        max_calls=16,
-        max_external_attempts=0,
-        max_input_bytes=262_144,
-        max_output_bytes=4_194_304,
-        max_in_flight=1,
-        max_elapsed_seconds=120.0,
-    ),
-    exposure="Native",
-)
-IDEA_DOSSIER_READ_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
-    "IdeaDossierRead",
-    "idea_dossier_read",
-    _NEXUS_READ_TOOL_IDS,
-    RunLimits(
-        max_calls=12,
-        max_external_attempts=0,
-        max_input_bytes=131_072,
-        max_output_bytes=2_097_152,
-        max_in_flight=1,
-        max_elapsed_seconds=120.0,
-    ),
-    exposure="Native",
+CODEX_GENERATION_API_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
+    "CodexGenerationApi",
+    "codex_generation_api",
+    (WEB_SEARCH_SPEC.id, WEB_READ_SPEC.id, *_NEXUS_READ_TOOL_IDS, *_NEXUS_ADDITIVE_WRITE_TOOL_IDS),
+    _CHAT_RUN_LIMITS,
+    exposure="HttpApi",
+    max_live_writes=8,
 )
 IDEA_DOSSIER_RESEARCH_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
     "idea_dossier_research",
@@ -230,32 +213,10 @@ IDEA_DOSSIER_RESEARCH_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
     exposure="HostTable",
 )
 
-METADATA_READ_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
-    "MetadataRead",
-    "metadata_read",
-    (
-        WEB_SEARCH_SPEC.id,
-        WEB_READ_SPEC.id,
-        ToolId("nexus.document.search"),
-        ToolId("nexus.resource.read"),
-    ),
-    RunLimits(
-        max_calls=8,
-        max_external_attempts=64,
-        max_input_bytes=262_144,
-        max_output_bytes=4_194_304,
-        max_in_flight=1,
-        max_elapsed_seconds=120.0,
-    ),
-    exposure="Native",
-)
-
 TOOL_PLAN_DEFINITIONS: Final[tuple[ToolPlanDefinition, ...]] = (
+    CODEX_GENERATION_API_TOOL_DEFINITION,
     CHAT_READ_ADDITIVE_WRITE_TOOL_DEFINITION,
-    LIBRARY_DOSSIER_READ_TOOL_DEFINITION,
-    IDEA_DOSSIER_READ_TOOL_DEFINITION,
     IDEA_DOSSIER_RESEARCH_TOOL_DEFINITION,
-    METADATA_READ_TOOL_DEFINITION,
 )
 _computed_authority_revisions = {
     definition.plan_id: definition.authority_revision for definition in TOOL_PLAN_DEFINITIONS
@@ -274,10 +235,9 @@ TOOL_PLAN_DEFINITIONS_BY_ID: Final[MappingProxyType[str, ToolPlanDefinition]] = 
 
 
 __all__ = [
+    "CODEX_GENERATION_API_TOOL_DEFINITION",
     "CHAT_READ_ADDITIVE_WRITE_TOOL_DEFINITION",
-    "IDEA_DOSSIER_READ_TOOL_DEFINITION",
     "IDEA_DOSSIER_RESEARCH_TOOL_DEFINITION",
-    "LIBRARY_DOSSIER_READ_TOOL_DEFINITION",
     "TOOL_PLAN_DEFINITIONS",
     "TOOL_PLAN_DEFINITIONS_BY_ID",
     "ToolPlanDefinition",

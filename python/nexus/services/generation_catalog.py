@@ -9,11 +9,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from provider_runtime.registry import api_model_catalog
 from provider_runtime.types import Absent as RuntimeAbsent
-from provider_runtime.types import ApiModelCatalog, ApiModelFacts, ApiRoutingFacts
+from provider_runtime.types import ApiModelCatalog, ApiModelFacts, NativeStructuredOutput
 from provider_runtime.types import Present as RuntimePresent
 
 from nexus.config import GenerationApiProvider, Settings
@@ -45,6 +45,8 @@ from nexus.services.codex_generation_client import (
     CodexGenerationProtocolDefect,
 )
 from nexus.services.codex_generation_contract import CodexModelCatalog
+from nexus.services.codex_generation_health_contract import EXECUTION_POLICY_REVISION
+from nexus.services.generation_admission import GenerationConfigurationDefect
 from nexus.services.generation_policy import (
     GENERATION_POLICY,
     ExactModelTools,
@@ -54,60 +56,31 @@ from nexus.services.generation_policy import (
 from nexus.services.generation_spec import (
     CodexDispatchTargetSnapshot,
     CodexPersonalSelection,
-    JsonValue,
     ProviderApiSelection,
     ProviderDispatchTargetSnapshot,
-    ProviderReasoningLevel,
     selection_fingerprint,
 )
 from nexus.services.llm_credentials import provider_generation_credentials
 
+if TYPE_CHECKING:
+    from nexus.services.tool_runtime.catalog import ComposedToolRuntime
+
 type GenerationSelection = CodexPersonalSelection | ProviderApiSelection
-type TransportCapability = Literal["Text", "StrictStructured", "ToolsContinuation"]
+type TransportCapability = Literal[
+    "Text", "StrictStructured", "TextWithTools", "StructuredWithTools"
+]
 type ResolvedDispatchTarget = CodexDispatchTargetSnapshot | ProviderDispatchTargetSnapshot
 
 _PROVIDER_ORDER: tuple[GenerationApiProvider, ...] = (
     "openai",
     "anthropic",
     "gemini",
-    "moonshot",
-    "openrouter",
     "deepseek",
     "xai",
 )
-_CHAT_CAPABILITIES: tuple[TransportCapability, ...] = ("Text", "ToolsContinuation")
-_ALL_CAPABILITIES: tuple[TransportCapability, ...] = (
-    "Text",
-    "StrictStructured",
-    "ToolsContinuation",
-)
+_CHAT_CAPABILITY: TransportCapability = "TextWithTools"
 _DEFINITION_TTL_SECONDS = 300
 _READINESS_TTL_SECONDS = 60
-
-# The exact targets this deployment offers. A source row outside this set stays
-# visible and explains itself; it is never silently substituted.
-ADMITTED_TARGET_KEYS = frozenset(
-    {
-        "CodexPersonal:gpt-5.6-sol",
-        "CodexPersonal:gpt-5.6-terra",
-        "CodexPersonal:gpt-5.6-luna",
-        "CodexPersonal:gpt-5.5",
-        "CodexPersonal:gpt-5.4",
-        "CodexPersonal:gpt-5.4-mini",
-        "CodexPersonal:gpt-5.3-codex-spark",
-        "ProviderApi:openai:gpt-5.6-sol",
-        "ProviderApi:openai:gpt-5.6-terra",
-        "ProviderApi:openai:gpt-5.6-luna",
-        "ProviderApi:anthropic:claude-sonnet-5",
-        "ProviderApi:anthropic:claude-fable-5",
-        "ProviderApi:gemini:gemini-3.5-flash",
-        "ProviderApi:moonshot:kimi-k3",
-        "ProviderApi:openrouter:kimi-k3",
-        "ProviderApi:deepseek:deepseek-v4-pro",
-        "ProviderApi:deepseek:deepseek-v4-flash",
-        "ProviderApi:xai:grok-4.5",
-    }
-)
 
 
 class CatalogDefinitionStaleError(ValueError):
@@ -201,17 +174,23 @@ class _SourceModel:
         return ProviderApiSelection(
             route="ProviderApi",
             model_ref=self.key,
-            reasoning=cast(ProviderReasoningLevel, reasoning),
+            reasoning=reasoning,
         )
 
 
 class GenerationCatalogService:
     """The sole process cache and freshness owner for generation composition."""
 
-    def __init__(self, settings: Settings, codex_client: CodexGenerationClient) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        codex_client: CodexGenerationClient,
+        tool_runtime: ComposedToolRuntime,
+    ) -> None:
         self._providers = _configured_providers(settings.generation_api_provider_list)
         self._credentials = provider_generation_credentials(settings)
         self._codex_client = codex_client
+        self._tool_runtime = tool_runtime
         self._definitions: tuple[CodexModelCatalog, ApiModelCatalog, datetime] | None = None
         self._readiness: CatalogReadinessSnapshot | None = None
         self._lock = Lock()
@@ -285,12 +264,17 @@ class GenerationCatalogService:
                 configured_api_providers=self._providers,
                 readiness=_stale(self._readiness) if refresh_failed else self._readiness,
                 policy=GENERATION_POLICY,
+                tool_runtime=self._tool_runtime,
                 now=now,
             )
 
 
-def build_generation_catalog_service(settings: Settings) -> GenerationCatalogService:
-    return GenerationCatalogService(settings, CodexGenerationClient(settings.codex_agent_socket))
+def build_generation_catalog_service(
+    settings: Settings, *, tool_runtime: ComposedToolRuntime
+) -> GenerationCatalogService:
+    return GenerationCatalogService(
+        settings, CodexGenerationClient(settings.codex_agent_socket), tool_runtime
+    )
 
 
 async def production_catalog_readiness(
@@ -349,15 +333,42 @@ def compose_generation_catalog(
     configured_api_providers: Sequence[GenerationApiProvider],
     readiness: CatalogReadinessSnapshot,
     policy: GenerationPolicy,
+    tool_runtime: ComposedToolRuntime,
     now: datetime,
 ) -> GenerationCatalogSnapshot:
     """Compose one strict immutable snapshot; never synthesize a fallback row."""
 
+    from nexus.services.tool_runtime.catalog import required_tool_operation, unavailable_tool_ids
+
+    if agent_catalog.execution_policy_revision != EXECUTION_POLICY_REVISION:
+        raise GenerationConfigurationDefect("Codex execution policy revision drifted")
     configured = _configured_providers(configured_api_providers)
     by_route: dict[str, tuple[_SourceModel, ...]] = {"CodexPersonal": _agent_sources(agent_catalog)}
     for provider in configured:
         by_route[f"ProviderApi:{provider}"] = _api_sources(api_catalog, provider)
     chat_workflow = policy.chat.workflow
+    chat_tools = chat_workflow.model_tool_policy
+    if not isinstance(chat_tools, ExactModelTools):
+        raise AssertionError("Chat workflow lacks its exact model-tool plan")
+    try:
+        chat_operation = required_tool_operation(
+            tool_runtime,
+            plan_id=chat_tools.plan_id,
+            authority_revision=chat_tools.authority_revision,
+        )
+    except ValueError as error:
+        raise GenerationConfigurationDefect(str(error)) from error
+    unavailable = unavailable_tool_ids(chat_operation)
+    tool_readiness = (
+        OperatorActionRequired(
+            code="required_tool_unavailable",
+            explanation=f"Chat requires unavailable tools: {', '.join(unavailable)}.",
+            action="Configure the required tool dependencies and restart Nexus.",
+            last_checked=now,
+        )
+        if unavailable
+        else None
+    )
 
     pairs: dict[str, ResolvedCatalogPair] = {}
     routes: list[GenerationCatalogRoute] = []
@@ -366,7 +377,11 @@ def compose_generation_catalog(
         model_rows: list[GenerationModelRow] = []
         for source in sources:
             route_readiness = readiness.route(route_key)
-            state = _selection_state(source, route_readiness)
+            state = _selection_state(
+                source,
+                route_readiness,
+                tool_readiness if route_key != "CodexPersonal" else None,
+            )
             context_budget, output_budget = _effective_budget(source, chat_workflow)
             reasoning_rows: list[GenerationReasoningRow] = []
             for reasoning in source.reasoning:
@@ -437,7 +452,7 @@ def compose_generation_catalog(
         raise ValueError("developer Chat seed is absent from the configured catalog")
     catalog = GenerationCatalog(
         definition_revision=_hash(
-            b"nexus.generation-catalog.v1",
+            b"nexus.generation-catalog.v2",
             [
                 agent_catalog.definition_revision,
                 api_catalog.definition_revision,
@@ -485,31 +500,35 @@ def validate_background_policy(
         pair = snapshot.pair(entry.selection)
         if pair is None:
             raise AssertionError(f"{operation} selection is absent from the catalog")
-        if pair.target_key not in ADMITTED_TARGET_KEYS:
-            raise AssertionError(f"{operation} selects a target outside the admitted set")
-        required: set[TransportCapability] = {
-            "Text" if entry.workflow.output_contract == "Text" else "StrictStructured"
-        }
-        if isinstance(entry.workflow.model_tool_policy, ExactModelTools):
-            required.add("ToolsContinuation")
-        if not required.issubset(pair.capabilities):
+        required = workflow_transport_capability(
+            entry.workflow, codex_shell=isinstance(entry.selection, CodexPersonalSelection)
+        )
+        if required not in pair.capabilities:
             raise AssertionError(f"{operation} target does not support its workflow")
 
 
-def _selection_state(source: _SourceModel, readiness: Readiness) -> SelectionState:
-    if source.target_key not in ADMITTED_TARGET_KEYS:
-        return Ineligible(
-            code="selection_not_configured",
-            explanation="This model is not configured for Nexus generation.",
-        )
-    if not set(_CHAT_CAPABILITIES).issubset(source.capabilities):
+def workflow_transport_capability(
+    workflow: OperationWorkflowSpec, *, codex_shell: bool = False
+) -> TransportCapability:
+    if codex_shell:
+        return "TextWithTools" if workflow.output_contract == "Text" else "StructuredWithTools"
+    has_tools = isinstance(workflow.model_tool_policy, ExactModelTools)
+    if workflow.output_contract == "Text":
+        return "TextWithTools" if has_tools else "Text"
+    return "StructuredWithTools" if has_tools else "StrictStructured"
+
+
+def _selection_state(
+    source: _SourceModel, readiness: Readiness, tool_readiness: OperatorActionRequired | None
+) -> SelectionState:
+    if _CHAT_CAPABILITY not in source.capabilities:
         return Ineligible(
             code="unsupported_capability",
-            explanation="This model does not support streaming text with tool continuation.",
+            explanation="this route cannot run chat with its required tools.",
         )
-    if isinstance(readiness, Ready):
-        return Selectable()
-    return readiness
+    if not isinstance(readiness, Ready):
+        return readiness
+    return tool_readiness if tool_readiness is not None else Selectable()
 
 
 def _agent_sources(catalog: CodexModelCatalog) -> tuple[_SourceModel, ...]:
@@ -537,7 +556,16 @@ def _agent_sources(catalog: CodexModelCatalog) -> tuple[_SourceModel, ...]:
                 dispatch_model=row.dispatch_model,
                 agent_definition_revision=catalog.definition_revision,
             ),
-            capabilities=_ALL_CAPABILITIES,
+            capabilities=tuple(
+                cast(TransportCapability, capability)
+                for execution in row.execution
+                if execution.mode == "remote_shell"
+                for output, capability in (
+                    ("text", "TextWithTools"),
+                    ("json_schema", "StructuredWithTools"),
+                )
+                if output in execution.final_outputs
+            ),
         )
         for row in catalog.models
     )
@@ -555,13 +583,14 @@ def _api_sources(
 def _api_source(
     catalog: ApiModelCatalog, provider: GenerationApiProvider, row: ApiModelFacts
 ) -> _SourceModel:
-    label = _model_label(row.model_ref.split(":", 1)[1])
+    label = row.label
     capabilities: list[TransportCapability] = []
     if row.streaming and "text" in row.input_modalities:
         capabilities.append("Text")
-    capabilities.append("StrictStructured")
-    if row.tools and row.continuation_codec:
-        capabilities.append("ToolsContinuation")
+    if isinstance(row.structured, NativeStructuredOutput):
+        capabilities.append("StrictStructured")
+    if row.streaming and row.tools and row.continuation_codec:
+        capabilities.append("TextWithTools")
     return _SourceModel(
         route_key=f"ProviderApi:{provider}",
         target_key=f"ProviderApi:{row.model_ref}",
@@ -569,12 +598,9 @@ def _api_source(
         label=label,
         description=f"{label} through the configured {_provider_label(provider)} route.",
         source_context_window=row.context_window,
-        source_max_output_tokens=row.max_output_tokens,
+        source_max_output_tokens=_value(row.max_output_tokens),
         input_modalities=row.input_modalities,
-        reasoning=tuple(
-            _SourceReasoning(key=item.key, label=_reasoning_label(item.key))
-            for item in row.reasoning
-        ),
+        reasoning=tuple(_SourceReasoning(key=item.key, label=item.label) for item in row.reasoning),
         source_default_reasoning=_value(row.source_default_reasoning),
         source_definition_revision=catalog.definition_revision,
         backend_contract_revision=catalog.backend_contract_revision,
@@ -586,7 +612,6 @@ def _api_source(
             engine=row.dispatch.engine,
             base_url=_presence(_value(row.dispatch.base_url)),
             correlation=row.dispatch.correlation,
-            routing=_routing(row.dispatch.routing),
             continuation_codec=row.continuation_codec,
             registry_revision=catalog.registry_revision,
         ),
@@ -608,7 +633,11 @@ def _route_disclosure(route_key: str) -> _RouteDisclosure:
             label="Codex Personal",
             billing=SubscriptionBilling(),
             privacy=PrivacyDisclosure(
-                summary="Runs through your authenticated local Codex account.",
+                summary=(
+                    "Uses your Codex subscription. Its disposable shell can reach the public "
+                    "internet; the Nexus API can read your account-visible library and create "
+                    "additive content."
+                ),
                 retention="OpenAI Codex account retention applies.",
                 training="Nexus does not opt your content into model training.",
             ),
@@ -616,8 +645,6 @@ def _route_disclosure(route_key: str) -> _RouteDisclosure:
         )
     provider = cast(GenerationApiProvider, route_key.split(":", 1)[1])
     processors = ["Nexus", _provider_processor(provider)]
-    if provider == "openrouter":
-        processors.append("Pinned upstream provider")
     return _RouteDisclosure(
         label=_provider_label(provider),
         billing=MeteredApiBilling(),
@@ -643,10 +670,12 @@ def _route_identity(route_key: str) -> CodexPersonalRoute | ProviderApiRoute:
 
 def _effective_budget(source: _SourceModel, workflow: OperationWorkflowSpec) -> tuple[int, int]:
     requested = workflow.request_budget
-    if source.source_context_window is None or source.source_max_output_tokens is None:
-        return requested.max_context_tokens, requested.max_output_tokens
-    output = min(requested.max_output_tokens, source.source_max_output_tokens)
-    context = min(requested.max_context_tokens, source.source_context_window - output)
+    output = requested.max_output_tokens
+    if source.source_max_output_tokens is not None:
+        output = min(output, source.source_max_output_tokens)
+    context = requested.max_context_tokens
+    if source.source_context_window is not None:
+        context = min(context, source.source_context_window - output)
     if context <= 0 or output <= 0:
         raise ValueError("source capacity cannot satisfy a positive effective request budget")
     return context, output
@@ -688,58 +717,13 @@ def _presence[T](value: T | None) -> Present[T] | Absent:
     return Present[T](value=value) if value is not None else Absent()
 
 
-def _routing(
-    value: RuntimePresent[ApiRoutingFacts] | RuntimeAbsent,
-) -> Present[dict[str, JsonValue]] | Absent:
-    if isinstance(value, RuntimeAbsent):
-        return Absent()
-    routing = value.value
-    return Present[dict[str, JsonValue]](
-        value={
-            "only": list(routing.only),
-            "order": list(routing.order),
-            "quantizations": list(routing.quantizations),
-            "allow_fallbacks": routing.allow_fallbacks,
-            "require_parameters": routing.require_parameters,
-            "data_collection": routing.data_collection,
-            "zdr": routing.zdr,
-        }
-    )
-
-
 # Route display name and the processor named in the disclosure chain.
 _PROVIDER_DISPLAY: dict[GenerationApiProvider, tuple[str, str]] = {
     "openai": ("OpenAI API", "OpenAI"),
     "anthropic": ("Anthropic API", "Anthropic"),
     "gemini": ("Google Gemini API", "Google"),
-    "moonshot": ("Moonshot API", "Moonshot AI"),
-    "openrouter": ("OpenRouter API", "OpenRouter"),
     "deepseek": ("DeepSeek API", "DeepSeek"),
     "xai": ("xAI API", "xAI"),
-}
-_MODEL_WORDS = {
-    "gpt": "GPT",
-    "deepseek": "DeepSeek",
-    "claude": "Claude",
-    "gemini": "Gemini",
-    "kimi": "Kimi",
-    "grok": "Grok",
-    "sol": "Sol",
-    "terra": "Terra",
-    "luna": "Luna",
-    "flash": "Flash",
-    "pro": "Pro",
-    "sonnet": "Sonnet",
-    "fable": "Fable",
-}
-_REASONING_LABELS = {
-    "none": "None",
-    "minimal": "Minimal",
-    "low": "Low",
-    "medium": "Medium",
-    "high": "High",
-    "xhigh": "Extra high",
-    "max": "Max",
 }
 
 
@@ -749,19 +733,6 @@ def _provider_label(provider: GenerationApiProvider) -> str:
 
 def _provider_processor(provider: GenerationApiProvider) -> str:
     return _PROVIDER_DISPLAY[provider][1]
-
-
-def _model_label(model_id: str) -> str:
-    return " ".join(
-        _MODEL_WORDS.get(
-            word.lower(), word.upper() if word[:1].isalpha() and word[1:].isdigit() else word
-        )
-        for word in model_id.split("-")
-    )
-
-
-def _reasoning_label(value: str) -> str:
-    return _REASONING_LABELS.get(value, value)
 
 
 def _hash(domain: bytes, value: object) -> str:

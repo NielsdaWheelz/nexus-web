@@ -8,15 +8,12 @@ citation candidates only from completed durable tool receipts.
 
 from __future__ import annotations
 
-import json
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Final, Literal, assert_never, cast
+from typing import Annotated, Final, Literal, assert_never, cast
 from uuid import UUID
 
-from llm_tools import ToolResult
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.session import get_session_factory
@@ -36,18 +33,11 @@ from nexus.services.artifacts.collect import (
 from nexus.services.artifacts.coordination import DossierBuildRuntime
 from nexus.services.artifacts.document_html import DocumentHtmlError
 from nexus.services.artifacts.dossier_types import DossierBuildFailureCode
-from nexus.services.artifacts.manifests import IdeaInputManifestV1, LibraryInputManifestV1
-from nexus.services.generation_backend import (
-    BackendTerminal,
-    BackendToolExecutor,
-    CodexAdmissionBinder,
-)
+from nexus.services.generation_backend import BackendTerminal
 from nexus.services.generation_spec import (
     BackgroundOperationKey,
     FrozenHostToolPlanSnapshot,
-    FrozenToolScope,
     GenerationIntent,
-    GenerationSpec,
     ImmutablePromptPayloadRef,
     JsonValue,
     decode_generation_spec_document,
@@ -63,11 +53,7 @@ from nexus.services.llm_execution import (
     codex_terminal_evidence,
 )
 from nexus.services.llm_ledger import LlmCallOwner
-from nexus.services.resource_graph.refs import (
-    ResourceRefParseFailure,
-    assert_resource_ref,
-    parse_resource_ref,
-)
+from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 from nexus.services.resource_graph.schemas import CitationSnapshot
 from nexus.services.structured_synthesis import (
     StructuredSynthesisError,
@@ -75,21 +61,10 @@ from nexus.services.structured_synthesis import (
     decode_structured_synthesis,
     outcome_failure_facts,
 )
-from nexus.services.tool_authority import (
-    DeferredGenerationToolExecutor,
-    ToolAuditProjection,
-    ToolAuthority,
-    ToolAuthorityRefused,
-    ToolPositionRecord,
-    read_tool_positions,
-)
-from nexus.services.tool_runtime.catalog import FrozenToolOperation, freeze_tool_plan_snapshot
-
-if TYPE_CHECKING:
-    from nexus.services.agent_tools_mcp import CodexGenerationToolBinding
+from nexus.services.tool_authority import read_tool_positions
+from nexus.services.tool_runtime.catalog import freeze_tool_plan_snapshot
 
 SYNTHESIS_STEP_PATH: Final = "synthesis"
-_MODEL_TOOL_OPERATIONS: Final = frozenset({"dossier_library", "dossier_idea"})
 
 
 class GenerationFailure(BaseModel):
@@ -124,20 +99,6 @@ class GenerationInputsChanged(Exception):
 
 class GenerationUncertainOnReplay(RuntimeError):
     """A generation may have dispatched and requires operator repair."""
-
-
-@dataclass(slots=True)
-class SynthesisAdmission:
-    request: GenerationExecutionRequest
-    codex_tools: CodexGenerationToolBinding | None = None
-
-    @property
-    def before_terminal(self) -> Callable[[], Awaitable[None]] | None:
-        return None if self.codex_tools is None else self.codex_tools.wait_until_idle
-
-    async def close(self) -> None:
-        if self.codex_tools is not None:
-            await self.codex_tools.drain_and_close()
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,56 +137,18 @@ class SynthesisStep:
         *,
         requester_user_id: UUID,
         lock_dispatch: Callable[[Session], JobRow | None],
-    ) -> SynthesisAdmission:
-        """Freeze the exact selection and compose the route's tool transport."""
+    ) -> GenerationExecutionRequest:
+        """Freeze the exact selection and host evidence."""
         session_factory = get_session_factory()
         journal = JobGenerationJournal(
             context=runtime.execution_context,
             step_path=SYNTHESIS_STEP_PATH,
             lock_dispatch=lock_dispatch,
         )
-        scope = self._tool_scope()
-        projection = (
-            DossierToolExecutionProjection(
-                build_id=self.build_id,
-                baseline_candidates=tuple(self.collected.candidates),
-            )
-            if scope is not None
-            else None
-        )
-        binding: CodexGenerationToolBinding | None = None
-
-        def bind_codex(spec: GenerationSpec) -> CodexAdmissionBinder:
-            from nexus.services.agent_tools_mcp import CodexGenerationToolBinding
-
-            nonlocal binding
-            binding = CodexGenerationToolBinding(
-                session_factory=session_factory,
-                user_id=requester_user_id,
-                owner=self.owner,
-                generation_id=self.generation_id,
-                job_context=runtime.execution_context,
-                operation=_model_tool_operation(runtime, spec),
-                spec=spec,
-                intent=self.intent,
-                projection=projection,
-            )
-            return binding.bind_admission
-
-        def provider_executor(spec: GenerationSpec) -> BackendToolExecutor:
-            return DeferredGenerationToolExecutor(
-                session_factory=session_factory,
-                user_id=requester_user_id,
-                owner=self.owner,
-                generation_id=self.generation_id,
-                job_context=runtime.execution_context,
-                operation=_model_tool_operation(runtime, spec),
-                projection=projection,
-            )
-
         host_plan, host_evidence_revision = self._host_evidence(runtime)
         request = await admit_job_generation(
             owner=self.owner,
+            user_id=requester_user_id,
             generation_id=self.generation_id,
             operation=self.operation,
             intent=self.intent,
@@ -234,13 +157,10 @@ class SynthesisStep:
             journal=journal,
             session_factory=session_factory,
             runtime=runtime.llm_runtime,
-            scope=scope,
             host_plan=host_plan,
             host_evidence_revision=host_evidence_revision,
-            bind_admission_factory=bind_codex if scope is not None else None,
-            tool_executor_factory=provider_executor if scope is not None else None,
         )
-        return SynthesisAdmission(request=request, codex_tools=binding)
+        return request
 
     def encode_terminal(self, terminal: BackendTerminal) -> EncodedGenerationTerminal:
         """Validate and persist the final document at the ledger landing boundary."""
@@ -286,8 +206,6 @@ class SynthesisStep:
         return _RESULT_ADAPTER.validate_json(raw_result)
 
     def _materialize(self, decoded: StandardSynthesis) -> PublishableDossier:
-        if self.operation not in _MODEL_TOOL_OPERATIONS:
-            return materialize_citations(decoded, self.collected.candidates)
         with get_session_factory()() as db:
             candidates = dossier_candidates_from_ledger(
                 db,
@@ -295,22 +213,6 @@ class SynthesisStep:
                 baseline_candidates=self.collected.candidates,
             )
         return materialize_citations(decoded, list(candidates))
-
-    def _tool_scope(self) -> FrozenToolScope | None:
-        manifest = self.collected.manifest
-        if isinstance(manifest, LibraryInputManifestV1) and self.operation == "dossier_library":
-            refs = {manifest.library_ref, *(entry.media_ref for entry in manifest.media)}
-        elif isinstance(manifest, IdeaInputManifestV1) and self.operation == "dossier_idea":
-            refs = {
-                *manifest.included_seed_refs,
-                *(source.ref for source in manifest.included_sources),
-            }
-        else:
-            return None
-        canonical = tuple(sorted(refs))
-        for value in canonical:
-            assert_resource_ref(value)
-        return FrozenToolScope(admitted_refs=canonical, predicates=())
 
     def _host_evidence(
         self, runtime: DossierBuildRuntime
@@ -393,15 +295,6 @@ def build_synthesis_step(
     )
 
 
-def _model_tool_operation(
-    runtime: DossierBuildRuntime, spec: GenerationSpec
-) -> FrozenToolOperation:
-    operation = runtime.llm_runtime.admission.model_tool_operation(spec)
-    if operation is None:
-        raise AssertionError("tool-bearing Dossier lost its frozen operation")
-    return operation
-
-
 def _failure_code(code: GenerationFailureCode) -> DossierBuildFailureCode:
     match code:
         case "auth":
@@ -426,90 +319,6 @@ def _failure_code(code: GenerationFailureCode) -> DossierBuildFailureCode:
             raise AssertionError("cancellation has its own dossier outcome")
         case unreachable:
             assert_never(unreachable)
-
-
-# ---------------------------------------------------------------------------
-# The ledger-candidate projection `tool_authority` drives for tool-bearing runs.
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class DossierToolExecutionProjection:
-    """Bind one build and its initial citation-candidate sequence to tool runs."""
-
-    build_id: UUID
-    baseline_candidates: tuple[Candidate, ...]
-
-    @property
-    def scope_label(self) -> str:
-        return "dossier_evidence"
-
-    def lock_owner(self, db: Session, *, user_id: UUID, owner: LlmCallOwner) -> None:
-        if owner != LlmCallOwner(kind="artifact_build", id=self.build_id):
-            raise ToolAuthorityRefused("Dossier projection owner differs from the generation")
-        requester = db.execute(
-            text("SELECT requester_user_id FROM artifact_builds WHERE id = :build_id FOR UPDATE"),
-            {"build_id": self.build_id},
-        ).scalar_one_or_none()
-        if requester is None or UUID(str(requester)) != user_id:
-            raise ToolAuthorityRefused("Dossier projection requester is not live")
-
-    def stage_started(
-        self,
-        db: Session,
-        *,
-        authority: ToolAuthority,
-        position: ToolPositionRecord,
-        provider_wire_name: str,
-        arguments: Mapping[str, object],
-    ) -> None:
-        del db, authority, position, provider_wire_name, arguments
-
-    def stage_terminal(
-        self,
-        db: Session,
-        *,
-        authority: ToolAuthority,
-        position: ToolPositionRecord,
-        result: ToolResult,
-        audit: ToolAuditProjection,
-    ) -> None:
-        del db, authority, position, result, audit
-
-    def render_output(
-        self,
-        db: Session,
-        *,
-        authority: ToolAuthority,
-        position: ToolPositionRecord,
-        result: ToolResult,
-    ) -> str:
-        del position
-        if result.get("type") != "Success":
-            return _canonical_json(result)
-        candidates = dossier_candidates_from_ledger(
-            db,
-            generation_id=authority.generation_id,
-            baseline_candidates=self.baseline_candidates,
-        )
-        index_by_target = {candidate.target.uri: candidate.index for candidate in candidates}
-        return _canonical_json(
-            {
-                **result,
-                "dossier_citation_candidates": [
-                    {
-                        "candidate_index": index_by_target[candidate.target.uri],
-                        "target_uri": candidate.target.uri,
-                    }
-                    for candidate in _candidates_from_result(result, start_index=0)
-                    if candidate.target.uri in index_by_target
-                ],
-            }
-        )
-
-    def live_write_count(self, db: Session, *, authority: ToolAuthority) -> int | None:
-        del db, authority
-        return None
 
 
 def dossier_candidates_from_ledger(
@@ -592,13 +401,3 @@ def _objects(value: object) -> list[dict[str, object]]:
         for child in value:
             found.extend(_objects(child))
     return found
-
-
-def _canonical_json(value: object) -> str:
-    return json.dumps(
-        value,
-        ensure_ascii=True,
-        allow_nan=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )

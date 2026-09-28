@@ -11,7 +11,7 @@ from nexus.services.generation_backend import GenerationBackend, GenerationBacke
 from nexus.services.generation_catalog import GenerationCatalogService
 from nexus.services.generation_policy import GENERATION_POLICY
 from nexus.services.generation_service import GenerationService
-from nexus.services.generation_spec import GenerationSpec
+from nexus.services.generation_spec import GenerationSpec, ProviderFunctions
 from nexus.services.llm_credentials import generation_continuation_cipher
 from nexus.services.llm_execution import ComposedExecutionRuntime
 from nexus.services.provider_generation_backend import build_provider_generation_backend
@@ -35,7 +35,9 @@ def compose_generation_execution_runtime(
     def resolve_provider_tools(spec: GenerationSpec) -> ProviderModelTools | None:
         """Resolve only the operation already named by the frozen tool snapshot."""
 
-        snapshot = spec.model_tool_plan_snapshot
+        if not isinstance(spec.authority, ProviderFunctions):
+            return None
+        snapshot = spec.authority.model_tool_plan_snapshot
         if isinstance(snapshot, Absent):
             return None
         operation = tools.operations.get(snapshot.value.plan_id)

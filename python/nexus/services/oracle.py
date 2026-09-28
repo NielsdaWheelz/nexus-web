@@ -1213,6 +1213,7 @@ async def execute_reading(
     try:
         execution_request = await admit_job_generation(
             owner=LlmCallOwner(kind="oracle_reading", id=reading_id),
+            user_id=viewer_id,
             generation_id=generation_id,
             operation="oracle",
             intent=intent,

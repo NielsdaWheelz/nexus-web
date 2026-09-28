@@ -10,14 +10,18 @@ const WORKSPACE_SESSION_SYNC_DEBOUNCE_MS = 1000;
 // Persist workspace changes after mount. Restore is server-side now (the store is seeded
 // with the restored state, see store.tsx + bootstrap.server.ts), so there is no fetch and
 // no restore phase here — only capture (debounced PUT) and flush (keepalive on page hide).
-export function useWorkspaceSession(state: WorkspaceState, mounted: boolean): void {
+export function useWorkspaceSession(
+  state: WorkspaceState,
+  mounted: boolean,
+  persistInitialState: boolean,
+): void {
   const stateRef = useRef(state);
-  const lastSavedRef = useRef(state);
+  const lastSavedRef = useRef<WorkspaceState | null>(persistInitialState ? null : state);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   stateRef.current = state;
 
-  // CAPTURE — debounced PUT of the current state. lastSavedRef starts at the seeded
-  // (server-restored) state, so seeding never triggers a write; only real edits do.
+  // CAPTURE — debounced PUT of edits and a URL-created visit absent from the
+  // saved session. Page hide flushes that first write before reload.
   useEffect(() => {
     if (!mounted) {
       return;

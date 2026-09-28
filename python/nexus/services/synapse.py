@@ -344,6 +344,7 @@ async def run_synapse_scan(
     try:
         execution_request = await llm.admit_job_generation(
             owner=LlmCallOwner(kind="synapse_scan", id=ref.id),
+            user_id=user_id,
             generation_id=generation_id,
             operation="synapse",
             intent=intent,

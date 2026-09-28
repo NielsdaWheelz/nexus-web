@@ -6,8 +6,8 @@
 
 The flow is linear and idempotent; after any failure, fix the cause and rerun:
 
-    preflight -> inputs -> images -> backup -> migrate -> up -> caddy
-              -> health -> isolation -> current pointer
+    preflight -> inputs -> images -> backup -> migrate -> convert captures
+              -> up -> caddy -> health -> isolation -> current pointer
 
 `--check` runs preflight and the read-only proofs against the SHA the host
 records. There is no attempt/resume state machine: the host keeps one
@@ -431,6 +431,26 @@ def migrate(candidate: CandidateManifest) -> None:
         raise Failure(f"the database is at {reached}, not {candidate.expected_database_revision}")
 
 
+def convert_browser_captures(candidate: CandidateManifest) -> None:
+    """Finish the one-shot capture cutover while the API and workers are stopped."""
+
+    command = "run --rm --no-deps --no-TTY migration nexus convert-browser-article-captures"
+    pending = (
+        "SELECT count(*) FROM media_source_attempts "
+        "WHERE source_type = 'browser_article_capture' AND NOT (source_payload ? 'sha256')"
+    )
+    for attempt in (1, 2):
+        note(f"browser capture conversion pass {attempt}")
+        output = compose(candidate, command, profile="release", timeout=1800).strip()
+        if output:
+            print(output, flush=True)
+        remaining = psql(pending)
+        if remaining != "0":
+            raise Failure(f"{remaining} browser capture attempts remain unconverted")
+        if attempt == 2 and output:
+            raise Failure("the second conversion pass did work")
+
+
 # ---------------------------------------------------------------------------
 # Start, Caddy, health
 # ---------------------------------------------------------------------------
@@ -521,11 +541,18 @@ def assert_isolation() -> None:
 
     network = json.loads(host(f"docker network inspect {CODEX_PRIVATE_NETWORK}"))[0]
     gatewayed = any(entry.get("Gateway") for entry in network["IPAM"]["Config"])
-    if network["Internal"] is not True or gatewayed:
+    if network["Internal"] is not True or network["EnableIPv6"] is not False or gatewayed:
         raise Failure("the Codex private network is not an isolated internal bridge")
     members = {value["Name"] for value in network["Containers"].values()}
-    if members != {f"nexus-{CODEX_AGENT_HOST}-1", "nexus-codex-egress-policy-1"}:
+    if members != {
+        f"nexus-{CODEX_AGENT_HOST}-1",
+        "nexus-codex-egress-policy-1",
+        "nexus-api-1",
+    }:
         raise Failure(f"the Codex private network has unexpected members: {sorted(members)}")
+    api_networks = inspect(container("api"))["NetworkSettings"]["Networks"]
+    if api_networks[CODEX_PRIVATE_NETWORK]["IPAddress"] != "172.30.0.4":
+        raise Failure("the generation API private address differs from its runtime contract")
 
     inspected = inspect(container(CODEX_AGENT_HOST))
     configuration = inspected["HostConfig"]
@@ -535,6 +562,7 @@ def assert_isolation() -> None:
         or configuration["CapDrop"] != ["ALL"]
         or configuration["CapAdd"]
         or configuration["Privileged"] is not False
+        or configuration["PortBindings"]
         or list(inspected["NetworkSettings"]["Networks"]) != [CODEX_PRIVATE_NETWORK]
     ):
         raise Failure("the Codex agent host runtime differs from its declared confinement")
@@ -545,8 +573,13 @@ def assert_isolation() -> None:
     denied = (
         f"{CODEX_PRIVATE_BRIDGE_IP}:80 {CODEX_PRIVATE_BRIDGE_IP}:443"
         f" {service_address('postgres')}:5432 {service_address('caddy')}:443"
+        " 169.254.169.254:80"
     )
-    inside(CODEX_AGENT_HOST, f"python -m apps.codex_agent.network_health --denied-targets {denied}")
+    inside(
+        CODEX_AGENT_HOST,
+        "python -m apps.codex_agent.network_health"
+        f" --allowed-target 172.30.0.4:8000 --denied-targets {denied}",
+    )
     note(f"agent host confined; {denied} unreachable from it")
 
 
@@ -567,6 +600,37 @@ def release(source_sha: str, workspace: Path) -> None:
         " the API is down from here until `up` succeeds"
     )
     compose(candidate, f"stop --timeout 30 {' '.join(WRITERS)}", timeout=300)
+    compose(candidate, f"stop --timeout 45 {CODEX_AGENT_HOST}", timeout=120)
+    host_container = host(
+        "docker ps --all --quiet"
+        " --filter label=com.docker.compose.project=nexus"
+        f" --filter label=com.docker.compose.service={CODEX_AGENT_HOST}"
+        " --filter label=com.docker.compose.oneoff=False"
+    ).strip()
+    if host_container:
+        if CONTAINER_ID.fullmatch(host_container) is None:
+            raise Failure("Codex native host has ambiguous containers")
+        host_state = inspect(host_container)["State"]
+        if host_state["Status"] != "exited" or host_state["ExitCode"] != 0:
+            raise Failure(
+                "Codex native host did not stop cleanly: "
+                f"status={host_state['Status']} exit_code={host_state['ExitCode']}"
+            )
+    if starting_revision in {"0241", "0242", "0243", "0244"}:
+        missing = psql("""
+            SELECT COUNT(DISTINCT item.media_id)
+            FROM reader_apparatus_items item
+            LEFT JOIN reader_publications publication ON publication.media_id = item.media_id
+            WHERE publication.media_id IS NULL
+        """)
+        if not missing.isdecimal():
+            raise Failure(f"invalid apparatus publication count: {missing!r}")
+        if int(missing):
+            raise Failure(
+                f"0245 blocked: {missing} apparatus media have no reader publication;"
+                " repair their publication or stale apparatus before releasing"
+            )
+        note("0245 publication preflight: zero apparatus media without a reader publication")
     if starting_revision:
         backup(candidate, starting_revision)
     elif psql("SELECT count(*) FROM pg_tables WHERE schemaname = 'public'") != "0":
@@ -576,6 +640,7 @@ def release(source_sha: str, workspace: Path) -> None:
     else:
         note("the database is empty; there is nothing to back up")
     migrate(candidate)
+    convert_browser_captures(candidate)
 
     start(candidate)
     reload_caddy()

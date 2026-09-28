@@ -7,8 +7,9 @@ import socket
 from pathlib import Path
 from typing import Final
 
-from apps.codex_agent.health_contract import expected_health_identity
 from apps.codex_agent.path_environment import required_absolute_path
+
+from nexus.services.codex_generation_health_contract import expected_health_identity
 
 _SOCKET_ENV: Final = "NEXUS_CODEX_AGENT_SOCKET"
 _MAX_RESPONSE_BYTES: Final = 8 * 1024

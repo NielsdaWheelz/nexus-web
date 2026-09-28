@@ -110,6 +110,9 @@ RUN apt-get update \
 
 FROM worker-runtime AS worker
 
+RUN mkdir /workspace
+COPY docker/codex-requirements.toml /etc/codex/requirements.toml
+
 COPY --from=worker-python-builder /app/.venv /app/.venv
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-builder /app/node/ingest/node_modules ./node/ingest/node_modules

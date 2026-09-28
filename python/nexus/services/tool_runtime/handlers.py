@@ -125,6 +125,7 @@ def _admitted_target(
         recorder.db,
         uri=uri,
         admitted_resource_uris=recorder.admitted_resource_uris,
+        account_visible=recorder.account_visible,
         allow_derived_read=allow_derived_read,
     ):
         _resource_unavailable()
@@ -257,14 +258,25 @@ async def _run_search(
         with recorder.db.begin():
             requested_scopes = list(value.scopes or ())
             if value.scopes is None:
-                requested_scopes = [
-                    uri
-                    for uri in sorted(recorder.admitted_resource_uris)
-                    if resource_can_be_app_search_scope(_parse_ref_or_unavailable(uri))
-                ]
+                requested_scopes = (
+                    ["all"]
+                    if recorder.account_visible
+                    else [
+                        uri
+                        for uri in sorted(recorder.admitted_resource_uris)
+                        if resource_can_be_app_search_scope(_parse_ref_or_unavailable(uri))
+                    ]
+                )
             scopes = []
             for uri in requested_scopes:
-                ref = _admitted_target(recorder, uri)
+                if uri == "all" and recorder.account_visible:
+                    scopes.append(scope_from_uri("all"))
+                    continue
+                ref = (
+                    _assert_visible(recorder, uri)
+                    if recorder.account_visible
+                    else _admitted_target(recorder, uri)
+                )
                 if not resource_can_be_app_search_scope(ref):
                     _resource_unavailable()
                 scopes.append(scope_from_uri(uri))
@@ -294,7 +306,7 @@ async def _run_search(
     if not scopes:
         recorder.stage_audit(
             ToolAuditProjection(
-                scope="conversation_context",
+                scope="account_visible" if recorder.account_visible else "conversation_context",
                 requested_types=list(query.effective_result_types),
                 filters=filters,
                 search_query_fingerprint=hash_query(value.query),
@@ -340,7 +352,13 @@ async def _run_search(
         ]
         recorder.stage_audit(
             ToolAuditProjection(
-                scope=",".join(requested_scopes) if requested_scopes else "conversation_context",
+                scope=(
+                    "account_visible"
+                    if recorder.account_visible
+                    else ",".join(requested_scopes)
+                    if requested_scopes
+                    else "conversation_context"
+                ),
                 requested_types=list(query.effective_result_types),
                 filters=filters,
                 citations=citations,
@@ -484,7 +502,7 @@ def _run_resource_read(
     )
     recorder.stage_audit(
         ToolAuditProjection(
-            scope="conversation_context",
+            scope="account_visible" if recorder.account_visible else "conversation_context",
             filters={"uri": value.uri},
             citations=[citation] if citation is not None else [],
         )
@@ -547,7 +565,7 @@ def _run_resource_inspect(
     )
     recorder.stage_audit(
         ToolAuditProjection(
-            scope="conversation_context",
+            scope="account_visible" if recorder.account_visible else "conversation_context",
             filters={"uri": value.uri},
             citations=[citation] if citation is not None else [],
         )
@@ -628,7 +646,7 @@ def _run_relations_list(
     )
     recorder.stage_audit(
         ToolAuditProjection(
-            scope="conversation_context",
+            scope="account_visible" if recorder.account_visible else "conversation_context",
             filters={"uri": value.uri},
             citations=[citation] if citation is not None else [],
         )

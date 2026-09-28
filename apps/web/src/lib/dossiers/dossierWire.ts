@@ -666,6 +666,22 @@ function decodeToolPlan(raw: unknown): DossierBuildToolPlan {
       expectExactRecord(discriminated, ["kind"], "NoModelTools plan");
       return { kind: "NoModelTools" };
     }
+    case "CodexShell": {
+      const plan = expectExactRecord(
+        discriminated,
+        ["kind", "plan_id", "plan_revision", "effect_mode"],
+        "CodexShell plan",
+      );
+      if (plan.effect_mode !== "AdditiveWrites") {
+        fail("CodexShell effect_mode must be AdditiveWrites");
+      }
+      return {
+        kind: "CodexShell",
+        planId: decodeNonemptyString(plan.plan_id, "plan_id"),
+        planRevision: decodeNonemptyString(plan.plan_revision, "plan_revision"),
+        effectMode: "AdditiveWrites",
+      };
+    }
     case "ExactModelTools": {
       const plan = expectExactRecord(
         discriminated,

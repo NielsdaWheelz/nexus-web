@@ -36,7 +36,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(bun --version)" = "$(cat .bun-version)"
-          uv sync --extra dev --locked --directory python
+          uv sync --extra dev --extra codex-agent --locked --directory python
           bun install --frozen-lockfile --cwd apps/web
           bun install --frozen-lockfile --cwd node/ingest
 

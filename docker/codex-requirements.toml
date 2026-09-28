@@ -1,0 +1,16 @@
+[features]
+apps = false
+chronicle = false
+default_mode_request_user_input = false
+executor_capability_discovery = false
+external_agent_memory_import = false
+goals = false
+hooks = false
+memories = false
+multi_agent = false
+multi_agent_v2 = false
+plugins = false
+skill_mcp_dependency_install = false
+skill_search = false
+
+[mcp_servers]
