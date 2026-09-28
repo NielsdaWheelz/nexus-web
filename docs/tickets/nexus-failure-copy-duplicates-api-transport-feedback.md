@@ -8,7 +8,10 @@ status: open · origin: 2026-09-28 nexus launcher rewrite (size/nexus-launcher-w
 then retry.", "Wait a moment, then retry."). `apiTransportFeedback` in
 `apps/web/src/lib/api/client.ts` already owns those four codes, with different words
 ("…try again."). two owners of one policy, drifting in wording only. the rewrite kept the
-Nexus copy because the live suite pinned it verbatim.
+Nexus copy because the live suite pinned it verbatim. no route the Nexus calls has ever
+emitted `E_RATE_LIMITED` (the deleted limiter covered chat send, oracle create and
+stream-token mint; see [web-rate-limit-copy-outlives-limiter](web-rate-limit-copy-outlives-limiter.md)),
+so the Nexus arm is dead copy.
 
 impact: about 15 lines, and transport copy that reads differently in the Nexus than
 everywhere else.

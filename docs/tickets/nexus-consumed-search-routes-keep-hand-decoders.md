@@ -14,8 +14,9 @@ impact: two hand decoders and two defect classes that the generated wire would r
 
 prerequisites: the search and openables slices' rewrites.
 
-fix: give both routes response models, regenerate `wire.gen.ts`, replace the decoders with
-`ApiJson` types, and drop the two defect classes from `useNexusFind.ts`.
+fix: `GET /search` already declares `SearchResponse`, so only its web decoder remains; give
+openables search a response model and regenerate `wire.gen.ts`. then replace both decoders
+with `ApiJson` types and drop the two defect classes from `useNexusFind.ts`.
 
 resolved when: `rg "SearchContractDefect|ResourceOpenablesContractDefect" apps/web/src`
 finds nothing.
