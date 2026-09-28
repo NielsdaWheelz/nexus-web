@@ -8,7 +8,7 @@ const compat = new FlatCompat({ baseDirectory: directory });
 export default [
   ...compat.extends("next/core-web-vitals", "next/typescript"),
   {
-    ignores: [".next/**", "public/pdfjs/**"],
+    ignores: [".next/**", "public/pdfjs/**", "src/lib/api/wire.gen.ts"],
   },
   {
     rules: {

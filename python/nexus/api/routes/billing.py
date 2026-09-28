@@ -8,8 +8,13 @@ from starlette.concurrency import run_in_threadpool
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
-from nexus.responses import ok, success_response
-from nexus.schemas.billing import BillingCheckoutRequest, BillingSessionOut
+from nexus.responses import Data
+from nexus.schemas.billing import (
+    BillingAccountOut,
+    BillingCheckoutRequest,
+    BillingSessionOut,
+    BillingWebhookOut,
+)
 from nexus.services import billing as billing_service
 
 router = APIRouter(tags=["billing"])
@@ -19,9 +24,8 @@ router = APIRouter(tags=["billing"])
 def get_billing_account(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    out = billing_service.get_billing_account(db, viewer.user_id)
-    return ok(out)
+) -> Data[BillingAccountOut]:
+    return Data(data=billing_service.get_billing_account(db, viewer.user_id))
 
 
 @router.post("/billing/checkout")
@@ -29,23 +33,23 @@ def create_checkout_session(
     body: BillingCheckoutRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> Data[BillingSessionOut]:
     url = billing_service.create_checkout_session(
         db,
         viewer.user_id,
         viewer.email,
         body.plan_tier,
     )
-    return ok(BillingSessionOut(url=url))
+    return Data(data=BillingSessionOut(url=url))
 
 
 @router.post("/billing/portal")
 def create_customer_portal_session(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> Data[BillingSessionOut]:
     url = billing_service.create_customer_portal_session(db, viewer.user_id)
-    return ok(BillingSessionOut(url=url))
+    return Data(data=BillingSessionOut(url=url))
 
 
 @router.post("/billing/stripe/webhook")
@@ -53,9 +57,9 @@ async def process_stripe_webhook(
     request: Request,
     db: Annotated[Session, Depends(get_db)],
     stripe_signature: Annotated[str | None, Header(alias="stripe-signature")] = None,
-) -> dict:
+) -> Data[BillingWebhookOut]:
     body = await request.body()
     out = await run_in_threadpool(
         billing_service.process_stripe_webhook, db, body, stripe_signature
     )
-    return success_response(out)
+    return Data(data=out)

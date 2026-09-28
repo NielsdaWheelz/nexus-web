@@ -1,0 +1,63 @@
+# typed wire
+
+owner decision 2026-09-28. the web does not hand-validate its own FastAPI JSON:
+its wire types are generated from FastAPI's OpenAPI schema, so tsc catches drift.
+
+## python
+
+- a JSON route declares its response through its return annotation, which
+  FastAPI uses as the response model, and returns that model. `Data[XOut]`
+  (`nexus/responses.py`) is `{"data": X}`; `DataPage[XOut, PageOut]` is
+  `{"data": [X], "page": P}`; any other shape is its own model. `ok()`,
+  `ok_page()` and `success_response()` go route by route as routes are typed.
+- typing a route keeps its JSON byte for byte. check it against the old route
+  before merging.
+- FastAPI writes the schema by alias and serializes response models by alias.
+  never set `response_model_by_alias=False`: the bytes would then disagree with
+  the schema. a route that dumped by field name (`ok()`'s default) keeps its
+  bytes only if its models (nested ones included) have no aliases on output;
+  make an input-only alias a `validation_alias`.
+- a field of an Out model has no `None` default and no `default_factory`
+  (`x: T | None`, not `= None`; `xs: list[T]`, not `Field(default_factory=list)`).
+  FastAPI's schema drops `default: null` and never shows a factory's default,
+  so either would generate an optional `x?:` for a field that is always sent. a
+  plain non-None default (`= False`) generates a required field and may stay.
+- a route that returned `JSONResponse` was serialized by `json.dumps`; the
+  typed route is serialized by pydantic, which renders floats in exponent form
+  differently (`1e-05` becomes `0.00001`). a dynamic status or header goes on
+  an injected `Response`, and the route still returns the model.
+- 204, binary, redirect and SSE routes keep their shape.
+- an SSE `data:` frame that is a model as-is is listed in `nexus/wire_schema.py`
+  and generates under its own name, e.g. `Schema<"ChatRunDoneEventPayload">`.
+
+## generation
+
+- `python -m nexus.wire_schema` prints FastAPI's OpenAPI document, built from
+  the routers with every deployment toggle on, plus the SSE payload models, as
+  sorted JSON. it needs no settings, database, network or secrets. two
+  different schemas with one name fail it; rename one model.
+- `cd apps/web && bun run gen:wire` renders it with `openapi-typescript`
+  (pinned) to `apps/web/src/lib/api/wire.gen.ts`, which is committed, marked
+  generated, ignored by eslint and excluded from line targets.
+- `./scripts/test` regenerates it into a temp file and fails when the
+  committed file differs.
+
+## web
+
+- `apps/web/src/lib/api/wire.ts` exports `Schema<"XOut">` (a component schema)
+  and `ApiJson<"/path/{param}", "get">` (the success JSON body, envelope
+  included; a method without one does not type-check). write
+  `apiFetch<ApiJson<"/billing/account", "get">>("/api/billing/account")` and
+  read typed fields. an untyped route's `ApiJson` is `{[key: string]: unknown}`
+  (`unknown` for one that returns a raw `Response`): type the route first.
+- no hand decoder or hand-written interface for same-deploy FastAPI JSON.
+  strict runtime decoding stays only where versions drift: the android bridge,
+  the browser extension, persisted browser storage (sessionStorage,
+  localStorage, server-stored client blobs such as the workspace session), and
+  cross-origin postMessage.
+
+## migration
+
+a slice that rewrites routes types all of its routes and deletes their web
+decoders in the same PR. until every slice has run, typed and untyped routes
+coexist; [../reauthoring.md](../reauthoring.md) counts the untyped remainder.

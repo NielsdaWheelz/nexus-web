@@ -13,6 +13,7 @@ shared, language-agnostic standards mirrored from the
 - [codebase.md](codebase.md): repo structure, module ownership, import specifics, and the `.env.example` contract.
 - [entrypoints.md](entrypoints.md): where this repo's entrypoints concretely live.
 - [testing-standards.md](testing-standards.md): authoritative static-check, manual-verification, and future-test contract.
+- [typed-wire.md](typed-wire.md): FastAPI response models and the generated web wire types.
 
 ## Boundary
 

@@ -1,1 +1,2 @@
 apps/web/src/app/fonts/licenses/*.txt -whitespace
+apps/web/src/lib/api/wire.gen.ts linguist-generated=true

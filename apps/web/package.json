@@ -10,7 +10,8 @@
     "lint": "eslint src/ androidPlayerProtocolContract.ts --max-warnings 0",
     "typecheck": "rm -rf .next/types && next typegen && tsc --noEmit && tsc -p src/extension/tsconfig.json --noEmit",
     "build:offline-reading": "node scripts/build-offline-reading.mjs",
-    "build:extension": "node scripts/build-extension.mjs"
+    "build:extension": "node scripts/build-extension.mjs",
+    "gen:wire": "node scripts/gen-wire.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -41,6 +42,7 @@
     "@vitejs/plugin-react": "^6.0.2",
     "eslint": "^9.17.0",
     "eslint-config-next": "15.5.22",
+    "openapi-typescript": "7.13.0",
     "typescript": "^6.0.2",
     "vercel": "58.7.1",
     "vite": "8.0.16"

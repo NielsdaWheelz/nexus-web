@@ -19,6 +19,10 @@ class BillingSessionOut(BaseModel):
     url: str
 
 
+class BillingWebhookOut(BaseModel):
+    processed: bool
+
+
 class BillingEntitlementsOut(BaseModel):
     billing_plan_tier: BillingPlanTier
     billing_status: str
@@ -39,8 +43,8 @@ class BillingEntitlementsOut(BaseModel):
 class BillingUsageBucketOut(BaseModel):
     used: int = Field(ge=0)
     reserved: int = Field(ge=0)
-    limit: int | None = Field(default=None, ge=0)
-    remaining: int | None = Field(default=None, ge=0)
+    limit: int | None = Field(ge=0)
+    remaining: int | None = Field(ge=0)
     period_start: datetime
     period_end: datetime
 
