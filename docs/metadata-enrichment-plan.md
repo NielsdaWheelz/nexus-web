@@ -276,8 +276,14 @@ the currently installed generation owner provides no independent codex recovery
 entrypoint. the qualified native adapter must expose local recovery from the
 exact provider-sealed model-turn terminal before any provider/catalog call.
 metadata calls that shared seam from its early uncertainty guard when delivered;
-absent the authoritative seal, retain the barrier. parent terminal, local stop,
+without a seal or exact authoritative non-submission proof, retain the barrier.
+non-submission proof permits local failed settlement, never redispatch or a
+fabricated successful terminal. parent terminal, local stop,
 exceptions and missing usage/native identity are never recovery authority.
+recover this job's uncertain step using its stored spec and intent, before current
+source/access/eligibility checks. validate handles against that frozen input.
+the existing publication fence then rejects stale or revoked facts; recovery
+does not grant permission to publish them.
 
 reuse `tail_snapshot_stream` and the existing `media_events` notification channel.
 add a transport-only metadata-job insert/semantic-update/delete notification
@@ -437,8 +443,12 @@ pins; give it the capability/live acceptance contract in section 2.
    fallback or parallel metadata path. apply guarded saved-epub repair; inspect
    skipped items. rollback incompatible durable schemas using the verified
    release backup, not an older binary against new memos.
-   the native candidate's `0254` currently shares `0253`'s `0252` parent; coordinate
-   one linear migration sequence with the kernel owner before combined release.
+   after qualified adapter integration, compose `0252` → native `0254` → metadata
+   `0255`: rename/reparent the undeployed standalone metadata `0253`, retaining
+   its behavior. rebuild disposable `0253` databases; never stamp or alias them
+   into this chain. preserve historical receipts under their actual revision.
+   prove historical effect/principal preservation and whole-chain rollback when
+   native's guard passes but metadata's later guard rejects unresolved work.
    verify installed adapter/pins and provider-sealed local recovery. its
    executable `CodexCallbacks` authority uses the frozen `MetadataResearch` tool
    plan; the current shell grant does not qualify it. no dual head or old grant.
@@ -468,6 +478,7 @@ of commands, revisions, operation ids, observed outcomes and limitations.
 | no findings + invalid output | all-null and malformed results never stamp success; queue settles terminal unsuccessful; no second model call; provider terminal truth retained |
 | replay + concurrency | lost enqueue response yields same job; concurrent distinct requests and a scheduled retry cannot admit a second manual job; crash after publication reuses the outcome without restamping |
 | execution fences | stale source/credits, lost claim and revoked access cannot publish; uncertainty blocks fresh research; pre-admission catalog failure is visible without a generation id |
+| native recovery | sealed terminal recovers from frozen input with zero catalog/provider calls after source/credits/access change; original terminal/usage retained; publication rejects stale/revoked facts; without either seal or authoritative non-submission proof, remains uncertain; exact non-submission proof settles failed locally |
 | context | a large unicode credit list cannot exceed the encoded input budget or silently lose identities; malformed handles/isbn/roles fail before publication |
 | contributors + epub | stable person across credited-name changes; role-refined creator/contributor parsing; explicit empty author slice clears; historical repair preserves unrelated credits and reader state; ambiguous repair is reported |
 | observation + retention | open pane/overlay sees new automatic and manual jobs, completion and safe failures; reconnect/reopen agrees; ordinary pruning cannot reveal an older failure as latest; stream sharing avoids per-row listeners |

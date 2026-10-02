@@ -167,9 +167,12 @@ successful stamps and generation evidence remain. only legacy metadata source
 errors are cleared. deploy api, worker and web together; rollback restores the
 verified backup, never an old decoder over new memos.
 
-the standalone native candidate's `0254` also descends from `0252`; combined
-integration must establish one linear head with the kernel owner. immutable
-qualified pins, installed provider-sealed recovery and actual exact-model web
+after qualified adapter delivery, rename/reparent the undeployed standalone
+metadata migration to `0255`, following native `0254` and baseline `0252`.
+rebuild disposable `0253` databases; do not stamp them into the new chain.
+combined verification must preserve historical effect/principal evidence and
+leave schema/data at `0252` if metadata's later guard rejects the upgrade.
+immutable qualified pins, installed provider-sealed recovery and actual exact-model web
 research are still release prerequisites. `CodexCallbacks` / `MetadataResearch`
 qualification does not follow from the current shell-route or controlled peers.
 

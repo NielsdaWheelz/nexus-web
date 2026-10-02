@@ -90,7 +90,10 @@ collapse is retained in its [ticket](tickets/reader-find-preview-collapses-toolb
 the kernel owner's integration record still supplies no qualified immutable
 adapter/provider/tools pins. native provider-sealed local recovery, exact
 `CodexCallbacks` / four-tool `MetadataResearch`, native budget qualification and
-the combined 0253/0254 migration head remain unqualified. parent terminal or
+the combined `0252` → native `0254` → metadata `0255` migration remain unqualified.
+standalone `0253` receipts above remain historical; combined proof must cover
+historical effect/principal evidence and rollback of native changes when the
+later metadata guard rejects. parent terminal or
 local stop never unlocks metadata uncertainty.
 
 genuine book/collection/essay research remains NOT_RUN. finite primary-source
@@ -101,6 +104,11 @@ do not substitute a sermon, collection or current edition date. expected facts
 come from the [author site](https://www.cslewis.com/mere-christianity-making-righteousness-readable/),
 [wade bibliography](https://www.wheaton.edu/media/wade-center/files/authors/bibliographies/CSL-Bibliography20240219.pdf)
 and [journal publisher](https://journals.sagepub.com/doi/10.1177/0040571X4104325702).
+
+the disposable `.tmp/metadata_live_research.py` driver is prepared and reviewed,
+unexecuted. it uses identification excerpts and the actual api/worker; source
+ingestion is separately verified. actual wire selection/callbacks and supported
+date precision still require trace inspection, not inference from frozen fields.
 
 production uncertainty/catalog dispositions, release backup/quiescence and
 guarded saved-epub repair are still pending. follow the
