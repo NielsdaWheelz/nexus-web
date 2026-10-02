@@ -4,6 +4,11 @@ status: open
 origin: 2026-10-02 metadata implementation; kernel owner handoff
 area: metadata execution integration
 
+local metadata candidate: `feature/metadata-enrichment`, implementation commit
+`603c0e0c1d9b00a2f992d468f2204a2be503c36c`; controlled domain/job/browser checks and
+the static gate are green. [receipt](../metadata-enrichment-verification.md).
+this qualifies no kernel artifact, provider tool or native recovery path.
+
 problem: no immutable qualified kernel/provider/adapter pins or genuine
 `gpt-6-luna`/`xhigh`, strict-json, successful `web.search`/`web.read` receipt exists.
 controlled peers verify metadata behavior only. the early uncertainty guard

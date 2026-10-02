@@ -3,6 +3,8 @@
 status: local metadata behavior GREEN; native integration and genuine research
 NOT_READY / NOT_RUN. observed 2026-10-02 on `feature/metadata-enrichment`, based on
 `a494f743eb402b0cbb6069066fca4143b24036f0`. no production deployment or repair.
+verified metadata implementation commit:
+`603c0e0c1d9b00a2f992d468f2204a2be503c36c`.
 
 ## environment and boundaries
 
