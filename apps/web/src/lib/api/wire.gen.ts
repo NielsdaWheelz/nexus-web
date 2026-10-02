@@ -3832,21 +3832,6 @@ export interface components {
              */
             route: "CodexPersonal";
         };
-        /** CollectionDossierCoverageOut */
-        CollectionDossierCoverageOut: {
-            /** Included */
-            included: string[];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "contributor" | "library" | "podcast";
-            /** Omitted */
-            omitted: [
-                string,
-                components["schemas"]["MediaDisposition"]
-            ][];
-        };
         /** CompletionStatsSectionOut */
         CompletionStatsSectionOut: {
             /** Appliedfilters */
@@ -4052,18 +4037,6 @@ export interface components {
              * @constant
              */
             kind: "Complete";
-        };
-        /** ConversationDossierCoverageOut */
-        ConversationDossierCoverageOut: {
-            /** Context Refs */
-            context_refs: string[];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "conversation";
-            /** Message Refs */
-            message_refs: string[];
         };
         /** ConversationInputManifestV1 */
         ConversationInputManifestV1: {
@@ -4469,9 +4442,9 @@ export interface components {
          * DossierRevisionOut
          * @description The head's one immutable, citation-bearing revision.
          *
-         *     ``input_manifest`` is the typed, binding-owned coverage source: coverage is
-         *     derived from it rather than duplicated as a separate count. ``instruction``
-         *     is hoisted from the originating build for display.
+         *     ``input_manifest`` is the typed, binding-owned coverage source. The browser
+         *     derives its coverage label from that manifest. ``instruction`` is hoisted
+         *     from the originating build for display.
          */
         DossierRevisionOut: {
             /** Citations */
@@ -4480,8 +4453,6 @@ export interface components {
             content_html: string;
             /** Content Text */
             content_text: string;
-            /** Coverage */
-            coverage: components["schemas"]["MediaDossierCoverageOut"] | components["schemas"]["ConversationDossierCoverageOut"] | components["schemas"]["CollectionDossierCoverageOut"] | components["schemas"]["PageDossierCoverageOut"] | components["schemas"]["NoteDossierCoverageOut"] | components["schemas"]["IdeaDossierCoverageOut"];
             /**
              * Created At
              * Format: date-time
@@ -4795,25 +4766,6 @@ export interface components {
             y3: number;
             /** Y4 */
             y4: number;
-        };
-        /** IdeaDossierCoverageOut */
-        IdeaDossierCoverageOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "idea";
-            /** Nexus Source Count */
-            nexus_source_count: number;
-            /** Omitted Sources */
-            omitted_sources: [
-                string,
-                string
-            ][];
-            /** Seed Count */
-            seed_count: number;
-            /** Web Source Count */
-            web_source_count: number;
         };
         /** IdeaDossierIdentityOut */
         IdeaDossierIdentityOut: {
@@ -5363,18 +5315,6 @@ export interface components {
          * @enum {string}
          */
         MediaDisposition: "Included" | "OmittedNoReadyUnit" | "OmittedBudget" | "OmittedNotAudienceVisible" | "OmittedProjectionFailed";
-        /** MediaDossierCoverageOut */
-        MediaDossierCoverageOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "media";
-            /** Offered Claim Count */
-            offered_claim_count: number;
-            /** Omitted Evidence Refs */
-            omitted_evidence_refs: string[];
-        };
         /** MediaDurationOut */
         MediaDurationOut: {
             estimate: components["schemas"]["ReadingTimeEstimateOut"];
@@ -5769,18 +5709,6 @@ export interface components {
              */
             type: "note_block_offsets";
         };
-        /** NoteDossierCoverageOut */
-        NoteDossierCoverageOut: {
-            /** Body Present */
-            body_present: boolean;
-            /** Connection Refs */
-            connection_refs: string[];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "note";
-        };
         /** NoteInputManifestV1 */
         NoteInputManifestV1: {
             body_fingerprint: components["schemas"]["Presence_str_"];
@@ -5910,18 +5838,6 @@ export interface components {
             note_id: string;
             /** Parent Index */
             parent_index?: number | null;
-        };
-        /** PageDossierCoverageOut */
-        PageDossierCoverageOut: {
-            /** Block Refs */
-            block_refs: string[];
-            /** Connection Refs */
-            connection_refs: string[];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "page";
         };
         /** PageInputManifestV1 */
         PageInputManifestV1: {

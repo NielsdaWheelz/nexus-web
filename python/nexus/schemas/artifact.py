@@ -26,7 +26,7 @@ from nexus.services.artifacts.dossier_types import (
     StartedEventPayload,
     SucceededEventPayload,
 )
-from nexus.services.artifacts.manifests import InputManifestV1, MediaDisposition
+from nexus.services.artifacts.manifests import InputManifestV1
 from nexus.services.durable_step_journal import DurableExecutionPhase
 from nexus.services.generation_spec import GenerationSelectionSpec
 
@@ -136,66 +136,16 @@ class DossierBuildSummary(ArtifactSchemaModel):
     capacity_pause: Presence[CapacityPaused]
 
 
-class MediaDossierCoverageOut(ArtifactSchemaModel):
-    kind: Literal["media"] = "media"
-    offered_claim_count: int = Field(ge=0)
-    omitted_evidence_refs: list[str]
-
-
-class ConversationDossierCoverageOut(ArtifactSchemaModel):
-    kind: Literal["conversation"] = "conversation"
-    message_refs: list[str]
-    context_refs: list[str]
-
-
-class CollectionDossierCoverageOut(ArtifactSchemaModel):
-    kind: Literal["library", "podcast", "contributor"]
-    included: list[str]
-    omitted: list[tuple[str, MediaDisposition]]
-
-
-class PageDossierCoverageOut(ArtifactSchemaModel):
-    kind: Literal["page"] = "page"
-    block_refs: list[str]
-    connection_refs: list[str]
-
-
-class NoteDossierCoverageOut(ArtifactSchemaModel):
-    kind: Literal["note"] = "note"
-    body_present: bool
-    connection_refs: list[str]
-
-
-class IdeaDossierCoverageOut(ArtifactSchemaModel):
-    kind: Literal["idea"] = "idea"
-    seed_count: int = Field(ge=0)
-    nexus_source_count: int = Field(ge=0)
-    web_source_count: int = Field(ge=0)
-    omitted_sources: list[tuple[str, str]]
-
-
-DossierCoverageOut = Annotated[
-    MediaDossierCoverageOut
-    | ConversationDossierCoverageOut
-    | CollectionDossierCoverageOut
-    | PageDossierCoverageOut
-    | NoteDossierCoverageOut
-    | IdeaDossierCoverageOut,
-    Field(discriminator="kind"),
-]
-
-
 class DossierRevisionOut(ArtifactSchemaModel):
     """The head's one immutable, citation-bearing revision.
 
-    ``input_manifest`` is the typed, binding-owned coverage source: coverage is
-    derived from it rather than duplicated as a separate count. ``instruction``
-    is hoisted from the originating build for display.
+    ``input_manifest`` is the typed, binding-owned coverage source. The browser
+    derives its coverage label from that manifest. ``instruction`` is hoisted
+    from the originating build for display.
     """
 
     revision_ref: str
     input_manifest: InputManifestV1
-    coverage: DossierCoverageOut
     instruction: Presence[_InstructionText]
     creator_user_id: Presence[UUID]
     model_provider: Presence[str]
