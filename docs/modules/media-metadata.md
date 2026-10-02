@@ -41,10 +41,13 @@ author proposals, and the outcome reports that fact. no new manual field pins.
 ## research input and capability
 
 metadata policy selects codex personal, `gpt-6-luna`, `xhigh`: 300 seconds,
-32,768 utf-8 input bytes, 64,000 context tokens and 8,000 output tokens. the
+32,768 utf-8 input bytes, a 64,000-token context budget and an 8,000-token output
+reservation. the
 generation owner admits that selection or fails visibly. no model substitution.
 native execution and genuine tool qualification belong to the separate kernel
-integration; a frozen budget is not proof of native enforcement.
+integration. stock 0.160 has no native hard context/output token-cap field;
+the user accepted admission/reservation semantics on 2026-10-02. frozen budgets
+and observed usage are not proof of enforced ceilings.
 
 input includes current metadata, complete ordered credits/handles, source and
 provider identifiers, media reference and up to 1,000 normalized opening words.

@@ -237,7 +237,6 @@ unexpected timeouts. See
 - [open] oi-087 · ci actions · 2026-09-12 reader publication · the pinned buildx action targets a deprecated node runtime: [ticket](tickets/ci-buildx-action-deprecated-node-runtime.md).
 - [open] client telemetry malformed json · 2026-09-17 telemetry cleanup · malformed beacons return an unstructured 500 before authentication or backend validation: [ticket](tickets/client-defect-telemetry-malformed-json-returns-500.md).
 
-- [open] oi-106 · generation policy · 2026-09-14 spec review · p2 · background context-token budget is recorded without enforcement: [ticket](tickets/background-generation-context-budget-is-not-enforced.md).
 - [open] metadata verification · 2026-09-14 implementation · live research judgments and external query contents still need smoke inspection: [ticket](tickets/metadata-live-research-smoke-unverified.md).
 - [open] metadata execution · 2026-10-02 implementation · qualified native adapter/pins, provider-sealed local recovery and one coordinated migration head remain required: [ticket](tickets/metadata-native-kernel-integration.md).
 - [open] native adapter migration · 2026-10-02 metadata adversarial review · redundant callback check removed from candidate; qualified boundary proof pending: [ticket](tickets/native-callback-arguments-check-violates-database-rules.md).

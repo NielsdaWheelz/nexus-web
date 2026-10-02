@@ -37,10 +37,14 @@ kinds, access rules and contributor vocabulary.
 ## 2. research and capability contract
 
 `generation_policy.py` selects codex personal, `gpt-6-luna`, `xhigh`, with the
-existing 300-second deadline, 32 kib input, 64,000 context-token and 8,000
-output-token limits. admit that
+existing 300-second deadline and 32 kib input bound. freeze a 64,000-token
+context budget and an 8,000-token output reservation. admit that
 exact catalog selection or report unavailability; never silently substitute.
 qualify the deadline live before changing it.
+
+user decision, 2026-10-02: retain those admission/reservation budgets. stock 0.160
+has no native hard context/output token-cap field; report that enforcement limit
+explicitly. observed usage and frozen numbers do not prove enforced ceilings.
 
 supply current metadata, complete ordered credits with contributor handles,
 source/provider identifiers, media reference, and up to 1,000 normalized opening
@@ -500,6 +504,8 @@ module docs, delete only resolved tickets, and stop.
 - 1,000 opening words and bounded context are a starting allocation; later local
   reads handle missing front matter. oversized fixed context fails visibly.
 - xhigh costs latency on the current worker; there is no new concurrency system.
+- the native route retains 64,000/8,000 admission/reservation budgets without
+  hard token ceilings. the user accepted that limit; no local limiter is added.
 - indefinite metadata-job retention costs storage and retains research context;
   it avoids another outcome ledger and expiring replay semantics for one user.
 - visible details consume shared stream listeners; closed views reconcile on

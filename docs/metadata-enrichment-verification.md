@@ -1,7 +1,7 @@
 # metadata enrichment verification
 
-status: local metadata behavior GREEN; native integration and genuine research
-NOT_READY / NOT_RUN. observed 2026-10-02 on `feature/metadata-enrichment`, based on
+status: local metadata behavior GREEN; installed native integration NOT_READY;
+metadata's genuine bibliographic cases NOT_RUN. observed 2026-10-02 on `feature/metadata-enrichment`, based on
 `a494f743eb402b0cbb6069066fca4143b24036f0`. no production deployment or repair.
 verified metadata implementation commit:
 `603c0e0c1d9b00a2f992d468f2204a2be503c36c`.
@@ -87,13 +87,30 @@ collapse is retained in its [ticket](tickets/reader-find-preview-collapses-toolb
 
 ## remaining acceptance
 
-the kernel owner's integration record still supplies no qualified immutable
-adapter/provider/tools pins. native provider-sealed local recovery, exact
-`CodexCallbacks` / four-tool `MetadataResearch`, native budget qualification and
-the combined `0252` → native `0254` → metadata `0255` migration remain unqualified.
+the kernel owner now reports genuine source-overlay public `execute_generation`
+using personal `gpt-6-luna`/`xhigh`, strict json and useful results from all four
+actual tools. candidate actual-postgres SIGKILL/cold-reclaim recovery also passed
+with original terminal/usage and zero catalog/provider calls. these are separate
+proofs: genuine research and controlled recovery faults. neither establishes
+final installed metadata acceptance; the recovery probe uses
+`metadata_enrichment` / `native-proof`. metadata still needs its actual
+`enrich_metadata` / `codex/metadata` recovery with frozen inputs and publication
+fences after source, credits or access change.
+
+no qualified immutable adapter/provider/tools pin set is available. the owner is
+repairing and qualifying native delegation containment before frozen installation
+and the final live repeat. stock 0.160 has no native hard context/output ceiling
+field; 64,000/8,000 remain admission/reservation policy, not enforced token caps.
+the user accepted that contract on 2026-10-02; the enforcement limit is explicit
+in the plan and module documentation.
+installed `CodexCallbacks` / `MetadataResearch` and the combined
+`0252` → native `0254` → metadata `0255` migration remain unqualified.
 standalone `0253` receipts above remain historical; combined proof must cover
 historical effect/principal evidence and rollback of native changes when the
-later metadata guard rejects. parent terminal or
+later metadata guard rejects. the candidate proves actual whole-transaction
+rollback and raw byte preservation, but its synthetic terminal parent has an
+invalid pending continuation. a separate owner-created historical fixture is
+being prepared; no execution receipt exists yet. parent terminal or
 local stop never unlocks metadata uncertainty.
 
 genuine book/collection/essay research remains NOT_RUN. finite primary-source

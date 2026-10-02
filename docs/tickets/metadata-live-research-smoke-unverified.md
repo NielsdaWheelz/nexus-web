@@ -20,9 +20,12 @@ the scoped mcp path to codex shell, so qualify the actual released route after
 repair; the old run cannot qualify the new one.
 
 2026-10-02 candidate: local domain/api/worker/browser checks pass with controlled
-external leaves; [receipt](../metadata-enrichment-verification.md). actual
-research judgments, external query contents and the untrusted-passage journey
-remain NOT_RUN. qualified native integration is recorded separately in
+external leaves; [receipt](../metadata-enrichment-verification.md). the kernel
+owner also reports genuine source-overlay research with the exact model/effort,
+strict json and useful results from all four actual tools. final frozen installed
+research, metadata's book/collection/essay judgments, external query inspection
+and the untrusted-passage journey remain NOT_RUN. qualified native integration is
+recorded separately in
 `metadata-native-kernel-integration.md`.
 
 prerequisite: a configured metadata runtime and brave search, using public

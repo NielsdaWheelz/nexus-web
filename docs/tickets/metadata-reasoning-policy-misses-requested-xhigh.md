@@ -5,11 +5,13 @@ origin: 2026-10-01 metadata enrichment council review; checkout a494f743eb402b0c
 area: background generation policy
 
 2026-10-02 candidate: metadata policy selects `gpt-6-luna` / `xhigh`; controlled
-admission freezes the exact pair. genuine wire/terminal identity, factual results
-and elapsed time remain NOT_RUN. the baseline production selections below are
-historical admissions, never authority to mutate their frozen selections.
+admission freezes the exact pair. the kernel owner reports genuine source-overlay
+wire/terminal identity, strict json and all four actual research tools. final
+frozen installed ordinary metadata admission, factual results and elapsed time
+remain NOT_RUN. the baseline production selections below are historical
+admissions, never authority to mutate their frozen selections.
 
-problem: the intended metadata researcher is codex luna with xhigh reasoning. `python/nexus/services/generation_policy.py:219` selects luna/low; lines 234–243 resolve codex personal gpt-6-luna, strict json, and a 300-second turn. this confirms a policy mismatch, not the cause of the reported production lewis dates.
+baseline problem: the intended metadata researcher is codex luna with xhigh reasoning. at checkout `a494f743`, `python/nexus/services/generation_policy.py:219` selects luna/low; lines 234–243 resolve codex personal gpt-6-luna, strict json, and a 300-second turn. this confirms the former policy mismatch, not the cause of the reported production lewis dates. the local policy repair is complete; installed execution remains unqualified.
 
 production evidence: on 2026-10-01, runtime sha 7dc68929b4d5ddfd77eb1a50228d477fa0148b5d still selects gpt-5.6-luna/low. all five admitted lewis generations at 15:12 utc retain that exact selection in `llm_calls.generation_spec.selection`; none has a terminal. see `model-cutover-dead-media-generations.md`.
 
