@@ -97,11 +97,12 @@ scaffolding.
                            │  + pgvector  │   claims background_jobs    │
                            └──────┬───────┘          ┌───────────────────────┐
                                   │                  │ Workers (two lanes)   │
-                                  │ object refs      │ interactive: ingest,  │
-                                  ▼                  │ chat, oracle          │
-                           ┌──────────────┐          │ background: index,    │
-                           │ R2 / MinIO   │◀─────────│ repair, teardown      │
-                           │ object store │          └───────────────────────┘
+                                  │ object refs      │ interactive: chat,    │
+                                  ▼                  │ dossier, metadata,    │
+                           ┌──────────────┐          │ podcast sync, oracle  │
+                           │ R2 / MinIO   │◀─────────│ background: ingest,   │
+                           │ object store │          │ index, repair, delete │
+                           │              │          └───────────────────────┘
                            └──────────────┘
 
    Identity: Supabase Auth (JWT/JWKS) only — no Supabase DB or Storage.
@@ -1019,8 +1020,14 @@ The backend separates three owners:
 Callers look a subject scheme up once; there is no second mutable policy map or
 package-initializer registration side effect.
 
-Revision responses use the binding's stored manifest directly, including the
-Idea subject id for its owning user; Idea subject routes remain unavailable.
+Revision responses expose the binding's stored `input_manifest` as the sole
+coverage source, including the Idea subject id for its owning user. The browser
+derives its coverage label from this typed manifest; the head carries no second
+coverage projection. The eight manifest variants and their counts, included
+inputs, and omissions retain their stored shape. Revision content, citations,
+freshness, authorization, and build outcomes retain their contracts; a head
+without a revision has no manifest or coverage label. Head reads never generate
+or mutate a dossier. Idea subject routes remain unavailable.
 Failure facts contain a code and optional diagnostic detail. Build identifiers
 are UUIDs, with authorization checked separately on the owning Artifact.
 

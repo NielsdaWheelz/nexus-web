@@ -2,7 +2,7 @@
 
 Stored in ``artifact_revisions.input_manifest`` (jsonb) and read by the web as
 generated types (docs/local-rules/typed-wire.md). Freshness compares a stored
-manifest with the subject's live one; the head's coverage projection is derived
+manifest with the subject's live one; the browser derives its coverage label
 from the same value.
 """
 

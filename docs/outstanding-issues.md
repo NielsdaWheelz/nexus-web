@@ -30,6 +30,9 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
+- [open] transcript / chapter projection · 2026-10-02 cleanup audit · three consumers repeat chapter normalization and shape types after strict decoding: [ticket](tickets/transcript-chapters-repeat-normalization-and-shape.md).
+- [open] web resource prefetch · 2026-10-02 cleanup audit · an old consumed promise can overwrite or delete a newer same-key prefetch entry: [ticket](tickets/resource-prefetch-old-completion-overwrites-replacement.md).
+- [open] operator credentials · 2026-10-02 cleanup workflow · skid's three peer bearer fields were printed into a tool transcript; coordinate rotation with active sessions: [ticket](tickets/local-qualification-credential-transcript-exposure.md).
 - [open] processing recovery / release · 2026-09-28 pr #387 investigation · the keats normalizations and gutenberg correction never ran in production (commands are unreleased); run them after the release, then land #387: [ticket](tickets/processing-repairs-await-release-then-387.md).
 - [open] release / production · 2026-09-28 cleanup campaign · production still serves 7dc68929b at alembic 0241; main carries irreversible migrations 0242–0251 with preflights to run first: [ticket](tickets/production-release-pending-since-7dc68929b.md).
 - [open] resource sharing / production migration · 2026-09-28 resource-sharing reauthoring · run 0249's malformed/duplicate `resource_grants` count read-only against production before deploy: [ticket](tickets/resource-grants-0249-production-preflight.md).
@@ -341,7 +344,6 @@ unexpected timeouts. See
 - [open] 2026-09-28 chat admission / oracle web · web keeps E_RATE_LIMITED / E_RATE_LIMITER_UNAVAILABLE arms until the backend with 0248 ships: [ticket](tickets/web-rate-limit-copy-outlives-limiter.md).
 - [open] 2026-09-28 sse transport · the listen cap's 429 E_RATE_LIMITED is misnamed and the sse client treats it as fatal: [ticket](tickets/sse-listen-cap-rejection-is-misnamed-and-fatal.md).
 - [open] 2026-09-28 api / bff observability · server-timing phases outlived the tests that read them; keep or delete at the api/auth/bff reauthor: [ticket](tickets/server-timing-phases-outlived-their-tests.md).
-- [open] dossiers / typed wire · 2026-09-28 cleanup pr-08 · the head ships `coverage` that the web ignores while it derives the same label from `input_manifest`: [ticket](tickets/dossier-coverage-is-computed-and-dropped.md).
 - [open] search / typed wire · 2026-09-28 cleanup pr-08 · `RetrievalLocator` `= None` defaults generate optional fields; stored locators omit those keys, so dropping them needs a backfill: [ticket](tickets/retrieval-locator-defaults-generate-optional-fields.md).
 - [open] dossiers / resource graph · 2026-09-28 cleanup pr-08 · user links to or from an `artifact_revision` die at the next regenerate; revisions should not be link endpoints: [ticket](tickets/dossier-revision-user-links-die-on-regenerate.md).
 - [open] dossiers / production migration · 2026-09-28 cleanup pr-08 · run 0250's stored-json preconditions and loss counts read-only against production before the backend deploy: [ticket](tickets/dossier-latest-revision-0250-production-preflight.md).

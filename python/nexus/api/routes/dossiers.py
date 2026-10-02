@@ -14,8 +14,6 @@ from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data
 from nexus.schemas.artifact import (
-    CollectionDossierCoverageOut,
-    ConversationDossierCoverageOut,
     DossierBuildAdmittedGenerationOut,
     DossierBuildCodexShellOut,
     DossierBuildCreatedOut,
@@ -24,19 +22,14 @@ from nexus.schemas.artifact import (
     DossierBuildNoModelToolsOut,
     DossierBuildSummary,
     DossierBuildToolPlanOut,
-    DossierCoverageOut,
     DossierGenerateRequest,
     DossierHeadOut,
     DossierRevisionOut,
-    IdeaDossierCoverageOut,
     IdeaDossierIdentityOut,
     LearnDossierBuildAcceptedOut,
     LearnDossierOpenedOut,
     LearnDossierOut,
     LearnDossierRequest,
-    MediaDossierCoverageOut,
-    NoteDossierCoverageOut,
-    PageDossierCoverageOut,
     ResourceDossierIdentityOut,
 )
 from nexus.schemas.presence import (
@@ -54,18 +47,6 @@ from nexus.services.artifacts.dossier_types import (
     WebResearchNotConfigured,
 )
 from nexus.services.artifacts.idea import IdeaSubject
-from nexus.services.artifacts.manifests import (
-    ContributorInputManifestV1,
-    ConversationInputManifestV1,
-    InputManifestV1,
-    LibraryInputManifestV1,
-    MediaDisposition,
-    MediaInputManifestV1,
-    NoteInputManifestV1,
-    PageInputManifestV1,
-    PodcastInputManifestV1,
-    aggregate_entries,
-)
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
@@ -93,58 +74,10 @@ def _ref(raw: str, scheme: str) -> ResourceRef:
     return parsed
 
 
-def _coverage(manifest: InputManifestV1) -> DossierCoverageOut:
-    """The one coverage projection over the typed manifest union."""
-    if isinstance(manifest, MediaInputManifestV1):
-        return MediaDossierCoverageOut(
-            offered_claim_count=manifest.offered_claim_count,
-            omitted_evidence_refs=[item.evidence_ref for item in manifest.omitted_evidence],
-        )
-    if isinstance(manifest, ConversationInputManifestV1):
-        return ConversationDossierCoverageOut(
-            message_refs=manifest.message_refs,
-            context_refs=manifest.context_refs,
-        )
-    if isinstance(
-        manifest, LibraryInputManifestV1 | PodcastInputManifestV1 | ContributorInputManifestV1
-    ):
-        entries = aggregate_entries(manifest)
-        return CollectionDossierCoverageOut(
-            kind=manifest.kind,
-            included=[
-                entry.media_ref
-                for entry in entries
-                if entry.disposition is MediaDisposition.Included
-            ],
-            omitted=[
-                (entry.media_ref, entry.disposition)
-                for entry in entries
-                if entry.disposition is not MediaDisposition.Included
-            ],
-        )
-    if isinstance(manifest, PageInputManifestV1):
-        return PageDossierCoverageOut(
-            block_refs=manifest.block_refs,
-            connection_refs=manifest.connection_refs,
-        )
-    if isinstance(manifest, NoteInputManifestV1):
-        return NoteDossierCoverageOut(
-            body_present=isinstance(manifest.body_fingerprint, Present),
-            connection_refs=manifest.connection_refs,
-        )
-    return IdeaDossierCoverageOut(
-        seed_count=sum(source.role == "seed" for source in manifest.included_sources),
-        nexus_source_count=sum(source.role == "nexus" for source in manifest.included_sources),
-        web_source_count=sum(source.role == "web" for source in manifest.included_sources),
-        omitted_sources=[(item.locator, item.reason) for item in manifest.omitted_sources],
-    )
-
-
 def _revision_out(view: engine.RevisionView) -> DossierRevisionOut:
     return DossierRevisionOut(
         revision_ref=ResourceRef(scheme="artifact_revision", id=view.revision_id).uri,
         input_manifest=view.input_manifest,
-        coverage=_coverage(view.input_manifest),
         instruction=presence_from_nullable(view.instruction),
         creator_user_id=presence_from_nullable(view.creator_user_id),
         model_provider=presence_from_nullable(view.model_provider),
