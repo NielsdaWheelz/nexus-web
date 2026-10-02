@@ -1,3 +1,4 @@
+import type { ApiJson } from "@/lib/api/wire";
 import {
   AUTHOR_WORKS_LIMIT,
   contributorResource,
@@ -18,7 +19,7 @@ import type { PaneRouteId, RouteParams } from "@/lib/panes/paneRouteModel";
 import { loadNotePages } from "@/lib/notes/pageContract";
 import { shouldLoadInitialMediaFragments } from "@/lib/media/documentReadiness";
 import {
-  decodeMediaDetailResponse,
+  mediaDetailFromResponse,
   type MediaDetail,
 } from "@/lib/media/mediaDetail";
 import { decodeMediaFragmentsResponse } from "@/lib/media/mediaFragment";
@@ -116,8 +117,8 @@ export async function loadMediaPane(
   request: ResourceFetcher,
   params: { id: string },
 ): Promise<MediaPaneSeed> {
-  const media = decodeMediaDetailResponse(
-    await request<{ id: string }, unknown>(mediaResource, params),
+  const media = mediaDetailFromResponse(
+    await request<{ id: string }, ApiJson<"/media/{media_id}", "get">>(mediaResource, params),
     params.id,
   );
   let fragments: PaneMediaFragmentsSeed<Fragment> = {

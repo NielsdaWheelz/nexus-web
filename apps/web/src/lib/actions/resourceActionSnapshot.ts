@@ -21,6 +21,7 @@ import {
   expectRecord,
   expectString,
 } from "@/lib/validation";
+import type { Schema } from "@/lib/api/wire";
 
 // Decoded, same-system mirror of the camelCase wire contract for
 // `POST /resource-items/action-snapshots/resolve`. This decode is STRICT: the
@@ -48,7 +49,6 @@ export type ResourceActionCapability =
         | "PlayNext"
         | "DownloadOriginal"
         | "RefreshSource"
-        | "RetryMetadata"
         | "EditAuthors"
         | "MediaMetadata"
         | "ResetProgress"
@@ -78,6 +78,7 @@ export type ResourceActionCapability =
         | "RegenerateArtifact";
       readonly availability: ServerActionAvailability;
     }
+  | Schema<"RetryMetadataResourceActionCapabilityOut">
   | {
       readonly kind: "OpenSource";
       readonly availability: ServerActionAvailability;
@@ -141,7 +142,6 @@ export type ResourceActionCapability =
         | "Ready"
         | "Partial"
         | "Unavailable"
-        | "FailedQuota"
         | "FailedProvider";
       readonly coverage: "None" | "Partial" | "Full";
     }
@@ -204,6 +204,9 @@ function decodeResourceActionCapability(
   const record = expectRecord(raw, name);
   const kind = expectString(record.kind, `${name}.kind`);
   switch (kind) {
+    case "RetryMetadata":
+      // This touched arm follows the generated, same-deploy response contract.
+      return record as Schema<"RetryMetadataResourceActionCapabilityOut">;
     case "MakeArtifactRevisionCurrent":
       // the web deploys before the backend, and a pre-0250 backend offers this
       // on every superseded revision. drop it, or the unknown-kind defect below
@@ -276,7 +279,6 @@ function decodeResourceActionCapability(
     case "PlayNext":
     case "DownloadOriginal":
     case "RefreshSource":
-    case "RetryMetadata":
     case "EditAuthors":
     case "MediaMetadata":
     case "ResetProgress":
@@ -408,7 +410,6 @@ function decodeResourceActionCapability(
             "Ready",
             "Partial",
             "Unavailable",
-            "FailedQuota",
             "FailedProvider",
           ] as const,
           `${name}.state`,

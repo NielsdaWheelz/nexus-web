@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -33,6 +34,7 @@ from nexus.services.library_entries import (
     ensure_subscription_episode_default_in_current_transaction,
 )
 from nexus.services.metadata_dispatch import enqueue_metadata_enrichment
+from nexus.services.resource_mutation_replay import canonical_json_bytes
 from nexus.services.transcripts.state import ensure_media_transcript_state_row
 
 from ._normalize import (
@@ -110,17 +112,19 @@ def sync_subscription_ingest(
         )
         if existing_media_id is None:
             media_id = new_uuid7()
+            provider_id = diagnostic_episode_alias(aliases).value
             _insert_episode(
                 db,
                 media_id=media_id,
                 podcast_id=podcast_id,
                 viewer_id=viewer_id,
                 row=row,
-                provider_id=diagnostic_episode_alias(aliases).value,
+                provider_id=provider_id,
+                rss_metadata_fingerprint=_rss_metadata_fingerprint(row),
                 now=now,
             )
             ingested_episode_count += 1
-            enrichment_media_ids.add(media_id)
+            metadata_changed = True
             attach_episode_aliases_in_current_transaction(
                 db, podcast_id=podcast_id, media_id=media_id, aliases=aliases
             )
@@ -129,26 +133,28 @@ def sync_subscription_ingest(
             alias_set = attach_episode_aliases_in_current_transaction(
                 db, podcast_id=podcast_id, media_id=media_id, aliases=aliases
             )
-            _update_episode(
+            provider_id = diagnostic_episode_alias(alias_set).value
+            metadata_changed = _update_episode(
                 db,
                 media_id=media_id,
                 row=row,
-                provider_id=diagnostic_episode_alias(alias_set).value,
+                provider_id=provider_id,
+                rss_metadata_fingerprint=_rss_metadata_fingerprint(row),
                 now=now,
             )
 
-        observation = (
-            build_observation(
-                {"author": [RawCreditEntry(credited_name=name) for name in row["author_names"]]}
-            )[0]
-            if row["author_names"]
-            else NOT_OBSERVED
-        )
-        if isinstance(observation, ObservedRoleSlices):
-            apply_observed_role_slices_in_current_transaction(
-                db, target=MediaTarget(media_id), observation=observation, source="rss"
+        if metadata_changed:
+            observation = (
+                build_observation(
+                    {"author": [RawCreditEntry(credited_name=name) for name in row["author_names"]]}
+                )[0]
+                if row["author_names"]
+                else NOT_OBSERVED
             )
-        if not row["author_names"]:
+            if isinstance(observation, ObservedRoleSlices):
+                apply_observed_role_slices_in_current_transaction(
+                    db, target=MediaTarget(media_id), observation=observation, source="rss"
+                )
             enrichment_media_ids.add(media_id)
         if ensure_subscription_episode_default_in_current_transaction(
             db, viewer_id, podcast_id, media_id
@@ -164,7 +170,6 @@ def sync_subscription_ingest(
             media_id=media_id,
             requester_user_id=viewer_id,
             request_id=None,
-            dedupe_key=f"enrich-metadata:{media_id}",
         )
 
     # Co-subscribers see this show through no other collection family, so their
@@ -235,6 +240,7 @@ def _insert_episode(
     viewer_id: UUID,
     row: dict[str, Any],
     provider_id: str,
+    rss_metadata_fingerprint: str,
     now: datetime,
 ) -> None:
     db.execute(
@@ -267,24 +273,66 @@ def _insert_episode(
             """
             INSERT INTO podcast_episodes (
                 media_id, podcast_id, published_at, duration_seconds,
-                description_html, description_text, rss_transcript_url, created_at
+                description_html, description_text, rss_transcript_url,
+                rss_metadata_fingerprint, created_at
             )
             VALUES (
                 :media_id, :podcast_id, :published_at, :duration_seconds,
-                :description_html, :description_text, :rss_transcript_url, :now
+                :description_html, :description_text, :rss_transcript_url,
+                :rss_metadata_fingerprint, :now
             )
             """
         ),
-        {**row, "media_id": media_id, "podcast_id": podcast_id, "now": now},
+        {
+            **row,
+            "media_id": media_id,
+            "podcast_id": podcast_id,
+            "rss_metadata_fingerprint": rss_metadata_fingerprint,
+            "now": now,
+        },
     )
 
 
+def _rss_metadata_fingerprint(row: dict[str, Any]) -> str:
+    """The last observed feed bibliography, independent of enriched values."""
+    return hashlib.sha256(
+        canonical_json_bytes(
+            {
+                "title": row["title"],
+                "canonical_source_url": row["canonical_source_url"],
+                "external_playback_url": row["external_playback_url"],
+                "description": row["description"],
+                "description_text": row["description_text"],
+                "edition_published_date": row["edition_published_date"],
+                "language": row["language"],
+                "author_names": row["author_names"],
+            }
+        )
+    ).hexdigest()
+
+
 def _update_episode(
-    db: Session, *, media_id: UUID, row: dict[str, Any], provider_id: str, now: datetime
-) -> None:
-    db.execute(
-        text(
-            """
+    db: Session,
+    *,
+    media_id: UUID,
+    row: dict[str, Any],
+    provider_id: str,
+    rss_metadata_fingerprint: str,
+    now: datetime,
+) -> bool:
+    previous = db.execute(
+        text("""
+            SELECT pe.rss_metadata_fingerprint
+            FROM media m JOIN podcast_episodes pe ON pe.media_id=m.id
+            WHERE m.id=:media_id FOR UPDATE OF m
+        """),
+        {"media_id": media_id},
+    ).one()
+    metadata_changed = previous.rss_metadata_fingerprint != rss_metadata_fingerprint
+    if metadata_changed:
+        db.execute(
+            text(
+                """
             UPDATE media
             SET title = :title,
                 canonical_source_url = :canonical_source_url,
@@ -298,15 +346,31 @@ def _update_episode(
                 updated_at = :now
             WHERE id = :media_id
             """
-        ),
-        {
-            **row,
-            "media_id": media_id,
-            "provider": PODCAST_PROVIDER,
-            "provider_id": provider_id,
-            "now": now,
-        },
-    )
+            ),
+            {
+                **row,
+                "media_id": media_id,
+                "provider": PODCAST_PROVIDER,
+                "provider_id": provider_id,
+                "now": now,
+            },
+        )
+    else:
+        # Additional aliases of this resolved episode refine identity without
+        # restoring feed bibliography or spending another research request.
+        db.execute(
+            text("""
+                UPDATE media SET provider=:provider, provider_id=:provider_id, updated_at=:now
+                WHERE id=:media_id
+                  AND (provider,provider_id) IS DISTINCT FROM (:provider,:provider_id)
+            """),
+            {
+                "media_id": media_id,
+                "provider": PODCAST_PROVIDER,
+                "provider_id": provider_id,
+                "now": now,
+            },
+        )
     db.execute(
         text(
             """
@@ -315,12 +379,18 @@ def _update_episode(
                 description_text = :description_text,
                 published_at = COALESCE(:published_at, published_at),
                 duration_seconds = :duration_seconds,
-                rss_transcript_url = :rss_transcript_url
+                rss_transcript_url = :rss_transcript_url,
+                rss_metadata_fingerprint = :rss_metadata_fingerprint
             WHERE media_id = :media_id
             """
         ),
-        {**row, "media_id": media_id},
+        {
+            **row,
+            "media_id": media_id,
+            "rss_metadata_fingerprint": rss_metadata_fingerprint,
+        },
     )
+    return metadata_changed
 
 
 def _upsert_chapters(

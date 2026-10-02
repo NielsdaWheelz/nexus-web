@@ -1,23 +1,31 @@
-"""Metadata-enrichment job admission and enqueue."""
+"""Replayable manual admission and source-triggered metadata enqueue."""
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from nexus.auth.permissions import can_read_media
 from nexus.db.models import Media
+from nexus.db.retries import retry_read_committed
 from nexus.errors import ApiErrorCode, ConflictError, ForbiddenError, NotFoundError
-from nexus.jobs.queue import enqueue_job, enqueue_unique_job, lock_jobs_for_payload
+from nexus.jobs.queue import JobRow, enqueue_job, lock_jobs_for_payload
 from nexus.logging import get_logger
-from nexus.services.durable_step_journal import Uncertain, decode_step_states
-from nexus.services.media_processing_state import is_metadata_enrichment_eligible
+from nexus.schemas.metadata_enrichment import (
+    MetadataEnrichmentAccepted,
+    MetadataEnrichmentRequest,
+    MetadataRetryAllowed,
+)
+from nexus.schemas.presence import Presence, absent, presence_from_nullable, present
+from nexus.services.metadata_operations import metadata_retry
+from nexus.services.resource_mutation_replay import (
+    canonical_json_bytes,
+    lookup_replay,
+    record_replay,
+)
 
 logger = get_logger(__name__)
-
-# The one durable step path of the billed-once metadata turn.
-METADATA_STEP_PATH = "codex/metadata"
 
 
 def enqueue_metadata_enrichment(
@@ -26,88 +34,137 @@ def enqueue_metadata_enrichment(
     media_id: UUID | str,
     requester_user_id: UUID,
     request_id: str | None,
-    dedupe_key: str | None = None,
-) -> bool:
-    """Enqueue one metadata job in the caller's transaction; unique when keyed."""
-    # The registry's handler imports this module: resolve it at call time.
+) -> JobRow:
+    """Enqueue in the caller's transaction, serialized by the media parent."""
     from nexus.jobs.registry import get_default_registry
 
+    media_uuid = UUID(str(media_id))
+    exists = db.scalar(select(Media.id).where(Media.id == media_uuid).with_for_update())
+    if exists is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "media not found")
+    created_at = db.scalar(
+        text("""
+        SELECT greatest(clock_timestamp(), max(created_at) + interval '1 microsecond')
+        FROM background_jobs WHERE kind='enrich_metadata' AND payload->>'media_id'=:media_id
+    """),
+        {"media_id": str(media_uuid)},
+    )
     payload = {
-        "media_id": str(media_id),
+        "media_id": str(media_uuid),
         "requester_user_id": str(requester_user_id),
         "request_id": request_id,
     }
     attempts = get_default_registry()["enrich_metadata"].max_attempts
-    if dedupe_key is None:
-        enqueue_job(db, kind="enrich_metadata", payload=payload, max_attempts=attempts)
-        return True
-    _, inserted = enqueue_unique_job(
+    return enqueue_job(
         db,
         kind="enrich_metadata",
         payload=payload,
-        dedupe_key=dedupe_key,
         max_attempts=attempts,
+        created_at=created_at,
     )
-    return inserted
 
 
 def try_enqueue_metadata_enrichment(
     db: Session, *, media_id: UUID | str, requester_user_id: UUID, request_id: str | None
-) -> bool:
-    """Best-effort enqueue: a queue failure must not undo a readable capture."""
+) -> Presence[JobRow]:
+    """Best-effort automatic enqueue never undoes an already-readable capture."""
     try:
-        enqueue_metadata_enrichment(
-            db, media_id=media_id, requester_user_id=requester_user_id, request_id=request_id
+        return present(
+            enqueue_metadata_enrichment(
+                db, media_id=media_id, requester_user_id=requester_user_id, request_id=request_id
+            )
         )
-        return True
     except SQLAlchemyError as exc:
         db.rollback()
         logger.warning("metadata_enrichment_enqueue_failed", media_id=str(media_id), error=str(exc))
-        return False
+        return absent()
 
 
-def retry_metadata_for_viewer(
-    db: Session, viewer_id: UUID, media_id: UUID, *, request_id: str | None
-) -> dict:
-    """Enqueue LLM metadata re-enrichment for the creator's media."""
-    if not can_read_media(db, viewer_id, media_id):
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    if media.created_by_user_id != viewer_id:
-        raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Only the creator can re-enrich metadata.")
-    if not is_metadata_enrichment_eligible(
-        kind=media.kind, processing_status=media.processing_status
-    ):
-        raise ConflictError(
-            ApiErrorCode.E_RETRY_INVALID_STATE,
-            "Media must be readable or pending audio/video before metadata can be re-enriched.",
-        )
-
-    jobs = lock_jobs_for_payload(
-        db, kind="enrich_metadata", expected_payload_match={"media_id": str(media_id)}
+def admit_metadata_enrichment(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID,
+    request: MetadataEnrichmentRequest,
+    request_id: str | None,
+) -> MetadataEnrichmentAccepted:
+    """One media lock owns replay, expected activity, barriers, insert and receipt."""
+    scope = f"media_metadata_enrichment:{media_id}"
+    request_bytes = canonical_json_bytes(
+        {"expected_job_id": request.expected_job_id.model_dump(mode="json")}
     )
-    if any(
-        (state := decode_step_states(job.payload).get(METADATA_STEP_PATH)) is not None
-        and state.dispatch_phase is Uncertain
-        for job in jobs
-    ):
-        raise ConflictError(
-            ApiErrorCode.E_RETRY_NOT_ALLOWED,
-            "Metadata enrichment has an unresolved generation turn.",
+
+    def authorize(*, lock: bool) -> Media:
+        if not can_read_media(db, viewer_id, media_id):
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "media not found")
+        query = select(Media).options(defer(Media.plain_text)).where(Media.id == media_id)
+        if lock:
+            query = query.with_for_update()
+        media = db.scalar(query)
+        if media is None:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "media not found")
+        if lock and not can_read_media(db, viewer_id, media_id):
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "media not found")
+        if media.created_by_user_id != viewer_id:
+            raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "only the creator can research metadata")
+        return media
+
+    def replay() -> MetadataEnrichmentAccepted | None:
+        response = lookup_replay(
+            db,
+            viewer_id=viewer_id,
+            scope=scope,
+            client_mutation_id=request.client_mutation_id,
+            request_bytes=request_bytes,
         )
-    if any(job.status in {"pending", "running"} for job in jobs):
-        raise ConflictError(
-            ApiErrorCode.E_RETRY_NOT_ALLOWED, "Metadata enrichment is already in progress."
+        return (
+            MetadataEnrichmentAccepted.model_validate_json(canonical_json_bytes(response))
+            if response is not None
+            else None
         )
 
-    enqueue_metadata_enrichment(
-        db, media_id=media.id, requester_user_id=viewer_id, request_id=request_id
-    )
-    db.commit()
-    return {
-        "media_id": str(media.id),
-        "processing_status": media.processing_status.value,
-        "metadata_enrichment_enqueued": True,
-    }
+    authorize(lock=False)
+    if (existing := replay()) is not None:
+        db.rollback()
+        return existing
+    db.rollback()
+
+    def admit() -> MetadataEnrichmentAccepted:
+        media = authorize(lock=True)
+        jobs = lock_jobs_for_payload(
+            db, kind="enrich_metadata", expected_payload_match={"media_id": str(media_id)}
+        )
+        if (existing := replay()) is not None:
+            db.rollback()
+            return existing
+        latest = max(jobs, key=lambda job: (job.created_at, job.id), default=None)
+        expected = presence_from_nullable(latest.id if latest else None)
+        if request.expected_job_id != expected:
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT, "metadata activity changed; refresh and try again"
+            )
+        retry = metadata_retry(media=media, viewer_id=viewer_id, jobs=jobs)
+        if not isinstance(retry, MetadataRetryAllowed):
+            messages = {
+                "not_creator": "only the creator can research metadata",
+                "not_eligible": "metadata research is unavailable for this media state",
+                "active": "metadata research is already in progress",
+                "uncertain": "execution unresolved; retry unavailable",
+            }
+            raise ConflictError(ApiErrorCode.E_RETRY_NOT_ALLOWED, messages[retry.reason])
+        job = enqueue_metadata_enrichment(
+            db, media_id=media_id, requester_user_id=viewer_id, request_id=request_id
+        )
+        result = MetadataEnrichmentAccepted(media_id=media_id, job_id=job.id)
+        record_replay(
+            db,
+            viewer_id=viewer_id,
+            scope=scope,
+            client_mutation_id=request.client_mutation_id,
+            request_bytes=request_bytes,
+            response_json=result.model_dump(mode="json"),
+        )
+        db.commit()
+        return result
+
+    return retry_read_committed(db, "metadata_enrichment.admit", admit)

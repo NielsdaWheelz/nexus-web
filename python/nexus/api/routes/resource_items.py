@@ -13,8 +13,11 @@ from sqlalchemy.orm import Session
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.responses import ok
-from nexus.schemas.resource_action_snapshots import ResourceActionSnapshotResolveRequest
+from nexus.responses import Data, ok
+from nexus.schemas.resource_action_snapshots import (
+    ResourceActionSnapshotResolveRequest,
+    ResourceActionSnapshotResolveResponse,
+)
 from nexus.schemas.resource_items import (
     ResourceBodyMutationRequest,
     ResourceLocatorResolveRequest,
@@ -51,13 +54,12 @@ def _parse_ref(raw: str) -> ResourceRef:
 
 @router.post("/action-snapshots/resolve")
 def resolve_action_snapshots(
-    request: ResourceActionSnapshotResolveRequest, viewer: ViewerDep, db: DbDep
-) -> dict:
-    return ok(
-        action_snapshots.resolve_action_snapshots(
+    request: ResourceActionSnapshotResolveRequest, viewer: ViewerDep, db: ReadDbDep
+) -> Data[ResourceActionSnapshotResolveResponse]:
+    return Data(
+        data=action_snapshots.resolve_action_snapshots(
             db, viewer_id=viewer.user_id, refs=[_parse_ref(raw) for raw in request.refs]
         ),
-        by_alias=True,
     )
 
 

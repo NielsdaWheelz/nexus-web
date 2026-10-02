@@ -11,14 +11,15 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data, ok, success_response
 from nexus.schemas.contributors import MediaAuthorsPutRequest
 from nexus.schemas.library import LibraryEntryRemovalOut, LibraryPlacementOptionOut
-from nexus.schemas.media import MediaLibrariesRequest
+from nexus.schemas.media import MediaLibrariesRequest, MediaOut
+from nexus.schemas.metadata_enrichment import MetadataEnrichmentAccepted, MetadataEnrichmentRequest
 from nexus.services import contributors as contributors_service
-from nexus.services import library_entries, media_source_ingest
+from nexus.services import library_entries, media_source_ingest, metadata_dispatch
 from nexus.services import media as media_service
 from nexus.services import media_deletion as media_deletion_service
 
@@ -26,6 +27,7 @@ router = APIRouter(tags=["media"])
 
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 DbDep = Annotated[Session, Depends(get_db)]
+ReadDbDep = Annotated[Session, Depends(get_repeatable_read_db)]
 
 
 @router.get("/media")
@@ -47,9 +49,28 @@ def list_media(
 
 
 @router.get("/media/{media_id}")
-def get_media(media_id: UUID, viewer: ViewerDep, db: DbDep) -> dict:
+def get_media(media_id: UUID, viewer: ViewerDep, db: ReadDbDep) -> Data[MediaOut]:
     """404 if the media does not exist or the viewer cannot read it."""
-    return ok(media_service.get_media_for_viewer(db, viewer.user_id, media_id), by_alias=True)
+    return Data(data=media_service.get_media_for_viewer(db, viewer.user_id, media_id))
+
+
+@router.post("/media/{media_id}/metadata-enrichment", status_code=202)
+def enrich_media_metadata(
+    media_id: UUID,
+    body: MetadataEnrichmentRequest,
+    viewer: ViewerDep,
+    db: DbDep,
+    request: Request,
+) -> Data[MetadataEnrichmentAccepted]:
+    return Data(
+        data=metadata_dispatch.admit_metadata_enrichment(
+            db,
+            viewer_id=viewer.user_id,
+            media_id=media_id,
+            request=body,
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
 
 @router.get("/media/{media_id}/offline-download-spec")

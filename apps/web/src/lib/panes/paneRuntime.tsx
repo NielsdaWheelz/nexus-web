@@ -52,6 +52,7 @@ import {
   startSameDocumentViewTransition,
   type PaneViewTransitionIntent,
 } from "@/lib/ui/viewTransitions";
+import { useWorkspaceStore } from "@/lib/workspace/store";
 
 export interface PaneRouterOptions {
   labelHint?: string;
@@ -652,6 +653,13 @@ export function usePaneIsActive(): boolean {
     throw new Error("usePaneIsActive must be used inside PaneRuntimeProvider");
   }
   return isActive;
+}
+
+/** Visibility differs from focus; minimized panes remain mounted in the host. */
+export function usePaneIsVisible(): boolean {
+  const runtime = requirePaneRuntime(usePaneRuntime(), "usePaneIsVisible");
+  const { state } = useWorkspaceStore();
+  return state.primaryPanesById[runtime.paneId]?.visibility === "visible";
 }
 
 /**

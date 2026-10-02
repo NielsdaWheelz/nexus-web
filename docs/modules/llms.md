@@ -87,8 +87,9 @@ on provider api chat, `ExactModelTools` grants `AdditiveWrites` over
 `ChatAdmittedContext`: `web.search`, five nexus reads, and five owner-gated
 additive writes. the two dossier plans grant only the five nexus reads over
 their exact frozen evidence scope when used as provider functions. metadata
-enrichment's provider-function plan publishes `web.search`, `web.read`,
-`nexus.document.search`, and `nexus.resource.read`. other background
+enrichment uses codex personal; its prompt requests `web.search`, `web.read`,
+`nexus.document.search`, and `nexus.resource.read` under the actual codex authority
+below. there is no active metadata provider-function plan. other background
 provider-function plans publish no model-tool schema. idea host research
 remains a separate bounded, durable three-search preparation plan.
 

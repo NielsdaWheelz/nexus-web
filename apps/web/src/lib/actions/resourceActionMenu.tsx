@@ -2,6 +2,7 @@ import { createElement } from "react";
 import type { LucideIcon } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { present } from "@/lib/api/presence";
+import type { Schema } from "@/lib/api/wire";
 import { assertNever } from "@/lib/assertNever";
 import type { FeedbackContextValue } from "@/components/feedback/Feedback";
 import {
@@ -53,8 +54,8 @@ import {
 } from "@/lib/imports/importsClient";
 import {
   refreshMediaSource,
-  retryMediaMetadata,
 } from "@/lib/media/ingestionClient";
+import { METADATA_RETRY_BLOCKED_COPY } from "@/lib/media/mediaMetadataOperations";
 import { deleteMedia } from "@/lib/media/mediaLibraries";
 import { deleteConversation } from "@/lib/conversations/indexMutation";
 import {
@@ -85,6 +86,11 @@ import { requestContributorActionIntent } from "@/lib/contributors/actionIntent"
 import { requestPodcastActionIntent } from "@/lib/podcasts/actionIntent";
 
 export interface ResourceActionPorts {
+  readonly submitMetadata: (
+    mediaId: string,
+    expectedJobId: Schema<"MetadataRetryAllowed">["expected_job_id"] | null,
+    detail: ActionSelectDetail,
+  ) => Promise<void>;
   readonly workspace: ReturnType<typeof useWorkspaceStore>;
   readonly activePaneId: string;
   readonly openShare: ReturnType<typeof useShareController>["openShare"];
@@ -276,6 +282,7 @@ interface CommandOptions {
   readonly icon?: LucideIcon;
   readonly checked?: boolean;
   readonly blocked?: BlockedReason;
+  readonly disabledReason?: string;
   readonly confirmation?: ResourceActionConfirmation;
   readonly openOnly?: boolean;
   readonly restoreFocusOnClose?: boolean;
@@ -332,6 +339,8 @@ export function resourceActionDescriptors({
     if (busyIds.has(actionId)) reason = "Busy";
     const disabledReason =
       forceBlockedReason ??
+      (busyIds.has(actionId) ? RESOURCE_ACTION_BLOCKED_REASON_COPY.Busy : undefined) ??
+      options.disabledReason ??
       (reason ? RESOURCE_ACTION_BLOCKED_REASON_COPY[reason] : undefined);
     return {
       kind: "command",
@@ -860,15 +869,26 @@ export function resourceActionDescriptors({
           },
           { reconcile: subjectScope },
         );
-      case "RetryMetadata":
+      case "RetryMetadata": {
+        const confirming = environment.pendingMetadataRequests.has(ref);
+        const canConfirm = confirming && (capability.retry.status !== "blocked"
+          || capability.retry.reason !== "not_creator");
         return make(
-          capability,
+          canConfirm ? { ...capability, availability: { kind: "Available" } } : capability,
           "ResourceOperation.Media.RetryMetadata",
-          async () => {
-            await retryMediaMetadata(id());
+          async (ports, detail) => {
+            await ports.submitMetadata(id(), capability.retry.status === "allowed"
+              ? capability.retry.expected_job_id : null, detail);
           },
-          { reconcile: subjectScope },
+          {
+            label: canConfirm ? "confirm metadata request" : undefined,
+            disabledReason: !canConfirm && capability.retry.status === "blocked"
+              ? METADATA_RETRY_BLOCKED_COPY[capability.retry.reason] : undefined,
+            blocked: environment.connectivity === "Offline" ? "RequiresOnline" : undefined,
+            reconcile: subjectScope,
+          },
         );
+      }
       case "EditAuthors":
         return make(
           capability,

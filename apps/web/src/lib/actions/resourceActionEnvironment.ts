@@ -48,6 +48,7 @@ export type ResourceActionOfflineReadingState =
  * owners; every surface reads the same instance (never via presenter callbacks).
  */
 export interface ResourceActionEnvironment {
+  readonly pendingMetadataRequests: ReadonlySet<CanonicalResourceRef>;
   readonly platform: "Web" | "Android";
   readonly connectivity: "Online" | "Offline";
   readonly offline: ResourceActionOfflineState;

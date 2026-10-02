@@ -12,7 +12,7 @@ from uuid import UUID
 from nexus.db.models import MediaKind, ProcessingStatus, TranscriptCoverage, TranscriptState
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
 from nexus.schemas.media import CapabilitiesOut
-from nexus.services.media_processing_state import is_metadata_enrichment_eligible
+from nexus.schemas.metadata_enrichment import MetadataRetry, MetadataRetryAllowed
 from nexus.services.pdf_readiness import pdf_quote_text_readiness_rows_sql
 
 SourceRecoveryRestriction = Literal["NotOwner", "SameSourceTerminal", "SourceNotReacquirable"]
@@ -138,6 +138,7 @@ def derive_capabilities(
     source_refresh_available: bool = False,
     source_recovery: SourceRecoveryAnswer,
     search_recovery: SearchRecoveryAnswer,
+    metadata_retry: MetadataRetry,
 ) -> CapabilitiesOut:
     """Derive capabilities from media state and the owners' recovery answers."""
     is_pdf = kind == MediaKind.pdf.value
@@ -193,8 +194,7 @@ def derive_capabilities(
         # Author editing must not depend on processing state: a failed ingest
         # still has editable authors. The access half is true by construction —
         # a media DTO is only assembled for media the viewer can already read.
-        can_retry_metadata=is_creator
-        and is_metadata_enrichment_eligible(kind=kind, processing_status=processing_status),
+        can_retry_metadata=isinstance(metadata_retry, MetadataRetryAllowed),
         can_repair_source=source_suspended,
         can_repair_search=isinstance(search_recovery, RepairSearchOffer),
         can_edit_authors=can_edit_media_authors(can_read=True, is_creator=is_creator),

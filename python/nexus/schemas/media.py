@@ -4,13 +4,16 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, FiniteFloat, model_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, model_validator
 from pydantic.alias_generators import to_camel
 
+from nexus.db.models import MediaKind
+from nexus.schemas.client_mutation import ClientMutationUuidText
 from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.media_summary import MediaDurationOut, MediaProcessingStatus
+from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.presence import Presence, Present
 from nexus.schemas.publication_dates import PublicationDate
 from nexus.schemas.source_issues import SourceIssue
@@ -32,6 +35,10 @@ _CAMEL_CONFIG = ConfigDict(alias_generator=to_camel, populate_by_name=True, extr
 
 MediaSourceAttemptStatus = Literal["accepted", "queued", "running", "succeeded", "failed"]
 MediaReadState = Literal["unread", "in_progress", "finished"]
+TranscriptState = Literal[
+    "not_requested", "queued", "running", "ready", "partial", "unavailable", "failed_provider"
+]
+TranscriptCoverage = Literal["none", "partial", "full"]
 
 
 class CapabilitiesOut(BaseModel):
@@ -219,40 +226,45 @@ class MediaOut(BaseModel):
     """
 
     id: UUID
-    kind: str  # "web_article", "epub", "pdf", "podcast_episode", "video"
+    kind: MediaKind
     title: str
     canonical_source_url: str | None
+    provider: Presence[str]
+    provider_id: Presence[str]
+    requested_url: Presence[str]
+    canonical_url: Presence[str]
     processing_status: MediaProcessingStatus
     source_progress: Presence[SourceProgress]
-    transcript_state: str | None = None
-    transcript_coverage: str | None = None
+    transcript_state: TranscriptState | None
+    transcript_coverage: TranscriptCoverage | None
     transcript_origin: Presence[Literal["Publisher", "Imported", "Generated"]]
-    retrieval_status: str | None = None
-    retrieval_status_reason: str | None = None
-    failure_stage: str | None = None
-    last_error_code: str | None = None
-    playback_source: PlaybackSourceOut | None = None
-    listening_state: ListeningStateOut | None = None
-    episode_state: Literal["unplayed", "in_progress", "played"] | None = None
-    chapters: list[PodcastEpisodeChapterOut] = []
+    retrieval_status: str | None
+    retrieval_status_reason: str | None
+    failure_stage: str | None
+    last_error_code: str | None
+    playback_source: PlaybackSourceOut | None
+    listening_state: ListeningStateOut | None
+    episode_state: Literal["unplayed", "in_progress", "played"] | None
+    chapters: list[PodcastEpisodeChapterOut]
     capabilities: CapabilitiesOut
-    document_embed_summary: DocumentEmbedSummaryOut | None = None
-    contributors: list[ContributorCreditOut] = Field(default_factory=list)
+    document_embed_summary: DocumentEmbedSummaryOut | None
+    contributors: list[ContributorCreditOut]
     author_mode: Literal["automatic", "manual"] = "automatic"
     original_published_date: Presence[PublicationDate]
     edition_published_date: Presence[PublicationDate]
     edition_isbn: Presence[str]
     duration: Presence[MediaDurationOut]
-    publisher: str | None = None
-    language: str | None = None
-    description: str | None = None
-    description_html: str | None = None
-    description_text: str | None = None
-    metadata_enriched_at: datetime | None = None
-    read_state: MediaReadState | None = None
-    progress_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
+    publisher: str | None
+    language: str | None
+    description: str | None
+    description_html: str | None
+    description_text: str | None
+    metadata_enriched_at: datetime | None
+    metadata_enrichment: MetadataEnrichmentView
+    read_state: MediaReadState | None
+    progress_fraction: float | None = Field(ge=0.0, le=1.0)
     progress_resettable: bool
-    last_engaged_at: datetime | None = None
+    last_engaged_at: datetime | None
     player_descriptor: Presence[PlayerDescriptor] = Field(alias="playerDescriptor")
     created_at: datetime
     updated_at: datetime
@@ -304,20 +316,6 @@ class FragmentOut(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
-
-
-def _canonical_uuid_text(value: str) -> str:
-    """Replay keys are text columns, so only the canonical spelling is a key."""
-    try:
-        parsed = UUID(value)
-    except ValueError as exc:
-        raise ValueError("client_mutation_id must be canonical lowercase UUID text") from exc
-    if str(parsed) != value:
-        raise ValueError("client_mutation_id must be canonical lowercase UUID text")
-    return value
-
-
-ClientMutationUuidText = Annotated[str, AfterValidator(_canonical_uuid_text)]
 
 
 class CreateUploadSessionRequest(_Strict):
@@ -442,17 +440,6 @@ class RetrySourceRequest(_Strict):
     expected_attempt_id: UUID
 
 
-class RetryMetadataRequest(_Strict):
-    """Re-enrich metadata; no idempotency ledger."""
-
-    from_stage: Literal["metadata"]
-
-
-RetryRequest = Annotated[
-    RetrySourceRequest | RetryMetadataRequest, Field(discriminator="from_stage")
-]
-
-
 class SourceRepairRequest(_Strict):
     """Requeue the exact dead job of one nonterminal source attempt."""
 
@@ -504,12 +491,6 @@ TranscriptRequestReason = Literal[
 
 class TranscriptRequestRequest(_Strict):
     reason: TranscriptRequestReason = "episode_open"
-
-
-TranscriptState = Literal[
-    "not_requested", "queued", "running", "ready", "partial", "unavailable", "failed_provider"
-]
-TranscriptCoverage = Literal["none", "partial", "full"]
 
 
 class TranscriptRequestOut(BaseModel):

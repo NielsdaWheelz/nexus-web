@@ -1,5 +1,7 @@
 "use client";
 
+import { useMetadataCollectionRevision, metadataCollectionSnapshot } from "@/lib/media/mediaMetadataOperations";
+
 import {
   useCallback,
   useEffect,
@@ -80,6 +82,7 @@ import {
   useClearAllPaneVisitData,
   usePaneParam,
   usePaneIsActive,
+  usePaneIsVisible,
   usePaneReturnReady,
   usePaneRouter,
   usePaneRuntime,
@@ -159,6 +162,7 @@ type LibraryEntryPage = CollectionPage<LibraryEntry>;
 // A committed page records the revisions it was fetched at; a later advance
 // (that this pane reacts to) drives one reconciliation of the current view.
 interface LibraryRevisions {
+  metadata: number;
   placement: number;
   consumption: ConsumptionProjectionChange;
 }
@@ -308,6 +312,7 @@ export default function LibraryPaneBody() {
     "LibraryPaneBody",
   ).activateTarget;
   const isPaneActive = usePaneIsActive();
+  const isPaneVisible = usePaneIsVisible();
   const paneId = paneRuntime?.paneId ?? `library-${id}`;
 
   // The process-local fact revisions. A placement advance can change which
@@ -315,6 +320,9 @@ export default function LibraryPaneBody() {
   // change row state, duration, membership, and remaining-time order. Revisions
   // never enter an API query — they are the pane's local request identity and the
   // trigger for reconciling the current view against fresh authoritative truth.
+  const metadataRevision = useMetadataCollectionRevision();
+  const metadataRevisionRef = useRef(metadataRevision);
+  metadataRevisionRef.current = metadataRevision;
   const placementChange = useLibraryPlacementRevision();
   const consumptionChange = useConsumptionProjectionRevision();
   const placementRevisionRef = useRef(placementChange.revision);
@@ -494,6 +502,7 @@ export default function LibraryPaneBody() {
       : {
           placement: placementChange.revision,
           consumption: consumptionChange,
+          metadata: metadataRevisionRef.current,
         },
   );
   // Bumped when a first-page result is revision-stale so the exact same
@@ -629,7 +638,7 @@ export default function LibraryPaneBody() {
   // zero. The client claims that seed only while BOTH process revisions are still
   // zero; otherwise the exact first page loads through the entries endpoint.
   const bootstrapSeedClaimable =
-    placementChange.revision === 0 && consumptionChange.revision === 0;
+    placementChange.revision === 0 && consumptionChange.revision === 0 && metadataRevision === 0;
   // Whether a committed/requested page fetched at `captured` is stale relative to
   // the current process revisions this pane reacts to. The All (default) pane is
   // stale on any placement mismatch; a named/system pane is stale only when a
@@ -648,10 +657,11 @@ export default function LibraryPaneBody() {
         consumptionChange.revision !== captured.consumption.revision;
       const rowStale =
         consumptionChange.rowRevision !== captured.consumption.rowRevision;
-      return placementStale || consumptionStale || rowStale;
+      return placementStale || consumptionStale || rowStale || metadataRevision !== captured.metadata;
     },
     [
       consumptionChange,
+      metadataRevision,
       placementChange.revision,
       id,
       isDefaultLibrary,
@@ -691,6 +701,7 @@ export default function LibraryPaneBody() {
       const revisions: LibraryRevisions = {
         placement: placementRevisionRef.current,
         consumption: consumptionChangeRef.current,
+        metadata: metadataRevisionRef.current,
       };
       if (
         requestKey === null ||
@@ -842,6 +853,7 @@ export default function LibraryPaneBody() {
       const serial = requestEntryReconciliation(current.entries.view, {
         placement: placementRevisionRef.current,
         consumption: consumptionChangeRef.current,
+        metadata: metadataRevisionRef.current,
       });
       revalidationSourceKeyRef.current = sourceKey;
       return revalidation.wait({
@@ -890,6 +902,7 @@ export default function LibraryPaneBody() {
       requestEntryReconciliation(current.entries.view, {
         placement: libraryPlacementSnapshot().revision,
         consumption: consumptionProjectionSnapshot(),
+        metadata: metadataCollectionSnapshot(),
       });
     },
     [clearAllVisitData, requestEntryReconciliation, viewIsCommitted],
@@ -1063,12 +1076,13 @@ export default function LibraryPaneBody() {
   // commit re-bases to the request's captured revisions, so a mutation during
   // flight yields exactly one follow-up.
   useEffect(() => {
-    if (!isPaneActive) return;
+    if (!isPaneActive && !(isPaneVisible && metadataRevision !== committedRevisionsRef.current.metadata)) return;
     if (!viewIsCommitted || controller === null) return;
     if (entryReconciliationRequest !== null) return;
     const current: LibraryRevisions = {
       placement: placementChange.revision,
       consumption: consumptionChange,
+      metadata: metadataRevisionRef.current,
     };
     if (
       !revisionsAreStale(committedRevisionsRef.current, controller.entries.view)
@@ -1081,6 +1095,8 @@ export default function LibraryPaneBody() {
     controller,
     entryReconciliationRequest,
     isPaneActive,
+    isPaneVisible,
+    metadataRevision,
     placementChange.revision,
     requestEntryReconciliation,
     revisionsAreStale,
@@ -1108,6 +1124,7 @@ export default function LibraryPaneBody() {
         const seedRevisions: LibraryRevisions = {
           placement: 0,
           consumption: { revision: 0, rowRevision: 0 },
+          metadata: 0,
         };
         committedRevisionsRef.current = seedRevisions;
         setController({
@@ -1210,6 +1227,7 @@ export default function LibraryPaneBody() {
     const committedRevisions: LibraryRevisions = {
       placement: placementRevisionRef.current,
       consumption: consumptionChangeRef.current,
+      metadata: metadataRevisionRef.current,
     };
     committedRevisionsRef.current = committedRevisions;
     setController({
@@ -1403,6 +1421,7 @@ export default function LibraryPaneBody() {
       {
         placement: placementRevisionRef.current,
         consumption: consumptionChangeRef.current,
+        metadata: metadataRevisionRef.current,
       },
       "RefreshList",
     );
@@ -2054,6 +2073,7 @@ export default function LibraryPaneBody() {
           {
             placement: libraryPlacementSnapshot().revision,
             consumption: consumptionProjectionSnapshot(),
+            metadata: metadataCollectionSnapshot(),
           },
           entryReconciliationRequest.recovery,
         )

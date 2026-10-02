@@ -1,5 +1,7 @@
 "use client";
 
+import { useMetadataCollectionRevision, metadataCollectionSnapshot } from "@/lib/media/mediaMetadataOperations";
+
 import {
   useCallback,
   useEffect,
@@ -89,6 +91,7 @@ import {
   type PaneResourceStatus,
   useClearAllPaneVisitData,
   usePaneIsActive,
+  usePaneIsVisible,
   usePaneParam,
   usePaneReturnReady,
   usePaneRuntime,
@@ -113,6 +116,7 @@ type AuthorConnectionsResource =
 
 /** The author detail plus the works page committed as one exact works view. */
 interface CommittedAuthorWorks extends AuthorPaneSeed {
+  readonly metadataRevision: number;
   readonly view: AuthorWorksView;
 }
 
@@ -216,6 +220,8 @@ export default function AuthorPaneBody() {
   const paneRuntime = usePaneRuntime();
   const runtime = requirePaneRuntime(paneRuntime, "AuthorPaneBody");
   const isPaneActive = usePaneIsActive();
+  const isPaneVisible = usePaneIsVisible();
+  const metadataRevision = useMetadataCollectionRevision();
   const activateTarget = runtime.activateTarget;
   // The pane URL owns the works view through a strict, total codec; `view` is
   // null only for an Invalid URL, a terminal, user-recoverable state.
@@ -322,16 +328,14 @@ export default function AuthorPaneBody() {
   // The route seed composes the detail with the canonical first works page. Its
   // works are adopted only for the canonical view; every other view takes just
   // the detail and loads its own exact page.
-  const allowSeedAdoptionRef = useRef(initialRestored === null);
+  const allowSeedAdoptionRef = useRef(initialRestored === null && metadataRevision === 0);
   const seed = useResource<AuthorPaneSeed>({
     cacheKey:
       initialRestored === null && !invalidView
         ? contributorResource.cacheKey({ handle })
         : null,
     load: (signal) =>
-      paneResourceLoaders.author!.load(clientResourceFetcher(signal), {
-        handle,
-      }) as Promise<AuthorPaneSeed>,
+      paneResourceLoaders.author!.load(clientResourceFetcher(signal), { handle }) as Promise<AuthorPaneSeed>,
   });
   const seedDetail = seed.status === "ready" ? seed.data.detail : null;
 
@@ -351,18 +355,16 @@ export default function AuthorPaneBody() {
     requestsFirstPage && requestedViewKey !== null
       ? `${requestedViewKey}:collection:${firstPageVersion}`
       : null;
-  const firstPage = useResource<CollectionPage<ContributorWorkItem>>({
+  const firstPage = useResource<{ page: CollectionPage<ContributorWorkItem>; metadataRevision: number }>({
     cacheKey: firstPageRequestKey,
-    load: (signal) => {
+    load: async (signal) => {
+      const metadataRevision = metadataCollectionSnapshot();
       if (view === null) {
         // justify-defect: a non-null request key is built from this exact view.
         throw new Error("Author works request lost its view identity");
       }
-      return fetchContributorWorks(handle, {
-        view,
-        limit: AUTHOR_WORKS_LIMIT,
-        signal,
-      });
+      const page = await fetchContributorWorks(handle, { view, limit: AUTHOR_WORKS_LIMIT, signal });
+      return { page, metadataRevision };
     },
   });
 
@@ -370,17 +372,18 @@ export default function AuthorPaneBody() {
   // current request identity, so a superseded view can never install its rows.
   useEffect(() => {
     const detail = data?.detail ?? seedDetail;
-    if (firstPage.status === "ready" && view !== null && detail !== null) {
+    if (firstPage.status === "ready" && firstPage.data.metadataRevision === metadataRevision && view !== null && detail !== null) {
       allowSeedAdoptionRef.current = false;
       refreshPendingRef.current = false;
       const committed: CommittedAuthorWorks = {
         detail,
         view,
-        works: firstPage.data.items,
-        collectionRevision: firstPage.data.collectionRevision,
-        nextCursor: firstPage.data.nextCursor,
+        metadataRevision: firstPage.data.metadataRevision,
+        works: firstPage.data.page.items,
+        collectionRevision: firstPage.data.page.collectionRevision,
+        nextCursor: firstPage.data.page.nextCursor,
         exhaustion:
-          firstPage.data.nextCursor.kind === "Absent" ? "Complete" : "Partial",
+          firstPage.data.page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       };
       committedSnapshotRef.current = committed;
       setData(committed);
@@ -413,6 +416,7 @@ export default function AuthorPaneBody() {
     data?.detail,
     firstPage,
     firstPageVersion,
+    metadataRevision,
     seedDetail,
     view,
   ]);
@@ -424,10 +428,10 @@ export default function AuthorPaneBody() {
   // pane's load failure whether or not a works request is also in flight.
   useEffect(() => {
     if (seed.status === "ready") {
-      if (!allowSeedAdoptionRef.current) return;
+      if (!allowSeedAdoptionRef.current || metadataRevision !== 0) return;
       allowSeedAdoptionRef.current = false;
       if (view === null || view.kind !== "Canonical") return;
-      const committed: CommittedAuthorWorks = { ...seed.data, view };
+      const committed: CommittedAuthorWorks = { ...seed.data, view, metadataRevision: 0 };
       committedSnapshotRef.current = committed;
       setData(committed);
       setChainEpoch((epoch) => epoch + 1);
@@ -441,7 +445,7 @@ export default function AuthorPaneBody() {
         setDefect({ error: caughtDefect });
       }
     }
-  }, [seed, view]);
+  }, [seed, view, metadataRevision]);
 
   useLayoutEffect(() => {
     committedSnapshotRef.current = requestsFirstPage ? null : data;
@@ -481,6 +485,13 @@ export default function AuthorPaneBody() {
     firstPageVersionRef.current = version;
     setFirstPageVersion(version);
   }, [capturePaneScroll, clearAllVisitData, rejectPendingAuthorRevalidation]);
+  const appliedMetadataRevision = useRef(initialRestored?.metadataRevision ?? metadataRevision);
+  useEffect(() => {
+    if (!isPaneVisible || appliedMetadataRevision.current === metadataRevision) return;
+    appliedMetadataRevision.current = metadataRevision;
+    refreshWorks();
+  }, [isPaneVisible, metadataRevision, refreshWorks]);
+
   const revalidateWorks = useCallback(
     (signal: AbortSignal): Promise<void> => {
       if (signal.aborted) {

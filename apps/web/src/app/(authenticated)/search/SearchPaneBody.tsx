@@ -5,6 +5,8 @@
 
 "use client";
 
+import { useMetadataCollectionRevision } from "@/lib/media/mediaMetadataOperations";
+
 import {
   useCallback,
   useEffect,
@@ -69,6 +71,7 @@ import type {
 import {
   definePaneVisitDataKey,
   usePaneReturnReady,
+  usePaneIsVisible,
   usePaneRouter,
   usePaneSearchParams,
   usePaneVisitData,
@@ -79,6 +82,7 @@ const SEARCH_DEBOUNCE_MS = 200;
 const PAGE_LIMIT = 20;
 
 interface SearchSnapshot {
+  readonly metadataRevision: number;
   readonly queryKey: string;
   readonly rows: readonly SearchResultRowViewModel[];
   readonly nextCursor: string | null;
@@ -157,12 +161,15 @@ function hasExplicitEmptyKinds(query: SearchQuery): boolean {
 
 export default function SearchPaneBody() {
   const paneRouter = usePaneRouter();
+  const isPaneVisible = usePaneIsVisible();
+  const metadataRevision = useMetadataCollectionRevision();
   const paneSearchParams = usePaneSearchParams();
   const query = useMemo(
     () => searchQueryFromParams(paneSearchParams),
     [paneSearchParams],
   );
   const queryString = queryKey(query);
+  const requestIdentity = `${queryString}#metadata:${metadataRevision}`;
   const explicitEmptyKinds = hasExplicitEmptyKinds(query);
   const blank = isBlankQuery(query) || explicitEmptyKinds;
 
@@ -172,19 +179,19 @@ export default function SearchPaneBody() {
     [],
   );
   const restored = usePaneVisitData(SEARCH_VISIT_DATA, captureCommitted);
-  const restoredForQuery = restored?.queryKey === queryString ? restored : null;
+  const restoredForQuery = restored?.queryKey === queryString && restored.metadataRevision === metadataRevision ? restored : null;
   const [controller, setController] = useState<SearchSnapshot | null>(() =>
     restoredForQuery ??
     (blank
-      ? { queryKey: queryString, rows: [], nextCursor: null, hasSearched: explicitEmptyKinds }
+      ? { queryKey: queryString, metadataRevision, rows: [], nextCursor: null, hasSearched: explicitEmptyKinds }
       : null),
   );
   const allowFirstPageAdoptionRef = useRef(restoredForQuery === null && !blank);
-  const controllerQueryKeyRef = useRef(queryString);
-  const activeQueryKeyRef = useRef(queryString);
-  activeQueryKeyRef.current = queryString;
-  const firstPageLoadingQueryRef = useRef<string | null>(
-    blank || restoredForQuery !== null ? null : queryString,
+  const controllerRequestKeyRef = useRef(requestIdentity);
+  const activeRequestKeyRef = useRef(requestIdentity);
+  activeRequestKeyRef.current = requestIdentity;
+  const firstPageLoadingIdentityRef = useRef<string | null>(
+    blank || restoredForQuery !== null || !isPaneVisible ? null : requestIdentity,
   );
 
   const [draft, setDraft] = useState(query.text);
@@ -279,7 +286,7 @@ export default function SearchPaneBody() {
   // First page: refetched (immediately, then aborted) whenever the effective
   // query changes; blank queries make no request. Pagination is appended below.
   const firstPage = useDebouncedFetch<SearchResultPage>(
-    blank || restoredForQuery !== null ? null : queryString,
+    blank || restoredForQuery !== null || !isPaneVisible ? null : requestIdentity,
     (signal) =>
       fetchSearchResultPage(query, { limit: PAGE_LIMIT, cursor: null, signal }),
     { debounceMs: 0 },
@@ -291,8 +298,8 @@ export default function SearchPaneBody() {
   const moreAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    if (controllerQueryKeyRef.current === queryString) return;
-    controllerQueryKeyRef.current = queryString;
+    if (controllerRequestKeyRef.current === requestIdentity) return;
+    controllerRequestKeyRef.current = requestIdentity;
     moreAbortRef.current?.abort();
     setLoadingMore(false);
     setMoreError(null);
@@ -300,32 +307,33 @@ export default function SearchPaneBody() {
     setController((current) =>
       restoredForQuery ??
       (blank
-        ? { queryKey: queryString, rows: [], nextCursor: null, hasSearched: explicitEmptyKinds }
+        ? { queryKey: queryString, metadataRevision, rows: [], nextCursor: null, hasSearched: explicitEmptyKinds }
         : current),
     );
-  }, [blank, explicitEmptyKinds, queryString, restoredForQuery]);
+  }, [blank, explicitEmptyKinds, queryString, restoredForQuery, metadataRevision, requestIdentity]);
 
   useEffect(() => {
     if (firstPage.loading) {
-      firstPageLoadingQueryRef.current = queryString;
+      firstPageLoadingIdentityRef.current = requestIdentity;
       return;
     }
     if (
-      firstPageLoadingQueryRef.current !== queryString ||
+      firstPageLoadingIdentityRef.current !== requestIdentity ||
       !allowFirstPageAdoptionRef.current ||
       firstPage.data === null ||
-      firstPage.dataIdentity !== queryString
+      firstPage.dataIdentity !== requestIdentity
     ) {
       return;
     }
     allowFirstPageAdoptionRef.current = false;
     setController({
       queryKey: queryString,
+      metadataRevision,
       rows: firstPage.data.rows,
       nextCursor: firstPage.data.nextCursor,
       hasSearched: true,
     });
-  }, [firstPage.data, firstPage.dataIdentity, firstPage.loading, queryString]);
+  }, [firstPage.data, firstPage.dataIdentity, firstPage.loading, queryString, metadataRevision, requestIdentity]);
 
   useLayoutEffect(() => {
     committedSnapshotRef.current = controller;
@@ -334,11 +342,11 @@ export default function SearchPaneBody() {
   const results = blank && controller?.queryKey !== queryString
     ? EMPTY_SEARCH_ROWS
     : controller?.rows ?? EMPTY_SEARCH_ROWS;
-  const currentController = controller?.queryKey === queryString ? controller : null;
+  const currentController = controller?.queryKey === queryString && controller.metadataRevision === metadataRevision ? controller : null;
   const retained = controller !== null && currentController === null && !blank;
   const nextCursor = currentController?.nextCursor ?? null;
   const firstPageError =
-    firstPage.errorIdentity === queryString ? firstPage.error : null;
+    firstPage.errorIdentity === requestIdentity ? firstPage.error : null;
   const searching =
     (!blank && currentController === null && firstPageError === null) || loadingMore;
   const hasSearched = currentController?.hasSearched ?? false;
@@ -361,9 +369,9 @@ export default function SearchPaneBody() {
           cursor,
           signal: controller.signal,
         });
-        if (activeQueryKeyRef.current !== queryString) return;
+        if (activeRequestKeyRef.current !== requestIdentity) return;
         setController((current) =>
-          current === null || current.queryKey !== queryString
+          current === null || current.queryKey !== queryString || current.metadataRevision !== metadataRevision
             ? current
             : {
                 ...current,
@@ -373,7 +381,7 @@ export default function SearchPaneBody() {
         );
       } catch (err) {
         if (isAbortError(err) || handleUnauthenticatedApiError(err)) return;
-        if (activeQueryKeyRef.current !== queryString) return;
+        if (activeRequestKeyRef.current !== requestIdentity) return;
         try {
           setMoreError(searchErrorMessage(err));
         } catch (caughtDefect) {
@@ -383,7 +391,7 @@ export default function SearchPaneBody() {
         if (moreAbortRef.current === controller) setLoadingMore(false);
       }
     },
-    [query, queryString],
+    [query, queryString, metadataRevision, requestIdentity],
   );
 
   const formatDisabled = hasFormatFilter(query);

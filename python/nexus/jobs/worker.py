@@ -34,6 +34,7 @@ from nexus.jobs.process_executor import (
     ChildResourceFailure,
     ChildShutdownInterrupted,
     ChildSucceeded,
+    ChildTerminalFailure,
 )
 from nexus.jobs.queue import (
     HEAVY_CAPACITY_OCCUPIED_SQL,
@@ -43,6 +44,7 @@ from nexus.jobs.queue import (
     RescheduleRequested,
     RescheduleSchedule,
     ScheduleAfter,
+    TerminalJobFailure,
     claim_job,
     claim_next_job,
     complete_job,
@@ -216,7 +218,7 @@ class JobWorker:
             heartbeat.join(timeout=_HEARTBEAT_DRAIN_TIMEOUT_SECONDS)
 
         try:
-            handler_result: Mapping[str, Any] | RescheduleRequested | None
+            handler_result: Mapping[str, Any] | RescheduleRequested | TerminalJobFailure | None
             if self.process_executor is None:
                 # Interactive and maintenance lanes keep their in-process boundary.
                 handler = resolve_job_handler(definition.handler_path)
@@ -236,6 +238,12 @@ class JobWorker:
                         handler_result = payload
                     case ChildReschedule(schedule=schedule, payload=payload):
                         handler_result = RescheduleRequested(schedule=schedule, payload=payload)
+                    case ChildTerminalFailure(
+                        result_payload=payload, error_code=code, error_message=message
+                    ):
+                        handler_result = TerminalJobFailure(
+                            result_payload=payload, error_code=code, error_message=message
+                        )
                     case ChildClaimLost():
                         # The claim is already someone else's; settling it here
                         # would overwrite the current owner's attempt.
@@ -284,6 +292,17 @@ class JobWorker:
                     handler_result.schedule,
                     reason="handler",
                     payload=handler_result.payload,
+                )
+                return
+            if isinstance(handler_result, TerminalJobFailure):
+                self._fail_attempt(
+                    definition,
+                    job,
+                    context,
+                    error_code=handler_result.error_code,
+                    message=handler_result.error_message,
+                    result_payload=handler_result.result_payload,
+                    force_dead=True,
                 )
                 return
             result = dict(handler_result or {})
@@ -374,6 +393,7 @@ class JobWorker:
         error_code: str,
         message: str,
         result_payload: Mapping[str, Any] | None = None,
+        force_dead: bool = False,
     ) -> None:
         """Apply the retry/dead transition with its repair and history, in one transaction."""
         with self.session_factory() as db:
@@ -384,6 +404,7 @@ class JobWorker:
                 error_message=message,
                 retry_delays_seconds=definition.retry_delays_seconds,
                 result_payload=result_payload,
+                force_dead=force_dead,
             )
             if failed is None:
                 self._warn("worker_job_fail_rejected_lost_ownership", job)

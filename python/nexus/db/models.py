@@ -60,16 +60,13 @@ class ProcessingStatus(str, PyEnum):
 class FailureStage(str, PyEnum):
     """Stage at which processing failed.
 
-    Used to determine reset behavior on retry. `metadata` is a soft warning
-    set by enrich_metadata; it coexists with readable media
-    rather than implying a terminal failure.
+    Metadata research has its own background operation outcomes.
     """
 
     upload = "upload"
     extract = "extract"
     transcribe = "transcribe"
     embed = "embed"
-    metadata = "metadata"
     other = "other"
 
 
@@ -1440,6 +1437,8 @@ class PodcastEpisode(Base):
     description_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     description_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     rss_transcript_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Unknown until a real feed observation; enriched Media values cannot seed it.
+    rss_metadata_fingerprint: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),

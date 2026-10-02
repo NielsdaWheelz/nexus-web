@@ -27,6 +27,7 @@ from nexus.schemas.conversation import (
     ChatRunMetaEventPayload,
 )
 from nexus.schemas.execution import ChatRunExecutionOut, DurableExecutionOut
+from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.oracle import (
     OracleBindEventPayload,
     OracleCompleteDoneEventPayload,
@@ -45,6 +46,7 @@ from nexus.schemas.podcast import PodcastSubscriptionLifecycleSnapshotOut
 # passage payloads, which nest ResourceActivationOut by field name while typed
 # routes emit it by alias (ticket resource-activation-has-two-wire-casings).
 SSE_PAYLOADS_BY_NAME = (
+    MetadataEnrichmentView,
     ChatRunMetaEventPayload,
     ChatRunAssistantActivityEventPayload,
     ChatRunAssistantTextDeltaEventPayload,

@@ -10,7 +10,6 @@ export const TRANSCRIPT_STATES = [
   "queued",
   "running",
   "failed_provider",
-  "failed_quota",
   "unavailable",
   "ready",
   "partial",

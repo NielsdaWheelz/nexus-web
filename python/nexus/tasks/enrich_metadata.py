@@ -2,25 +2,24 @@
 
 One billed-once, tool-using generation per job: Prepared, then Uncertain
 immediately before dispatch, then Completed with a normalized memo. A Completed
-replay re-applies the memo's publication; an Uncertain replay is operator-owned.
-Dispatch, the pre-dispatch terminal and publication all take the same locks in
-the same order — generation owner, media, queue rows — because the retry route
-and this worker run concurrently.
+replay publishes its pending memo or returns its stored publication outcome;
+an Uncertain replay is operator-owned.
+Dispatch and pre-dispatch closure take generation-owner, media, then queue locks.
+Publication takes the media lock before its exact queue claim; a Completed memo
+needs no dispatch-owner advisory lock. Admission uses that same media→queue order.
 """
 
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 from typing import Literal, assert_never
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session, defer, sessionmaker
 
 from nexus.auth.permissions import can_read_media
-from nexus.db.models import ContentIndexState, FailureStage, Media, ProcessingStatus
+from nexus.db.models import ContentIndexState, Media, PodcastEpisode
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode, exception_error_detail
@@ -28,24 +27,39 @@ from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
     RescheduleRequested,
+    TerminalJobFailure,
     get_job,
     lock_and_renew_running_job_claim,
     lock_jobs_for_payload,
 )
 from nexus.logging import get_logger
-from nexus.schemas.presence import Present, present
+from nexus.schemas.llm import OperatorActionRequired, TemporarilyUnavailable
+from nexus.schemas.metadata_enrichment import (
+    MetadataAcceptedMemo,
+    MetadataCompletedOutcome,
+    MetadataFailedMemo,
+    MetadataFailedOutcome,
+    MetadataFailureCode,
+    MetadataMemo,
+    MetadataNoFindingsOutcome,
+    MetadataOutcome,
+)
+from nexus.schemas.presence import Present, absent, present
 from nexus.services import durable_step_journal as step_journal
 from nexus.services.codex_generation_contract import (
     GenerationTerminal,
     normalized_failure,
-    retained_terminal_error_detail,
 )
 from nexus.services.collection_revisions import (
     ENTRY_VISIBILITY_FAMILIES,
     bump_all_collection_families,
 )
 from nexus.services.contributor_writes import MediaTarget
-from nexus.services.contributors import apply_observed_role_slices_in_current_transaction
+from nexus.services.contributors import (
+    ContributorObservationRejected,
+    apply_prepared_role_slices_in_current_transaction,
+    prepare_observed_role_slices_in_current_transaction,
+)
 from nexus.services.durable_step_journal import Completed, Prepared, StepReplayState, Uncertain
 from nexus.services.generation_spec import (
     GenerationIntent,
@@ -56,7 +70,6 @@ from nexus.services.generation_spec import (
     generation_fact_digest,
 )
 from nexus.services.llm_execution import (
-    AcceptedGenerationFailure,
     CompletedGeneration,
     EncodedGenerationTerminal,
     ExecutionRuntime,
@@ -71,14 +84,20 @@ from nexus.services.llm_execution import (
 )
 from nexus.services.llm_ledger import LlmCallOwner, lock_generation_owner_in_current_transaction
 from nexus.services.media_processing_state import is_metadata_enrichment_eligible
-from nexus.services.metadata_dispatch import METADATA_STEP_PATH
 from nexus.services.metadata_enrichment import (
-    MetadataEnrichmentOutput,
+    MetadataInputTooLarge,
+    MetadataInvalidOutput,
+    admitted_contributor_handles,
     build_enrichment_user_content,
     get_content_sample,
     merge_enrichment,
     metadata_enrichment_agent_definition,
     validate_structured_enrichment,
+)
+from nexus.services.metadata_operations import (
+    METADATA_STEP_PATH,
+    MetadataRetryableFailure,
+    decode_metadata_memo,
 )
 from nexus.services.reader_publication import (
     lock_publication_generation,
@@ -88,26 +107,10 @@ from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
 logger = get_logger(__name__)
 
-_MAX_ERROR_DETAIL_LENGTH = 1000
 _LEASE_SECONDS = 300
 _TASK = LlmTaskSpec(label="metadata_generation")
-
 type _TerminalReason = Literal["source_changed", "media_not_found", "not_ready"]
-# One publication outcome, with exactly one `status` discriminant. Its success
-# value matches the rest of the media pipeline, not the queue row's own status.
-type _JobResult = dict[str, str]
-
-
-class _Memo(BaseModel):
-    """The durable replay memo of one metadata turn and its publication."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    kind: Literal["success", "failed", "skipped"]
-    enrichment: MetadataEnrichmentOutput | None = None
-    error_code: str = ""
-    error_detail: str = ""
-    published: _JobResult | None = None
+type _JobResult = dict[str, object] | TerminalJobFailure
 
 
 class _UncertainMetadataTurn(RuntimeError):
@@ -125,6 +128,66 @@ class _PreDispatchTerminal(RuntimeError):
 
 
 def enrich_metadata(
+    media_id: str,
+    request_id: str | None,
+    *,
+    requester_user_id: UUID,
+    context: JobExecutionContext,
+) -> _JobResult | RescheduleRequested:
+    """Classify owned failures without losing uncertainty or retrying a paid call."""
+    from nexus.services.generation_admission import (
+        GenerationConfigurationDefect,
+        GenerationOperationUnavailable,
+    )
+    from nexus.services.generation_catalog import GenerationCatalogRefreshError
+
+    try:
+        return _enrich_metadata(
+            media_id, request_id, requester_user_id=requester_user_id, context=context
+        )
+    except MetadataInputTooLarge:
+        return _queue_only_failure("input_too_large")
+    except (
+        GenerationCatalogRefreshError,
+        GenerationOperationUnavailable,
+        GenerationConfigurationDefect,
+    ) as error:
+        # The exact journal is authoritative about whether external I/O was armed.
+        with get_session_factory()() as db:
+            job = get_job(db, context.job_id)
+            state = step_journal.read_step_states(job).get(METADATA_STEP_PATH) if job else None
+        if state is not None and state.dispatch_phase is Uncertain:
+            raise _UncertainMetadataTurn("metadata execution remains unresolved") from error
+        if isinstance(error, GenerationConfigurationDefect):
+            return _queue_only_failure("configuration_error")
+        code: MetadataFailureCode = "catalog_unavailable"
+        if isinstance(error, GenerationOperationUnavailable):
+            code = "model_unavailable"
+            if isinstance(error.reason, (OperatorActionRequired, TemporarilyUnavailable)):
+                readiness_codes: dict[str, MetadataFailureCode] = {
+                    "catalog_refresh_failed": "catalog_unavailable",
+                    "codex_host_unavailable": "model_unavailable",
+                    "credential_unavailable": "authentication_failed",
+                    "required_tool_unavailable": "configuration_error",
+                }
+                code = readiness_codes[error.reason.code]
+                if isinstance(error.reason, OperatorActionRequired):
+                    return _queue_only_failure(code)
+        raise MetadataRetryableFailure(code) from error
+
+
+def _queue_only_failure(code: MetadataFailureCode) -> TerminalJobFailure:
+    with get_session_factory()() as db:
+        completed_at = db.scalar(text("SELECT clock_timestamp()"))
+    outcome = MetadataFailedOutcome(completed_at=completed_at, reason=code)
+    return TerminalJobFailure(
+        result_payload=outcome.model_dump(mode="json"),
+        error_code=f"E_METADATA_{code.upper()}",
+        error_message=f"metadata research failed: {code}",
+    )
+
+
+def _enrich_metadata(
     media_id: str,
     request_id: str | None,
     *,
@@ -162,14 +225,13 @@ def enrich_metadata(
             stored = state.terminal_result
             if not isinstance(stored, Present):
                 raise AssertionError("Completed metadata step has no terminal result")
-            memo = step_journal.decode_step_result(stored.value, _Memo)
             db.commit()
-            return _publish(factory, context, media_uuid, request_fingerprint, memo)
+            return _publish(factory, context, media_uuid, request_fingerprint)
 
         def unusable(reason: _TerminalReason) -> _JobResult:
             db.commit()
             if request_fingerprint is None:
-                return {"status": "skipped", "reason": reason}
+                return _queue_only_failure(_domain_reason(reason))
             return terminalize(reason, request_fingerprint)
 
         media = db.get(Media, media_uuid, options=(defer(Media.plain_text),))
@@ -243,7 +305,10 @@ def enrich_metadata(
             request,
             session_factory=factory,
             runtime=runtime,
-            encode_terminal=lambda terminal: _encode_terminal(codex_terminal_evidence(terminal)),
+            encode_terminal=lambda terminal: _encode_terminal(
+                codex_terminal_evidence(terminal),
+                admitted_handles=admitted_contributor_handles(intent.input),
+            ),
             encode_failure=_encode_failure,
         )
 
@@ -251,7 +316,7 @@ def enrich_metadata(
         result = run_llm_task(_TASK, execute)
     except _PreDispatchTerminal as exc:
         if request_fingerprint is None:
-            return {"status": "skipped", "reason": exc.reason}
+            return _queue_only_failure(_domain_reason(exc.reason))
         return terminalize(exc.reason, request_fingerprint)
     except GenerationDispatchAborted:
         return {"status": "skipped", "reason": "claim_lost_before_dispatch"}
@@ -271,7 +336,6 @@ def enrich_metadata(
         context,
         media_uuid,
         request_fingerprint,
-        step_journal.decode_step_result(result.terminal_result, _Memo),
     )
 
 
@@ -298,6 +362,17 @@ def _user_content(db: Session, media: Media, *, requester_user_id: UUID) -> str:
         .where(ContentIndexState.owner_kind == "media", ContentIndexState.owner_id == media.id)
         .with_for_update()
     ).one_or_none()
+    rss_metadata_fingerprint = (
+        db.execute(
+            select(PodcastEpisode.rss_metadata_fingerprint).where(
+                PodcastEpisode.media_id == media.id
+            )
+        )
+        .one()
+        .rss_metadata_fingerprint
+        if media.kind == "podcast_episode"
+        else None
+    )
     admission_facts = json.dumps(
         {
             "requester_user_id": str(requester_user_id),
@@ -305,6 +380,7 @@ def _user_content(db: Session, media: Media, *, requester_user_id: UUID) -> str:
             "index_revision": index.revision if index is not None else None,
             "index_status": index.status if index is not None else None,
             "index_updated_at": index.updated_at.isoformat() if index is not None else None,
+            "rss_metadata_fingerprint": rss_metadata_fingerprint,
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -372,20 +448,12 @@ def _terminalize_prepared(
         ):
             reason = "not_ready"
 
-        if reason == "source_changed" and media is not None:
-            code = ApiErrorCode.E_GENERATION_SOURCE_CHANGED.value
-            detail = "metadata request fingerprint changed before dispatch"
-            published: _JobResult = {
-                "status": "failed",
-                "reason": "source_changed",
-                "error_code": code,
-            }
-            memo = _Memo(kind="failed", error_code=code, error_detail=detail, published=published)
-            _record_metadata_failure(media, code, detail)
-            bump_all_collection_families(db, families=ENTRY_VISIBILITY_FAMILIES)
-        else:
-            published = {"status": "skipped", "reason": reason}
-            memo = _Memo(kind="skipped", published=published)
+        outcome = MetadataFailedOutcome(
+            completed_at=db.scalar(text("SELECT clock_timestamp()")), reason=_domain_reason(reason)
+        )
+        memo = MetadataFailedMemo(
+            reason=outcome.reason, published=Present[MetadataOutcome](value=outcome)
+        )
 
         # Prepared is strictly pre-admission — parent rows and Uncertain land
         # atomically — so this known terminal cannot coexist with a model call.
@@ -406,76 +474,96 @@ def _terminalize_prepared(
                 f"metadata job {context.job_id} lost its claim before its terminal"
             )
         db.commit()
-        return published
+        return _settlement(outcome)
 
 
-def _encode_terminal(terminal: GenerationTerminal) -> EncodedGenerationTerminal:
-    memo = _normalize_terminal(terminal)
+def _domain_reason(reason: _TerminalReason) -> MetadataFailureCode:
+    mapping: dict[_TerminalReason, MetadataFailureCode] = {
+        "source_changed": "stale_input",
+        "media_not_found": "access_revoked",
+        "not_ready": "no_longer_eligible",
+    }
+    return mapping[reason]
+
+
+def _encode_terminal(
+    terminal: GenerationTerminal, *, admitted_handles: frozenset[str]
+) -> EncodedGenerationTerminal:
+    # Domain rejection must not rewrite a successful provider terminal.
     return EncodedGenerationTerminal(
-        terminal_result=step_journal.encode_step_result(memo),
-        accepted_failure=(
-            AcceptedGenerationFailure(code="invalid_output", detail=memo.error_detail)
-            if terminal.status == "succeeded" and memo.kind == "failed"
-            else None
+        terminal_result=step_journal.encode_step_result(
+            _normalize_terminal(terminal, admitted_handles=admitted_handles)
         ),
+        accepted_failure=None,
     )
 
 
 def _encode_failure(code: GenerationFailureCode, detail: str) -> str:
-    return step_journal.encode_step_result(_failed_memo(_failure_code(code), detail))
-
-
-def _normalize_terminal(terminal: GenerationTerminal) -> _Memo:
-    if terminal.status == "cancelled":
-        return _failed_memo(
-            ApiErrorCode.E_GENERATION_CANCELLED, "metadata generation was cancelled"
-        )
-    if terminal.status == "failed":
-        if terminal.failure is None:
-            raise AssertionError("failed generation terminal has no typed failure")
-        detail = retained_terminal_error_detail(terminal)
-        if detail is None:
-            raise AssertionError("failed generation terminal has no retained detail")
-        return _failed_memo(_failure_code(normalized_failure(terminal.failure.kind)), detail)
-    validated = validate_structured_enrichment(terminal.structured_output)
-    if validated is None:
-        return _failed_memo(
-            ApiErrorCode.E_GENERATION_INVALID_OUTPUT,
-            "generation returned metadata outside the domain output contract",
-        )
-    return _Memo(kind="success", enrichment=validated)
-
-
-def _failed_memo(error_code: ApiErrorCode, detail: str) -> _Memo:
-    return _Memo(
-        kind="failed", error_code=error_code.value, error_detail=detail[:_MAX_ERROR_DETAIL_LENGTH]
+    return step_journal.encode_step_result(
+        MetadataFailedMemo(reason=_failure_code(code), published=absent())
     )
 
 
-def _failure_code(kind: GenerationFailureCode) -> ApiErrorCode:
+def _normalize_terminal(
+    terminal: GenerationTerminal, *, admitted_handles: frozenset[str]
+) -> MetadataMemo:
+    if terminal.status == "cancelled":
+        return MetadataFailedMemo(reason="cancelled", published=absent())
+    if terminal.status == "failed":
+        if terminal.failure is None:
+            raise AssertionError("failed generation terminal has no typed failure")
+        return MetadataFailedMemo(
+            reason=_failure_code(normalized_failure(terminal.failure.kind)), published=absent()
+        )
+    try:
+        accepted = validate_structured_enrichment(
+            terminal.structured_output, admitted_handles=admitted_handles
+        )
+    except MetadataInvalidOutput:
+        return MetadataFailedMemo(reason="invalid_output", published=absent())
+    return MetadataAcceptedMemo(enrichment=accepted, published=absent())
+
+
+def _failure_code(kind: GenerationFailureCode) -> MetadataFailureCode:
     match kind:
         case "cancelled":
-            return ApiErrorCode.E_GENERATION_CANCELLED
+            return "cancelled"
         case "quota":
-            return ApiErrorCode.E_GENERATION_QUOTA
+            return "quota_unavailable"
         case "timeout":
-            return ApiErrorCode.E_GENERATION_TIMEOUT
+            return "research_timeout"
         case "invalid_output":
-            return ApiErrorCode.E_GENERATION_INVALID_OUTPUT
+            return "invalid_output"
         case "output_limit" | "turn_limit":
-            return ApiErrorCode.E_GENERATION_OUTPUT_LIMIT
+            return "output_limit"
         case "context_too_large":
-            return ApiErrorCode.E_GENERATION_CONTEXT_TOO_LARGE
+            return "input_too_large"
         case "auth":
-            return ApiErrorCode.E_GENERATION_AUTH
-        case "runtime_unavailable":
-            return ApiErrorCode.E_GENERATION_RUNTIME_UNAVAILABLE
+            return "authentication_failed"
+        case "runtime_unavailable" | "capacity_unavailable":
+            return "model_unavailable"
         case "policy_violation":
-            return ApiErrorCode.E_GENERATION_POLICY_VIOLATION
-        case "capacity_unavailable":
-            return ApiErrorCode.E_GENERATION_CAPACITY_UNAVAILABLE
+            return "policy_violation"
         case _ as unreachable:
             assert_never(unreachable)
+
+
+def _settlement(outcome: MetadataOutcome) -> _JobResult:
+    result = outcome.model_dump(mode="json")
+    if outcome.status == "completed":
+        return result
+    code = (
+        "E_METADATA_NO_FINDINGS"
+        if outcome.status == "no_findings"
+        else f"E_METADATA_{outcome.reason.upper()}"
+    )
+    return TerminalJobFailure(
+        result_payload=result,
+        error_code=code,
+        error_message="no metadata found"
+        if outcome.status == "no_findings"
+        else f"metadata research failed: {outcome.reason}",
+    )
 
 
 def _publish(
@@ -483,7 +571,6 @@ def _publish(
     context: JobExecutionContext,
     media_id: UUID,
     request_fingerprint: str,
-    memo: _Memo,
 ) -> _JobResult:
     """The claim-fenced publication transaction, with its serialization retry."""
     db = factory()
@@ -491,7 +578,7 @@ def _publish(
         return retry_serializable(
             db,
             "metadata_enrichment.publish",
-            lambda: _publish_in_tx(db, context, media_id, request_fingerprint, memo),
+            lambda: _publish_in_tx(db, context, media_id, request_fingerprint),
         )
     finally:
         db.close()
@@ -502,7 +589,6 @@ def _publish_in_tx(
     context: JobExecutionContext,
     media_id: UUID,
     request_fingerprint: str,
-    memo: _Memo,
 ) -> _JobResult:
     # Media row before queue rows: dispatch and the retry lifecycle lock in that
     # same order, and the opposite order deadlocks.
@@ -515,73 +601,99 @@ def _publish_in_tx(
     job = get_job(db, context.job_id)
     if job is None:
         raise AssertionError("metadata job disappeared after renewing its claim")
-    if memo.published is not None:
-        db.commit()
-        return memo.published
-
-    requester_user_id = UUID(str(job.payload["requester_user_id"]))
-    if media is None or not can_read_media(db, requester_user_id, media_id):
-        return _finish(db, context, memo, {"status": "skipped", "reason": "media_not_found"})
-    if not is_metadata_enrichment_eligible(
-        kind=media.kind, processing_status=media.processing_status
+    state = step_journal.read_step_states(job).get(METADATA_STEP_PATH)
+    if (
+        state is None
+        or state.dispatch_phase is not Completed
+        or not isinstance(state.terminal_result, Present)
     ):
-        return _finish(db, context, memo, {"status": "skipped", "reason": "not_ready"})
+        raise AssertionError("metadata publication requires the completed memo")
+    memo = decode_metadata_memo(state.terminal_result.value)
+    if isinstance(memo.published, Present):
+        db.commit()
+        return _settlement(memo.published.value)
 
-    if memo.kind == "failed":
-        # Idempotent: an identical recorded failure is not rewritten.
-        if not (
-            media.failure_stage == FailureStage.metadata
-            and media.last_error_code == memo.error_code
-            and media.last_error_message == memo.error_detail
-        ):
-            _record_metadata_failure(media, memo.error_code, memo.error_detail)
-            bump_all_collection_families(db, families=ENTRY_VISIBILITY_FAMILIES)
+    def failed(code: MetadataFailureCode) -> _JobResult:
         return _finish(
             db,
             context,
             memo,
-            {"status": "failed", "reason": "agent_terminal", "error_code": memo.error_code},
+            MetadataFailedOutcome(
+                completed_at=db.scalar(text("SELECT clock_timestamp()")), reason=code
+            ),
         )
-    if memo.enrichment is None:
-        raise AssertionError("accepted metadata memo has no enrichment")
+
+    requester_user_id = UUID(str(job.payload["requester_user_id"]))
+    if media is None or not can_read_media(db, requester_user_id, media_id):
+        return failed("access_revoked")
+    if not is_metadata_enrichment_eligible(
+        kind=media.kind, processing_status=media.processing_status
+    ):
+        return failed("no_longer_eligible")
+    if memo.status == "failed":
+        return failed(memo.reason)
 
     lock_publication_generation(db, media_id=media_id)
     frozen_spec, frozen_intent = _frozen_admission(job)
-    current = _intent(_user_content(db, media, requester_user_id=requester_user_id))
+    try:
+        current = _intent(_user_content(db, media, requester_user_id=requester_user_id))
+    except MetadataInputTooLarge:
+        # The admitted input fit; enlarged current facts invalidate that input.
+        return failed("stale_input")
     if frozen_spec.fingerprint != request_fingerprint or frozen_intent != current:
-        code = ApiErrorCode.E_GENERATION_SOURCE_CHANGED.value
-        _record_metadata_failure(media, code, "media facts changed before metadata publication")
-        bump_all_collection_families(db, families=ENTRY_VISIBILITY_FAMILIES)
+        return failed("stale_input")
+    if not memo.enrichment.has_findings:
         return _finish(
-            db, context, memo, {"status": "failed", "reason": "source_changed", "error_code": code}
+            db,
+            context,
+            memo,
+            MetadataNoFindingsOutcome(completed_at=db.scalar(text("SELECT clock_timestamp()"))),
         )
 
-    apply_observed_role_slices_in_current_transaction(
-        db,
-        target=MediaTarget(media.id),
-        observation=merge_enrichment(db, media, memo.enrichment),
-        source="metadata_enrichment",
+    try:
+        prepared_credits = prepare_observed_role_slices_in_current_transaction(
+            db,
+            target=MediaTarget(media.id),
+            observation=memo.enrichment.contributor_observation(),
+            source="metadata_enrichment",
+        )
+    except ContributorObservationRejected:
+        return failed("invalid_output")
+    # All domain rejection precedes every proposed write. Unexpected writer
+    # failures roll back this whole serializable attempt and replay its memo.
+    changed = merge_enrichment(db, media, memo.enrichment)
+    credit_result = apply_prepared_role_slices_in_current_transaction(db, prepared=prepared_credits)
+    if credit_result.changed:
+        changed.append("contributors")
+    completed_at = db.scalar(
+        text(
+            "SELECT greatest(clock_timestamp(), CAST(:previous AS timestamptz) + interval '1 microsecond')"
+        ),
+        {"previous": media.metadata_enriched_at},
     )
-    if media.failure_stage == FailureStage.metadata:
-        media.failure_stage = None
-        media.last_error_code = None
-        media.last_error_message = None
-    bump_all_collection_families(db, families=ENTRY_VISIBILITY_FAMILIES)
-    published = _finish(db, context, memo, {"status": "success"})
-    logger.info("enrich_metadata_completed", media_id=str(media_id))
-    return published
+    media.metadata_enriched_at = completed_at
+    media.updated_at = completed_at
+    if changed:
+        bump_all_collection_families(db, families=ENTRY_VISIBILITY_FAMILIES)
+    outcome = MetadataCompletedOutcome(
+        completed_at=completed_at,
+        changed_fields=changed,
+        unresolved_fields=list(memo.enrichment.unresolved_fields),
+        retained_manual_authors=credit_result.retained_manual_authors,
+    )
+    return _finish(db, context, memo, outcome)
 
 
 def _finish(
-    db: Session, context: JobExecutionContext, memo: _Memo, published: _JobResult
+    db: Session, context: JobExecutionContext, memo: MetadataMemo, published: MetadataOutcome
 ) -> _JobResult:
-    """Checkpoint the published memo under the same claim, then commit."""
+    """Checkpoint publication atomically with all accepted metadata facts."""
     job = get_job(db, context.job_id)
     if job is None:
-        raise AssertionError(f"metadata job {context.job_id} disappeared at publication")
+        raise AssertionError("metadata job disappeared at publication")
     current = step_journal.read_step_states(job).get(METADATA_STEP_PATH)
     if current is None or current.dispatch_phase is not Completed:
-        raise AssertionError("metadata publication requires the Completed checkpoint")
+        raise AssertionError("metadata publication requires the completed checkpoint")
     if not step_journal.checkpoint_step_state(
         db,
         ctx=context,
@@ -592,24 +704,15 @@ def _finish(
             dispatch_phase=Completed,
             request_fingerprint=current.request_fingerprint,
             terminal_result=present(
-                step_journal.encode_step_result(memo.model_copy(update={"published": published}))
+                step_journal.encode_step_result(
+                    memo.model_copy(update={"published": Present[MetadataOutcome](value=published)})
+                )
             ),
         ),
     ):
-        raise _UncertainMetadataTurn(
-            f"metadata job {context.job_id} lost its claim before publication"
-        )
+        raise _UncertainMetadataTurn("metadata job lost its claim before publication")
     db.commit()
-    return published
-
-
-def _record_metadata_failure(media: Media, error_code: str, error_message: str) -> None:
-    if media.processing_status == ProcessingStatus.failed:
-        return
-    media.failure_stage = FailureStage.metadata
-    media.last_error_code = error_code
-    media.last_error_message = error_message[:_MAX_ERROR_DETAIL_LENGTH]
-    media.updated_at = datetime.now(UTC)
+    return _settlement(published)
 
 
 def _frozen_admission(job: JobRow) -> tuple[GenerationSpec, GenerationIntent]:

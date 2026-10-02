@@ -63,6 +63,10 @@ import {
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { assertNever } from "@/lib/assertNever";
+import type { ApiJson, Schema } from "@/lib/api/wire";
+import { createMutationIntent, type MutationIntent } from "@/lib/contributors/mutationIntent";
+import { submitMetadataEnrichment, subscribeMetadataOperationChanges } from "@/lib/media/mediaMetadataOperations";
+import type { ActionSelectDetail } from "@/lib/ui/actionDescriptor";
 
 async function resolveActionSnapshots(
   refs: readonly CanonicalResourceRef[],
@@ -70,7 +74,7 @@ async function resolveActionSnapshots(
   const requests: Promise<readonly ResourceActionSnapshot[]>[] = [];
   for (let offset = 0; offset < refs.length; offset += 100) {
     requests.push(
-      apiFetch<{ data: unknown }>(
+      apiFetch<ApiJson<"/resource-items/action-snapshots/resolve", "post">>(
         "/api/resource-items/action-snapshots/resolve",
         {
           method: "POST",
@@ -160,6 +164,12 @@ export function ResourceActionRuntimeProvider({
     }),
   );
   const [busy] = useState(createBusyStore);
+  const [metadataIntents] = useState(() => new Map<string, {
+    readonly intent: MutationIntent;
+    readonly expectedJobId: Schema<"MetadataRetryAllowed">["expected_job_id"];
+    submitting: boolean;
+  }>());
+  const [pendingMetadataRequests, setPendingMetadataRequests] = useState<ReadonlySet<CanonicalResourceRef>>(new Set());
   const workspace = useWorkspaceStore();
   const workspaceRef = useRef(workspace);
   workspaceRef.current = workspace;
@@ -178,6 +188,72 @@ export function ResourceActionRuntimeProvider({
   const offlineCapability = useOfflineMediaCapability();
   const offlineReadingCapability = useOfflineReadingCapability();
   const feedback = useFeedback();
+  const submitMetadata = useCallback(async function submit(
+    mediaId: string,
+    expectedJobId: Schema<"MetadataRetryAllowed">["expected_job_id"] | null,
+    detail: ActionSelectDetail,
+  ): Promise<void> {
+    let pending = metadataIntents.get(mediaId);
+    if (!pending) {
+      if (expectedJobId === null) {
+        // justify-defect: fresh research needs the exact offered expectation.
+        throw new TypeError("Metadata admission lost its inspected expectation");
+      }
+      pending = { intent: createMutationIntent(), expectedJobId, submitting: false };
+      metadataIntents.set(mediaId, pending);
+      setPendingMetadataRequests(new Set([...metadataIntents.keys()].map((id) => canonicalResourceRef({ scheme: "media", id }))));
+    }
+    if (pending.submitting) return;
+    pending.submitting = true;
+    const paneId = detail.triggerEl?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId
+      ?? workspaceRef.current.state.activePrimaryPaneId;
+    const showMetadata = () => openMediaMetadata(mediaId, detail.triggerEl, () =>
+      document.querySelector<HTMLElement>(`[data-pane-chrome-for="${paneId}"]`));
+    try {
+      await submitMetadataEnrichment(mediaId, {
+        client_mutation_id: pending.intent.clientMutationId(JSON.stringify(pending.expectedJobId)),
+        expected_job_id: pending.expectedJobId,
+      });
+      pending.intent.discard();
+      metadataIntents.delete(mediaId);
+      setPendingMetadataRequests(new Set([...metadataIntents.keys()].map((id) => canonicalResourceRef({ scheme: "media", id }))));
+      feedback.publish({
+        kind: "Hud",
+        key: `metadata-request:${mediaId}`,
+        content: { tone: "Neutral", title: "metadata research request confirmed" },
+        actions: [{ label: "metadata…", onClick: showMetadata }],
+      });
+    } catch (error) {
+      if (isApiError(error) && error.status >= 400 && error.status < 500) {
+        pending.intent.discard();
+        metadataIntents.delete(mediaId);
+        feedback.resolve(`metadata-request:${mediaId}`);
+        setPendingMetadataRequests(new Set([...metadataIntents.keys()].map((id) => canonicalResourceRef({ scheme: "media", id }))));
+        throw error;
+      }
+      // No receipt was received. New snapshots must not rotate this frozen body.
+      feedback.publish({
+        kind: "Hud",
+        key: `metadata-request:${mediaId}`,
+        content: { tone: "Danger", title: "metadata request unconfirmed", message: "confirm this request to safely check whether it was queued" },
+        actions: [
+          { label: "confirm request", onClick: () => { void submit(mediaId, null, detail).catch((error) => {
+            if (handleUnauthenticatedApiError(error)) return;
+            if (isApiError(error) && !isSameSystemApiDefect(error)) {
+              feedback.publish({ kind: "Hud", content: { tone: "Danger", title: "metadata request was not accepted", message: error.message } });
+              void cache.reconcile({ kind: "Subjects", refs: [canonicalResourceRef({ scheme: "media", id: mediaId })] }).catch((error) => setDefect({ error }));
+            } else setDefect({ error });
+          }); } },
+          { label: "metadata…", onClick: showMetadata },
+        ],
+      });
+    } finally {
+      pending.submitting = false;
+    }
+  }, [metadataIntents, feedback, openMediaMetadata, cache]);
+  useEffect(() => subscribeMetadataOperationChanges((mediaId) => {
+    void cache.reconcile({ kind: "Subjects", refs: [canonicalResourceRef({ scheme: "media", id: mediaId })] }).catch((error) => setDefect({ error }));
+  }), [cache]);
   const offerCompletionUndo = useCompletionUndo(cache.reconcile);
   const { getCanonicalSnapshot, onCanonicalInstall } = lectern;
   useEffect(() => {
@@ -231,6 +307,7 @@ export function ResourceActionRuntimeProvider({
     [settleDeletedResource],
   );
   const ports: ResourceActionPorts = {
+    submitMetadata,
     workspace,
     activePaneId: workspace.state.activePrimaryPaneId,
     openShare,
@@ -282,6 +359,9 @@ export function ResourceActionRuntimeProvider({
         } catch (error) {
           if (handleUnauthenticatedApiError(error)) return;
           if (isApiError(error) && !isSameSystemApiDefect(error)) {
+            if (command.id === "ResourceOperation.Media.RetryMetadata") {
+              void cache.reconcile(command.reconcile).catch((error) => setDefect({ error }));
+            }
             const importRecovery =
               command.id === "ResourceOperation.Media.RetryProcessing" ||
               command.id === "ResourceOperation.Media.RepairSource" ||
@@ -439,6 +519,7 @@ export function ResourceActionRuntimeProvider({
             }
           : { kind: lectern.resource.status === "error" ? "Error" : "Loading" },
       playbackByRef,
+      pendingMetadataRequests,
     }),
     [
       androidShell,
@@ -450,6 +531,7 @@ export function ResourceActionRuntimeProvider({
       offlineReadingCapability.kind,
       readingByRef,
       playbackByRef,
+      pendingMetadataRequests,
     ],
   );
   if (defect) throw defect.error;

@@ -216,7 +216,7 @@ _IDEA_HOST_PLAN = ExactHostToolPlan(
 _BACKGROUND_ROWS: tuple[
     tuple[BackgroundOperationKey, str, str, int, int, int, int, HostToolPlan], ...
 ] = (
-    ("metadata_enrichment", "luna", "low", 300, 32, 64_000, 8_000, _NO_HOST),
+    ("metadata_enrichment", "luna", "xhigh", 300, 32, 64_000, 8_000, _NO_HOST),
     ("media_summary", "luna", "low", 120, 256, 128_000, 16_000, _NO_HOST),
     ("synapse", "luna", "low", 120, 256, 128_000, 16_000, _NO_HOST),
     ("oracle", "sol", "medium", 180, 256, 128_000, 16_000, _NO_HOST),

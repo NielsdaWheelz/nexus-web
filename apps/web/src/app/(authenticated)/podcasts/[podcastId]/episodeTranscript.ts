@@ -163,7 +163,6 @@ export function decodePodcastEpisodeMedia(raw: unknown): PodcastEpisodeMedia {
         "queued",
         "running",
         "failed_provider",
-        "failed_quota",
         "unavailable",
         "ready",
         "partial",

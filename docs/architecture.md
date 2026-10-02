@@ -1106,10 +1106,11 @@ capability-owned:
 **Entity & state machine:** `media.processing_status` runs
 `pending → extracting → ready_for_reading` or `failed`. Search/embedding
 readiness lives on the separate `content_index_states` machine.
-`failure_stage ∈ {upload, extract, transcribe, embed, metadata, other}`. Source
+`failure_stage ∈ {upload, extract, transcribe, embed, other}`. Source
 retryability is derived from the latest `media_source_attempts` row and
-capability projection; `source` is not a `failure_stage`. `failure_stage='metadata'`
-and `'embed'` are soft warnings that coexist with readable media.
+capability projection; `source` is not a `failure_stage`. `failure_stage='embed'`
+is a soft warning that coexists with readable media. metadata research has its
+own retained job/outcome projection and never changes the source-error triple.
 
 **Capture entry points** (`api/routes/media_ingest.py`): `POST /media/from_url`,
 `POST /media/uploads` plus session-scoped confirm/retry/transport-failure/delete,

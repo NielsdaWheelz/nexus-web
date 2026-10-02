@@ -29,6 +29,7 @@ import {
 import { ApiError, isApiError } from "@/lib/api/client";
 import type { AsyncResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { useMetadataCollectionRevision } from "@/lib/media/mediaMetadataOperations";
 import { publishConsumptionProjectionChange } from "@/lib/consumption/projectionRevision";
 import { isAbortError } from "@/lib/errors";
 import {
@@ -838,6 +839,13 @@ export function LecternProvider({ children }: { children: ReactNode }) {
     engineRef.current = createLecternEngine({ setResource, setMutation });
   }
   const engine = engineRef.current;
+  const metadataRevision = useMetadataCollectionRevision();
+  const appliedMetadataRevision = useRef(metadataRevision);
+  useEffect(() => {
+    if (appliedMetadataRevision.current === metadataRevision) return;
+    appliedMetadataRevision.current = metadataRevision;
+    engine.revalidate();
+  }, [engine, metadataRevision]);
 
   useEffect(() => {
     engine.start();

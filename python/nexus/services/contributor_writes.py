@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import assert_never
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, delete, select, text, update
+from sqlalchemy import ColumnElement, select, text, update
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
@@ -22,6 +22,7 @@ from nexus.db.models import (
     ContributorExternalId,
     Media,
 )
+from nexus.schemas.presence import Present
 from nexus.services.contributor_taxonomy import (
     CONTRIBUTOR_ROLES_ORDERED,
     ContributorObservation,
@@ -83,25 +84,73 @@ class ResolvedCredit:
     display_name: str
 
 
-def resolve_observation_credits(
+class ContributorObservationRejected(ValueError):
+    """An observation cannot identify a valid contributor roster; nothing was written."""
+
+
+@dataclass(frozen=True, slots=True)
+class NewContributor:
+    """One read-only identity selection awaiting allocation in the owning transaction."""
+
+    position: int
+    display_name: str
+    distinct_seed: KeyDistinctSeed | None = None
+
+
+PlannedContributor = ResolvedCredit | NewContributor
+
+
+@dataclass(frozen=True, slots=True)
+class ObservationIdentityPlan:
+    credits: tuple[ContributorObservation, ...]
+    identities: tuple[PlannedContributor, ...]
+    new_keys: tuple[tuple[PlannedContributor, str, str], ...]
+
+
+def planned_contributor_identity(credit: PlannedContributor) -> UUID | NewContributor:
+    return credit.contributor_id if isinstance(credit, ResolvedCredit) else credit
+
+
+def plan_observation_credits(
     db: Session, credits: Sequence[ContributorObservation]
-) -> list[ResolvedCredit]:
-    """Resolve one observation batch to identities, positionally aligned with ``credits``.
+) -> ObservationIdentityPlan:
+    """Select identities for the whole observation without allocating rows.
 
     An existing exact key always beats a name candidate; an unseen key contradicting a
     same-authority key on the name winner is positive evidence of two people and forces
     a distinct contributor; otherwise one contributor is created per equivalence group.
     """
     if not credits:
-        return []
+        return ObservationIdentityPlan((), (), ())
+
+    handles = {
+        obs.contributor_handle.value
+        for obs in credits
+        if isinstance(obs.contributor_handle, Present)
+    }
+    bound = {
+        contributor.handle: ResolvedCredit(
+            contributor.id, contributor.handle, contributor.display_name
+        )
+        for contributor in db.scalars(select(Contributor).where(Contributor.handle.in_(handles)))
+    }
+    if set(bound) != handles:
+        raise ContributorObservationRejected("A bound contributor no longer exists")
+    if any(
+        isinstance(obs.contributor_handle, Present) and obs.identity_key is not None
+        for obs in credits
+    ):
+        raise ContributorObservationRejected(
+            "A contributor handle cannot be combined with an identity key"
+        )
 
     match_keys = [contributor_match_key(obs.credited_name) for obs in credits]
     pairs = [(k.authority, k.key) if (k := obs.identity_key) else None for obs in credits]
     claimed = [pair for pair in pairs if pair is not None]
     # contributor -> authority -> owned keys, for reuse within the batch and for
     # same-authority contradiction detection.
-    contributor_keys: dict[UUID, dict[str, set[str]]] = {}
-    key_owner: dict[tuple[str, str], ResolvedCredit] = {}
+    contributor_keys: dict[UUID | NewContributor, dict[str, set[str]]] = {}
+    key_owner: dict[tuple[str, str], PlannedContributor] = {}
     for authority, external_key, cid, handle, name in db.execute(
         text(
             """
@@ -146,50 +195,90 @@ def resolve_observation_credits(
 
     # Name winners are cached so keyless same-name observations reuse one identity;
     # forced-distinct creations are deliberately not cached.
-    name_winner: dict[str, ResolvedCredit] = {}
-    ensured: set[tuple[UUID, str]] = set()
-    resolved: list[ResolvedCredit] = []
+    name_winner: dict[str, PlannedContributor] = {}
+    resolved: list[PlannedContributor] = []
+    new_keys: list[tuple[PlannedContributor, str, str]] = []
     for match_key, pair, obs in zip(match_keys, pairs, credits, strict=True):
         key = obs.identity_key
         winner = name_winner.get(match_key) or alias_winner.get(match_key)
-        winner_keys = contributor_keys.get(winner.contributor_id, {}) if winner else {}
-        if pair is not None and pair in key_owner:
+        winner_keys = (
+            contributor_keys.get(planned_contributor_identity(winner), {}) if winner else {}
+        )
+        if isinstance(obs.contributor_handle, Present):
+            chosen = bound[obs.contributor_handle.value]
+        elif pair is not None and pair in key_owner:
             chosen = key_owner[pair]
         elif key is not None and winner_keys.get(key.authority, set()) - {key.key}:
-            chosen = create_contributor(
-                db,
+            chosen = NewContributor(
+                position=len(resolved),
                 display_name=obs.credited_name,
                 distinct_seed=KeyDistinctSeed(key.authority, key.key),
             )
         else:
-            chosen = winner or create_contributor(db, display_name=obs.credited_name)
+            chosen = winner or NewContributor(len(resolved), obs.credited_name)
             name_winner[match_key] = chosen
         if key is not None and pair is not None and pair not in key_owner:
             # The key is unseen: it belongs to whoever just won.
-            db.add(
-                ContributorExternalId(
-                    contributor_id=chosen.contributor_id,
-                    authority=key.authority,
-                    external_key=key.key,
-                )
-            )
-            db.flush()
+            new_keys.append((chosen, key.authority, key.key))
             key_owner[pair] = chosen
-            contributor_keys.setdefault(chosen.contributor_id, {}).setdefault(
+            contributor_keys.setdefault(planned_contributor_identity(chosen), {}).setdefault(
                 key.authority, set()
             ).add(key.key)
+        resolved.append(chosen)
+    return ObservationIdentityPlan(tuple(credits), tuple(resolved), tuple(new_keys))
 
+
+def materialize_observation_credits(
+    db: Session, *, plan: ObservationIdentityPlan, record_aliases: bool = True
+) -> list[ResolvedCredit]:
+    """Allocate a fully selected roster; uniqueness races retry the whole transaction."""
+    allocated: dict[NewContributor, ResolvedCredit] = {}
+    resolved: list[ResolvedCredit] = []
+    for selected in plan.identities:
+        if isinstance(selected, ResolvedCredit):
+            resolved.append(selected)
+            continue
+        if selected not in allocated:
+            allocated[selected] = create_contributor(
+                db, display_name=selected.display_name, distinct_seed=selected.distinct_seed
+            )
+        resolved.append(allocated[selected])
+    for selected, authority, key in plan.new_keys:
+        chosen = selected if isinstance(selected, ResolvedCredit) else allocated[selected]
+        db.add(
+            ContributorExternalId(
+                contributor_id=chosen.contributor_id, authority=authority, external_key=key
+            )
+        )
+    if plan.new_keys:
+        db.flush()
+
+    ensured: set[tuple[UUID, str]] = set()
+    for chosen, obs in zip(resolved, plan.credits, strict=True):
+        match_key = contributor_match_key(obs.credited_name)
         cid = chosen.contributor_id
         display_key = contributor_match_key(chosen.display_name)
-        if (cid, display_key) not in ensured:
+        if (
+            record_aliases
+            and not isinstance(obs.contributor_handle, Present)
+            and (cid, display_key) not in ensured
+        ):
             ensure_alias(db, contributor_id=cid, alias=chosen.display_name, resolves_identity=True)
             ensured.add((cid, display_key))
-        if (cid, match_key) not in ensured:
+        if record_aliases and (cid, match_key) not in ensured:
             # Provider-observed spellings are searchable but do not resolve identity.
             ensure_alias(db, contributor_id=cid, alias=obs.credited_name, resolves_identity=False)
             ensured.add((cid, match_key))
-        resolved.append(chosen)
     return resolved
+
+
+def resolve_observation_credits(
+    db: Session, credits: Sequence[ContributorObservation], *, record_aliases: bool = True
+) -> list[ResolvedCredit]:
+    """Select and allocate one exact identity batch in the caller's transaction."""
+    return materialize_observation_credits(
+        db, plan=plan_observation_credits(db, credits), record_aliases=record_aliases
+    )
 
 
 def create_contributor(
@@ -241,14 +330,13 @@ def replace_role_slices(
     managed_roles: frozenset[str],
     resolved: Sequence[tuple[ResolvedCredit, ContributorObservation]],
     source: str,
-) -> None:
+) -> bool:
     """Replace exactly the declared managed-role slices for one target.
 
     Undeclared roles keep their rows and relative position; a replaced role is anchored
     at its prior first position; a new role is appended in vocabulary order; the list is
-    renumbered densely 0..n-1. The slice is deleted and reinserted wholesale (ids and
-    ``created_at`` churn), the DELETE before the INSERTs so a shifted row never collides
-    with its own prior occupant on the ordinal unique index.
+    renumbered densely 0..n-1. Identical roles and unaffected rows retain identity,
+    source and timestamps; a temporary ordinal range avoids uniqueness collisions.
     """
     new_by_role: dict[str, list[tuple[ResolvedCredit, ContributorObservation]]] = {}
     seen: set[tuple[str, UUID]] = set()
@@ -265,6 +353,21 @@ def replace_role_slices(
     ):
         current_by_role.setdefault(row.role, []).append(row)
 
+    changed_roles = {
+        role
+        for role in managed_roles
+        if [
+            (row.contributor_id, row.credited_name, row.raw_role)
+            for row in current_by_role.get(role, [])
+        ]
+        != [
+            (credit.contributor_id, observation.credited_name, observation.raw_role)
+            for credit, observation in new_by_role.get(role, [])
+        ]
+    }
+    if not changed_roles:
+        return False
+
     # An emptied managed role disappears; a genuinely new one is appended.
     kept = [role for role in current_by_role if role not in managed_roles or role in new_by_role]
     fresh = sorted(set(new_by_role) - set(current_by_role), key=CONTRIBUTOR_ROLES_ORDERED.index)
@@ -272,32 +375,35 @@ def replace_role_slices(
     columns = _target_columns(target)
     planned: list[ContributorCredit] = []
     for role in kept + fresh:
-        if role in managed_roles:
-            facts = [
-                (credit.contributor_id, observation.credited_name, observation.raw_role, source)
-                for credit, observation in new_by_role[role]
-            ]
-        else:
-            facts = [
-                (row.contributor_id, row.credited_name, row.raw_role, row.source)
-                for row in current_by_role[role]
-            ]
-        for contributor_id, credited_name, raw_role, row_source in facts:
+        if role not in changed_roles:
+            planned.extend(current_by_role[role])
+            continue
+        for credit, observation in new_by_role[role]:
             planned.append(
                 ContributorCredit(
-                    contributor_id=contributor_id,
-                    credited_name=credited_name,
+                    contributor_id=credit.contributor_id,
+                    credited_name=observation.credited_name,
                     role=role,
-                    raw_role=raw_role,
-                    source=row_source,
-                    ordinal=len(planned),
+                    raw_role=observation.raw_role,
+                    source=source,
+                    ordinal=0,
                     **columns,
                 )
             )
 
-    db.execute(delete(ContributorCredit).where(_target_filter(target)))
+    current = [row for rows in current_by_role.values() for row in rows]
+    for row in current:
+        row.ordinal = -row.ordinal - 1
+    db.flush()
+    for row in current:
+        if row.role in changed_roles:
+            db.delete(row)
+    db.flush()
+    for ordinal, row in enumerate(planned):
+        row.ordinal = ordinal
     db.add_all(planned)
     db.flush()
+    return True
 
 
 def set_media_author_mode(db: Session, *, media_id: UUID, manual: bool) -> None:
