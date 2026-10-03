@@ -134,6 +134,15 @@ credentials and version. root's final installed combined graph and domain
 integration remain NOT_RUN. parent terminal or local stop never unlocks metadata
 uncertainty.
 
+the disposable `.tmp/metadata_native_recovery.py` is written and independently
+reviewed for six actual-job controlled cases: unchanged/source/credits/access/
+current-definition and submitted transport loss. source sha256
+`54699491be4e761883ecc60913aaee3082290bbc6721bf4e3b82a6cec47a80fa`.
+initial execution exits 1 at the legacy `NoModelTools` capability assertion before
+database/settings/api/socket work; `.tmp/metadata-native-recovery-red.log`.
+positive recovery remains NOT_RUN. parent-only/local-stop/authoritative
+non-submission variants remain separate shared-owner proof obligations.
+
 genuine book/collection/essay research remains NOT_RUN. finite primary-source
 fixtures identify *mere christianity* (1952), *of other worlds* (1966) and the
 standalone *weight of glory* essay (1941), starting with deliberately wrong
@@ -143,9 +152,13 @@ come from the [author site](https://www.cslewis.com/mere-christianity-making-rig
 [wade bibliography](https://www.wheaton.edu/media/wade-center/files/authors/bibliographies/CSL-Bibliography20240219.pdf)
 and [journal publisher](https://journals.sagepub.com/doi/10.1177/0040571X4104325702).
 
-the disposable `.tmp/metadata_live_research.py` driver is prepared and reviewed,
-unexecuted. it uses identification excerpts and the actual api/worker; source
-ingestion is separately verified. actual wire selection/callbacks and supported
+the disposable `.tmp/metadata_live_research.py` driver is prepared and independently
+reviewed, unexecuted; sha256
+`19d722ba4729c14cf138a7472adcbe67bba8d751050186cb7f5248104273f3be`.
+it uses identification excerpts and the actual api/worker; source ingestion is
+separately verified. the book includes a synthetic untrusted instruction,
+checking correct publication and original external arguments without a fourth
+model run. actual wire selection/callbacks and supported
 date precision still require trace inspection, not inference from frozen fields.
 tool use remains model-directed: require useful web search/read across the cohort,
 with exact four-tool capability qualified in the shared owner's separate receipt.
