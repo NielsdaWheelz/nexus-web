@@ -184,8 +184,6 @@ def _span_locator(row: RowMapping, *, owner_id: UUID, media_kind: str) -> dict[s
         selector=row["selector"],
         resolver_kind=row["resolver_kind"],
     )
-    if resolution["resolver"]["status"] != "resolved":
-        return None
     return locator_from_resolution(resolution, media_id=owner_id, media_kind=media_kind)
 
 
