@@ -345,4 +345,3 @@ unexpected timeouts. See
 - author non-media work dates have no producer: [ticket](tickets/author-nonmedia-work-dates-have-no-producer.md).
 
 - local stopped-container inventory fails on missing docker snapshot; see [ticket](tickets/local-docker-stopped-container-snapshot-missing.md).
-- [open] workspace / bootstrap · 2026-10-02 architecture audit · a failed restore can autosave a default over the unknown stored workspace without a user edit: [ticket](tickets/workspace-restore-failure-autosaves-default-over-stored-session.md).

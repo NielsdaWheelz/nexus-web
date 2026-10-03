@@ -2021,12 +2021,14 @@ they open over Resume and never become panes.
   **required** read on the normal 30 s server-request deadline, since it seeds
   `ReaderProvider` and workspace width restoration, so a failed or malformed read
   rejects the whole bootstrap rather than fabricating a default — alongside the
-  best-effort saved session and, only for Navigate, the explicit pane's
-  speculative resource seed, then (2) the remaining restored visible panes —
-  returning `{ readerProfile, initialState, resources }` (a hydration cache keyed
-  exactly as each pane's `useResource` reads it). Resume never seeds root. Session
-  and pane seeds stay best-effort under a deadline; a timed-out seed degrades to
-  the normal client fetch.
+  required saved session on that same normal deadline and, only for Navigate,
+  the explicit pane's speculative resource seed, then (2) the remaining restored visible panes —
+  returning `{ account, readerProfile, initialState, persistInitialState, resources }`.
+  `resources` is a hydration cache keyed exactly as each pane's `useResource`
+  reads it. Resume never seeds root. Session
+  restoration failure cannot fabricate a fallback or mount its save hook. only
+  pane seeds stay best-effort under the 500 ms deadline; a timed-out seed degrades
+  to the normal client fetch.
   A rejected bootstrap surfaces as the error boundary's accessible Retry UI, which
   re-issues the Server Component request (`router.refresh()`) before resetting the
   boundary.
