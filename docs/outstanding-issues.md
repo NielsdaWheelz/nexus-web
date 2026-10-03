@@ -345,4 +345,3 @@ unexpected timeouts. See
 - [open] walknote / transcription · 2026-10-02 cleanup audit · the async upload route makes blocking deepgram http calls, delaying unrelated requests and streams: [ticket](tickets/walknote-transcription-blocks-api-event-loop.md).
 - [open] atlas / query · 2026-10-02 representation repair · the star query still selects/groups an unused position timestamp: [ticket](tickets/atlas-star-query-reads-unused-position-timestamp.md).
 - author non-media work dates have no producer: [ticket](tickets/author-nonmedia-work-dates-have-no-producer.md).
-- [open] media / wire · 2026-10-02 typed detail audit · the detail/list episode state is always null and has no media-detail consumer: [ticket](tickets/media-detail-retains-always-null-episode-state.md).
