@@ -24,6 +24,8 @@ wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the 
 
 "now" is the line count at the start; update it when a module's PR lands (wc -l over the files the row names). "target" is the expected size reauthored linearly. targets sum to about 140k before culls; culls are the owner's to take later.
 
+author retirement counts compare `2efd00ae4` with tested `0e8bcbb8f`: web `lib/contributors`, `components/contributors`, authenticated `authors` and bff `contributors`; python contributor routes, `schemas/contributors.py`, `schemas/contributor_credit.py` and the three `services/contributors.py`, `contributor_credits.py`, `contributor_writes.py` owners. shared action, media, loader and search files are outside that owner count.
+
 | feature | now | target | call | status |
 |---|---:|---:|---|---|
 | GENERATED android bundle | 0 | 0 | untrack, build in gradle (step already exists) | done (size/bundle): untracked, built by gradle |
@@ -48,7 +50,7 @@ wire types follow [typed-wire](local-rules/typed-wire.md): each slice types the 
 | library-sharing (memberships, invitations, governance) | 5.0k | 2k | keep, reauthor | python landed in size/library-py: invitations+membership governance now one services/library_sharing.py (624 lines); web sharing UI open |
 | resource-sharing (grants, public /s reader, share overlay) | 2.8k | 2.5k | keep grants + link; /s reader reuses the reader | landed (size/resource-sharing, mig 0249): 7,081→2,841, −60%; typed wire, one-shot public document, loosened gate, CHECK + unique grants; /s reuses reader primitives, not the reader panes |
 | notes-pages (daily pages, two body editors, highlights service) | 11.2k | 4k | one editor | python first pass landed (size/notes-py): 3.5k→2.4k, −30%; web 8.7k (two body editors) open |
-| authors (contributors, credits, taxonomy, author pane) | 6.0k | 2k | reauthor | python first pass landed (size/contributors-py): 3.2k→2.0k, −39%; web 4.0k open |
+| authors (contributors, credits, taxonomy, author pane) | 5.3k | 2k | reauthor | python first pass landed (size/contributors-py): 3.2k→2.0k, −39%; dead author rename retired and three reads typed (cleanup/retire-author-rename): measured author owners 5,885→5,334 lines (web 4,092→3,567; python 1,793→1,767), generated wire excluded; shared media conversion serves api, seed and search; full reauthoring open ([contract and proof](modules/contributors.md)) |
 | offline-android (delivery, packages, downloads, two kotlin stores) | 17.6k | 8k | one store | open |
 | vault (export/sync/watch CLI + pane) | 1.9k | 0–1k | deferred by owner 2026-09-21; keep and reauthor: keep at 1k or delete | open |
 | settings (6 settings panes; was billing-settings) | 4.4k | 2k | keep, reauthor | billing, entitlements and the transcription quota deleted 2026-09-27 (Stripe, plan tiers, grants, minute ledger, billing pane): 4.4k→3.0k, −33%; settings panes open |

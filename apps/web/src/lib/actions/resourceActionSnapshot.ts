@@ -74,7 +74,6 @@ export type ResourceActionCapability =
         | "EditPageTitle"
         | "DeletePage"
         | "EditNoteBody"
-        | "RenameContributor"
         | "RegenerateArtifact";
       readonly availability: ServerActionAvailability;
     }
@@ -302,7 +301,6 @@ function decodeResourceActionCapability(
     case "EditPageTitle":
     case "DeletePage":
     case "EditNoteBody":
-    case "RenameContributor":
     case "RegenerateArtifact": {
       expectExactRecord(record, ["kind", "availability"], name);
       return {

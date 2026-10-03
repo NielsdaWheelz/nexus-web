@@ -110,7 +110,6 @@ SimpleResourceActionCapabilityKind = Literal[
     "EditPageTitle",
     "DeletePage",
     "EditNoteBody",
-    "RenameContributor",
     "RegenerateArtifact",
     "RemoveMedia",
     "LibraryPlacement",

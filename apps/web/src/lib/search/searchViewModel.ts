@@ -8,7 +8,7 @@ import {
 } from "@/lib/dates/publicationDate";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
-import type { MediaSummary } from "@/lib/media/mediaSummary";
+import { mediaSummaryFromWire } from "@/lib/media/mediaSummary";
 import type { SearchResultRowViewModel, SearchType } from "./types";
 
 type SearchResult = ApiJson<"/search", "get">["results"][number];
@@ -245,32 +245,7 @@ function adaptSearchResultRow(result: SearchResult): SearchResultRowViewModel {
       // justify-defect: the summary and result tag must name the same media and kind.
       throw new Error("Search media identity is inconsistent");
     }
-    const date = summary.originalPublishedDate;
-    const duration = summary.duration;
-    const expectedModality = summary.mediaKind === "podcast_episode"
-      ? "Listen"
-      : summary.mediaKind === "video" ? null : "Read";
-    if (duration.kind === "Present" && duration.value.modality !== expectedModality) {
-      // justify-defect: the duration modality follows the canonical media kind.
-      throw new Error("Search media duration does not match media kind");
-    }
-    const mediaSummary: MediaSummary = {
-      ...summary,
-      originalPublishedDate: date.kind === "Absent"
-        ? date
-        : present(decodePublicationDateOnly(date.value, "Search media date")),
-      duration: duration.kind === "Absent"
-        ? duration
-        : present({
-            modality: duration.value.modality,
-            estimate: {
-              totalMinutes: { value: duration.value.estimate.totalMinutes },
-              remainingMinutes: duration.value.estimate.remainingMinutes.kind === "Present"
-                ? present({ value: duration.value.estimate.remainingMinutes.value })
-                : duration.value.estimate.remainingMinutes,
-            },
-          }),
-    };
+    const mediaSummary = mediaSummaryFromWire(summary);
     return { ...base, type: result.type, mediaSummary };
   }
   const primaryText = buildPrimaryText(result);

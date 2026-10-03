@@ -518,7 +518,7 @@ def _capabilities_for_ref(
     elif ref.scheme == "external_snapshot":
         pass
     elif ref.scheme == "contributor":
-        capabilities.append(_simple("RenameContributor", _blocked("PermissionDenied")))
+        pass
     elif ref.scheme == "podcast":
         _extend_podcast(ref, capability=capability, facts=facts, capabilities=capabilities)
     elif ref.scheme == "reader_apparatus_item":

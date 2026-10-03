@@ -25,7 +25,10 @@ import {
 import { decodeMediaFragmentsResponse } from "@/lib/media/mediaFragment";
 import type { Fragment } from "@/lib/media/transcriptView";
 import { isAbortError } from "@/lib/errors";
-import { decodeContributorDetail } from "@/lib/contributors/detail";
+import {
+  contributorDetailFromWire,
+  contributorWorksPageFromWire,
+} from "@/lib/contributors/api";
 import {
   decodeCollectionPage,
   type CollectionCursor,
@@ -41,7 +44,6 @@ import {
   decodeLibraryEntryListItem,
   type LibraryEntryListItem,
 } from "@/lib/libraries/entryListItem";
-import { decodeContributorWorkItem } from "@/lib/contributors/workItem";
 import type {
   ContributorDetail,
   ContributorWorkItem,
@@ -78,9 +80,9 @@ export interface LibraryPaneSeed {
 // "fetch and compose this pane's first-paint data." The server bootstrap seed, the
 // client `useResource` mount, and prefetch-on-intent all call it; only the transport
 // (serverResourceFetcher vs clientResourceFetcher) is injected as `request`, so
-// server-seed ≡ client-load ≡ prefetch holds by construction. This module imports NO
-// transport (the HTTP helpers) and no client-only or server-only code — pure
-// composition over ResourceDescriptor + pure normalizers.
+// server-seed ≡ client-load ≡ prefetch holds by construction. Loaders call only the
+// request port and shared projections; author projections share their api module
+// with HTTP helpers.
 export interface PaneResourceLoader {
   cacheKey: (params: RouteParams) => string;
   load: (request: ResourceFetcher, params: RouteParams) => Promise<unknown>;
@@ -213,17 +215,21 @@ export const paneResourceLoaders: Partial<
     cacheKey: (p) => contributorResource.cacheKey({ handle: p.handle }),
     load: async (request, p): Promise<AuthorPaneSeed> => {
       const [detailEnv, worksEnv] = await Promise.all([
-        request<{ handle: string }, { data: unknown }>(contributorResource, {
-          handle: p.handle,
-        }),
-        request<{ handle: string; limit: number }, unknown>(
+        request<
+          { handle: string },
+          ApiJson<"/contributors/{contributor_handle}", "get">
+        >(contributorResource, { handle: p.handle }),
+        request<
+          { handle: string; limit: number },
+          ApiJson<"/contributors/{contributor_handle}/works", "get">
+        >(
           contributorWorksResource,
           { handle: p.handle, limit: AUTHOR_WORKS_LIMIT },
         ),
       ]);
-      const page = decodeCollectionPage(worksEnv, decodeContributorWorkItem);
+      const page = contributorWorksPageFromWire(worksEnv.data);
       return {
-        detail: decodeContributorDetail(detailEnv.data),
+        detail: contributorDetailFromWire(detailEnv.data),
         works: page.items,
         collectionRevision: page.collectionRevision,
         nextCursor: page.nextCursor,

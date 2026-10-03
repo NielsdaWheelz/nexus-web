@@ -246,9 +246,13 @@ def single_credit(name: str | None, role: ContributorRole) -> list[ContributorCr
         return []
     return [
         ContributorCreditOut(
+            contributor_handle=None,
             credited_name=name,
             contributor_display_name=name,
+            href=None,
             role=role,
+            raw_role=None,
+            ordinal=None,
         )
     ]
 
