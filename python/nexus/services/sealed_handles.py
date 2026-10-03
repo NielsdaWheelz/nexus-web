@@ -30,7 +30,7 @@ _DISCOVERY_TARGET_TAG_BYTES = 32
 _SHARE_TOKEN_BYTES = 32
 _SHARE_TOKEN_CHARS = 43
 _ENTITY_HANDLE_INPUT_PREFIX = b"nexus-handle\0"
-_ENTITY_KEY_INPUT_PREFIX = b"nexus-handle-key\0"
+_HANDLE_KEY_INPUT_PREFIX = b"nexus-handle-key\0"
 _DISCOVERY_TARGET_INPUT_PREFIX = b"nexus-discovery-target\0"
 _DISCOVERY_TARGET_KEY_INPUT = b"nexus-handle-key\0browse-discovery-target"
 _B64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -156,8 +156,8 @@ def _root_key() -> bytes:
     try:
         root = base64.b64decode(encoded, validate=True)
     except (binascii.Error, ValueError) as exc:
-        # justify-defect: settings validated by this process must carry the
-        # canonical base64 signing root used by every handle owner.
+        # justify-defect: this owner validates the configured signing root at use;
+        # malformed base64 is a configuration defect, not invalid handle input.
         raise RuntimeError("STREAM_TOKEN_SIGNING_KEY is not strict base64") from exc
     if len(root) < 32:
         # justify-defect: a shorter configured root violates the sealed-handle
@@ -166,13 +166,9 @@ def _root_key() -> bytes:
     return root
 
 
-def _derived_key(spec: _EntityHandleSpec) -> bytes:
-    material = (
-        _ENTITY_KEY_INPUT_PREFIX
-        + spec.domain.encode("ascii")
-        + b"\0"
-        + spec.version.encode("ascii")
-    )
+def derive_handle_key(domain: str, version: str) -> bytes:
+    """Derive a versioned handle key for trusted ASCII domain and version constants."""
+    material = _HANDLE_KEY_INPUT_PREFIX + domain.encode("ascii") + b"\0" + version.encode("ascii")
     return hmac.new(_root_key(), material, hashlib.sha256).digest()
 
 
@@ -189,7 +185,7 @@ def _authenticated_input(spec: _EntityHandleSpec, entity_id: UUID) -> bytes:
 
 def _tag(spec: _EntityHandleSpec, entity_id: UUID) -> bytes:
     return hmac.new(
-        _derived_key(spec),
+        derive_handle_key(spec.domain, spec.version),
         _authenticated_input(spec, entity_id),
         hashlib.sha256,
     ).digest()[:_ENTITY_TAG_BYTES]
