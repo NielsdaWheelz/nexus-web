@@ -5233,11 +5233,7 @@ export interface components {
             accepted_at: string;
             capabilities: components["schemas"]["Capabilities"];
             matched_event: components["schemas"]["Presence_HistoryEntry_"];
-            /**
-             * Media Kind
-             * @enum {string}
-             */
-            media_kind: "web_article" | "epub" | "pdf" | "podcast_episode" | "video";
+            media_kind: components["schemas"]["MediaKind"];
             media_ref: components["schemas"]["Presence_Annotated_str__AfterValidator__"];
             /** Ref */
             ref: string;
@@ -12012,7 +12008,7 @@ export interface operations {
             query: {
                 view: "NeedsAttention" | "InProgress" | "History";
                 q?: string | null;
-                media_kind?: ("web_article" | "epub" | "pdf" | "podcast_episode" | "video") | null;
+                media_kind?: components["schemas"]["MediaKind"] | null;
                 stage?: ("Upload" | "Validate" | "Extract" | "Finalize" | "Index" | "SourceProcessing") | null;
                 failure_code?: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_BILLING_REQUIRED" | "E_CAPTURE_TOO_LARGE" | "E_FORBIDDEN" | "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_LLM_BAD_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_PODCAST_QUOTA_EXCEEDED" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_UPLOAD_TRANSPORT_FAILED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE") | null;
                 state?: ("Active" | "NeedsAttention" | "Complete") | null;

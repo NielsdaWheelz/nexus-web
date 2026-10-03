@@ -26,6 +26,7 @@ from llm_tools import (
 )
 from pydantic import BaseModel, ConfigDict, Field
 
+from nexus.db.models import MediaKind
 from nexus.schemas.highlights import HIGHLIGHT_COLORS
 from nexus.schemas.library import CreateLibraryRequest
 from nexus.schemas.machine_authorship import MachineAuthorshipOut
@@ -241,7 +242,7 @@ class ResourceInspectSection(_StrictModel):
 
 class ResourceInspectSuccess(_StrictModel):
     evidence: NexusEvidence
-    media_kind: Literal["web_article", "epub", "pdf", "podcast_episode", "video"]
+    media_kind: MediaKind
     sections: Annotated[list[ResourceInspectSection], Field(max_length=_MAX_MAP_SECTIONS)]
     title: Annotated[str, Field(max_length=_TITLE_MAX)]
     total_sections: Annotated[int, Field(ge=0, le=1_000_000)]

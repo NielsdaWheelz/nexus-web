@@ -16,7 +16,6 @@ from nexus.schemas.reader import ReaderCursorSnapshot
 
 ConsumptionStateValue = Literal["Unread", "InProgress", "Finished"]
 NextCapability = Literal["Stop", "FooterAudio", "Readable"]
-ConsumptionMediaKind = Literal["web_article", "epub", "pdf", "video", "podcast_episode"]
 PauseShorteningMode = Literal["Off", "Natural"]
 PlaybackRate = Annotated[float, Field(strict=True, ge=0.5, le=3)]
 _NonNegInt32 = Annotated[int, Field(ge=0, le=2_147_483_647)]
