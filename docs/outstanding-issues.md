@@ -335,14 +335,11 @@ unexpected timeouts. See
 - [open] consumption / stats pane · 2026-09-28 consumption-stats reauthoring · p3 · the day view of a date its zone skips sends `start == end` and shows "Stats could not load": [ticket](tickets/stats-day-view-fails-on-a-zone-skipped-date.md).
 - [open] consumption / stats pane · 2026-09-28 consumption-stats reauthoring · p3 · timeline modalities all paint `CanvasText` in forced colors: [ticket](tickets/stats-timeline-modalities-merge-in-forced-colors.md).
 - [open] consumption activity / web outbox · 2026-09-28 consumption-stats reauthoring · p3 · batches follow creation order, so two tabs on one work can fail a whole batch as out of order: [ticket](tickets/activity-outbox-batches-rows-in-creation-order.md).
-- [open] local dependency setup · 2026-10-02 cleanup verification · make setup omits the codex-agent extra required by checked runtime imports: [ticket](tickets/local-setup-omits-codex-agent-extra.md).
 - [open] walknote / transcription · 2026-10-02 cleanup audit · the async upload route makes blocking deepgram http calls, delaying unrelated requests and streams: [ticket](tickets/walknote-transcription-blocks-api-event-loop.md).
 - [open] atlas / query · 2026-10-02 representation repair · the star query still selects/groups an unused position timestamp: [ticket](tickets/atlas-star-query-reads-unused-position-timestamp.md).
 - author non-media work dates have no producer: [ticket](tickets/author-nonmedia-work-dates-have-no-producer.md).
 
-- local stopped-container inventory fails on missing docker snapshot; see [ticket](tickets/local-docker-stopped-container-snapshot-missing.md).
 
-- [open] local setup documentation · 2026-10-02 source review · README omits the shellcheck prerequisite enforced by the sole static gate: [ticket](tickets/local-setup-readme-omits-shellcheck-prerequisite.md).
 - [open] inbound share / account policy candidate · 2026-10-02 producer review · valid dependency failures reach the defect owner; terminal recovery policy is undecided, source-verified/live not_run: [ticket](tickets/share-account-transient-failures-escape-inline-feedback.md).
 - [open] nexus / command policy candidate · 2026-10-02 producer review · valid auth-dependency503 reaches all three writes; terminal recovery policy is undecided, source-verified/live not_run: [ticket](tickets/nexus-auth-dependency-failure-escapes-retry-feedback.md).
 - [open] internal auth / transport · 2026-10-02 handoff review · fetch deadline ends before mint/consume json body transfer: [ticket](tickets/internal-auth-fetch-deadline-excludes-response-body.md).

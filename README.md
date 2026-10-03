@@ -27,6 +27,7 @@ Nexus is a reading and notes platform with a Next.js frontend, a first-party And
 - Docker (running)
 - `uv`
 - `actionlint`
+- `shellcheck`
 - Supabase CLI
 
 ### Setup
