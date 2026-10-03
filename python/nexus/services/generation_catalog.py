@@ -39,13 +39,6 @@ from nexus.schemas.llm import (
     TemporarilyUnavailable,
 )
 from nexus.schemas.presence import Absent, Presence, Present
-from nexus.services.codex_generation_client import (
-    CodexGenerationClient,
-    CodexGenerationClientError,
-    CodexGenerationProtocolDefect,
-)
-from nexus.services.codex_generation_contract import CodexModelCatalog
-from nexus.services.codex_generation_health_contract import EXECUTION_POLICY_REVISION
 from nexus.services.generation_admission import GenerationConfigurationDefect
 from nexus.services.generation_policy import (
     GENERATION_POLICY,
@@ -61,6 +54,12 @@ from nexus.services.generation_spec import (
     selection_fingerprint,
 )
 from nexus.services.llm_credentials import provider_generation_credentials
+from nexus.services.native_catalog_client import (
+    NativeCatalogClient,
+    NativeCatalogProtocolDefect,
+    NativeCatalogUnavailable,
+)
+from nexus.services.native_catalog_contract import EXECUTION_POLICY_REVISION, CodexModelCatalog
 
 if TYPE_CHECKING:
     from nexus.services.tool_runtime.catalog import ComposedToolRuntime
@@ -184,7 +183,7 @@ class GenerationCatalogService:
     def __init__(
         self,
         settings: Settings,
-        codex_client: CodexGenerationClient,
+        codex_client: NativeCatalogClient,
         tool_runtime: ComposedToolRuntime,
     ) -> None:
         self._providers = _configured_providers(settings.generation_api_provider_list)
@@ -268,13 +267,13 @@ def build_generation_catalog_service(
     settings: Settings, *, tool_runtime: ComposedToolRuntime
 ) -> GenerationCatalogService:
     return GenerationCatalogService(
-        settings, CodexGenerationClient(settings.codex_agent_socket), tool_runtime
+        settings, NativeCatalogClient(settings.codex_native_socket), tool_runtime
     )
 
 
 async def production_catalog_readiness(
     *,
-    codex_client: CodexGenerationClient,
+    codex_client: NativeCatalogClient,
     credentials: Mapping[GenerationApiProvider, object],
     configured_api_providers: Sequence[GenerationApiProvider],
 ) -> CatalogReadinessSnapshot:
@@ -287,14 +286,14 @@ async def production_catalog_readiness(
     checked_at = datetime.now(UTC)
     try:
         await codex_client.health()
-    except CodexGenerationProtocolDefect:
+    except NativeCatalogProtocolDefect:
         codex_readiness: Readiness = OperatorActionRequired(
             code="codex_host_unavailable",
             explanation="The Codex generation host contract does not match this Nexus build.",
             action="Repair or redeploy the pinned Codex generation host before sending.",
             last_checked=checked_at,
         )
-    except CodexGenerationClientError:
+    except NativeCatalogUnavailable:
         codex_readiness = TemporarilyUnavailable(
             code="codex_host_unavailable",
             explanation="The authenticated Codex generation host is not currently reachable.",
@@ -496,16 +495,16 @@ def validate_background_policy(
         if pair is None:
             raise AssertionError(f"{operation} selection is absent from the catalog")
         required = workflow_transport_capability(
-            entry.workflow, codex_shell=isinstance(entry.selection, CodexPersonalSelection)
+            entry.workflow, codex_native=isinstance(entry.selection, CodexPersonalSelection)
         )
         if required not in pair.capabilities:
             raise AssertionError(f"{operation} target does not support its workflow")
 
 
 def workflow_transport_capability(
-    workflow: OperationWorkflowSpec, *, codex_shell: bool = False
+    workflow: OperationWorkflowSpec, *, codex_native: bool = False
 ) -> TransportCapability:
-    if codex_shell:
+    if codex_native:
         return "TextWithTools" if workflow.output_contract == "Text" else "StructuredWithTools"
     has_tools = isinstance(workflow.model_tool_policy, ExactModelTools)
     if workflow.output_contract == "Text":
@@ -553,13 +552,11 @@ def _agent_sources(catalog: CodexModelCatalog) -> tuple[_SourceModel, ...]:
             ),
             capabilities=tuple(
                 cast(TransportCapability, capability)
-                for execution in row.execution
-                if execution.mode == "remote_shell"
                 for output, capability in (
                     ("text", "TextWithTools"),
                     ("json_schema", "StructuredWithTools"),
                 )
-                if output in execution.final_outputs
+                if output in catalog.execution.final_outputs
             ),
         )
         for row in catalog.models

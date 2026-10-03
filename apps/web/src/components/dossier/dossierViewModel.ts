@@ -51,8 +51,6 @@ export type DossierActivityView =
       progress: string | null;
     }
   | { kind: "Suspended" }
-  /** Codex quota parked the admission durably (spec 3.4); cancel stays available. */
-  | { kind: "CapacityPaused"; pause: Schema<"CapacityPaused"> }
   | { kind: "Failed"; code: Schema<"DossierBuildFailureCode">; message: string }
   | { kind: "Cancelled" };
 
@@ -176,12 +174,6 @@ export function deriveDossierViewModel(
   const suspended =
     hasEffectiveActive &&
     (activePhase === "Suspended" || state.stream.kind === "Suspended");
-  const capacityPause: Schema<"CapacityPaused"> | null =
-    hasEffectiveActive &&
-    ready.active_build.kind === "Present" &&
-    ready.active_build.value.capacity_pause.kind === "Present"
-      ? ready.active_build.value.capacity_pause.value
-      : null;
   const lub = ready.latest_unsuccessful_build;
   const failureFacts =
     lub.kind === "Present" && lub.value.failure.kind === "Present"
@@ -231,9 +223,6 @@ export function deriveDossierViewModel(
     activity = terminalActivity(terminalOutcome);
   } else if (suspended) {
     activity = { kind: "Suspended" };
-  } else if (capacityPause !== null) {
-    // The durable wait outranks transport liveness: no worker is generating.
-    activity = { kind: "CapacityPaused", pause: capacityPause };
   } else if (hasEffectiveActive && state.stream.kind === "Connecting") {
     activity = { kind: "Connecting" };
   } else if (hasEffectiveActive && state.stream.kind === "Reconnecting") {
@@ -293,8 +282,6 @@ export function deriveDossierViewModel(
     statusMessage = "Dossier generated.";
   } else if (suspended) {
     statusMessage = "Generation stopped; it needs attention.";
-  } else if (activity.kind === "CapacityPaused") {
-    statusMessage = "Waiting for Codex capacity";
   } else if (activity.kind === "Connecting") {
     statusMessage = "Connecting to dossier generation…";
   } else if (activity.kind === "Reconnecting") {

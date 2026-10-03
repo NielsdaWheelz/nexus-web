@@ -6,7 +6,6 @@ import httpx
 
 from nexus.config import Settings
 from nexus.schemas.presence import Absent
-from nexus.services.codex_generation_client import CodexGenerationClient
 from nexus.services.generation_backend import GenerationBackend, GenerationBackendDefect
 from nexus.services.generation_catalog import GenerationCatalogService
 from nexus.services.generation_policy import GENERATION_POLICY
@@ -14,6 +13,7 @@ from nexus.services.generation_service import GenerationService
 from nexus.services.generation_spec import GenerationSpec, ProviderFunctions
 from nexus.services.llm_credentials import generation_continuation_cipher
 from nexus.services.llm_execution import ComposedExecutionRuntime
+from nexus.services.native_generation import NativeGenerationBackend
 from nexus.services.provider_generation_backend import build_provider_generation_backend
 from nexus.services.provider_generation_contract import ProviderModelTools
 from nexus.services.tool_runtime.catalog import (
@@ -53,10 +53,10 @@ def compose_generation_execution_runtime(
 
     return ComposedExecutionRuntime(
         backend=GenerationBackend(
-            codex=CodexGenerationClient(settings.codex_agent_socket),
             provider=build_provider_generation_backend(settings, http_client),
             provider_tools=resolve_provider_tools,
         ),
+        native=NativeGenerationBackend(settings.codex_native_socket, tools),
         continuation_cipher=generation_continuation_cipher(settings),
         admission=GenerationService(catalog=catalog, policy=GENERATION_POLICY, tools=tools),
     )

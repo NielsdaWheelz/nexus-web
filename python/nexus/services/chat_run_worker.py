@@ -52,7 +52,6 @@ from nexus.db.models import ChatPromptAssembly, ChatRun
 from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
-    RescheduleRequested,
     get_job,
     lock_running_job_claim,
     update_running_job_payload,
@@ -66,13 +65,13 @@ from nexus.services.chat_run_citations import (
 from nexus.services.chat_run_event_store import (
     TERMINAL_RUN_STATUSES,
     ChatRunEventEmitter,
+    bounded_text_prefix,
     finalize_run,
     is_cancel_requested,
     lock_chat_run_for_update,
     mark_running,
 )
 from nexus.services.chat_run_selection import chat_generation_spec
-from nexus.services.codex_generation_contract import GenerationUsage, normalized_failure
 from nexus.services.durable_step_journal import (
     Completed,
     Prepared,
@@ -95,11 +94,11 @@ from nexus.services.generation_backend import (
     ProviderTerminalEvidence,
 )
 from nexus.services.generation_spec import (
-    CodexPersonalSelection,
     GenerationIntent,
     GenerationSpec,
     ProviderApiSelection,
 )
+from nexus.services.generation_terminal import GenerationUsage, normalized_failure
 from nexus.services.llm_execution import (
     EncodedGenerationTerminal,
     ExecutionRuntime,
@@ -274,7 +273,7 @@ async def execute_chat_run(
     execution_context: JobExecutionContext,
     session_factory: sessionmaker[Session],
     runtime: ExecutionRuntime,
-) -> RescheduleRequested | None:
+) -> None:
     """Execute one claimed chat job; defects escape into queue recovery."""
 
     steps = ChatStepRuntime(
@@ -301,7 +300,7 @@ async def _execute(
     run_id: UUID,
     steps: ChatStepRuntime,
     session_factory: sessionmaker[Session],
-) -> RescheduleRequested | None:
+) -> None:
     run = db.get(ChatRun, run_id)
     if run is None or run.status in TERMINAL_RUN_STATUSES:
         steps.clear()
@@ -340,9 +339,6 @@ async def _execute(
         session_factory=session_factory,
         emitter=emitter,
     )
-    if isinstance(result, RescheduleRequested):
-        return result
-
     usage = _value(result.usage)
     last_provider_event_seq = _value(result.last_provider_event_seq)
     if isinstance(result, CancelledGeneration):
@@ -639,7 +635,7 @@ async def _dispatch_generation(
     operation: FrozenToolOperation | None,
     session_factory: sessionmaker[Session],
     emitter: ChatRunEventEmitter,
-) -> AssistantTurn | ExpectedFailure | CancelledGeneration | RescheduleRequested:
+) -> AssistantTurn | ExpectedFailure | CancelledGeneration:
     from nexus.services.tool_runtime.chat_projection import ChatToolExecutionProjection
 
     observed_text_parts: list[str] = []
@@ -719,21 +715,17 @@ async def _dispatch_generation(
             cancel_signal.set()
         return encode_terminal(terminal, host_cancelled=host_cancelled)
 
-    tool_executor = None
-    if isinstance(spec.selection, ProviderApiSelection):
-        if operation is None:
-            raise AssertionError("provider Chat tool operation disappeared after admission")
-        tool_executor = DeferredGenerationToolExecutor(
-            session_factory=session_factory,
-            user_id=run.owner_user_id,
-            owner=LlmCallOwner(kind="chat_run", id=run.id),
-            generation_id=generation_id,
-            job_context=steps.execution_context,
-            operation=operation,
-            projection=projection,
-        )
-    elif not isinstance(spec.selection, CodexPersonalSelection):
-        assert_never(spec.selection)
+    if operation is None:
+        raise AssertionError("Chat tool operation disappeared after admission")
+    tool_executor = DeferredGenerationToolExecutor(
+        session_factory=session_factory,
+        user_id=run.owner_user_id,
+        owner=LlmCallOwner(kind="chat_run", id=run.id),
+        generation_id=generation_id,
+        job_context=steps.execution_context,
+        operation=operation,
+        projection=projection,
+    )
 
     try:
         cancel_watcher = asyncio.create_task(
@@ -776,8 +768,6 @@ async def _dispatch_generation(
                 with suppress(asyncio.CancelledError):
                     await cancel_watcher
 
-    if isinstance(result, RescheduleRequested):
-        return result
     return decode_step_result(result.terminal_result, GenerationStepResultEnvelope).root
 
 
@@ -845,13 +835,13 @@ def _terminal_result(
         usages[terminal.child_seq] = terminal_usage
     usage = _aggregate_usage(usages)
     child_text = "".join(observed_text_by_child.get(terminal.child_seq, ()))
+    final_text = observed_text
 
     if isinstance(terminal.evidence, CodexTerminalEvidence):
         native = terminal.evidence.native
-        if native.status == "succeeded" and native.final_text != child_text:
-            raise AssertionError("Codex terminal text differs from its streamed text fold")
-        if native.status != "succeeded" and native.final_text:
-            raise AssertionError("non-success Codex terminal exposed provider text")
+        # Native commentary is progress; the sealed terminal alone selects the
+        # final answer. Its bytes remain valid evidence on failure too.
+        final_text = native.final_text
         status = native.status
         error_code = (
             normalized_failure(native.failure.kind)
@@ -885,7 +875,7 @@ def _terminal_result(
 
     if host_cancelled or status == "cancelled":
         return CancelledGeneration(
-            assistant_content=observed_text,
+            assistant_content=final_text,
             usage=_presence(usage),
             last_provider_event_seq=_presence(last_sequence),
         )
@@ -893,14 +883,14 @@ def _terminal_result(
         if error_code is None:
             raise AssertionError("failed Chat generation omitted its domain failure")
         return ExpectedFailure(
-            assistant_content=observed_text,
+            assistant_content=final_text,
             error_code=error_code,
             usage=_presence(usage),
             support_id=_presence(generation_id.hex[:12]),
             last_provider_event_seq=_presence(last_sequence),
         )
     return AssistantTurn(
-        text=observed_text,
+        text=final_text,
         usage=_presence(usage),
         support_id=_presence(generation_id.hex[:12]),
         last_provider_event_seq=_presence(last_sequence),
@@ -1079,7 +1069,7 @@ class _ChatTextCoalescer:
             return
         remaining = text
         while remaining:
-            prefix = _bounded_text_prefix(
+            prefix = bounded_text_prefix(
                 remaining,
                 max_chars=CHAT_TEXT_FLUSH_MAX_CHARS - len(self._text),
                 max_bytes=CHAT_TEXT_FLUSH_MAX_BYTES - len(self._text.encode("utf-8")),
@@ -1138,19 +1128,3 @@ class _ChatTextCoalescer:
     def _raise_if_failed(self) -> None:
         if self._failure is not None:
             raise RuntimeError("Chat SSE text flush failed") from self._failure
-
-
-def _bounded_text_prefix(text: str, *, max_chars: int, max_bytes: int) -> str:
-    """The largest whole-code-point prefix inside both SSE frame limits."""
-
-    if max_chars < 1 or max_bytes < 1:
-        return ""
-    byte_count = 0
-    end = 0
-    for character in text[:max_chars]:
-        encoded_bytes = len(character.encode("utf-8"))
-        if byte_count + encoded_bytes > max_bytes:
-            break
-        byte_count += encoded_bytes
-        end += 1
-    return text[:end]

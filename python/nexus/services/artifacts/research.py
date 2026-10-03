@@ -498,7 +498,7 @@ def _ensure_research_tool_plan(db: Session, *, runtime: DossierBuildRuntime) -> 
 class _ResearchBudget:
     """The run budget for one fixed research step; the plan caps calls at three."""
 
-    def __init__(self, *, limits: RunLimits, remaining_elapsed_seconds: float) -> None:
+    def __init__(self, *, limits: RunLimits, remaining_elapsed_seconds: float | None) -> None:
         self.limits = limits
         self.remaining_elapsed_seconds = remaining_elapsed_seconds
 
@@ -595,7 +595,9 @@ async def _web_search_step(
         position=InvocationPosition(path),
         budgets=_ResearchBudget(
             limits=limits,
-            remaining_elapsed_seconds=max(0.0, float(limits.max_elapsed_seconds) - elapsed),
+            remaining_elapsed_seconds=None
+            if limits.max_elapsed_seconds is None
+            else max(0.0, limits.max_elapsed_seconds - elapsed),
         ),
     )
     seams = _InertToolSeams()

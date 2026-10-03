@@ -3,7 +3,8 @@
 The claimed job attempt owns one stable ``(media_id, fingerprint, synthesis)``
 generation: Prepared, then Uncertain immediately before dispatch, then Completed
 with a normalized memo. A Completed replay re-applies that memo without
-redispatching; an Uncertain replay is operator-owned. Both head writes are
+redispatching. Uncertain permits local settlement only with the original native
+seal or positive non-submission proof. Both head writes are
 fenced on the captured content fingerprint and this exact running lease, so a
 superseded attempt can neither publish nor fail the live head.
 """
@@ -23,7 +24,6 @@ from nexus.db.session import get_session_factory
 from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
-    RescheduleRequested,
     get_job,
     lock_jobs_for_payload,
     running_job_claim_is_current,
@@ -32,8 +32,8 @@ from nexus.schemas.presence import Present
 from nexus.services import durable_step_journal as step_journal
 from nexus.services import generation_policy
 from nexus.services.atlas_projection import try_enqueue_atlas_project
-from nexus.services.codex_generation_contract import GenerationTerminal
 from nexus.services.generation_spec import ImmutablePromptPayloadRef, generation_fact_digest
+from nexus.services.generation_terminal import GenerationTerminal
 from nexus.services.llm_execution import (
     AcceptedGenerationFailure,
     EncodedGenerationTerminal,
@@ -47,6 +47,7 @@ from nexus.services.llm_execution import (
     cancel_prepared_generation_without_dispatch_in_current_transaction,
     codex_terminal_evidence,
     execute_generation,
+    generation_has_local_recovery,
 )
 from nexus.services.llm_ledger import LlmCallOwner
 from nexus.services.media_intelligence import Candidate, load_candidates, media_summary_orm_or_none
@@ -142,11 +143,11 @@ class _UncertainMediaUnitTurn(RuntimeError):
 
 def media_unit_build(
     *, media_id: str, content_fingerprint: str, context: JobExecutionContext
-) -> dict | RescheduleRequested:
+) -> dict:
     """Worker entry: synthesize (or replay) one media unit."""
     media_uuid = UUID(media_id)
 
-    async def handler(db: Session, runtime: ExecutionRuntime) -> dict | RescheduleRequested:
+    async def handler(db: Session, runtime: ExecutionRuntime) -> dict:
         outcome = await _build(
             db,
             media_id=media_uuid,
@@ -154,8 +155,6 @@ def media_unit_build(
             ctx=context,
             runtime=runtime,
         )
-        if isinstance(outcome, RescheduleRequested):
-            return outcome
         # A modeled domain failure is a completed durable job, not a queue
         # infrastructure failure.
         return {"status": "ok", "outcome": outcome, "media_id": media_id}
@@ -170,7 +169,7 @@ async def _build(
     content_fingerprint: str,
     ctx: JobExecutionContext,
     runtime: ExecutionRuntime,
-) -> Literal["ok", "failed"] | RescheduleRequested:
+) -> Literal["ok", "failed"]:
     job = get_job(db, ctx.job_id)
     if job is None:
         return "ok"
@@ -181,7 +180,11 @@ async def _build(
         return "ok"
 
     state = step_journal.read_step_states(job).get(_STEP_PATH)
-    if state is not None and state.dispatch_phase is step_journal.Uncertain:
+    if (
+        state is not None
+        and state.dispatch_phase is step_journal.Uncertain
+        and not generation_has_local_recovery(db, state)
+    ):
         raise _UncertainMediaUnitTurn(f"media unit {head.summary_id} synthesis is uncertain")
 
     def terminalize(memo: _Memo) -> bool:
@@ -322,8 +325,6 @@ async def _build(
         return "ok"
     except GenerationUncertain as exc:
         raise _UncertainMediaUnitTurn(str(exc)) from exc
-    if isinstance(result, RescheduleRequested):
-        return result
     return _apply(
         db,
         ctx=ctx,

@@ -12,12 +12,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ValidationError
 
-from nexus.services.codex_generation_contract import (
+from nexus.services.generation_spec import GenerationIntent, JsonSchemaOutput
+from nexus.services.generation_terminal import (
     GenerationTerminal,
     normalized_failure,
     retained_terminal_error_detail,
 )
-from nexus.services.generation_spec import GenerationIntent, JsonSchemaOutput
 
 INDEX_GROUNDING_RULE = "Refer to candidate passages only by their integer index."
 

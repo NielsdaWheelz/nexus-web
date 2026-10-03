@@ -24,7 +24,7 @@ from nexus.schemas.retrieval import (
     retrieval_locator_json,
     retrieval_result_ref_json,
 )
-from nexus.schemas.search import SearchResultOut
+from nexus.schemas.search import SearchResultMediaOut, SearchResultOut
 
 STRICT_LOCATOR_RESULT_TYPES = frozenset(
     {
@@ -147,6 +147,14 @@ def citation_from_search_result(
     filters: dict[str, Any],
 ) -> RetrievalCitation:
     payload = result.model_dump(mode="json")
+    if isinstance(result, SearchResultMediaOut):
+        summary = result.media_summary
+        payload.update(
+            title=summary.title,
+            media_id=str(summary.media_id),
+            media_kind=summary.media_kind,
+            contributors=[credit.model_dump(mode="json") for credit in summary.contributors],
+        )
     result_type = str(payload["type"])
     if result_type == "web_result":
         source_id = str(payload["source_id"])

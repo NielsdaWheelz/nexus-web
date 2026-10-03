@@ -6,8 +6,6 @@ settings, and ``nexus.wire_schema`` passes True for both to describe every route
 
 from fastapi import APIRouter
 
-from nexus.api.routes.agent_api import router as agent_api_router
-from nexus.api.routes.agent_api import user_router as generation_effects_router
 from nexus.api.routes.atlas import router as atlas_router
 from nexus.api.routes.auth_handoff_codes import router as auth_handoff_codes_router
 from nexus.api.routes.browse import router as browse_router
@@ -21,6 +19,7 @@ from nexus.api.routes.conversations import router as conversations_router
 from nexus.api.routes.dossiers import router as dossiers_router
 from nexus.api.routes.extension_captures import router as extension_captures_router
 from nexus.api.routes.extension_sessions import router as extension_sessions_router
+from nexus.api.routes.generation_effects import router as generation_effects_router
 from nexus.api.routes.highlights import router as highlights_router
 from nexus.api.routes.imports import router as imports_router
 from nexus.api.routes.lectern import router as lectern_router
@@ -57,7 +56,6 @@ from nexus.api.routes.walknotes import router as walknotes_router
 def create_api_router(*, podcasts: bool, email_ingest: bool) -> APIRouter:
     """Every API route, with the podcast and email-ingest routers when enabled."""
     api_router = APIRouter()
-    api_router.include_router(agent_api_router)
     api_router.include_router(generation_effects_router)
     api_router.include_router(operational_router)
     api_router.include_router(me_router)

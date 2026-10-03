@@ -17,9 +17,7 @@ from nexus.api.deps import (
     require_tool_projection_revision,
 )
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.config import get_settings
 from nexus.db.session import get_repeatable_read_db, get_session_factory
-from nexus.logging import get_logger
 from nexus.responses import ok
 from nexus.schemas.conversation import (
     CHAT_RUN_STATUS_FILTER,
@@ -29,14 +27,7 @@ from nexus.schemas.conversation import (
 )
 from nexus.schemas.presence import Present
 from nexus.services import chat_runs as chat_runs_service
-from nexus.services.codex_generation_client import (
-    CodexGenerationClient,
-    CodexGenerationClientError,
-    CodexGenerationProtocolDefect,
-)
-from nexus.services.durable_step_journal import stable_generation_id
 from nexus.services.generation_catalog import GenerationCatalogService
-from nexus.services.generation_spec import CodexPersonalSelection
 from nexus.services.tool_runtime.catalog import ComposedToolRuntime
 
 router = APIRouter(
@@ -46,7 +37,6 @@ router = APIRouter(
         Depends(require_tool_projection_revision),
     ],
 )
-logger = get_logger(__name__)
 
 
 def _tool_runtime(request: Request) -> ComposedToolRuntime:
@@ -130,21 +120,6 @@ async def cancel_chat_run(
             )
 
     response = await run_in_threadpool(cancel)
-    if response.run.status not in {"complete", "error"} and isinstance(
-        response.run.run_selection.selection, CodexPersonalSelection
-    ):
-        try:
-            await CodexGenerationClient(get_settings().codex_agent_socket).cancel(
-                stable_generation_id(run_id, "generation/1")
-            )
-        except (CodexGenerationClientError, CodexGenerationProtocolDefect) as error:
-            # The committed intent is still the response. The host owns
-            # interruption and drain; an unreachable host proves neither.
-            logger.warning(
-                "chat_cancel_host_interrupt_unconfirmed",
-                run_id=str(run_id),
-                error_type=type(error).__name__,
-            )
     return ok(response)
 
 

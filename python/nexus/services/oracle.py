@@ -14,7 +14,8 @@ from datetime import datetime
 from typing import Annotated, Any, Literal, cast
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from llm_tools import canonical_json_bytes
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -38,7 +39,6 @@ from nexus.errors import (
 from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
-    RescheduleRequested,
     enqueue_job,
     get_job,
     lock_job,
@@ -73,17 +73,16 @@ from nexus.services import (
     oracle_corpus,
     run_kit,
 )
-from nexus.services.codex_generation_contract import (
-    GenerationTerminal,
-)
 from nexus.services.generation_spec import (
     GenerationIntent,
     ImmutablePromptPayloadRef,
     generation_fact_digest,
 )
+from nexus.services.generation_terminal import (
+    GenerationTerminal,
+)
 from nexus.services.llm_execution import (
     AcceptedGenerationFailure,
-    CompletedGeneration,
     EncodedGenerationTerminal,
     ExecutionRuntime,
     GenerationAdmissionInputsChanged,
@@ -95,6 +94,7 @@ from nexus.services.llm_execution import (
     cancel_prepared_generation_without_dispatch_in_current_transaction,
     codex_terminal_evidence,
     execute_generation,
+    generation_has_local_recovery,
 )
 from nexus.services.llm_ledger import LlmCallOwner, lock_generation_owner_in_current_transaction
 from nexus.services.oracle_plates import oracle_plate_url
@@ -122,7 +122,6 @@ from nexus.services.structured_synthesis import (
     StructuredSynthesisError,
     build_synthesis_intent,
     build_synthesis_prompt,
-    build_synthesis_user_content,
     decode_structured_synthesis,
     ground_indices,
     outcome_failure_facts,
@@ -585,6 +584,16 @@ class _CompletedOraclePlate(BaseModel):
     height: int
 
 
+class _OracleInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True, allow_inf_nan=False)
+
+    kind: Literal["oracle-input.v1"]
+    question: str
+    candidates: tuple[_Candidate, ...]
+    plate: _CompletedOraclePlate
+    requires_user_content: bool
+
+
 class _CompletedOraclePassage(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -667,8 +676,8 @@ def _invalid_oracle_terminal(detail: str) -> EncodedGenerationTerminal:
 def _encode_oracle_terminal(
     terminal: GenerationTerminal,
     *,
-    candidates: list[_Candidate],
-    plate: OraclePlate,
+    candidates: Sequence[_Candidate] | None,
+    plate: _CompletedOraclePlate | None,
     requires_user_content: bool,
 ) -> EncodedGenerationTerminal:
     if terminal.status != "succeeded":
@@ -680,6 +689,8 @@ def _encode_oracle_terminal(
         return EncodedGenerationTerminal(
             terminal_result=_COMPLETED_ORACLE_ADAPTER.dump_json(completed).decode("utf-8")
         )
+    if candidates is None or plate is None:
+        raise GenerationUncertain("successful oracle recovery lacks its original domain snapshot")
     try:
         parsed = decode_structured_synthesis(
             terminal,
@@ -721,15 +732,7 @@ def _encode_oracle_terminal(
         folio_theme=theme,
         interpretation=interpretation.strip(),
         omens=(omens[0], omens[1], omens[2]),
-        plate=_CompletedOraclePlate(
-            id=plate.id,
-            attribution_text=plate.attribution_text,
-            artist=plate.artist,
-            work_title=plate.work_title,
-            year=plate.year,
-            width=plate.width,
-            height=plate.height,
-        ),
+        plate=plate,
         passages=(passages[0], passages[1], passages[2]),
         input_tokens=usage.input_tokens if usage is not None else None,
         output_tokens=usage.output_tokens if usage is not None else None,
@@ -1057,7 +1060,7 @@ async def execute_reading(
     reading_id: UUID,
     context: JobExecutionContext,
     runtime: ExecutionRuntime,
-) -> dict[str, Any] | RescheduleRequested:
+) -> dict[str, Any]:
     """Worker job body: pick plate, retrieve passages, call LLM, persist, stream."""
     job = get_job(db, context.job_id)
     if job is None:
@@ -1081,7 +1084,11 @@ async def execute_reading(
             context=context,
             completed=completed,
         )
-    if state is not None and state.dispatch_phase is step_journal.Uncertain:
+    if (
+        state is not None
+        and state.dispatch_phase is step_journal.Uncertain
+        and not generation_has_local_recovery(db, state)
+    ):
         db.commit()
         raise GenerationUncertain(f"oracle generation {generation_id} has an unresolved dispatch")
 
@@ -1096,87 +1103,6 @@ async def execute_reading(
 
     question = reading.question_text
     viewer_id = reading.user_id
-    # Finish owner/job reads before generation admission I/O.
-    db.commit()
-    readiness = oracle_corpus.get_oracle_corpus_readiness(db)
-    if readiness.status != "ready" or readiness.library_id is None:
-        detail = (
-            f"corpus not ready: {readiness.ready_media_count}/{readiness.work_count} media, "
-            f"{readiness.resolved_anchor_count}/{readiness.anchor_count} anchors, "
-            f"{readiness.ready_plate_count}/{readiness.plate_count} plates"
-        )
-        db.rollback()
-        return _finish_oracle_terminal_without_dispatch(
-            db,
-            reading_id=reading_id,
-            context=context,
-            error_code=oracle_reading_failure_code(E_ORACLE_CORPUS_NOT_READY),
-            error_detail=detail,
-        )
-
-    # Embedding construction performs external I/O; the readiness snapshot
-    # is complete and no database transaction may cross that boundary.
-    db.commit()
-    try:
-        query_embedding = build_query_embedding(
-            db, question, ["content_chunk"], transaction_active_at_entry=False
-        )
-        if query_embedding is None:
-            raise ApiError(
-                ApiErrorCode.E_APP_SEARCH_FAILED,
-                "Oracle requires semantic embeddings, which are unavailable",
-            )
-        corpus_media_ids = _oracle_corpus_media_ids(db)
-        candidates = _oracle_corpus_candidates(
-            db,
-            viewer_id=viewer_id,
-            question=question,
-            query_embedding=query_embedding,
-            library_id=readiness.library_id,
-        )
-        requires_user_content = _viewer_has_searchable_user_content(db, viewer_id=viewer_id)
-        if requires_user_content:
-            candidates = [
-                *candidates,
-                *_personal_candidates(
-                    db,
-                    viewer_id=viewer_id,
-                    query_embedding=query_embedding,
-                    corpus_media_ids=corpus_media_ids,
-                ),
-            ]
-        plate = _pick_plate(db, question=question, candidates=candidates)
-    except ApiError as exc:
-        if exc.code is not ApiErrorCode.E_APP_SEARCH_FAILED:
-            raise
-        db.rollback()
-        return _finish_oracle_terminal_without_dispatch(
-            db,
-            reading_id=reading_id,
-            context=context,
-            error_code=oracle_reading_failure_code(exc.code.value),
-            error_detail=exc.message,
-        )
-
-    if len(candidates) < 3:
-        db.rollback()
-        # justify-defect: a ready Oracle corpus is required to yield three
-        # candidates; persisting E_INTERNAL as a user-facing reading would
-        # conceal a broken retrieval/corpus invariant.
-        raise AssertionError("ready Oracle corpus yielded fewer than three candidates")
-    if requires_user_content and not _candidate_set_includes_user_media(candidates):
-        detail = "user content is searchable but yielded no user_media candidate"
-        db.rollback()
-        return _finish_oracle_terminal_without_dispatch(
-            db,
-            reading_id=reading_id,
-            context=context,
-            error_code=oracle_reading_failure_code(ApiErrorCode.E_APP_SEARCH_FAILED.value),
-            error_detail=detail,
-        )
-
-    user_content = _build_oracle_user_content(question=question, candidates=candidates)
-    intent = _oracle_intent(user_content=user_content)
 
     def lock_dispatch(dispatch_db: Session) -> JobRow | None:
         locked_reading = dispatch_db.scalar(
@@ -1193,14 +1119,128 @@ async def execute_reading(
             return None
         return locked_job
 
+    journal = JobGenerationJournal(
+        context=context, step_path=_SYNTHESIS_STEP_PATH, lock_dispatch=lock_dispatch
+    )
+    candidates: Sequence[_Candidate] | None
+    plate: _CompletedOraclePlate | None
+    if state is not None and state.dispatch_phase is step_journal.Uncertain:
+        frozen = journal.read_admission(db)
+        if frozen is None:
+            raise AssertionError("armed oracle generation has no frozen admission")
+        spec, intent = frozen
+        revision = spec.prompt_template_revision
+        try:
+            snapshot = _OracleInput.model_validate_json(intent.input)
+        except ValidationError:
+            # Original failures need no domain projection. Successful terminals
+            # cannot settle without their original candidates and plate.
+            candidates, plate, requires_user_content = None, None, False
+        else:
+            candidates = snapshot.candidates
+            plate = snapshot.plate
+            requires_user_content = snapshot.requires_user_content
+    else:
+        # Finish owner/job reads before generation admission I/O.
+        db.commit()
+        readiness = oracle_corpus.get_oracle_corpus_readiness(db)
+        if readiness.status != "ready" or readiness.library_id is None:
+            detail = (
+                f"corpus not ready: {readiness.ready_media_count}/{readiness.work_count} media, "
+                f"{readiness.resolved_anchor_count}/{readiness.anchor_count} anchors, "
+                f"{readiness.ready_plate_count}/{readiness.plate_count} plates"
+            )
+            db.rollback()
+            return _finish_oracle_terminal_without_dispatch(
+                db,
+                reading_id=reading_id,
+                context=context,
+                error_code=oracle_reading_failure_code(E_ORACLE_CORPUS_NOT_READY),
+                error_detail=detail,
+            )
+
+        # Embedding construction performs external I/O; the readiness snapshot
+        # is complete and no database transaction may cross that boundary.
+        db.commit()
+        try:
+            query_embedding = build_query_embedding(
+                db, question, ["content_chunk"], transaction_active_at_entry=False
+            )
+            if query_embedding is None:
+                raise ApiError(
+                    ApiErrorCode.E_APP_SEARCH_FAILED,
+                    "Oracle requires semantic embeddings, which are unavailable",
+                )
+            corpus_media_ids = _oracle_corpus_media_ids(db)
+            candidates = _oracle_corpus_candidates(
+                db,
+                viewer_id=viewer_id,
+                question=question,
+                query_embedding=query_embedding,
+                library_id=readiness.library_id,
+            )
+            requires_user_content = _viewer_has_searchable_user_content(db, viewer_id=viewer_id)
+            if requires_user_content:
+                candidates = [
+                    *candidates,
+                    *_personal_candidates(
+                        db,
+                        viewer_id=viewer_id,
+                        query_embedding=query_embedding,
+                        corpus_media_ids=corpus_media_ids,
+                    ),
+                ]
+            chosen_plate = _pick_plate(db, question=question, candidates=candidates)
+        except ApiError as exc:
+            if exc.code is not ApiErrorCode.E_APP_SEARCH_FAILED:
+                raise
+            db.rollback()
+            return _finish_oracle_terminal_without_dispatch(
+                db,
+                reading_id=reading_id,
+                context=context,
+                error_code=oracle_reading_failure_code(exc.code.value),
+                error_detail=exc.message,
+            )
+
+        if len(candidates) < 3:
+            db.rollback()
+            # justify-defect: a ready Oracle corpus is required to yield three
+            # candidates; persisting E_INTERNAL as a user-facing reading would
+            # conceal a broken retrieval/corpus invariant.
+            raise AssertionError("ready Oracle corpus yielded fewer than three candidates")
+        if requires_user_content and not _candidate_set_includes_user_media(candidates):
+            detail = "user content is searchable but yielded no user_media candidate"
+            db.rollback()
+            return _finish_oracle_terminal_without_dispatch(
+                db,
+                reading_id=reading_id,
+                context=context,
+                error_code=oracle_reading_failure_code(ApiErrorCode.E_APP_SEARCH_FAILED.value),
+                error_detail=detail,
+            )
+
+        plate = _CompletedOraclePlate(
+            id=chosen_plate.id,
+            attribution_text=chosen_plate.attribution_text,
+            artist=chosen_plate.artist,
+            work_title=chosen_plate.work_title,
+            year=chosen_plate.year,
+            width=chosen_plate.width,
+            height=chosen_plate.height,
+        )
+        user_content = _build_oracle_user_content(
+            question=question,
+            candidates=candidates,
+            plate=plate,
+            requires_user_content=requires_user_content,
+        )
+        intent = _oracle_intent(user_content=user_content)
+
+        revision = generation_policy.operation_revision(ORACLE_OPERATION) + ".oracle-input.v1"
     # A first dispatch reloads the prepared job; a replay may retain an earlier
     # read snapshot. Neither may cross the generation host I/O boundary.
     db.commit()
-    journal = JobGenerationJournal(
-        context=context,
-        step_path=_SYNTHESIS_STEP_PATH,
-        lock_dispatch=lock_dispatch,
-    )
     try:
         execution_request = await admit_job_generation(
             owner=LlmCallOwner(kind="oracle_reading", id=reading_id),
@@ -1208,11 +1248,11 @@ async def execute_reading(
             generation_id=generation_id,
             operation="oracle",
             intent=intent,
-            prompt_template_revision=generation_policy.operation_revision(ORACLE_OPERATION),
+            prompt_template_revision=revision,
             prompt_payload_ref=ImmutablePromptPayloadRef(
                 owner_kind="oracle_reading",
                 owner_id=str(reading_id),
-                revision=generation_policy.operation_revision(ORACLE_OPERATION),
+                revision=revision,
                 payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
             ),
             journal=journal,
@@ -1246,10 +1286,6 @@ async def execute_reading(
             reading_id=reading_id,
             context=context,
         )
-    if isinstance(execution_result, RescheduleRequested):
-        return execution_result
-    if not isinstance(execution_result, CompletedGeneration):
-        raise AssertionError("oracle generation result is not exhaustive")
     completed = _COMPLETED_ORACLE_ADAPTER.validate_json(execution_result.terminal_result)
     return _apply_completed_oracle(
         db,
@@ -1511,6 +1547,7 @@ _ORACLE_PREAMBLE = (
 )
 _ORACLE_DOMAIN_RULES = [
     INDEX_GROUNDING_RULE,
+    "The input is JSON. A candidate's index is its zero-based position in candidates.",
     "Do not quote, paraphrase, summarize, or invent any text from the passages. "
     "The reader will see the verbatim passages alongside your prose.",
     "Do not invent works, authors, line numbers, page numbers, URLs, or citations. "
@@ -1564,20 +1601,21 @@ _ORACLE_SYSTEM_PROMPT = build_synthesis_prompt(
 )
 
 
-def _build_oracle_user_content(*, question: str, candidates: Sequence[_Candidate]) -> str:
-    rendered = "\n\n".join(
-        (
-            f"[{index}] source_kind={candidate.source_kind} tags={candidate.tags!r}\n"
-            f"label: {'your library passage' if candidate.source_kind == 'user_media' else 'public-domain passage'}\n"
-            f"passage_text: {candidate.exact_snippet}"
-        )
-        for index, candidate in enumerate(candidates)
+def _build_oracle_user_content(
+    *,
+    question: str,
+    candidates: Sequence[_Candidate],
+    plate: _CompletedOraclePlate,
+    requires_user_content: bool,
+) -> str:
+    snapshot = _OracleInput(
+        kind="oracle-input.v1",
+        question=question,
+        candidates=tuple(candidates),
+        plate=plate,
+        requires_user_content=requires_user_content,
     )
-    return build_synthesis_user_content(
-        candidates_header="CANDIDATES",
-        rendered_candidates=rendered,
-        extra_user_block=f"QUESTION: {question.strip()}",
-    )
+    return canonical_json_bytes(snapshot.model_dump(mode="json")).decode("utf-8")
 
 
 # ---------- internal: LLM output parsing ------------------------------------

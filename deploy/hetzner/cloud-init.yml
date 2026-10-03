@@ -13,8 +13,8 @@ packages:
   - ufw
 
 write_files:
-  # Keep Ubuntu's AppArmor user-namespace hardening persistent. The named Codex
-  # host profile grants only the bounded exception required by inner bwrap.
+  # Keep Ubuntu's AppArmor user-namespace hardening persistent. Native callbacks
+  # require no host exception or nested execution namespace.
   - path: /etc/sysctl.d/60-nexus-codex-userns.conf
     owner: root:root
     permissions: "0644"

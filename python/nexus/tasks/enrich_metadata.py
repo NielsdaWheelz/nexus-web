@@ -2,7 +2,8 @@
 
 One billed-once, tool-using generation per job: Prepared, then Uncertain
 immediately before dispatch, then Completed with a normalized memo. A Completed
-replay re-applies the memo's publication; an Uncertain replay is operator-owned.
+replay re-applies the memo's publication. Uncertain permits local settlement
+only with the original native seal or positive non-submission proof.
 Dispatch, the pre-dispatch terminal and publication all take the same locks in
 the same order — generation owner, media, queue rows — because the retry route
 and this worker run concurrently.
@@ -27,7 +28,6 @@ from nexus.errors import ApiErrorCode, exception_error_detail
 from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
-    RescheduleRequested,
     get_job,
     lock_and_renew_running_job_claim,
     lock_jobs_for_payload,
@@ -35,11 +35,6 @@ from nexus.jobs.queue import (
 from nexus.logging import get_logger
 from nexus.schemas.presence import Present, present
 from nexus.services import durable_step_journal as step_journal
-from nexus.services.codex_generation_contract import (
-    GenerationTerminal,
-    normalized_failure,
-    retained_terminal_error_detail,
-)
 from nexus.services.collection_revisions import (
     ENTRY_VISIBILITY_FAMILIES,
     bump_all_collection_families,
@@ -55,6 +50,11 @@ from nexus.services.generation_spec import (
     decode_generation_spec_document,
     generation_fact_digest,
 )
+from nexus.services.generation_terminal import (
+    GenerationTerminal,
+    normalized_failure,
+    retained_terminal_error_detail,
+)
 from nexus.services.llm_execution import (
     AcceptedGenerationFailure,
     CompletedGeneration,
@@ -68,6 +68,7 @@ from nexus.services.llm_execution import (
     admit_job_generation,
     codex_terminal_evidence,
     execute_generation,
+    generation_has_local_recovery,
 )
 from nexus.services.llm_ledger import LlmCallOwner, lock_generation_owner_in_current_transaction
 from nexus.services.media_processing_state import is_metadata_enrichment_eligible
@@ -130,7 +131,7 @@ def enrich_metadata(
     *,
     requester_user_id: UUID,
     context: JobExecutionContext,
-) -> _JobResult | RescheduleRequested:
+) -> _JobResult:
     """Run or replay the one billed-once ``codex/metadata`` step."""
     media_uuid = UUID(media_id)
     factory = get_session_factory()
@@ -153,7 +154,11 @@ def enrich_metadata(
             raise AssertionError(f"metadata job {context.job_id} disappeared")
         state = step_journal.read_step_states(job).get(METADATA_STEP_PATH)
         request_fingerprint = None if state is None else _request_fingerprint(state)
-        if state is not None and state.dispatch_phase is Uncertain:
+        if (
+            state is not None
+            and state.dispatch_phase is Uncertain
+            and not generation_has_local_recovery(db, state)
+        ):
             db.commit()
             raise _UncertainMetadataTurn(
                 f"metadata job {context.job_id} has an unresolved generation"
@@ -213,9 +218,7 @@ def enrich_metadata(
         context=context, step_path=METADATA_STEP_PATH, lock_dispatch=lock_dispatch
     )
 
-    async def execute(
-        _db: Session, runtime: ExecutionRuntime
-    ) -> CompletedGeneration | RescheduleRequested:
+    async def execute(_db: Session, runtime: ExecutionRuntime) -> CompletedGeneration:
         from nexus.services import generation_policy
 
         nonlocal request_fingerprint
@@ -262,8 +265,6 @@ def enrich_metadata(
     except GenerationUncertain as exc:
         raise _UncertainMetadataTurn(exception_error_detail(exc)) from exc
 
-    if isinstance(result, RescheduleRequested):
-        return result
     if request_fingerprint is None:
         raise AssertionError("completed metadata dispatch has no frozen fingerprint")
     return _publish(

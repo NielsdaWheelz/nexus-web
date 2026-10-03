@@ -216,7 +216,7 @@ _IDEA_HOST_PLAN = ExactHostToolPlan(
 _BACKGROUND_ROWS: tuple[
     tuple[BackgroundOperationKey, str, str, int, int, int, int, HostToolPlan], ...
 ] = (
-    ("metadata_enrichment", "luna", "low", 300, 32, 64_000, 8_000, _NO_HOST),
+    ("metadata_enrichment", "luna", "xhigh", 300, 32, 64_000, 8_000, _NO_HOST),
     ("media_summary", "luna", "low", 120, 256, 128_000, 16_000, _NO_HOST),
     ("synapse", "luna", "low", 120, 256, 128_000, 16_000, _NO_HOST),
     ("oracle", "sol", "medium", 180, 256, 128_000, 16_000, _NO_HOST),
@@ -240,6 +240,16 @@ _BACKGROUND_OPERATIONS: dict[BackgroundOperationKey, BackgroundOperationPolicy] 
             ),
             output_contract="StrictJson",
             host_tool_plan=host_plan,
+            model_tool_policy=(
+                ExactModelTools(
+                    "MetadataResearch",
+                    _tool_authority_revision("MetadataResearch"),
+                    "ReadOnly",
+                    "MetadataMedia",
+                )
+                if operation == "metadata_enrichment"
+                else _NO_TOOLS
+            ),
         ),
     )
     for (
@@ -279,9 +289,6 @@ GENERATION_POLICY = GenerationPolicy(
     chat=_CHAT,
     background_operations=_IMMUTABLE_BACKGROUND_OPERATIONS,
 )
-# A durable capacity pause rechecks at this low-frequency fallback only when the
-# provider supplies no reset instant. It is not an ordinary generation retry.
-BACKGROUND_CAPACITY_PROBE_SECONDS = 15 * 60
 
 
 def background_operation_policy(operation: str) -> BackgroundOperationPolicy:

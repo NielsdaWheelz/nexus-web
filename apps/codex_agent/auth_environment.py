@@ -14,7 +14,7 @@ def reject_subscription_api_key_auth() -> None:
 
 
 def reject_ambient_codex_home() -> None:
-    """Keep long-lived runtime state out of an ambient persistent profile."""
+    """Require the host's explicit account directory rather than ambient routing."""
 
     if "CODEX_HOME" in os.environ:
         raise RuntimeError("CODEX_HOME must not be inherited by the Codex generation host")

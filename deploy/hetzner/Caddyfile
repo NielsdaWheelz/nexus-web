@@ -29,11 +29,6 @@
 			}
 		}
 
-		@agent_api path /agent-api /agent-api/*
-		handle @agent_api {
-			respond 404
-		}
-
 		handle {
 			encode zstd gzip
 			reverse_proxy api:8000

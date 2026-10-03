@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.metadata
+import json
 import os
 import signal
 import stat
@@ -11,30 +12,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import codex_cli_bin
-from apps.codex_agent.credential_state import EphemeralRuntimePaths
-from provider_runtime.agent_runtime.codex_app_server import (
-    CodexAppServerClient,
-    CodexAppServerConfig,
-    CodexConnectionUnavailable,
+from apps.codex_agent.credential_state import validate_enrolled_auth_file
+from provider_runtime.agent_runtime import (
+    CODEX_CONTAINMENT_VERSION,
+    materialize_codex_containment_catalog,
 )
 
-from nexus.services.codex_generation_health_contract import PINNED_CODEX_VERSION
+from nexus.services.native_catalog_client import (
+    NativeCatalogClient,
+    NativeCatalogUnavailable,
+)
+from nexus.services.native_health_contract import PINNED_CODEX_VERSION
 
 _START_SECONDS = 15.0
 _STOP_SECONDS = 5.0
-_PROFILE = "codex-personal"
-_CONFIG_OVERRIDES = (
-    "agents.enabled=false",
-    'shell_environment_policy.inherit="all"',
-    "shell_environment_policy.ignore_default_excludes=true",
-    "include_apps_instructions=false",
-    "notify=[]",
-    "orchestrator.mcp.enabled=false",
-    "orchestrator.skills.enabled=false",
-    "skills.bundled.enabled=false",
-    "skills.include_instructions=true",
-    "tools.experimental_request_user_input.enabled=false",
-)
 
 
 @dataclass(slots=True)
@@ -44,13 +35,6 @@ class NativeCodexServer:
     socket_target: Path
     socket_identity: tuple[int, int] | None
     _stop_task: asyncio.Task[None] | None = field(default=None, init=False, repr=False)
-
-    @property
-    def stopped(self) -> bool:
-        task = self._stop_task
-        return (
-            task is not None and task.done() and not task.cancelled() and task.exception() is None
-        )
 
     async def stop(self) -> None:
         if self._stop_task is None:
@@ -136,8 +120,10 @@ def _observe_socket(
         parent = target.parent.lstat()
         if (
             target.parent != daemon_dir
+            or target.parent != socket_path.parent
             or not stat.S_ISDIR(parent.st_mode)
             or parent.st_uid != os.geteuid()
+            or parent.st_gid != os.getegid()
             or stat.S_IMODE(parent.st_mode) != 0o700
         ):
             raise RuntimeError("Codex native socket escaped its private daemon directory")
@@ -148,47 +134,76 @@ def _observe_socket(
     except FileNotFoundError:
         identity = None
     else:
-        if not stat.S_ISSOCK(metadata.st_mode) or metadata.st_uid != os.geteuid():
+        if (
+            not stat.S_ISSOCK(metadata.st_mode)
+            or metadata.st_uid != os.geteuid()
+            or metadata.st_gid != os.getegid()
+        ):
             raise RuntimeError("Codex native socket is not owned by the host")
         identity = (metadata.st_dev, metadata.st_ino)
     return NativeCodexServer(process, socket_path, target, identity)
 
 
-async def start_native_codex_server(paths: EphemeralRuntimePaths) -> NativeCodexServer:
-    if importlib.metadata.version("openai-codex-cli-bin") != PINNED_CODEX_VERSION:
+async def start_native_codex_server(
+    *, socket_path: Path, credential_file: Path
+) -> NativeCodexServer:
+    if (
+        PINNED_CODEX_VERSION != CODEX_CONTAINMENT_VERSION
+        or importlib.metadata.version("openai-codex-cli-bin") != PINNED_CODEX_VERSION
+    ):
         raise RuntimeError("Codex binary distribution differs from the pinned version")
     executable = codex_cli_bin.bundled_codex_path()
     if not executable.is_absolute() or not executable.is_file():
         raise RuntimeError("Codex pinned executable is unavailable")
-    codex_home = paths.state_root_base / "codex" / _PROFILE
-    if not (codex_home / "auth.json").is_symlink():
-        raise RuntimeError("Codex native process has no enrolled auth link")
-    home = paths.state_root_base / "home"
-    home.mkdir(mode=0o700)
-    socket_path = paths.root / "codex.sock"
+    validate_enrolled_auth_file(credential_file)
+    if credential_file.name != "auth.json":
+        raise RuntimeError("Codex native account file must be auth.json")
+    codex_home = credential_file.parent
+    daemon_dir = Path("/tmp").resolve() / f"codex-daemon-{os.geteuid()}"
+    if not socket_path.is_absolute() or socket_path.parent != daemon_dir:
+        raise RuntimeError("Codex native socket must occupy its private shared daemon directory")
+    daemon_dir.mkdir(mode=0o700, exist_ok=True)
+    metadata = daemon_dir.stat()
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or metadata.st_gid != os.getegid()
+        or stat.S_IMODE(metadata.st_mode) != 0o700
+    ):
+        raise RuntimeError("Codex shared socket directory must be private and process-owned")
+    cwd_root = daemon_dir / "cwds"
+    cwd_root.mkdir(mode=0o700, exist_ok=True)
+    cwd = cwd_root / "host"
+    cwd.mkdir(mode=0o500, exist_ok=True)
+    home = codex_home / "home"
+    temporary = codex_home / "tmp"
+    home.mkdir(mode=0o700, exist_ok=True)
+    temporary.mkdir(mode=0o700, exist_ok=True)
     try:
         socket_path.lstat()
     except FileNotFoundError:
         pass
     else:
         raise RuntimeError("Codex native socket path already exists")
+    catalog = materialize_codex_containment_catalog(codex_home)
     environment = {
         "CODEX_HOME": str(codex_home),
         "CODEX_EXEC_SERVER_URL": "none",
         "HOME": str(home),
-        "TMPDIR": str(paths.temporary_directory),
+        "TMPDIR": str(temporary),
         "LANG": "C.UTF-8",
         "LC_ALL": "C.UTF-8",
         "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     }
     process = await asyncio.create_subprocess_exec(
         str(executable),
-        *(item for value in _CONFIG_OVERRIDES for item in ("--config", value)),
+        "-c",
+        f"model_catalog_json={json.dumps(str(catalog))}",
         "app-server",
         "--listen",
         f"unix://{socket_path}",
         "--strict-config",
-        cwd=paths.working_directory,
+        cwd=cwd,
         env=environment,
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.DEVNULL,
@@ -207,19 +222,14 @@ async def start_native_codex_server(paths: EphemeralRuntimePaths) -> NativeCodex
                 await asyncio.sleep(0.05)
                 continue
             try:
-                async with CodexAppServerClient(
-                    CodexAppServerConfig(server.socket_target, client_name="nexus-codex-host")
-                ) as client:
-                    agent = client.metadata["userAgent"]
-                    if not isinstance(agent, str) or not agent.startswith(
-                        f"nexus-codex-host/{PINNED_CODEX_VERSION} ("
-                    ):
-                        raise RuntimeError("Codex native process reported a different version")
-            except CodexConnectionUnavailable:
+                async with asyncio.timeout(max(0.001, deadline - loop.time())):
+                    await NativeCatalogClient(server.socket_target).health()
+            except NativeCatalogUnavailable:
                 await asyncio.sleep(0.05)
                 continue
+            os.chmod(server.socket_target, 0o660)
             return server
-        raise RuntimeError("Codex native socket did not pass its startup handshake")
+        raise RuntimeError("Codex native socket did not pass its authenticated startup probe")
     except BaseException:
         if server is not None:
             await server.stop()

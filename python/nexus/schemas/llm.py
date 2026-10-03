@@ -65,22 +65,6 @@ class TemporarilyUnavailable(_StrictGenerationModel):
     _last_checked_is_aware = field_validator("last_checked")(_aware)
 
 
-class CapacityPaused(_StrictGenerationModel):
-    """A parked Codex capacity refusal, rendered by the dossier surface."""
-
-    kind: Literal["CapacityPaused"] = "CapacityPaused"
-    code: Literal["quota_unavailable"] = "quota_unavailable"
-    explanation: str = Field(min_length=1, max_length=1_000)
-    reset_at: Presence[datetime]
-    next_check_at: datetime
-    last_checked: datetime
-
-    @field_validator("next_check_at", "last_checked")
-    @classmethod
-    def _instant_is_aware(cls, value: datetime) -> datetime:
-        return _aware(value)
-
-
 Readiness = Annotated[
     Ready | OperatorActionRequired | TemporarilyUnavailable, Field(discriminator="kind")
 ]
@@ -274,7 +258,6 @@ __all__ = [
     "AssistantUnavailableChatFailure",
     "BillingDisclosure",
     "CancelledChatFailure",
-    "CapacityPaused",
     "CatalogDefinitionStale",
     "ChatSeed",
     "CodexPersonalRoute",
