@@ -4448,6 +4448,30 @@ export interface components {
              */
             noteId: string;
         };
+        /** DailyCaptureResult */
+        DailyCaptureResult: {
+            /** Clientmutationid */
+            clientMutationId: string;
+            /**
+             * Localdate
+             * Format: date
+             */
+            localDate: string;
+            /**
+             * Pageid
+             * Format: uuid
+             */
+            pageId: string;
+            surface: components["schemas"]["ResourceSurfaceOut"];
+        };
+        /** DailyPageSummaryOut */
+        DailyPageSummaryOut: {
+            /**
+             * Localdate
+             * Format: date
+             */
+            localDate: string;
+        };
         /** DataPage[ConversationOut, PageInfo] */
         DataPage_ConversationOut_PageInfo_: {
             /** Data */
@@ -4461,6 +4485,11 @@ export interface components {
         /** Data[ActivitySessionPageOut] */
         Data_ActivitySessionPageOut_: {
             data: components["schemas"]["ActivitySessionPageOut"];
+        };
+        /** Data[Annotated[Union[LatentDailyPageDescriptor, MaterializedDailyPageDescriptor], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
+        Data_Annotated_Union_LatentDailyPageDescriptor__MaterializedDailyPageDescriptor___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
+            /** Data */
+            data: components["schemas"]["LatentDailyPageDescriptor"] | components["schemas"]["MaterializedDailyPageDescriptor"];
         };
         /** Data[Annotated[Union[LearnDossierOpenedOut, LearnDossierBuildAcceptedOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
         Data_Annotated_Union_LearnDossierOpenedOut__LearnDossierBuildAcceptedOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
@@ -4494,6 +4523,10 @@ export interface components {
         /** Data[CreateResourceShareOut] */
         Data_CreateResourceShareOut_: {
             data: components["schemas"]["CreateResourceShareOut"];
+        };
+        /** Data[DailyCaptureResult] */
+        Data_DailyCaptureResult_: {
+            data: components["schemas"]["DailyCaptureResult"];
         };
         /** Data[DossierBuildCreatedOut] */
         Data_DossierBuildCreatedOut_: {
@@ -4538,6 +4571,18 @@ export interface components {
         /** Data[NexusSelectionRecordOut] */
         Data_NexusSelectionRecordOut_: {
             data: components["schemas"]["NexusSelectionRecordOut"];
+        };
+        /** Data[NoteBlockOut] */
+        Data_NoteBlockOut_: {
+            data: components["schemas"]["NoteBlockOut"];
+        };
+        /** Data[NotePageOut] */
+        Data_NotePageOut_: {
+            data: components["schemas"]["NotePageOut"];
+        };
+        /** Data[NotePagesOut] */
+        Data_NotePagesOut_: {
+            data: components["schemas"]["NotePagesOut"];
         };
         /** Data[PodcastEpisodeQueryTranscriptForecastOut] */
         Data_PodcastEpisodeQueryTranscriptForecastOut_: {
@@ -5634,6 +5679,21 @@ export interface components {
              */
             kind: "Last";
         };
+        /** LatentDailyPageDescriptor */
+        LatentDailyPageDescriptor: {
+            /** Defaulttitle */
+            defaultTitle: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Latent";
+            /**
+             * Localdate
+             * Format: date
+             */
+            localDate: string;
+        };
         /** LearnDossierBuildAcceptedOut */
         LearnDossierBuildAcceptedOut: {
             /** Artifact Ref */
@@ -6024,6 +6084,21 @@ export interface components {
              * @enum {string}
              */
             mode: "manual";
+        };
+        /** MaterializedDailyPageDescriptor */
+        MaterializedDailyPageDescriptor: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Materialized";
+            /**
+             * Localdate
+             * Format: date
+             */
+            localDate: string;
+            page: components["schemas"]["NotePageOut"];
+            surface: components["schemas"]["ResourceSurfaceOut"];
         };
         /** MediaAbstractBuildingOut */
         MediaAbstractBuildingOut: {
@@ -6618,6 +6693,48 @@ export interface components {
              */
             type: "note_block_offsets";
         };
+        /** NoteBlockOut */
+        NoteBlockOut: {
+            /** Bodypmjson */
+            bodyPmJson: {
+                [key: string]: unknown;
+            };
+            /** Bodytext */
+            bodyText: string;
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Updatedat
+             * Format: date-time
+             */
+            updatedAt: string;
+            /** Versionbylane */
+            versionByLane: {
+                [key: string]: number;
+            };
+        };
+        /** NoteBodySurfaceContent */
+        NoteBodySurfaceContent: {
+            /** Body Pm Json */
+            body_pm_json: {
+                [key: string]: unknown;
+            };
+            /** Body Text */
+            body_text: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "note_body";
+        };
         /** NoteInputManifestV1 */
         NoteInputManifestV1: {
             body_fingerprint: components["schemas"]["Presence_str_"];
@@ -6638,6 +6755,42 @@ export interface components {
              * @constant
              */
             version: "v1";
+        };
+        /** NotePageOut */
+        NotePageOut: {
+            dailyPage: components["schemas"]["Presence_DailyPageSummaryOut_"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Title */
+            title: string;
+            /**
+             * Updatedat
+             * Format: date-time
+             */
+            updatedAt: string;
+        };
+        /** NotePageSummaryOut */
+        NotePageSummaryOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Title */
+            title: string;
+            /**
+             * Updatedat
+             * Format: date-time
+             */
+            updatedAt: string;
+        };
+        /** NotePagesOut */
+        NotePagesOut: {
+            /** Pages */
+            pages: components["schemas"]["NotePageSummaryOut"][];
         };
         /** OfflineReaderWrite */
         OfflineReaderWrite: {
@@ -6806,6 +6959,16 @@ export interface components {
              * @constant
              */
             version: "v1";
+        };
+        /** PageTitleSurfaceContent */
+        PageTitleSurfaceContent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "page_title";
+            /** Title */
+            title: string;
         };
         /**
          * PartialHistoryCoverage
@@ -7317,6 +7480,7 @@ export interface components {
         Presence_CancelledEventPayload_: components["schemas"]["Absent"] | components["schemas"]["Present_CancelledEventPayload_"];
         Presence_CapacityPaused_: components["schemas"]["Absent"] | components["schemas"]["Present_CapacityPaused_"];
         Presence_ChatPublicationWarning_: components["schemas"]["Absent"] | components["schemas"]["Present_ChatPublicationWarning_"];
+        Presence_DailyPageSummaryOut_: components["schemas"]["Absent"] | components["schemas"]["Present_DailyPageSummaryOut_"];
         Presence_DossierBuildAdmittedGenerationOut_: components["schemas"]["Absent"] | components["schemas"]["Present_DossierBuildAdmittedGenerationOut_"];
         Presence_DossierBuildExecution_: components["schemas"]["Absent"] | components["schemas"]["Present_DossierBuildExecution_"];
         Presence_DossierBuildSummary_: components["schemas"]["Absent"] | components["schemas"]["Present_DossierBuildSummary_"];
@@ -7569,6 +7733,15 @@ export interface components {
              */
             kind: "Present";
             value: components["schemas"]["ChatPublicationWarning"];
+        };
+        /** Present[DailyPageSummaryOut] */
+        Present_DailyPageSummaryOut_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["DailyPageSummaryOut"];
         };
         /** Present[DossierBuildAdmittedGenerationOut] */
         Present_DossierBuildAdmittedGenerationOut_: {
@@ -8459,6 +8632,93 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** ResourceItemCapabilitiesOut */
+        ResourceItemCapabilitiesOut: {
+            /** Adjacencysource */
+            adjacencySource: boolean;
+            /** Adjacencytarget */
+            adjacencyTarget: boolean;
+            /** Appsearchscope */
+            appSearchScope: boolean;
+            /** Attachable */
+            attachable: boolean;
+            /**
+             * Chatsubject
+             * @enum {string}
+             */
+            chatSubject: "none" | "label" | "scope" | "readable" | "quote" | "generated_output";
+            /** Citableresulttype */
+            citableResultType: string | null;
+            /** Citationoutputsource */
+            citationOutputSource: boolean;
+            /** Conversationsearchscope */
+            conversationSearchScope: boolean;
+            /** Expandable */
+            expandable: boolean;
+            /**
+             * Expansionpolicy
+             * @enum {string}
+             */
+            expansionPolicy: "none" | "media_owned_reader_children" | "page_note_blocks" | "note_block_owned_evidence" | "artifact_revisions";
+            /**
+             * Inspectable
+             * @enum {string}
+             */
+            inspectable: "none" | "media_document_map";
+            /**
+             * Libraryplacement
+             * @enum {string}
+             */
+            libraryPlacement: "None" | "ManageEntries";
+            /**
+             * Promptrender
+             * @enum {string}
+             */
+            promptRender: "none" | "label" | "inline_body" | "quote";
+            /**
+             * Readable
+             * @enum {string}
+             */
+            readable: "none" | "scope" | "body" | "media";
+            /**
+             * Sharing
+             * @enum {string}
+             */
+            sharing: "None" | "CopyOnly" | "ResourceGrants" | "HighlightGrants" | "LibraryMembership";
+            userRelation: components["schemas"]["ResourceUserRelationPolicyOut"];
+        };
+        /** ResourceItemOut */
+        ResourceItemOut: {
+            activation: components["schemas"]["ResourceActivationOut"];
+            capabilities: components["schemas"]["ResourceItemCapabilitiesOut"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Label */
+            label: string;
+            /**
+             * Missing
+             * @default false
+             */
+            missing: boolean;
+            /** Ref */
+            ref: string;
+            /** Route */
+            route: string | null;
+            /**
+             * Scheme
+             * @enum {string}
+             */
+            scheme: "media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "artifact" | "artifact_revision" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor";
+            /** Summary */
+            summary: string;
+            /** Versionbylane */
+            versionByLane: {
+                [key: string]: number;
+            };
+        };
         /** ResourceLaneVersionIn */
         ResourceLaneVersionIn: {
             /**
@@ -8508,6 +8768,14 @@ export interface components {
              */
             sharing: "None" | "CopyOnly" | "ResourceGrants" | "HighlightGrants" | "LibraryMembership";
         };
+        /** ResourceSummarySurfaceContent */
+        ResourceSummarySurfaceContent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "resource_summary";
+        };
         /** ResourceSurfaceCommandRequest */
         ResourceSurfaceCommandRequest: {
             /** Base Versions */
@@ -8519,6 +8787,31 @@ export interface components {
             /** Command */
             command: components["schemas"]["InsertNoteSurfaceCommand"] | components["schemas"]["SplitNoteSurfaceCommand"] | components["schemas"]["InsertResourceSurfaceCommand"] | components["schemas"]["MoveOccurrenceSurfaceCommand"] | components["schemas"]["RemoveOccurrenceSurfaceCommand"] | components["schemas"]["RelinkSurfaceCommand"] | components["schemas"]["JoinNotesSurfaceCommand"] | components["schemas"]["PasteOutlineSurfaceCommand"] | components["schemas"]["ReverseEditSurfaceCommand"];
             context: components["schemas"]["SurfaceContext"];
+        };
+        /** ResourceSurfaceNode */
+        ResourceSurfaceNode: {
+            /** Content */
+            content: components["schemas"]["PageTitleSurfaceContent"] | components["schemas"]["NoteBodySurfaceContent"] | components["schemas"]["ResourceSummarySurfaceContent"];
+            item: components["schemas"]["ResourceItemOut"];
+        };
+        /** ResourceSurfaceOccurrence */
+        ResourceSurfaceOccurrence: {
+            /** Collapsed */
+            collapsed: boolean;
+            /** Has Link Note */
+            has_link_note: boolean;
+            /**
+             * Link Id
+             * Format: uuid
+             */
+            link_id: string;
+            target: components["schemas"]["ResourceSurfaceNode"];
+        };
+        /** ResourceSurfaceOut */
+        ResourceSurfaceOut: {
+            /** Ordered Items */
+            ordered_items: components["schemas"]["ResourceSurfaceOccurrence"][];
+            source: components["schemas"]["ResourceSurfaceNode"];
         };
         /** ResourceTargetSearchRequest */
         ResourceTargetSearchRequest: {
@@ -8551,6 +8844,18 @@ export interface components {
             client_mutation_id: string;
             /** Title */
             title: string;
+        };
+        /** ResourceUserRelationPolicyOut */
+        ResourceUserRelationPolicyOut: {
+            /** Notereferencetarget */
+            noteReferenceTarget: boolean;
+            /** Userlinksource */
+            userLinkSource: boolean;
+            /**
+             * Userlinktarget
+             * @enum {string}
+             */
+            userLinkTarget: "none" | "direct" | "materialize_passage";
         };
         /** RestoreActivityExclusionIn */
         RestoreActivityExclusionIn: {
@@ -15137,9 +15442,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_NoteBlockOut_"];
                 };
             };
             /** @description Validation Error */
@@ -15170,9 +15473,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_Annotated_Union_LatentDailyPageDescriptor__MaterializedDailyPageDescriptor___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
                 };
             };
             /** @description Validation Error */
@@ -15207,9 +15508,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_DailyCaptureResult_"];
                 };
             };
             /** @description Validation Error */
@@ -15238,9 +15537,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_NotePagesOut_"];
                 };
             };
         };
@@ -15264,9 +15561,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_NotePageOut_"];
                 };
             };
             /** @description Validation Error */
@@ -15297,9 +15592,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_NotePageOut_"];
                 };
             };
             /** @description Validation Error */
@@ -15363,9 +15656,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_NotePageOut_"];
                 };
             };
             /** @description Validation Error */

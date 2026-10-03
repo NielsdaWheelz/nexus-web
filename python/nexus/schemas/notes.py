@@ -6,7 +6,7 @@ from datetime import date, datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.alias_generators import to_camel
 
 from nexus.schemas.presence import Presence
@@ -24,7 +24,7 @@ class NoteBlockOut(BaseModel):
     body_text: str
     created_at: datetime
     updated_at: datetime
-    version_by_lane: dict[str, int] = Field(default_factory=dict)
+    version_by_lane: dict[str, int]
 
     model_config = _CAMEL
 
@@ -68,6 +68,14 @@ class MaterializedDailyPageDescriptor(BaseModel):
     surface: ResourceSurfaceOut
 
     model_config = _CAMEL_CLOSED
+
+    @model_validator(mode="after")
+    def _validate_daily_page(self) -> MaterializedDailyPageDescriptor:
+        if self.page.daily_page.kind != "Present":
+            raise ValueError("materialized daily page must have daily metadata")
+        if self.page.daily_page.value.local_date != self.local_date:
+            raise ValueError("materialized daily page metadata must match local_date")
+        return self
 
 
 DailyPageDescriptor = Annotated[
