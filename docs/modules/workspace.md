@@ -38,9 +38,36 @@ nontrivial newest elsewhere, then the current deep-link/default state.
 [`workspaceRestore.ts`](../../apps/web/src/lib/workspace/workspaceRestore.ts)
 owns validation, width adjustment and deep-link merging.
 [`useWorkspaceSession.ts`](../../apps/web/src/lib/workspace/useWorkspaceSession.ts)
-debounces edits for 1 s and flushes pending writes on pagehide/hidden with
-keepalive. its separate [failed-save gap](../tickets/workspace-session-failed-save-discards-dirty-state.md)
-remains unresolved.
+debounces edits for 1 s; only successful transport acknowledges the exact sent
+snapshot. one live writer coalesces newer requested state, reading latest at
+dispatch. failures retain dirty state. pagehide/hidden requests a dirty keepalive
+save independently of the timer; repeated events for the same live snapshot
+coalesce without creating an automatic retry.
+
+network, upstream, upstream-timeout and auth-dependency failures publish one
+persistent retry notice; retry reads latest state. 401 keeps existing login
+handling. malformed/internal/unexpected faults reach the authenticated workspace
+render boundary. lifetime cleanup cancels timers, clears unsent intent and
+withdraws the notice; withdrawal is not acknowledgement. late settlements cannot
+publish feedback or dispatch after their owner unmounts.
+
+this serializes known requests in the mounted hook, not remote intent across
+tabs or ambiguous failures. per-device/cross-tab saves remain last-write-wins.
+closing during an older live request may destroy the document before the latest
+queued keepalive dispatches; offline and close delivery remain best-effort.
+no server revision protocol, local journal or retry loop is added.
+
+live qualification: 14 cases and 24 recorded browser puts, with genuine
+bff/api readback, cover initial
+deep-link/no-op, debounce, failed save → latest retry → root restore, dirty
+pagehide, keepalive failure without an automatic loop, real pre-forward
+serialization, delayed acknowledgement, committed/lost response, the four named
+delivery failures, auth redirect and internal/non-json fault handoff. the
+persistent notice withdraws on defect; historical aria announcement text may
+remain without a retry action. receipts: `/tmp/nexus-workspace-save-{baseline,candidate}-receipt.json`.
+pagehide events were explicitly injected; actual visibility-hidden, mobile and
+document-close delivery were not observed. the hidden branch is source-qualified
+through the same flush callback. final static gate passed.
 
 ## Layout Modes
 

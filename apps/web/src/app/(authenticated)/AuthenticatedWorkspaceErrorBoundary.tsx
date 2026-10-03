@@ -1,6 +1,12 @@
 "use client";
 
-import { Component, useEffect, useRef, useTransition, type ReactNode } from "react";
+import {
+  Component,
+  useEffect,
+  useRef,
+  useTransition,
+  type ReactNode,
+} from "react";
 import { useRouter } from "next/navigation";
 import Button from "@/components/ui/Button";
 import styles from "./AuthenticatedWorkspaceErrorBoundary.module.css";
@@ -8,12 +14,11 @@ import styles from "./AuthenticatedWorkspaceErrorBoundary.module.css";
 /**
  * The error boundary for the whole authenticated workspace. A same-segment
  * `error.tsx` cannot catch its own layout, so the authenticated layout wraps
- * its Suspense/bootstrap subtree in this client class boundary. The required
- * bootstrap profile read surfaces here: failure replaces the skeleton with an
- * accessible error and Retry — never a fabricated default.
+ * its Suspense/bootstrap subtree in this client class boundary. Bootstrap and
+ * live workspace faults surface here with accessible retry.
  */
 
-function WorkspaceBootstrapError({ onReset }: { onReset: () => void }) {
+function WorkspaceError({ onReset }: { onReset: () => void }) {
   const router = useRouter();
   const [retrying, startTransition] = useTransition();
   const regionRef = useRef<HTMLDivElement>(null);
@@ -36,15 +41,15 @@ function WorkspaceBootstrapError({ onReset }: { onReset: () => void }) {
     <div
       ref={regionRef}
       role="alert"
-      aria-labelledby="workspace-bootstrap-error-heading"
+      aria-labelledby="workspace-error-heading"
       tabIndex={-1}
       className={styles.region}
     >
-      <h2 id="workspace-bootstrap-error-heading" className={styles.heading}>
-        The workspace couldn’t load
+      <h2 id="workspace-error-heading" className={styles.heading}>
+        Something went wrong in your workspace
       </h2>
       <p className={styles.body}>
-        Something went wrong while loading your workspace. Your data is safe.
+        Retry to reopen your saved workspace. Unsaved changes may be lost.
       </p>
       <Button onClick={retry} disabled={retrying}>
         {retrying ? "Retrying…" : "Retry"}
@@ -68,12 +73,14 @@ export class AuthenticatedWorkspaceErrorBoundary extends Component<
   }
 
   componentDidCatch(error: unknown) {
-    console.error("Authenticated workspace bootstrap failed:", error);
+    console.error("Authenticated workspace failed:", error);
   }
 
   render() {
     if (this.state.hasError) {
-      return <WorkspaceBootstrapError onReset={() => this.setState({ hasError: false })} />;
+      return (
+        <WorkspaceError onReset={() => this.setState({ hasError: false })} />
+      );
     }
     return this.props.children;
   }

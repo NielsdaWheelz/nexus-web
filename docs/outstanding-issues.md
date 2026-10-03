@@ -349,6 +349,5 @@ unexpected timeouts. See
 - [open] local dependency setup · 2026-10-02 cleanup verification · make setup omits the codex-agent extra required by checked runtime imports: [ticket](tickets/local-setup-omits-codex-agent-extra.md).
 - [open] walknote / transcription · 2026-10-02 cleanup audit · the async upload route makes blocking deepgram http calls, delaying unrelated requests and streams: [ticket](tickets/walknote-transcription-blocks-api-event-loop.md).
 - [open] atlas / query · 2026-10-02 representation repair · the star query still selects/groups an unused position timestamp: [ticket](tickets/atlas-star-query-reads-unused-position-timestamp.md).
-- [open] workspace / saving · 2026-10-02 cleanup audit · scheduled snapshots count as saved; non-auth failures disappear and pagehide skips retry: [ticket](tickets/workspace-session-failed-save-discards-dirty-state.md).
 - author non-media work dates have no producer: [ticket](tickets/author-nonmedia-work-dates-have-no-producer.md).
 - [open] media / wire · 2026-10-02 typed detail audit · the detail/list episode state is always null and has no media-detail consumer: [ticket](tickets/media-detail-retains-always-null-episode-state.md).
