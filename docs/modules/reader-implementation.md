@@ -468,6 +468,14 @@ revision }`; on send the server row-locks the Highlight and captures an
 
 ### anchored evidence projection
 
+`locator_from_resolution` publishes a positional locator only for resolved
+evidence and reuses the existing highlight text quote. unresolved evidence has
+no locator; a readable media target remains available. geometry-less pdf
+citations retain evidence-hash/page navigation without geometry paint, while
+connections retain Unanchorable presentation and disabled positional Jump.
+strict geometry validation and writer-produced string quotes remain unchanged;
+legacy quote contexts follow the highlight's `str(value or "")` normalization.
+
 Anchored projection is the reader-owned bridge from target-owned locators to
 visible rows in Evidence. The overview rail owns no DOM geometry:
 marker positions come from aggregate document fractions and its visible band

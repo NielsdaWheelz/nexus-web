@@ -405,20 +405,17 @@ def _pdf_quads_from_geometry(geometry: dict[str, Any]) -> list[dict[str, float]]
 
 def locator_from_resolution(
     resolution: dict[str, Any], *, media_id: UUID, media_kind: str
-) -> dict[str, Any]:
-    """Map an ``evidence_resolution`` to a validated retrieval locator.
+) -> dict[str, Any] | None:
+    """Map resolved evidence to a validated positional locator, otherwise none.
 
     The single owner of the resolver-kind -> ``RetrievalLocator`` mapping, shared by
     ``search`` (content-chunk and evidence-span results) and ``reader_targets``.
     """
     resolver = resolution["resolver"]
+    if resolver["status"] != "resolved":
+        return None
     selector = resolver["selector"]
-    raw_quote = selector.get("text_quote")
-    quote = raw_quote if isinstance(raw_quote, dict) else {}
-    exact = str(quote.get("exact") or resolution.get("span_text") or "")
-    prefix = quote.get("prefix") if isinstance(quote.get("prefix"), str) else None
-    suffix = quote.get("suffix") if isinstance(quote.get("suffix"), str) else None
-    quote_selector = {"exact": exact, "prefix": prefix, "suffix": suffix}
+    quote_selector = resolver["highlight"]["text_quote"]
 
     kind = resolver.get("kind")
     if kind == "web":
@@ -451,9 +448,9 @@ def locator_from_resolution(
             "media_id": str(media_id),
             "page_number": selector.get("page_number"),
             "quads": geometry.get("quads") if isinstance(geometry.get("quads"), list) else [],
-            "exact": exact,
-            "prefix": prefix,
-            "suffix": suffix,
+            "exact": quote_selector["exact"],
+            "prefix": quote_selector["prefix"],
+            "suffix": quote_selector["suffix"],
             "text_quote_selector": quote_selector,
         }
     elif kind == "transcript":
