@@ -100,7 +100,9 @@ _WEB_SEARCH_POLICY_INPUTS: Final[Mapping[str, object]] = MappingProxyType(
 )
 
 
-def compose_tool_runtime(web_search_provider: WebSearchProvider | None) -> ComposedToolRuntime:
+def compose_tool_runtime(
+    web_search_provider: WebSearchProvider | None, *, embedding_available: bool
+) -> ComposedToolRuntime:
     """Compose the one process-owned runtime."""
 
     from nexus.services.tool_runtime.bindings import nexus_tool_bindings
@@ -129,7 +131,7 @@ def compose_tool_runtime(web_search_provider: WebSearchProvider | None) -> Compo
         policy_epoch=search_source.policy_epoch,
         policy_inputs={**search_source.policy_inputs, **_WEB_SEARCH_POLICY_INPUTS},
     )
-    nexus_bindings = nexus_tool_bindings()
+    nexus_bindings = nexus_tool_bindings(embedding_available=embedding_available)
     catalog = ToolCatalog.compose(
         (
             web_family(search=web_search_binding, read=read_source),

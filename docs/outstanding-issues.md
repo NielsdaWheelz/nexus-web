@@ -239,6 +239,7 @@ unexpected timeouts. See
 
 - [open] metadata verification · 2026-09-14 implementation · live research judgments and external query contents still need smoke inspection: [ticket](tickets/metadata-live-research-smoke-unverified.md).
 - [open] metadata execution · 2026-10-02 implementation · qualified native adapter/pins, provider-sealed local recovery and one coordinated migration head remain required: [ticket](tickets/metadata-native-kernel-integration.md).
+- [open] metadata research · 2026-10-03 installed live acceptance · missing document-search embedding credential is admitted before callback failure: [ticket](tickets/metadata-research-tool-prerequisites-not-admitted.md).
 - [open] native adapter migration · 2026-10-02 metadata adversarial review · redundant callback check removed from candidate; qualified boundary proof pending: [ticket](tickets/native-callback-arguments-check-violates-database-rules.md).
 - [open] metadata bibliography · 2026-10-01 council · first-book/collection/essay semantics are implemented; actual date judgments and targeted saved-item correction remain unqualified: [ticket](tickets/metadata-book-date-counts-serialization.md).
 - [open] metadata context · 2026-10-01 council · bounded normalized input is implemented; useful live research and follow-up reading remain unqualified: [ticket](tickets/metadata-prefix-sample-omits-bibliographic-evidence.md).

@@ -48,12 +48,15 @@ def compose_nexus_bindings(
     )
 
 
-def nexus_tool_bindings() -> tuple[ToolBinding[Any, Any, Any], ...]:
+def nexus_tool_bindings(*, embedding_available: bool) -> tuple[ToolBinding[Any, Any, Any], ...]:
     """The executable bindings used by every process that dispatches tools."""
 
     return compose_nexus_bindings(
         {
-            entry.spec.id: Available(partial(execute_nexus_tool, tool_id=entry.spec.id))
+            entry.spec.id: Unavailable("embedding credential is not configured")
+            if not embedding_available
+            and str(entry.spec.id) in ("nexus.search", "nexus.document.search")
+            else Available(partial(execute_nexus_tool, tool_id=entry.spec.id))
             for entry in NEXUS_TOOL_DECLARATIONS
         }
     )

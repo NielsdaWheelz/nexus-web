@@ -501,6 +501,7 @@ of commands, revisions, operation ids, observed outcomes and limitations.
 | no findings + invalid output | all-null and malformed results never stamp success; queue settles terminal unsuccessful; no second model call; provider terminal truth retained |
 | replay + concurrency | lost enqueue response yields same job; concurrent distinct requests and a scheduled retry cannot admit a second manual job; crash after publication reuses the outcome without restamping |
 | execution fences | stale source/credits, lost claim and revoked access cannot publish; uncertainty blocks fresh research; pre-admission catalog failure is visible without a generation id |
+| required tools | known missing search credentials fail as configuration errors before model submission; no generation id or stamp; configured research works; original-seal recovery bypasses current tool unavailability |
 | native recovery | sealed terminal recovers from frozen input with zero catalog/provider calls after source/credits/access or current-tool-definition change; original terminal/usage retained; publication rejects stale/revoked facts; without either seal or authoritative non-submission proof, remains uncertain; exact non-submission proof settles failed locally |
 | context | a large unicode credit list cannot exceed the encoded input budget or silently lose identities; malformed handles/isbn/roles fail before publication |
 | contributors + epub | stable person across credited-name changes; role-refined creator/contributor parsing; explicit empty author slice clears; historical repair preserves unrelated credits and reader state; ambiguous repair is reported |
@@ -528,6 +529,8 @@ module docs, delete only resolved tickets, and stop.
 - native execution retires shell quota parking. known pre-submission failures
   use bounded queue retries; terminal native quota failures fail the job and
   allow a fresh manual request. no new quota scheduler is introduced.
+- required-tool admission checks known local configuration. configured remote
+  dependencies can still fail during execution; no readiness network probe is added.
 - indefinite metadata-job retention costs storage and retains research context;
   it avoids another outcome ledger and expiring replay semantics for one user.
 - visible details consume shared stream listeners; closed views reconcile on
