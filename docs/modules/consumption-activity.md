@@ -82,6 +82,7 @@ midnight starts at its earlier reading and a skipped one at its transition; a
 date the zone skips entirely has no bucket of its own. Session device summaries
 are required because every session is observed. Raw device IDs and span
 payloads never reach presentation.
+both embedded and continuation session pages use the same `items,nextCursor` contract.
 The Stats pane binds a session continuation to the exact committed Stats path
 and decoded URL state, never the still-pending requested view. The shared manual
 cursor owner atomically adopts first-page rows, cursor, loading, and expected

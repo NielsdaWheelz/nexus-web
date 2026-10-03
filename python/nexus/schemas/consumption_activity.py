@@ -163,12 +163,7 @@ class ActivitySessionOut(_Row):
 
 
 class ActivitySessionPageOut(CamelOut):
-    sessions: list[ActivitySessionOut]
-    next_cursor: Presence[str]
-
-
-class ActivitySessionsOut(CamelOut):
-    rows: list[ActivitySessionOut]
+    items: list[ActivitySessionOut]
     next_cursor: Presence[str]
 
 
@@ -257,7 +252,7 @@ class ActivityStatsSectionOut(_Scoped):
     media: MediaActivityBreakdownOut
     contributors: ContributorActivityBreakdownOut
     devices: list[DeviceActivityOut]
-    sessions: ActivitySessionsOut
+    sessions: ActivitySessionPageOut
     longest_session: Presence[ActivitySessionOut]
     active_exclusions: list[ActiveExclusionOut]
 

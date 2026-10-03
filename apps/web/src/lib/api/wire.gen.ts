@@ -3359,15 +3359,9 @@ export interface components {
         };
         /** ActivitySessionPageOut */
         ActivitySessionPageOut: {
+            /** Items */
+            items: components["schemas"]["ActivitySessionOut"][];
             nextCursor: components["schemas"]["Presence_str_"];
-            /** Sessions */
-            sessions: components["schemas"]["ActivitySessionOut"][];
-        };
-        /** ActivitySessionsOut */
-        ActivitySessionsOut: {
-            nextCursor: components["schemas"]["Presence_str_"];
-            /** Rows */
-            rows: components["schemas"]["ActivitySessionOut"][];
         };
         /** ActivityStatsSectionOut */
         ActivityStatsSectionOut: {
@@ -3386,7 +3380,7 @@ export interface components {
             localHours: components["schemas"]["LocalHourOut"][];
             longestSession: components["schemas"]["Presence_ActivitySessionOut_"];
             media: components["schemas"]["MediaActivityBreakdownOut"];
-            sessions: components["schemas"]["ActivitySessionsOut"];
+            sessions: components["schemas"]["ActivitySessionPageOut"];
             /** Timeline */
             timeline: components["schemas"]["ActivityTimelineRowOut"][];
             totals: components["schemas"]["ActivityTotalsOut"];
