@@ -1,6 +1,6 @@
 # metadata enrichment verification
 
-status: local metadata behavior GREEN; installed native integration NOT_READY;
+status: local metadata behavior GREEN; final native delivery NOT_READY;
 metadata's genuine bibliographic cases NOT_RUN. observed 2026-10-02 on `feature/metadata-enrichment`, based on
 `a494f743eb402b0cbb6069066fca4143b24036f0`. no production deployment or repair.
 verified metadata implementation commit:
@@ -87,9 +87,14 @@ collapse is retained in its [ticket](tickets/reader-find-preview-collapses-toolb
 
 ## remaining acceptance
 
-the kernel owner now reports genuine source-overlay public `execute_generation`
-using personal `gpt-6-luna`/`xhigh`, strict json and useful results from all four
-actual tools. candidate actual-postgres SIGKILL/cold-reclaim recovery also passed
+the installed candidate's genuine public `execute_generation` receipt now proves
+personal `gpt-6-luna`/`xhigh`, closed strict json and useful results from all four
+actual tools. receipt `/tmp/nexus-native-research.json`, generation
+`73e1c192-e2a8-4171-b47d-8b15fbdcbedb`; the matching stock `0.160.0` rollout
+confirms actual model/effort and only declared callbacks. installed nexus files
+match adapter `c087faba0529095a076e83b559774a510b513dab`; module origins are
+site-packages, without source overlays. candidate actual-postgres
+SIGKILL/cold-reclaim recovery also passed
 with original terminal/usage and zero catalog/provider calls. these are separate
 proofs: genuine research and controlled recovery faults. neither establishes
 final installed metadata acceptance; the recovery probe uses
@@ -97,20 +102,19 @@ final installed metadata acceptance; the recovery probe uses
 `enrich_metadata` / `codex/metadata` recovery with frozen inputs and publication
 fences after source, credits or access change.
 
-no qualified immutable adapter/provider/tools pin set is available. the owner is
-repairing and qualifying native delegation containment before frozen installation
-and the final live repeat. stock 0.160 has no native hard context/output ceiling
+no final qualified adapter/provider/tools pin set is available. the installed
+research candidate uses provider `23bd67420c9aaac78f5a6689d795b1eb02a1d5e9`,
+kernel `ece3cda0c9898d2041cb74041b711d83b6361c74` and tools
+`cad13af1289c247897236959bfff0d6791956d4b`. its frozen lock is an uncommitted
+urllib3 2.8.0 variant; final cleanup, committed locks and consumer qualification
+remain owner gates. stock 0.160 has no native hard context/output ceiling
 field; 64,000/8,000 remain admission/reservation policy, not enforced token caps.
 the user accepted that contract on 2026-10-02; the enforcement limit is explicit
 in the plan and module documentation.
-installed `CodexCallbacks` / `MetadataResearch` and the combined
+root adoption of `CodexCallbacks` / `MetadataResearch` and the combined
 `0252` → native `0254` → metadata `0255` migration remain unqualified.
-standalone `0253` receipts above remain historical; combined proof must cover
-historical effect/principal evidence and rollback of native changes when the
-later metadata guard rejects. the candidate proves actual whole-transaction
-rollback and raw byte preservation, but its synthetic terminal parent has an
-invalid pending continuation. the separate owner-created historical fixture is
-now prepared: actual `0252` upgrades and both seeds pass on the two owned
+standalone `0253` receipts above remain historical. the valid owner-created
+historical fixture is prepared: actual `0252` upgrades and both seeds pass on the two owned
 `metadata_native_cutover_{success,blocked}` databases. each contains two tool
 receipts/authorships, one reverted note, a closed original-principal credential,
 and a separate open API parent with an authenticated continuation. captured
@@ -119,9 +123,16 @@ public-schema definitions and all baseline table columns match. executed source:
 `1a0185b5301d8d90131909a1c7856f0d145f13dd5135f7f958e28a4175c4a384`;
 receipt `.tmp/metadata-native-cutover-baseline-v4.log`. the target-head check is
 RED on current `0253` before any database connection. archives and receipt were
-sent to the kernel owner for its isolated candidate audit. actual installed
-combined upgrade/rollback and post-cutover undo remain NOT_RUN. parent terminal
-or local stop never unlocks metadata uncertainty.
+sent to the kernel owner for its isolated candidate audit. that separate installed
+candidate, `f13bb04bf9e801a1d75c6d79141132220c4405d1`, now passes the unchanged
+owner verifier for both success and later metadata rejection. logs:
+`/private/tmp/native-combined-migration.PNQFIS/{success,blocked}.migration.log`
+and corresponding verifier logs. original states/dumps match. valid authenticated
+continuation, original principals/effects/authorships and undo-once/repeat-false
+are preserved; rejection rolls back captured definitions, all baseline columns,
+credentials and version. root's final installed combined graph and domain
+integration remain NOT_RUN. parent terminal or local stop never unlocks metadata
+uncertainty.
 
 genuine book/collection/essay research remains NOT_RUN. finite primary-source
 fixtures identify *mere christianity* (1952), *of other worlds* (1966) and the
@@ -136,6 +147,8 @@ the disposable `.tmp/metadata_live_research.py` driver is prepared and reviewed,
 unexecuted. it uses identification excerpts and the actual api/worker; source
 ingestion is separately verified. actual wire selection/callbacks and supported
 date precision still require trace inspection, not inference from frozen fields.
+tool use remains model-directed: require useful web search/read across the cohort,
+with exact four-tool capability qualified in the shared owner's separate receipt.
 
 production uncertainty/catalog dispositions, release backup/quiescence and
 guarded saved-epub repair are still pending. follow the
