@@ -1,7 +1,8 @@
 # metadata enrichment: implementation contract
 
-status: qualified native adapter/pins adopted on `feature/metadata-enrichment`;
-composed metadata acceptance and genuine bibliographic research are in progress.
+status: local metadata implementation, native integration and genuine research GREEN.
+disposable proofs deleted; final `./scripts/test` PASS. historical production
+release and saved-item repair remain BLOCKED; section 9 is not complete.
 owner decisions: 2026-10-01–02. [verification receipt](metadata-enrichment-verification.md).
 scope: nexus metadata only. the separate kernel agent owns model execution.
 no unanswered product questions block this plan. paths below are repository-relative.
@@ -523,14 +524,19 @@ module docs, delete only resolved tickets, and stop.
   no replacement is found. automatic scalar retraction is outside this contract.
 - 1,000 opening words and bounded context are a starting allocation; later local
   reads handle missing front matter. oversized fixed context fails visibly.
-- xhigh costs latency on the current worker; there is no new concurrency system.
+- xhigh costs latency on the serial worker; the finite live cohort took about
+  67/64/42 model-turn seconds. this does not establish a universal latency bound;
+  there is no new concurrency system.
 - the native route retains 64,000/8,000 admission/reservation budgets without
   hard token ceilings. the user accepted that limit; no local limiter is added.
+  aggregate usage across research steps does not measure peak context or prove caps.
 - native execution retires shell quota parking. known pre-submission failures
   use bounded queue retries; terminal native quota failures fail the job and
   allow a fresh manual request. no new quota scheduler is introduced.
 - required-tool admission checks known local configuration. configured remote
-  dependencies can still fail during execution; no readiness network probe is added.
+  dependencies can still fail after submission and leave uncertainty. finite
+  dependency qualification before live acceptance is not a product readiness
+  network probe; none is added.
 - indefinite metadata-job retention costs storage and retains research context;
   it avoids another outcome ledger and expiring replay semantics for one user.
 - visible details consume shared stream listeners; closed views reconcile on

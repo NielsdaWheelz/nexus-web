@@ -1,13 +1,17 @@
-# first-publication semantics need live qualification
+# saved first-publication dates need repair
 
-status: open
+status: open; local contract qualified, saved-production repair blocked
 origin: 2026-10-01 owner clarification
 area: bibliographic date meaning
 
-2026-10-02 candidate: prompt and module docs implement the clarified rule;
-strict date precision and edition separation pass local checks. actual model
-judgments and targeted saved-item correction remain NOT_RUN. finish the finite
-live fixtures after qualified native integration. the evidence below is baseline.
+2026-10-03 utc: prompt, schemas and module docs implement the clarified rule.
+final `bcdaf51de` ordinary live jobs independently qualify *mere christianity*
+(1952), *of other worlds* (1966) and the standalone *weight of glory* essay
+(1941-11), with supported precision, edition separation and original stock
+luna/xhigh/four-tool evidence. see
+[verification](../metadata-enrichment-verification.md). targeted saved-production
+correction remains NOT_RUN behind the historical uncertainty/release gate.
+the evidence below is baseline.
 
 baseline problem: `python/nexus/services/metadata_enrichment.py:52–57` and
 `docs/modules/media-metadata.md:8–10` count serialization as original publication.
@@ -24,3 +28,5 @@ after runtime recovery, not an unconditional date rewrite.
 acceptance: a serialized-then-book work gets first book publication, a collection
 gets its own book date, and an individual essay gets its own first publication.
 delivery/broadcast dates and modern reprint dates do not replace those facts.
+inspect targeted saved-item corrections after the separately authorized aligned
+release; preserve original uncertainty and never rewrite dates unconditionally.
