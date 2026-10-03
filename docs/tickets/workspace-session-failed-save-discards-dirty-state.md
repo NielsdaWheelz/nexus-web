@@ -22,9 +22,7 @@ edit, fail its debounced PUT with a non-auth network/server error, then restore
 connectivity without editing again. hide/reload the page. no flush request is
 sent and the previous server snapshot returns.
 
-prerequisite: resolve the separate missing `workspace_sessions.order_key`
-mapping so restore can succeed normally. keep this fix separate from that
-one-line schema/model repair.
+prerequisite: working session get/save and server restore.
 
 smallest owner fix: in `useWorkspaceSession`, distinguish dirty current state
 from the last successfully acknowledged snapshot. preserve failed state for
