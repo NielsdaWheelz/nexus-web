@@ -1,48 +1,27 @@
-# The media-kind Literal has no single owner
+# media-kind contracts still duplicate the canonical owner
 
-**Status:** open (found while writing `nexus/schemas/imports.py`; not fixed there)
-**Origin:** 2026-09-08, imports workspace hard cutover, Track C1
-**Area:** `python/nexus/schemas/*` wire contracts
+status: open · origin: 2026-09-08 imports cutover; refreshed 2026-10-02 typed media detail cleanup · area: media contracts
 
-## What is wrong
+`db/models.py:76` already owns the five-value `MediaKind` enum. media summary
+and the typed detail schema use it, but `schemas/imports.py:45` and
+`schemas/consumption.py:19` still repeat the same values as separate literals.
+`services/imports.py:942` casts stored values to its duplicate alias;
+`services/consumption/_lectern_store.py:44` derives supported kinds with
+`get_args(ConsumptionMediaKind)`. the old library-specific kind contract is gone.
+`services/tool_runtime/declarations.py:244` also repeats all five values in
+`ResourceInspectSuccess.media_kind`; `tool_runtime/handlers.py:586` hides its
+source kind with `cast("Any", document_map.kind)`.
 
-`Literal["web_article", "epub", "pdf", "podcast_episode", "video"]` is written
-out separately in four places, and the media response that should own it is
-untyped:
+impact: adding a kind can leave independent wire inventories and authority
+membership checks inconsistent. the current detail cut closes its own enum
+boundary; it does not resolve these remaining owners.
 
-- `python/nexus/schemas/library.py:291` (`LibraryEntryMediaOut.kind`)
-- `python/nexus/schemas/imports.py:44` (`MediaKind`, added by this cutover and
-  read by `ImportItem.media_kind:227` and `ImportSummaryQuery.media_kind:308`)
-- `python/nexus/schemas/consumption.py:34` reorders the same members as
-  `ConsumptionMediaKind`
-- `python/nexus/schemas/media.py:285` is `kind: str  # "web_article", ...`, so
-  `nexus/services/imports.py` has to `cast(...)` the value back into the
-  Literal at every projection.
+fix: reuse `db.models.MediaKind` at the remaining full-kind boundaries, validate
+stored values with enum construction, and update the literal-based membership
+check explicitly. do not import `schemas/media.py` into consumption: media's
+player descriptor dependency would create a cycle. retain narrower reader-kind
+contracts where their subset has a separate meaning.
 
-Adding a media kind therefore fails to type-error in every consumer, which is
-exactly what `docs/rules/control-flow.md` (exhaustiveness) requires it to do.
-
-The imports cutover contract assumed the alias already existed in
-`nexus/schemas/media.py` ("`MediaKind` = existing `Literal[...]`"); it does not,
-so Track C1 declared a fourth copy rather than retyping `MediaOut.kind`, which
-is owned by another track and reaches unrelated consumers.
-
-## Prerequisites
-
-None. The prerequisite this ticket was filed with is met: the imports cutover
-has landed on this branch — `python/nexus/schemas/media_activity.py` is deleted
-and `python/nexus/schemas/imports.py` is its replacement — so the consolidation
-no longer conflicts with in-flight work.
-
-## Proposed fix
-
-Declare `MediaKind` once in `nexus/schemas/media.py`, retype `MediaOut.kind` to
-it, and import it from `schemas/imports.py`, `schemas/library.py` and
-`schemas/consumption.py` (`ConsumptionMediaKind` becomes an alias of it or is
-deleted). Delete the `cast` at each media-kind projection site.
-
-## Acceptance
-
-One `Literal` declaration of the media kinds in the repository, `MediaOut.kind`
-typed by it, no `cast` to a media-kind Literal anywhere, and
-`./scripts/test` passes.
+acceptance: one owner for the complete media-kind inventory, no duplicate
+full-kind literal or cast that hides invalid stored kinds; imports/lectern wire
+values and supported-kind decisions unchanged; `./scripts/test` passes.

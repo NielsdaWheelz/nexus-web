@@ -211,8 +211,7 @@ export default function TranscriptStatePanel({
 
   if (
     transcriptState === "not_requested" ||
-    transcriptState === "failed_provider" ||
-    transcriptState === "failed_quota"
+    transcriptState === "failed_provider"
   ) {
     return (
       <div className={styles.notReady}>

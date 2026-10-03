@@ -140,7 +140,6 @@ export type ResourceActionCapability =
         | "Ready"
         | "Partial"
         | "Unavailable"
-        | "FailedQuota"
         | "FailedProvider";
       readonly coverage: "None" | "Partial" | "Full";
     }
@@ -406,7 +405,6 @@ function decodeResourceActionCapability(
             "Ready",
             "Partial",
             "Unavailable",
-            "FailedQuota",
             "FailedProvider",
           ] as const,
           `${name}.state`,
