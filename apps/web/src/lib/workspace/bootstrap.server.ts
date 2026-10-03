@@ -1,9 +1,7 @@
 import "server-only";
 
 import { cookies, headers } from "next/headers";
-import { isApiError } from "@/lib/api/client";
 import { callFastAPI } from "@/lib/api/server";
-import { PREFETCH_OPTS } from "@/lib/api/resourceTransport";
 import { serverResourceFetcher } from "@/lib/api/resourceTransport.server";
 import type { DehydratedResources } from "@/lib/api/resourceCache";
 import {
@@ -103,34 +101,15 @@ async function loadAuthenticatedAccount(): Promise<AuthenticatedAccount> {
   return decodeAuthenticatedAccount(response.data);
 }
 
+// Saved state is required bootstrap input. Transport failure must not fabricate
+// absence: mounting a fallback could autosave over the unknown saved workspace.
 async function loadSession(
-  deviceId: string | null,
-): Promise<{ own: unknown; mostRecentElsewhere: unknown } | null> {
-  if (!deviceId) {
-    return null;
-  }
-  let response: unknown;
-  try {
-    response = await callFastAPI<unknown>(
-      `/me/workspace-session?device_id=${encodeURIComponent(deviceId)}`,
-      PREFETCH_OPTS,
-    );
-  } catch (error) {
-    if (
-      isApiError(error) &&
-      error.code === "E_INVALID_RESPONSE" &&
-      error.status >= 200 &&
-      error.status < 300
-    ) {
-      throw error;
-    }
-    // justify-ignore-error: best-effort restore; on failure the deep-link/default stands.
-    return null;
-  }
+  deviceId: string,
+): Promise<{ own: unknown; mostRecentElsewhere: unknown }> {
+  const response = await callFastAPI<unknown>(
+    `/me/workspace-session?device_id=${encodeURIComponent(deviceId)}`,
+  );
 
-  // A transport failure is optional restore data. A successful response is a trusted
-  // persistence boundary: malformed envelopes or rows must defect rather than masquerade
-  // as an absent session and silently discard the user's saved workspace.
   const envelope = expectExactRecord(
     response,
     ["data"],
@@ -173,6 +152,10 @@ export async function loadWorkspaceBootstrap(androidShell: boolean): Promise<{
     (await headers()).get(REQUEST_PATH_HEADER),
   );
   const deviceId = readDeviceId(await cookies());
+  if (!deviceId) {
+    // justify-defect: middleware forwards its minted device cookie on the first request.
+    throw new Error("Missing required workspace device cookie");
+  }
 
   let urlSeedPromise: ReturnType<typeof seedPane> | null;
   switch (entryIntent.kind) {
@@ -186,7 +169,7 @@ export async function loadWorkspaceBootstrap(androidShell: boolean): Promise<{
 
   // Wave 1 — account profile, reader profile, saved session, and only a Navigate
   // pane's resource are concurrent. Resume never speculatively seeds root. Both
-  // profiles are required; session and pane seeds stay best-effort. None gates
+  // profiles and saved session are required; pane seeds stay best-effort. None gates
   // the first byte — the shell skeleton streamed.
   const [account, readerProfile, session, urlSeed] = await Promise.all([
     loadAuthenticatedAccount(),
@@ -199,9 +182,12 @@ export async function loadWorkspaceBootstrap(androidShell: boolean): Promise<{
   // so restored widths need no settle. Session selection remains own → most-recent-elsewhere.
   const widthPx = estimatePrimaryWidthPx(readerProfile);
   const metrics = { primaryMinWidthPx: widthPx, primaryDefaultWidthPx: widthPx };
-  const restored = session
-    ? selectRestoredState(session.own, session.mostRecentElsewhere, metrics, androidShell)
-    : null;
+  const restored = selectRestoredState(
+    session.own,
+    session.mostRecentElsewhere,
+    metrics,
+    androidShell,
+  );
   let initialState: WorkspaceState;
   switch (entryIntent.kind) {
     case "Resume":

@@ -33,8 +33,14 @@ httpOnly `nx_device` cookie. supplied device identity is rejected with 400
 `E_INVALID_WORKSPACE_STATE`; an absent cookie is a 500 `E_INTERNAL` defect.
 restore is a direct server api read, with no browser get route.
 [`bootstrap.server.ts`](../../apps/web/src/lib/workspace/bootstrap.server.ts)
-loads it within the existing 500 ms deadline: nontrivial own state wins, then
-nontrivial newest elsewhere, then the current deep-link/default state.
+requires restoration on the normal 30 s server deadline: nontrivial own state
+wins, then nontrivial newest elsewhere, then the current deep-link/default state
+after a successful read confirms no nontrivial saved state. missing device
+identity, failed reads and malformed saved data reject bootstrap into its
+existing error/retry boundary;
+no fallback mounts the save hook while stored state is unknown. only speculative
+pane seeds keep the 500 ms budget. slow restoration may delay workspace content
+or show the error boundary; the shell skeleton still streams immediately.
 [`workspaceRestore.ts`](../../apps/web/src/lib/workspace/workspaceRestore.ts)
 owns validation, width adjustment and deep-link merging.
 [`useWorkspaceSession.ts`](../../apps/web/src/lib/workspace/useWorkspaceSession.ts)
