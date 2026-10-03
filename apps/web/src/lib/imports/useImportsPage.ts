@@ -108,19 +108,21 @@ export function useImportsPage(
   if (read !== null) lastGoodRef.current = { query, page: read };
   const lastGood = lastGoodRef.current;
   const page =
-    read ?? (lastGood !== null && lastGood.query === query ? lastGood.page : null);
+    read ??
+    (lastGood !== null && lastGood.query === query ? lastGood.page : null);
 
   // The newest read of this query failed while the page above is the one read
   // before it: the reader is looking at facts, not at a failure, so the pane
   // says the refresh failed rather than replacing the list with an error.
-  const refreshFailed = keyed.status === "error" && read === null && page !== null;
+  const refreshFailed =
+    keyed.status === "error" && read === null && page !== null;
 
   // What the effect below re-reads: the page committed with the key it is
   // running for, since an effect runs against the render that scheduled it.
   const shownRef = useRef<ImportPage | null>(null);
   shownRef.current = page;
   const activeRef = useRef(0);
-  activeRef.current = summary?.activeCount ?? 0;
+  activeRef.current = summary?.active_count ?? 0;
 
   // The observation revision the shown page was read for. An observation that
   // moved the revision re-keyed the read above and is answered by that keyed
@@ -165,30 +167,39 @@ export function useImportsPage(
     return () => controller.abort();
   }, [absorbRereadFailure, cacheKey, observedAt, query, revision]);
 
+  const cursorPage = useMemo(
+    () =>
+      page === null
+        ? null
+        : { items: page.items, nextCursor: page.next_cursor },
+    [page],
+  );
   const firstPage = useMemo<AsyncResource<CursorPage<ImportItem>>>(() => {
-    if (page !== null) return { status: "ready", data: page };
+    if (cursorPage !== null) return { status: "ready", data: cursorPage };
     if (keyed.status === "error") {
       return { status: "error", error: keyed.error, retry: keyed.retry };
     }
     return { status: "loading" };
-  }, [page, keyed]);
+  }, [cursorPage, keyed]);
 
   const pagination = useCursorPagination<ImportItem>({
     firstPage,
     initialMoreError: null,
-    loadMorePage: (cursor, signal) =>
-      fetchImportPage({
+    loadMorePage: async (cursor, signal) => {
+      const next = await fetchImportPage({
         query: new URLSearchParams(query),
         cursor: present(cursor),
         signal,
-      }),
+      });
+      return { items: next.items, nextCursor: next.next_cursor };
+    },
   });
 
   return {
     items: pagination.items,
     status: pagination.status,
     error: pagination.error,
-    matchedCount: page?.matchedCount ?? 0,
+    matchedCount: page?.matched_count ?? 0,
     groups: page?.groups ?? [],
     hasMore: pagination.hasMore,
     loadingMore: pagination.loadingMore,

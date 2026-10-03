@@ -138,11 +138,11 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
             setObservation((current) => ({
               revision:
                 previous !== null &&
-                (previous.needsAttentionCount !== next.needsAttentionCount ||
-                  previous.activeCount !== next.activeCount)
+                (previous.needs_attention_count !== next.needs_attention_count ||
+                  previous.active_count !== next.active_count)
                   ? current.revision + 1
                   : current.revision,
-              observedAt: next.observedAt,
+              observedAt: next.observed_at,
             }));
           } catch (error: unknown) {
             if (controller.signal.aborted || isAbortError(error)) break;
@@ -311,7 +311,7 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
     };
   }, [wake]);
 
-  const activeCount = summary?.activeCount ?? 0;
+  const activeCount = summary?.active_count ?? 0;
   const [pollIntervalMs, setPollIntervalMs] = useState(0);
   useEffect(() => {
     const evaluate = () => {

@@ -11,7 +11,6 @@ import { assertNever } from "@/lib/assertNever";
 import type { ImportStage } from "@/lib/imports/importRef";
 import type {
   HistoryEntry,
-  HistoryFacts,
   ImportItem,
   ImportStageGroup,
   ImportSummary,
@@ -59,8 +58,8 @@ export function unqualifiedImportsView(
   summary: ImportSummary | null,
 ): ImportsView | null {
   if (summary === null) return null;
-  if (summary.needsAttentionCount > 0) return "NeedsAttention";
-  if (summary.activeCount > 0) return "InProgress";
+  if (summary.needs_attention_count > 0) return "NeedsAttention";
+  if (summary.active_count > 0) return "InProgress";
   return "History";
 }
 
@@ -100,10 +99,10 @@ export type ImportsBadge =
  * visually while the accessible name keeps the exact number.
  */
 export function importsBadge(summary: ImportSummary | null): ImportsBadge {
-  if (summary === null || summary.needsAttentionCount === 0) {
+  if (summary === null || summary.needs_attention_count === 0) {
     return { kind: "Hidden" };
   }
-  const count = summary.needsAttentionCount;
+  const count = summary.needs_attention_count;
   return {
     kind: "Count",
     visible: importsCountText(count),
@@ -148,12 +147,12 @@ export interface ImportHistoryGroup {
   readonly entries: readonly HistoryEntry[];
 }
 
-function historyGroupKey(facts: HistoryFacts): ImportHistoryGroupKey {
+function historyGroupKey(facts: HistoryEntry["facts"]): ImportHistoryGroupKey {
   if ("generation" in facts) {
     return { kind: "Upload", generation: facts.generation };
   }
-  if ("sourceAttemptId" in facts) {
-    return { kind: "Source", sourceAttemptId: facts.sourceAttemptId };
+  if ("source_attempt_id" in facts) {
+    return { kind: "Source", sourceAttemptId: facts.source_attempt_id };
   }
   if ("revision" in facts) {
     return { kind: "Index", revision: facts.revision };
@@ -191,7 +190,7 @@ function historyGroupLabel(
         numbered !== undefined &&
         (numbered.facts.kind === "SourceAccepted" ||
           numbered.facts.kind === "SourceHistoryBaseline")
-          ? numbered.facts.attemptNo
+          ? numbered.facts.attempt_no
           : null;
       return attemptNo === null
         ? "Source attempt"
