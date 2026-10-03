@@ -106,7 +106,12 @@ export type SurfaceHistoryItem =
   | { kind: "structure"; mutationId: string; receiptId: string | null; bodyRefs: string[]; reverseVersions?: Array<{ ref: string; lane: "body" | "links" | "title"; version: number }>; before: unknown; after: unknown; selectionBefore: SurfaceHistorySelection; selectionAfter: SurfaceHistorySelection };
 type SurfaceHistory = { undo: SurfaceHistoryItem[]; redo: SurfaceHistoryItem[]; group: number };
 type HistoryItem = { before: NoteBodyValue; after: NoteBodyValue; selectionBefore: NoteBodySelection; selectionAfter: NoteBodySelection; group: number; source: NoteBodyEdit["source"] };
-export type OperationCallbacks = { prepare: (intent: unknown) => FrozenRequest; onAck: (data: unknown) => void; onError?: (error: unknown) => void };
+export type CompleteOperation = <R>(request: FrozenRequest, acknowledge: (reply: R) => void) => Promise<void>;
+export type OperationCallbacks = {
+  prepare: (intent: unknown) => FrozenRequest;
+  deliver: (operationId: string, request: FrozenRequest, complete: CompleteOperation) => Promise<void>;
+  onError?: (error: unknown) => void;
+};
 type OperationRuntime = OperationCallbacks;
 
 function sameBody(a: NoteBodyValue, b: NoteBodyValue): boolean {
@@ -517,7 +522,7 @@ export class WritingSession {
     const id = createRandomId();
     const entry: OperationEntry = { id, ownerKey: input.ownerKey, key: input.key, intent: JSON.parse(JSON.stringify(input.intent)) as unknown, request: null, sequence: ++this.sequence, paused: null };
     this.journal.operations.push(entry);
-    this.operations.set(id, { prepare: input.prepare, onAck: input.onAck, onError: input.onError });
+    this.operations.set(id, { prepare: input.prepare, deliver: input.deliver, onError: input.onError });
     const retained = this.retain();
     if (!retained) entry.paused = "storage";
     else this.pump();
@@ -625,7 +630,8 @@ export class WritingSession {
       runtime.ready = false;
       runtime.lease ??= runtime.onMutationStarted?.() ?? null;
       this.snapshot(runtime, runtime.snapshot.localRetained ? "saving" : "storage_failed", runtime.snapshot.localRetained);
-      void this.execute(entry.submitted.request).then(async (data) => {
+      void this.execute<{ data: unknown } | undefined>(entry.submitted.request).then(async (reply) => {
+        const data = reply?.data;
         const submitted = entry.submitted!;
         let ack: BodyAck;
         try {
@@ -683,17 +689,7 @@ export class WritingSession {
       }
     }
     this.active = operation.id;
-    void this.execute(operation.request).then((data) => {
-      try {
-        callbacks.onAck(data);
-      } catch (error) {
-        // The server committed; exact replay must repair the owner's projection before successors run.
-        operation.paused = "network";
-        this.blocked = operation.id;
-        this.retain();
-        callbacks.onError?.(new WritingUnknownOutcomeError(error));
-        return;
-      }
+    void callbacks.deliver(operation.id, operation.request, this.completeOperation).then(() => {
       this.journal.operations = this.journal.operations.filter((entry) => entry.id !== operation.id);
       this.operations.delete(operation.id);
       this.removeCleanJournal();
@@ -704,10 +700,19 @@ export class WritingSession {
     }).finally(() => { this.active = null; this.pump(); });
   }
 
-  private async execute(request: FrozenRequest): Promise<unknown> {
+  private completeOperation = async <R>(request: FrozenRequest, acknowledge: (reply: R) => void): Promise<void> => {
+    const reply = await this.execute<R>(request);
     try {
-      const result = await apiFetch<{ data: unknown } | undefined>(request.path, { method: request.method, body: request.body });
-      return result?.data;
+      acknowledge(reply);
+    } catch (error) {
+      // A committed request stays frozen until exact replay repairs its projection.
+      throw new WritingUnknownOutcomeError(error);
+    }
+  };
+
+  private async execute<R>(request: FrozenRequest): Promise<R> {
+    try {
+      return await apiFetch<R>(request.path, { method: request.method, body: request.body });
     } catch (error) {
       if (isApiError(error) && error.code === "E_INVALID_RESPONSE" && error.status >= 200 && error.status < 300) {
         throw new WritingUnknownOutcomeError(error);

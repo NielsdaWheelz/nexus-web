@@ -390,7 +390,7 @@ function AnnotationBody({
         body: "",
       };
     },
-    onAck: () => {
+    deliver: (_operationId, request, complete) => complete<undefined>(request, () => {
       setDetachOperationId(null);
       setDetachFailure(null);
       setDetachConflict(false);
@@ -399,7 +399,7 @@ function AnnotationBody({
       const lease = detachLease.current;
       detachLease.current = null;
       void lease?.committed().catch((error: unknown) => setDefect({ error }));
-    },
+    }),
     onError: (error) => {
       detachLease.current?.failed();
       detachLease.current = null;

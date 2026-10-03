@@ -604,5 +604,5 @@ class ResourceBodyMutationOut(CamelModel):
 class ResourceTitleMutationOut(CamelModel):
     client_mutation_id: str
     item: ResourceItemOut
-    versions: dict[str, dict[str, int]] = Field(default_factory=dict)
+    versions: dict[str, dict[str, int]]
     updated_at: datetime

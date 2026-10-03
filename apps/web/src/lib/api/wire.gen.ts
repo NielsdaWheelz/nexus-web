@@ -4620,6 +4620,14 @@ export interface components {
         Data_ResourceShareSnapshotOut_: {
             data: components["schemas"]["ResourceShareSnapshotOut"];
         };
+        /** Data[ResourceSurfaceCommandOut] */
+        Data_ResourceSurfaceCommandOut_: {
+            data: components["schemas"]["ResourceSurfaceCommandOut"];
+        };
+        /** Data[ResourceTitleMutationOut] */
+        Data_ResourceTitleMutationOut_: {
+            data: components["schemas"]["ResourceTitleMutationOut"];
+        };
         /** Data[TranscriptRequestOut] */
         Data_TranscriptRequestOut_: {
             data: components["schemas"]["TranscriptRequestOut"];
@@ -8776,6 +8784,22 @@ export interface components {
              */
             kind: "resource_summary";
         };
+        /** ResourceSurfaceCommandOut */
+        ResourceSurfaceCommandOut: {
+            /** Client Mutation Id */
+            client_mutation_id: string;
+            /** Nodes */
+            nodes: components["schemas"]["ResourceSurfaceNode"][];
+            /**
+             * Receipt Id
+             * Format: uuid
+             */
+            receipt_id: string;
+            /** Reverse Versions */
+            reverse_versions: components["schemas"]["ResourceLaneVersionIn"][];
+            /** Surfaces */
+            surfaces: components["schemas"]["ResourceSurfaceOut"][];
+        };
         /** ResourceSurfaceCommandRequest */
         ResourceSurfaceCommandRequest: {
             /** Base Versions */
@@ -8835,6 +8859,23 @@ export interface components {
             schemes?: ("media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "artifact" | "artifact_revision" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor")[] | null;
             /** Source Ref */
             source_ref?: string | null;
+        };
+        /** ResourceTitleMutationOut */
+        ResourceTitleMutationOut: {
+            /** Clientmutationid */
+            clientMutationId: string;
+            item: components["schemas"]["ResourceItemOut"];
+            /**
+             * Updatedat
+             * Format: date-time
+             */
+            updatedAt: string;
+            /** Versions */
+            versions: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
         };
         /** ResourceTitleMutationRequest */
         ResourceTitleMutationRequest: {
@@ -16971,9 +17012,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ResourceSurfaceCommandOut_"];
                 };
             };
             /** @description Validation Error */
@@ -17008,9 +17047,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ResourceTitleMutationOut_"];
                 };
             };
             /** @description Validation Error */
