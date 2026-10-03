@@ -316,7 +316,7 @@ class ResourceLocatorResolveRequest(BaseModel):
 class ResourceLocatorResolutionOut(CamelModel):
     locator: ResourceLocatorIn
     resource_item: ResourceItemOut
-    canonical_href: str | None = None
+    canonical_href: str | None
 
 
 class ResourceLocatorResolveResponse(BaseModel):

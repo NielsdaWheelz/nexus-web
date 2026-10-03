@@ -4,45 +4,14 @@ import {
   parseResourceRef,
   type ResourceScheme,
 } from "@/lib/resourceGraph/resourceRef";
-import { parseContributorHandle } from "@/lib/contributors/handle";
 import { routeShareTarget } from "@/lib/sharing/targets";
 import type { ShareTarget } from "@/lib/sharing/types";
-import { expectExactRecord, expectOneOf, expectString } from "@/lib/validation";
 
 export type PaneResourceLocator =
   | { kind: "resource_ref"; ref: string }
   | { kind: "contributor_handle"; handle: string };
 
 export type PaneRouteShareIdentity = Extract<ShareTarget, { kind: "Route" }>;
-
-/** Strict same-system decoder for the two locator variants the server echoes. */
-export function decodePaneResourceLocator(raw: unknown): PaneResourceLocator {
-  const candidate = expectExactRecord(
-    raw,
-    raw !== null &&
-      typeof raw === "object" &&
-      "kind" in raw &&
-      raw.kind === "contributor_handle"
-      ? ["kind", "handle"]
-      : ["kind", "ref"],
-    "pane resource locator",
-  );
-  const kind = expectOneOf(
-    candidate.kind,
-    ["resource_ref", "contributor_handle"] as const,
-    "pane resource locator.kind",
-  );
-  if (kind === "resource_ref") {
-    const ref = expectString(candidate.ref, "pane resource locator.ref");
-    if (parseResourceRef(ref) === null) {
-      throw new TypeError("pane resource locator.ref must be canonical");
-    }
-    return { kind, ref };
-  }
-  const handle = expectString(candidate.handle, "pane resource locator.handle");
-  parseContributorHandle(handle);
-  return { kind, handle };
-}
 
 export function paneResourceLocatorKey(
   locator: PaneResourceLocator | null,

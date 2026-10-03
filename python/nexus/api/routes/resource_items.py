@@ -31,7 +31,7 @@ from nexus.schemas.resource_openables import (
     ResourceOpenableSearchRequest,
     ResourceOpenableSearchResponse,
 )
-from nexus.schemas.resource_targets import ResourceTargetSearchRequest
+from nexus.schemas.resource_targets import ResourceTargetSearchRequest, ResourceTargetSearchResponse
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
@@ -71,22 +71,21 @@ def resolve_action_snapshots(
 @router.post("/locators/resolve")
 def resolve_resource_locators(
     request: ResourceLocatorResolveRequest, viewer: ViewerDep, db: DbDep
-) -> dict:
-    return ok(
-        ResourceLocatorResolveResponse(
+) -> Data[ResourceLocatorResolveResponse]:
+    return Data(
+        data=ResourceLocatorResolveResponse(
             resolutions=locator_service.resolve_resource_locators(
                 db, viewer_id=viewer.user_id, locators=request.locators
             )
         ),
-        by_alias=True,
     )
 
 
 @router.post("/targets/search")
 def search_resource_targets(
     request: ResourceTargetSearchRequest, viewer: ViewerDep, db: DbDep
-) -> dict:
-    return ok(targets.search_targets(db, viewer_id=viewer.user_id, request=request), by_alias=True)
+) -> Data[ResourceTargetSearchResponse]:
+    return Data(data=targets.search_targets(db, viewer_id=viewer.user_id, request=request))
 
 
 @router.post("/openables/search")

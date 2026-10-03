@@ -4681,6 +4681,10 @@ export interface components {
         Data_ResourceActionSnapshotResolveResponse_: {
             data: components["schemas"]["ResourceActionSnapshotResolveResponse"];
         };
+        /** Data[ResourceLocatorResolveResponse] */
+        Data_ResourceLocatorResolveResponse_: {
+            data: components["schemas"]["ResourceLocatorResolveResponse"];
+        };
         /** Data[ResourceOpenableSearchResponse] */
         Data_ResourceOpenableSearchResponse_: {
             data: components["schemas"]["ResourceOpenableSearchResponse"];
@@ -4692,6 +4696,10 @@ export interface components {
         /** Data[ResourceSurfaceCommandOut] */
         Data_ResourceSurfaceCommandOut_: {
             data: components["schemas"]["ResourceSurfaceCommandOut"];
+        };
+        /** Data[ResourceTargetSearchResponse] */
+        Data_ResourceTargetSearchResponse_: {
+            data: components["schemas"]["ResourceTargetSearchResponse"];
         };
         /** Data[ResourceTitleMutationOut] */
         Data_ResourceTitleMutationOut_: {
@@ -9648,10 +9656,23 @@ export interface components {
             /** Version */
             version: number;
         };
+        /** ResourceLocatorResolutionOut */
+        ResourceLocatorResolutionOut: {
+            /** Canonicalhref */
+            canonicalHref: string | null;
+            /** Locator */
+            locator: components["schemas"]["ResourceRefLocatorIn"] | components["schemas"]["ContributorHandleLocatorIn"];
+            resourceItem: components["schemas"]["ResourceItemOut"];
+        };
         /** ResourceLocatorResolveRequest */
         ResourceLocatorResolveRequest: {
             /** Locators */
             locators: (components["schemas"]["ResourceRefLocatorIn"] | components["schemas"]["ContributorHandleLocatorIn"])[];
+        };
+        /** ResourceLocatorResolveResponse */
+        ResourceLocatorResolveResponse: {
+            /** Resolutions */
+            resolutions: components["schemas"]["ResourceLocatorResolutionOut"][];
         };
         /** ResourceOpenableSearchRequest */
         ResourceOpenableSearchRequest: {
@@ -9751,6 +9772,35 @@ export interface components {
             ordered_items: components["schemas"]["ResourceSurfaceOccurrence"][];
             source: components["schemas"]["ResourceSurfaceNode"];
         };
+        /** ResourceTargetPassageOut */
+        ResourceTargetPassageOut: {
+            activation: components["schemas"]["ResourceActivationOut"];
+            /** Candidateref */
+            candidateRef: string;
+            /** Excerpt */
+            excerpt: string;
+            /** Existinglinkid */
+            existingLinkId: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "passage";
+            /** Label */
+            label: string;
+            source: components["schemas"]["ResourceItemOut"];
+        };
+        /** ResourceTargetResourceOut */
+        ResourceTargetResourceOut: {
+            /** Existinglinkid */
+            existingLinkId: string | null;
+            item: components["schemas"]["ResourceItemOut"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "resource";
+        };
         /** ResourceTargetSearchRequest */
         ResourceTargetSearchRequest: {
             /** Cursor */
@@ -9773,6 +9823,13 @@ export interface components {
             schemes?: ("media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "artifact" | "artifact_revision" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor")[] | null;
             /** Source Ref */
             source_ref?: string | null;
+        };
+        /** ResourceTargetSearchResponse */
+        ResourceTargetSearchResponse: {
+            /** Nextcursor */
+            nextCursor: string | null;
+            /** Targets */
+            targets: (components["schemas"]["ResourceTargetResourceOut"] | components["schemas"]["ResourceTargetPassageOut"])[];
         };
         /** ResourceTitleMutationOut */
         ResourceTitleMutationOut: {
@@ -17662,9 +17719,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ResourceLocatorResolveResponse_"];
                 };
             };
             /** @description Validation Error */
@@ -17730,9 +17785,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ResourceTargetSearchResponse_"];
                 };
             };
             /** @description Validation Error */

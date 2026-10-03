@@ -120,10 +120,10 @@ invoke that same store command.
 Pane route identity and pane resource identity are separate. The route remains
 renderable while its resource locator settles.
 
-- `paneResourceLocator.ts` is the sole locator decoder, equality, and key owner.
+- `paneResourceLocator.ts` owns locator identity, equality, and keys.
 - `resourceLocators.ts` is the strict transport owner. A successful batch must
-  return exactly one decoded row per requested locator, in request order, and
-  each `canonicalHref` must equal the decoded resource item's route.
+  return exactly one typed row per requested locator, in request order, and
+  each `canonicalHref` must equal the returned resource item's route.
 - `usePaneResourceResolutionRegistry.ts` owns live-locator deduplication,
   pending/settled state, generation-fenced installation, pruning, retry, and
   request cleanup for `WorkspaceHost`.
