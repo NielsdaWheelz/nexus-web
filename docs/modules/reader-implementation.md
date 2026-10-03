@@ -63,6 +63,38 @@ The parameterized Chromium component proof covers hosted PDF, EPUB, and article
 load/restore/save through this session. It is format-coordinator evidence, not
 evidence for native persistence, package integrity, or signed APK wiring.
 
+### native read boundary
+
+`GET /media/{id}/document-map`, `/fragments` and `/navigation` return their
+owned `Data` models. generated web types feed pane loading, walknotes and
+`HostedReaderSource`. `documentMap.ts` decorates action subjects and uses the
+shared snake-case activation wire directly;
+its facts, markers, source content and associations remain server-owned.
+intrinsic target/ref and marker relations belong to the small output models;
+publication and section owners establish native navigation relations. only
+persisted offline navigation retains strict unknown-data decoding. embed
+rendering accepts the generated model directly, preserving canonical source,
+widget fields and actions; internal embeds now include previously discarded
+server fields. quote grammar validation returns the original dictionary, keeping
+extension values, genuine omissions and insertion order. selected output configs
+make always-sent defaults required without changing constructor behavior.
+
+qualification: 19 actual response-field models (14 frozen authenticated reads,
+5 labeled graph/locator controls) preserve 64,921 literal bytes; seven isolated
+relations now reject at their output owners. 20 imported presentation records
+preserve retained values, widget html/canonical text, markers, anchored rows,
+associations and structure; three exported command request identities match.
+40 real scoped api cases preserve 14 literal successes and 26 status/error
+outcomes (request ids only normalized). the actual desktop article retains its
+resolved caption/card/actions, two saved highlights, map hover, selection and
+find; epub section selection reaches both real fragments and retains its source
+issue notice. no page errors occurred. concise receipts are
+`/tmp/nexus-reader-native-candidate-{model,presentation,api,browser}-receipt.json`.
+sole `./scripts/test` passed on the frozen source. pending/source-content, associations and
+pdf geometry are imported/model controls; no pdf ui, offline/native/mobile,
+new highlight admission, external action navigation or provider lifecycle is
+claimed.
+
 ### mobile scroll-linked chrome
 
 One active mobile reader scrollport registers directly with the workspace
