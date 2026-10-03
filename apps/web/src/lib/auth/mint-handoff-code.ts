@@ -29,7 +29,6 @@ export async function mintHandoffCode(args: {
           challenge: args.challenge,
         }),
       },
-      "Handoff mint request timed out",
     );
   } catch (error) {
     if (!(error instanceof Error)) {
