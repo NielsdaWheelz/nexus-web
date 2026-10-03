@@ -4,10 +4,10 @@
 // openables first, owned search only once openables settled for the same text, and typed
 // history only once the last of those settled.
 import { useEffect, useState } from "react";
-import { useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import { useFeedback } from "@/components/feedback/Feedback";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { absent } from "@/lib/api/presence";
-import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { apiFetch, apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
 import { useResource } from "@/lib/api/useResource";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -27,27 +27,7 @@ const EMPTY_FRECENCY: Readonly<Record<string, number>> = {};
 const EMPTY_ITEMS: readonly ResourceItem[] = [];
 const EMPTY_SEARCH: readonly SearchResultRowViewModel[] = [];
 const HISTORY_FEEDBACK_KEY = "nexus-history-save";
-const UPSTREAM = "Nexus couldn’t complete the request. Wait a moment, then retry.";
-const FORBIDDEN = "This account can’t make that change.";
-const FAILURE_COPY: Record<string, string> = {
-  E_NETWORK: "Check your connection and retry.",
-  E_UPSTREAM: UPSTREAM,
-  E_UPSTREAM_TIMEOUT: UPSTREAM,
-  E_RATE_LIMITED: "Wait a moment, then retry.",
-  E_FORBIDDEN: FORBIDDEN,
-  E_LIBRARY_FORBIDDEN: FORBIDDEN,
-  E_INVALID_REQUEST: "Review the request and retry.",
-  E_NAME_INVALID: "Enter a non-reserved library name between 1 and 100 characters.",
-  E_RESOURCE_CONFLICT: "The saved create request conflicts with another resource.",
-};
-export const TRANSPORT_CODES = ["E_NETWORK", "E_UPSTREAM", "E_UPSTREAM_TIMEOUT", "E_RATE_LIMITED"];
-
-/** Nexus copy for an API failure whose code the caller expects; null for anything else (a defect). */
-export function nexusFailure(error: unknown, title: string, codes: readonly string[]): FeedbackContent | null {
-  return isApiError(error) && codes.includes(error.code)
-    ? { tone: "Danger", title, message: FAILURE_COPY[error.code], requestId: error.requestId }
-    : null;
-}
+export const TRANSPORT_CODES = ["E_NETWORK", "E_UPSTREAM", "E_UPSTREAM_TIMEOUT"];
 
 export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery }) {
   const { accountId } = useAuthenticatedAccount();
@@ -131,8 +111,11 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
         },
         (error: unknown) => {
           if (handleUnauthenticatedApiError(error)) return;
-          const content = nexusFailure(error, "Nexus history wasn’t saved", TRANSPORT_CODES);
+          const content = isApiError(error) && TRANSPORT_CODES.includes(error.code)
+            ? apiTransportFeedback(error, "Nexus history wasn’t saved")
+            : null;
           if (content === null) {
+            // justify-defect: history admits only auth recovery and declared transport feedback.
             setDefect({ error });
             return;
           }
