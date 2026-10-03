@@ -181,9 +181,7 @@ export function metadataOperationSummary(operation: MetadataOperation): string {
     case "running": return "researching metadata";
     case "recovering": return "recovering metadata research";
     case "uncertain": return "execution unresolved; retry unavailable";
-    case "waiting":
-      return operation.reason === "capacity" ? "waiting for generation capacity"
-        : operation.reason === "provider_limit" ? "waiting for the provider" : "waiting to retry";
+    case "waiting": return "waiting to retry";
     case "no_findings": return "no metadata found";
     case "failed": return "metadata research failed";
     case "completed":

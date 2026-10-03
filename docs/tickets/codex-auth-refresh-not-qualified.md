@@ -4,11 +4,12 @@ status: open · origin: 2026-09-25 latest-model cutover · area: codex host cred
 
 ## problem and evidence
 
-the pinned 0.157.1 app-server completed all 15 codex model/effort cells on
-`d6b06991c`, but the protected auth file kept its original digest and mtime
-(`1790402374.7912033`). its access token expires on 2026-10-05 23:07 utc;
-none of those turns exercised refresh or a native credential write. the host's
-writable-file boundary remains unqualified for refresh.
+the native callback cutover pins stock app-server 0.160.0 and replaces the
+old exact-file bind with a host-only private account directory, permitting
+native atomic auth-file replacement. workers mount no account state. actual
+uid/gid-10001 concurrent native turns and cancellation isolation passed in
+`/private/tmp/nexus-native-topology-zcDlUE`; no native credential refresh was
+observed. directory ownership and successful turns do not qualify refresh.
 forcing refresh on a byte copy of the live profile could rotate the shared
 remote refresh token and strand the original, so that is not a safe fixture.
 

@@ -7,11 +7,9 @@ tool-loop, continuation, and cancellation lifecycle.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import aclosing
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Literal, Protocol, assert_never
 from uuid import UUID
 
@@ -29,6 +27,7 @@ from llm_agent_kernel.generation import (
 )
 from llm_agent_kernel.generation import GenerationFrame as KernelFrame
 from llm_agent_kernel.generation import GenerationTerminal as KernelTerminal
+from provider_runtime.agent_runtime import AgentTerminal
 from provider_runtime.types import Absent as RuntimeAbsent
 from provider_runtime.types import (
     CancelSignal,
@@ -40,32 +39,19 @@ from provider_runtime.types import (
 )
 
 from nexus.schemas.presence import Absent, Presence, Present
-from nexus.services.codex_generation_contract import (
-    GenerationAdmission,
-    GenerationApiAccess,
-    GenerationCommand,
-    GenerationCommandDraft,
-    GenerationFrame,
-    GenerationNative,
-    GenerationPermissionRequest,
-    GenerationTerminal,
-    GenerationText,
-    GenerationToolUse,
-    GenerationUsage,
-    GenerationUsageEvent,
-    generation_command_draft,
-    generation_command_from_draft,
-    generation_draft_fingerprint,
-)
 from nexus.services.generation_spec import (
-    CodexPersonalSelection,
-    CodexShell,
     GenerationIntent,
     GenerationSpec,
     ProviderApiSelection,
     ProviderDispatchTargetSnapshot,
     ProviderFunctions,
     StrictJsonOutputSnapshot,
+)
+from nexus.services.generation_terminal import (
+    GenerationTerminal,
+    GenerationToolUse,
+    GenerationUsage,
+    project_terminal,
 )
 from nexus.services.provider_generation_contract import (
     ProviderGenerationEvent,
@@ -82,7 +68,6 @@ from nexus.services.provider_generation_contract import (
 if TYPE_CHECKING:
     from provider_runtime.tool_adapter import ToolCallResolution
 
-    from nexus.services.codex_generation_client import CodexGenerationClient
     from nexus.services.provider_generation_backend import (
         ProviderGenerationBackend,
         ProviderTurnRequest,
@@ -131,7 +116,7 @@ class BackendToolProposed:
 
 @dataclass(frozen=True, slots=True)
 class BackendToolObserved:
-    """Sanitized native progress; Nexus does not execute the shell tool again."""
+    """Sanitized callback progress from the canonical local tool executor."""
 
     kind: Literal["ToolObserved"] = field(default="ToolObserved", init=False)
     route: Literal["CodexPersonal"] = field(default="CodexPersonal", init=False)
@@ -143,7 +128,12 @@ class BackendToolObserved:
 @dataclass(frozen=True, slots=True)
 class CodexTerminalEvidence:
     route: Literal["CodexPersonal"] = field(default="CodexPersonal", init=False)
-    native: GenerationTerminal
+    terminal: AgentTerminal
+
+    @property
+    def native(self) -> GenerationTerminal:
+        """Decode product material only after this original terminal was committed."""
+        return project_terminal(self.terminal)
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,13 +250,9 @@ class BackendChildLifecycle(Protocol):
 
     async def arm_child(self, child: BackendChildDispatch) -> None: ...
 
-    def set_codex_api_deadline(self, expires_at: datetime) -> None: ...
+    async def record_child_terminal(self, completion: BackendChildCompletion) -> None: ...
 
-    async def close_codex_api_admission(self) -> None: ...
-
-    def take_codex_api_access(self) -> GenerationApiAccess: ...
-
-    async def complete_child(
+    async def resolve_child_terminal(
         self, completion: BackendChildCompletion
     ) -> BackendChildCompletion: ...
 
@@ -277,7 +263,7 @@ class BackendToolExecutor(Protocol):
     async def execute(self, request: BackendToolExecutionRequest) -> BackendToolExecutionResult: ...
 
 
-type NativeTurn = GenerationCommandDraft | ProviderTurnRequest
+type NativeTurn = ProviderTurnRequest
 type KernelContinuation = GenerationContinuation[ProviderContinuationMaterial, ToolCallResolution]
 type KernelCompletion = KernelTerminal[
     BackendTerminal, ProviderContinuationMaterial, ToolCallResolution
@@ -292,11 +278,9 @@ class GenerationBackend:
     def __init__(
         self,
         *,
-        codex: CodexGenerationClient,
         provider: ProviderGenerationBackend,
         provider_tools: ProviderToolProjection,
     ) -> None:
-        self._codex = codex
         self._provider = provider
         self._provider_tools = provider_tools
 
@@ -314,18 +298,7 @@ class GenerationBackend:
     ) -> BackendGenerationOutcome:
         model_tools: ProviderModelTools | None = None
         start: GenerationTurn[NativeTurn] | KernelContinuation
-        if isinstance(spec.selection, CodexPersonalSelection):
-            if provider_resume is not None:
-                raise GenerationBackendDefect(
-                    "CodexPersonal execution received a ProviderApi resume state"
-                )
-            if not isinstance(spec.authority, CodexShell):
-                raise GenerationBackendDefect("Codex shell authority is absent")
-            start = GenerationTurn(
-                1, GenerationCommandDraft(request_id=generation_id, spec=spec, intent=intent)
-            )
-            max_turns = 1
-        elif isinstance(spec.selection, ProviderApiSelection):
+        if isinstance(spec.selection, ProviderApiSelection):
             if not isinstance(spec.authority, ProviderFunctions):
                 raise GenerationBackendDefect("provider function authority is absent")
             if isinstance(spec.output_contract, StrictJsonOutputSnapshot) and isinstance(
@@ -336,7 +309,7 @@ class GenerationBackend:
                     "one generation"
                 )
             model_tools = self._provider_tools(spec)
-            max_turns = model_tools.snapshot.run_limits.max_calls + 1 if model_tools else 1
+            max_turns = None if model_tools else 1
             if provider_resume is None:
                 turn = self._provider.prepare_initial_turn(
                     generation_id=generation_id, spec=spec, intent=intent, model_tools=model_tools
@@ -345,9 +318,8 @@ class GenerationBackend:
             else:
                 start = _resume_continuation(generation_id, spec, provider_resume, model_tools)
         else:
-            assert_never(spec.selection)
+            raise GenerationBackendDefect("raw API backend received a non-API selection")
         adapter = _KernelAdapter(
-            codex=self._codex,
             provider=self._provider,
             generation_id=generation_id,
             spec=spec,
@@ -378,7 +350,6 @@ class GenerationBackend:
 class _KernelAdapter:
     """Nexus lowering and durable hooks; execution ordering belongs to the kernel."""
 
-    codex: CodexGenerationClient
     provider: ProviderGenerationBackend
     generation_id: UUID
     spec: GenerationSpec
@@ -398,10 +369,6 @@ class _KernelAdapter:
         KernelFrame[BackendEvent, BackendTerminal, ProviderContinuationMaterial, ToolCallResolution]
     ]:
         native = turn.request
-        if isinstance(native, GenerationCommandDraft):
-            async for frame in self._stream_codex(native, arm=arm, cancellation=cancellation):
-                yield frame
-            return
         await arm()
         calls: list[GenerationToolCall[ToolCallResolution]] = []
         sequence = 0
@@ -436,71 +403,6 @@ class _KernelAdapter:
                 else:
                     yield GenerationObservation(sequence, event)
 
-    async def _stream_codex(
-        self,
-        draft: GenerationCommandDraft,
-        *,
-        arm: Callable[[], Awaitable[None]],
-        cancellation: CancelSignal,
-    ) -> AsyncGenerator[
-        KernelFrame[BackendEvent, BackendTerminal, ProviderContinuationMaterial, ToolCallResolution]
-    ]:
-        async def bind(admission: GenerationAdmission) -> GenerationCommand:
-            admitted_at = datetime.fromisoformat(admission.admitted_at[:-1] + "+00:00")
-            self.lifecycle.set_codex_api_deadline(
-                admitted_at + timedelta(seconds=admission.runtime_deadline_seconds)
-            )
-            await arm()
-            command = generation_command_from_draft(
-                draft, api_access=self.lifecycle.take_codex_api_access()
-            )
-            if generation_command_draft(command) != draft:
-                raise GenerationBackendDefect("Codex command changed frozen generation identity")
-            return command
-
-        # Race only the next transport read against cancellation: the native
-        # transport owns interrupt and terminal truth, so no effect is raced.
-        stream = self.codex.stream(draft, bind_admission=bind)
-        cancel_task = asyncio.create_task(cancellation.wait())
-        read_task: asyncio.Task[GenerationFrame] | None = None
-        cancelled = False
-        try:
-            while True:
-                read_task = asyncio.create_task(anext(stream))
-                if not cancelled:
-                    done, _ = await asyncio.wait(
-                        (read_task, cancel_task), return_when=asyncio.FIRST_COMPLETED
-                    )
-                    if read_task not in done:
-                        await cancel_task
-                        try:
-                            await self.lifecycle.close_codex_api_admission()
-                        finally:
-                            await self.codex.cancel(draft.request_id)
-                        cancelled = True
-                try:
-                    frame = await read_task
-                except StopAsyncIteration:
-                    break
-                if frame.request_id != draft.request_id:
-                    raise GenerationBackendDefect("Codex changed frozen generation identity")
-                event = _project_codex_frame(frame)
-                if event is None:
-                    continue
-                if isinstance(event, BackendTerminal):
-                    yield KernelTerminal(event.backend_seq, event)
-                else:
-                    yield GenerationObservation(event.backend_seq, event)
-        finally:
-            pending: list[asyncio.Task[object]] = [cancel_task]
-            if read_task is not None:
-                pending.append(read_task)
-            for task in pending:
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
-            await stream.aclose()
-
     def successor(
         self,
         continuation: KernelContinuation,
@@ -528,10 +430,25 @@ class _KernelAdapter:
     async def arm(self, turn: GenerationTurn[NativeTurn]) -> None:
         await self.lifecycle.arm_child(self._child(turn))
 
-    async def complete(
+    async def record_terminal(
+        self, turn: GenerationTurn[NativeTurn], terminal: KernelCompletion
+    ) -> None:
+        await self.lifecycle.record_child_terminal(
+            BackendChildCompletion(
+                child=self._child(turn),
+                terminal=terminal.value,
+                successor=(
+                    Absent()
+                    if terminal.continuation is None
+                    else Present(value=terminal.continuation.payload)
+                ),
+            )
+        )
+
+    async def resolve_terminal(
         self, turn: GenerationTurn[NativeTurn], terminal: KernelCompletion
     ) -> KernelCompletion:
-        completed = await self.lifecycle.complete_child(
+        completed = await self.lifecycle.resolve_child_terminal(
             BackendChildCompletion(
                 child=self._child(turn),
                 terminal=terminal.value,
@@ -571,62 +488,13 @@ class _KernelAdapter:
 
     def _child(self, turn: GenerationTurn[NativeTurn]) -> BackendChildDispatch:
         native = turn.request
-        if not isinstance(native, GenerationCommandDraft):
-            return BackendChildDispatch(
-                generation_id=native.generation_id,
-                child_seq=native.turn_seq,
-                route="ProviderApi",
-                request_fingerprint=native.request_fingerprint,
-                route_request_identity=native.route_request_identity,
-            )
-        dispatch = self.spec.resolved_dispatch_target
-        if dispatch.kind != "CodexPersonal":
-            raise GenerationBackendDefect("Codex selection lacks a Codex dispatch target")
-        fingerprint = generation_draft_fingerprint(native)
         return BackendChildDispatch(
-            generation_id=self.generation_id,
-            child_seq=1,
-            route="CodexPersonal",
-            request_fingerprint=fingerprint,
-            route_request_identity={
-                "kind": "CodexPersonal",
-                "request_id": str(self.generation_id),
-                "generation_spec_fingerprint": self.spec.fingerprint,
-                "request_fingerprint": fingerprint,
-                "model_key": dispatch.model_key,
-                "dispatch_model": dispatch.dispatch_model,
-                "reasoning": self.spec.selection.reasoning,
-                "agent_definition_revision": dispatch.agent_definition_revision,
-            },
+            generation_id=native.generation_id,
+            child_seq=native.turn_seq,
+            route="ProviderApi",
+            request_fingerprint=native.request_fingerprint,
+            route_request_identity=native.route_request_identity,
         )
-
-
-def _project_codex_frame(frame: GenerationFrame) -> BackendEvent | None:
-    """Project one validated Codex frame; permission and native frames carry none."""
-
-    event = frame.event
-    match event:
-        case GenerationText(text=text):
-            return BackendTextDelta(
-                route="CodexPersonal", child_seq=1, backend_seq=frame.sequence, text=text
-            )
-        case GenerationUsageEvent(usage=usage):
-            return BackendUsageObserved(
-                route="CodexPersonal", child_seq=1, backend_seq=frame.sequence, usage=usage
-            )
-        case GenerationToolUse():
-            return BackendToolObserved(backend_seq=frame.sequence, observation=event)
-        case GenerationPermissionRequest() | GenerationNative():
-            return None
-        case GenerationTerminal():
-            return BackendTerminal(
-                route="CodexPersonal",
-                child_seq=1,
-                backend_seq=frame.sequence,
-                evidence=CodexTerminalEvidence(native=event),
-            )
-        case other:
-            assert_never(other)
 
 
 def _project_provider_event(event: ProviderGenerationEvent) -> BackendEvent:

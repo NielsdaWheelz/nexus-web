@@ -3,7 +3,8 @@
 One billed-once, tool-using generation per job: Prepared, then Uncertain
 immediately before dispatch, then Completed with a normalized memo. A Completed
 replay publishes its pending memo or returns its stored publication outcome;
-an Uncertain replay is operator-owned.
+Uncertain permits local settlement only with the original native seal or
+positive non-submission proof.
 Dispatch and pre-dispatch closure take generation-owner, media, then queue locks.
 Publication takes the media lock before its exact queue claim; a Completed memo
 needs no dispatch-owner advisory lock. Admission uses that same media→queue order.
@@ -26,7 +27,6 @@ from nexus.errors import ApiErrorCode, exception_error_detail
 from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
-    RescheduleRequested,
     TerminalJobFailure,
     get_job,
     lock_and_renew_running_job_claim,
@@ -46,10 +46,6 @@ from nexus.schemas.metadata_enrichment import (
 )
 from nexus.schemas.presence import Present, absent, present
 from nexus.services import durable_step_journal as step_journal
-from nexus.services.codex_generation_contract import (
-    GenerationTerminal,
-    normalized_failure,
-)
 from nexus.services.collection_revisions import (
     ENTRY_VISIBILITY_FAMILIES,
     bump_all_collection_families,
@@ -69,6 +65,10 @@ from nexus.services.generation_spec import (
     decode_generation_spec_document,
     generation_fact_digest,
 )
+from nexus.services.generation_terminal import (
+    GenerationTerminal,
+    normalized_failure,
+)
 from nexus.services.llm_execution import (
     CompletedGeneration,
     EncodedGenerationTerminal,
@@ -81,6 +81,7 @@ from nexus.services.llm_execution import (
     admit_job_generation,
     codex_terminal_evidence,
     execute_generation,
+    generation_has_local_recovery,
 )
 from nexus.services.llm_ledger import LlmCallOwner, lock_generation_owner_in_current_transaction
 from nexus.services.media_processing_state import is_metadata_enrichment_eligible
@@ -133,7 +134,7 @@ def enrich_metadata(
     *,
     requester_user_id: UUID,
     context: JobExecutionContext,
-) -> _JobResult | RescheduleRequested:
+) -> _JobResult:
     """Classify owned failures without losing uncertainty or retrying a paid call."""
     from nexus.services.generation_admission import (
         GenerationConfigurationDefect,
@@ -193,7 +194,7 @@ def _enrich_metadata(
     *,
     requester_user_id: UUID,
     context: JobExecutionContext,
-) -> _JobResult | RescheduleRequested:
+) -> _JobResult:
     """Run or replay the one billed-once ``codex/metadata`` step."""
     media_uuid = UUID(media_id)
     factory = get_session_factory()
@@ -216,11 +217,6 @@ def _enrich_metadata(
             raise AssertionError(f"metadata job {context.job_id} disappeared")
         state = step_journal.read_step_states(job).get(METADATA_STEP_PATH)
         request_fingerprint = None if state is None else _request_fingerprint(state)
-        if state is not None and state.dispatch_phase is Uncertain:
-            db.commit()
-            raise _UncertainMetadataTurn(
-                f"metadata job {context.job_id} has an unresolved generation"
-            )
         if state is not None and state.dispatch_phase is Completed and request_fingerprint:
             stored = state.terminal_result
             if not isinstance(stored, Present):
@@ -228,21 +224,33 @@ def _enrich_metadata(
             db.commit()
             return _publish(factory, context, media_uuid, request_fingerprint)
 
-        def unusable(reason: _TerminalReason) -> _JobResult:
-            db.commit()
-            if request_fingerprint is None:
-                return _queue_only_failure(_domain_reason(reason))
-            return terminalize(reason, request_fingerprint)
+        if state is not None and state.dispatch_phase is Uncertain:
+            if not generation_has_local_recovery(db, state):
+                db.commit()
+                raise _UncertainMetadataTurn(
+                    f"metadata job {context.job_id} has an unresolved generation"
+                )
+            # Recover the original turn before inspecting mutable domain facts.
+            # Its Completed memo still has to pass the publication fence.
+            frozen_spec, intent = _frozen_admission(job)
+        else:
+            frozen_spec = None if state is None else _frozen_admission(job)[0]
 
-        media = db.get(Media, media_uuid, options=(defer(Media.plain_text),))
-        if media is None or not can_read_media(db, requester_user_id, media_uuid):
-            return unusable("media_not_found")
-        if not is_metadata_enrichment_eligible(
-            kind=media.kind, processing_status=media.processing_status
-        ):
-            return unusable("not_ready")
+            def unusable(reason: _TerminalReason) -> _JobResult:
+                db.commit()
+                if request_fingerprint is None:
+                    return _queue_only_failure(_domain_reason(reason))
+                return terminalize(reason, request_fingerprint)
 
-        intent = _intent(_user_content(db, media, requester_user_id=requester_user_id))
+            media = db.get(Media, media_uuid, options=(defer(Media.plain_text),))
+            if media is None or not can_read_media(db, requester_user_id, media_uuid):
+                return unusable("media_not_found")
+            if not is_metadata_enrichment_eligible(
+                kind=media.kind, processing_status=media.processing_status
+            ):
+                return unusable("not_ready")
+
+            intent = _intent(_user_content(db, media, requester_user_id=requester_user_id))
         db.commit()
 
     owner = LlmCallOwner(kind="media_enrichment", id=media_uuid)
@@ -275,14 +283,22 @@ def _enrich_metadata(
         context=context, step_path=METADATA_STEP_PATH, lock_dispatch=lock_dispatch
     )
 
-    async def execute(
-        _db: Session, runtime: ExecutionRuntime
-    ) -> CompletedGeneration | RescheduleRequested:
+    async def execute(_db: Session, runtime: ExecutionRuntime) -> CompletedGeneration:
         from nexus.services import generation_policy
 
         nonlocal request_fingerprint
 
-        revision = generation_policy.operation_revision("metadata_enrichment")
+        if frozen_spec is None:
+            revision = generation_policy.operation_revision("metadata_enrichment")
+            prompt_payload_ref = ImmutablePromptPayloadRef(
+                owner_kind="media_enrichment",
+                owner_id=str(media_uuid),
+                revision=revision,
+                payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
+            )
+        else:
+            revision = frozen_spec.prompt_template_revision
+            prompt_payload_ref = frozen_spec.prompt_payload_ref
         request = await admit_job_generation(
             owner=owner,
             user_id=requester_user_id,
@@ -290,12 +306,7 @@ def _enrich_metadata(
             operation="metadata_enrichment",
             intent=intent,
             prompt_template_revision=revision,
-            prompt_payload_ref=ImmutablePromptPayloadRef(
-                owner_kind="media_enrichment",
-                owner_id=str(media_uuid),
-                revision=revision,
-                payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
-            ),
+            prompt_payload_ref=prompt_payload_ref,
             journal=journal,
             session_factory=factory,
             runtime=runtime,
@@ -307,13 +318,13 @@ def _enrich_metadata(
             runtime=runtime,
             encode_terminal=lambda terminal: _encode_terminal(
                 codex_terminal_evidence(terminal),
-                admitted_handles=admitted_contributor_handles(intent.input),
+                admitted_handles=admitted_contributor_handles(request.intent.input),
             ),
             encode_failure=_encode_failure,
         )
 
     try:
-        result = run_llm_task(_TASK, execute)
+        run_llm_task(_TASK, execute)
     except _PreDispatchTerminal as exc:
         if request_fingerprint is None:
             return _queue_only_failure(_domain_reason(exc.reason))
@@ -327,8 +338,6 @@ def _enrich_metadata(
     except GenerationUncertain as exc:
         raise _UncertainMetadataTurn(exception_error_detail(exc)) from exc
 
-    if isinstance(result, RescheduleRequested):
-        return result
     if request_fingerprint is None:
         raise AssertionError("completed metadata dispatch has no frozen fingerprint")
     return _publish(

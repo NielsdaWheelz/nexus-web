@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun
 from nexus.db.session import get_session_factory
-from nexus.jobs.queue import JobExecutionContext, JobRow, RescheduleRequested, get_job
+from nexus.jobs.queue import JobExecutionContext, JobRow, get_job
 from nexus.logging import get_logger
 from nexus.services.chat_run_worker import execute_chat_run, settle_cancelled_dead_chat_run
 from nexus.services.llm_execution import ExecutionRuntime
@@ -20,14 +20,14 @@ logger = get_logger(__name__)
 _CHAT_RUN_SPEC = LlmTaskSpec(label="chat_run")
 
 
-def chat_run(run_id: str, *, context: JobExecutionContext) -> RescheduleRequested | None:
+def chat_run(run_id: str, *, context: JobExecutionContext) -> None:
     """Run one claimed chat job.
 
     Defects escape unchanged: the queue owns retries and durable suspension,
     and expected product failures are already folded by the worker.
     """
 
-    async def handler(db: Session, runtime: ExecutionRuntime) -> RescheduleRequested | None:
+    async def handler(db: Session, runtime: ExecutionRuntime) -> None:
         job = get_job(db, context.job_id)
         if job is None or str(job.payload.get("run_id")) != run_id:
             raise AssertionError("claimed chat job does not match its run payload")
@@ -40,8 +40,7 @@ def chat_run(run_id: str, *, context: JobExecutionContext) -> RescheduleRequeste
             runtime=runtime,
         )
 
-    outcome = run_llm_task(_CHAT_RUN_SPEC, handler)
-    return outcome if isinstance(outcome, RescheduleRequested) else None
+    run_llm_task(_CHAT_RUN_SPEC, handler)
 
 
 def record_dead_lettered_chat_run(db: Session, job: JobRow) -> None:

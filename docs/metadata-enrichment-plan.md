@@ -1,7 +1,7 @@
 # metadata enrichment: implementation contract
 
-status: local metadata implementation verified on `feature/metadata-enrichment`;
-full acceptance awaits qualified native integration and genuine research.
+status: qualified native adapter/pins adopted on `feature/metadata-enrichment`;
+composed metadata acceptance and genuine bibliographic research are in progress.
 owner decisions: 2026-10-01–02. [verification receipt](metadata-enrichment-verification.md).
 scope: nexus metadata only. the separate kernel agent owns model execution.
 no unanswered product questions block this plan. paths below are repository-relative.
@@ -163,7 +163,6 @@ completed even when domain acceptance returns `no_findings` or `invalid_output`.
 | accepted finding, including unchanged/partial | `succeeded` | atomic accepted values and successful timestamp |
 | no findings; invalid output; stale/ineligible/access-revoked; terminal generation failure | `dead`, nonretryable | no metadata or successful timestamp change |
 | retryable failure proven before submission | existing bounded retry (`failed` is nonterminal) | none |
-| capacity/provider wait | existing reschedule | none |
 | uncertain submission | existing uncertainty barrier; no fresh dispatch | none |
 
 add one explicit `TerminalJobFailure` handler result to the existing worker
@@ -259,7 +258,7 @@ the job id to the existing hud acknowledgement with its `metadata…` action.
 its `status` union is:
 
 - `queued`; `running`; `recovering`;
-- `waiting {reason: capacity | provider_limit | retry, until: Presence<datetime>}`;
+- `waiting {reason: retry, until: Presence<datetime>}`;
 - `completed {outcome: completed MetadataOutcome}`;
 - `no_findings {completed_at}`;
 - `failed {completed_at, code: MetadataFailureCode}`;
@@ -276,10 +275,9 @@ return payloads, prompts, raw `last_error`, or fabricate a generation id before
 one exists. check uncertainty across retained jobs, not merely the latest job.
 only the generation owner's `Completed` journal authorizes local publication
 replay. a parent terminal beside an `Uncertain` journal cannot establish recovery;
-the currently installed generation owner provides no independent codex recovery
-entrypoint. the qualified native adapter must expose local recovery from the
-exact provider-sealed model-turn terminal before any provider/catalog call.
-metadata calls that shared seam from its early uncertainty guard when delivered;
+the qualified native adapter exposes local recovery from the exact
+provider-sealed model-turn terminal before any provider/catalog call.
+metadata calls `generation_has_local_recovery` from its early uncertainty guard;
 without a seal or exact authoritative non-submission proof, retain the barrier.
 non-submission proof permits local failed settlement, never redispatch or a
 fabricated successful terminal. parent terminal, local stop,
@@ -394,8 +392,8 @@ absent; otherwise `first publication unverified; kept {date}`.
 withheld authors: `kept manually set authors`.
 stream failure: `live status disconnected` with reconnect, independent of job
 failure. a failed detail reread says `metadata updated; couldn't load current
-values`; its retry rereads, never re-enriches. capacity wait says `waiting for
-generation capacity`; stale input says `research result was not applied`.
+values`; its retry rereads, never re-enriches. stale input says
+`research result was not applied`.
 no fabricated percentages. include latest operation time/id and admitted
 model selection in existing metadata activity details; no new diagnostics page.
 preserve focus/scroll, use one polite outcome announcement, and verify long
@@ -527,6 +525,9 @@ module docs, delete only resolved tickets, and stop.
 - xhigh costs latency on the current worker; there is no new concurrency system.
 - the native route retains 64,000/8,000 admission/reservation budgets without
   hard token ceilings. the user accepted that limit; no local limiter is added.
+- native execution retires shell quota parking. known pre-submission failures
+  use bounded queue retries; terminal native quota failures fail the job and
+  allow a fresh manual request. no new quota scheduler is introduced.
 - indefinite metadata-job retention costs storage and retains research context;
   it avoids another outcome ledger and expiring replay semantics for one user.
 - visible details consume shared stream listeners; closed views reconcile on

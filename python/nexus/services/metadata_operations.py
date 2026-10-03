@@ -37,7 +37,6 @@ from nexus.schemas.metadata_enrichment import (
 from nexus.schemas.presence import Presence, Present, absent, presence_from_nullable
 from nexus.services.durable_step_journal import Completed, Uncertain, read_step_states
 from nexus.services.generation_spec import decode_generation_spec_document
-from nexus.services.llm_execution import read_capacity_pauses
 from nexus.services.media_processing_state import is_metadata_enrichment_eligible
 
 METADATA_STEP_PATH = "codex/metadata"
@@ -205,18 +204,13 @@ def _operation(job: JobRow, call: LLMCall | None, now: datetime) -> MetadataOper
         return MetadataFailedOperation(
             **common, completed_at=job.finished_at, code=metadata_failure_code(job.error_code)
         )
-    pauses = read_capacity_pauses(job.payload)
-    if (pause := pauses.get(METADATA_STEP_PATH)) is not None:
-        return MetadataWaitingOperation(
-            **common, reason="provider_limit", until=Present(value=pause.next_check_at)
-        )
     if job.status == "failed":
         return MetadataWaitingOperation(
             **common, reason="retry", until=Present(value=job.available_at)
         )
     if job.status == "pending" and job.available_at > now:
         return MetadataWaitingOperation(
-            **common, reason="capacity", until=Present(value=job.available_at)
+            **common, reason="retry", until=Present(value=job.available_at)
         )
     if job.status == "running" or (step is not None and step.dispatch_phase is Completed):
         return MetadataRecoveringOperation(**common)

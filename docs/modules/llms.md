@@ -30,11 +30,10 @@ Primary owners:
 - `generation_spec.py`: immutable admitted selection, budgets, output, and tool
   authority;
 - `generation_backend.py`: route-neutral execution result;
-- `codex_generation_*`: private Codex transport adapter;
+- `native_generation.py`: shared native supervisor and durable callback adapter;
 - `provider_generation_*`: ProviderRuntime adapter and continuation loop;
 - `llm_execution.py` and `llm_ledger.py`: parent/child/tool lifecycle and replay;
-- `tool_authority.py` and `tool_runtime/`: frozen provider-function and codex
-  generation-api operation authority, domain handlers, and effect positions;
+- `tool_authority.py` and `tool_runtime/`: frozen provider-function/native-callback authority, domain handlers, and effect positions;
 - `apps/codex_agent/`: isolated subscription-backed Codex host.
 
 queue ownership is documented in [jobs.md](jobs.md).
@@ -93,21 +92,18 @@ below. there is no active metadata provider-function plan. other background
 provider-function plans publish no model-tool schema. idea host research
 remains a separate bounded, durable three-search preparation plan.
 
-codex uses `CodexShell` authority instead: one release-owned api plan gives
-every codex generation, including background helpers, the same twelve
-account-wide read, search, and additive-write operations. prompt instructions
-guide use but do not narrow the grant. the private generation api checks the
-run-bound credential and active job, binds idempotent effect positions, and
-uses the same domain handlers, receipts, and undo. native shell and
-public-network effects are outside that ledger. see
-[the shell authority contract](../codex-shell-cutover-plan.md).
+codex freezes `CodexCallbacks` authority using the same operation-selected
+portable declarations as `ProviderFunctions`. metadata publishes exactly the four
+research tools above; no-model-tool helpers publish none. chat and dossiers retain
+their selected scope/effect policy. prompts cannot broaden an operation grant.
 
-provider api function proposals reach the canonical `GenerationToolExecutor`,
-authority checks, receipts, evidence, citations, trust, and undo. the provider-function tool-position grammar is
-`generation/{generation_seq}/tool/{n}`, with a one-based ordinal monotonic
-across the parent generation. An API model/tool/model loop never restarts it at
-a child call. codex calls the generation api from its native shell; its http
-positions bind the native child and idempotency key before effects.
+both routes execute the canonical `GenerationToolExecutor`, authority, recorder,
+evidence, citation and undo boundaries. provider-function positions remain
+`generation/{generation_seq}/tool/{n}`. native callbacks retain original native
+turn/call identity and immutable arguments before entering an effect; their stable
+position/effect identity comes from the host. a duplicate callback replays its
+recorded model-facing projection and never repeats the handler. original result
+facts and cited model-facing text remain separate persisted values.
 
 Untrusted tool arguments or output cannot widen the frozen plan, principal,
 scope, limits, or effect authority. There is no tool-shaped text parser,
@@ -115,17 +111,20 @@ provider-native Web search, alternate executor, or transport fallback.
 
 ## Backend composition
 
-codex personal uses the isolated subscription host and its private unix-socket
-control protocol. each generation gets a disposable remote execution sandbox
-with scratch and public internet. the authenticated account app-server stays
-outside it; ordinary shell/filesystem calls run inside it, and a run-bound
-bearer reaches only the private generation api. the host pins and checks its
-native app-server and exec-server at `openai-codex-cli-bin==0.157.1`. it
-publishes final answer text only after filtering bearer material; structured
-final output passes host schema validation. cancellation closes api admission,
-interrupts native work, and drains the sandbox before terminal settlement.
-the model-visible native tool set is not an exact nexus grant. remaining live
-qualification is tracked in the [runtime ticket](../tickets/codex-shell-runtime-unqualified.md).
+codex personal attaches to one dedicated stock 0.160.0 app-server through its
+private unix socket. the host retains authentication and owns process startup;
+workers own the shared kernel/native callbacks and portable executor. no shell,
+exec-server, http generation bridge, bearer or worker credential mount remains.
+the provider-owned restricted complete model catalogue loads at HOST STARTUP;
+exact public version/config preflight rejects unsupported hosts before thread
+creation. inherited clock, CodeMode and native user-input are removed. declared
+callbacks, strict json and read-only/no-network session containment qualify together.
+see [the native host runbook](../runbooks/codex-personal-agent-host.md).
+
+completed commentary persists before bounded chat progress delivery. only the
+original sealed native final supplies product terminal output. control/fence/cleanup
+facts cannot become native seals or replace original failure/usage. invalid callback
+arguments remain raw rejected evidence, without handler entry.
 
 Provider API execution uses `ProviderRuntime` with the selected configured
 credential. Each independently accepted provider call is a child model turn.
@@ -151,18 +150,31 @@ prompts, and decrypted continuation bytes never enter catalog, history,
 evidence, or logs.
 
 Completed children and tool positions replay without redispatch. A provider
-loop may resume from its sealed next-child continuation; `ReDispatchable` tools
-may retry after lease recovery. An unresolved external dispatch grants no retry
+loop may resume from its sealed next-child continuation; raw-api `ReDispatchable` tools may retry under their existing owner contract.
+an unresolved accepted native callback cannot be redispatched merely because it
+was a read. An unresolved external dispatch grants no retry
 authority and remains suspended/terminal according to its owner contract.
 There is no application entry point for resetting an uncertain generation or
 attaching an out-of-band terminal result.
 
-Subscription quota observed before Codex acceptance is capacity, not ordinary
-failure. Background work enters durable `CapacityPaused`, waits for the known
-reset or a bounded low-frequency recheck, and neither spends API money nor
-switches models. Chat reports the typed capacity refusal directly. A capacity
-error after acceptance is terminal because replay could duplicate billing or
-effects.
+native recovery first reads the original frozen spec/intent and attempt facts,
+before provider/catalogue/current tools. only its own exact sealed terminal or
+authoritative original-attempt non-submission proof permits local settlement.
+parent terminal state beside an Uncertain journal is not recovery authority.
+local replay preserves original terminal/usage and performs no provider call;
+publication still rechecks current source, access, credits and job claim. metadata
+uses the public `generation_has_local_recovery` seam for its early guard.
+
+native cumulative usage limits and subscription `CapacityPaused` machinery are
+removed. nexus generation deadlines and per-operation bounds remain; 64,000/8,000
+are admitted context/output reservations, without native hard token enforcement.
+raw provider-api billing/admission keeps its existing contract.
+
+migration 0254 backfills original historical principals, retains original effect
+and continuation bytes without invented seals, then deletes shell credentials.
+uncertain legacy shell work blocks migration. historical undo uses persisted
+principal/effect ownership. the single combined chain is 0252 ->0254 ->0255;
+metadata owns the final separately committed/reparented migration.
 
 ## Product API and reset boundary
 

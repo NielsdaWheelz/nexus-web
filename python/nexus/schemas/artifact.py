@@ -15,7 +15,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.schemas.citation import CitationOut
-from nexus.schemas.llm import CapacityPaused, SelectionPresentation
+from nexus.schemas.llm import SelectionPresentation
 from nexus.schemas.presence import Presence
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.artifacts.dossier_types import (
@@ -90,15 +90,8 @@ class DossierBuildExactModelToolsOut(ArtifactSchemaModel):
     effect_mode: Literal["ReadOnly", "AdditiveWrites"]
 
 
-class DossierBuildCodexShellOut(ArtifactSchemaModel):
-    kind: Literal["CodexShell"] = "CodexShell"
-    plan_id: str = Field(min_length=1)
-    plan_revision: str = Field(min_length=1)
-    effect_mode: Literal["AdditiveWrites"] = "AdditiveWrites"
-
-
 DossierBuildToolPlanOut = Annotated[
-    DossierBuildNoModelToolsOut | DossierBuildExactModelToolsOut | DossierBuildCodexShellOut,
+    DossierBuildNoModelToolsOut | DossierBuildExactModelToolsOut,
     Field(discriminator="kind"),
 ]
 
@@ -133,7 +126,6 @@ class DossierBuildSummary(ArtifactSchemaModel):
     failure: Presence[FailedEventPayload]
     cancellation: Presence[CancelledEventPayload]
     admitted_generation: Presence[DossierBuildAdmittedGenerationOut]
-    capacity_pause: Presence[CapacityPaused]
 
 
 class MediaDossierCoverageOut(ArtifactSchemaModel):

@@ -20,7 +20,8 @@ from dataclasses import dataclass
 from typing import Literal, cast
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from llm_tools import canonical_json_bytes
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -34,7 +35,6 @@ from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
 from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
-    RescheduleRequested,
     enqueue_unique_job,
     get_job,
     lock_running_job_claim,
@@ -50,8 +50,8 @@ from nexus.services import durable_step_journal as step_journal
 from nexus.services import generation_policy
 from nexus.services import llm_execution as llm
 from nexus.services import structured_synthesis as synthesis
-from nexus.services.codex_generation_contract import GenerationTerminal
 from nexus.services.generation_spec import ImmutablePromptPayloadRef, generation_fact_digest
+from nexus.services.generation_terminal import GenerationTerminal
 from nexus.services.llm_ledger import LlmCallOwner, lock_generation_owner_in_current_transaction
 from nexus.services.media_intelligence import NotReady, get_media_unit
 from nexus.services.resource_graph.connections import query_connections
@@ -242,7 +242,7 @@ async def run_synapse_scan(
     ref: ResourceRef,
     context: JobExecutionContext,
     runtime: llm.ExecutionRuntime,
-) -> ScanResult | RescheduleRequested:
+) -> ScanResult:
     """Worker body: one dossier → retrieve → judge → replace-set scan.
 
     ``skipped``: engine disabled, source gone, dossier unavailable, or the
@@ -278,7 +278,11 @@ async def run_synapse_scan(
         if not isinstance(state.terminal_result, Present):
             raise AssertionError("Completed synapse generation has no result")
         return settle(_CompletedSynapse.model_validate_json(state.terminal_result.value))
-    if state is not None and state.dispatch_phase is step_journal.Uncertain:
+    if (
+        state is not None
+        and state.dispatch_phase is step_journal.Uncertain
+        and not llm.generation_has_local_recovery(db, state)
+    ):
         db.commit()
         raise llm.GenerationUncertain(
             f"synapse generation {generation_id} has an unresolved dispatch"
@@ -291,45 +295,6 @@ async def run_synapse_scan(
     except NotFoundError:
         return skip("source_missing", "synapse source disappeared before dispatch")
 
-    db.commit()
-    dossier = _build_dossier(db, user_id=user_id, ref=ref)
-    if dossier is None:
-        return skip("dossier_unavailable", "synapse dossier unavailable before dispatch")
-
-    # Close the dossier read transaction before retrieval crosses the embedding
-    # transport; ``search`` owns its own pre-I/O read transaction. Over-fetch:
-    # exclusion happens after retrieval and the source's own chunks often
-    # dominate the top hits.
-    db.commit()
-    response = search(
-        db,
-        user_id,
-        SearchQuery(
-            text=dossier.text[:SYNAPSE_QUERY_CHAR_BUDGET],
-            requested_kinds=frozenset({"documents", "notes"}),
-            limit=min(50, SYNAPSE_CANDIDATE_LIMIT * 4),
-        ),
-    )
-    candidates = _map_candidates(
-        response.results,
-        excluded=_excluded_refs(db, user_id=user_id, ref=ref, kin=dossier.kin_refs),
-    )
-    if not candidates:
-        # The engine currently sees nothing: own the empty set.
-        if state is None:
-            return settle(_CompletedSynapse(outcome="success"))
-        db.rollback()
-        return settle(
-            _CompletedSynapse(outcome="success"),
-            preaccept="synapse candidate set became empty before dispatch",
-        )
-
-    intent = synthesis.build_synthesis_intent(
-        system_prompt=_SYNAPSE_SYSTEM_PROMPT,
-        user_content=_build_synapse_user_content(dossier.text, candidates),
-        schema=SynapseSynthesis,
-    )
-
     def lock_dispatch(dispatch_db: Session) -> JobRow | None:
         try:
             assert_ref_visible(dispatch_db, viewer_id=user_id, ref=ref)
@@ -337,10 +302,68 @@ async def run_synapse_scan(
             return None
         return get_job(dispatch_db, context.job_id)
 
+    journal = llm.JobGenerationJournal(
+        context=context, step_path=_SYNTHESIS_STEP_PATH, lock_dispatch=lock_dispatch
+    )
+    candidates: Sequence[_SynapseCandidate] | None
+    if state is not None and state.dispatch_phase is step_journal.Uncertain:
+        frozen = journal.read_admission(db)
+        if frozen is None:
+            raise AssertionError("armed synapse generation has no frozen admission")
+        spec, intent = frozen
+        revision = spec.prompt_template_revision
+        try:
+            snapshot = _SynapseInput.model_validate_json(intent.input)
+        except ValidationError:
+            # Original failures need no candidate projection. A successful
+            # terminal is refused by the encoder when its snapshot is absent.
+            candidates = None
+        else:
+            if snapshot.source_ref != ref:
+                raise AssertionError("synapse snapshot changed its admitted source")
+            candidates = snapshot.candidates
+    else:
+        db.commit()
+        dossier = _build_dossier(db, user_id=user_id, ref=ref)
+        if dossier is None:
+            return skip("dossier_unavailable", "synapse dossier unavailable before dispatch")
+
+        # Retrieval owns its pre-I/O transaction. Exclusion happens afterwards;
+        # the source's own chunks can dominate the highest-ranked hits.
+        db.commit()
+        response = search(
+            db,
+            user_id,
+            SearchQuery(
+                text=dossier.text[:SYNAPSE_QUERY_CHAR_BUDGET],
+                requested_kinds=frozenset({"documents", "notes"}),
+                limit=min(50, SYNAPSE_CANDIDATE_LIMIT * 4),
+            ),
+        )
+        candidates = _map_candidates(
+            response.results,
+            excluded=_excluded_refs(db, user_id=user_id, ref=ref, kin=dossier.kin_refs),
+        )
+        if not candidates:
+            if state is None:
+                return settle(_CompletedSynapse(outcome="success"))
+            db.rollback()
+            return settle(
+                _CompletedSynapse(outcome="success"),
+                preaccept="synapse candidate set became empty before dispatch",
+            )
+        intent = synthesis.build_synthesis_intent(
+            system_prompt=_SYNAPSE_SYSTEM_PROMPT,
+            user_content=_build_synapse_user_content(
+                source_ref=ref, source_text=dossier.text, candidates=candidates
+            ),
+            schema=SynapseSynthesis,
+        )
+        revision = generation_policy.operation_revision(SYNAPSE_OPERATION) + ".synapse-input.v1"
+
     # A first dispatch reloads the prepared job; a replay may retain an earlier
     # read snapshot. Neither may cross the generation host I/O boundary.
     db.commit()
-    revision = generation_policy.operation_revision(SYNAPSE_OPERATION)
     try:
         execution_request = await llm.admit_job_generation(
             owner=LlmCallOwner(kind="synapse_scan", id=ref.id),
@@ -355,11 +378,7 @@ async def run_synapse_scan(
                 revision=revision,
                 payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
             ),
-            journal=llm.JobGenerationJournal(
-                context=context,
-                step_path=_SYNTHESIS_STEP_PATH,
-                lock_dispatch=lock_dispatch,
-            ),
+            journal=journal,
             session_factory=get_session_factory(),
             runtime=runtime,
         )
@@ -377,8 +396,6 @@ async def run_synapse_scan(
         return skip("input_changed", "synapse input changed before dispatch")
     except llm.GenerationDispatchAborted:
         return skip("pre_dispatch_aborted", "synapse dispatch invalidated before acceptance")
-    if isinstance(execution_result, RescheduleRequested):
-        return execution_result
     return settle(_CompletedSynapse.model_validate_json(execution_result.terminal_result))
 
 
@@ -386,7 +403,7 @@ async def run_synapse_scan(
 
 
 def _encode_synapse_terminal(
-    terminal: GenerationTerminal, *, candidates: list[_SynapseCandidate]
+    terminal: GenerationTerminal, *, candidates: Sequence[_SynapseCandidate] | None
 ) -> llm.EncodedGenerationTerminal:
     if terminal.status != "succeeded":
         code, detail = synthesis.outcome_failure_facts(terminal)
@@ -394,6 +411,10 @@ def _encode_synapse_terminal(
             terminal_result=_CompletedSynapse(
                 outcome="failure", error_code=code, error_detail=detail
             ).model_dump_json()
+        )
+    if candidates is None:
+        raise llm.GenerationUncertain(
+            "successful synapse recovery lacks its original candidate snapshot"
         )
     try:
         value = synthesis.decode_structured_synthesis(terminal, schema=SynapseSynthesis)
@@ -611,6 +632,15 @@ class _SynapseCandidate:
     owner_media_id: UUID | None = None
 
 
+class _SynapseInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    kind: Literal["synapse-input.v1"]
+    source_ref: ResourceRef
+    source_text: str
+    candidates: tuple[_SynapseCandidate, ...]
+
+
 def _excluded_refs(
     db: Session, *, user_id: UUID, ref: ResourceRef, kin: frozenset[ResourceRef]
 ) -> set[ResourceRef]:
@@ -754,6 +784,7 @@ _SYNAPSE_SYSTEM_PROMPT = synthesis.build_synthesis_prompt(
     preamble=None,
     domain_rules=[
         synthesis.INDEX_GROUNDING_RULE + " Do not invent candidates, indices, or quotations.",
+        "The input is JSON. A candidate's index is its zero-based position in candidates.",
         "Propose only connections where remembering the candidate genuinely "
         "illuminates the source — a shared argument, a direct contradiction, the "
         "same idea in different words, a concrete example; reject mere topical "
@@ -774,13 +805,13 @@ _SYNAPSE_SYSTEM_PROMPT = synthesis.build_synthesis_prompt(
 )
 
 
-def _build_synapse_user_content(source_text: str, candidates: list[_SynapseCandidate]) -> str:
-    rendered = "\n\n".join(
-        f"[{index}] {candidate.label}: {candidate.snippet}"
-        for index, candidate in enumerate(candidates)
+def _build_synapse_user_content(
+    *, source_ref: ResourceRef, source_text: str, candidates: Sequence[_SynapseCandidate]
+) -> str:
+    snapshot = _SynapseInput(
+        kind="synapse-input.v1",
+        source_ref=source_ref,
+        source_text=source_text,
+        candidates=tuple(candidates),
     )
-    return synthesis.build_synthesis_user_content(
-        candidates_header="CANDIDATES",
-        rendered_candidates=rendered,
-        extra_user_block=f"SOURCE:\n{source_text}",
-    )
+    return canonical_json_bytes(snapshot.model_dump(mode="json")).decode("utf-8")

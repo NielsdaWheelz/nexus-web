@@ -26,6 +26,7 @@ from llm_tools import (
 )
 from sqlalchemy.orm import Session
 
+from nexus.db.async_session import open_async_session
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.search import SearchResultMediaOut
 from nexus.services.agent_tools.app_search import (
@@ -317,7 +318,8 @@ async def _run_search(
             actual_attempts=0,
         )
     try:
-        response = await search_scopes_async(recorder.database, viewer_id, query, scopes)
+        async with open_async_session(recorder.authority.session_factory) as search_db:
+            response = await search_scopes_async(search_db, viewer_id, query, scopes)
     except ApiError as exc:
         _collapse_expected_unavailable(
             exc,
@@ -404,9 +406,10 @@ async def _run_document_search(
 
     query = await recorder.database.run_sync(prepare)
     try:
-        response = await search_scopes_async(
-            recorder.database, recorder.principal_id, query, (query.scope,)
-        )
+        async with open_async_session(recorder.authority.session_factory) as search_db:
+            response = await search_scopes_async(
+                search_db, recorder.principal_id, query, (query.scope,)
+            )
     except ApiError as exc:
         _collapse_expected_unavailable(exc, allowed_codes=frozenset({ApiErrorCode.E_NOT_FOUND}))
 
@@ -444,6 +447,7 @@ async def _run_document_search(
                 requested_types=list(query.effective_result_types),
                 filters={"uri": value.uri},
                 citations=citations,
+                selected_citations=citations,
             )
         )
         return HandlerSuccess(
@@ -505,6 +509,7 @@ def _run_resource_read(
             scope="account_visible" if recorder.account_visible else "conversation_context",
             filters={"uri": value.uri},
             citations=[citation] if citation is not None else [],
+            selected_citations=[citation] if citation is not None else [],
         )
     )
     return HandlerSuccess(
@@ -568,6 +573,7 @@ def _run_resource_inspect(
             scope="account_visible" if recorder.account_visible else "conversation_context",
             filters={"uri": value.uri},
             citations=[citation] if citation is not None else [],
+            selected_citations=[citation] if citation is not None else [],
         )
     )
     return HandlerSuccess(
@@ -649,6 +655,7 @@ def _run_relations_list(
             scope="account_visible" if recorder.account_visible else "conversation_context",
             filters={"uri": value.uri},
             citations=[citation] if citation is not None else [],
+            selected_citations=[citation] if citation is not None else [],
         )
     )
     return HandlerSuccess(

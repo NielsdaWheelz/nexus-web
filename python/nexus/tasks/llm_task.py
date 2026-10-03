@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
 from nexus.db.session import get_session_factory
-from nexus.jobs.queue import RescheduleRequested
 from nexus.logging import get_logger
 
 if TYPE_CHECKING:
@@ -29,10 +28,8 @@ class LlmTaskSpec:
 
 def run_llm_task[R](
     spec: LlmTaskSpec, handler: Callable[[Session, ExecutionRuntime], Awaitable[R]]
-) -> R | RescheduleRequested:
+) -> R:
     """Run one async generation task with one session and one owned event loop."""
-
-    from nexus.services.llm_execution import GenerationCapacityPaused
 
     db = get_session_factory()()
 
@@ -70,9 +67,6 @@ def run_llm_task[R](
         return loop.run_until_complete(_call())
     # justify-ignore-error: unexpected defects remain owned by the durable
     # queue retry and dead-letter policy after this boundary records them.
-    except GenerationCapacityPaused as error:
-        db.rollback()
-        return RescheduleRequested(schedule=error.schedule)
     except Exception:
         logger.exception(f"{spec.label}_failed_unexpected")
         raise

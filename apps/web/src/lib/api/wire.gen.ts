@@ -3541,37 +3541,6 @@ export interface components {
             can_search: boolean;
         };
         /**
-         * CapacityPaused
-         * @description A parked Codex capacity refusal, rendered by the dossier surface.
-         */
-        CapacityPaused: {
-            /**
-             * Code
-             * @default quota_unavailable
-             * @constant
-             */
-            code: "quota_unavailable";
-            /** Explanation */
-            explanation: string;
-            /**
-             * Kind
-             * @default CapacityPaused
-             * @constant
-             */
-            kind: "CapacityPaused";
-            /**
-             * Last Checked
-             * Format: date-time
-             */
-            last_checked: string;
-            /**
-             * Next Check At
-             * Format: date-time
-             */
-            next_check_at: string;
-            reset_at: components["schemas"]["Presence_datetime_"];
-        };
-        /**
          * ChapterOut
          * @description One playable chapter marker (title clamped to 300 in the projection).
          */
@@ -4290,27 +4259,9 @@ export interface components {
             /** Selection */
             selection: components["schemas"]["CodexPersonalSelection"] | components["schemas"]["ProviderApiSelection"];
             /** Tool Plan */
-            tool_plan: components["schemas"]["DossierBuildNoModelToolsOut"] | components["schemas"]["DossierBuildExactModelToolsOut"] | components["schemas"]["DossierBuildCodexShellOut"];
+            tool_plan: components["schemas"]["DossierBuildNoModelToolsOut"] | components["schemas"]["DossierBuildExactModelToolsOut"];
             /** Tool Positions */
             tool_positions: number;
-        };
-        /** DossierBuildCodexShellOut */
-        DossierBuildCodexShellOut: {
-            /**
-             * Effect Mode
-             * @default AdditiveWrites
-             * @constant
-             */
-            effect_mode: "AdditiveWrites";
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "CodexShell";
-            /** Plan Id */
-            plan_id: string;
-            /** Plan Revision */
-            plan_revision: string;
         };
         /** DossierBuildCreatedOut */
         DossierBuildCreatedOut: {
@@ -4370,7 +4321,6 @@ export interface components {
         DossierBuildSummary: {
             admitted_generation: components["schemas"]["Presence_DossierBuildAdmittedGenerationOut_"];
             cancellation: components["schemas"]["Presence_CancelledEventPayload_"];
-            capacity_pause: components["schemas"]["Presence_CapacityPaused_"];
             /**
              * Created At
              * Format: date-time
@@ -5955,9 +5905,9 @@ export interface components {
             job_id: string;
             /**
              * Reason
-             * @enum {string}
+             * @constant
              */
-            reason: "capacity" | "provider_limit" | "retry";
+            reason: "retry";
             selection: components["schemas"]["Presence_MetadataSelection_"];
             started_at: components["schemas"]["Presence_AwareDatetime_"];
             /**
@@ -6774,7 +6724,6 @@ export interface components {
         Presence_Annotated_str__StringConstraints__AfterValidator__: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__StringConstraints__AfterValidator__"];
         Presence_AwareDatetime_: components["schemas"]["Absent"] | components["schemas"]["Present_AwareDatetime_"];
         Presence_CancelledEventPayload_: components["schemas"]["Absent"] | components["schemas"]["Present_CancelledEventPayload_"];
-        Presence_CapacityPaused_: components["schemas"]["Absent"] | components["schemas"]["Present_CapacityPaused_"];
         Presence_ChatPublicationWarning_: components["schemas"]["Absent"] | components["schemas"]["Present_ChatPublicationWarning_"];
         Presence_DossierBuildAdmittedGenerationOut_: components["schemas"]["Absent"] | components["schemas"]["Present_DossierBuildAdmittedGenerationOut_"];
         Presence_DossierBuildExecution_: components["schemas"]["Absent"] | components["schemas"]["Present_DossierBuildExecution_"];
@@ -6795,7 +6744,6 @@ export interface components {
         Presence_ReaderTimeRange_: components["schemas"]["Absent"] | components["schemas"]["Present_ReaderTimeRange_"];
         Presence_ShareMembersOut_: components["schemas"]["Absent"] | components["schemas"]["Present_ShareMembersOut_"];
         Presence_UUID_: components["schemas"]["Absent"] | components["schemas"]["Present_UUID_"];
-        Presence_datetime_: components["schemas"]["Absent"] | components["schemas"]["Present_datetime_"];
         Presence_int_: components["schemas"]["Absent"] | components["schemas"]["Present_int_"];
         Presence_str_: components["schemas"]["Absent"] | components["schemas"]["Present_str_"];
         /** Present[Annotated[Union[MediaAbstractBuildingOut, MediaAbstractReadyOut, MediaAbstractStaleOut, MediaAbstractFailedOut, MediaAbstractNotAvailableOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
@@ -6959,15 +6907,6 @@ export interface components {
              */
             kind: "Present";
             value: components["schemas"]["CancelledEventPayload"];
-        };
-        /** Present[CapacityPaused] */
-        Present_CapacityPaused_: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Present";
-            value: components["schemas"]["CapacityPaused"];
         };
         /** Present[ChatPublicationWarning] */
         Present_ChatPublicationWarning_: {
@@ -7162,19 +7101,6 @@ export interface components {
             /**
              * Value
              * Format: uuid
-             */
-            value: string;
-        };
-        /** Present[datetime] */
-        Present_datetime_: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Present";
-            /**
-             * Value
-             * Format: date-time
              */
             value: string;
         };

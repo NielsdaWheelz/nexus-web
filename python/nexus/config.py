@@ -402,9 +402,9 @@ class Settings(BaseSettings):
     metadata_enrichment_max_content_words: int = Field(
         default=1000, alias="METADATA_ENRICHMENT_MAX_CONTENT_WORDS", ge=1, le=1000
     )
-    codex_agent_socket: Path = Field(
-        default=Path("/run/nexus-codex/agent.sock"),
-        alias="NEXUS_CODEX_AGENT_SOCKET",
+    codex_native_socket: Path = Field(
+        default=Path("/tmp/codex-daemon-10001/app-server.sock"),
+        alias="NEXUS_CODEX_NATIVE_SOCKET",
     )
 
     # Synapse resonance engine: SYNAPSE_ENABLED=false turns every scan trigger
@@ -666,10 +666,10 @@ class Settings(BaseSettings):
         if not self.node_ingest_script.is_absolute():
             raise ValueError("NODE_INGEST_SCRIPT must be an absolute path")
         if (
-            not self.codex_agent_socket.is_absolute()
-            or Path(os.path.normpath(str(self.codex_agent_socket))) != self.codex_agent_socket
+            not self.codex_native_socket.is_absolute()
+            or Path(os.path.normpath(str(self.codex_native_socket))) != self.codex_native_socket
         ):
-            raise ValueError("NEXUS_CODEX_AGENT_SOCKET must be a normalized absolute path.")
+            raise ValueError("NEXUS_CODEX_NATIVE_SOCKET must be a normalized absolute path.")
         if not self.parser_temp_root.is_absolute():
             raise ValueError("PARSER_TEMP_ROOT must be an absolute path.")
 

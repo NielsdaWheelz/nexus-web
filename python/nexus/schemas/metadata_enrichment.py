@@ -295,7 +295,7 @@ class MetadataUncertainOperation(_MetadataOperationBase):
 
 class MetadataWaitingOperation(_MetadataOperationBase):
     status: Literal["waiting"] = "waiting"
-    reason: Literal["capacity", "provider_limit", "retry"]
+    reason: Literal["retry"]
     until: Presence[AwareDatetime]
 
 

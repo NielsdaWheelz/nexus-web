@@ -42,8 +42,8 @@ author proposals, and the outcome reports that fact. no new manual field pins.
 
 metadata policy selects codex personal, `gpt-6-luna`, `xhigh`: 300 seconds,
 32,768 utf-8 input bytes, a 64,000-token context budget and an 8,000-token output
-reservation. the
-generation owner admits that selection or fails visibly. no model substitution.
+reservation. the generation owner admits that selection or fails visibly.
+no model substitution.
 native execution and genuine tool qualification belong to the separate kernel
 integration. stock 0.160 has no native hard context/output token-cap field;
 the user accepted admission/reservation semantics on 2026-10-02. frozen budgets
@@ -60,9 +60,10 @@ are never silently truncated. oversized fixed context fails before dispatch.
 
 the prompt requests `nexus.document.search`, `nexus.resource.read`, `web.search`
 and `web.read`; public queries use identifying strings, not private passages.
-source text is evidence, never instructions. the generation owner controls the
-actual tool grant: the current codex shell grant is account-wide, and this prompt
-does not narrow it. see [llms.md](llms.md). metadata owns no provider adapter or
+source text is evidence, never instructions. the frozen `MetadataResearch` grant
+permits exactly those four tools; local reads use the admitted media scope.
+`CodexCallbacks` executes that plan through the shared generation owner.
+see [llms.md](llms.md). metadata owns no provider adapter or
 second context builder. exact model/effort and successful search/read require a
 real live receipt before release; controlled responses qualify domain behavior
 only.
@@ -87,16 +88,19 @@ the stored outcome without merging, restamping or buying another generation.
 accepted findings settle `succeeded`. no findings, invalid output and terminal
 research/domain failures return `TerminalJobFailure` and settle `dead` without
 retrying paid research. known retryable pre-submission failures use the ordinary
-bounded queue retry; waits use existing rescheduling. unresolved submission blocks
+bounded queue retry. terminal native quota failures settle failed; shell quota
+parking is retired. unresolved submission blocks
 fresh research until the generation owner settles it. metadata failures never
 write source-processing error fields. successful and dead metadata jobs are
 retained indefinitely so pruning cannot revive an older failure as latest.
 
-the native candidate remains unqualified. its shared recovery seam must read the
-exact provider-sealed model-turn terminal locally before provider/catalog calls;
-metadata will call it from the early uncertainty guard when delivered. a parent
-terminal or process stop alone never unlocks research. current completed-journal
-publication replay is already metadata-owned.
+`generation_has_local_recovery` authorizes only local settlement from the exact
+original native seal or authoritative non-submission evidence. metadata reuses
+the original frozen spec, intent and handles before mutable domain reads;
+execution recovers before provider/catalog calls. publication still checks
+current source, credits, access and claim. a parent terminal or process stop
+alone never unlocks research. completed-journal publication replay remains
+metadata-owned.
 
 ## api and observation
 
@@ -163,21 +167,23 @@ canonical urls distinct from the source url share one descriptive label.
 
 ## hard cutover and source repair
 
-`0253` requires stopped writers and the verified release backup. unresolved
+`0255` requires stopped writers and the verified release backup. unresolved
 metadata jobs or generations block migration. settled legacy metadata jobs are
 archived in that backup and removed from the live projection; existing facts,
 successful stamps and generation evidence remain. only legacy metadata source
 errors are cleared. deploy api, worker and web together; rollback restores the
 verified backup, never an old decoder over new memos.
 
-after qualified adapter delivery, rename/reparent the undeployed standalone
-metadata migration to `0255`, following native `0254` and baseline `0252`.
-rebuild disposable `0253` databases; do not stamp them into the new chain.
+the sole migration chain is `0252` → native `0254` → metadata `0255`.
+the undeployed standalone `0253` is removed; its disposable databases are
+rebuilt, never stamped into this chain.
 combined verification must preserve historical effect/principal evidence and
 leave schema/data at `0252` if metadata's later guard rejects the upgrade.
-immutable qualified pins, installed provider-sealed recovery and actual exact-model web
-research are still release prerequisites. `CodexCallbacks` / `MetadataResearch`
-qualification does not follow from the current shell-route or controlled peers.
+qualified immutable pins and genuine exact-model four-tool research are
+delivered. metadata's installed job and bibliographic acceptance are separate
+from that capability proof. production release additionally requires the
+historical uncertainty disposition and actual starting-revision effect/undo
+restore proof in [the plan](../metadata-enrichment-plan.md#9-hard-cutover-and-verification).
 
 `python/scripts/repair_epub_contributors.py` previews by default and applies only
 explicitly requested source-observation repair. it uses retained originals,

@@ -120,10 +120,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
         """Process the request through auth checks."""
         # This execution-private path authenticates its run-bound bearer in its
         # own route. Private network ingress is its reachability boundary.
-        if request.url.path == "/agent-api/openapi.json" or request.url.path.startswith(
-            "/agent-api/operations/"
-        ):
-            return await call_next(request)
         # Skip auth for public paths
         if request.url.path in PUBLIC_PATHS:
             return await call_next(request)

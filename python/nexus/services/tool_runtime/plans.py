@@ -19,7 +19,6 @@ from llm_tools import (
     WEB_SEARCH_SPEC,
     CapabilityProfile,
     HostTable,
-    HttpApi,
     Native,
     ProfileId,
     RunLimits,
@@ -34,7 +33,7 @@ from llm_tools import (
 from nexus.services.tool_runtime.declarations import NEXUS_TOOL_DECLARATIONS
 from nexus.services.tool_runtime.plan_revisions import TOOL_PLAN_AUTHORITY_REVISIONS
 
-type ToolExposureName = Literal["HostTable", "Native", "HttpApi"]
+type ToolExposureName = Literal["HostTable", "Native"]
 
 _NEXUS_READ_TOOL_IDS: Final[tuple[ToolId, ...]] = tuple(
     ToolId(value)
@@ -113,8 +112,6 @@ def _exposure_name(plan: ToolPlan) -> ToolExposureName:
         return "Native"
     if isinstance(plan.exposure, HostTable):
         return "HostTable"
-    if isinstance(plan.exposure, HttpApi):
-        return "HttpApi"
     raise ValueError("Nexus tool plan has an unsupported exposure")
 
 
@@ -163,7 +160,7 @@ def _definition(
     )
     plan = ToolPlan(
         profile=profile.id,
-        exposure={"Native": Native, "HostTable": HostTable, "HttpApi": HttpApi}[exposure](),
+        exposure={"Native": Native, "HostTable": HostTable}[exposure](),
     )
     return ToolPlanDefinition(
         plan_id=plan_id,
@@ -173,30 +170,41 @@ def _definition(
     )
 
 
-_CHAT_RUN_LIMITS: Final[RunLimits] = RunLimits(
-    max_calls=64,
-    max_external_attempts=128,
-    max_input_bytes=4_194_304,
-    max_output_bytes=16_777_216,
+_NATIVE_RUN_LIMITS: Final[RunLimits] = RunLimits(
+    max_calls=None,
+    max_external_attempts=None,
+    max_input_bytes=None,
+    max_output_bytes=None,
     max_in_flight=1,
-    max_elapsed_seconds=900.0,
+    max_elapsed_seconds=None,
 )
 
 CHAT_READ_ADDITIVE_WRITE_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
     "ChatReadAdditiveWrite",
     "chat_read_additive_write",
-    (WEB_SEARCH_SPEC.id, *_NEXUS_READ_TOOL_IDS, *_NEXUS_ADDITIVE_WRITE_TOOL_IDS),
-    _CHAT_RUN_LIMITS,
+    (WEB_SEARCH_SPEC.id, WEB_READ_SPEC.id, *_NEXUS_READ_TOOL_IDS, *_NEXUS_ADDITIVE_WRITE_TOOL_IDS),
+    _NATIVE_RUN_LIMITS,
     exposure="Native",
     max_live_writes=8,
 )
-CODEX_GENERATION_API_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
-    "CodexGenerationApi",
-    "codex_generation_api",
-    (WEB_SEARCH_SPEC.id, WEB_READ_SPEC.id, *_NEXUS_READ_TOOL_IDS, *_NEXUS_ADDITIVE_WRITE_TOOL_IDS),
-    _CHAT_RUN_LIMITS,
-    exposure="HttpApi",
-    max_live_writes=8,
+METADATA_RESEARCH_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
+    "MetadataResearch",
+    "metadata_research",
+    (
+        ToolId("nexus.document.search"),
+        ToolId("nexus.resource.read"),
+        WEB_SEARCH_SPEC.id,
+        WEB_READ_SPEC.id,
+    ),
+    _NATIVE_RUN_LIMITS,
+    exposure="Native",
+)
+NO_MODEL_TOOLS_DEFINITION: Final[ToolPlanDefinition] = _definition(
+    "NoModelTools",
+    "no_model_tools",
+    (),
+    _NATIVE_RUN_LIMITS,
+    exposure="Native",
 )
 IDEA_DOSSIER_RESEARCH_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
     "idea_dossier_research",
@@ -214,7 +222,8 @@ IDEA_DOSSIER_RESEARCH_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
 )
 
 TOOL_PLAN_DEFINITIONS: Final[tuple[ToolPlanDefinition, ...]] = (
-    CODEX_GENERATION_API_TOOL_DEFINITION,
+    METADATA_RESEARCH_TOOL_DEFINITION,
+    NO_MODEL_TOOLS_DEFINITION,
     CHAT_READ_ADDITIVE_WRITE_TOOL_DEFINITION,
     IDEA_DOSSIER_RESEARCH_TOOL_DEFINITION,
 )
@@ -235,7 +244,8 @@ TOOL_PLAN_DEFINITIONS_BY_ID: Final[MappingProxyType[str, ToolPlanDefinition]] = 
 
 
 __all__ = [
-    "CODEX_GENERATION_API_TOOL_DEFINITION",
+    "METADATA_RESEARCH_TOOL_DEFINITION",
+    "NO_MODEL_TOOLS_DEFINITION",
     "CHAT_READ_ADDITIVE_WRITE_TOOL_DEFINITION",
     "IDEA_DOSSIER_RESEARCH_TOOL_DEFINITION",
     "TOOL_PLAN_DEFINITIONS",

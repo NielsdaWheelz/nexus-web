@@ -55,11 +55,9 @@ from nexus.jobs.queue import (
     running_job_claim_is_current,
 )
 from nexus.schemas.citation import CitationOut
-from nexus.schemas.llm import CapacityPaused
 from nexus.schemas.presence import absent, present
 from nexus.services import durable_step_journal as step_journal
 from nexus.services import run_kit
-from nexus.services.agent_api import close_generation_api_admission_for_owner
 from nexus.services.artifacts import subjects
 from nexus.services.artifacts.collect import (
     AggregateDependenciesPending,
@@ -120,7 +118,6 @@ from nexus.services.generation_spec import (
     GenerationHistory,
     ProviderApiSelection,
     ProviderDispatchTargetSnapshot,
-    read_generation_history,
 )
 from nexus.services.llm_execution import (
     CancellationSignal,
@@ -129,12 +126,12 @@ from nexus.services.llm_execution import (
     GenerationUncertain,
     cancel_prepared_generation_without_dispatch_in_current_transaction,
     execute_generation,
-    read_capacity_pauses,
 )
 from nexus.services.llm_ledger import (
     GenerationRecord,
     LlmCallOwner,
     ModelTurnRecord,
+    fence_native_attempts_for_owner,
     lock_generation_owner_in_current_transaction,
     read_latest_generation_for_owner,
     read_latest_generations_for_owners,
@@ -179,7 +176,6 @@ class ActiveBuildView:
     created_at: datetime
     execution: step_journal.DurableExecutionPhase
     admitted_generation: AdmittedGeneration | None
-    capacity_pause: CapacityPaused | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -638,7 +634,7 @@ async def run_build(
             runtime=runtime,
             recheck=recheck,
         )
-        if document is None or isinstance(document, RescheduleRequested):
+        if document is None:
             return document
         db.commit()
         _success_terminal(
@@ -671,7 +667,7 @@ async def _run_synthesis(
     step: SynthesisStep,
     runtime: DossierBuildRuntime,
     recheck: _InputRecheck,
-) -> PublishableDossier | RescheduleRequested | None:
+) -> PublishableDossier | None:
     """Run or replay the build's one durable generation."""
     ctx = runtime.execution_context
     try:
@@ -751,8 +747,6 @@ async def _run_synthesis(
         watcher.cancel()
         await asyncio.gather(watcher, return_exceptions=True)
 
-    if isinstance(execution_result, RescheduleRequested):
-        return execution_result
     if not _refresh_job(db, runtime):
         return None
     return _consume(
@@ -1128,7 +1122,7 @@ def cancel_build(db: Session, *, build_id: UUID, actor_user_id: UUID) -> None:
         if existing in ("revision", "failure"):
             db.commit()
             return False
-        close_generation_api_admission_for_owner(db, owner=owner)
+        fence_native_attempts_for_owner(db, owner=owner)
         if existing == "cancellation":
             db.commit()
             return True
@@ -1286,7 +1280,6 @@ def _head_snapshot(
                     created_at=row["created_at"],
                     execution=_execution_phase(job),
                     admitted_generation=_admitted_generation(db, build_id),
-                    capacity_pause=_capacity_pause(job),
                 )
         elif rev:
             # Builds are newest first: every remaining failure is older than
@@ -1391,12 +1384,12 @@ def _revision_view(db: Session, *, revision_id: UUID, viewer_id: UUID) -> Revisi
 
 
 def _provenance(
-    generation: GenerationRecord | None,
+    generation: GenerationRecord[GenerationHistory] | None,
     turns: tuple[ModelTurnRecord, ...],
 ) -> tuple[str | None, str | None, int | None]:
     if generation is None:
         return None, None, None
-    spec = read_generation_history(generation.spec)
+    spec = generation.spec
     if isinstance(spec.selection, CodexPersonalSelection):
         provider, model = "codex-personal", spec.selection.model
     elif isinstance(spec.selection, ProviderApiSelection):
@@ -1935,13 +1928,6 @@ def _job_state(db: Session, build_id: UUID) -> _JobState | None:
     )
 
 
-def _capacity_pause(job: _JobState | None) -> CapacityPaused | None:
-    """The one durable pre-admission pause parked on an active build's job."""
-    if job is None or job.status == SUCCEEDED:
-        return None
-    return read_capacity_pauses(job.payload).get(SYNTHESIS_STEP_PATH)
-
-
 def _admitted_generation(db: Session, build_id: UUID) -> AdmittedGeneration | None:
     """The build's latest admitted ledger generation, read without mutation."""
     record = read_latest_generation_for_owner(
@@ -1950,7 +1936,7 @@ def _admitted_generation(db: Session, build_id: UUID) -> AdmittedGeneration | No
     if record is None:
         return None
     return AdmittedGeneration(
-        spec=read_generation_history(record.spec),
+        spec=record.spec,
         tool_positions=len(read_tool_positions(db, generation_id=record.id)),
     )
 
