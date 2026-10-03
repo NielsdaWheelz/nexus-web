@@ -25,10 +25,10 @@ import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   requirePaneRuntime,
-  usePaneReturnReady,
   usePaneRuntime,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
+import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { createNotePage } from "@/lib/notes/api";
 import { useOpenDailyPage } from "@/lib/notes/openDailyPage";
 import {

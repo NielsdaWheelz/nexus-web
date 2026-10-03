@@ -5,7 +5,7 @@ import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import { setAppearanceAction } from "@/lib/theme/setAppearanceAction";
 import type { AppTheme } from "@/lib/theme/cookie";
-import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
+import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 // Imported directly by the one surface that draws it: the inscription registry
 // is data-heavy and must never enter a shared barrel (blueprint §3). This pane
 // body is a lazy chunk (paneRenderRegistry), so it costs no First Load JS.

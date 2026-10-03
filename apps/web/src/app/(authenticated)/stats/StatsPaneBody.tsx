@@ -23,11 +23,11 @@ import { formatLocalDateInTimeZone } from "@/lib/localDate";
 import {
   requirePaneRuntime,
   usePaneIsActive,
-  usePaneReturnReady,
   usePaneRuntime,
   usePaneSearchParams,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
+import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import { useHydratedBrowserTimeZone } from "@/lib/time/browserTimeZone";
 import ActivityHealth from "./ActivityHealth";

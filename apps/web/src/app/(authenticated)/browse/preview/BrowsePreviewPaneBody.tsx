@@ -39,11 +39,11 @@ import { decodeBrowsePreviewQuery } from "@/lib/browse/query";
 import { presentPreviewEpisode } from "@/lib/collections/presenters/browse";
 import { addMediaFromUrl } from "@/lib/media/ingestionClient";
 import {
-  usePaneReturnReady,
   usePaneRouter,
   usePaneSearchParams,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
+import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { usePlayerCommands } from "@/lib/player/playerRuntime";
 import { subscribeToPodcast } from "@/lib/podcasts/acquisition";
 import styles from "../browse.module.css";

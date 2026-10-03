@@ -48,14 +48,16 @@ import {
 import type { ConversationListItem } from "@/lib/conversations/types";
 import usePaneScrollRetention from "@/lib/panes/usePaneScrollRetention";
 import {
-  definePaneVisitDataKey,
   requirePaneRuntime,
-  useClearAllPaneVisitData,
   usePaneIsActive,
-  usePaneReturnReady,
   usePaneRuntime,
-  usePaneVisitData,
 } from "@/lib/panes/paneRuntime";
+import {
+  definePaneVisitDataKey,
+  useClearAllPaneVisitData,
+  usePaneReturnReady,
+  usePaneVisitData,
+} from "@/lib/workspace/paneReturnMemento";
 import type { ConversationsPaneSeed } from "@/lib/panes/paneResourceLoaders";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";

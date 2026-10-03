@@ -5,7 +5,7 @@ import { presentSettingsRow } from "@/lib/collections/presenters/settings";
 import { isAndroidShellRestrictedRouteId } from "@/lib/androidShell";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { useAndroidShell } from "@/lib/renderEnvironment/provider";
-import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
+import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 
 const SETTINGS_ITEMS: {
   href: string;

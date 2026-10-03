@@ -61,14 +61,16 @@ import {
   useLibraryPlacementRevision,
 } from "@/lib/libraries/placementRevision";
 import {
-  definePaneVisitDataKey,
   requirePaneRuntime,
-  useClearAllPaneVisitData,
   usePaneIsActive,
   usePaneRuntime,
+} from "@/lib/panes/paneRuntime";
+import {
+  definePaneVisitDataKey,
+  useClearAllPaneVisitData,
   usePaneReturnReady,
   usePaneVisitData,
-} from "@/lib/panes/paneRuntime";
+} from "@/lib/workspace/paneReturnMemento";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import usePaneScrollRetention from "@/lib/panes/usePaneScrollRetention";

@@ -59,17 +59,19 @@ import {
 } from "@/lib/panes/paneResourceLoaders";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import {
-  definePaneVisitDataKey,
   type PaneResourceStatus,
-  useClearAllPaneVisitData,
   usePaneIsActive,
   usePaneParam,
-  usePaneReturnReady,
   usePaneRuntime,
   requirePaneRuntime,
-  usePaneVisitData,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
+import {
+  definePaneVisitDataKey,
+  useClearAllPaneVisitData,
+  usePaneReturnReady,
+  usePaneVisitData,
+} from "@/lib/workspace/paneReturnMemento";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import usePaneScrollRetention from "@/lib/panes/usePaneScrollRetention";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";

@@ -18,7 +18,8 @@ import {
   normalizePaneSecondaryPublication,
   type PaneSecondaryPublication,
 } from "@/lib/panes/panePublications";
-import { usePaneReturnReady, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { paneSecondaryRegionId } from "@/lib/panes/paneSecondaryModel";
 
 const IMPORTS_URL_STATE_CODEC = {
