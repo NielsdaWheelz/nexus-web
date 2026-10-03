@@ -11,6 +11,12 @@ independent audit reproduced two refresh grants for near-expiry cookies.
 this adds a provider round trip and an avoidable failure point after an
 already successful rotation.
 
+2026-10-02 qualification reruns the actual refresh owner with locked auth-js
+2.108.2 and ssr 0.10.2 against a loopback synthetic provider: exactly two
+refresh grants produce two successor cookie writes and an active result.
+receipt: `/tmp/nexus-auth-startup.E0TlcS/qualification.receipt.json`.
+no hosted authentication or real credentials were used.
+
 fix: make the refresh owner request exactly one provider grant and collect
 its successor cookies. preserve in-flight deduplication and exact terminal
 versus dependency-failure classification. a blind switch to `getSession()`
