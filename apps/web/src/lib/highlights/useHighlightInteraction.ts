@@ -1,166 +1,56 @@
-/**
- * Hook for highlight interaction: focus, cycling, and click handling.
- *
- * This hook manages:
- * - Focus state (which highlight is currently focused)
- * - Overlap cycling (clicking same segment cycles through overlapping highlights)
- * - Segment tracking (which segment was last clicked)
- *
- * The focus model:
- * - At most one highlight is focused at any time
- * - Focus is selection/emphasis: the .selected card + the .hl-focused prose ring,
- *   and the target for edit/delete actions
- * - Focus does not gate verbosity: the snippet show-more, the note, and linked
- *   chats are all shown independently of which highlight is focused
- *
- * Overlap cycling:
- * - First click on segment focuses data-highlight-top
- * - Subsequent clicks on same segment cycle through data-active-highlight-ids
- * - Clicking different segment resets cycling
- *
- * The DOM contract stores active highlight ids in the space-delimited
- * data-active-highlight-ids attribute for efficient CSS ~= selection.
- */
-
 import { useState, useCallback, useRef } from "react";
 import { escapeAttrValue } from "./escapeAttrValue";
 
-// =============================================================================
-// Types
-// =============================================================================
-
-/**
- * Highlight focus state.
- */
 export type HighlightFocusState = {
-  /** Currently focused highlight ID, or null if none */
   focusedId: string | null;
-  /** Whether we're in edit mode for bounds */
   editingBounds: boolean;
 };
 
-/**
- * Click event data from a highlight span.
- */
 export type HighlightClickData = {
-  /** All highlight IDs active in this segment */
   highlightIds: string[];
-  /** The topmost highlight ID */
   topmostId: string;
-  /** The DOM element that was clicked */
   element: Element;
 };
 
-/**
- * Return type of useHighlightInteraction hook.
- */
 export type UseHighlightInteractionReturn = {
-  /** Current focus state */
   focusState: HighlightFocusState;
-  
-  /** Focus a specific highlight */
   focusHighlight: (highlightId: string | null) => void;
-  
-  /** Handle click on a highlight span */
   handleHighlightClick: (data: HighlightClickData) => void;
-  
-  /** Clear focus */
   clearFocus: () => void;
-  
-  /** Enter edit bounds mode */
   startEditBounds: () => void;
-  
-  /** Exit edit bounds mode */
   cancelEditBounds: () => void;
-  
-  /** Check if a highlight is focused */
-  isHighlightFocused: (highlightId: string) => boolean;
 };
 
-// =============================================================================
-// Implementation
-// =============================================================================
-
-/**
- * Hook for managing highlight interaction.
- *
- * @param onFocusChange - Optional callback when focus changes (for linked-items sync)
- * @returns Interaction state and handlers
- *
- * @example
- * ```tsx
- * const { focusState, handleHighlightClick, clearFocus } = useHighlightInteraction();
- *
- * // In highlight span click handler:
- * const onClick = (e: React.MouseEvent) => {
- *   const target = e.target as Element;
- *   const ids = target.getAttribute('data-active-highlight-ids')?.split(' ') || [];
- *   const topId = target.getAttribute('data-highlight-top') || ids[0];
- *   handleHighlightClick({ highlightIds: ids, topmostId: topId, element: target });
- * };
- *
- * // Focus CSS class:
- * const className = focusState.focusedId === highlightId ? 'hl-focused' : '';
- * ```
- */
-export function useHighlightInteraction(
-  onFocusChange?: (highlightId: string | null) => void
-): UseHighlightInteractionReturn {
-  // Focus state
+/** Focus owns emphasis and the edit target, never scrolling or verbosity. */
+export function useHighlightInteraction(): UseHighlightInteractionReturn {
   const [focusState, setFocusState] = useState<HighlightFocusState>({
     focusedId: null,
     editingBounds: false,
   });
-
-  // Track last clicked segment for cycling
   const lastClickedSegment = useRef<{
     element: Element | null;
     cycleIndex: number;
-    highlightIds: string[];
-  }>({
-    element: null,
-    cycleIndex: 0,
-    highlightIds: [],
-  });
+  }>({ element: null, cycleIndex: 0 });
 
-  /**
-   * Focus a specific highlight.
-   *
-   * Invariant: focus changes emphasis, never the viewport. This only updates
-   * focusState and notifies onFocusChange — it must never scroll. Navigation
-   * (reveal/jump) is a separate verb owned by the caller.
-   */
-  const focusHighlight = useCallback(
-    (highlightId: string | null) => {
-      setFocusState((prev) => {
-        const newEditingBounds = highlightId === null ? false : prev.editingBounds;
-        if (prev.focusedId === highlightId && prev.editingBounds === newEditingBounds) return prev;
-        return { focusedId: highlightId, editingBounds: newEditingBounds };
-      });
-      onFocusChange?.(highlightId);
-    },
-    [onFocusChange]
-  );
+  // Null ends bounds editing but preserves the overlap cycle.
+  const focusHighlight = useCallback((highlightId: string | null) => {
+    setFocusState((prev) => {
+      const editingBounds = highlightId === null ? false : prev.editingBounds;
+      if (prev.focusedId === highlightId && prev.editingBounds === editingBounds)
+        return prev;
+      return { focusedId: highlightId, editingBounds };
+    });
+  }, []);
 
-  /**
-   * Clear focus entirely.
-   */
+  // Explicit clear also forgets the clicked segment and cycle.
   const clearFocus = useCallback(() => {
     setFocusState((prev) => {
       if (prev.focusedId === null && !prev.editingBounds) return prev;
       return { focusedId: null, editingBounds: false };
     });
-    lastClickedSegment.current = {
-      element: null,
-      cycleIndex: 0,
-      highlightIds: [],
-    };
-    onFocusChange?.(null);
-  }, [onFocusChange]);
+    lastClickedSegment.current = { element: null, cycleIndex: 0 };
+  }, []);
 
-  /**
-   * Enter edit bounds mode for the currently focused highlight.
-   */
   const startEditBounds = useCallback(() => {
     setFocusState((prev) => ({
       ...prev,
@@ -168,72 +58,27 @@ export function useHighlightInteraction(
     }));
   }, []);
 
-  /**
-   * Exit edit bounds mode.
-   */
   const cancelEditBounds = useCallback(() => {
-    setFocusState((prev) => ({
-      ...prev,
-      editingBounds: false,
-    }));
+    setFocusState((prev) => ({ ...prev, editingBounds: false }));
   }, []);
 
-  /**
-   * Handle click on a highlight span.
-   *
-   * Implements cycling behavior:
-   * - First click: focus topmost highlight
-   * - Subsequent clicks on same segment: cycle through highlights
-   * - Click on different segment: reset to topmost
-   */
   const handleHighlightClick = useCallback(
-    (data: HighlightClickData) => {
-      const { highlightIds, topmostId, element } = data;
-
+    ({ highlightIds, topmostId, element }: HighlightClickData) => {
       if (highlightIds.length === 0) {
         clearFocus();
         return;
       }
-
+      // The producer orders current ids with topmost first. Never cache that list.
       const lastClicked = lastClickedSegment.current;
-
-      // Check if clicking the same segment
-      const isSameSegment = element === lastClicked.element;
-
-      if (isSameSegment && highlightIds.length > 1) {
-        // Cycle to next highlight
-        const nextIndex = (lastClicked.cycleIndex + 1) % highlightIds.length;
-        const nextHighlightId = highlightIds[nextIndex];
-
-        lastClickedSegment.current = {
-          element,
-          cycleIndex: nextIndex,
-          highlightIds,
-        };
-
-        focusHighlight(nextHighlightId);
-      } else {
-        // New segment or single highlight: focus topmost
-        lastClickedSegment.current = {
-          element,
-          cycleIndex: 0,
-          highlightIds,
-        };
-
-        focusHighlight(topmostId);
-      }
+      const advanceCycle =
+        element === lastClicked.element && highlightIds.length > 1;
+      const cycleIndex = advanceCycle
+        ? (lastClicked.cycleIndex + 1) % highlightIds.length
+        : 0;
+      lastClickedSegment.current = { element, cycleIndex };
+      focusHighlight(advanceCycle ? highlightIds[cycleIndex] : topmostId);
     },
-    [clearFocus, focusHighlight]
-  );
-
-  /**
-   * Check if a highlight is currently focused.
-   */
-  const isHighlightFocused = useCallback(
-    (highlightId: string) => {
-      return focusState.focusedId === highlightId;
-    },
-    [focusState.focusedId]
+    [clearFocus, focusHighlight],
   );
 
   return {
@@ -243,23 +88,10 @@ export function useHighlightInteraction(
     clearFocus,
     startEditBounds,
     cancelEditBounds,
-    isHighlightFocused,
   };
 }
 
-// =============================================================================
-// Utility Functions
-// =============================================================================
-
-/**
- * Parse highlight data from a DOM element's data attributes.
- *
- * Uses data-active-highlight-ids as space-delimited tokens for efficient
- * CSS ~= selector matching.
- *
- * @param element - Element with data-active-highlight-ids and data-highlight-top
- * @returns HighlightClickData or null if not a highlight span
- */
+/** Parse the producer's space-delimited active ids and optional topmost id. */
 export function parseHighlightElement(element: Element): HighlightClickData | null {
   const idsAttr = element.getAttribute("data-active-highlight-ids");
   if (!idsAttr) {
@@ -280,12 +112,7 @@ export function parseHighlightElement(element: Element): HighlightClickData | nu
   };
 }
 
-/**
- * Find the closest ancestor with highlight data attributes.
- *
- * @param element - Starting element
- * @returns Element with highlight data or null
- */
+/** Find the nearest highlight-bearing ancestor. */
 export function findHighlightElement(element: Element | null): Element | null {
   while (element) {
     if (element.hasAttribute("data-active-highlight-ids")) {
@@ -296,19 +123,7 @@ export function findHighlightElement(element: Element | null): Element | null {
   return null;
 }
 
-/**
- * Apply focus class to all spans containing a highlight ID.
- *
- * This is a DOM-based approach that doesn't require re-rendering.
- * Call this when focus changes to update visual state.
- *
- * Uses data-active-highlight-ids with ~= selector for efficient
- * space-delimited token matching.
- *
- * @param container - The container element to search within
- * @param highlightId - The highlight ID to focus (or null to clear)
- * @param focusClass - The CSS class to apply (default: "hl-focused")
- */
+/** Paint exact id tokens across every matching span, without scrolling. */
 export function applyFocusClass(
   container: Element,
   highlightId: string | null,
@@ -327,17 +142,7 @@ export function applyFocusClass(
   }
 }
 
-/**
- * Update focus state after highlights refetch.
- *
- * After any highlight mutation + refetch:
- * - If focused highlight ID still exists → keep focus
- * - If focused highlight ID no longer exists → clear focus
- *
- * @param currentFocusedId - Currently focused highlight ID
- * @param newHighlightIds - Set of highlight IDs after refetch
- * @returns The new focused ID (same or null)
- */
+/** Keep focus after refetch only while the id still exists. */
 export function reconcileFocusAfterRefetch(
   currentFocusedId: string | null,
   newHighlightIds: Set<string>
