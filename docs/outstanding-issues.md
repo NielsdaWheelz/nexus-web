@@ -114,11 +114,6 @@ The safe-code catalog carries a PDF text warning as if it were a failure; the
 browser copy is corrected, but warnings still share the failure vocabulary. See
 [docs/tickets/import-history-pdf-text-warning-is-not-a-failure.md](tickets/import-history-pdf-text-warning-is-not-a-failure.md).
 
-### [OPEN] OI-019 — media-kind contracts still duplicate the canonical owner
-backend · opened 2026-09-08 by Claude (imports cutover, Track C1) · P3
-the canonical media-kind enum still has duplicate imports/consumption literals. see
-[docs/tickets/media-kind-literal-has-no-owner.md](tickets/media-kind-literal-has-no-owner.md).
-
 ### [OPEN] OI-023 — X-post quote completion defects when its ingest job is not running
 backend · opened 2026-09-08 by Claude (imports cutover, Track B) · P2
 A pre-existing defect surfaced while fixing the completion's lock cycle: quote

@@ -21,6 +21,7 @@ from uuid import UUID
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 from pydantic_core import core_schema
 
+from nexus.db.models import MediaKind
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.import_history import HistoryCoverage, HistoryEntry, SafeFailureCode, Stage
 from nexus.schemas.media import SourceProgress
@@ -42,7 +43,6 @@ def _media_resource_ref(value: str) -> str:
 # The linked media named in the resource-action grammar (`media:<uuid>`), the
 # identity every media action speaks (contract D16).
 MediaResourceRef = Annotated[str, AfterValidator(_media_resource_ref)]
-MediaKind = Literal["web_article", "epub", "pdf", "podcast_episode", "video"]
 WaitingReason = Literal["Queue", "Capacity", "RetryBackoff"]
 ImportView = Literal["NeedsAttention", "InProgress", "History"]
 ImportCurrentState = Literal["Active", "NeedsAttention", "Complete"]

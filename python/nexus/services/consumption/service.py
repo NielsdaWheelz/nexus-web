@@ -67,7 +67,7 @@ from nexus.services.consumption import (
     replayed_command,
     viewer_txn,
 )
-from nexus.services.consumption._lectern_store import SUPPORTED_MEDIA_KINDS, LecternRow, _dedupe
+from nexus.services.consumption._lectern_store import LecternRow, _dedupe
 from nexus.services.consumption.handles import COMPLETION, seal, unseal
 
 LECTERN_SCOPE = "Lectern.Commands"
@@ -195,11 +195,6 @@ def run_lectern_command(viewer_id: UUID, command: LecternCommand) -> LecternResu
             if _lectern_store.teardown_intent_media(db, media_ids=media_ids):
                 raise ConflictError(
                     ApiErrorCode.E_MEDIA_DELETING, "A target media is being deleted"
-                )
-            kinds = projection.media_kinds(db, media_ids)
-            if any(kinds.get(media_id) not in SUPPORTED_MEDIA_KINDS for media_id in media_ids):
-                raise InvalidRequestError(
-                    ApiErrorCode.E_INVALID_KIND, "Media cannot be added to the Lectern"
                 )
             outcome = PlacedOutcome(
                 item_ids=_lectern_store.place_items_in_txn(
