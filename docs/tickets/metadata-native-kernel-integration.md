@@ -29,10 +29,20 @@ acceptance or metadata's book/collection/essay judgments. the recovery probe use
 the candidate combined migration proves actual transactional rollback and
 original-byte preservation. its synthetic terminal parent also has an invalid
 pending continuation (`_native_acceptance/migrations.py:39–41`); preservation of
-valid history still needs an owner-created fixture. the stock 0.160 containment
-probe also found that a false feature flag does not disable model-driven native
-delegation. the owner is qualifying `agents.enabled=false` and a rotated
-containment/catalog identity before final pins. this remains a release blocker.
+valid history still needs installed cutover proof. the finite owner-created
+baseline fixture now passes actual `0252` upgrades/seeds; harness
+`.tmp/metadata_native_cutover_proof.py`, receipt
+`.tmp/metadata-native-cutover-baseline-v4.log`. its archives are handed off for
+the kernel owner's separate candidate audit. combined installed migration and
+post-cutover undo remain NOT_RUN.
+
+stock 0.160 adversarial
+review also found hidden vendor CodeMode/clock execution despite feature flags.
+the owner is qualifying the public host-start `model_catalog_json` restriction,
+preserving exact model/account/effort; nexus has a dedicated host. direct
+callback/strict-json, clock denial and malicious inherited callback content now
+pass that candidate restriction. final cross-uid topology, preflight drift guard,
+immutable installed pins and genuine research repeat remain release blockers.
 
 next: integrate the owner's qualified immutable adapter/dependencies, then rename
 undeployed metadata `0253` to `0255` with parent native `0254` (parent `0252`).
@@ -46,6 +56,8 @@ handles before current source/access checks or any provider/catalog call.
 the candidate public `generation_has_local_recovery(db, state)` only admits the
 exact stored attempt to shared local settlement; it grants no publication or
 fresh-dispatch authority.
+the owner reports current-tools/provider traps green; actual installed metadata
+recovery must also tolerate changed current tool definitions.
 publication still rejects stale/revoked input. only an exact provider-sealed
 `llm_model_turns` terminal authorizes completed-output recovery. authoritative
 non-submission proof for the original attempt permits local failed settlement,

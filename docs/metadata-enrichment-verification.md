@@ -109,9 +109,19 @@ standalone `0253` receipts above remain historical; combined proof must cover
 historical effect/principal evidence and rollback of native changes when the
 later metadata guard rejects. the candidate proves actual whole-transaction
 rollback and raw byte preservation, but its synthetic terminal parent has an
-invalid pending continuation. a separate owner-created historical fixture is
-being prepared; no execution receipt exists yet. parent terminal or
-local stop never unlocks metadata uncertainty.
+invalid pending continuation. the separate owner-created historical fixture is
+now prepared: actual `0252` upgrades and both seeds pass on the two owned
+`metadata_native_cutover_{success,blocked}` databases. each contains two tool
+receipts/authorships, one reverted note, a closed original-principal credential,
+and a separate open API parent with an authenticated continuation. captured
+public-schema definitions and all baseline table columns match. executed source:
+`.tmp/metadata_native_cutover_proof.py`, sha256
+`1a0185b5301d8d90131909a1c7856f0d145f13dd5135f7f958e28a4175c4a384`;
+receipt `.tmp/metadata-native-cutover-baseline-v4.log`. the target-head check is
+RED on current `0253` before any database connection. archives and receipt were
+sent to the kernel owner for its isolated candidate audit. actual installed
+combined upgrade/rollback and post-cutover undo remain NOT_RUN. parent terminal
+or local stop never unlocks metadata uncertainty.
 
 genuine book/collection/essay research remains NOT_RUN. finite primary-source
 fixtures identify *mere christianity* (1952), *of other worlds* (1966) and the
