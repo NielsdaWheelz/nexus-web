@@ -27,7 +27,10 @@ from nexus.schemas.resource_items import (
     ResourceTitleMutationOut,
     ResourceTitleMutationRequest,
 )
-from nexus.schemas.resource_openables import ResourceOpenableSearchRequest
+from nexus.schemas.resource_openables import (
+    ResourceOpenableSearchRequest,
+    ResourceOpenableSearchResponse,
+)
 from nexus.schemas.resource_targets import ResourceTargetSearchRequest
 from nexus.services.resource_graph.refs import (
     ResourceRef,
@@ -89,12 +92,12 @@ def search_resource_targets(
 @router.post("/openables/search")
 def search_openable_resources(
     request: ResourceOpenableSearchRequest, response: Response, viewer: ViewerDep, db: DbDep
-) -> dict:
+) -> Data[ResourceOpenableSearchResponse]:
     started_at = time.monotonic()
     result = openables.search_openable_resources(db, viewer_id=viewer.user_id, request=request)
     duration_ms = (time.monotonic() - started_at) * 1000
     response.headers.append("Server-Timing", f"nexus_openables;dur={duration_ms:.2f}")
-    return ok(result, by_alias=True)
+    return Data(data=result)
 
 
 @router.get("/{resource_ref}/surface")

@@ -256,7 +256,6 @@ unexpected timeouts. See
 - [open] nexus url ingress · 2026-09-28 launcher rewrite review · `?nexus=1` returns after a reload via the SSR pane href: [ticket](tickets/nexus-url-ingress-reappears-after-reload.md).
 - [open] daily page · 2026-09-28 launcher rewrite review · the Today editor drops focus ~150 ms after mobile Add to Today: [ticket](tickets/add-to-today-editor-loses-focus.md).
 - [open] nexus pane warm · 2026-09-28 launcher rewrite review · the first pane warm delays the active-row commit ~60 ms, so a fast Enter hits the previous row: [ticket](tickets/nexus-first-pane-warm-delays-active-row.md).
-- [open] typed wire / search · 2026-09-28 launcher rewrite · `/search` and openables search, consumed by the Nexus, keep hand decoders and defect classes: [ticket](tickets/nexus-consumed-search-routes-keep-hand-decoders.md).
 - [deferred] nexus history · 2026-09-28 launcher rewrite (F7, owner decision) · unused provenance/output retirement is unadopted; preserve creation time, eligibility and replay guards, with sequential-release quiescence undecided: [ticket](tickets/nexus-usage-provenance-columns-have-no-reader.md).
 - [deferred] nexus url ingress · 2026-09-28 launcher rewrite (F10, owner decision) · `?nexus=1&intent=&action=` has no producer; delete or document it: [ticket](tickets/nexus-url-ingress-has-no-producer.md).
 - [deferred] nexus rows · 2026-09-28 launcher rewrite (F13, owner decision) · the row projection branches on surface instead of leaving presentation to the shells: [ticket](tickets/nexus-row-projection-is-surface-aware.md).
