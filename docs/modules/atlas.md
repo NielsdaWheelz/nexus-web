@@ -1,6 +1,6 @@
 # atlas
 
-status: representation-tag repair live-qualified; static gate passed · 2026-10-02
+status: timestamp owner cut locally qualified; paired release pending · 2026-10-03
 
 ## read model and visibility
 
@@ -18,12 +18,16 @@ membership ids reuse the star ids. edges belong to the viewer, have both media
 endpoints in that personal relation, and are synapse context or contradicts edges.
 opaque ids confer no authority.
 
-queries and array construction remain unchanged. the sql does not specify stable
-array ordering; the tag identifies the actual returned representation, including
-whatever order those queries returned. no sorting or array normalization is added.
-`services/atlas_projection.py` remains the position writer. computed_at no longer
-controls the tag; its existing query selection/grouping remains a
-[recorded follow-up](../tickets/atlas-star-query-reads-unused-position-timestamp.md).
+`services/atlas_projection.py` owns positions: media_id and non-null x/y. migration `0254` drops the unused recomputation timestamp; the writer and
+star query no longer write, select or group it. ids, constraints and projection
+algorithms remain unchanged. discarded timestamps cannot be reconstructed by
+migration downgrade; the existing release controller owns paired code/schema
+release and forward recovery.
+
+the sql does not specify stable array ordering. removing the grouping field can
+change incidental star/default-member order and traversal or tie outcomes. the
+tag still identifies the exact returned representation, including its actual
+order. no sorting or array normalization is added.
 
 ## conditional http owner
 
