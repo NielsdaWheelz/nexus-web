@@ -10,8 +10,6 @@ import styles from "./ResourceRow.module.css";
 type ResourceRowRootProps = HTMLAttributes<HTMLElement> &
   Partial<Record<`data-${string}`, string>>;
 
-export type { ResourceRowPrimary };
-
 interface ResourceRowProps {
   readonly primary: ResourceRowPrimary;
   readonly title: ReactNode;
