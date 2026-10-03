@@ -265,7 +265,9 @@ unexpected timeouts. See
 - [open] chat recovery copy · 2026-09-28 pr #412 · copy changed; merged-tree terminal-defect browser journey remains unverified: [ticket](tickets/chat-operator-defect-copy-invites-new-command.md).
 - [open] chat incident · 2026-09-25 report, reviewed 2026-09-27 · original pane crash has no initiating exception: [ticket](tickets/production-chat-pane-crash-unattributed.md).
 - [open] model history cutover · 2026-09-27 combined-release plan · migration 0246 rejects uncertain old work without an audited abandonment transition: [ticket](tickets/model-history-cutover-blocked-by-uncertain-work.md).
-- [open] model history cutover / media enrichment · 2026-09-27 production census · 41 dead media jobs retain dispatched, unterminated generations and block migration 0246: [ticket](tickets/model-cutover-dead-media-generations.md).
+- [open] model history cutover / media enrichment · 2026-09-27 production census · historical census reports 41 dead media jobs with unterminated admissions; fresh disposition remains required: [ticket](tickets/model-cutover-dead-media-generations.md).
+- [open] aligned release / model reset · 2026-10-02 kernel review · deploy.sh does not forward the controller's required reviewed snapshot: [ticket](tickets/deploy-model-cutover-snapshot-not-forwarded.md).
+- [open] model reset / effect undo · 2026-10-02 kernel review · 0246 deletes original ledger evidence still required by background undo: [ticket](tickets/model-reset-deletes-background-undo-evidence.md).
 - [open] codex host diagnostics · 2026-09-28 pr #412 · bounded first-cause log passed a local probe; merged-tree native-to-caller journey remains unverified: [ticket](tickets/codex-host-original-failure-not-retained.md).
 - [open] write undo · 2026-09-25 model cutover review · shared transaction fix is staged; interruption and retry proof for chat/background undo remains: [ticket](tickets/chat-write-undo-can-commit-before-completion-stamp.md).
 - [waived] api model qualification · 2026-09-26 owner decision · 61 api cells pass; 4 xai cells lack a key and are not live-qualified: [ticket](tickets/latest-model-api-live-cells-unqualified.md).

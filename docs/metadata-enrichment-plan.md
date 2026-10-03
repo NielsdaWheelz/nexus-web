@@ -428,16 +428,33 @@ pins; give it the capability/live acceptance contract in section 2.
 
 ## 9. hard cutover and verification
 
+artifact readiness and historical release readiness are separate. kernel
+integration owns the original-evidence verdict and coordination. the nexus
+reset/ledger owner owns the finite archival disposition and `0246` integration;
+the release owner owns drain, verified backup and separately authorized aligned
+deployment. metadata/media owns publication and retained metadata-job disposition.
+the kernel's `docs/issues/historical-uncertainty-release.md` records requirements,
+not executed receipts. no current reset/release owner handoff is identified.
+
 1. inventory current metadata jobs/memos, unresolved generations, legacy metadata
    errors and manual-author pins. freeze metadata admission and quiesce writers
    through the existing release workflow. drain or explicitly settle old work
-   under the old contract; the kernel owner must disposition uncertainty first.
+   under the old contract. classify only original authoritative evidence;
+   otherwise the reset/ledger and metadata owners need a reviewed exact-id
+   archival abandonment under the approved reset. preserve original uncertainty,
+   null terminals, effects and history; revoke old grants and fence stale replay.
+   historical counts are neither a fresh census nor additive totals.
 2. archive exact settled legacy metadata job records in the release backup and
    retire them from the live projection before replacing the memo schema. verify
    references before deleting rows; preserve media facts and generation evidence.
-   the metadata cutover does not delete generation history. if bundled with the
-   already-planned 0246 model cutover, archive its discarded generation records
-   with the jobs; do not promise live links to history that migration removes.
+   the metadata cutover does not delete generation history. if the actual starting
+   revision crosses `0246`, preserve its discarded originals in the verified
+   pre-disposition archive and repair the
+   [effect/undo evidence gap](tickets/model-reset-deletes-background-undo-evidence.md).
+   copied authorship and the `0252` → `0254` → `0255` fixture do not prove
+   `0241` → `0246` undo. actually restore the backup, then prove disposition,
+   the entire chain from the actual starting revision, real effect/undo and
+   stale-replay refusal on that copy.
    do not fabricate modern changed/unresolved lists for old runs. the retained
    `metadata_enriched_at` still records prior accepted research. unresolved jobs
    cannot be deleted merely to make cutover pass.
@@ -447,6 +464,10 @@ pins; give it the capability/live acceptance contract in section 2.
    fallback or parallel metadata path. apply guarded saved-epub repair; inspect
    skipped items. rollback incompatible durable schemas using the verified
    release backup, not an older binary against new memos.
+   the existing aligned entrypoint must
+   [forward the reviewed snapshot](tickets/deploy-model-cutover-snapshot-not-forwarded.md)
+   to its controller. release remains blocked until the application disposition,
+   restore/effect/undo proofs and separate release authorization exist.
    after qualified adapter integration, compose `0252` → native `0254` → metadata
    `0255`: rename/reparent the undeployed standalone metadata `0253`, retaining
    its behavior. rebuild disposable `0253` databases; never stamp or alias them
