@@ -5,6 +5,7 @@ import {
   isAuthSessionMissingError,
   isAuthWeakPasswordError,
 } from "@supabase/supabase-js";
+import { isRecord } from "@/lib/validation";
 
 export type PasswordSignInOutcome =
   | { kind: "SignedIn" }
@@ -50,13 +51,9 @@ interface PasswordUpdateClient {
   };
 }
 
-function isProviderObject(value: unknown): value is object {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function isProviderUser(value: unknown): value is { id: string } {
   return (
-    isProviderObject(value) &&
+    isRecord(value) &&
     "id" in value &&
     typeof value.id === "string" &&
     value.id.trim().length > 0
@@ -192,7 +189,7 @@ export async function signInWithPasswordFlow(input: {
   if (result.error) {
     return projectPasswordSignInError(result.error);
   }
-  if (!result.data || !isProviderObject(result.data.session)) {
+  if (!result.data || !isRecord(result.data.session)) {
     // justify-defect: a successful password sign-in must establish a concrete
     // provider session; redirecting without it recreates a false-success flow.
     throw new Error("Supabase password sign-in returned no session");

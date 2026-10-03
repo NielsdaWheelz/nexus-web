@@ -1,3 +1,5 @@
+import { isRecord } from "@/lib/validation";
+
 export type OAuthProvider = "google" | "github";
 
 export interface LinkedIdentity {
@@ -11,10 +13,6 @@ const SUPPORTED_OAUTH_PROVIDERS: OAuthProvider[] = ["google", "github"];
 
 export function isOAuthProvider(value: unknown): value is OAuthProvider {
   return value === "google" || value === "github";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 interface SupabaseIdentityRecord {
