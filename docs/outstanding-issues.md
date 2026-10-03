@@ -263,7 +263,6 @@ unexpected timeouts. See
 - [deferred] nexus url ingress · 2026-09-28 launcher rewrite (F10, owner decision) · `?nexus=1&intent=&action=` has no producer; delete or document it: [ticket](tickets/nexus-url-ingress-has-no-producer.md).
 - [deferred] nexus rows · 2026-09-28 launcher rewrite (F13, owner decision) · the row projection branches on surface instead of leaving presentation to the shells: [ticket](tickets/nexus-row-projection-is-surface-aware.md).
 - [deferred] nexus error policy · 2026-09-28 launcher rewrite (F19, owner decision) · an openables or `/search` defect or 500 replaces the whole workspace: [ticket](tickets/nexus-retrieval-defects-replace-the-workspace.md).
-- [open] nexus history · 2026-09-28 launcher rewrite lander · three or more concurrent first selections of one target exhaust the serializable retry, answer 500 and take down the workspace: [ticket](tickets/nexus-selection-concurrent-upserts-exhaust-retry.md).
 - [open] codex shell runtime · 2026-09-26 owner-approved redesign · shell/api chat proof passed; auth refresh, full lifecycle denials and twelve background roles remain unqualified: [ticket](tickets/codex-shell-runtime-unqualified.md).
 - [open] oi-130 · synapse jobs · 2026-09-15 ecbe production observation · p2 · cancellation after lost admission claim requires an absent Prepared checkpoint: [ticket](tickets/synapse-cancellation-missing-prepared-checkpoint.md).
 - [open] oi-131 · background memory · 2026-09-15 ecbe observation · p2 · retained peak447.902/448 mib leaves100 kib margin, without observed oom: [ticket](tickets/background-worker-production-memory-margin.md).
@@ -338,3 +337,5 @@ unexpected timeouts. See
 
 - [open] inbound share / account policy candidate · 2026-10-02 producer review · valid dependency failures reach the defect owner; terminal recovery policy is undecided, source-verified/live not_run: [ticket](tickets/share-account-transient-failures-escape-inline-feedback.md).
 - [open] nexus / command policy candidate · 2026-10-02 producer review · valid auth-dependency503 reaches all three writes; terminal recovery policy is undecided, source-verified/live not_run: [ticket](tickets/nexus-auth-dependency-failure-escapes-retry-feedback.md).
+- [open] local docker / inventory · 2026-10-03 selection-concurrency allocation · stopped-container enumeration again fails on a missing snapshot; no repair or full stopped-state comparison is claimed: [ticket](tickets/local-docker-stopped-container-snapshot-missing.md).
+- [open] nexus / label admission · 2026-10-03 source audit · valid podcast labels can exceed the 2,000-character request limit before 120-character snapshot normalization; source design accepted, runtime not_run: [ticket](tickets/nexus-selection-label-exceeds-api-limit.md).
