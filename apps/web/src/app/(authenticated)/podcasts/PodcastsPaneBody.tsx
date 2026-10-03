@@ -70,7 +70,10 @@ import {
   type SubscriptionFilter,
   type SubscriptionSort,
 } from "@/lib/podcasts/subscriptionView";
-import { runPodcastRefresh } from "@/lib/podcasts/refresh";
+import {
+  podcastRefreshRequestAnnouncement,
+  requestPodcastRefresh,
+} from "@/lib/podcasts/refresh";
 import type { PaneRefreshExecute } from "@/lib/panes/panePublications";
 import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
 import styles from "./page.module.css";
@@ -797,24 +800,16 @@ export default function PodcastsPaneBody() {
     visibleRows.length === 0;
 
   const executeRefresh = useCallback<PaneRefreshExecute>(
-    async ({ signal, reportProgress }) => {
+    async ({ signal }) => {
       try {
-        const result = await runPodcastRefresh(
+        const requestedCount = await requestPodcastRefresh(
           { kind: "Podcasts" },
-          {
-            signal,
-            onProgress: ({ finishedCount, requestedCount }) =>
-              reportProgress({
-                kind: "Determinate",
-                finishedCount,
-                requestedCount,
-              }),
-          },
+          signal,
         );
         await revalidateSubscriptions(signal);
         return {
-          kind: result.kind,
-          announcement: result.announcement,
+          kind: "Complete",
+          announcement: podcastRefreshRequestAnnouncement(requestedCount),
         };
       } catch (refreshError: unknown) {
         if (isAbortError(refreshError)) throw refreshError;

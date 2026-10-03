@@ -4320,6 +4320,10 @@ export interface components {
         Data_PodcastPlacementRemovalOut_: {
             data: components["schemas"]["PodcastPlacementRemovalOut"];
         };
+        /** Data[PodcastRefreshAcceptedOut] */
+        Data_PodcastRefreshAcceptedOut_: {
+            data: components["schemas"]["PodcastRefreshAcceptedOut"];
+        };
         /** Data[PublicSectionOut] */
         Data_PublicSectionOut_: {
             data: components["schemas"]["PublicSectionOut"];
@@ -6197,6 +6201,11 @@ export interface components {
              * @enum {string}
              */
             outcome: "Removed" | "AlreadyAbsent";
+        };
+        /** PodcastRefreshAcceptedOut */
+        PodcastRefreshAcceptedOut: {
+            /** Requestedcount */
+            requestedCount: number;
         };
         /** PodcastRefreshLibraryScope */
         PodcastRefreshLibraryScope: {
@@ -13886,7 +13895,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["Data_PodcastRefreshAcceptedOut_"];
                 };
             };
             /** @description Validation Error */
