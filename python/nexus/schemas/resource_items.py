@@ -14,7 +14,15 @@ from typing import Annotated, Any, Literal, TypeGuard
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from pydantic import AliasChoices, AliasGenerator, BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    AliasChoices,
+    AliasGenerator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 from pydantic.alias_generators import to_camel
 
 from nexus.services.resource_graph.refs import (
@@ -251,6 +259,12 @@ class ResourceActivationOut(CamelModel):
     kind: Literal["route", "external", "none"]
     href: str | None
     unresolved_reason: str | None
+
+    @model_validator(mode="after")
+    def _validate_href(self) -> ResourceActivationOut:
+        if (self.kind == "none") != (self.href is None):
+            raise ValueError("activation href must be absent exactly for none")
+        return self
 
 
 class ResourceItemOut(CamelModel):

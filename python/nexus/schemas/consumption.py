@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, Field
+from pydantic import AwareDatetime, Field, model_validator
 
 from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.consumption_activity import CamelIn, CamelOut, CommandIn, CompletionHandle
@@ -36,6 +36,25 @@ class PlaybackRateResolution(CamelOut):
     value: PlaybackRate
     source: Literal["Episode", "Podcast", "Product"]
     podcast_preference: Presence[PodcastPlaybackPreference]
+
+    @model_validator(mode="after")
+    def _validate_source(self) -> PlaybackRateResolution:
+        if self.source == "Podcast":
+            if (
+                self.podcast_preference.kind != "Present"
+                or self.podcast_preference.value.value.kind != "Present"
+                or self.podcast_preference.value.value.value != self.value
+            ):
+                raise ValueError("Podcast source must equal the present podcast preference")
+        if self.source == "Product":
+            if self.value != 1:
+                raise ValueError("Product source must resolve to 1")
+            if (
+                self.podcast_preference.kind == "Present"
+                and self.podcast_preference.value.value.kind == "Present"
+            ):
+                raise ValueError("a present podcast preference must resolve from Podcast")
+        return self
 
 
 class FooterAudioActivation(CamelOut):

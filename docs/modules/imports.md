@@ -17,7 +17,7 @@ web reads use generated `ApiJson`/component types and native snake-case fields. 
 
 the list/history hooks bridge native data to shared `CursorPage`; memoization follows the underlying page identity. unchanged row rereads preserve appended pages; query changes reset continuation. the provider's observation, last-good rows, polling, failures and retry remain their existing view-state contracts.
 
-url/filter option catalogs remain genuine input ingress. the three recovery commands retain their request/admission/mutation-id behavior. action snapshots retain their camel-case media recovery decoder and reject upload offers. upload capabilities, generation fencing, invalidation and persisted journals keep their existing owners.
+url/filter option catalogs remain genuine input ingress. the three recovery commands retain their request/admission/mutation-id behavior. [action snapshots](resource-actions.md) use generated camel-case media recovery offers; upload offers remain outside that union. upload capabilities, generation fencing, invalidation and persisted journals keep their existing owners.
 
 current writers guarantee the retired scalar checks: owner-allocated uuids; positive upload generations/attempt numbers; nonnegative index revisions and pdf/epub counts; literal counted units; publication's 10,000-issue bound; nonempty signed continuation cursors. shared persisted history schemas are not tightened for this read cutover.
 
