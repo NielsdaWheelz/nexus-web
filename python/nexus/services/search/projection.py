@@ -267,7 +267,7 @@ def _envelope(
         "resource_ref": ref.uri,
         "owner_resource_ref": owner.uri,
         "action_subject_ref": (owner if result.result_type in _PASSAGE_TYPES else ref).uri,
-        "activation": activation.model_dump(mode="python", by_alias=False),
+        "activation": activation,
         "citation_target": ref.uri if resource_citation_result_type(ref) is not None else None,
         "context_ref": _context_ref(result),
     }

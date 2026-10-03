@@ -9,6 +9,7 @@
  * 5. If JSON parse fails on a `data:` line: stream error.
  */
 
+import type { Schema } from "@/lib/api/wire";
 import { isRecord } from "@/lib/validation";
 import { decodePresence, type Presence } from "@/lib/api/presence";
 import {
@@ -16,10 +17,7 @@ import {
   EXECUTION_ADVISORY_EVENT_TYPE,
   type ChatRunExecution,
 } from "@/lib/api/executionAdvisory";
-import {
-  decodeCitationOut,
-  type CitationOut,
-} from "@/lib/conversations/citationOut";
+import { decodeCitationOut } from "@/lib/conversations/citationOut";
 import {
   decodeRunSelectionOut,
   type RunSelectionOut,
@@ -153,26 +151,16 @@ export interface SSEToolResultEvent {
   };
 }
 
-/** One citation edge carrying the backend-built citation read model. */
-interface SSECitationIndexItem {
-  citation_edge_id: string;
-  citation: CitationOut;
-}
-
 export interface SSECitationIndexEvent {
   type: "citation_index";
-  data: {
-    assistant_message_id: string;
-    citations: SSECitationIndexItem[];
-  };
+  data: Schema<"ChatRunCitationIndexEventPayload">;
 }
 
-/** A citation-materialized context edge (`ContextRefOut` shape). */
+/** The decoder enriches the generated wire with the canonical action subject. */
 export interface SSEContextRefAddedEvent {
   type: "context_ref_added";
-  data: ContextRefOut & {
-    citation_edge_id: string | null;
-  };
+  data: Schema<"ChatRunContextRefAddedEventPayload"> &
+    Pick<ContextRefOut, "actionSubject">;
 }
 
 export type SSEEvent = (
@@ -538,7 +526,9 @@ function parseCitationIndexData(data: unknown): SSECitationIndexEvent["data"] {
   };
 }
 
-function parseCitationIndexItem(item: unknown): SSECitationIndexItem {
+function parseCitationIndexItem(
+  item: unknown,
+): SSECitationIndexEvent["data"]["citations"][number] {
   const citation =
     isRecord(item) && "citation" in item
       ? decodeCitationOut(item.citation)

@@ -6,7 +6,7 @@ import {
   type ResourceScheme,
 } from "@/lib/resourceGraph/resourceRef";
 import {
-  decodeSnakeCaseResourceActivation,
+  decodeResourceActivation,
   type ResourceActivation,
 } from "@/lib/resources/activation";
 import {
@@ -200,7 +200,7 @@ function decodeActionEndpoint(
     throw new TypeError(`${name}.scheme/id must equal ${name}.ref`);
   }
   const missing = expectBoolean(value.missing, `${name}.missing`);
-  const activation = decodeSnakeCaseResourceActivation(
+  const activation = decodeResourceActivation(
     value.activation,
     `${name}.activation`,
   );
@@ -208,7 +208,7 @@ function decodeActionEndpoint(
     { ref },
     `${name}.actionSubject`,
   );
-  if (activation.resourceRef !== actionSubject.ref) {
+  if (activation.resource_ref !== actionSubject.ref) {
     // justify-defect: occurrence navigation and canonical action identity are
     // separate facts, but an endpoint must publish both for the same resource.
     throw new TypeError(
@@ -266,7 +266,7 @@ function decodeConnectionCitation(
     ordinal: expectInteger(value.ordinal, `${name}.ordinal`),
     role: expectOneOf(value.role, EDGE_KINDS, `${name}.role`),
     snapshot: expectRecord(value.snapshot, `${name}.snapshot`),
-    activation: decodeSnakeCaseResourceActivation(
+    activation: decodeResourceActivation(
       value.activation,
       `${name}.activation`,
     ),

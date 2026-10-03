@@ -49,7 +49,7 @@ function requireLink(surface: ResourceSurface, linkId: string): ResourceSurfaceO
 function createdNode(surface: ResourceSurface, noteId: string, bodyPmJson: Record<string, unknown>): ResourceSurfaceNode {
   const ref = `note_block:${noteId}`;
   return {
-    item: { ...surface.source.item, ref, scheme: "note_block", id: noteId, label: "", summary: "", route: `/notes/${noteId}`, activation: { resourceRef: ref, kind: "route", href: `/notes/${noteId}`, unresolvedReason: null }, versionByLane: { body: 0, links: 0 } },
+    item: { ...surface.source.item, ref, scheme: "note_block", id: noteId, label: "", summary: "", route: `/notes/${noteId}`, activation: { resource_ref: ref, kind: "route", href: `/notes/${noteId}`, unresolved_reason: null }, versionByLane: { body: 0, links: 0 } },
     content: { kind: "note_body", bodyPmJson, bodyText: "" },
   };
 }
@@ -105,7 +105,7 @@ export function projectSurfaceGraph(surfaces: ReadonlyMap<string, ResourceSurfac
         if (existing) break;
         const parsed = parseResourceRef(command.targetRef);
         if (!parsed) throw new TypeError("Reference must be canonical");
-        const target = node(command.targetRef) ?? { item: { ...surface.source.item, ref: command.targetRef, scheme: parsed.scheme, id: parsed.id, label: "Resource", summary: "", route: null, activation: { resourceRef: command.targetRef, kind: "none" as const, href: null, unresolvedReason: null } }, content: { kind: "resource_summary" as const } };
+        const target = node(command.targetRef) ?? { item: { ...surface.source.item, ref: command.targetRef, scheme: parsed.scheme, id: parsed.id, label: "Resource", summary: "", route: null, activation: { resource_ref: command.targetRef, kind: "none" as const, href: null, unresolved_reason: null } }, content: { kind: "resource_summary" as const } };
         insert(intent.endpointRef, target, pendingSurfaceLinkId(intent.clientMutationId), command.position);
         break;
       }

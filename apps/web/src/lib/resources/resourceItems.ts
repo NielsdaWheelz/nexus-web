@@ -10,7 +10,7 @@ import type {
 import { isLibraryPlacementMode } from "@/lib/resources/resourceCapabilities";
 import { isShareMode, type ShareMode } from "@/lib/sharing/types";
 import {
-  decodeCamelCaseResourceActivation,
+  decodeResourceActivation,
   type ResourceActivation,
 } from "@/lib/resources/activation";
 import {
@@ -211,13 +211,13 @@ export function decodeResourceItem(raw: unknown): ResourceItem {
     }),
   );
   const route = expectNullableString(item.route, "resource item.route");
-  const activation = decodeCamelCaseResourceActivation(
+  const activation = decodeResourceActivation(
     item.activation,
     "resource item.activation",
   );
-  if (activation.resourceRef !== ref) {
+  if (activation.resource_ref !== ref) {
     throw new TypeError(
-      "resource item.activation.resourceRef must match resource item.ref",
+      "resource item.activation.resource_ref must match resource item.ref",
     );
   }
   if (

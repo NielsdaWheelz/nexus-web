@@ -23,6 +23,8 @@ from nexus.schemas.artifact import (
 from nexus.schemas.conversation import (
     ChatRunAssistantActivityEventPayload,
     ChatRunAssistantTextDeltaEventPayload,
+    ChatRunCitationIndexEventPayload,
+    ChatRunContextRefAddedEventPayload,
     ChatRunDoneEventPayload,
     ChatRunMetaEventPayload,
 )
@@ -34,6 +36,7 @@ from nexus.schemas.oracle import (
     OracleMetaEventPayload,
     OracleOmensEventPayload,
     OracleReadingImageOut,
+    OracleReadingPassageOut,
     OracleTextEventPayload,
 )
 from nexus.schemas.podcast import PodcastSubscriptionLifecycleSnapshotOut
@@ -41,20 +44,21 @@ from nexus.schemas.podcast import PodcastSubscriptionLifecycleSnapshotOut
 # Every model whose JSON is an SSE `data:` frame as-is (api/routes/stream.py),
 # split by how the stream dumps it. Not listed: chat tool_* payloads (the read
 # path strips their audit fields, so no model is the wire), the media snapshot
-# (a hand-built dict), and the chat citation_index / context_ref_added and oracle
-# passage payloads, which nest ResourceActivationOut by field name while typed
-# routes emit it by alias (ticket resource-activation-has-two-wire-casings).
+# (a hand-built dict).
 SSE_PAYLOADS_BY_NAME = (
     ChatRunMetaEventPayload,
     ChatRunAssistantActivityEventPayload,
     ChatRunAssistantTextDeltaEventPayload,
     ChatRunDoneEventPayload,
+    ChatRunCitationIndexEventPayload,
+    ChatRunContextRefAddedEventPayload,
     ChatRunExecutionOut,
     DurableExecutionOut,
     OracleMetaEventPayload,
     OracleBindEventPayload,
     OracleTextEventPayload,
     OracleReadingImageOut,
+    OracleReadingPassageOut,
     OracleOmensEventPayload,
     OracleCompleteDoneEventPayload,
     OracleFailedDoneEventPayload,

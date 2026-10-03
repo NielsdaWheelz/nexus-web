@@ -190,8 +190,8 @@ class OracleReadingPassageOut(BaseModel):
     locator_label: str = Field(min_length=1)
     attribution_text: str = Field(min_length=1)
     marginalia_text: str = Field(min_length=1)
-    deep_link: str | None = None
-    citation: CitationOut | None = None
+    deep_link: str | None
+    citation: CitationOut | None
 
     model_config = ConfigDict(extra="forbid")
 

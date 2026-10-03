@@ -3750,6 +3750,57 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** ChatRunCitationIndexEventPayload */
+        ChatRunCitationIndexEventPayload: {
+            /**
+             * Assistant Message Id
+             * Format: uuid
+             */
+            assistant_message_id: string;
+            /** Citations */
+            citations: components["schemas"]["ChatRunCitationIndexItem"][];
+        };
+        /** ChatRunCitationIndexItem */
+        ChatRunCitationIndexItem: {
+            citation: components["schemas"]["CitationOut"];
+            /**
+             * Citation Edge Id
+             * Format: uuid
+             */
+            citation_edge_id: string;
+        };
+        /**
+         * ChatRunContextRefAddedEventPayload
+         * @description Strict SSE payload for a citation-materialized context edge (ContextRefOut shape).
+         */
+        ChatRunContextRefAddedEventPayload: {
+            activation: components["schemas"]["ResourceActivationOut"];
+            /** Citation Edge Id */
+            citation_edge_id: string | null;
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Label */
+            label: string;
+            /** Missing */
+            missing: boolean;
+            /** Resource Ref */
+            resource_ref: string;
+            /** Summary */
+            summary: string;
+        };
         /**
          * ChatRunCreateRequest
          * @description Request schema for creating a durable chat run.
@@ -4174,7 +4225,7 @@ export interface components {
         ConversationArtifactSearchOut: {
             /** Actionsubjectref */
             actionSubjectRef: string;
-            activation: components["schemas"]["SearchResultActivationOut"];
+            activation: components["schemas"]["ResourceActivationOut"];
             /** Citation Target */
             citation_target: string | null;
             context_ref: components["schemas"]["SearchResultContextRefOut"];
@@ -6913,6 +6964,34 @@ export interface components {
             /** Year */
             year?: string | null;
         };
+        /**
+         * OracleReadingPassageOut
+         * @description One persisted citation in a reading.
+         *
+         *     ``citation`` is the read-model CitationOut when the persisted citation edge
+         *     resolves to a live shared reader/note locator. Resolved public-domain anchors
+         *     render the same chip path as user content; unresolved or span-less targets
+         *     carry ``None`` and remain typographic only.
+         */
+        OracleReadingPassageOut: {
+            /** Attribution Text */
+            attribution_text: string;
+            citation: components["schemas"]["CitationOut"] | null;
+            /** Deep Link */
+            deep_link: string | null;
+            /** Exact Snippet */
+            exact_snippet: string;
+            /** Locator Label */
+            locator_label: string;
+            /** Marginalia Text */
+            marginalia_text: string;
+            phase: components["schemas"]["OracleReadingPhase"];
+            source_kind: components["schemas"]["OracleReadingSourceKind"];
+        };
+        /** @enum {string} */
+        OracleReadingPhase: "descent" | "ordeal" | "ascent";
+        /** @enum {string} */
+        OracleReadingSourceKind: "user_media" | "public_domain";
         /** OracleTextEventPayload */
         OracleTextEventPayload: {
             /** Text */
@@ -8607,10 +8686,10 @@ export interface components {
              * @enum {string}
              */
             kind: "route" | "external" | "none";
-            /** Resourceref */
-            resourceRef: string;
-            /** Unresolvedreason */
-            unresolvedReason: string | null;
+            /** Resource Ref */
+            resource_ref: string;
+            /** Unresolved Reason */
+            unresolved_reason: string | null;
         };
         /** ResourceBodyMutationRequest */
         ResourceBodyMutationRequest: {
@@ -9103,33 +9182,13 @@ export interface components {
             results: (components["schemas"]["SearchResultMediaOut"] | components["schemas"]["SearchResultPodcastOut"] | components["schemas"]["SearchResultContentChunkOut"] | components["schemas"]["SearchResultFragmentOut"] | components["schemas"]["SearchResultContributorOut"] | components["schemas"]["SearchResultPageOut"] | components["schemas"]["SearchResultNoteBlockOut"] | components["schemas"]["SearchResultHighlightOut"] | components["schemas"]["SearchResultMessageOut"] | components["schemas"]["SearchResultEvidenceSpanOut"] | components["schemas"]["SearchResultReaderApparatusItemOut"] | components["schemas"]["SearchResultConversationOut"] | components["schemas"]["ConversationArtifactSearchOut"] | components["schemas"]["SearchResultWebOut"])[];
         };
         /**
-         * SearchResultActivationOut
-         * @description Search-owned snake-case occurrence activation.
-         *
-         *     A local DTO so the response's ``by_alias=True`` dump cannot leak the
-         *     resource-items activation aliases onto this boundary.
-         */
-        SearchResultActivationOut: {
-            /** Href */
-            href: string | null;
-            /**
-             * Kind
-             * @enum {string}
-             */
-            kind: "route" | "external" | "none";
-            /** Resource Ref */
-            resource_ref: string;
-            /** Unresolved Reason */
-            unresolved_reason: string | null;
-        };
-        /**
          * SearchResultContentChunkOut
          * @description An indexed document passage.
          */
         SearchResultContentChunkOut: {
             /** Actionsubjectref */
             actionSubjectRef: string;
-            activation: components["schemas"]["SearchResultActivationOut"];
+            activation: components["schemas"]["ResourceActivationOut"];
             /** Citation Label */
             citation_label: string;
             /** Citation Target */
@@ -9203,7 +9262,7 @@ export interface components {
         SearchResultContributorOut: {
             /** Actionsubjectref */
             actionSubjectRef: string;
-            activation: components["schemas"]["SearchResultActivationOut"];
+            activation: components["schemas"]["ResourceActivationOut"];
             /** Citation Target */
             citation_target: string | null;
             context_ref: components["schemas"]["SearchResultContextRefOut"];
@@ -9241,7 +9300,7 @@ export interface components {
         SearchResultConversationOut: {
             /** Actionsubjectref */
             actionSubjectRef: string;
-            activation: components["schemas"]["SearchResultActivationOut"];
+            activation: components["schemas"]["ResourceActivationOut"];
             /** Citation Target */
             citation_target: string | null;
             context_ref: components["schemas"]["SearchResultContextRefOut"];
@@ -9279,7 +9338,7 @@ export interface components {
         SearchResultEvidenceSpanOut: {
             /** Actionsubjectref */
             actionSubjectRef: string;
-            activation: components["schemas"]["SearchResultActivationOut"];
+            activation: components["schemas"]["ResourceActivationOut"];
             /** Citation Label */
             citation_label: string;
             /** Citation Target */
@@ -9327,7 +9386,7 @@ export interface components {
         SearchResultFragmentOut: {
             /** Actionsubjectref */
             actionSubjectRef: string;
-            activation: components["schemas"]["SearchResultActivationOut"];
+            activation: components["schemas"]["ResourceActivationOut"];
             /** Citation Label */
             citation_label: string | null;
             /** Citation Target */
@@ -9370,7 +9429,7 @@ export interface components {
         SearchResultHighlightOut: {
             /** Actionsubjectref */
             actionSubjectRef: string;
-            activation: components["schemas"]["SearchResultActivationOut"];
+            activation: components["schemas"]["ResourceActivationOut"];
             /** Citation Label */
             citation_label: string | null;
             /** Citation Target */
@@ -9417,7 +9476,7 @@ export interface components {
         SearchResultMediaOut: {
             /** Actionsubjectref */
             actionSubjectRef: string;
-            activation: components["schemas"]["SearchResultActivationOut"];
+            activation: components["schemas"]["ResourceActivationOut"];
             /** Citation Target */
             citation_target: string | null;
             context_ref: components["schemas"]["SearchResultContextRefOut"];
@@ -9448,7 +9507,7 @@ export interface components {
         SearchResultMessageOut: {
             /** Actionsubjectref */
             actionSubjectRef: string;
-            activation: components["schemas"]["SearchResultActivationOut"];
+            activation: components["schemas"]["ResourceActivationOut"];
             /** Citation Target */
             citation_target: string | null;
             context_ref: components["schemas"]["SearchResultContextRefOut"];
@@ -9495,7 +9554,7 @@ export interface components {
         SearchResultNoteBlockOut: {
             /** Actionsubjectref */
             actionSubjectRef: string;
-            activation: components["schemas"]["SearchResultActivationOut"];
+            activation: components["schemas"]["ResourceActivationOut"];
             /** Body Text */
             body_text: string;
             /** Citation Target */
@@ -9544,7 +9603,7 @@ export interface components {
         SearchResultPageOut: {
             /** Actionsubjectref */
             actionSubjectRef: string;
-            activation: components["schemas"]["SearchResultActivationOut"];
+            activation: components["schemas"]["ResourceActivationOut"];
             /** Citation Target */
             citation_target: string | null;
             context_ref: components["schemas"]["SearchResultContextRefOut"];
@@ -9582,7 +9641,7 @@ export interface components {
         SearchResultPodcastOut: {
             /** Actionsubjectref */
             actionSubjectRef: string;
-            activation: components["schemas"]["SearchResultActivationOut"];
+            activation: components["schemas"]["ResourceActivationOut"];
             /** Citation Target */
             citation_target: string | null;
             context_ref: components["schemas"]["SearchResultContextRefOut"];
@@ -9622,7 +9681,7 @@ export interface components {
         SearchResultReaderApparatusItemOut: {
             /** Actionsubjectref */
             actionSubjectRef: string;
-            activation: components["schemas"]["SearchResultActivationOut"];
+            activation: components["schemas"]["ResourceActivationOut"];
             /** Apparatus Kind */
             apparatus_kind: string;
             /** Citation Target */
@@ -9685,7 +9744,7 @@ export interface components {
         SearchResultWebOut: {
             /** Actionsubjectref */
             actionSubjectRef: string;
-            activation: components["schemas"]["SearchResultActivationOut"];
+            activation: components["schemas"]["ResourceActivationOut"];
             /** Citation Target */
             citation_target: string | null;
             context_ref: components["schemas"]["SearchResultContextRefOut"];

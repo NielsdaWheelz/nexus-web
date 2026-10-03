@@ -266,7 +266,7 @@ export function createMountedActionHandoff<
 
   return {
     request(intent) {
-      if (intent.activation.resourceRef !== intent.ref) {
+      if (intent.activation.resource_ref !== intent.ref) {
         throw new TypeError(
           "Mounted action activation must identify its canonical ref",
         );

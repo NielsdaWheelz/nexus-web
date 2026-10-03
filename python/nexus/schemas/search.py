@@ -20,6 +20,7 @@ from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.presence import Presence
 from nexus.schemas.publication_dates import PublicationDate
+from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import (
     LocatorBackedResultType,
     RetrievalLocator,
@@ -68,21 +69,6 @@ class SearchResultContextRefOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class SearchResultActivationOut(BaseModel):
-    """Search-owned snake-case occurrence activation.
-
-    A local DTO so the response's ``by_alias=True`` dump cannot leak the
-    resource-items activation aliases onto this boundary.
-    """
-
-    resource_ref: str
-    kind: Literal["route", "external", "none"]
-    href: str | None
-    unresolved_reason: str | None
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class SearchResultBaseOut(BaseModel):
     """Envelope fields shared by every typed variant."""
 
@@ -91,7 +77,7 @@ class SearchResultBaseOut(BaseModel):
     resource_ref: str
     owner_resource_ref: str
     action_subject_ref: str = Field(alias="actionSubjectRef")
-    activation: SearchResultActivationOut
+    activation: ResourceActivationOut
     citation_target: str | None
     context_ref: SearchResultContextRefOut
 

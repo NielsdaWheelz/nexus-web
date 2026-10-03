@@ -181,21 +181,15 @@ const TYPE_LABELS: Partial<Record<SearchType, string>> = {
 };
 
 function adaptSearchResultRow(result: SearchResult): SearchResultRowViewModel {
-  const rawActivation = result.activation;
+  const activation = result.activation;
   if (
-    parseResourceRef(rawActivation.resource_ref) === null ||
-    rawActivation.kind === "none" ||
-    !rawActivation.href
+    parseResourceRef(activation.resource_ref) === null ||
+    activation.kind === "none" ||
+    !activation.href
   ) {
     // justify-defect: search only emits canonical, activatable occurrences.
     throw new Error("Search result missing canonical activation");
   }
-  const activation = {
-    resourceRef: rawActivation.resource_ref,
-    kind: rawActivation.kind,
-    href: rawActivation.href,
-    unresolvedReason: rawActivation.unresolved_reason,
-  };
   const context = result.context_ref;
   if (
     ("mediaSummary" in result && context.type !== "media") ||

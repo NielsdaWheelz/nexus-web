@@ -11,86 +11,44 @@ import type {
   WorkspaceTargetDisposition,
 } from "@/lib/workspace/targetActivation";
 
-/** The typed dossier head emits it as generated; the decoders below serve the
- * untyped routes and SSE frames that still send either key casing. */
+/** Canonical activation wire; untyped and replayed inputs use the decoder below. */
 export type ResourceActivation = Schema<"ResourceActivationOut">;
 
-const SNAKE_CASE_KEYS = {
-  resourceRef: "resource_ref",
-  kind: "kind",
-  href: "href",
-  unresolvedReason: "unresolved_reason",
-} as const;
-
-const CAMEL_CASE_KEYS = {
-  resourceRef: "resourceRef",
-  kind: "kind",
-  href: "href",
-  unresolvedReason: "unresolvedReason",
-} as const;
-
-type ActivationKeys = typeof SNAKE_CASE_KEYS | typeof CAMEL_CASE_KEYS;
-
-function decodeActivationFields(
-  value: Record<string, unknown>,
-  keys: ActivationKeys,
-  name: string,
+export function decodeResourceActivation(
+  raw: unknown,
+  name = "resource activation",
 ): ResourceActivation {
-  const resourceRef = expectString(
-    value[keys.resourceRef],
-    `${name}.${keys.resourceRef}`,
+  const value = expectExactRecord(
+    raw,
+    ["resource_ref", "kind", "href", "unresolved_reason"],
+    name,
   );
+  const resourceRef = expectString(value.resource_ref, `${name}.resource_ref`);
   if (parseResourceRef(resourceRef) === null) {
-    throw new TypeError(
-      `${name}.${keys.resourceRef} must be a canonical ResourceRef`,
-    );
+    throw new TypeError(`${name}.resource_ref must be a canonical ResourceRef`);
   }
   const kind = expectOneOf(
-    value[keys.kind],
+    value.kind,
     ["route", "external", "none"] as const,
-    `${name}.${keys.kind}`,
+    `${name}.kind`,
   );
-  const href = expectNullableString(value[keys.href], `${name}.${keys.href}`);
+  const href = expectNullableString(value.href, `${name}.href`);
   const unresolvedReason = expectNullableString(
-    value[keys.unresolvedReason],
-    `${name}.${keys.unresolvedReason}`,
+    value.unresolved_reason,
+    `${name}.unresolved_reason`,
   );
-  if (kind === "none") {
-    if (href !== null) {
-      throw new TypeError(`${name}.${keys.href} must be null for none`);
-    }
-    return { resourceRef, kind, href, unresolvedReason };
+  if (kind === "none" && href !== null) {
+    throw new TypeError(`${name}.href must be null for none`);
   }
-  if (href === null) {
-    throw new TypeError(`${name}.${keys.href} must be a string for ${kind}`);
+  if (kind !== "none" && href === null) {
+    throw new TypeError(`${name}.href must be a string for ${kind}`);
   }
-  return { resourceRef, kind, href, unresolvedReason };
-}
-
-/** Strict decoder for same-system snake_case activation wires. */
-export function decodeSnakeCaseResourceActivation(
-  raw: unknown,
-  name = "resource activation",
-): ResourceActivation {
-  const value = expectExactRecord(
-    raw,
-    Object.values(SNAKE_CASE_KEYS),
-    name,
-  );
-  return decodeActivationFields(value, SNAKE_CASE_KEYS, name);
-}
-
-/** Strict decoder for same-system camelCase activation wires. */
-export function decodeCamelCaseResourceActivation(
-  raw: unknown,
-  name = "resource activation",
-): ResourceActivation {
-  const value = expectExactRecord(
-    raw,
-    Object.values(CAMEL_CASE_KEYS),
-    name,
-  );
-  return decodeActivationFields(value, CAMEL_CASE_KEYS, name);
+  return {
+    resource_ref: resourceRef,
+    kind,
+    href,
+    unresolved_reason: unresolvedReason,
+  };
 }
 
 /** Nullable adapter for replayed or independently persisted snake_case data. */
@@ -98,7 +56,7 @@ export function normalizeResourceActivation(
   raw: unknown,
 ): ResourceActivation | null {
   try {
-    return decodeSnakeCaseResourceActivation(raw);
+    return decodeResourceActivation(raw);
   } catch (error) {
     if (!(error instanceof TypeError)) throw error;
     return null;
