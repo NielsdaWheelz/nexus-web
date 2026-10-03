@@ -29,15 +29,11 @@ from llm_tools import (
     bind_web_read,
     web_family,
 )
-from provider_runtime.tool_adapter import PublishedTools, ToolPublication, lower_tools
+from provider_runtime.tool_adapter import ToolPublication, lower_tools
 from pydantic import ValidationError
 
 from nexus.config import Settings
-from nexus.services.tool_runtime.declarations import (
-    CHAT_TOOL_DECLARATIONS_BY_ID,
-    NEXUS_TOOL_DECLARATIONS,
-    PresentedToolDeclaration,
-)
+from nexus.services.tool_runtime.declarations import NEXUS_TOOL_DECLARATIONS
 from nexus.services.tool_runtime.plans import TOOL_PLAN_DEFINITIONS, ToolPlanDefinition
 from nexus.services.tool_runtime.snapshots import (
     FrozenRunLimitsSnapshot,
@@ -176,45 +172,14 @@ def compose_configured_web_search_provider(
     )
 
 
-def operation_presented_declarations(
-    operation: FrozenToolOperation | None,
-) -> tuple[PresentedToolDeclaration, ...]:
-    """Join plan-owned membership to its canonical presentation metadata."""
-
-    if operation is None:
-        return ()
-    declarations: list[PresentedToolDeclaration] = []
-    for grant in operation.profile.ordered_grants:
-        spec = operation.plan.catalog_view.spec(grant.id)
-        entry = CHAT_TOOL_DECLARATIONS_BY_ID.get(str(spec.id))
-        if entry is None:
-            raise ValueError(f"frozen tool lacks presentation metadata: {spec.id!s}")
-        if entry.spec is not spec:
-            raise ValueError(f"frozen tool declaration identity drifted: {spec.id!s}")
-        declarations.append(entry)
-    return tuple(declarations)
-
-
-def project_provider_model_tools(
-    operation: FrozenToolOperation | None,
-) -> PublishedTools | None:
-    """Lower one plan to API-provider function declarations; ``None`` means no tools."""
-
-    if operation is None:
-        return None
-    if not isinstance(operation.plan.exposure, Native):
-        raise ValueError("only Native model-tool plans can be provider-published")
-    return lower_tools(ToolPublication(plan=operation.plan, revealed_targets=()))
-
-
 def compose_provider_model_tools(operation: FrozenToolOperation) -> ProviderModelTools:
     """Bind provider publication and frozen authority into one route value."""
 
     from nexus.services.provider_generation_contract import ProviderModelTools
 
-    publication = project_provider_model_tools(operation)
-    if publication is None:
-        raise ValueError("provider model tools require one Native operation")
+    if not isinstance(operation.plan.exposure, Native):
+        raise ValueError("only Native model-tool plans can be provider-published")
+    publication = lower_tools(ToolPublication(plan=operation.plan, revealed_targets=()))
     return ProviderModelTools(
         snapshot=freeze_tool_plan_snapshot(operation),
         publication=publication,
@@ -318,8 +283,6 @@ __all__ = [
     "compose_tool_runtime",
     "encode_tool_plan_snapshot",
     "freeze_tool_plan_snapshot",
-    "operation_presented_declarations",
-    "project_provider_model_tools",
     "required_tool_operation",
     "unavailable_tool_ids",
     "validate_tool_plan_snapshot",

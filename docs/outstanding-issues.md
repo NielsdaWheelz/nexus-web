@@ -30,7 +30,6 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
-- [open] tool catalog / presentation · 2026-10-02 cleanup audit · the catalog retains an unused presentation projection: [ticket](tickets/tool-catalog-retains-unused-presentation-projection.md).
 - [open] transcript / chapter projection · 2026-10-02 cleanup audit · three consumers repeat chapter normalization and shape types after strict decoding: [ticket](tickets/transcript-chapters-repeat-normalization-and-shape.md).
 - [open] operator credentials · 2026-10-02 cleanup workflow · skid's three peer bearer fields were printed into a tool transcript; coordinate rotation with active sessions: [ticket](tickets/local-qualification-credential-transcript-exposure.md).
 - [open] processing recovery / release · 2026-09-28 pr #387 investigation · the keats normalizations and gutenberg correction never ran in production (commands are unreleased); run them after the release, then land #387: [ticket](tickets/processing-repairs-await-release-then-387.md).
