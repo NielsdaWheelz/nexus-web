@@ -297,7 +297,7 @@ unexpected timeouts. See
 - [open] 2026-09-26 processing review · historical gutenberg epub retry retains the wrong source adapter: [ticket](tickets/gutenberg-failed-import-retains-obsolete-web-adapter.md).
 - [open] 2026-09-26 processing review · two historical note indexes still need owned recovery: [ticket](tickets/historical-note-index-failures-need-owned-recovery.md).
 - [open] 2026-09-26 processing review · source acceptance can commit before runnable work is durable: [ticket](tickets/source-acceptance-can-commit-without-enqueued-work.md).
-- [open] 2026-09-26 processing review · dead obligations can monopolize bounded reconciliation discovery: [ticket](tickets/ingest-reconciler-dead-rows-can-starve-new-work.md).
+- [deferred] ingest reconciliation · 2026-10-03 source recheck · nonterminal semantic jobs can monopolize oldest-25 discovery; prior source/index paths are fixed, runtime NOT_RUN: [ticket](tickets/ingest-reconciler-dead-rows-can-starve-new-work.md).
 - [open] 2026-09-26 processing review · transient storage errors are treated as permanent source loss: [ticket](tickets/storage-outage-is-misclassified-as-lost-source.md).
 - [open] 2026-09-26 processing review · superseded oracle sources retain three unfiled failed media rows: [ticket](tickets/superseded-oracle-seeds-retain-unfiled-failed-media.md).
 - [open] 2026-09-26 processing plan · publication lock upgrades can obstruct concurrent index settlement: [ticket](tickets/publication-lock-upgrade-can-block-index-settlement.md).
