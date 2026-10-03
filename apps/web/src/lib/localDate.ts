@@ -30,11 +30,11 @@ export function isLocalDate(value: string): boolean {
     return false;
   }
   const [year, month, day] = value.split("-").map(Number);
-  const parsed = new Date(year, month - 1, day);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
   return (
-    parsed.getFullYear() === year &&
-    parsed.getMonth() === month - 1 &&
-    parsed.getDate() === day
+    parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day
   );
 }
 
