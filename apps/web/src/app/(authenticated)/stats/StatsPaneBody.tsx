@@ -10,7 +10,7 @@ import PaneSection from "@/components/ui/PaneSection";
 import SelectField from "@/components/ui/SelectField";
 import { useFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { useCursorPagination, type CursorPage } from "@/lib/api/useCursorPagination";
+import { useCursorPagination } from "@/lib/api/useCursorPagination";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import { useResource, type AsyncResource } from "@/lib/api/useResource";
 import type { ApiJson, Schema } from "@/lib/api/wire";
@@ -769,10 +769,9 @@ export default function StatsPaneBody() {
   const updating = fetching && data !== null;
   usePaneReturnReady(!initialLoading);
 
-  const firstPage = useMemo<AsyncResource<CursorPage<Session>>>(() => {
+  const firstPage = useMemo<AsyncResource<Schema<"ActivitySessionPageOut">>>(() => {
     if (data === null) return { status: "loading" };
-    const { rows, nextCursor } = data.activity.sessions;
-    return { status: "ready", data: { items: rows, nextCursor } };
+    return { status: "ready", data: data.activity.sessions };
   }, [data]);
   // Continuations reuse the committed query, so the cursor's snapshot and scope always match.
   const sessions = useCursorPagination<Session>({
@@ -784,7 +783,7 @@ export default function StatsPaneBody() {
       params.set("cursor", cursor);
       const url = `/api/consumption/sessions?${params}` as const;
       const body = await apiFetch<ApiJson<"/consumption/sessions", "get">>(url, { signal });
-      return { items: body.data.sessions, nextCursor: body.data.nextCursor };
+      return body.data;
     },
   });
 

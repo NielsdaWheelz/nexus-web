@@ -406,8 +406,8 @@ def consumption_stats(db: Session, scope: Scope, bucket: Bucket) -> wire.Consump
                 ]
             ),
             devices=devices,
-            sessions=wire.ActivitySessionsOut(
-                rows=[_session(row, summaries) for row in newest[:_PAGE]],
+            sessions=wire.ActivitySessionPageOut(
+                items=[_session(row, summaries) for row in newest[:_PAGE]],
                 next_cursor=_next_cursor(scope, params["as_of"], newest, _PAGE),
             ),
             longest_session=present(_session(longest, summaries)) if longest else absent(),
@@ -460,7 +460,7 @@ def session_page(
         params | keyset | {"limit": limit + 1},
     )
     return wire.ActivitySessionPageOut(
-        sessions=[_session(row, summaries) for row in rows[:limit]],
+        items=[_session(row, summaries) for row in rows[:limit]],
         next_cursor=_next_cursor(scope, as_of, rows, limit),
     )
 
