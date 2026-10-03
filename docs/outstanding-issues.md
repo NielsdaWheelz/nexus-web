@@ -314,7 +314,6 @@ unexpected timeouts. See
 - [open] 2026-09-21 auth audit · response cookie ownership is split between route clients and refresh: [ticket](tickets/auth-response-cookie-ownership-is-split.md).
 - [open] 2026-09-21 auth audit · auth flows retain unused injection seams: [ticket](tickets/auth-flows-retain-unused-injection-seams.md).
 - [open] 2026-09-21 auth audit · default android debug origin disagrees with bff csrf configuration: [ticket](tickets/android-debug-origin-disagrees-with-bff-csrf-origin.md).
-- [open] 2026-09-21 auth audit · browser auth redirects have two owners with different handled results: [ticket](tickets/unauthenticated-api-redirect-has-two-owners.md).
 - [open] 2026-09-21 auth audit · sdk operation deadlines end before response bodies: [ticket](tickets/supabase-operation-deadline-ends-at-response-headers.md).
 - [open] 2026-09-25 local qualification · credential values appeared in an internal tool transcript; rotate outside the transcript's trust boundary: [ticket](tickets/local-qualification-credential-transcript-exposure.md).
 
@@ -359,3 +358,5 @@ unexpected timeouts. See
 - [open] consumption / stats pane · 2026-09-28 consumption-stats reauthoring · p3 · the day view of a date its zone skips sends `start == end` and shows "Stats could not load": [ticket](tickets/stats-day-view-fails-on-a-zone-skipped-date.md).
 - [open] consumption / stats pane · 2026-09-28 consumption-stats reauthoring · p3 · timeline modalities all paint `CanvasText` in forced colors: [ticket](tickets/stats-timeline-modalities-merge-in-forced-colors.md).
 - [open] consumption activity / web outbox · 2026-09-28 consumption-stats reauthoring · p3 · batches follow creation order, so two tabs on one work can fail a whole batch as out of order: [ticket](tickets/activity-outbox-batches-rows-in-creation-order.md).
+- [open] inbound share capture / auth · 2026-10-02 frontend cleanup map · a plain-text share account-read `401 E_UNAUTHENTICATED` escapes render instead of showing sign-in guidance: [ticket](tickets/share-account-auth-failure-escapes-inline-feedback.md).
+- [open] local dependency setup · 2026-10-02 cleanup verification · make setup omits the codex-agent extra required by checked runtime imports: [ticket](tickets/local-setup-omits-codex-agent-extra.md).
