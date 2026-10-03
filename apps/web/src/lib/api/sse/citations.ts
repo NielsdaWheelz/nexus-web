@@ -1,8 +1,5 @@
 import { isRecord } from "@/lib/validation";
-import {
-  RESULT_TYPE_VALUES,
-  type SearchType,
-} from "@/lib/search/types";
+import type { SearchType } from "@/lib/search/types";
 import { hasOnlyKeys } from "./guards";
 import type { MediaRetrievalLocator, RetrievalLocator } from "./locators";
 
@@ -20,11 +17,23 @@ export type RetrievalContextRef =
       evidence_span_ids?: string[];
     };
 
-const SEARCH_CITATION_RESULT_TYPES = new Set<SearchCitationResultType>(
-  RESULT_TYPE_VALUES.filter(
-    (value): value is SearchCitationResultType => value !== "web_result",
-  ),
-);
+const SEARCH_CITATION_RESULT_TYPES = {
+  contributor: true,
+  media: true,
+  podcast: true,
+  episode: true,
+  video: true,
+  content_chunk: true,
+  fragment: true,
+  page: true,
+  note_block: true,
+  highlight: true,
+  message: true,
+  evidence_span: true,
+  conversation: true,
+  artifact: true,
+  reader_apparatus_item: true,
+} satisfies Record<SearchCitationResultType, true>;
 
 export function isRetrievalContextRef(
   value: unknown,
@@ -38,7 +47,7 @@ export function isRetrievalContextRef(
     return false;
   }
   if (
-    !SEARCH_CITATION_RESULT_TYPES.has(value.type as SearchCitationResultType) &&
+    !Object.hasOwn(SEARCH_CITATION_RESULT_TYPES, value.type) &&
     value.type !== "web_result"
   ) {
     return false;
@@ -261,9 +270,7 @@ export function isSearchCitationEventData(
   return (
     isRecord(citation) &&
     typeof citation.result_type === "string" &&
-    SEARCH_CITATION_RESULT_TYPES.has(
-      citation.result_type as SearchCitationResultType,
-    ) &&
+    Object.hasOwn(SEARCH_CITATION_RESULT_TYPES, citation.result_type) &&
     citation.type === citation.result_type
   );
 }

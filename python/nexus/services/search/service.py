@@ -131,12 +131,12 @@ def search(
 
     has_query = len(q) >= MIN_QUERY_LENGTH
     if not has_query and not (query.authors or query.roles or content_kinds):
-        return SearchResponse()
+        return SearchResponse(results=[], page=SearchPageInfo(next_cursor=None))
     authorize_scope(db, viewer_id, query.scope.kind, query.scope.id)
     if not result_types:
-        return SearchResponse()
+        return SearchResponse(results=[], page=SearchPageInfo(next_cursor=None))
     if has_query and not _query_has_full_text_terms(db, q):
-        return SearchResponse()
+        return SearchResponse(results=[], page=SearchPageInfo(next_cursor=None))
 
     # Hybrid retrieval is an invariant: the embedding is built once for any
     # semantic-capable kind, independent of the structured filters.
@@ -242,7 +242,7 @@ def search_scopes(
             if existing is None or result.score > existing.score:
                 merged[key] = result
     ordered = sorted(merged.values(), key=lambda result: (-result.score, str(result.id)))
-    return SearchResponse(results=ordered[: base.limit], page=SearchPageInfo())
+    return SearchResponse(results=ordered[: base.limit], page=SearchPageInfo(next_cursor=None))
 
 
 async def search_scopes_async(

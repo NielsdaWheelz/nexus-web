@@ -12,10 +12,10 @@ import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
 import { useResource } from "@/lib/api/useResource";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { ResourceOpenablesContractDefect, searchOpenableResources } from "@/lib/resources/openableResources";
+import { searchOpenableResources } from "@/lib/resources/openableResources";
 import type { ResourceItem } from "@/lib/resources/resourceItems";
 import { SEARCH_KINDS } from "@/lib/search/kinds";
-import { fetchSearchResultPage, SearchContractDefect } from "@/lib/search/searchApi";
+import { fetchSearchResultPage } from "@/lib/search/searchApi";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
 import type { NexusRecent, NexusSource } from "./model";
 import type { NexusQuery } from "./query";
@@ -99,7 +99,7 @@ export function useNexusFind({ open, query }: { open: boolean; query: NexusQuery
   const ownedError = owned.errorIdentity === ownedId ? owned.error : null;
   const contractDefect = [openablesError, ownedError].find(
     (error) =>
-      error instanceof ResourceOpenablesContractDefect || error instanceof SearchContractDefect || isSameSystemApiDefect(error),
+      error !== null && (!isApiError(error) || isSameSystemApiDefect(error)),
   );
   if (contractDefect) throw contractDefect;
   if (defect) throw defect.error;
