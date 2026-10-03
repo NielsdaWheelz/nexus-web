@@ -3,7 +3,6 @@
 import type { CSSProperties, MouseEvent, PointerEvent, RefObject } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import Button from "@/components/ui/Button";
-import { normalizeTrackChapters } from "@/lib/media/transcriptChapters";
 import type { PaneFindResultKey } from "@/lib/panes/paneSearch";
 import {
   formatTranscriptTimestampMs,
@@ -41,7 +40,7 @@ interface TranscriptContentPanelProps {
   mediaId: string;
   transcriptState: TranscriptState;
   transcriptCoverage: TranscriptCoverage;
-  chapters: TranscriptChapter[];
+  chapters: readonly TranscriptChapter[];
   fragments: TranscriptFragment[];
   activeFragment: TranscriptFragment | null;
   renderedHtml: string;
@@ -175,7 +174,6 @@ export default function TranscriptContentPanel({
   onContentPointerOver,
   onContentPointerOut,
 }: TranscriptContentPanelProps) {
-  const normalizedChapters = normalizeTrackChapters(chapters);
   const textRunsByFragmentId = transcriptTextRuns({
     fragments,
     presentation: findPresentation,
@@ -193,7 +191,7 @@ export default function TranscriptContentPanel({
     | { kind: "segment"; fragment: TranscriptFragment }
   > = [];
 
-  if (normalizedChapters.length === 0) {
+  if (chapters.length === 0) {
     for (const fragment of fragments) {
       timeline.push({ kind: "segment", fragment });
     }
@@ -208,10 +206,10 @@ export default function TranscriptContentPanel({
           : Number.MAX_SAFE_INTEGER;
 
       while (
-        chapterCursor < normalizedChapters.length &&
-        normalizedChapters[chapterCursor].t_start_ms <= fragmentStartMs
+        chapterCursor < chapters.length &&
+        chapters[chapterCursor].t_start_ms <= fragmentStartMs
       ) {
-        const chapter = normalizedChapters[chapterCursor];
+        const chapter = chapters[chapterCursor];
         timeline.push({
           kind: "chapter",
           chapterOrdinal: chapterCursor,
@@ -225,8 +223,8 @@ export default function TranscriptContentPanel({
       timeline.push({ kind: "segment", fragment });
     }
 
-    while (chapterCursor < normalizedChapters.length) {
-      const chapter = normalizedChapters[chapterCursor];
+    while (chapterCursor < chapters.length) {
+      const chapter = chapters[chapterCursor];
       timeline.push({
         kind: "chapter",
         chapterOrdinal: chapterCursor,

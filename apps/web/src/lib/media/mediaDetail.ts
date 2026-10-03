@@ -115,7 +115,7 @@ export interface MediaDetail {
   playback_source: MediaPlaybackSource | null;
   listening_state: MediaListeningState | null;
   episode_state: "unplayed" | "in_progress" | "played" | null;
-  chapters: TranscriptChapter[];
+  chapters: readonly TranscriptChapter[];
   capabilities: MediaActionCapabilities;
   document_embed_summary: DocumentEmbedSummary | null;
   contributors: ContributorCredit[];
@@ -278,7 +278,14 @@ export function decodeMediaDetail(
       ["unplayed", "in_progress", "played"] as const,
       "MediaOut.episode_state",
     ),
-    chapters: expectArray(value.chapters, decodeChapter, "MediaOut.chapters"),
+    chapters: expectArray(value.chapters, decodeChapter, "MediaOut.chapters")
+      .map((chapter) => ({ ...chapter, title: chapter.title.trim() }))
+      .filter((chapter) => chapter.title.length > 0)
+      .sort(
+        (left, right) =>
+          left.t_start_ms - right.t_start_ms ||
+          left.chapter_idx - right.chapter_idx,
+      ),
     capabilities: decodeMediaActionCapabilities(
       value.capabilities,
       "MediaOut.capabilities",
