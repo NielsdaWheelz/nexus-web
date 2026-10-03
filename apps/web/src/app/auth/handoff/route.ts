@@ -86,7 +86,6 @@ export async function GET(request: Request): Promise<NextResponse> {
           headers: internalAuthHeaders({ json: true }),
           body: JSON.stringify({ code, verifier: hv }),
         },
-        "Handoff consume request timed out"
       );
     } catch (error) {
       if (!(error instanceof Error)) {

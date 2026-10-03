@@ -27,7 +27,6 @@ export async function POST(request: Request) {
             Authorization: `Bearer ${session.accessToken}`,
           },
         },
-        "Supabase sign-out timed out",
       );
       if (
         !signOutResponse.ok &&
