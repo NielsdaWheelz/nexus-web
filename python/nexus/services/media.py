@@ -7,7 +7,7 @@ import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal, cast
+from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy import text
@@ -27,6 +27,7 @@ from nexus.schemas.media import (
     FragmentOut,
     ListeningStateOut,
     MediaOut,
+    MediaProcessingSnapshotOut,
     MediaReadState,
     OfflineDownloadSpecOut,
     PodcastEpisodeChapterOut,
@@ -984,7 +985,7 @@ def list_fragments_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> l
 
 @dataclass(frozen=True)
 class MediaEventSnapshot:
-    payload: dict[str, Any]
+    payload: MediaProcessingSnapshotOut
     terminal: bool
 
 
@@ -996,17 +997,17 @@ def read_event_snapshot(db: Session, *, viewer_id: UUID, media_id: UUID) -> Medi
     """
     media = get_media_for_viewer(db, viewer_id, media_id)
     return MediaEventSnapshot(
-        payload={
-            "processing_status": media.processing_status,
-            "source_progress": media.source_progress.model_dump(mode="json"),
-            "last_error_code": media.last_error_code,
-            "failure_stage": media.failure_stage,
-            "retrieval_status": media.retrieval_status,
-            "retrieval_status_reason": media.retrieval_status_reason,
-            "capabilities": media.capabilities.model_dump(mode="json"),
-            "transcript_state": media.transcript_state,
-            "transcript_coverage": media.transcript_coverage,
-            "updated_at": media.updated_at.isoformat(),
-        },
+        payload=MediaProcessingSnapshotOut(
+            processing_status=media.processing_status,
+            source_progress=media.source_progress,
+            last_error_code=media.last_error_code,
+            failure_stage=media.failure_stage,
+            retrieval_status=media.retrieval_status,
+            retrieval_status_reason=media.retrieval_status_reason,
+            capabilities=media.capabilities,
+            transcript_state=media.transcript_state,
+            transcript_coverage=media.transcript_coverage,
+            updated_at=media.updated_at.isoformat(),
+        ),
         terminal=media.processing_status in _TERMINAL_PROCESSING_STATUSES,
     )
