@@ -607,7 +607,9 @@ def assert_isolation() -> None:
 # ---------------------------------------------------------------------------
 
 
-def release(source_sha: str, workspace: Path, model_cutover_snapshot: Path | None) -> None:
+def release(
+    source_sha: str, workspace: Path, model_cutover_snapshot: dict[str, Any] | None
+) -> None:
     candidate = preflight(source_sha, workspace, deploying=True)
     install_host_inputs()
     pull_image(candidate, candidate.images.api)
@@ -624,16 +626,9 @@ def release(source_sha: str, workspace: Path, model_cutover_snapshot: Path | Non
     if crossing_model_cutover:
         if model_cutover_snapshot is None:
             raise Failure("0246 requires --model-cutover-snapshot with a reviewed database census")
-        try:
-            parsed_snapshot = json.loads(model_cutover_snapshot.read_text())
-        except (OSError, ValueError) as error:
-            raise Failure(f"cannot read the reviewed 0246 database census: {error}") from error
-        if (
-            not isinstance(parsed_snapshot, dict)
-            or parsed_snapshot.get("schema_revision") != starting_revision
-        ):
+        if model_cutover_snapshot["schema_revision"] != starting_revision:
             raise Failure("reviewed 0246 database census has the wrong starting revision")
-        reviewed_cutover_snapshot = parsed_snapshot
+        reviewed_cutover_snapshot = model_cutover_snapshot
     note(
         f"stopping the writers at revision {starting_revision or '(none)'};"
         " the API is down from here until `up` succeeds"
@@ -738,11 +733,38 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("a release requires its source SHA")
     if arguments.check and arguments.model_cutover_snapshot is not None:
         parser.error("--model-cutover-snapshot is only used during release")
+    reviewed_snapshot: dict[str, Any] | None = None
+    if arguments.model_cutover_snapshot is not None:
+        try:
+            parsed_snapshot = json.loads(arguments.model_cutover_snapshot.read_text())
+        except (OSError, ValueError) as error:
+            raise Failure(f"cannot read the reviewed 0246 database census: {error}") from error
+        collections = (
+            "unsettled_calls",
+            "unsettled_turns",
+            "unsettled_continuations",
+            "unsettled_tool_positions",
+            "nonterminal_chat_runs",
+            "affected_jobs",
+        )
+        if (
+            not isinstance(parsed_snapshot, dict)
+            or set(parsed_snapshot) != {"schema_revision", *collections}
+            or not isinstance(parsed_snapshot["schema_revision"], str)
+            or REVISION.fullmatch(parsed_snapshot["schema_revision"]) is None
+            or any(
+                not isinstance(parsed_snapshot[name], list)
+                or any(not isinstance(row, dict) for row in parsed_snapshot[name])
+                for name in collections
+            )
+        ):
+            raise Failure("reviewed 0246 database census has an invalid structure")
+        reviewed_snapshot = parsed_snapshot
     with tempfile.TemporaryDirectory(prefix="nexus-release.") as temporary:
         if arguments.check:
             check(source_sha, Path(temporary))
         else:
-            release(str(source_sha), Path(temporary), arguments.model_cutover_snapshot)
+            release(str(source_sha), Path(temporary), reviewed_snapshot)
     return 0
 
 
