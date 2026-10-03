@@ -626,9 +626,10 @@ def _route_disclosure(route_key: str) -> _RouteDisclosure:
             billing=SubscriptionBilling(),
             privacy=PrivacyDisclosure(
                 summary=(
-                    "Uses your Codex subscription. Its disposable shell can reach the public "
-                    "internet; the Nexus API can read your account-visible library and create "
-                    "additive content."
+                    "Uses your Codex subscription. Nexus shares task context with Codex and limits "
+                    "the agent to declared application tools. These can read permitted library "
+                    "content, search and read public web pages, and create additive content when "
+                    "the task permits it."
                 ),
                 retention="OpenAI Codex account retention applies.",
                 training="Nexus does not opt your content into model training.",
