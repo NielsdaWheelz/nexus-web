@@ -141,7 +141,10 @@ import type { PaneRefreshExecute } from "@/lib/panes/panePublications";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { isAbortError } from "@/lib/errors";
 import { useRevalidationSettlement } from "@/lib/panes/useRevalidationSettlement";
-import { runPodcastRefresh } from "@/lib/podcasts/refresh";
+import {
+  podcastRefreshRequestAnnouncement,
+  requestPodcastRefresh,
+} from "@/lib/podcasts/refresh";
 import {
   decodeLibraryEntryListItem,
   type LibraryEntryListItem,
@@ -1846,22 +1849,12 @@ export default function LibraryPaneBody() {
   const retryLibraryRefresh = useCallback(() => {
     const controller = new AbortController();
     setError(null);
-    void runPodcastRefresh(
+    void requestPodcastRefresh(
       { kind: "Library", libraryId: id },
-      { signal: controller.signal, onProgress: () => {} },
+      controller.signal,
     )
-      .then(async (result) => {
+      .then(async () => {
         await revalidateLibraryEntries(controller.signal);
-        if (result.kind === "Complete") return;
-        setError({
-          content: {
-            tone: result.kind === "Failed" ? "Danger" : "Warning",
-            title: result.announcement,
-          },
-          actions: [
-            { label: "Retry", onClick: () => retryLibraryRefreshRef.current() },
-          ],
-        });
       })
       .catch((refreshError: unknown) => {
         if (isAbortError(refreshError)) return;
@@ -1879,24 +1872,16 @@ export default function LibraryPaneBody() {
   }, [id, presentFailure, revalidateLibraryEntries]);
   retryLibraryRefreshRef.current = retryLibraryRefresh;
   const executeRefresh = useCallback<PaneRefreshExecute>(
-    async ({ signal, reportProgress }) => {
+    async ({ signal }) => {
       try {
-        const result = await runPodcastRefresh(
+        const requestedCount = await requestPodcastRefresh(
           { kind: "Library", libraryId: id },
-          {
-            signal,
-            onProgress: ({ finishedCount, requestedCount }) =>
-              reportProgress({
-                kind: "Determinate",
-                finishedCount,
-                requestedCount,
-              }),
-          },
+          signal,
         );
         await revalidateLibraryEntries(signal);
         return {
-          kind: result.kind,
-          announcement: result.announcement,
+          kind: "Complete",
+          announcement: podcastRefreshRequestAnnouncement(requestedCount),
         };
       } catch (refreshError: unknown) {
         if (isAbortError(refreshError)) throw refreshError;

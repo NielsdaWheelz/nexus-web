@@ -4,13 +4,12 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Request
-from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.responses import ok
+from nexus.responses import Data, ok
 from nexus.schemas.collection_page import parse_collection_query
 from nexus.schemas.podcast import (
     PodcastEpisodeFromDiscoveryRequest,
@@ -157,15 +156,12 @@ def refresh_podcasts(
     body: PodcastRefreshManualScope,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> Response:
+) -> Data[PodcastRefreshAcceptedOut]:
     """Enqueue one sync per in-scope subscription; the panes observe the rows."""
     requested_count = podcast_refresh_service.enqueue_manual_refresh(
         db, viewer_id=viewer.user_id, scope=body
     )
-    return JSONResponse(
-        status_code=202,
-        content=ok(PodcastRefreshAcceptedOut(requested_count=requested_count), by_alias=True),
-    )
+    return Data(data=PodcastRefreshAcceptedOut(requested_count=requested_count))
 
 
 @router.delete("/podcasts/subscriptions/{podcast_id}")
