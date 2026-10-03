@@ -19,16 +19,16 @@ from __future__ import annotations
 
 import hashlib
 from typing import Annotated
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Response
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.session import get_db
-from nexus.responses import ok
+from nexus.responses import Data
 from nexus.schemas.atlas import (
     AtlasEdgeOut,
     AtlasOut,
@@ -45,24 +45,14 @@ router = APIRouter(prefix="/atlas", tags=["atlas"])
 _PERSONAL_MEDIA_SQL = library_media_ids_cte_sql()
 
 
-def _personal_media_params(viewer: Viewer) -> dict[str, UUID]:
-    return {"viewer_id": viewer.user_id, "library_id": viewer.default_library_id}
-
-
-def _compute_etag(max_computed_at: object) -> str:
-    seed = max_computed_at.isoformat() if max_computed_at is not None else "empty"  # type: ignore[attr-defined]
-    return hashlib.md5(seed.encode()).hexdigest()  # noqa: S324 - cache tag, not security
-
-
-@router.get("", response_model=None)
+@router.get("", response_model=Data[AtlasOut], responses={304: {"description": "not modified"}})
 def read_atlas(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    response: Response,
     if_none_match: Annotated[str | None, Header(alias="If-None-Match")] = None,
-) -> dict | Response:
-    """Return the grand atlas read model, ETag-cacheable by max(computed_at)."""
-    params = _personal_media_params(viewer)
+) -> Response:
+    """return the scoped atlas; its tag identifies the exact rendered representation."""
+    params = {"viewer_id": viewer.user_id, "library_id": viewer.default_library_id}
 
     star_rows = db.execute(
         text(
@@ -80,14 +70,6 @@ def read_atlas(
         ),
         params,
     ).all()
-
-    max_computed_at = max(
-        (row.computed_at for row in star_rows if row.computed_at is not None),
-        default=None,
-    )
-    etag = _compute_etag(max_computed_at)
-    if if_none_match is not None and if_none_match.strip('"') == etag:
-        return Response(status_code=304, headers={"ETag": f'"{etag}"'})
 
     stars = [
         StarOut(
@@ -185,5 +167,12 @@ def read_atlas(
         for row in edge_rows
     ]
 
-    response.headers["ETag"] = f'"{etag}"'
-    return ok(AtlasOut(stars=stars, constellations=constellations, edges=edges))
+    representation = Data(data=AtlasOut(stars=stars, constellations=constellations, edges=edges))
+    # one conditional http owner renders once; preserve standard-json float bytes.
+    response = JSONResponse(content=representation.model_dump(mode="json", by_alias=True))
+    etag = hashlib.sha256(response.body).hexdigest()
+    headers = {"ETag": f'"{etag}"'}
+    if if_none_match is not None and if_none_match.strip('"') == etag:
+        return Response(status_code=304, headers=headers)
+    response.headers.update(headers)
+    return response

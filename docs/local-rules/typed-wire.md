@@ -26,6 +26,12 @@ its wire types are generated from FastAPI's OpenAPI schema, so tsc catches drift
   typed route is serialized by pydantic, which renders floats in exponent form
   differently (`1e-05` becomes `0.00001`). a dynamic status or header goes on
   an injected `Response`, and the route still returns the model.
+- atlas is the named conditional-json exception: `GET /atlas` explicitly declares
+  `Data[AtlasOut]`, constructs that validated envelope, renders one `JSONResponse`
+  and hashes its actual body before returning 200 or bodyless 304. this preserves
+  the existing standard-json float bytes and makes the tag identify exactly what
+  is sent. the [atlas owner](../modules/atlas.md#conditional-http-owner) specifies
+  this boundary; other typed json routes return their model directly.
 - 204, binary, redirect and SSE routes keep their shape.
 - an SSE `data:` frame that is a model as-is is listed in `nexus/wire_schema.py`
   and generates under its own name, e.g. `Schema<"ChatRunDoneEventPayload">`,
