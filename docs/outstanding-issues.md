@@ -291,7 +291,7 @@ unexpected timeouts. See
 - [open] 2026-09-21 cleanup audit · offline reading store retains unused construction modes: [ticket](tickets/cleanup-offline-reading-unused-construction-seams.md).
 - [deferred] 2026-09-23 firefox v1 · the signed unlisted build needs AMO credentials and the production origins: [ticket](tickets/extension-firefox-distribution-consent-is-undeclared.md).
 - [open] 2026-09-23 firefox v1 track a · remove the browser-capture conversion command after its production run: [ticket](tickets/remove-browser-capture-conversion-command.md).
-- [open] 2026-09-21 auth audit · cookie settlement retirement needs locked-sdk subscriber-startup qualification: [ticket](tickets/auth-cookie-settlement-polls-an-awaited-sdk-callback.md).
+- [open] 2026-09-21 auth audit · cookie polling misses successor writes from unjoined sdk startup refresh: [ticket](tickets/auth-cookie-settlement-polls-an-awaited-sdk-callback.md).
 - [open] 2026-09-21 auth audit · one refresh can rotate the provider session twice: [ticket](tickets/auth-refresh-can-rotate-the-provider-session-twice.md).
 - [open] 2026-09-21 auth audit · response cookie ownership is split between route clients and refresh: [ticket](tickets/auth-response-cookie-ownership-is-split.md).
 - [open] 2026-09-21 auth audit · auth flows retain unused injection seams: [ticket](tickets/auth-flows-retain-unused-injection-seams.md).
@@ -329,7 +329,6 @@ unexpected timeouts. See
 - [open] dossiers / resource graph · 2026-09-28 cleanup pr-08 · user links to or from an `artifact_revision` die at the next regenerate; revisions should not be link endpoints: [ticket](tickets/dossier-revision-user-links-die-on-regenerate.md).
 - [open] dossiers / production migration · 2026-09-28 cleanup pr-08 · run 0250's stored-json preconditions and loss counts read-only against production before the backend deploy: [ticket](tickets/dossier-latest-revision-0250-production-preflight.md).
 - [open] schema / production migration · 2026-09-28 pr #413 · inventory irreversible 0251 data loss against the production lineage and verify the backup before release: [ticket](tickets/schema-0251-production-loss-preflight.md).
-- [open] 2026-09-28 source ingest · `_publish_file_source(kind)` and `reusable_embedded_source_media_ids(viewer_id)` take parameters they never read: [ticket](tickets/source-ingest-unused-parameters.md).
 - [open] release / billing · 2026-09-28 cleanup pr-03 · record the billing counts before the 0252 release; cancel stripe, delete its webhook and drop the billing env keys after it: [ticket](tickets/billing-0252-release-steps.md).
 - [open] podcasts / transcript api · 2026-09-27 cleanup pr-03 · p3 · the batch transcript forecast now only counts and fingerprints; removing it needs an expand step against the `extra=forbid` batch body: [ticket](tickets/podcast-batch-transcript-forecast-is-vestigial.md).
 - [deferred] consumption / schema · 2026-09-28 consumption-stats reauthoring · four consumption state timestamps are written by nothing and read by nothing; drop them one release later: [ticket](tickets/drop-write-only-consumption-timestamps.md).

@@ -1,4 +1,4 @@
-# auth cookie settlement polls an awaited sdk callback
+# auth cookie settlement does not join sdk startup
 
 status: open · origin: 2026-09-21 cleanup auth audit · area: web auth
 
@@ -17,14 +17,22 @@ source qualification, 2026-10-02 at main `aea51d2b3`: the locked compiled
 explicit-operation awaits do not themselves join that startup task;
 `refreshingDeferred` and any configured lock can affect whether the paths
 converge. both distributed javascript builds and the actual Next auth bundle
-contain these paths. no live post-response write defect has been verified.
+contain these paths.
 
-proposed fix, only after that startup is qualified: remove the settlement methods, counters, timers and call-site awaits;
-keep actual cookie/header collection and response publication at one owner.
-prerequisite: verify retained operations and subscriber startup against the
-locked executed sdk. prove whether near-expiry startup can publish after the
-response, including shared refresh promises/locks. if no stable complete
-boundary is established, park the deletion; do not add another timer fallback.
+actual qualification, 2026-10-02: the retained password recovery route returns
+303 with its pkce cookie after the current settlement poll while a startup
+refresh is held. releasing that request writes successor auth cookies after
+return; they are absent from the returned response. the actual password sign-in
+publishes before return. receipt:
+`/tmp/nexus-auth-startup.E0TlcS/qualification.receipt.json`. this uses the locked
+cjs sdk, real route owners and `NextResponse`, fixed cookie/env leaves, synthetic
+credentials and a loopback provider. no hosted authentication was exercised.
+
+fix prerequisite: establish one complete operation/startup cookie-publication
+boundary against the locked sdk, including shared refresh promises/locks.
+then remove settlement methods, counters, timers and call-site polling while
+retaining cookie/header collection and response publication at one owner.
+do not replace the incomplete poll with another timer fallback.
 
 acceptance: callback exchange, password sign-in/update, otp confirmation,
 native sign-in and refresh publish the same cookies and no-store headers

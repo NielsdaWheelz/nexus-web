@@ -361,7 +361,6 @@ def _run_remote_file(
         return _publish_file_source(
             db,
             media_id=media_id,
-            kind=kind,
             prepared=prepared,
             source_file=ReaderPublicationSourceFile(
                 storage_path=storage_path,
@@ -430,9 +429,7 @@ def _run_existing_file(
         label=f"publish_{kind}_source_artifacts",
         fence=fence,
         media_ids=(media_id,),
-        mutate=lambda db, _attempt: _publish_file_source(
-            db, media_id=media_id, kind=kind, prepared=prepared
-        ),
+        mutate=lambda db, _attempt: _publish_file_source(db, media_id=media_id, prepared=prepared),
     )
     _finalize_file_source(session_factory, media_id=media_id, prepared=prepared)
     delete_document_storage_objects(cleanup_paths, get_storage_client())
@@ -488,7 +485,6 @@ def _publish_file_source(
     db: Session,
     *,
     media_id: UUID,
-    kind: str,
     prepared: ExtractionPlan,
     source_file: ReaderPublicationSourceFile | None = None,
 ) -> tuple[dict[str, object], list[str]]:
@@ -680,9 +676,7 @@ def _publish_stored_html(
     def discover(db: Session) -> list[UUID]:
         locked_embed_media_ids.clear()
         if owner_user_id is not None and embed_urls:
-            locked_embed_media_ids.update(
-                reusable_embedded_source_media_ids(db, viewer_id=owner_user_id, urls=embed_urls)
-            )
+            locked_embed_media_ids.update(reusable_embedded_source_media_ids(db, urls=embed_urls))
         return sorted(locked_embed_media_ids)
 
     def publish(
