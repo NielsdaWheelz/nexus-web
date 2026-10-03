@@ -30,6 +30,8 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
+- [document embed card repeats child title](tickets/document-embed-card-repeats-child-title.md): resolved target title is also rendered as a second description paragraph.
+
 - [local documents access blocks owned cleanup](tickets/local-documents-access-blocks-owned-cleanup.md): host access denies source reads and cleanup of an unused owned writing checkout; product behavior is unaffected.
 
 - [open] operator credentials · 2026-10-02 cleanup workflow · skid's three peer bearer fields were printed into a tool transcript; coordinate rotation with active sessions: [ticket](tickets/local-qualification-credential-transcript-exposure.md).
