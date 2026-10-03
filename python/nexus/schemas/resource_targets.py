@@ -32,7 +32,7 @@ class ResourceTargetSearchRequest(CamelModel):
 class ResourceTargetResourceOut(CamelModel):
     kind: Literal["resource"] = "resource"
     item: ResourceItemOut
-    existing_link_id: UUID | None = None
+    existing_link_id: UUID | None
 
 
 class ResourceTargetPassageOut(CamelModel):
@@ -42,7 +42,7 @@ class ResourceTargetPassageOut(CamelModel):
     label: str
     excerpt: str
     activation: ResourceActivationOut
-    existing_link_id: UUID | None = None
+    existing_link_id: UUID | None
 
 
 ResourceTargetOut = Annotated[
@@ -53,4 +53,4 @@ ResourceTargetOut = Annotated[
 
 class ResourceTargetSearchResponse(CamelModel):
     targets: list[ResourceTargetOut]
-    next_cursor: str | None = None
+    next_cursor: str | None
