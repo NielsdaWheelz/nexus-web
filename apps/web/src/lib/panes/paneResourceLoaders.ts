@@ -22,7 +22,7 @@ import {
   mediaDetailFromResponse,
   type MediaDetail,
 } from "@/lib/media/mediaDetail";
-import { decodeMediaFragmentsResponse } from "@/lib/media/mediaFragment";
+import { mediaFragmentsFromResponse } from "@/lib/media/mediaFragment";
 import type { Fragment } from "@/lib/media/transcriptView";
 import { isAbortError } from "@/lib/errors";
 import {
@@ -129,14 +129,12 @@ export async function loadMediaPane(
     data: [],
   };
   if (shouldLoadInitialMediaFragments(media)) {
-    let rawFragmentsResponse: unknown = null;
-    let fragmentsFetchSucceeded = false;
+    let fragmentsResponse: ApiJson<"/media/{media_id}/fragments", "get"> | undefined;
     try {
-      rawFragmentsResponse = await request<{ id: string }, unknown>(
+      fragmentsResponse = await request<{ id: string }, ApiJson<"/media/{media_id}/fragments", "get">>(
         mediaFragmentsResource,
         params,
       );
-      fragmentsFetchSucceeded = true;
     } catch (error) {
       if (isAbortError(error)) throw error;
       fragments = {
@@ -144,10 +142,10 @@ export async function loadMediaPane(
         error: paneSubresourceFailure(error),
       };
     }
-    if (fragmentsFetchSucceeded) {
+    if (fragmentsResponse !== undefined) {
       fragments = {
         status: "ready",
-        data: decodeMediaFragmentsResponse(rawFragmentsResponse, media.id),
+        data: mediaFragmentsFromResponse(fragmentsResponse, media.id),
       };
     }
   }

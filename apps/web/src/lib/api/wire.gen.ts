@@ -4022,6 +4022,18 @@ export interface components {
             /** Target Schemes */
             target_schemes?: ("media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "artifact" | "artifact_revision" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor")[] | null;
         };
+        /** ConnectionLinkNoteOut */
+        ConnectionLinkNoteOut: {
+            /**
+             * Note Block Id
+             * Format: uuid
+             */
+            note_block_id: string;
+            /** Preview */
+            preview: string | null;
+            /** Ref */
+            ref: string;
+        };
         /** ConnectionQueryRequest */
         ConnectionQueryRequest: {
             /** Cursor */
@@ -4605,6 +4617,10 @@ export interface components {
         Data_LibraryOut_: {
             data: components["schemas"]["LibraryOut"];
         };
+        /** Data[MediaNavigationOut] */
+        Data_MediaNavigationOut_: {
+            data: components["schemas"]["MediaNavigationOut"];
+        };
         /** Data[MediaOut] */
         Data_MediaOut_: {
             data: components["schemas"]["MediaOut"];
@@ -4657,6 +4673,10 @@ export interface components {
         Data_PublicShareOut_: {
             data: components["schemas"]["PublicShareOut"];
         };
+        /** Data[ReaderDocumentMapOut] */
+        Data_ReaderDocumentMapOut_: {
+            data: components["schemas"]["ReaderDocumentMapOut"];
+        };
         /** Data[ResourceActionSnapshotResolveResponse] */
         Data_ResourceActionSnapshotResolveResponse_: {
             data: components["schemas"]["ResourceActionSnapshotResolveResponse"];
@@ -4680,6 +4700,11 @@ export interface components {
         /** Data[TranscriptRequestOut] */
         Data_TranscriptRequestOut_: {
             data: components["schemas"]["TranscriptRequestOut"];
+        };
+        /** Data[list[FragmentOut]] */
+        Data_list_FragmentOut__: {
+            /** Data */
+            data: components["schemas"]["FragmentOut"][];
         };
         /** Data[list[LibraryPlacementOptionOut]] */
         Data_list_LibraryPlacementOptionOut__: {
@@ -4720,6 +4745,117 @@ export interface components {
              */
             kind: "Direct";
         };
+        /** DocumentEmbedDisplayActionOut */
+        DocumentEmbedDisplayActionOut: {
+            /**
+             * Disabled
+             * @default false
+             */
+            disabled: boolean;
+            /** Href */
+            href: string | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "open_child_media" | "open_original" | "retry_child" | "refresh_parent";
+            /** Label */
+            label: string;
+        };
+        /** DocumentEmbedDisplayOut */
+        DocumentEmbedDisplayOut: {
+            /** Actions */
+            actions: components["schemas"]["DocumentEmbedDisplayActionOut"][];
+            /** Description */
+            description: string;
+            /** Label */
+            label: string;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "resolved" | "pending" | "unsupported" | "failed";
+        };
+        /** DocumentEmbedLocatorOut */
+        DocumentEmbedLocatorOut: {
+            /** Canonical End Offset */
+            canonical_end_offset: number | null;
+            /** Canonical Start Offset */
+            canonical_start_offset: number | null;
+            /** Document Order Key */
+            document_order_key: string;
+            /** Fragment Id */
+            fragment_id: string | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "anchored" | "unanchored";
+            /** Placeholder Text */
+            placeholder_text: string;
+        };
+        /** DocumentEmbedOut */
+        DocumentEmbedOut: {
+            authored_text: components["schemas"]["DocumentEmbedTextOut"];
+            canonical_url: components["schemas"]["DocumentEmbedUrlOut"];
+            description: components["schemas"]["DocumentEmbedTextOut"];
+            display: components["schemas"]["DocumentEmbedDisplayOut"];
+            error_code: components["schemas"]["DocumentEmbedTextOut"];
+            /** Fragment Id */
+            fragment_id: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "video" | "post" | "audio" | "link_preview" | "unknown";
+            locator: components["schemas"]["DocumentEmbedLocatorOut"];
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            /** Occurrence Key */
+            occurrence_key: string;
+            /** Ordinal */
+            ordinal: number;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "youtube" | "x" | "substack" | "vimeo" | "spotify" | "generic" | "unknown";
+            provider_target_ref: components["schemas"]["DocumentEmbedProviderRefOut"];
+            /**
+             * Resolution Status
+             * @enum {string}
+             */
+            resolution_status: "resolving" | "resolved" | "unsupported" | "failed";
+            /**
+             * Source Shape
+             * @enum {string}
+             */
+            source_shape: "iframe" | "blockquote" | "anchor" | "video_tag" | "provider_json" | "unknown";
+            source_url: components["schemas"]["DocumentEmbedUrlOut"];
+            target: components["schemas"]["DocumentEmbedTargetOut"];
+            thumbnail_url: components["schemas"]["DocumentEmbedUrlOut"];
+            title: components["schemas"]["DocumentEmbedTextOut"];
+        };
+        /** DocumentEmbedProviderRefOut */
+        DocumentEmbedProviderRefOut: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "present" | "absent";
+            /** Reason */
+            reason: ("unsupported_provider" | "unparseable" | "not_applicable") | null;
+            /** Value */
+            value: string | null;
+        };
         /** DocumentEmbedSummaryOut */
         DocumentEmbedSummaryOut: {
             /** Failed Count */
@@ -4735,6 +4871,53 @@ export interface components {
             total_count: number;
             /** Unsupported Count */
             unsupported_count: number;
+        };
+        /** DocumentEmbedTargetOut */
+        DocumentEmbedTargetOut: {
+            /** Href */
+            href: string | null;
+            /** Kind */
+            kind: string | null;
+            /** Media Id */
+            media_id: string | null;
+            playback: components["schemas"]["PlaybackSourceOut"] | null;
+            /** Resource Ref */
+            resource_ref: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "exact" | "container" | "missing" | "forbidden" | "unanchorable" | "stale" | "unsupported" | "partial";
+            /** Thumbnail Url */
+            thumbnail_url: string | null;
+            /** Title */
+            title: string | null;
+        };
+        /** DocumentEmbedTextOut */
+        DocumentEmbedTextOut: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "present" | "absent";
+            /** Reason */
+            reason: ("not_in_source" | "redacted" | "not_applicable") | null;
+            /** Value */
+            value: string | null;
+        };
+        /** DocumentEmbedUrlOut */
+        DocumentEmbedUrlOut: {
+            /** Error Code */
+            error_code: string | null;
+            /** Reason */
+            reason: ("not_in_source" | "not_applicable") | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "present" | "malformed" | "absent";
+            /** Value */
+            value: string | null;
         };
         /**
          * DossierBuildAdmittedGenerationOut
@@ -5004,10 +5187,7 @@ export interface components {
             section_id?: string | null;
             /** Start Offset */
             start_offset: number;
-            /** Text Quote Selector */
-            text_quote_selector?: {
-                [key: string]: unknown;
-            } | null;
+            text_quote_selector?: components["schemas"]["TextQuoteSelector"] | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -5228,6 +5408,42 @@ export interface components {
              * @enum {string}
              */
             type: "fragment_offsets";
+        };
+        /** FragmentOut */
+        FragmentOut: {
+            /** Canonical Text */
+            canonical_text: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Document Embeds */
+            document_embeds: components["schemas"]["DocumentEmbedOut"][];
+            /** Document Word Start */
+            document_word_start: number;
+            /** Html Sanitized */
+            html_sanitized: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Idx */
+            idx: number;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            /** Speaker Label */
+            speaker_label: string | null;
+            /** T End Ms */
+            t_end_ms: number | null;
+            /** T Start Ms */
+            t_start_ms: number | null;
+            /** Word Count */
+            word_count: number;
         };
         /** FromUrlRequest */
         FromUrlRequest: {
@@ -6472,6 +6688,33 @@ export interface components {
             /** Media Ref */
             media_ref: string;
         };
+        /** MediaNavigationOut */
+        MediaNavigationOut: {
+            /** Fragments */
+            fragments: components["schemas"]["ReaderNavigationFragmentOut"][];
+            /** Generation */
+            generation: number;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "epub" | "web_article";
+            /** Landmarks */
+            landmarks: components["schemas"]["ReaderNavigationLocationOut"][];
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            /** Page List */
+            page_list: components["schemas"]["ReaderNavigationLocationOut"][];
+            /** Sections */
+            sections: components["schemas"]["ReaderNavigationSectionOut"][];
+            /** Source Issues */
+            source_issues: (components["schemas"]["MissingImage"] | components["schemas"]["UnresolvedNavigationTarget"])[];
+            /** Toc Nodes */
+            toc_nodes: components["schemas"]["ReaderNavigationTocNodeOut"][];
+        };
         /**
          * MediaOut
          * @description The media detail wire: snake_case throughout except ``playerDescriptor``.
@@ -6651,6 +6894,27 @@ export interface components {
              * @enum {string}
              */
             type: "move_occurrence";
+        };
+        /**
+         * NavigationTextPointOut
+         * @description An exact canonical codepoint boundary within one source fragment.
+         */
+        NavigationTextPointOut: {
+            /**
+             * Fragment Id
+             * Format: uuid
+             */
+            fragment_id: string;
+            /** Offset */
+            offset: number;
+        };
+        /**
+         * NavigationTextRangeOut
+         * @description A semantic extent, potentially spanning several canonical fragments.
+         */
+        NavigationTextRangeOut: {
+            end: components["schemas"]["NavigationTextPointOut"];
+            start: components["schemas"]["NavigationTextPointOut"];
         };
         /** NewAuthorBinding */
         NewAuthorBinding: {
@@ -7128,10 +7392,7 @@ export interface components {
             quads: components["schemas"]["PdfGeometryQuad"][];
             /** Suffix */
             suffix?: string | null;
-            /** Text Quote Selector */
-            text_quote_selector?: {
-                [key: string]: unknown;
-            } | null;
+            text_quote_selector?: components["schemas"]["TextQuoteSelector"] | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -7548,11 +7809,13 @@ export interface components {
         Presence_Annotated_Union_RetryUploadOffer__RetrySourceOffer__RepairSourceOffer__RepairSearchOffer___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_Union_RetryUploadOffer__RetrySourceOffer__RepairSourceOffer__RepairSearchOffer___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
         Presence_Annotated_Union_SourceStageProgress__SourceCountedProgress___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_Union_SourceStageProgress__SourceCountedProgress___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
         Presence_Annotated_Union_UploadTransportNetworkFailure__UploadTransportTimeoutFailure__UploadTransportHttpRejectedFailure__UploadTransportAbortedFailure___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_Union_UploadTransportNetworkFailure__UploadTransportTimeoutFailure__UploadTransportHttpRejectedFailure__UploadTransportAbortedFailure___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+        Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__0__0_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__0__0_____"];
         Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____"];
         Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____"];
         Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____"];
         Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_9223372036854775807_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_9223372036854775807_____"];
         Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___Ge_ge_0___Le_le_2147483647_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___Ge_ge_0___Le_le_2147483647_____"];
+        Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___Ge_ge_1_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___Ge_ge_1_____"];
         Presence_Annotated_list_Literal__media____library____evidence_span____content_chunk____highlight____page____note_block____fragment____conversation____message____oracle_reading____oracle_passage_anchor____artifact____artifact_revision____external_snapshot____contributor____podcast____reader_apparatus_item____passage_anchor_____FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_list_Literal__media____library____evidence_span____content_chunk____highlight____page____note_block____fragment____conversation____message____oracle_reading____oracle_passage_anchor____artifact____artifact_revision____external_snapshot____contributor____podcast____reader_apparatus_item____passage_anchor_____FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____"];
         Presence_Annotated_str__AfterValidator__: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__AfterValidator__"];
         Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____"];
@@ -7580,6 +7843,9 @@ export interface components {
         Presence_Literal__Queue____Capacity____RetryBackoff___: components["schemas"]["Absent"] | components["schemas"]["Present_Literal__Queue____Capacity____RetryBackoff___"];
         Presence_Literal__Upload____Validate____Extract____Finalize____Index____SourceProcessing___: components["schemas"]["Absent"] | components["schemas"]["Present_Literal__Upload____Validate____Extract____Finalize____Index____SourceProcessing___"];
         Presence_MediaDurationOut_: components["schemas"]["Absent"] | components["schemas"]["Present_MediaDurationOut_"];
+        Presence_MediaNavigationOut_: components["schemas"]["Absent"] | components["schemas"]["Present_MediaNavigationOut_"];
+        Presence_NavigationTextPointOut_: components["schemas"]["Absent"] | components["schemas"]["Present_NavigationTextPointOut_"];
+        Presence_NavigationTextRangeOut_: components["schemas"]["Absent"] | components["schemas"]["Present_NavigationTextRangeOut_"];
         Presence_PlayerDescriptor_: components["schemas"]["Absent"] | components["schemas"]["Present_PlayerDescriptor_"];
         Presence_PodcastPlaybackPreference_: components["schemas"]["Absent"] | components["schemas"]["Present_PodcastPlaybackPreference_"];
         Presence_PodcastReplacementConfirmation_: components["schemas"]["Absent"] | components["schemas"]["Present_PodcastReplacementConfirmation_"];
@@ -7652,6 +7918,16 @@ export interface components {
             /** Value */
             value: components["schemas"]["UploadTransportNetworkFailure"] | components["schemas"]["UploadTransportTimeoutFailure"] | components["schemas"]["UploadTransportHttpRejectedFailure"] | components["schemas"]["UploadTransportAbortedFailure"];
         };
+        /** Present[Annotated[float, FieldInfo(annotation=NoneType, required=True, metadata=[Ge(ge=0.0), Le(le=1.0)])]] */
+        Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__0__0_____: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /** Value */
+            value: number;
+        };
         /** Present[Annotated[float, FieldInfo(annotation=NoneType, required=True, metadata=[Ge(ge=0), Le(le=1)])]] */
         Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____: {
             /**
@@ -7694,6 +7970,16 @@ export interface components {
         };
         /** Present[Annotated[int, FieldInfo(annotation=NoneType, required=True, metadata=[Strict(strict=True), Ge(ge=0), Le(le=2147483647)])]] */
         Present_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___Ge_ge_0___Le_le_2147483647_____: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /** Value */
+            value: number;
+        };
+        /** Present[Annotated[int, FieldInfo(annotation=NoneType, required=True, metadata=[Strict(strict=True), Ge(ge=1)])]] */
+        Present_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___Ge_ge_1_____: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -7977,6 +8263,33 @@ export interface components {
              */
             kind: "Present";
             value: components["schemas"]["MediaDurationOut"];
+        };
+        /** Present[MediaNavigationOut] */
+        Present_MediaNavigationOut_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["MediaNavigationOut"];
+        };
+        /** Present[NavigationTextPointOut] */
+        Present_NavigationTextPointOut_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["NavigationTextPointOut"];
+        };
+        /** Present[NavigationTextRangeOut] */
+        Present_NavigationTextRangeOut_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["NavigationTextRangeOut"];
         };
         /** Present[PlayerDescriptor] */
         Present_PlayerDescriptor_: {
@@ -8295,6 +8608,61 @@ export interface components {
             /** Target Ref */
             target_ref: string;
         };
+        /** ReaderDocumentMapDiagnosticsOut */
+        ReaderDocumentMapDiagnosticsOut: {
+            /** Omitted Item Counts */
+            omitted_item_counts: {
+                [key: string]: number;
+            };
+        };
+        /** ReaderDocumentMapMarkerOut */
+        ReaderDocumentMapMarkerOut: {
+            end_position: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__0__0_____"];
+            /** Id */
+            id: string;
+            /** Item Id */
+            item_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "Contents" | "Embed" | "Highlight" | "SourceReference" | "GeneratedCitation" | "Link" | "Synapse";
+            /** Label */
+            label: string;
+            /** Position */
+            position: number;
+            preview: components["schemas"]["Presence_str_"];
+            /**
+             * Tone
+             * @enum {string}
+             */
+            tone: "Neutral" | "Highlight" | "Citation" | "Link" | "Synapse" | "Warning";
+        };
+        /** ReaderDocumentMapOut */
+        ReaderDocumentMapOut: {
+            diagnostics: components["schemas"]["ReaderDocumentMapDiagnosticsOut"];
+            /** Embeds */
+            embeds: components["schemas"]["DocumentEmbedOut"][];
+            evidence: components["schemas"]["ReaderEvidenceOut"];
+            generation: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___Ge_ge_1_____"];
+            /** Markers */
+            markers: components["schemas"]["ReaderDocumentMapMarkerOut"][];
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            /** Media Kind */
+            media_kind: string;
+            navigation: components["schemas"]["Presence_MediaNavigationOut_"];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ready" | "empty" | "partial";
+            /** Title */
+            title: string;
+        };
         /** ReaderEpubTarget */
         ReaderEpubTarget: {
             anchor_id: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__"];
@@ -8306,10 +8674,444 @@ export interface components {
             /** Href Path */
             href_path: string;
         };
+        /** ReaderEvidenceAlsoReferenceOut */
+        ReaderEvidenceAlsoReferenceOut: {
+            /** Object */
+            object: components["schemas"]["ReaderEvidenceChatObjectOut"] | components["schemas"]["ReaderEvidenceNoteObjectOut"] | components["schemas"]["ReaderEvidencePlainObjectOut"];
+            /**
+             * Relationship
+             * @default AlsoReferences
+             * @constant
+             */
+            relationship: "AlsoReferences";
+        };
+        /** ReaderEvidenceAnchorOut */
+        ReaderEvidenceAnchorOut: {
+            /** Locator */
+            locator: (components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"]) | components["schemas"]["ReaderPdfPageLocatorOut"];
+            /** Passage Anchor Id */
+            passage_anchor_id: string | null;
+        };
+        /** ReaderEvidenceAuthoredInOut */
+        ReaderEvidenceAuthoredInOut: {
+            /** Object */
+            object: components["schemas"]["ReaderEvidenceChatObjectOut"] | components["schemas"]["ReaderEvidenceNoteObjectOut"] | components["schemas"]["ReaderEvidencePlainObjectOut"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            relationship: "AuthoredIn";
+        };
+        /** ReaderEvidenceChatObjectOut */
+        ReaderEvidenceChatObjectOut: {
+            activation: components["schemas"]["ResourceActivationOut"];
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            excerpt: components["schemas"]["Presence_str_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Chat";
+            /** Label */
+            label: string;
+            message_ref: components["schemas"]["Presence_str_"];
+            /** Ref */
+            ref: string;
+        };
+        /** ReaderEvidenceCountsOut */
+        ReaderEvidenceCountsOut: {
+            /** Citations */
+            citations: number;
+            /** Document */
+            document: number;
+            /** Highlights */
+            highlights: number;
+            /** Links */
+            links: number;
+            /** Passages */
+            passages: number;
+            /** Synapses */
+            synapses: number;
+        };
+        /** ReaderEvidenceDirectlyAttachedOut */
+        ReaderEvidenceDirectlyAttachedOut: {
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "Outgoing" | "Incoming";
+            /**
+             * Edge Id
+             * Format: uuid
+             */
+            edge_id: string;
+            /** Object */
+            object: components["schemas"]["ReaderEvidenceChatObjectOut"] | components["schemas"]["ReaderEvidenceNoteObjectOut"] | components["schemas"]["ReaderEvidencePlainObjectOut"];
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "user" | "citation" | "system" | "note_body" | "highlight_note" | "synapse" | "document_embed" | "assistant" | "link_note";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            relationship: "DirectlyAttached";
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "context" | "supports" | "contradicts";
+        };
+        /** ReaderEvidenceGeneratedCitationOut */
+        ReaderEvidenceGeneratedCitationOut: {
+            /** Associations */
+            associations: (components["schemas"]["ReaderEvidenceAuthoredInOut"] | components["schemas"]["ReaderEvidenceDirectlyAttachedOut"])[];
+            /**
+             * Edge Id
+             * Format: uuid
+             */
+            edge_id: string;
+            excerpt: components["schemas"]["Presence_str_"];
+            /** Id */
+            id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "GeneratedCitation";
+            /** Label */
+            label: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "context" | "supports" | "contradicts";
+        };
+        /** ReaderEvidenceHighlightOut */
+        ReaderEvidenceHighlightOut: {
+            /** Associations */
+            associations: (components["schemas"]["ReaderEvidenceAuthoredInOut"] | components["schemas"]["ReaderEvidenceDirectlyAttachedOut"])[];
+            /**
+             * Author User Id
+             * Format: uuid
+             */
+            author_user_id: string;
+            /**
+             * Color
+             * @enum {string}
+             */
+            color: "yellow" | "green" | "blue" | "pink" | "purple";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            excerpt: components["schemas"]["Presence_str_"];
+            /**
+             * Highlight Id
+             * Format: uuid
+             */
+            highlight_id: string;
+            /** Id */
+            id: string;
+            /** Is Owner */
+            is_owner: boolean;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Highlight";
+            /** Label */
+            label: string;
+            /** Prefix */
+            prefix: string;
+            /** Quote */
+            quote: string;
+            /** Suffix */
+            suffix: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** ReaderEvidenceLinkOut */
+        ReaderEvidenceLinkOut: {
+            /** Associations */
+            associations: (components["schemas"]["ReaderEvidenceAuthoredInOut"] | components["schemas"]["ReaderEvidenceDirectlyAttachedOut"])[];
+            /**
+             * Edge Id
+             * Format: uuid
+             */
+            edge_id: string;
+            excerpt: components["schemas"]["Presence_str_"];
+            /** Id */
+            id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Link";
+            /** Label */
+            label: string;
+            link_note: components["schemas"]["ConnectionLinkNoteOut"] | null;
+            /** Object */
+            object: components["schemas"]["ReaderEvidenceChatObjectOut"] | components["schemas"]["ReaderEvidenceNoteObjectOut"] | components["schemas"]["ReaderEvidencePlainObjectOut"];
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "user" | "citation" | "system" | "note_body" | "highlight_note" | "synapse" | "document_embed" | "assistant" | "link_note";
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "context" | "supports" | "contradicts";
+        };
+        /** ReaderEvidenceNoteObjectOut */
+        ReaderEvidenceNoteObjectOut: {
+            activation: components["schemas"]["ResourceActivationOut"];
+            /** Body Pm Json */
+            body_pm_json: {
+                [key: string]: unknown;
+            };
+            excerpt: components["schemas"]["Presence_str_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Note";
+            /** Label */
+            label: string;
+            /**
+             * Note Block Id
+             * Format: uuid
+             */
+            note_block_id: string;
+            /** Ref */
+            ref: string;
+        };
+        /** ReaderEvidenceOut */
+        ReaderEvidenceOut: {
+            counts: components["schemas"]["ReaderEvidenceCountsOut"];
+            /** Document Items */
+            document_items: (components["schemas"]["ReaderEvidenceHighlightOut"] | components["schemas"]["ReaderEvidenceSourceReferenceOut"] | components["schemas"]["ReaderEvidenceGeneratedCitationOut"] | components["schemas"]["ReaderEvidenceLinkOut"] | components["schemas"]["ReaderEvidenceSynapseOut"])[];
+            /** Passage Groups */
+            passage_groups: components["schemas"]["ReaderEvidencePassageGroupOut"][];
+            /** Source Targets */
+            source_targets: components["schemas"]["ReaderEvidenceSourceTargetOut"][];
+        };
+        /** ReaderEvidencePassageGroupOut */
+        ReaderEvidencePassageGroupOut: {
+            /** Also References */
+            also_references: components["schemas"]["ReaderEvidenceAlsoReferenceOut"][];
+            /** Items */
+            items: (components["schemas"]["ReaderEvidenceHighlightOut"] | components["schemas"]["ReaderEvidenceSourceReferenceOut"] | components["schemas"]["ReaderEvidenceGeneratedCitationOut"] | components["schemas"]["ReaderEvidenceLinkOut"] | components["schemas"]["ReaderEvidenceSynapseOut"])[];
+            /** Locus Ref */
+            locus_ref: string;
+            /** Resolution */
+            resolution: components["schemas"]["ReaderEvidenceResolvedOut"] | components["schemas"]["ReaderEvidenceUnavailableOut"];
+            target_excerpt: components["schemas"]["Presence_str_"];
+        };
+        /**
+         * ReaderEvidencePlainObjectOut
+         * @description An object carrying no payload beyond the common four keys.
+         */
+        ReaderEvidencePlainObjectOut: {
+            activation: components["schemas"]["ResourceActivationOut"];
+            excerpt: components["schemas"]["Presence_str_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Dossier" | "Media" | "Oracle" | "Other";
+            /** Label */
+            label: string;
+            /** Ref */
+            ref: string;
+        };
+        /** ReaderEvidenceResolvedOut */
+        ReaderEvidenceResolvedOut: {
+            anchor: components["schemas"]["ReaderEvidenceAnchorOut"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Resolved";
+            /** Order Key */
+            order_key: string;
+        };
+        /** ReaderEvidenceSourceReferenceOut */
+        ReaderEvidenceSourceReferenceOut: {
+            /**
+             * Apparatus Kind
+             * @enum {string}
+             */
+            apparatus_kind: "footnote_ref" | "endnote_ref" | "bibliography_ref" | "sidenote_ref" | "margin_note_ref" | "footnote" | "endnote" | "bibliography_entry" | "sidenote" | "margin_note" | "reference_section";
+            /** Associations */
+            associations: (components["schemas"]["ReaderEvidenceAuthoredInOut"] | components["schemas"]["ReaderEvidenceDirectlyAttachedOut"])[];
+            /**
+             * Confidence
+             * @enum {string}
+             */
+            confidence: "exact" | "strong" | "probable";
+            excerpt: components["schemas"]["Presence_str_"];
+            /** Id */
+            id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "SourceReference";
+            /** Label */
+            label: string;
+            marker_anchor_id: components["schemas"]["Presence_str_"];
+            /** Stable Key */
+            stable_key: string;
+            /** Target Refs */
+            target_refs: string[];
+        };
+        /** ReaderEvidenceSourceTargetOut */
+        ReaderEvidenceSourceTargetOut: {
+            activation: components["schemas"]["ResourceActivationOut"];
+            /**
+             * Apparatus Kind
+             * @enum {string}
+             */
+            apparatus_kind: "footnote_ref" | "endnote_ref" | "bibliography_ref" | "sidenote_ref" | "margin_note_ref" | "footnote" | "endnote" | "bibliography_entry" | "sidenote" | "margin_note" | "reference_section";
+            /** Content */
+            content: components["schemas"]["ReaderSourceHtmlOut"] | components["schemas"]["ReaderSourceTextOut"] | components["schemas"]["ReaderSourceUnavailableOut"];
+            label: components["schemas"]["Presence_str_"];
+            /** Ref */
+            ref: string;
+            /** Resolution */
+            resolution: components["schemas"]["ReaderEvidenceResolvedOut"] | components["schemas"]["ReaderEvidenceUnavailableOut"];
+            /** Stable Key */
+            stable_key: string;
+        };
+        /** ReaderEvidenceSynapseOut */
+        ReaderEvidenceSynapseOut: {
+            /** Associations */
+            associations: (components["schemas"]["ReaderEvidenceAuthoredInOut"] | components["schemas"]["ReaderEvidenceDirectlyAttachedOut"])[];
+            /**
+             * Edge Id
+             * Format: uuid
+             */
+            edge_id: string;
+            excerpt: components["schemas"]["Presence_str_"];
+            /** Id */
+            id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Synapse";
+            /** Label */
+            label: string;
+            /** Object */
+            object: components["schemas"]["ReaderEvidenceChatObjectOut"] | components["schemas"]["ReaderEvidenceNoteObjectOut"] | components["schemas"]["ReaderEvidencePlainObjectOut"];
+            /** Rationale */
+            rationale: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "context" | "supports" | "contradicts";
+        };
+        /** ReaderEvidenceUnavailableOut */
+        ReaderEvidenceUnavailableOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Unavailable";
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "Missing" | "Unanchorable" | "Stale";
+        };
         /** ReaderFragmentTarget */
         ReaderFragmentTarget: {
             /** Fragment Id */
             fragment_id: string;
+        };
+        /**
+         * ReaderNavigationFragmentOut
+         * @description One unique canonical text unit in document order.
+         */
+        ReaderNavigationFragmentOut: {
+            /** Char Count */
+            char_count: number;
+            /**
+             * Fragment Id
+             * Format: uuid
+             */
+            fragment_id: string;
+            /** Fragment Idx */
+            fragment_idx: number;
+        };
+        /**
+         * ReaderNavigationLocationOut
+         * @description A non-TOC reader navigation target.
+         */
+        ReaderNavigationLocationOut: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            target: components["schemas"]["Presence_NavigationTextPointOut_"];
+        };
+        /** ReaderNavigationSectionOut */
+        ReaderNavigationSectionOut: {
+            anchor_id: components["schemas"]["Presence_str_"];
+            extent: components["schemas"]["Presence_NavigationTextRangeOut_"];
+            /** Label */
+            label: string;
+            parent_section_id: components["schemas"]["Presence_str_"];
+            /** Section Id */
+            section_id: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "Publisher" | "Heading" | "Both" | "InferredNumberedEntry";
+            target: components["schemas"]["NavigationTextPointOut"];
+        };
+        /**
+         * ReaderNavigationTocNodeOut
+         * @description A published destination, independently linked to a reading section.
+         */
+        ReaderNavigationTocNodeOut: {
+            /** Children */
+            children: components["schemas"]["ReaderNavigationTocNodeOut"][];
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            section_id: components["schemas"]["Presence_str_"];
+            target: components["schemas"]["Presence_NavigationTextPointOut_"];
+        };
+        /** ReaderPdfPageLocatorOut */
+        ReaderPdfPageLocatorOut: {
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            /** Page Number */
+            page_number: number;
+            /**
+             * Type
+             * @default pdf_page
+             * @constant
+             */
+            type: "pdf_page";
         };
         /**
          * ReaderProfilePatch
@@ -8361,6 +9163,36 @@ export interface components {
              * Format: uuid
              */
             media_id: string;
+        };
+        /** ReaderSourceHtmlOut */
+        ReaderSourceHtmlOut: {
+            /** Html Sanitized */
+            html_sanitized: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Html";
+            /** Text */
+            text: string;
+        };
+        /** ReaderSourceTextOut */
+        ReaderSourceTextOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Text";
+            /** Text */
+            text: string;
+        };
+        /** ReaderSourceUnavailableOut */
+        ReaderSourceUnavailableOut: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Unavailable";
         };
         /** ReaderTextLocations */
         ReaderTextLocations: {
@@ -10348,6 +11180,17 @@ export interface components {
             /** Positionms */
             positionMs: number;
         };
+        /** _TextQuoteGrammar */
+        TextQuoteSelector: {
+            /** Exact */
+            exact: string;
+            /** Prefix */
+            prefix?: string;
+            /** Suffix */
+            suffix?: string;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * TranscriptCoverage
          * @description Coverage quality for transcript artifacts.
@@ -10453,10 +11296,7 @@ export interface components {
             t_end_ms: number;
             /** T Start Ms */
             t_start_ms: number;
-            /** Text Quote Selector */
-            text_quote_selector?: {
-                [key: string]: unknown;
-            } | null;
+            text_quote_selector?: components["schemas"]["TextQuoteSelector"] | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -10823,10 +11663,7 @@ export interface components {
             media_kind?: string | null;
             /** Start Offset */
             start_offset: number;
-            /** Text Quote Selector */
-            text_quote_selector?: {
-                [key: string]: unknown;
-            } | null;
+            text_quote_selector?: components["schemas"]["TextQuoteSelector"] | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -14547,9 +15384,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ReaderDocumentMapOut_"];
                 };
             };
             /** @description Validation Error */
@@ -14682,9 +15517,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_list_FragmentOut__"];
                 };
             };
             /** @description Validation Error */
@@ -14915,9 +15748,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_MediaNavigationOut_"];
                 };
             };
             /** @description Validation Error */

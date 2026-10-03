@@ -1,276 +1,79 @@
-import type { ApiPath } from "@/lib/api/client";
 import { apiFetch } from "@/lib/api/client";
+import type { ApiJson, Schema } from "@/lib/api/wire";
 import { absent, present, type Presence } from "@/lib/api/presence";
-import type { MediaRetrievalLocator } from "@/lib/api/sse/locators";
-import type { HighlightColor } from "@/lib/highlights/segmenter";
-import type { DocumentEmbed } from "@/lib/media/documentEmbeds";
-import type { MediaNavigationResponse } from "@/lib/media/readerNavigation";
-import type { EdgeKind, EdgeOrigin } from "@/lib/resourceGraph/connections";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
-import { decodeReaderDocumentMapContract } from "./documentMapContract";
+import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 
-export type ReaderEvidenceFactKind =
-  "Highlight" | "SourceReference" | "GeneratedCitation" | "Link" | "Synapse";
-
+export type ReaderEvidenceFactKind = ReaderEvidenceItem["kind"];
 export type ReaderEvidenceSemanticKind =
   "highlight" | "citation" | "link" | "synapse";
-
-export type ReaderEvidenceSourceKind =
-  | "footnote_ref"
-  | "endnote_ref"
-  | "bibliography_ref"
-  | "sidenote_ref"
-  | "margin_note_ref"
-  | "footnote"
-  | "endnote"
-  | "bibliography_entry"
-  | "sidenote"
-  | "margin_note"
-  | "reference_section";
-
-export type ReaderEvidenceConfidence = "exact" | "strong" | "probable";
-
-export interface ReaderPdfPageLocator {
-  type: "pdf_page";
-  media_id: string;
-  page_number: number;
-}
-
-export type ReaderEvidenceLocator =
-  | MediaRetrievalLocator
-  | ReaderPdfPageLocator;
-
-export interface ReaderEvidenceAnchor {
-  locator: ReaderEvidenceLocator;
-  // Present when the resolved locus is a durable passage anchor, so a mutation
-  // can key off the anchor rather than the edge. Null for every other locus.
-  passage_anchor_id: string | null;
-}
-
-export type ReaderEvidenceResolution =
-  | {
-      kind: "Resolved";
-      anchor: ReaderEvidenceAnchor;
-      order_key: string;
-    }
-  | {
-      kind: "Unavailable";
-      reason: "Missing" | "Unanchorable" | "Stale";
-    };
-
-interface ReaderEvidenceObjectBase {
-  ref: string;
-  label: string;
-  excerpt: Presence<string>;
-  activation: ResourceActivation;
-  actionSubject: ResourceActionSubject;
-}
-
-export interface ReaderEvidenceChatObject extends ReaderEvidenceObjectBase {
-  kind: "Chat";
-  conversation_id: string;
-  message_ref: Presence<string>;
-}
-
-export interface ReaderEvidenceNoteObject extends ReaderEvidenceObjectBase {
-  kind: "Note";
-  note_block_id: string;
-  body_pm_json: Record<string, unknown>;
-}
-
-export interface ReaderEvidenceDossierObject extends ReaderEvidenceObjectBase {
-  kind: "Dossier";
-}
-
-export interface ReaderEvidenceOracleObject extends ReaderEvidenceObjectBase {
-  kind: "Oracle";
-}
-
-export interface ReaderEvidenceMediaObject extends ReaderEvidenceObjectBase {
-  kind: "Media";
-}
-
-export interface ReaderEvidenceOtherObject extends ReaderEvidenceObjectBase {
-  kind: "Other";
-}
-
-export type ReaderEvidenceObject =
-  | ReaderEvidenceChatObject
-  | ReaderEvidenceNoteObject
-  | ReaderEvidenceDossierObject
-  | ReaderEvidenceOracleObject
-  | ReaderEvidenceMediaObject
-  | ReaderEvidenceOtherObject;
-
-export interface ReaderEvidenceAuthoredInAssociation {
-  relationship: "AuthoredIn";
-  object: ReaderEvidenceObject;
-}
-
-export interface ReaderEvidenceDirectlyAttachedAssociation {
-  relationship: "DirectlyAttached";
-  object: ReaderEvidenceObject;
-  edge_id: string;
-  role: EdgeKind;
-  origin: EdgeOrigin;
-  direction: "Outgoing" | "Incoming";
-}
-
-export type ReaderEvidenceHighlightNoteAssociation =
-  ReaderEvidenceDirectlyAttachedAssociation & {
-    origin: "highlight_note";
-    direction: "Outgoing";
-    object: ReaderEvidenceNoteObject;
-  };
-
-export type ReaderEvidenceUserStanceAssociation =
-  ReaderEvidenceDirectlyAttachedAssociation & {
-    origin: "user";
-    direction: "Outgoing";
-    role: "supports" | "contradicts";
-  };
-
-export type ReaderEvidenceAssociation =
-  | ReaderEvidenceAuthoredInAssociation
-  | ReaderEvidenceDirectlyAttachedAssociation;
-
-export interface ReaderEvidenceAlsoReference {
-  relationship: "AlsoReferences";
-  object: ReaderEvidenceObject;
-}
-
-interface ReaderEvidenceItemBase {
-  id: string;
-  label: string;
-  excerpt: Presence<string>;
-  associations: ReaderEvidenceAssociation[];
-}
-
-export interface ReaderEvidenceHighlight extends ReaderEvidenceItemBase {
-  kind: "Highlight";
-  highlight_id: string;
-  quote: string;
-  prefix: string;
-  suffix: string;
-  color: HighlightColor;
-  created_at: string;
-  updated_at: string;
-  author_user_id: string;
-  is_owner: boolean;
-}
-
-export type ReaderEvidenceSourceContent =
-  | { kind: "Html"; html_sanitized: string; text: string }
-  | { kind: "Text"; text: string }
-  | { kind: "Unavailable" };
-
+export type ReaderEvidenceResolution = Schema<"ReaderEvidencePassageGroupOut">["resolution"];
+export type ReaderEvidenceSourceContent = Schema<"ReaderEvidenceSourceTargetOut">["content"];
 export interface ReaderEvidenceSourceActivation {
   occurrenceItemId: string | null;
   targetRef: string;
 }
 
-export interface ReaderEvidenceSourceTarget {
-  ref: string;
-  stable_key: string;
-  apparatus_kind: ReaderEvidenceSourceKind;
-  label: Presence<string>;
-  content: ReaderEvidenceSourceContent;
+type WithActivation<T> = Omit<T, "activation"> & {
   activation: ResourceActivation;
   actionSubject: ResourceActionSubject;
-  resolution: ReaderEvidenceResolution;
-}
-
-export interface ReaderEvidenceSourceReference extends ReaderEvidenceItemBase {
-  kind: "SourceReference";
-  stable_key: string;
-  apparatus_kind: ReaderEvidenceSourceKind;
-  confidence: ReaderEvidenceConfidence;
-  marker_anchor_id: Presence<string>;
-  target_refs: string[];
-}
-
-export interface ReaderEvidenceGeneratedCitation extends ReaderEvidenceItemBase {
-  kind: "GeneratedCitation";
-  edge_id: string;
-  role: EdgeKind;
-}
-
-export interface ReaderEvidenceLink extends ReaderEvidenceItemBase {
-  kind: "Link";
-  edge_id: string;
-  role: EdgeKind;
-  origin: EdgeOrigin;
-  object: ReaderEvidenceObject;
-  link_note: { ref: string; note_block_id: string; preview: string | null } | null;
-}
-
-/** Explicit user-authored graph facts that the Evidence presenter may remove.
- * A fact can arrive either as a top-level Link row or folded onto another fact
- * as a DirectlyAttached association; both carry the authoritative mutation key
- * and relation role. */
-export type ReaderEvidenceUserLink = ReaderEvidenceLink & {
-  origin: "user";
 };
-export type ReaderEvidenceUserAssociation =
-  ReaderEvidenceDirectlyAttachedAssociation & {
-    origin: "user";
+export type ReaderEvidenceNoteObject = WithActivation<Schema<"ReaderEvidenceNoteObjectOut">>;
+export type ReaderEvidenceObject =
+  | WithActivation<Schema<"ReaderEvidenceChatObjectOut">>
+  | ReaderEvidenceNoteObject
+  | WithActivation<Schema<"ReaderEvidencePlainObjectOut">>;
+export type ReaderEvidenceSourceTarget = WithActivation<Schema<"ReaderEvidenceSourceTargetOut">>;
+export type ReaderEvidenceDirectlyAttachedAssociation =
+  Omit<Schema<"ReaderEvidenceDirectlyAttachedOut">, "object"> & {
+    object: ReaderEvidenceObject;
   };
-export type ReaderEvidenceUserEdge =
-  ReaderEvidenceUserLink | ReaderEvidenceUserAssociation;
-
-export interface ReaderEvidenceSynapse extends ReaderEvidenceItemBase {
-  kind: "Synapse";
-  edge_id: string;
-  role: EdgeKind;
-  rationale: string;
-  object: ReaderEvidenceObject;
-}
-
+export type ReaderEvidenceAssociation =
+  | (Omit<Schema<"ReaderEvidenceAuthoredInOut">, "object"> & { object: ReaderEvidenceObject })
+  | ReaderEvidenceDirectlyAttachedAssociation;
+export type ReaderEvidenceAlsoReference =
+  Omit<Schema<"ReaderEvidenceAlsoReferenceOut">, "object"> & {
+    object: ReaderEvidenceObject;
+  };
+export type ReaderEvidenceHighlightNoteAssociation = ReaderEvidenceDirectlyAttachedAssociation & {
+  origin: "highlight_note";
+  direction: "Outgoing";
+  object: ReaderEvidenceNoteObject;
+};
+export type ReaderEvidenceUserStanceAssociation = ReaderEvidenceDirectlyAttachedAssociation & {
+  origin: "user";
+  direction: "Outgoing";
+  role: "supports" | "contradicts";
+};
+type WithAssociations<T> = Omit<T, "associations"> & { associations: ReaderEvidenceAssociation[] };
+export type ReaderEvidenceHighlight = WithAssociations<Schema<"ReaderEvidenceHighlightOut">>;
+export type ReaderEvidenceSourceReference = WithAssociations<Schema<"ReaderEvidenceSourceReferenceOut">>;
+export type ReaderEvidenceLink =
+  Omit<WithAssociations<Schema<"ReaderEvidenceLinkOut">>, "object"> & {
+    object: ReaderEvidenceObject;
+  };
 export type ReaderEvidenceItem =
   | ReaderEvidenceHighlight
   | ReaderEvidenceSourceReference
-  | ReaderEvidenceGeneratedCitation
+  | WithAssociations<Schema<"ReaderEvidenceGeneratedCitationOut">>
   | ReaderEvidenceLink
-  | ReaderEvidenceSynapse;
-
-export interface ReaderEvidencePassageGroup {
-  locus_ref: string;
-  resolution: ReaderEvidenceResolution;
-  target_excerpt: Presence<string>;
+  | (Omit<WithAssociations<Schema<"ReaderEvidenceSynapseOut">>, "object"> & { object: ReaderEvidenceObject });
+export type ReaderEvidenceUserLink = ReaderEvidenceLink & { origin: "user" };
+export type ReaderEvidenceUserAssociation = ReaderEvidenceDirectlyAttachedAssociation & { origin: "user" };
+export type ReaderEvidenceUserEdge = ReaderEvidenceUserLink | ReaderEvidenceUserAssociation;
+export type ReaderEvidencePassageGroup = Omit<Schema<"ReaderEvidencePassageGroupOut">, "items" | "also_references"> & {
   items: ReaderEvidenceItem[];
   also_references: ReaderEvidenceAlsoReference[];
-}
-
-export interface ReaderEvidenceCounts {
-  highlights: number;
-  citations: number;
-  links: number;
-  synapses: number;
-  passages: number;
-  document: number;
-}
-
-export interface ReaderEvidence {
-  counts: ReaderEvidenceCounts;
+};
+export type ReaderEvidence = Omit<Schema<"ReaderEvidenceOut">, "source_targets" | "passage_groups" | "document_items"> & {
   source_targets: ReaderEvidenceSourceTarget[];
   passage_groups: ReaderEvidencePassageGroup[];
   document_items: ReaderEvidenceItem[];
-}
-
-export type ReaderDocumentMapMarkerKind =
-  "Contents" | "Embed" | ReaderEvidenceFactKind;
-
-export interface ReaderDocumentMapMarker {
-  id: string;
-  kind: ReaderDocumentMapMarkerKind;
-  item_id: string;
-  position: number;
-  end_position: Presence<number>;
-  tone: "Neutral" | "Highlight" | "Citation" | "Link" | "Synapse" | "Warning";
-  label: string;
-  preview: Presence<string>;
-}
+};
+export type ReaderDocumentMapMarker = Schema<"ReaderDocumentMapMarkerOut">;
+export type ReaderDocumentMapMarkerKind = ReaderDocumentMapMarker["kind"];
+export type ReaderDocumentMap = Omit<Schema<"ReaderDocumentMapOut">, "evidence"> & { evidence: ReaderEvidence };
 
 export type ReaderMapContent =
   | {
@@ -290,25 +93,6 @@ export type ReaderMapContent =
 export interface ReaderMapMarkerPresentation {
   marker: ReaderDocumentMapMarker;
   content: ReaderMapContent;
-}
-
-export interface ReaderDocumentMap {
-  media_id: string;
-  generation: Presence<number>;
-  media_kind: string;
-  title: string;
-  status: "ready" | "empty" | "partial";
-  navigation: Presence<MediaNavigationResponse["data"]>;
-  embeds: DocumentEmbed[];
-  evidence: ReaderEvidence;
-  markers: ReaderDocumentMapMarker[];
-  diagnostics: {
-    omitted_item_counts: Record<string, number>;
-  };
-}
-
-interface ReaderDocumentMapResponse {
-  data: unknown;
 }
 
 export type ReaderEvidenceItemLocation =
@@ -437,13 +221,58 @@ export function projectReaderMapMarkers(
   });
 }
 
+function adaptObject(
+  value: Schema<"ReaderEvidenceChatObjectOut">
+    | Schema<"ReaderEvidenceNoteObjectOut">
+    | Schema<"ReaderEvidencePlainObjectOut">,
+): ReaderEvidenceObject {
+  return {
+    ...value,
+    actionSubject: { ref: assumeCanonicalResourceRef(value.ref) },
+  };
+}
+
+function adaptAssociation(
+  value: Schema<"ReaderEvidenceAuthoredInOut"> | Schema<"ReaderEvidenceDirectlyAttachedOut">,
+): ReaderEvidenceAssociation {
+  return { ...value, object: adaptObject(value.object) };
+}
+
+function adaptItem(
+  value: Schema<"ReaderEvidencePassageGroupOut">["items"][number],
+): ReaderEvidenceItem {
+  const associations = value.associations.map(adaptAssociation);
+  if (value.kind === "Link" || value.kind === "Synapse") {
+    return { ...value, associations, object: adaptObject(value.object) };
+  }
+  return { ...value, associations };
+}
+
 export async function getReaderDocumentMap(
   mediaId: string,
   options: { signal?: AbortSignal } = {},
 ): Promise<ReaderDocumentMap> {
-  const response = await apiFetch<ReaderDocumentMapResponse>(
-    `/api/media/${mediaId}/document-map` as ApiPath,
+  const { data } = await apiFetch<ApiJson<"/media/{media_id}/document-map", "get">>(
+    `/api/media/${mediaId}/document-map`,
     { signal: options.signal },
   );
-  return decodeReaderDocumentMapContract(response.data);
+  return {
+    ...data,
+    evidence: {
+      ...data.evidence,
+      source_targets: data.evidence.source_targets.map((target) => ({
+        ...target,
+        actionSubject: { ref: assumeCanonicalResourceRef(target.ref) },
+      })),
+      passage_groups: data.evidence.passage_groups.map((group) => ({
+        ...group,
+        items: group.items.map(adaptItem),
+        also_references: group.also_references.map((association) => ({
+          ...association,
+          object: adaptObject(association.object),
+        })),
+      })),
+      document_items: data.evidence.document_items.map(adaptItem),
+    },
+  };
 }

@@ -1,9 +1,4 @@
-"""Canonical Reader Document Map aggregate schemas.
-
-Evidence is projected as typed facts grouped by exact reader locus.  Domain
-owner payloads never leak through this boundary.  Every field name here is
-decoded key-for-key by ``apps/web/src/lib/reader/documentMapContract.ts``.
-"""
+"""Reader map output: scoped facts, exact loci and native presentation data."""
 
 from __future__ import annotations
 
@@ -11,7 +6,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.schemas.highlights import HIGHLIGHT_COLORS
 from nexus.schemas.media import DocumentEmbedOut, MediaNavigationOut
@@ -40,35 +35,31 @@ ReaderDocumentMapMarkerTone = Literal[
 ]
 
 
-class ReaderPdfPageLocatorOut(BaseModel):
+class _ReaderMapOut(BaseModel):
+    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
+
+
+class ReaderPdfPageLocatorOut(_ReaderMapOut):
     type: Literal["pdf_page"] = "pdf_page"
     media_id: UUID
     page_number: int = Field(ge=1)
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class ReaderEvidenceAnchorOut(BaseModel):
+class ReaderEvidenceAnchorOut(_ReaderMapOut):
     locator: MediaRetrievalLocator | ReaderPdfPageLocatorOut
     passage_anchor_id: UUID | None = None
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class ReaderEvidenceResolvedOut(BaseModel):
+class ReaderEvidenceResolvedOut(_ReaderMapOut):
     kind: Literal["Resolved"] = "Resolved"
     anchor: ReaderEvidenceAnchorOut
     order_key: str
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class ReaderEvidenceUnavailableOut(BaseModel):
+class ReaderEvidenceUnavailableOut(_ReaderMapOut):
     kind: Literal["Unavailable"] = "Unavailable"
     reason: ReaderEvidenceUnavailableReason
     sort_order_key: str | None = Field(default=None, exclude=True)
-
-    model_config = ConfigDict(extra="forbid")
 
 
 ReaderEvidenceResolutionOut = Annotated[
@@ -77,13 +68,17 @@ ReaderEvidenceResolutionOut = Annotated[
 ]
 
 
-class ReaderEvidenceObjectBaseOut(BaseModel):
+class ReaderEvidenceObjectBaseOut(_ReaderMapOut):
     ref: str
     label: str
     excerpt: Presence[str]
     activation: ResourceActivationOut
 
-    model_config = ConfigDict(extra="forbid")
+    @model_validator(mode="after")
+    def validate_activation_identity(self) -> ReaderEvidenceObjectBaseOut:
+        if self.activation.resource_ref != self.ref:
+            raise ValueError("activation.resource_ref must match ref")
+        return self
 
 
 class ReaderEvidenceChatObjectOut(ReaderEvidenceObjectBaseOut):
@@ -110,22 +105,18 @@ ReaderEvidenceObjectOut = Annotated[
 ]
 
 
-class ReaderEvidenceAuthoredInOut(BaseModel):
+class ReaderEvidenceAuthoredInOut(_ReaderMapOut):
     relationship: Literal["AuthoredIn"] = "AuthoredIn"
     object: ReaderEvidenceObjectOut
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class ReaderEvidenceDirectlyAttachedOut(BaseModel):
+class ReaderEvidenceDirectlyAttachedOut(_ReaderMapOut):
     relationship: Literal["DirectlyAttached"] = "DirectlyAttached"
     object: ReaderEvidenceObjectOut
     edge_id: UUID
     role: EdgeKind
     origin: EdgeOrigin
     direction: Literal["Outgoing", "Incoming"]
-
-    model_config = ConfigDict(extra="forbid")
 
 
 ReaderEvidenceAssociationOut = Annotated[
@@ -134,20 +125,16 @@ ReaderEvidenceAssociationOut = Annotated[
 ]
 
 
-class ReaderEvidenceAlsoReferenceOut(BaseModel):
+class ReaderEvidenceAlsoReferenceOut(_ReaderMapOut):
     relationship: Literal["AlsoReferences"] = "AlsoReferences"
     object: ReaderEvidenceObjectOut
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class ReaderEvidenceItemBaseOut(BaseModel):
+class ReaderEvidenceItemBaseOut(_ReaderMapOut):
     id: str
     label: str
     excerpt: Presence[str]
     associations: list[ReaderEvidenceAssociationOut] = Field(default_factory=list)
-
-    model_config = ConfigDict(extra="forbid")
 
 
 class ReaderEvidenceHighlightOut(ReaderEvidenceItemBaseOut):
@@ -163,22 +150,19 @@ class ReaderEvidenceHighlightOut(ReaderEvidenceItemBaseOut):
     is_owner: bool
 
 
-class ReaderSourceHtmlOut(BaseModel):
+class ReaderSourceHtmlOut(_ReaderMapOut):
     kind: Literal["Html"] = "Html"
     html_sanitized: str
     text: str
-    model_config = ConfigDict(extra="forbid")
 
 
-class ReaderSourceTextOut(BaseModel):
+class ReaderSourceTextOut(_ReaderMapOut):
     kind: Literal["Text"] = "Text"
     text: str
-    model_config = ConfigDict(extra="forbid")
 
 
-class ReaderSourceUnavailableOut(BaseModel):
+class ReaderSourceUnavailableOut(_ReaderMapOut):
     kind: Literal["Unavailable"] = "Unavailable"
-    model_config = ConfigDict(extra="forbid")
 
 
 SourceContent = Annotated[
@@ -187,7 +171,7 @@ SourceContent = Annotated[
 ]
 
 
-class ReaderEvidenceSourceTargetOut(BaseModel):
+class ReaderEvidenceSourceTargetOut(_ReaderMapOut):
     ref: str
     stable_key: str
     apparatus_kind: ReaderApparatusItemKind
@@ -196,7 +180,11 @@ class ReaderEvidenceSourceTargetOut(BaseModel):
     activation: ResourceActivationOut
     resolution: ReaderEvidenceResolutionOut
 
-    model_config = ConfigDict(extra="forbid")
+    @model_validator(mode="after")
+    def validate_activation_identity(self) -> ReaderEvidenceSourceTargetOut:
+        if self.activation.resource_ref != self.ref:
+            raise ValueError("activation.resource_ref must match ref")
+        return self
 
 
 class ReaderEvidenceSourceReferenceOut(ReaderEvidenceItemBaseOut):
@@ -241,17 +229,15 @@ ReaderEvidenceItemOut = Annotated[
 ]
 
 
-class ReaderEvidencePassageGroupOut(BaseModel):
+class ReaderEvidencePassageGroupOut(_ReaderMapOut):
     locus_ref: str
     resolution: ReaderEvidenceResolutionOut
     target_excerpt: Presence[str]
     items: list[ReaderEvidenceItemOut]
     also_references: list[ReaderEvidenceAlsoReferenceOut] = Field(default_factory=list)
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class ReaderEvidenceCountsOut(BaseModel):
+class ReaderEvidenceCountsOut(_ReaderMapOut):
     highlights: int = Field(ge=0)
     citations: int = Field(ge=0)
     links: int = Field(ge=0)
@@ -259,19 +245,28 @@ class ReaderEvidenceCountsOut(BaseModel):
     passages: int = Field(ge=0)
     document: int = Field(ge=0)
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class ReaderEvidenceOut(BaseModel):
+class ReaderEvidenceOut(_ReaderMapOut):
     counts: ReaderEvidenceCountsOut
     source_targets: list[ReaderEvidenceSourceTargetOut]
     passage_groups: list[ReaderEvidencePassageGroupOut] = Field(default_factory=list)
     document_items: list[ReaderEvidenceItemOut] = Field(default_factory=list)
 
-    model_config = ConfigDict(extra="forbid")
+    @model_validator(mode="after")
+    def validate_source_targets(self) -> ReaderEvidenceOut:
+        refs = {target.ref for target in self.source_targets}
+        if len(refs) != len(self.source_targets):
+            raise ValueError("source_targets must have unique refs")
+        items = [item for group in self.passage_groups for item in group.items]
+        for item in [*items, *self.document_items]:
+            if isinstance(item, ReaderEvidenceSourceReferenceOut) and not refs.issuperset(
+                item.target_refs
+            ):
+                raise ValueError("source reference target_refs must belong to source_targets")
+        return self
 
 
-class ReaderDocumentMapMarkerOut(BaseModel):
+class ReaderDocumentMapMarkerOut(_ReaderMapOut):
     id: str
     kind: ReaderDocumentMapMarkerKind
     item_id: str
@@ -281,16 +276,18 @@ class ReaderDocumentMapMarkerOut(BaseModel):
     label: str
     preview: Presence[str]
 
-    model_config = ConfigDict(extra="forbid")
+    @model_validator(mode="after")
+    def validate_end_position(self) -> ReaderDocumentMapMarkerOut:
+        if self.end_position.kind == "Present" and self.end_position.value < self.position:
+            raise ValueError("end_position must not precede position")
+        return self
 
 
-class ReaderDocumentMapDiagnosticsOut(BaseModel):
-    omitted_item_counts: dict[str, int] = Field(default_factory=dict)
-
-    model_config = ConfigDict(extra="forbid")
+class ReaderDocumentMapDiagnosticsOut(_ReaderMapOut):
+    omitted_item_counts: dict[str, Annotated[int, Field(ge=0)]] = Field(default_factory=dict)
 
 
-class ReaderDocumentMapOut(BaseModel):
+class ReaderDocumentMapOut(_ReaderMapOut):
     media_id: UUID
     generation: Presence[Annotated[int, Field(ge=1, strict=True)]]
     media_kind: str
@@ -303,5 +300,3 @@ class ReaderDocumentMapOut(BaseModel):
     diagnostics: ReaderDocumentMapDiagnosticsOut = Field(
         default_factory=ReaderDocumentMapDiagnosticsOut
     )
-
-    model_config = ConfigDict(extra="forbid")

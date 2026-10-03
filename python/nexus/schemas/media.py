@@ -99,6 +99,8 @@ class DocumentEmbedTextOut(BaseModel):
     value: str | None = None
     reason: Literal["not_in_source", "redacted", "not_applicable"] | None = None
 
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
 
 class DocumentEmbedUrlOut(BaseModel):
     status: Literal["present", "malformed", "absent"]
@@ -106,11 +108,15 @@ class DocumentEmbedUrlOut(BaseModel):
     error_code: str | None = None
     reason: Literal["not_in_source", "not_applicable"] | None = None
 
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
 
 class DocumentEmbedProviderRefOut(BaseModel):
     kind: Literal["present", "absent"]
     value: str | None = None
     reason: Literal["unsupported_provider", "unparseable", "not_applicable"] | None = None
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
 
 class DocumentEmbedLocatorOut(BaseModel):
@@ -120,6 +126,8 @@ class DocumentEmbedLocatorOut(BaseModel):
     canonical_end_offset: int | None = Field(default=None, ge=0)
     document_order_key: str
     placeholder_text: str
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
 
 class DocumentEmbedTargetOut(BaseModel):
@@ -141,6 +149,8 @@ class DocumentEmbedTargetOut(BaseModel):
     thumbnail_url: str | None = None
     playback: PlaybackSourceOut | None = None
 
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
 
 class DocumentEmbedDisplayActionOut(BaseModel):
     kind: Literal["open_child_media", "open_original", "retry_child", "refresh_parent"]
@@ -148,12 +158,16 @@ class DocumentEmbedDisplayActionOut(BaseModel):
     href: str | None = None
     disabled: bool = False
 
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
 
 class DocumentEmbedDisplayOut(BaseModel):
     mode: Literal["resolved", "pending", "unsupported", "failed"]
     label: str
     description: str
     actions: list[DocumentEmbedDisplayActionOut] = Field(default_factory=list)
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
 
 class DocumentEmbedOut(BaseModel):
@@ -177,6 +191,8 @@ class DocumentEmbedOut(BaseModel):
     target: DocumentEmbedTargetOut
     error_code: DocumentEmbedTextOut
     display: DocumentEmbedDisplayOut
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
 
 class ListeningStateOut(BaseModel):
@@ -305,7 +321,9 @@ class FragmentOut(BaseModel):
     document_embeds: list[DocumentEmbedOut] = Field(default_factory=list)
     created_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True, json_schema_serialization_defaults_required=True
+    )
 
 
 def _canonical_uuid_text(value: str) -> str:
