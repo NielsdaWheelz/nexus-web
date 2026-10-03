@@ -53,9 +53,12 @@ including bad handles and wrong-kind endpoints, is one masked
 handles and Range are read only after the token passes; query strings are
 ignored.
 
-A read locks the media `FOR SHARE`, then reads its facts in a fresh statement,
-so teardown and dedupe serialize with it and one read never mixes publication
-generations. The document is one response: title, bylines, disclosable source
+a read locks the media `FOR SHARE`, then reads its facts in a fresh statement.
+article and transcript publication takes a conflicting parent `FOR NO KEY UPDATE`
+or `FOR UPDATE` lock. an article or transcript highlight must resolve to a current same-media
+fragment, and the response emits the complete fragment list with its ordinals;
+a stale anchor fails upstream with the same masked 404. the document is one
+response: title, bylines, disclosable source
 URL, the shared highlight (quote, color, and a text anchor naming a
 fragment/segment/section ordinal or a PDF page and quads), and the reader
 (article fragments, transcript segments, EPUB contents, or PDF). EPUB sections
