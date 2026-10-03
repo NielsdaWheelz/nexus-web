@@ -16,7 +16,7 @@ from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data, ok, success_response
 from nexus.schemas.contributors import MediaAuthorsPutRequest
 from nexus.schemas.library import LibraryEntryRemovalOut, LibraryPlacementOptionOut
-from nexus.schemas.media import MediaLibrariesRequest
+from nexus.schemas.media import MediaLibrariesRequest, MediaOut
 from nexus.services import contributors as contributors_service
 from nexus.services import library_entries, media_source_ingest
 from nexus.services import media as media_service
@@ -47,9 +47,9 @@ def list_media(
 
 
 @router.get("/media/{media_id}")
-def get_media(media_id: UUID, viewer: ViewerDep, db: DbDep) -> dict:
+def get_media(media_id: UUID, viewer: ViewerDep, db: DbDep) -> Data[MediaOut]:
     """404 if the media does not exist or the viewer cannot read it."""
-    return ok(media_service.get_media_for_viewer(db, viewer.user_id, media_id), by_alias=True)
+    return Data(data=media_service.get_media_for_viewer(db, viewer.user_id, media_id))
 
 
 @router.get("/media/{media_id}/offline-download-spec")

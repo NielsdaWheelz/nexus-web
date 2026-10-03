@@ -35,6 +35,9 @@ def derive_playback_source(
             stream_url=stream_url,
             source_url=source_url,
             provider=normalized_provider,
+            provider_video_id=None,
+            watch_url=None,
+            embed_url=None,
         )
 
     provider_video_id = (
@@ -75,6 +78,9 @@ def derive_playback_source(
         stream_url=stream_url,
         source_url=source_url,
         provider=normalized_provider,
+        provider_video_id=None,
+        watch_url=None,
+        embed_url=None,
     )
 
 

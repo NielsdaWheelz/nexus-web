@@ -19,7 +19,7 @@ from nexus.auth.permissions import (
     non_system_media_ref_exists_sql,
     visible_media_ids_cte_sql,
 )
-from nexus.db.models import MediaKind
+from nexus.db.models import MediaKind, TranscriptCoverage, TranscriptState
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
@@ -690,15 +690,23 @@ def _hydrate_media_out(
         media_list.append(
             MediaOut(
                 id=media_id,
-                kind=kind_value,
+                kind=MediaKind(kind_value),
                 title=str(row["title"]),
                 canonical_source_url=row["canonical_source_url"],
                 processing_status=cast(
                     "MediaProcessingStatus", _status_to_str(row["processing_status"])
                 ),
                 source_progress=_source_progress(progress_by_media.get(media_id)),
-                transcript_state=_nullable_str(row["transcript_state"]),
-                transcript_coverage=_nullable_str(row["transcript_coverage"]),
+                transcript_state=(
+                    None
+                    if row["transcript_state"] is None
+                    else TranscriptState(row["transcript_state"])
+                ),
+                transcript_coverage=(
+                    None
+                    if row["transcript_coverage"] is None
+                    else TranscriptCoverage(row["transcript_coverage"])
+                ),
                 transcript_origin=presence_from_nullable(row["transcript_origin"]),
                 retrieval_status=retrieval_status,
                 retrieval_status_reason=row["retrieval_status_reason"],
@@ -712,6 +720,7 @@ def _hydrate_media_out(
                     provider_id=row["provider_id"],
                 ),
                 listening_state=_listening_state(row),
+                episode_state=None,
                 chapters=chapters_by_media.get(media_id, []),
                 capabilities=derive_capabilities(
                     kind=kind_value,

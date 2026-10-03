@@ -1,4 +1,5 @@
 import type { DocumentEmbed } from "@/lib/media/documentEmbeds";
+import type { Schema } from "@/lib/api/wire";
 import { normalizeDocumentEmbeds } from "@/lib/media/documentEmbeds";
 import type { MediaPlaybackSource } from "@/lib/media/playback";
 import { expectOneOf } from "@/lib/validation";
@@ -10,7 +11,6 @@ export const TRANSCRIPT_STATES = [
   "queued",
   "running",
   "failed_provider",
-  "failed_quota",
   "unavailable",
   "ready",
   "partial",
@@ -45,14 +45,7 @@ export interface TranscriptFragment {
   speaker_label?: string | null;
 }
 
-export interface TranscriptChapter {
-  readonly chapter_idx: number;
-  readonly title: string;
-  readonly t_start_ms: number;
-  readonly t_end_ms: number | null;
-  readonly url: string | null;
-  readonly image_url: string | null;
-}
+export type TranscriptChapter = Readonly<Schema<"PodcastEpisodeChapterOut">>;
 
 export interface Fragment {
   id: string;

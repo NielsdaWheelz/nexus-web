@@ -114,10 +114,9 @@ The safe-code catalog carries a PDF text warning as if it were a failure; the
 browser copy is corrected, but warnings still share the failure vocabulary. See
 [docs/tickets/import-history-pdf-text-warning-is-not-a-failure.md](tickets/import-history-pdf-text-warning-is-not-a-failure.md).
 
-### [OPEN] OI-019 — The media-kind Literal has no single owner
+### [OPEN] OI-019 — media-kind contracts still duplicate the canonical owner
 backend · opened 2026-09-08 by Claude (imports cutover, Track C1) · P3
-The media-kind literal is re-listed in several wire schemas instead of being
-owned once. See
+the canonical media-kind enum still has duplicate imports/consumption literals. see
 [docs/tickets/media-kind-literal-has-no-owner.md](tickets/media-kind-literal-has-no-owner.md).
 
 ### [OPEN] OI-023 — X-post quote completion defects when its ingest job is not running
@@ -183,14 +182,6 @@ Contract D9's mobile entry — the shared `AccountMenu` item `Imports` with its
 `Pill` badge — is captured in no D15 artifact set, so the visual gate reads it
 from the browser proof alone. See
 [docs/tickets/mobile-imports-entry-has-no-d15-capture.md](tickets/mobile-imports-entry-has-no-d15-capture.md).
-
-### [OPEN] OI-049 — `player_descriptor` is installed after the media DTO is built
-backend · opened 2026-09-08 by Claude (imports cutover, Phase 4 chain M) · P3
-`_media_out_from_row` builds every `MediaOut` with an absent `playerDescriptor`
-and `_apply_consumption_state` then rebuilds the whole DTO through
-`model_validate` to install the derived one, so the descriptor's owner is a
-second pass over an already-built object. See
-[docs/tickets/media-player-descriptor-is-installed-after-construction.md](tickets/media-player-descriptor-is-installed-after-construction.md).
 
 ### [OPEN] OI-050 — Four rules outside `Pill` paint a tone as text over its own tint
 frontend · opened 2026-09-10 by Claude (imports cutover, Phase 7 chain Z review) · P2
@@ -346,7 +337,6 @@ unexpected timeouts. See
 - [open] schema / production migration · 2026-09-28 pr #413 · inventory irreversible 0251 data loss against the production lineage and verify the backup before release: [ticket](tickets/schema-0251-production-loss-preflight.md).
 - [open] resource actions web · 2026-09-28 cleanup pr-08 · web decodes and drops `MakeArtifactRevisionCurrent` until the backend with 0250 ships: [ticket](tickets/web-make-current-arm-outlives-revision-history.md).
 - [open] 2026-09-28 source ingest · `_publish_file_source(kind)` and `reusable_embedded_source_media_ids(viewer_id)` take parameters they never read: [ticket](tickets/source-ingest-unused-parameters.md).
-- [open] podcasts / transcript web · 2026-09-27 cleanup pr-03 · p3 · the web still decodes the retired `failed_quota` / `FailedQuota` transcript state; web and backend release together, so the arms can go now: [ticket](tickets/web-failed-quota-transcript-state-outlives-0252.md).
 - [open] release / billing · 2026-09-28 cleanup pr-03 · record the billing counts before the 0252 release; cancel stripe, delete its webhook and drop the billing env keys after it: [ticket](tickets/billing-0252-release-steps.md).
 - [open] podcasts / transcript api · 2026-09-27 cleanup pr-03 · p3 · the batch transcript forecast now only counts and fingerprints; removing it needs an expand step against the `extra=forbid` batch body: [ticket](tickets/podcast-batch-transcript-forecast-is-vestigial.md).
 - [deferred] consumption / schema · 2026-09-28 consumption-stats reauthoring · four consumption state timestamps are written by nothing and read by nothing; drop them one release later: [ticket](tickets/drop-write-only-consumption-timestamps.md).
@@ -361,3 +351,4 @@ unexpected timeouts. See
 - [open] atlas / query · 2026-10-02 representation repair · the star query still selects/groups an unused position timestamp: [ticket](tickets/atlas-star-query-reads-unused-position-timestamp.md).
 - [open] workspace / saving · 2026-10-02 cleanup audit · scheduled snapshots count as saved; non-auth failures disappear and pagehide skips retry: [ticket](tickets/workspace-session-failed-save-discards-dirty-state.md).
 - author non-media work dates have no producer: [ticket](tickets/author-nonmedia-work-dates-have-no-producer.md).
+- [open] media / wire · 2026-10-02 typed detail audit · the detail/list episode state is always null and has no media-detail consumer: [ticket](tickets/media-detail-retains-always-null-episode-state.md).
