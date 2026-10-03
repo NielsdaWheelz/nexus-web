@@ -26,7 +26,7 @@ import {
   definePaneVisitDataKey,
   usePaneVisitData,
 } from "@/lib/panes/paneRuntime";
-import { usePlayerCommands } from "@/lib/player/globalPlayer";
+import { usePlayerCommands } from "@/lib/player/playerRuntime";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import PodcastReplacementDialog, {
   type PodcastReplacementConflict,

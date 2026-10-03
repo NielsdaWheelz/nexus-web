@@ -20,7 +20,7 @@
 
 import Button from "@/components/ui/Button";
 import { useLectern } from "@/lib/lectern/LecternProvider";
-import { usePlayerSession } from "@/lib/player/globalPlayer";
+import { usePlayerSession } from "@/lib/player/playerRuntime";
 import { mutationMatchesAttempt } from "@/lib/player/playerSession";
 import styles from "./LecternMutationNotice.module.css";
 

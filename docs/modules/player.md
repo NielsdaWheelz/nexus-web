@@ -253,8 +253,10 @@ Lectern pane is the sole full-list editor).
   `playerChromeModel.ts` (the exhaustive pure semantic projection),
   `outputEffects.ts`, `pauseShortening.ts`, `chapters.ts`, `mediaSession.ts`,
   `playbackRate.ts`, `usePlayerKeyboardShortcuts.ts`, and
-  `globalPlayer.tsx` (the exclusive platform-runtime selector and public
-  re-export boundary). Each runtime publishes stable Commands and
+  `playerRuntime.tsx` (the shared capability/context contract, canonical-session
+  selector and 15/30-second skip constants), and `globalPlayer.tsx` (only the
+  platform-runtime chooser). consumers import the contract owner directly.
+  each runtime publishes stable Commands and
   cadence-separated Session/Settings/Timeline capabilities. `playbackRate.ts`
   is the one owner of product bounds, steps, presets, parsing, formatting, and
   adjusted remaining time.

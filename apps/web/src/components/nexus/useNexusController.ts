@@ -38,7 +38,7 @@ import { resolveDailyLocalDate, useOpenDailyPage } from "@/lib/notes/openDailyPa
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { usePaneWarm } from "@/lib/panes/paneWarm";
-import { usePlayerCommands, usePlayerSession } from "@/lib/player/globalPlayer";
+import { usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
 import { useRenderEnvironment, useViewportState } from "@/lib/renderEnvironment/provider";
 import { dailyDraftAcceptsText } from "@/lib/resourceSurface/dailySurfacePersistence";
 import type { DismissDecision } from "@/lib/ui/useHistoryDismiss";

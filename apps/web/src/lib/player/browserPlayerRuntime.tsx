@@ -80,6 +80,8 @@ import {
 import { useMediaSessionAdapter } from "@/lib/player/mediaSession";
 import { parsePlaybackRate } from "@/lib/player/playbackRate";
 import {
+  PLAYER_SKIP_BACK_SECONDS,
+  PLAYER_SKIP_FORWARD_SECONDS,
   PlayerCapabilityProviders,
   playerPreferenceErrorMessage,
   type GlobalPlayerState,
@@ -124,8 +126,6 @@ import { parseMediaRef } from "@/lib/consumption/activityContract";
 import { useViewportState } from "@/lib/renderEnvironment/provider";
 import { assertNever } from "@/lib/assertNever";
 
-export const PLAYER_SKIP_BACK_SECONDS = 15;
-export const PLAYER_SKIP_FORWARD_SECONDS = 30;
 const DEFAULT_PLAYBACK_RATE = 1.0;
 const DEFAULT_VOLUME = 1.0;
 const VOLUME_STORAGE_KEY = "nexus.globalPlayer.volume";
@@ -345,50 +345,6 @@ function mapSessionDescriptor(
           descriptor: transform(state.session.descriptor),
         },
       };
-    default:
-      return assertNever(state);
-  }
-}
-
-export function canonicalSessionOfGlobalState(
-  state: GlobalPlayerState,
-): AudioSession | null {
-  switch (state.kind) {
-    case "Absent":
-    case "UpdateRequired":
-    case "RuntimeFailed":
-    case "PreviewAudio":
-    case "PreviewAudioFailed":
-    case "PreviewAudioAtEnd":
-      return null;
-    case "Active":
-    case "Completing":
-    case "CompletionFailed":
-    case "PlaybackFailed":
-    case "PausedAtEnd":
-      return state.session;
-    default:
-      return assertNever(state);
-  }
-}
-
-export function previewSessionOfGlobalState(
-  state: GlobalPlayerState,
-): PreviewAudioSession | null {
-  switch (state.kind) {
-    case "PreviewAudio":
-    case "PreviewAudioFailed":
-    case "PreviewAudioAtEnd":
-      return state.session;
-    case "Absent":
-    case "UpdateRequired":
-    case "RuntimeFailed":
-    case "Active":
-    case "Completing":
-    case "CompletionFailed":
-    case "PlaybackFailed":
-    case "PausedAtEnd":
-      return null;
     default:
       return assertNever(state);
   }

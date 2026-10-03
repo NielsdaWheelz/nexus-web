@@ -27,7 +27,7 @@ import {
   usePlayerCommands,
   usePlayerSettings,
   usePlayerTimeline,
-} from "@/lib/player/globalPlayer";
+} from "@/lib/player/playerRuntime";
 import { chapterMarkers } from "@/lib/player/chapters";
 import {
   playerTransportLocked,

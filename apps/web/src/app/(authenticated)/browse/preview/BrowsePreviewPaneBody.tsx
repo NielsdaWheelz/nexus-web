@@ -44,7 +44,7 @@ import {
   usePaneSearchParams,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
-import { usePlayerCommands } from "@/lib/player/globalPlayer";
+import { usePlayerCommands } from "@/lib/player/playerRuntime";
 import { subscribeToPodcast } from "@/lib/podcasts/acquisition";
 import styles from "../browse.module.css";
 
