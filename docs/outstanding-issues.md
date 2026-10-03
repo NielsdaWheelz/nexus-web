@@ -30,7 +30,8 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
-- [open] typed wire / writing acknowledgement · 2026-10-02 notes read-boundary review · generic writing transport erases the fresh capture response type and retains duplicate structural parsing: [ticket](tickets/notes-capture-acknowledgement-type-erasure.md).
+- [local documents access blocks owned cleanup](tickets/local-documents-access-blocks-owned-cleanup.md): host access denies source reads and cleanup of an unused owned writing checkout; product behavior is unaffected.
+
 - [open] operator credentials · 2026-10-02 cleanup workflow · skid's three peer bearer fields were printed into a tool transcript; coordinate rotation with active sessions: [ticket](tickets/local-qualification-credential-transcript-exposure.md).
 - [open] processing recovery / release · 2026-09-28 pr #387 investigation · the keats normalizations and gutenberg correction never ran in production (commands are unreleased); run them after the release, then land #387: [ticket](tickets/processing-repairs-await-release-then-387.md).
 - [open] release / production · 2026-09-28 cleanup campaign · production still serves 7dc68929b at alembic 0241; main carries irreversible migrations 0242–0251 with preflights to run first: [ticket](tickets/production-release-pending-since-7dc68929b.md).

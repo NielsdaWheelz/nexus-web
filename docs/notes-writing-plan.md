@@ -101,12 +101,11 @@ the descriptor date. five always-sent item/surface/block fields are required in
 the output schema; genuine nulls, presence values, array order and versions remain.
 
 capture input/result types also derive from generated schemas, overriding only
-the normalized surface. capture acknowledgement and block parsing remain live
-client boundaries; the [capture follow-up](tickets/notes-capture-acknowledgement-type-erasure.md)
-owns fresh acknowledgement type erasure. request-relative mutation/date checks,
-page/source/body identity, writing serialization, journals and recovery stay
-unchanged. first capture and stored jsonb replay may order nested json object keys
-differently; repeated stored replay preserves exact bytes.
+the normalized surface. typed writing acknowledgement is specified below;
+body/block parsing remains a distinct client boundary. request-relative checks,
+page/source/body identity, journals and recovery keep their owners. first capture
+and stored jsonb replay may order nested json object keys differently; repeated
+stored replay preserves exact bytes.
 
 the bounded rewrite removes 166 handwritten production lines, excluding generated
 wire and docs. frozen actual facade values, requests and row presenter bytes
@@ -121,6 +120,45 @@ occurrence and authoritative block readback. receipts:
 `/tmp/nexus-notes-candidate-api-receipt.json` and
 `/tmp/nexus-notes-candidate-browser-receipt.json`. final static passed (`./scripts/test`).
 these checks do not qualify android, journal recovery, concurrency or providers.
+
+## writing acknowledgement boundary
+
+one account writer retains the frozen request and owns the transport slot.
+operation delivery receives the actual pending id, request and a generic typed
+completion function. the writer sends the full envelope and invokes synchronous
+acknowledgement inside its existing unknown-outcome wrapper; successful-status
+invalid-json handling remains at that same transport owner. failed or ambiguous
+acknowledgement retains exact request bytes and fences successors.
+
+surface capture/title/graph delivery chooses the current pending kind and rereads
+that id's current intent during acknowledgement. fresh and recovered registration
+share the same delivery; title coalescing and graph remapping therefore cannot
+bind settlement to an earlier intent. highlight/link detach uses the same
+completion with an undefined reply and keeps its declared 204 behavior. body
+submission only projects its existing optional envelope to data once.
+
+capture/title/command structural response decoders retire in favor of generated
+contracts and existing item/prose/surface conversion. title and command outputs
+are typed models; the always-sent title versions map is required. capture keeps
+page/source/body and request mutation/date checks. the direct share-capture
+facade retains conversion-error mapping to api invalid-response, then performs
+request mismatch checks in their existing stage. request preparation, leases,
+stored journals and recovery formats remain unchanged.
+
+the bounded cut removes 18 handwritten production lines, excluding generated wire
+and docs. frozen seven exported projections preserve 22,049 literal bytes;
+eight simulated facade requests and 14 retained semantic/error-stage cases match
+(`/tmp/nexus-writing-ack-candidate-projection-receipt.json`). five scalar duplicate
+checks retire under generated/current-writer guarantees. seven actual response-field
+models preserve 17,534 literal bytes; title requiredness and 11 imported-writer
+traces pass. 20 frozen real api responses match before browser mutations. four
+real browser capture flows qualify ordinary save, committed-but-lost response,
+acknowledgement defect and reloaded recovery: seven posts retain exact retry
+bytes, one occurrence and authoritative body readback. direct api title/command stored
+replays and both detach routes/readbacks also pass. receipts:
+`/tmp/nexus-writing-ack-candidate-{model,writer,api,browser,admission}-receipt.json`.
+final static passed via `./scripts/test`. annotation detach is api/source/exported-projection
+qualified, not mounted; no provider/native or universal recovery claim.
 
 ## persistence schema and protocol
 

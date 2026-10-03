@@ -3,7 +3,6 @@ import type { ApiJson, Schema } from "@/lib/api/wire";
 import { withNotePageActionSubject, type NotePage } from "@/lib/notes/pageContract";
 import { isLocalDate } from "@/lib/localDate";
 import { normalizeResourceSurface, type ResourceSurface } from "@/lib/resources/resourceItems";
-import { expectCanonicalUuid, expectExactRecord, expectString } from "@/lib/validation";
 
 export async function createNotePage(input: {
   pageId: string;
@@ -55,32 +54,12 @@ export type DailyCaptureResult = Omit<Schema<"DailyCaptureResult">, "surface"> &
   surface: ResourceSurface;
 };
 
-export function decodeDailyCaptureResult(raw: unknown): DailyCaptureResult {
-  const result = expectExactRecord(
-    raw,
-    ["clientMutationId", "localDate", "pageId", "surface"],
-    "daily capture result",
-  );
-  const pageId = expectCanonicalUuid(result.pageId, "daily capture result.pageId");
+export function acceptDailyCaptureResult(result: Schema<"DailyCaptureResult">): DailyCaptureResult {
   const surface = normalizeResourceSurface(result.surface);
-  if (surface.source.item.ref !== `page:${pageId}`) {
-    throw new TypeError(
-      "daily capture result.surface source must match pageId",
-    );
+  if (surface.source.item.ref !== `page:${result.pageId}`) {
+    throw new TypeError("daily capture result.surface source must match pageId");
   }
-  const localDate = expectString(result.localDate, "daily capture result.localDate");
-  if (!isLocalDate(localDate)) {
-    throw new TypeError("daily capture result.localDate must be a valid YYYY-MM-DD date");
-  }
-  return {
-    clientMutationId: expectString(
-      result.clientMutationId,
-      "daily capture result.clientMutationId",
-    ),
-    localDate,
-    pageId,
-    surface,
-  };
+  return { ...result, surface };
 }
 
 export async function captureDailyPageNote(
@@ -90,7 +69,7 @@ export async function captureDailyPageNote(
   if (!isLocalDate(localDate)) {
     throw new TypeError("localDate must be a valid YYYY-MM-DD date");
   }
-  const response = await apiFetch<unknown>(
+  const response = await apiFetch<ApiJson<"/notes/daily/{local_date}/captures", "post">>(
     `/api/notes/daily/${localDate}/captures`,
     {
       method: "POST",
@@ -103,14 +82,7 @@ export async function captureDailyPageNote(
   );
   const result = decodeApiPayload(
     response,
-    (raw) => {
-      const envelope = expectExactRecord(
-        raw,
-        ["data"],
-        "daily capture response",
-      );
-      return decodeDailyCaptureResult(envelope.data);
-    },
+    () => acceptDailyCaptureResult(response.data),
     "Capture daily page note",
   );
   if (
