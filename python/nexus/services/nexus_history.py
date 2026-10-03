@@ -11,7 +11,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.retries import retry_serializable
+from nexus.db.retries import retry_read_committed
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.nexus_history import (
     NexusHistoryOut,
@@ -125,7 +125,7 @@ def record_selection_for_viewer(
         db.commit()
         return response
 
-    return retry_serializable(db, "record_nexus_selection", op)
+    return retry_read_committed(db, "record_nexus_selection", op)
 
 
 def _age_points(age: timedelta) -> int:

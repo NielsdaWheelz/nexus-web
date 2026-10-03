@@ -86,4 +86,4 @@ based on `1048517`; all nine owned paths stayed unchanged. log sha256
 `6e9d506c84966f29679006b156bb834c96f0e7c56ca4b56d9f3583c6d9704935`.
 this receipt-only edit follows the checked tree. temporary proof is removed after
 acceptance. the duplicate-copy issue
-is resolved; the selection-concurrency issue and both policy candidates remain open.
+is resolved; both policy candidates remain open.
