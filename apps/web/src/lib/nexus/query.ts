@@ -61,7 +61,7 @@ export type NexusIntent =
   | { readonly kind: "ImportUrl"; readonly url: string };
 
 export interface NexusQuery {
-  /** The input trimmed; `norm` is it lowercased and keys the stable result list. */
+  /** The input trimmed; `norm` is it lowercased. Raw trailing space can still change intent. */
   readonly text: string;
   readonly norm: string;
   readonly intent: NexusIntent;
