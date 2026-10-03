@@ -83,6 +83,45 @@ boundaries. group consecutive typing in the same note; selection movement,
 paste, formatting, structural commands and composition completion close groups.
 no second history inside a toolbar, outline, popup or save queue.
 
+## page and daily read boundary
+
+the seven notes json routes return their owned models through `Data`, by camel
+alias; page deletion remains 204. pages stay viewer-owned. list query validation,
+four title/updated orders and tie-breaks, title bounds, timestamps and daily
+metadata presence remain the server contract. create stays idempotent by the
+caller-chosen page id, with the existing owner/title conflict and response-id
+check. a latent daily read creates nothing.
+
+`lib/notes/pageContract.ts` uses generated page/summary types and adds only the
+canonical action subject. list, create, get and daily reads consume generated
+endpoint output. materialized daily descriptors decorate their page and reuse
+`normalizeResourceSurface` for mixed wire casing, prose-mirror bodies and body/text
+coherence. the materialized output model requires present daily metadata matching
+the descriptor date. five always-sent item/surface/block fields are required in
+the output schema; genuine nulls, presence values, array order and versions remain.
+
+capture input/result types also derive from generated schemas, overriding only
+the normalized surface. capture acknowledgement and block parsing remain live
+client boundaries; the [capture follow-up](tickets/notes-capture-acknowledgement-type-erasure.md)
+owns fresh acknowledgement type erasure. request-relative mutation/date checks,
+page/source/body identity, writing serialization, journals and recovery stay
+unchanged. first capture and stored jsonb replay may order nested json object keys
+differently; repeated stored replay preserves exact bytes.
+
+the bounded rewrite removes 166 handwritten production lines, excluding generated
+wire and docs. frozen actual facade values, requests and row presenter bytes
+match (`/tmp/nexus-notes-presentation-receipt.json`); native page property order
+puts the action subject after daily metadata, with no enumerating consumer.
+candidate qualification passed: 15 actual response-field model envelopes preserve
+19,063 literal bytes; both malformed daily relations reject at their producer.
+40 real authenticated cases preserve 24 success bodies and 16 error outcomes
+(request ids excluded). the browser preserves settled list/page/daily output,
+then qualifies create/title save/reload and daily capture/replay with one
+occurrence and authoritative block readback. receipts:
+`/tmp/nexus-notes-candidate-api-receipt.json` and
+`/tmp/nexus-notes-candidate-browser-receipt.json`. final static passed (`./scripts/test`).
+these checks do not qualify android, journal recovery, concurrency or providers.
+
 ## persistence schema and protocol
 
 retain localstorage with a compact account-scoped pending journal. successful

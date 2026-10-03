@@ -237,7 +237,7 @@ class ResourceItemCapabilitiesOut(CamelModel):
     chat_subject: Literal["none", "label", "scope", "readable", "quote", "generated_output"]
     readable: Literal["none", "scope", "body", "media"]
     inspectable: Literal["none", "media_document_map"]
-    citable_result_type: str | None = None
+    citable_result_type: str | None
     citation_output_source: bool
     app_search_scope: bool
     conversation_search_scope: bool
@@ -273,11 +273,11 @@ class ResourceItemOut(CamelModel):
     id: UUID
     label: str
     summary: str
-    route: str | None = None
+    route: str | None
     activation: ResourceActivationOut
     missing: bool = False
     capabilities: ResourceItemCapabilitiesOut
-    version_by_lane: dict[str, int] = Field(default_factory=dict)
+    version_by_lane: dict[str, int]
 
 
 class ResourceRefLocatorIn(BaseModel):
@@ -368,7 +368,7 @@ class ResourceSurfaceOccurrence(BaseModel):
 
 class ResourceSurfaceOut(BaseModel):
     source: ResourceSurfaceNode
-    ordered_items: list[ResourceSurfaceOccurrence] = Field(default_factory=list)
+    ordered_items: list[ResourceSurfaceOccurrence]
 
     model_config = ConfigDict(extra="forbid")
 
