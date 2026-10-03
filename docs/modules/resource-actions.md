@@ -1,0 +1,23 @@
+# resource actions
+
+status: typed read boundary implemented; candidate runtime qualification passed; final static gate passed.
+
+## contract and owners
+
+`POST /resource-items/action-snapshots/resolve` authenticates the viewer and accepts 1–100 unique canonical refs. `services/resource_items/action_snapshots.py` reads scoped facts without executing actions. every requested ref keeps its position; missing or invisible resources return a missing snapshot with empty capabilities and none activation. the route returns `Data[ResourceActionSnapshotResolveResponse]` directly. camel aliases, nullable activation fields, values, array order and serializer bytes remain the current contract.
+
+`schemas/resource_action_snapshots.py` owns the closed capability/availability unions. capabilities are always sent and required. its output-only serialization config requires always-sent default tags without repeating tags in constructors or changing input defaults. lectern membership and highlight note use named state unions: absent omits its id; present requires a non-null uuid. names give the nested state discriminator a schema reference inside the outer kind discriminator; no custom serializer remains.
+
+snapshot construction enforces ref/activation identity, no capabilities for missing resources, and none activation for missing resources. `ResourceActivationOut` owns kind/href coherence. `PlaybackRateResolution` owns podcast source/preference equality; product rate is 1 with no saved preference value (outer present with inner absent is valid). episode overrides retain their existing freedom. these previously decoded relations reject impossible producer construction before publication.
+
+`resourceActionSnapshot.ts` consumes the generated contract and adapts only canonical-ref and playback-media-id brands. it retains native object field order; consumers neither enumerate nor serialize snapshots, so the old decoder's internal offline-reading key reorder retires. the runtime still batches at 100, resolves batches concurrently and flattens in request order. the cache keeps request-relative count/order checks, retained entries, generations, retry and reconciliation.
+
+`resourceActions.ts` owns the action catalog: labels, icons, groups/order and default confirmation copy. `resourceActionMenu.tsx` projects capabilities and local facts into descriptors and executable commands; `resourceActionRuntime.tsx` dispatches them. pane/row menus present the descriptors. mutation dispatch, leases, mounted handoff, cache invalidation and recovery request/admission/replay behavior retain their owners. recovery offers use the imports owner's generated camel output; the orphan camel decoder is gone. no current producer advertises the retired make-current capability.
+
+## qualification and limits
+
+88 frozen model envelopes preserve exact actual route serializer bytes across all 44 capability kinds and nested alternatives. 18 malformed output models reject at their owners; required fields and genuine omission are qualified. actual exported menu/selected-command metadata match literally: 1,919 descriptors across 23 declared environments, including labels/order, blocking/checked state, separators, confirmations and reconciliation. full adapted snapshots remain structurally equal; only incidental internal offline-reading key insertion order changes. five simulated recovery callbacks preserve request/offer identity, normalizing only minted mutation ids.
+
+10 real route cases preserve scoped two-viewer results, ordered/missing placeholders, request limits/errors and literal success bodies (error comparison excludes only request ids). three actual loaded browser menus match; retained reopening adds no resolve request and opening executes no mutation. real lectern add/remove each dispatch once, succeed with authoritative readback and restore original membership/menu; two reconciliation reads per command and their ordered batches match baseline. no page errors.
+
+receipts: `/tmp/nexus-action-snapshot-candidate-{model,api,callback,browser}-receipt.json`; presentation: `/tmp/nexus-action-snapshot-menu-receipt.json`. rare variants and declared environments are model simulations, not provider/worker/native execution. audio/storage, whole lectern lifecycle and deployment remain unqualified. the read cut removes 518 handwritten production lines, excluding generated wire/docs; remaining substrate reauthoring stays open. final static gate passed.

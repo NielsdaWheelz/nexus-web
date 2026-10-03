@@ -12,7 +12,6 @@ import {
   expectExactRecord,
   expectNonnegativeInteger,
   expectOneOf,
-  expectRecord,
 } from "@/lib/validation";
 
 export type ImportState = Schema<"ImportItem">["state"];
@@ -57,28 +56,6 @@ function acceptImportItem(item: Schema<"ImportItem">): ImportItem {
   return { ...item, ref, media_ref: mediaRef };
 }
 
-const SOURCE_RECOVERY_INPUTS = ["StoredSource", "RefetchSource"] as const;
-
-/** The camel-case media action-snapshot contract; read offers use generated wire fields. */
-export type MediaRecoveryOffer =
-  | {
-      readonly kind: "RetrySource";
-      readonly expectedAttemptId: string;
-      readonly input: "StoredSource" | "RefetchSource";
-    }
-  | {
-      readonly kind: "RepairSource";
-      readonly expectedAttemptId: string;
-      readonly expectedJobId: string;
-      readonly input: "StoredSource" | "RefetchSource";
-    }
-  | {
-      readonly kind: "RepairSearch";
-      readonly expectedRevision: number;
-      readonly expectedJobId: string;
-      readonly input: "PublishedContent";
-    };
-
 export interface SourceAdmission {
   readonly mediaId: string;
   readonly sourceAttemptId: string;
@@ -89,86 +66,6 @@ export interface SearchAdmission {
   readonly mediaId: string;
   readonly revision: number;
   readonly jobId: string;
-}
-
-export function decodeCamelCaseMediaRecoveryOffer(
-  raw: unknown,
-  name: string,
-): MediaRecoveryOffer {
-  const kind = expectOneOf(
-    expectRecord(raw, name).kind,
-    ["RetryUpload", "RetrySource", "RepairSource", "RepairSearch"] as const,
-    `${name}.kind`,
-  );
-  switch (kind) {
-    case "RetryUpload":
-      throw new TypeError(`${name} must name a media recovery`);
-    case "RetrySource": {
-      const offer = expectExactRecord(
-        raw,
-        ["kind", "expectedAttemptId", "input"],
-        name,
-      );
-      return {
-        kind,
-        expectedAttemptId: expectCanonicalRfcUuid(
-          offer.expectedAttemptId,
-          `${name}.expectedAttemptId`,
-        ),
-        input: expectOneOf(
-          offer.input,
-          SOURCE_RECOVERY_INPUTS,
-          `${name}.input`,
-        ),
-      };
-    }
-    case "RepairSource": {
-      const offer = expectExactRecord(
-        raw,
-        ["kind", "expectedAttemptId", "expectedJobId", "input"],
-        name,
-      );
-      return {
-        kind,
-        expectedAttemptId: expectCanonicalRfcUuid(
-          offer.expectedAttemptId,
-          `${name}.expectedAttemptId`,
-        ),
-        expectedJobId: expectCanonicalRfcUuid(
-          offer.expectedJobId,
-          `${name}.expectedJobId`,
-        ),
-        input: expectOneOf(
-          offer.input,
-          SOURCE_RECOVERY_INPUTS,
-          `${name}.input`,
-        ),
-      };
-    }
-    case "RepairSearch": {
-      const offer = expectExactRecord(
-        raw,
-        ["kind", "expectedRevision", "expectedJobId", "input"],
-        name,
-      );
-      return {
-        kind,
-        expectedRevision: expectNonnegativeInteger(
-          offer.expectedRevision,
-          `${name}.expectedRevision`,
-        ),
-        expectedJobId: expectCanonicalRfcUuid(
-          offer.expectedJobId,
-          `${name}.expectedJobId`,
-        ),
-        input: expectOneOf(
-          offer.input,
-          ["PublishedContent"] as const,
-          `${name}.input`,
-        ),
-      };
-    }
-  }
 }
 
 export function decodeSourceAdmission(

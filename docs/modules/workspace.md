@@ -222,7 +222,7 @@ A resource pane publishes only its canonical `actionSubject`
 (`ResourceActionSubject`). `PaneShell` composes its pane commands and the body's
 `menuActions` through `ContextualActionMenu`; the unchanged canonical resource
 descriptors are one ordered contiguous suffix
-(`canonical-resource-action-menu-hard-cutover.md`). Membership, current verb,
+([resource-action owner](resource-actions.md)). Membership, current verb,
 order, and danger-last come from the server action snapshot and direct menu projection,
 so the pane menu includes `Open`. Pane bodies never build resource action
 arrays.
