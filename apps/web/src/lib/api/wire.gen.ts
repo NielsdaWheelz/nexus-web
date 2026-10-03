@@ -415,8 +415,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Rename Contributor */
-        patch: operations["rename_contributor_contributors__contributor_handle__patch"];
+        patch?: never;
         trace?: never;
     };
     "/contributors/{contributor_handle}/works": {
@@ -3861,6 +3860,14 @@ export interface components {
              */
             route: "CodexPersonal";
         };
+        /** CollectionPage[Annotated[Union[MediaContributorWorkItemOut, PodcastContributorWorkItemOut, ExternalContributorWorkItemOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
+        CollectionPage_Annotated_Union_MediaContributorWorkItemOut__PodcastContributorWorkItemOut__ExternalContributorWorkItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
+            /** Collectionrevision */
+            collectionRevision: number;
+            /** Items */
+            items: (components["schemas"]["MediaContributorWorkItemOut"] | components["schemas"]["PodcastContributorWorkItemOut"] | components["schemas"]["ExternalContributorWorkItemOut"])[];
+            nextCursor: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____"];
+        };
         /** CollectionPage[ConversationListItemOut] */
         CollectionPage_ConversationListItemOut_: {
             /** Collectionrevision */
@@ -3980,22 +3987,34 @@ export interface components {
          */
         ContributorCreditOut: {
             /** Contributor Display Name */
-            contributor_display_name?: string | null;
+            contributor_display_name: string | null;
             /** Contributor Handle */
-            contributor_handle?: string | null;
+            contributor_handle: string | null;
             /** Credited Name */
             credited_name: string;
             /** Href */
-            href?: string | null;
+            href: string | null;
             /** Ordinal */
-            ordinal?: number | null;
+            ordinal: number | null;
             /** Raw Role */
-            raw_role?: string | null;
+            raw_role: string | null;
             /**
              * Role
              * @enum {string}
              */
             role: "author" | "editor" | "translator" | "host" | "guest" | "narrator" | "creator" | "producer" | "publisher" | "channel" | "organization" | "unknown";
+        };
+        /** ContributorDetailOut */
+        ContributorDetailOut: {
+            actionSubject: components["schemas"]["ResourceActionSubjectOut"];
+            /** Displayname */
+            displayName: string;
+            /** Handle */
+            handle: string;
+            /** Href */
+            href: string;
+            /** Othernames */
+            otherNames: string[];
         };
         /** ContributorHandleLocatorIn */
         ContributorHandleLocatorIn: {
@@ -4025,12 +4044,46 @@ export interface components {
             /** Works */
             works: components["schemas"]["MediaManifestEntry"][];
         };
-        /** ContributorRenameRequest */
-        ContributorRenameRequest: {
-            /** Clientmutationid */
-            clientMutationId: string;
+        /** ContributorRoleFactOut */
+        ContributorRoleFactOut: {
+            /** Creditedname */
+            creditedName: string;
+            /** Rawrole */
+            rawRole: string | null;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "author" | "editor" | "translator" | "host" | "guest" | "narrator" | "creator" | "producer" | "publisher" | "channel" | "organization" | "unknown";
+        };
+        /** ContributorSearchItemOut */
+        ContributorSearchItemOut: {
             /** Displayname */
             displayName: string;
+            /** Handle */
+            handle: string;
+            /** Href */
+            href: string;
+            /** Matchedalias */
+            matchedAlias: string | null;
+            /** Workcount */
+            workCount: number;
+            /** Workexamples */
+            workExamples: components["schemas"]["ContributorWorkExampleOut"][];
+        };
+        /** ContributorSearchPageOut */
+        ContributorSearchPageOut: {
+            /** Contributors */
+            contributors: components["schemas"]["ContributorSearchItemOut"][];
+            /** Nextcursor */
+            nextCursor: string | null;
+        };
+        /** ContributorWorkExampleOut */
+        ContributorWorkExampleOut: {
+            /** Href */
+            href: string;
+            /** Title */
+            title: string;
         };
         /**
          * ConversationArtifactSearchOut
@@ -4313,6 +4366,10 @@ export interface components {
         Data_AtlasOut_: {
             data: components["schemas"]["AtlasOut"];
         };
+        /** Data[CollectionPage[Annotated[Union[MediaContributorWorkItemOut, PodcastContributorWorkItemOut, ExternalContributorWorkItemOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]]] */
+        Data_CollectionPage_Annotated_Union_MediaContributorWorkItemOut__PodcastContributorWorkItemOut__ExternalContributorWorkItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind_____: {
+            data: components["schemas"]["CollectionPage_Annotated_Union_MediaContributorWorkItemOut__PodcastContributorWorkItemOut__ExternalContributorWorkItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+        };
         /** Data[CollectionPage[ConversationListItemOut]] */
         Data_CollectionPage_ConversationListItemOut__: {
             data: components["schemas"]["CollectionPage_ConversationListItemOut_"];
@@ -4320,6 +4377,14 @@ export interface components {
         /** Data[ConsumptionStatsOut] */
         Data_ConsumptionStatsOut_: {
             data: components["schemas"]["ConsumptionStatsOut"];
+        };
+        /** Data[ContributorDetailOut] */
+        Data_ContributorDetailOut_: {
+            data: components["schemas"]["ContributorDetailOut"];
+        };
+        /** Data[ContributorSearchPageOut] */
+        Data_ContributorSearchPageOut_: {
+            data: components["schemas"]["ContributorSearchPageOut"];
         };
         /** Data[CreateResourceShareOut] */
         Data_CreateResourceShareOut_: {
@@ -4776,6 +4841,26 @@ export interface components {
              * @enum {string}
              */
             kind: "Existing";
+        };
+        /** ExternalContributorWorkItemOut */
+        ExternalContributorWorkItemOut: {
+            /** Actionsubject */
+            actionSubject: null;
+            /** Contentkind */
+            contentKind: string;
+            /** Date */
+            date: string | null;
+            /** Href */
+            href: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ExternalWork";
+            /** Rolefacts */
+            roleFacts: components["schemas"]["ContributorRoleFactOut"][];
+            /** Title */
+            title: string;
         };
         /** ExternalUrlLocator */
         ExternalUrlLocator: {
@@ -5422,6 +5507,20 @@ export interface components {
             title: string;
             /** Total */
             total: number;
+        };
+        /** MediaContributorWorkItemOut */
+        MediaContributorWorkItemOut: {
+            actionSubject: components["schemas"]["ResourceActionSubjectOut"];
+            /** Href */
+            href: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Media";
+            mediaSummary: components["schemas"]["MediaSummaryOut"];
+            /** Rolefacts */
+            roleFacts: components["schemas"]["ContributorRoleFactOut"][];
         };
         /**
          * MediaDisposition
@@ -6139,6 +6238,25 @@ export interface components {
              * Format: uuid
              */
             podcastId: string;
+        };
+        /** PodcastContributorWorkItemOut */
+        PodcastContributorWorkItemOut: {
+            actionSubject: components["schemas"]["ResourceActionSubjectOut"];
+            /** Contentkind */
+            contentKind: string;
+            /** Date */
+            date: string | null;
+            /** Href */
+            href: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Podcast";
+            /** Rolefacts */
+            roleFacts: components["schemas"]["ContributorRoleFactOut"][];
+            /** Title */
+            title: string;
         };
         /** PodcastDiscoveryCommitTarget */
         PodcastDiscoveryCommitTarget: {
@@ -7147,6 +7265,11 @@ export interface components {
         ResourceActionSnapshotResolveRequest: {
             /** Refs */
             refs: string[];
+        };
+        /** ResourceActionSubjectOut */
+        ResourceActionSubjectOut: {
+            /** Ref */
+            ref: string;
         };
         /** ResourceActivationOut */
         ResourceActivationOut: {
@@ -9515,9 +9638,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ContributorSearchPageOut_"];
                 };
             };
             /** @description Validation Error */
@@ -9548,46 +9669,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    rename_contributor_contributors__contributor_handle__patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                contributor_handle: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ContributorRenameRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ContributorDetailOut_"];
                 };
             };
             /** @description Validation Error */
@@ -9618,9 +9700,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_CollectionPage_Annotated_Union_MediaContributorWorkItemOut__PodcastContributorWorkItemOut__ExternalContributorWorkItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind_____"];
                 };
             };
             /** @description Validation Error */

@@ -25,9 +25,3 @@ export async function GET(req: Request, { params }: { params: Params }) {
   if (RESERVED_CONTRIBUTOR_HANDLE_SEGMENTS.has(handle)) return reservedSegment404();
   return proxyToFastAPI(req, contributorResource.serverPath({ handle }));
 }
-
-export async function PATCH(req: Request, { params }: { params: Params }) {
-  const { handle } = await params;
-  if (RESERVED_CONTRIBUTOR_HANDLE_SEGMENTS.has(handle)) return reservedSegment404();
-  return proxyToFastAPI(req, contributorResource.serverPath({ handle }));
-}

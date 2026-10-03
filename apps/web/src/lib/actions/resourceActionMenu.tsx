@@ -81,7 +81,6 @@ import {
   requestNoteBlockActionIntent,
   requestPageActionIntent,
 } from "@/lib/notes/actionIntents";
-import { requestContributorActionIntent } from "@/lib/contributors/actionIntent";
 import { requestPodcastActionIntent } from "@/lib/podcasts/actionIntent";
 
 export interface ResourceActionPorts {
@@ -1115,19 +1114,6 @@ export function resourceActionDescriptors({
             mountedMutation(snapshot, ports, (completion) =>
               requestNoteBlockActionIntent({
                 kind: "EditNoteBody",
-                ...mounted,
-                ...completion,
-              }),
-            ),
-        );
-      case "RenameContributor":
-        return make(
-          capability,
-          "ResourceOperation.Contributor.Rename",
-          (ports) =>
-            mountedMutation(snapshot, ports, (completion) =>
-              requestContributorActionIntent({
-                kind: "RenameContributor",
                 ...mounted,
                 ...completion,
               }),

@@ -9,8 +9,13 @@ from sqlalchemy.orm import Session
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.responses import ok
-from nexus.schemas.contributors import ContributorRenameRequest
+from nexus.responses import Data
+from nexus.schemas.collection_page import CollectionPage
+from nexus.schemas.contributors import (
+    ContributorDetailOut,
+    ContributorSearchPageOut,
+    ContributorWorkItemOut,
+)
 from nexus.services import contributors as contributors_service
 from nexus.services.contributor_taxonomy import ContributorHandle, parse_contributor_handle
 
@@ -38,11 +43,11 @@ def search_contributors(
     q: Annotated[str, Query(min_length=1, max_length=200), AfterValidator(_require_nonblank)],
     cursor: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=50),
-) -> dict:
+) -> Data[ContributorSearchPageOut]:
     page = contributors_service.search_contributors(
         db, viewer_id=viewer.user_id, q=q, cursor=cursor, limit=limit
     )
-    return ok(page, by_alias=True)
+    return Data(data=page)
 
 
 @router.get("/{contributor_handle}")
@@ -50,11 +55,11 @@ def get_contributor(
     contributor_handle: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> Data[ContributorDetailOut]:
     detail = contributors_service.get_contributor_detail(
         db, viewer_id=viewer.user_id, contributor_handle=_parse_handle(contributor_handle)
     )
-    return ok(detail, by_alias=True)
+    return Data(data=detail)
 
 
 @router.get("/{contributor_handle}/works")
@@ -63,7 +68,7 @@ def list_contributor_works(
     contributor_handle: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_repeatable_read_db)],
-) -> dict:
+) -> Data[CollectionPage[ContributorWorkItemOut]]:
     plan, query = contributors_service.parse_contributor_works_query(
         request.query_params.multi_items()
     )
@@ -76,16 +81,4 @@ def list_contributor_works(
         collection_revision=query.collection_revision,
         limit=query.limit,
     )
-    return ok(page, by_alias=True)
-
-
-@router.patch("/{contributor_handle}")
-def rename_contributor(
-    contributor_handle: str,
-    request: ContributorRenameRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-) -> dict:
-    detail = contributors_service.ensure_contributor_display_name(
-        viewer=viewer, contributor_handle=_parse_handle(contributor_handle)
-    )
-    return ok(detail, by_alias=True)
+    return Data(data=page)

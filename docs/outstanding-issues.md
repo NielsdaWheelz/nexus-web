@@ -296,7 +296,6 @@ unexpected timeouts. See
 - [open] oi-167 · pdf highlights · 2026-09-17 typecheck cleanup · p2 · write-time matching combines cached text with current publication spans: [ticket](tickets/pdf-highlight-matching-mixes-publication-snapshots.md).
 - [open] oi-170 · consumption activity · 2026-09-17 slop sweep · p3 · `clientMutationId` on activity uploads is a wire no-op held by the shipped android client: [ticket](tickets/activity-upload-client-mutation-id-is-a-wire-no-op.md).
 - [open] oi-171 · appearance · 2026-09-18 owner decisions · p3 · Press and Study declare no color-scheme, so native controls and UA scrollbars follow the browser default: [ticket](tickets/press-and-study-leave-native-controls-on-the-ua-scheme.md).
-- [open] oi-172 · contributors · 2026-09-18 owner decisions · p3 · author rename is dead end to end now that no viewer can hold the admin role; delete the feature or grant it to a real principal: [ticket](tickets/author-rename-has-no-principal-who-may-perform-it.md).
 - [open] secret scanning · 2026-09-18 pr #334 · gitguardian repeats an operator-classified false positive on a compose variable reference: [ticket](tickets/gitguardian-repeats-classified-variable-reference.md).
 - [open] oi-175 · chat tool runtime · 2026-09-21 reauthoring · p3 · `tool_call_delta` has no producer but remains in the event vocabulary, the CHECK and the browser decoder; removal needs one owner preflight count: [ticket](tickets/tool-call-delta-event-has-no-producer.md).
 - [open] oi-178 · dossiers · 2026-09-21 reauthoring · p2 · a recheck raising DossierInputTooLarge escapes the terminal writers and leaves a build active with no terminal: [ticket](tickets/dossier-recheck-can-raise-past-the-terminal-writer.md).
@@ -360,5 +359,5 @@ unexpected timeouts. See
 - [open] local dependency setup · 2026-10-02 cleanup verification · make setup omits the codex-agent extra required by checked runtime imports: [ticket](tickets/local-setup-omits-codex-agent-extra.md).
 - [open] walknote / transcription · 2026-10-02 cleanup audit · the async upload route makes blocking deepgram http calls, delaying unrelated requests and streams: [ticket](tickets/walknote-transcription-blocks-api-event-loop.md).
 - [open] atlas / query · 2026-10-02 representation repair · the star query still selects/groups an unused position timestamp: [ticket](tickets/atlas-star-query-reads-unused-position-timestamp.md).
-- [open] contributor / typed wire · 2026-10-02 cleanup audit · nullable defaults make five always-sent embedded credit keys optional in generated types: [ticket](tickets/contributor-credit-wire-optionalizes-sent-fields.md).
 - [open] workspace / saving · 2026-10-02 cleanup audit · scheduled snapshots count as saved; non-auth failures disappear and pagehide skips retry: [ticket](tickets/workspace-session-failed-save-discards-dirty-state.md).
+- author non-media work dates have no producer: [ticket](tickets/author-nonmedia-work-dates-have-no-producer.md).

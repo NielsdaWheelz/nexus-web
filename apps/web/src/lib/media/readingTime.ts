@@ -1,4 +1,5 @@
-import { decodePresence, type Presence } from "@/lib/api/presence";
+import { absent, present, decodePresence, type Presence } from "@/lib/api/presence";
+import type { Schema } from "@/lib/api/wire";
 import type {
   NonNegativeMinutes,
   PositiveMinutes,
@@ -20,18 +21,41 @@ function decodeMinutes(raw: unknown, minimum: number, name: string): number {
   return value;
 }
 
-export function decodeReadingTimeEstimate(raw: unknown): ReadingTimeEstimate {
+export function parseReadingTimeEstimateWire(
+  raw: unknown,
+): Schema<"ReadingTimeEstimateOut"> {
   const value = expectExactRecord(
     raw,
     ["totalMinutes", "remainingMinutes"],
     "readingTimeEstimate.value",
   );
   return {
+    totalMinutes: expectInteger(value.totalMinutes, "readingTimeEstimate.value.totalMinutes"),
+    remainingMinutes: decodePresence(value.remainingMinutes, (minutes) =>
+      expectInteger(minutes, "readingTimeEstimate.value.remainingMinutes.value"),
+    ),
+  };
+}
+
+export function readingTimeEstimateFromWire(
+  value: Schema<"ReadingTimeEstimateOut">,
+): ReadingTimeEstimate {
+  return {
     totalMinutes: {
       value: decodeMinutes(value.totalMinutes, 1, "readingTimeEstimate.value.totalMinutes"),
     },
-    remainingMinutes: decodePresence(value.remainingMinutes, (minutes) => ({
-      value: decodeMinutes(minutes, 0, "readingTimeEstimate.value.remainingMinutes.value"),
-    })),
+    remainingMinutes: value.remainingMinutes.kind === "Present"
+      ? present({
+          value: decodeMinutes(
+            value.remainingMinutes.value,
+            0,
+            "readingTimeEstimate.value.remainingMinutes.value",
+          ),
+        })
+      : absent(),
   };
+}
+
+export function decodeReadingTimeEstimate(raw: unknown): ReadingTimeEstimate {
+  return readingTimeEstimateFromWire(parseReadingTimeEstimateWire(raw));
 }
