@@ -1,10 +1,6 @@
 import type { TranscriptFindPresentation } from "./TranscriptContentPanel";
 import type { Presence } from "@/lib/api/presence";
-import {
-  normalizeTrackChapters,
-  resolveTranscriptChapterInterval,
-  type GlobalPlayerChapter,
-} from "@/lib/media/transcriptChapters";
+import { resolveTranscriptChapterInterval } from "@/lib/media/transcriptChapters";
 import {
   formatTranscriptTimestampMs,
   type Fragment,
@@ -43,7 +39,7 @@ export interface TranscriptFindSnapshot {
   readonly sourceKey: PaneFindSourceKey;
   readonly completeness: "Complete" | "Partial";
   readonly fragments: readonly TranscriptFindSnapshotFragment[];
-  readonly chapters: readonly GlobalPlayerChapter[];
+  readonly chapters: readonly TranscriptChapter[];
 }
 
 interface PreparedChapterScope {
@@ -124,7 +120,6 @@ export function createTranscriptFindSnapshot({
     }
     fragmentIds.add(fragment.id);
   }
-  const normalizedChapters = normalizeTrackChapters(chapters);
   const completeness =
     transcriptState === "partial" || transcriptCoverage === "partial"
       ? "Partial"
@@ -133,7 +128,7 @@ export function createTranscriptFindSnapshot({
     mediaId,
     completeness,
     fragments: orderedFragments,
-    chapters: normalizedChapters,
+    chapters,
     sourceKey: createPaneFindSourceKey({
       kind: "Transcript",
       mediaId,

@@ -110,6 +110,15 @@ conversation and artifact find keep their own non-reader return behavior.
 epub find retains its bounded server scan, and pdf find retains pdf.js matching
 and marks. closing find removes marks while the reader origin remains held.
 
+rich transcript chapters have one readonly, required-nullable `TranscriptChapter`
+shape in `lib/media/transcriptView.ts`. media-detail ingress strictly decodes
+records, trims titles, drops blank titles, and stably orders by start then chapter
+index once. contents, playback, and find consume that same list. interval
+resolution stays in `transcriptChapters.ts`: a later distinct start caps an end,
+absent or invalid ends fall back to the next start, a missing final end stays open,
+ends are exclusive, and tied overlapping intervals have no active chapter. the
+lectern's separate `ChapterOut` protocol remains independent.
+
 ### canonical Find marks and rebind
 
 Web-article and EPUB Find share one presentation owner,

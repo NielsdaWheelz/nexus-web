@@ -18,10 +18,7 @@ import { parseMediaId, type PlayerDescriptor } from "@/lib/lectern/contract";
 import { activityRecorder } from "@/lib/consumption/activityRecorder";
 import { parseMediaRef } from "@/lib/consumption/activityContract";
 import { useViewportState } from "@/lib/renderEnvironment/provider";
-import {
-  normalizeTrackChapters,
-  resolveTranscriptChapterInterval,
-} from "@/lib/media/transcriptChapters";
+import { resolveTranscriptChapterInterval } from "@/lib/media/transcriptChapters";
 import {
   formatTranscriptTimestampMs,
   type TranscriptChapter,
@@ -174,7 +171,7 @@ interface TranscriptPlaybackPanelProps {
   mediaKind: "podcast_episode" | "video";
   playbackSource: TranscriptPlaybackSource | null;
   canonicalSourceUrl: string | null;
-  chapters: TranscriptChapter[];
+  chapters: readonly TranscriptChapter[];
   /** Decoded footer descriptor for this media; null hides the Play affordance. */
   playerDescriptor: PlayerDescriptor | null;
   descriptionHtml?: string | null;
@@ -252,19 +249,15 @@ export default function TranscriptPlaybackPanel({
     });
   };
 
-  const normalizedChapters = useMemo(
-    () => normalizeTrackChapters(chapters),
-    [chapters],
-  );
   const activeChapterInterval = useMemo(
     () =>
       mediaKind === "podcast_episode"
         ? resolveTranscriptChapterInterval({
-            chapters: normalizedChapters,
+            chapters,
             timestampMs: positionMs,
           })
         : null,
-    [mediaKind, normalizedChapters, positionMs],
+    [mediaKind, chapters, positionMs],
   );
   const showNotesHtml = useMemo(() => {
     if (mediaKind !== "podcast_episode") {
@@ -482,11 +475,11 @@ export default function TranscriptPlaybackPanel({
         ) : null}
       </div>
 
-      {mediaKind === "podcast_episode" && normalizedChapters.length > 0 ? (
+      {mediaKind === "podcast_episode" && chapters.length > 0 ? (
         <section className={styles.chapterPanel} aria-label="Episode chapters">
           <h2 className={styles.chapterHeading}>Chapters</h2>
           <ol className={styles.chapterList}>
-            {normalizedChapters.map((chapter, chapterOrdinal) => {
+            {chapters.map((chapter, chapterOrdinal) => {
               const timestamp = formatTranscriptTimestampMs(chapter.t_start_ms);
               const isActiveChapter =
                 activeChapterInterval?.ordinal === chapterOrdinal;

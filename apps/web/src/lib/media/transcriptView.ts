@@ -46,12 +46,12 @@ export interface TranscriptFragment {
 }
 
 export interface TranscriptChapter {
-  chapter_idx: number;
-  title: string;
-  t_start_ms: number;
-  t_end_ms?: number | null;
-  url?: string | null;
-  image_url?: string | null;
+  readonly chapter_idx: number;
+  readonly title: string;
+  readonly t_start_ms: number;
+  readonly t_end_ms: number | null;
+  readonly url: string | null;
+  readonly image_url: string | null;
 }
 
 export interface Fragment {
