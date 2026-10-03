@@ -12,7 +12,7 @@ import {
   usePlayerCommands,
   usePlayerSession,
   usePlayerTimeline,
-} from "@/lib/player/globalPlayer";
+} from "@/lib/player/playerRuntime";
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import { parseMediaId, type PlayerDescriptor } from "@/lib/lectern/contract";
 import { activityRecorder } from "@/lib/consumption/activityRecorder";

@@ -60,7 +60,7 @@ import {
   canonicalSessionOfGlobalState,
   usePlayerCommands,
   usePlayerSession,
-} from "@/lib/player/globalPlayer";
+} from "@/lib/player/playerRuntime";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { assertNever } from "@/lib/assertNever";

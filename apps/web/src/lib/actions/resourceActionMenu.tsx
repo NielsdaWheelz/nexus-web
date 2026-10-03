@@ -65,7 +65,7 @@ import {
   canonicalSessionOfGlobalState,
   type usePlayerCommands,
   type usePlayerSession,
-} from "@/lib/player/globalPlayer";
+} from "@/lib/player/playerRuntime";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { ActionSelectDetail } from "@/lib/ui/actionDescriptor";
 import {

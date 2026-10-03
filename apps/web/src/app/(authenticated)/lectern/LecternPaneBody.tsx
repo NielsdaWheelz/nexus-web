@@ -44,7 +44,7 @@ import {
   type LecternSortOptionId,
 } from "@/lib/lectern/view";
 import { descriptorFromLecternItem } from "@/lib/player/playerSession";
-import { usePlayerCommands } from "@/lib/player/globalPlayer";
+import { usePlayerCommands } from "@/lib/player/playerRuntime";
 import {
   usePaneIsActive,
   usePaneReturnReady,

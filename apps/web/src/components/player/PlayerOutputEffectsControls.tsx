@@ -3,7 +3,7 @@
 import {
   usePlayerCommands,
   usePlayerSettings,
-} from "@/lib/player/globalPlayer";
+} from "@/lib/player/playerRuntime";
 import {
   normalizeVolumeBoostLevel,
   type OutputEffectsVolumeBoost,
