@@ -113,7 +113,7 @@ export interface paths {
         };
         /**
          * Read Atlas
-         * @description Return the grand atlas read model, ETag-cacheable by max(computed_at).
+         * @description return the scoped atlas; its tag identifies the exact rendered representation.
          */
         get: operations["read_atlas_atlas_get"];
         put?: never;
@@ -3492,6 +3492,35 @@ export interface components {
             /** Suffix */
             suffix?: string | null;
         };
+        /** AtlasEdgeOut */
+        AtlasEdgeOut: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "context" | "contradicts";
+            /** Origin */
+            origin: string;
+            /**
+             * Source Media Id
+             * Format: uuid
+             */
+            source_media_id: string;
+            /**
+             * Target Media Id
+             * Format: uuid
+             */
+            target_media_id: string;
+        };
+        /** AtlasOut */
+        AtlasOut: {
+            /** Constellations */
+            constellations: components["schemas"]["ConstellationOut"][];
+            /** Edges */
+            edges: components["schemas"]["AtlasEdgeOut"][];
+            /** Stars */
+            stars: components["schemas"]["StarOut"][];
+        };
         /** AudienceAvailableOut */
         AudienceAvailableOut: {
             /**
@@ -3893,6 +3922,18 @@ export interface components {
              */
             rollup: "exact" | "owner";
         };
+        /** ConstellationOut */
+        ConstellationOut: {
+            /**
+             * Library Id
+             * Format: uuid
+             */
+            library_id: string;
+            /** Member Media Ids */
+            member_media_ids: string[];
+            /** Name */
+            name: string;
+        };
         /** ConsumeHandoffCodeRequest */
         ConsumeHandoffCodeRequest: {
             /** Code */
@@ -4267,6 +4308,10 @@ export interface components {
         Data_Annotated_Union_LearnDossierOpenedOut__LearnDossierBuildAcceptedOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
             /** Data */
             data: components["schemas"]["LearnDossierOpenedOut"] | components["schemas"]["LearnDossierBuildAcceptedOut"];
+        };
+        /** Data[AtlasOut] */
+        Data_AtlasOut_: {
+            data: components["schemas"]["AtlasOut"];
         };
         /** Data[CollectionPage[ConversationListItemOut]] */
         Data_CollectionPage_ConversationListItemOut__: {
@@ -8195,6 +8240,24 @@ export interface components {
              */
             type: "split_note";
         };
+        /** StarOut */
+        StarOut: {
+            /** Kind */
+            kind: string;
+            /** Magnitude */
+            magnitude: number;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            /** Title */
+            title: string;
+            /** X */
+            x: number | null;
+            /** Y */
+            y: number | null;
+        };
         /** StartedEventPayload */
         StartedEventPayload: {
             /** Artifact Ref */
@@ -8874,8 +8937,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["Data_AtlasOut_"];
                 };
+            };
+            /** @description not modified */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
