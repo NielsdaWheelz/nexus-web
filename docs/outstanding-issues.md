@@ -340,6 +340,6 @@ unexpected timeouts. See
 - author non-media work dates have no producer: [ticket](tickets/author-nonmedia-work-dates-have-no-producer.md).
 
 
-- [open] native auth / handoff · 2026-10-02 route contract census · session-installation rejection is ignored before the success redirect: [ticket](tickets/auth-handoff-ignores-session-installation-rejection.md).
 - [open] inbound share / account policy candidate · 2026-10-02 producer review · valid dependency failures reach the defect owner; terminal recovery policy is undecided, source-verified/live not_run: [ticket](tickets/share-account-transient-failures-escape-inline-feedback.md).
 - [open] nexus / command policy candidate · 2026-10-02 producer review · valid auth-dependency503 reaches all three writes; terminal recovery policy is undecided, source-verified/live not_run: [ticket](tickets/nexus-auth-dependency-failure-escapes-retry-feedback.md).
+- [open] internal auth / transport · 2026-10-02 handoff review · fetch deadline ends before mint/consume json body transfer: [ticket](tickets/internal-auth-fetch-deadline-excludes-response-body.md).

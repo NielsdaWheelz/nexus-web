@@ -6,6 +6,7 @@ import {
   type SessionEffect,
 } from "@/lib/auth/session-response";
 import {
+  getSupabaseAuthCookieNames,
   withholdSupabaseSessionCredentials,
   type CookieValue,
 } from "@/lib/auth/session-cookie";
@@ -44,35 +45,46 @@ function createResponseClient(
     "Supabase auth operation timed out",
   );
 
+  function applyCookies(
+    response: NextResponse,
+    effect: SessionEffect = { kind: "Preserve" },
+  ): NextResponse {
+    Object.entries(headersToApply).forEach(([key, value]) => {
+      response.headers.set(key, value);
+    });
+
+    const [firstCookie, ...remainingCookies] = cookiesToApply;
+    if (effect.kind === "Clear" || !firstCookie) {
+      return finalizeSessionResponse(response, effect);
+    }
+    const providerCookies: NonEmptyCookieSet = [
+      firstCookie,
+      ...remainingCookies,
+    ];
+    const combinedEffect: SessionEffect =
+      effect.kind === "Rotate"
+        ? {
+            kind: "Rotate",
+            cookiesToSet: [
+              ...effect.cookiesToSet,
+              ...providerCookies,
+            ],
+          }
+        : { kind: "Rotate", cookiesToSet: providerCookies };
+    return finalizeSessionResponse(response, combinedEffect);
+  }
+
   return {
     supabase,
-    applyCookies(
-      response: NextResponse,
-      effect: SessionEffect = { kind: "Preserve" },
-    ): NextResponse {
-      Object.entries(headersToApply).forEach(([key, value]) => {
-        response.headers.set(key, value);
+    applyCookies,
+    clearSession(response: NextResponse): NextResponse {
+      return applyCookies(response, {
+        kind: "Clear",
+        cookieNames: getSupabaseAuthCookieNames(
+          Array.from(effectiveCookies, ([name, value]) => ({ name, value })),
+        ),
+        feedback: false,
       });
-
-      const [firstCookie, ...remainingCookies] = cookiesToApply;
-      if (effect.kind === "Clear" || !firstCookie) {
-        return finalizeSessionResponse(response, effect);
-      }
-      const providerCookies: NonEmptyCookieSet = [
-        firstCookie,
-        ...remainingCookies,
-      ];
-      const combinedEffect: SessionEffect =
-        effect.kind === "Rotate"
-          ? {
-              kind: "Rotate",
-              cookiesToSet: [
-                ...effect.cookiesToSet,
-                ...providerCookies,
-              ],
-            }
-          : { kind: "Rotate", cookiesToSet: providerCookies };
-      return finalizeSessionResponse(response, combinedEffect);
     },
   };
 }

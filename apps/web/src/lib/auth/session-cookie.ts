@@ -80,15 +80,13 @@ export function withholdSupabaseSessionCredentials(
   }));
 }
 
-// Expire every Supabase auth cookie on the outgoing response. The empty value
-// plus maxAge: 0 is the browser-supported way to drop a cookie; the path must
-// match the original set (the app sets these at `/`).
+// native deletion's past expiry survives Next's mutable-cookie merge.
 export function clearSupabaseAuthCookies(
   response: NextResponse,
   cookieNames: readonly string[],
 ): void {
   for (const name of cookieNames) {
-    response.cookies.set(name, "", { maxAge: 0, path: "/" });
+    response.cookies.delete({ name, path: "/" });
   }
 }
 

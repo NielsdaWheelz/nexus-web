@@ -130,21 +130,35 @@ export async function GET(request: Request): Promise<NextResponse> {
       );
     }
 
-    const { supabase, applyCookies } =
-      await createSessionEstablishmentClient();
+    const auth = await createSessionEstablishmentClient();
+    try {
+      const { data, error } = await auth.supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      });
+      if (error || !data.session) {
+        return auth.clearSession(
+          NextResponse.redirect(
+            buildLoginUrl(redirectOrigin, target, {
+              errorDescription: AUTH_CALLBACK_FAILURE_MESSAGE,
+            }),
+            { status: TEMPORARY_REDIRECT },
+          ),
+        );
+      }
 
-    await supabase.auth.setSession({
-      access_token: accessToken,
-      refresh_token: refreshToken,
-    });
-
-    return applyCookies(
-      preserve(
+      return auth.applyCookies(
         NextResponse.redirect(buildAuthReturnTargetUrl(redirectOrigin, target), {
           status: TEMPORARY_REDIRECT,
-        })
-      )
-    );
+        }),
+      );
+    } catch {
+      // justify-defect: an attempted installation must terminate with local
+      // cleanup even when the SDK throws a non-Error value.
+      return auth.clearSession(
+        new NextResponse(AUTH_CALLBACK_FAILURE_MESSAGE, { status: 500 }),
+      );
+    }
   } catch (error) {
     if (!(error instanceof Error)) {
       throw error;

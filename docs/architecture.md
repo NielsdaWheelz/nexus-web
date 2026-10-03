@@ -801,6 +801,18 @@ retain their distinct cookie-store capability. response finalization preserves
 clear precedence and private, no-store headers. sdk retry/backoff can outlast
 the fetch budget; these capabilities do not add a full-operation deadline.
 
+native handoff delivery owns local session failure cleanup. a successful token
+consume is followed by a checked session installation; any failed attempted
+installation clears local auth cookies, including an old session. failed mint
+after native google or oauth handoff establishment also clears them. validation
+and consume failures before installation preserve the prior jar. the response
+adapter owns complete old/new base and chunk deletion; the callback owns its
+execution and response publication. canonical clear and sdk removal writes use
+native cookie deletion so expiry survives next's mutable-cookie merge, including
+obsolete chunks and verifier removal on successful delivery. this is local
+cleanup, without restoring an old session, revoking provider credentials or
+recovering a consumed code.
+
 Other identity surfaces:
 
 - **Stream tokens** (`services/stream_tokens.py`, route `api/routes/stream_tokens.py`):
