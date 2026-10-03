@@ -11,6 +11,7 @@ import {
   mediaResource,
   notePagesResource,
   settingsAccountResource,
+  type ConversationIndexResourceParams,
 } from "@/lib/api/resource";
 import { decodeSlateEnvelope } from "@/lib/resonance/contract";
 import type { ResourceFetcher } from "@/lib/api/resourceTransport";
@@ -45,7 +46,8 @@ import type {
   ContributorDetail,
   ContributorWorkItem,
 } from "@/lib/contributors/types";
-import { decodeConversationIndexItem } from "@/lib/conversations/indexApi";
+import { conversationIndexPage } from "@/lib/conversations/indexApi";
+import type { ApiJson } from "@/lib/api/wire";
 import type { ConversationListItem } from "@/lib/conversations/types";
 
 // The author pane's composed first-paint seed: the lightweight contributor
@@ -237,9 +239,11 @@ export const paneResourceLoaders: Partial<
   conversations: {
     cacheKey: () => conversationsInitialResource.cacheKey({}),
     load: async (request): Promise<ConversationsPaneSeed> => {
-      const page = decodeCollectionPage(
-        await request(conversationsInitialResource, {}),
-        decodeConversationIndexItem,
+      const page = conversationIndexPage(
+        await request<ConversationIndexResourceParams, ApiJson<"/conversations", "get">>(
+          conversationsInitialResource,
+          {},
+        ),
       );
       return {
         conversations: page.items,

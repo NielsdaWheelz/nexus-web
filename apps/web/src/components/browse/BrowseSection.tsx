@@ -38,18 +38,6 @@ export type BrowseSectionSnapshot =
       readonly failure: BrowseSectionFailureSnapshot;
     };
 
-function cursorPage(page: BrowsePage): CursorPage<BrowseCandidate> {
-  const nextCursor =
-    page.nextCursor.kind === "Present" ? page.nextCursor.value : null;
-  return {
-    data: [...page.items],
-    page: {
-      has_more: nextCursor !== null,
-      next_cursor: nextCursor,
-    },
-  };
-}
-
 function snapshotFailure(error: ApiError): BrowseSectionFailureSnapshot {
   return {
     status: error.status,
@@ -142,11 +130,11 @@ export default function BrowseSection({
       };
     }
     if (activeRestore?.kind === "Ready") {
-      return { status: "ready", data: cursorPage(activeRestore.page) };
+      return { status: "ready", data: activeRestore.page };
     }
     if (activeRestore?.kind === "Failed") {
       if (activeRestore.page !== null) {
-        return { status: "ready", data: cursorPage(activeRestore.page) };
+        return { status: "ready", data: activeRestore.page };
       }
       return {
         status: "error",
@@ -162,7 +150,7 @@ export default function BrowseSection({
       case "error":
         return loaded;
       case "ready":
-        return { status: "ready", data: cursorPage(loaded.data) };
+        return { status: "ready", data: loaded.data };
     }
   }, [activeRestore, loaded]);
   const initialMoreError = useMemo(
@@ -176,16 +164,14 @@ export default function BrowseSection({
     firstPage,
     initialMoreError,
     loadMorePage: async (cursor, signal) =>
-      cursorPage(
-        await runRequest(signal, () =>
-          fetchBrowsePage({
-            query,
-            ...identity,
-            limit: PAGE_SIZE,
-            cursor,
-            signal,
-          }),
-        ),
+      runRequest(signal, () =>
+        fetchBrowsePage({
+          query,
+          ...identity,
+          limit: PAGE_SIZE,
+          cursor,
+          signal,
+        }),
       ),
   });
   const rows = useMemo(
@@ -214,10 +200,7 @@ export default function BrowseSection({
       sort:
         identity.sort === "Relevance" ? absent() : present(identity.sort),
       items: pagination.items,
-      nextCursor:
-        pagination.nextCursor === null
-          ? absent()
-          : present(pagination.nextCursor),
+      nextCursor: pagination.nextCursor,
     };
     return pagination.error
       ? {

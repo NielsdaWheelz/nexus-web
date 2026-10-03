@@ -298,12 +298,10 @@ class ChatsTitle:
 
 type ConversationIndexView = ChatsUpdatedNewest | ChatsUpdatedOldest | ChatsTitle
 
-_INDEX_QUERY_KEYS = frozenset({"sort", "direction"})
+_INDEX_QUERY_KEYS = frozenset({"sort", "direction", "title_search"})
 # Versioned family: a cursor minted under the single unordered index carried no
 # plan and no revision, so none is decodable against a chosen order.
 _INDEX_CURSOR_FAMILY = f"{CollectionFamily.ConversationIndex.value}:v2"
-# The retained destination picker pages the same rows without a revision.
-_TITLE_SEARCH_CURSOR_FAMILY = "ConversationDestination"
 # The presented chat title, matching `conversations/presentation.ts`. Ordering on
 # the raw column would sort by a string the reader never sees.
 _PRESENTED_TITLE_SQL = "coalesce(nullif(btrim(c.title), ''), 'Untitled chat')"
@@ -311,23 +309,30 @@ _PRESENTED_TITLE_SQL = "coalesce(nullif(btrim(c.title), ''), 'Untitled chat')"
 
 def parse_conversation_index_query(
     items: Sequence[tuple[str, str]],
-) -> tuple[ConversationIndexView, ParsedCollectionQuery]:
+) -> tuple[ConversationIndexView, str, ParsedCollectionQuery]:
     """Strict chat-index view parse over the request's ``multi_items()``.
 
     Both keys absent is the canonical newest-first view; anything else must name
     one advertised non-default view exactly. ``updated+desc`` is rejected rather
-    than normalized so the canonical view keeps exactly one URL.
+    than normalized so the canonical view keeps exactly one URL. Title search
+    is a trimmed literal substring, bounded independently of the sort view.
     """
 
     query = parse_collection_query(items, domain_keys=_INDEX_QUERY_KEYS)
+    title_search = query.parameters.get("title_search", "").strip()
+    if len(title_search) > MAX_CONVERSATION_SEARCH_QUERY:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            f"title_search must be at most {MAX_CONVERSATION_SEARCH_QUERY} characters",
+        )
     sort = query.parameters.get("sort")
     direction = query.parameters.get("direction")
     if sort is None and direction is None:
-        return ChatsUpdatedNewest(), query
+        return ChatsUpdatedNewest(), title_search, query
     if sort == "updated" and direction == "asc":
-        return ChatsUpdatedOldest(), query
+        return ChatsUpdatedOldest(), title_search, query
     if sort == "title" and direction in ("asc", "desc"):
-        return ChatsTitle(cast(Direction, direction)), query
+        return ChatsTitle(cast(Direction, direction)), title_search, query
     raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported chat index view")
 
 
@@ -424,6 +429,7 @@ def list_conversation_index(
     cursor: CollectionCursor | None,
     collection_revision: CollectionRevision | None,
     view: ConversationIndexView,
+    title_search: str,
 ) -> CollectionPage[ConversationListItemOut]:
     """One revision-consistent page of the finite primary conversation index.
 
@@ -445,12 +451,14 @@ def list_conversation_index(
         )
     )
     plan = _index_plan(view)
-    cursor_query = {
+    cursor_query: dict[str, object] = {
         "family": _INDEX_CURSOR_FAMILY,
         "plan": plan_json(plan),
         "revision": current_revision,
         "viewerId": str(viewer_id),
     }
+    if title_search:
+        cursor_query["titleSearch"] = title_search
     params: dict[str, object] = {"viewer_id": viewer_id, "limit_plus_one": limit + 1}
     keyset_sql = ""
     if cursor is not None:
@@ -471,7 +479,7 @@ def list_conversation_index(
         plan=plan,
         params=params,
         keyset_sql=keyset_sql,
-        title_search="",
+        title_search=title_search,
     )
     page_rows = rows[:limit]
     next_cursor: CollectionCursor | None = None
@@ -494,72 +502,6 @@ def list_conversation_index(
         collectionRevision=current_revision,
         nextCursor=present(next_cursor) if next_cursor is not None else absent(),
     )
-
-
-def list_conversations_matching_title(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    limit: int,
-    cursor: str | None,
-    q: str,
-) -> tuple[list[ConversationOut], PageInfo]:
-    """The retained destination picker: owner-scoped literal title search.
-
-    Ordering stays ``(updated_at DESC, id DESC)`` so a cursor stays stable while
-    ``q`` is fixed; changing ``q`` invalidates the cursor's query digest.
-    """
-
-    normalized_q = q.strip()
-    if len(normalized_q) > MAX_CONVERSATION_SEARCH_QUERY:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            f"q must be at most {MAX_CONVERSATION_SEARCH_QUERY} characters",
-        )
-    plan = _index_plan(ChatsUpdatedNewest())
-    cursor_query: dict[str, object] = {"viewerId": str(viewer_id), "q": normalized_q}
-    params: dict[str, object] = {"viewer_id": viewer_id, "limit_plus_one": limit + 1}
-    keyset_sql = ""
-    if cursor is not None:
-        keyset_sql = keyset_clause(plan, alias="facts")
-        params.update(
-            keyset_params(
-                plan,
-                decode_keyset_cursor(
-                    cursor,
-                    family=_TITLE_SEARCH_CURSOR_FAMILY,
-                    query=cursor_query,
-                    expected_kinds=expected_kinds(plan),
-                ),
-            )
-        )
-    rows = _conversation_rows(
-        db,
-        plan=plan,
-        params=params,
-        keyset_sql=keyset_sql,
-        title_search=normalized_q,
-    )
-    page_rows = rows[:limit]
-    next_cursor = None
-    if len(rows) > limit and page_rows:
-        next_cursor = encode_keyset_cursor(
-            family=_TITLE_SEARCH_CURSOR_FAMILY,
-            query=cursor_query,
-            after=after_values(plan, page_rows[-1]),
-        )
-    return [
-        ConversationOut(
-            id=row["id"],
-            title=row["title"],
-            owner_user_id=row["owner_user_id"],
-            is_owner=True,
-            message_count=row["message_count"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-        )
-        for row in page_rows
-    ], PageInfo(next_cursor=next_cursor)
 
 
 def list_conversations_with_context_ref(

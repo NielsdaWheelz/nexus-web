@@ -1,13 +1,9 @@
 "use client";
 
-import { useMemo } from "react";
 import type { ApiError } from "@/lib/api/client";
 import { absent, present } from "@/lib/api/presence";
-import {
-  useCursorPagination,
-  type CursorPage,
-} from "@/lib/api/useCursorPagination";
-import { useResource, type AsyncResource } from "@/lib/api/useResource";
+import { useCursorPagination } from "@/lib/api/useCursorPagination";
+import { useResource } from "@/lib/api/useResource";
 import { useImports } from "@/lib/imports/ImportsProvider";
 import type { ImportRef } from "@/lib/imports/importRef";
 import {
@@ -26,17 +22,6 @@ export interface ImportHistoryResult {
   retry(): void;
 }
 
-function cursorPage(page: HistoryPage): CursorPage<HistoryEntry> {
-  return {
-    data: [...page.entries],
-    page: {
-      has_more: page.nextCursor.kind === "Present",
-      next_cursor:
-        page.nextCursor.kind === "Present" ? page.nextCursor.value : null,
-    },
-  };
-}
-
 /**
  * The inspected import's recorded attempts, newest first, paged by its own
  * cursor. History is append-only evidence, so it is keyed to the observation
@@ -52,27 +37,12 @@ export function useImportHistory(ref: ImportRef | null): ImportHistoryResult {
     },
   });
 
-  const firstPage = useMemo<AsyncResource<CursorPage<HistoryEntry>>>(() => {
-    switch (keyed.status) {
-      case "ready":
-        return { status: "ready", data: cursorPage(keyed.data) };
-      case "error":
-        return { status: "error", error: keyed.error, retry: keyed.retry };
-      case "idle":
-        return { status: "idle" };
-      case "loading":
-        return { status: "loading" };
-    }
-  }, [keyed]);
-
   const pagination = useCursorPagination<HistoryEntry>({
-    firstPage,
+    firstPage: keyed,
     initialMoreError: null,
     loadMorePage: async (cursor, signal) => {
       if (ref === null) throw new Error("Cannot page a history with no ref");
-      return cursorPage(
-        await fetchImportHistory({ ref, cursor: present(cursor), signal }),
-      );
+      return fetchImportHistory({ ref, cursor: present(cursor), signal });
     },
   });
 

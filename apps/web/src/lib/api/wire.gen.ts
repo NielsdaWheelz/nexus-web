@@ -447,13 +447,13 @@ export interface paths {
          * List Conversations
          * @description List conversations.
          *
-         *     An explicit ``q`` selects the retained destination picker and an explicit
-         *     ``has_context_ref`` the retained resource-graph mode; both keep the manual
-         *     ``{data, page}`` envelope. Every other request is the finite primary index.
+         *     An explicit ``has_context_ref`` selects the retained resource-graph mode
+         *     with its manual ``{data, page}`` envelope. Every other request is the finite
+         *     index, with optional literal ``title_search``.
          *
          *     Errors:
          *         E_INVALID_REQUEST (400): a view state outside the advertised inventory,
-         *             a malformed has_context_ref URI, or ``q`` over its length bound.
+         *             a malformed has_context_ref URI, or title search over its length bound.
          *         E_INVALID_CURSOR (400): the cursor is malformed or unparseable.
          */
         get: operations["list_conversations_conversations_get"];
@@ -3832,6 +3832,14 @@ export interface components {
              */
             route: "CodexPersonal";
         };
+        /** CollectionPage[ConversationListItemOut] */
+        CollectionPage_ConversationListItemOut_: {
+            /** Collectionrevision */
+            collectionRevision: number;
+            /** Items */
+            items: components["schemas"]["ConversationListItemOut"][];
+            nextCursor: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____"];
+        };
         /** CompletionStatsSectionOut */
         CompletionStatsSectionOut: {
             /** Appliedfilters */
@@ -4060,6 +4068,52 @@ export interface components {
              */
             version: "v1";
         };
+        /** ConversationListItemOut */
+        ConversationListItemOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Message Count */
+            message_count: number;
+            /** Title */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** ConversationOut */
+        ConversationOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Owner */
+            is_owner: boolean;
+            /** Message Count */
+            message_count: number;
+            /**
+             * Owner User Id
+             * Format: uuid
+             */
+            owner_user_id: string;
+            /** Title */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
         /** CreateConversationRequest */
         CreateConversationRequest: {
             /** Initial Context Refs */
@@ -4195,6 +4249,12 @@ export interface components {
              */
             noteId: string;
         };
+        /** DataPage[ConversationOut, PageInfo] */
+        DataPage_ConversationOut_PageInfo_: {
+            /** Data */
+            data: components["schemas"]["ConversationOut"][];
+            page: components["schemas"]["PageInfo"];
+        };
         /** Data[ActivityExclusionResultOut] */
         Data_ActivityExclusionResultOut_: {
             data: components["schemas"]["ActivityExclusionResultOut"];
@@ -4207,6 +4267,10 @@ export interface components {
         Data_Annotated_Union_LearnDossierOpenedOut__LearnDossierBuildAcceptedOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
             /** Data */
             data: components["schemas"]["LearnDossierOpenedOut"] | components["schemas"]["LearnDossierBuildAcceptedOut"];
+        };
+        /** Data[CollectionPage[ConversationListItemOut]] */
+        Data_CollectionPage_ConversationListItemOut__: {
+            data: components["schemas"]["CollectionPage_ConversationListItemOut_"];
         };
         /** Data[ConsumptionStatsOut] */
         Data_ConsumptionStatsOut_: {
@@ -5839,6 +5903,14 @@ export interface components {
             /** Parent Index */
             parent_index?: number | null;
         };
+        /**
+         * PageInfo
+         * @description Manual-paging cursor envelope for retained conversation context queries.
+         */
+        PageInfo: {
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
         /** PageInputManifestV1 */
         PageInputManifestV1: {
             /** Block Refs */
@@ -6228,6 +6300,7 @@ export interface components {
         Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1___MaxLen_max_length_128_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1___MaxLen_max_length_128_____"];
         Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1___MaxLen_max_length_200_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1___MaxLen_max_length_200_____"];
         Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__"];
+        Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____"];
         Presence_Annotated_str__StringConstraints__AfterValidator__: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__StringConstraints__AfterValidator__"];
         Presence_CancelledEventPayload_: components["schemas"]["Absent"] | components["schemas"]["Present_CancelledEventPayload_"];
         Presence_CapacityPaused_: components["schemas"]["Absent"] | components["schemas"]["Present_CapacityPaused_"];
@@ -6370,6 +6443,16 @@ export interface components {
         };
         /** Present[Annotated[str, FieldInfo(annotation=NoneType, required=True, metadata=[MinLen(min_length=1)]), AfterValidator]] */
         Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /** Value */
+            value: string;
+        };
+        /** Present[Annotated[str, FieldInfo(annotation=NoneType, required=True, metadata=[Strict(strict=True), MinLen(min_length=1)])]] */
+        Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -9487,9 +9570,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_CollectionPage_ConversationListItemOut__"] | components["schemas"]["DataPage_ConversationOut_PageInfo_"];
                 };
             };
         };

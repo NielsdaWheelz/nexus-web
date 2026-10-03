@@ -91,11 +91,6 @@ const movement = (words: number, mediaMs: number) =>
 const periodName = (state: StatsUrlState) =>
   state.view === "year" ? state.year : PERIOD_LABEL[state.period];
 
-function page(rows: Session[], cursor: Schema<"ActivitySessionsOut">["nextCursor"]) {
-  const next = cursor.kind === "Present" ? cursor.value : null;
-  return { data: rows, page: { has_more: next !== null, next_cursor: next } };
-}
-
 function duration(ms: number): string {
   const minutes = Math.round(ms / 60_000);
   if (minutes < 60) return `${minutes} min`;
@@ -428,7 +423,7 @@ function Sessions(props: {
         </div>
       ) : (
         <LoadMoreFooter
-          hasMore={props.more && sessions.nextCursor !== null}
+          hasMore={props.more && sessions.hasMore}
           loading={sessions.loadingMore}
           onLoadMore={sessions.loadMore}
           label="Load more sessions"
@@ -777,7 +772,7 @@ export default function StatsPaneBody() {
   const firstPage = useMemo<AsyncResource<CursorPage<Session>>>(() => {
     if (data === null) return { status: "loading" };
     const { rows, nextCursor } = data.activity.sessions;
-    return { status: "ready", data: page(rows, nextCursor) };
+    return { status: "ready", data: { items: rows, nextCursor } };
   }, [data]);
   // Continuations reuse the committed query, so the cursor's snapshot and scope always match.
   const sessions = useCursorPagination<Session>({
@@ -789,7 +784,7 @@ export default function StatsPaneBody() {
       params.set("cursor", cursor);
       const url = `/api/consumption/sessions?${params}` as const;
       const body = await apiFetch<ApiJson<"/consumption/sessions", "get">>(url, { signal });
-      return page(body.data.sessions, body.data.nextCursor);
+      return { items: body.data.sessions, nextCursor: body.data.nextCursor };
     },
   });
 

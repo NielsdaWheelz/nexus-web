@@ -53,17 +53,6 @@ function shownItems(page: ImportPage): string {
   return JSON.stringify(page.items);
 }
 
-function cursorPage(page: ImportPage): CursorPage<ImportItem> {
-  return {
-    data: [...page.items],
-    page: {
-      has_more: page.nextCursor.kind === "Present",
-      next_cursor:
-        page.nextCursor.kind === "Present" ? page.nextCursor.value : null,
-    },
-  };
-}
-
 /**
  * The filtered list of imports for one view: page one keyed to the query and the
  * provider's observation revision, later pages appended by cursor, and — while
@@ -176,32 +165,23 @@ export function useImportsPage(
     return () => controller.abort();
   }, [absorbRereadFailure, cacheKey, observedAt, query, revision]);
 
-  // The continuation is owned by the page object, so the projection of one page
-  // must not be rebuilt while the reader is still on it: a re-keyed read hands
-  // back a fresh resource object on every render until it answers.
-  const firstData = useMemo(
-    () => (page === null ? null : cursorPage(page)),
-    [page],
-  );
   const firstPage = useMemo<AsyncResource<CursorPage<ImportItem>>>(() => {
-    if (firstData !== null) return { status: "ready", data: firstData };
+    if (page !== null) return { status: "ready", data: page };
     if (keyed.status === "error") {
       return { status: "error", error: keyed.error, retry: keyed.retry };
     }
     return { status: "loading" };
-  }, [firstData, keyed]);
+  }, [page, keyed]);
 
   const pagination = useCursorPagination<ImportItem>({
     firstPage,
     initialMoreError: null,
-    loadMorePage: async (cursor, signal) =>
-      cursorPage(
-        await fetchImportPage({
-          query: new URLSearchParams(query),
-          cursor: present(cursor),
-          signal,
-        }),
-      ),
+    loadMorePage: (cursor, signal) =>
+      fetchImportPage({
+        query: new URLSearchParams(query),
+        cursor: present(cursor),
+        signal,
+      }),
   });
 
   return {
