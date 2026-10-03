@@ -4661,6 +4661,10 @@ export interface components {
         Data_ResourceActionSnapshotResolveResponse_: {
             data: components["schemas"]["ResourceActionSnapshotResolveResponse"];
         };
+        /** Data[ResourceOpenableSearchResponse] */
+        Data_ResourceOpenableSearchResponse_: {
+            data: components["schemas"]["ResourceOpenableSearchResponse"];
+        };
         /** Data[ResourceShareSnapshotOut] */
         Data_ResourceShareSnapshotOut_: {
             data: components["schemas"]["ResourceShareSnapshotOut"];
@@ -8822,6 +8826,11 @@ export interface components {
             /** Q */
             q: string;
             schemes: components["schemas"]["Presence_Annotated_list_Literal__media____library____evidence_span____content_chunk____highlight____page____note_block____fragment____conversation____message____oracle_reading____oracle_passage_anchor____artifact____artifact_revision____external_snapshot____contributor____podcast____reader_apparatus_item____passage_anchor_____FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____"];
+        };
+        /** ResourceOpenableSearchResponse */
+        ResourceOpenableSearchResponse: {
+            /** Items */
+            items: components["schemas"]["ResourceItemOut"][];
         };
         /** ResourceRefLocatorIn */
         ResourceRefLocatorIn: {
@@ -16857,9 +16866,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ResourceOpenableSearchResponse_"];
                 };
             };
             /** @description Validation Error */
