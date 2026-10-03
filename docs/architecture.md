@@ -1754,12 +1754,18 @@ only correction lifecycle. Accepted writes publish the
 process-local Consumption revision; focus, activation, visibility, pageshow,
 and online transitions revalidate cross-process state without polling. The
 committed Stats response owns its session-continuation state: the pane delegates
-manual cursor lifecycle to `lib/api/useCursorPagination.ts`, builds continuation
-requests from the committed decoded view, aborts stale generations on a new
-first page, preserves rows across retryable continuation failure, and never
-uses an empty-string cursor as a second absence encoding; wire absence stays
-`Presence<string>` until the pagination adapter unwraps it. The
-full contract is [`modules/consumption-activity.md`](modules/consumption-activity.md).
+manual cursor lifecycle to `lib/api/useCursorPagination.ts` and builds
+continuation requests from the committed decoded view. the shared manual owner
+accepts one `CursorPage<T, Cursor extends string>` contract:
+`{items: readonly T[], nextCursor: Presence<Cursor>}`. first-page object identity
+owns appended rows and continuation; a replacement first page aborts the old
+request and immediately projects its own rows and tail. one continuation runs at
+a time, supplied rows append in order including duplicates, and retryable
+failures retain rows and tail. cursor absence stays explicit until the network
+command unwraps a present cursor; no empty-string or nullable cursor alias is
+introduced. imports, browse, stats, and the conversation picker consume this
+same contract. stats' full contract is
+[`modules/consumption-activity.md`](modules/consumption-activity.md).
 
 ### 8.10 Search, Browse, desktop Nexus, and mobile Nexus
 

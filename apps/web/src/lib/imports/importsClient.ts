@@ -287,7 +287,7 @@ export interface ImportDetail {
 }
 
 export interface HistoryPage {
-  readonly entries: readonly HistoryEntry[];
+  readonly items: readonly HistoryEntry[];
   readonly nextCursor: Presence<string>;
 }
 
@@ -1131,7 +1131,7 @@ export function decodeImportHistoryPage(raw: unknown): HistoryPage {
     `${name}.data`,
   );
   return {
-    entries: expectArray(
+    items: expectArray(
       data.entries,
       (entry, index) => historyEntry(entry, `${name}.entries[${index}]`),
       `${name}.entries`,

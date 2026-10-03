@@ -34,7 +34,6 @@ import {
   type BrowsePreview,
   type DiscoveryTargetHandle,
   type PreviewEpisodeItem,
-  type PreviewEpisodePage,
 } from "@/lib/browse/contract";
 import { decodeBrowsePreviewQuery } from "@/lib/browse/query";
 import { presentPreviewEpisode } from "@/lib/collections/presenters/browse";
@@ -115,27 +114,13 @@ function browsePreviewErrorMessage(error: unknown): BrowsePreviewFailure {
   }
 }
 
-function episodeCursorPage(
-  page: PreviewEpisodePage,
-): CursorPage<PreviewEpisodeItem> {
-  const nextCursor =
-    page.nextCursor.kind === "Present" ? page.nextCursor.value : null;
-  return {
-    data: [...page.items],
-    page: {
-      has_more: nextCursor !== null,
-      next_cursor: nextCursor,
-    },
-  };
-}
-
 function PodcastEpisodePreviewList({
   preview,
 }: {
   readonly preview: Extract<BrowsePreview, { kind: "Podcast" }>;
 }) {
   const firstPage: AsyncResource<CursorPage<PreviewEpisodeItem>> = useMemo(
-    () => ({ status: "ready", data: episodeCursorPage(preview.episodes) }),
+    () => ({ status: "ready", data: preview.episodes }),
     [preview.episodes],
   );
   const pagination = useCursorPagination({
@@ -151,7 +136,7 @@ function PodcastEpisodePreviewList({
       if (next.kind !== "Podcast") {
         throw new TypeError("Podcast Preview continuation changed identity");
       }
-      return episodeCursorPage(next.episodes);
+      return next.episodes;
     },
   });
   const rows = useMemo(
