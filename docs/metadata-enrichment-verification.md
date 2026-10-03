@@ -143,6 +143,14 @@ database/settings/api/socket work; `.tmp/metadata-native-recovery-red.log`.
 positive recovery remains NOT_RUN. parent-only/local-stop/authoritative
 non-submission variants remain separate shared-owner proof obligations.
 
+the existing 20-case `.tmp/metadata_e2e.py` now uses a controlled native websocket
+peer, with no shell transport or fabricated terminal. source-only review approved
+sha256 `baaa65580f3f16fd6c91ad69d8886c84974e22d89ee296acd3d0c727b103e955`.
+all cases remain; setup cleanup and direct loopback clients were corrected.
+new installed execution is NOT_RUN; the earlier shell GREEN remains historical.
+use a separate process, rebuilt owned `metadata_proof_final` at sole `0255`,
+qualified locked dependencies and explicit `METADATA_PROOF_SOURCE_SHA`.
+
 genuine book/collection/essay research remains NOT_RUN. finite primary-source
 fixtures identify *mere christianity* (1952), *of other worlds* (1966) and the
 standalone *weight of glory* essay (1941), starting with deliberately wrong
