@@ -25,7 +25,7 @@ import type { LibraryDestinationSelection } from "@/lib/libraries/destinationCon
 import {
   definePaneVisitDataKey,
   usePaneVisitData,
-} from "@/lib/panes/paneRuntime";
+} from "@/lib/workspace/paneReturnMemento";
 import { usePlayerCommands } from "@/lib/player/playerRuntime";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import PodcastReplacementDialog, {

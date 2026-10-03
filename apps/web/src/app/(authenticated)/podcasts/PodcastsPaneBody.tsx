@@ -48,13 +48,13 @@ import {
 } from "@/lib/libraries/client";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
+import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import {
   definePaneVisitDataKey,
   useClearAllPaneVisitData,
-  usePaneIsActive,
   usePaneReturnReady,
   usePaneVisitData,
-} from "@/lib/panes/paneRuntime";
+} from "@/lib/workspace/paneReturnMemento";
 import { isAbortError } from "@/lib/errors";
 import { useRevalidationSettlement } from "@/lib/panes/useRevalidationSettlement";
 import {

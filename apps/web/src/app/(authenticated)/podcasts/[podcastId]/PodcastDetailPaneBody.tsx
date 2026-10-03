@@ -24,16 +24,18 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import { useResource } from "@/lib/api/useResource";
 import {
-  definePaneVisitDataKey,
-  useClearAllPaneVisitData,
   usePaneIsActive,
   usePaneParam,
-  usePaneReturnReady,
   usePaneRuntime,
   requirePaneRuntime,
-  usePaneVisitData,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
+import {
+  definePaneVisitDataKey,
+  useClearAllPaneVisitData,
+  usePaneReturnReady,
+  usePaneVisitData,
+} from "@/lib/workspace/paneReturnMemento";
 import {
   CANONICAL_PODCAST_EPISODE_VIEW,
   EPISODE_SORTS,

@@ -45,12 +45,14 @@ import {
 } from "@/lib/browse/query";
 import { createBrowseRequestGate } from "@/lib/browse/requestGate";
 import {
-  definePaneVisitDataKey,
-  usePaneReturnReady,
   usePaneRouter,
   usePaneSearchParams,
-  usePaneVisitData,
 } from "@/lib/panes/paneRuntime";
+import {
+  definePaneVisitDataKey,
+  usePaneReturnReady,
+  usePaneVisitData,
+} from "@/lib/workspace/paneReturnMemento";
 import styles from "./browse.module.css";
 
 interface BrowseSnapshot {

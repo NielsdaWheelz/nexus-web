@@ -76,17 +76,19 @@ import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInpu
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import {
-  definePaneVisitDataKey,
-  useClearAllPaneVisitData,
   usePaneParam,
   usePaneIsActive,
-  usePaneReturnReady,
   usePaneRouter,
   usePaneRuntime,
   requirePaneRuntime,
-  usePaneVisitData,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
+import {
+  definePaneVisitDataKey,
+  useClearAllPaneVisitData,
+  usePaneReturnReady,
+  usePaneVisitData,
+} from "@/lib/workspace/paneReturnMemento";
 import type { LibraryOut } from "@/lib/libraries/contract";
 import { useLibraryMembers } from "@/lib/libraries/useLibraryMembers";
 import {

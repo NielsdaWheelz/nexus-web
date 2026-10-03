@@ -13,7 +13,7 @@ import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import type { CollectionRowView } from "@/lib/collections/types";
-import { usePaneReturnDescendantReady } from "@/lib/panes/paneRuntime";
+import { usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
 import { presentSlateItem } from "@/lib/resonance/presentSlateItem";
 import {
   readingSlateErrorMessage,

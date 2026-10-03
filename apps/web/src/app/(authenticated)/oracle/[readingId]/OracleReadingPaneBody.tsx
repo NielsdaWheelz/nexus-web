@@ -37,11 +37,11 @@ import {
 } from "@/lib/oracle/oracleReadingWire";
 import {
   usePaneParam,
-  usePaneReturnReady,
   requirePaneRuntime,
   usePaneRuntime,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
+import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { canonicalResourceRef } from "@/lib/sharing/targets";

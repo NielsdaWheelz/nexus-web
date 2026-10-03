@@ -14,10 +14,10 @@ import { renderPane } from "@/lib/panes/paneRenderRegistry";
 import {
   PaneRuntimeProvider,
   type PaneNavigationCommandOptions,
-  type PaneNavigationModality,
   type PaneResourceStatus,
   type PaneRuntimeLayoutPublication,
 } from "@/lib/panes/paneRuntime";
+import { type PaneNavigationModality } from "@/lib/workspace/paneReturnMemento";
 import {
   paneResourceLocatorKey,
   resolvePaneResourceLocator,

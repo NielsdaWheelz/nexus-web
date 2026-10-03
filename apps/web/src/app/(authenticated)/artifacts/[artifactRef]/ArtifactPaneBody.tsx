@@ -26,10 +26,10 @@ import {
   requirePaneRuntime,
   usePaneParam,
   usePaneIsActive,
-  usePaneReturnReady,
   usePaneRuntime,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
+import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import type { PaneRuntimeContextValue } from "@/lib/panes/paneRuntime";
 import type { PanePrimaryChromePublication } from "@/lib/panes/panePublications";
 import { dispatchPaneSearchRequest } from "@/lib/panes/paneSearchEvents";
