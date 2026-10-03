@@ -294,10 +294,10 @@ def _assert_media_readable(viewer_id: UUID, media_id: UUID) -> None:
         media_service.get_media_for_viewer(db, viewer_id, media_id)
 
 
-def _read_media_snapshot(viewer_id: UUID, media_id: UUID) -> tuple[dict, bool]:
+def _read_media_snapshot(viewer_id: UUID, media_id: UUID) -> tuple[dict[str, Any], bool]:
     with get_session_factory()() as db:
         snapshot = media_service.read_event_snapshot(db, viewer_id=viewer_id, media_id=media_id)
-    return snapshot.payload, snapshot.terminal
+    return snapshot.payload.model_dump(mode="json"), snapshot.terminal
 
 
 def _parse_last_event_id(value: str | None) -> int:

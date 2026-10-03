@@ -278,6 +278,21 @@ class MediaOut(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
+class MediaProcessingSnapshotOut(BaseModel):
+    """The complete data frame for media processing state and done events."""
+
+    processing_status: MediaProcessingStatus
+    source_progress: Presence[SourceProgress]
+    last_error_code: str | None
+    failure_stage: str | None
+    retrieval_status: str | None
+    retrieval_status_reason: str | None
+    capabilities: CapabilitiesOut
+    transcript_state: MediaTranscriptState | None
+    transcript_coverage: MediaTranscriptCoverage | None
+    updated_at: str
+
+
 class MediaRemovedResult(BaseModel):
     model_config = _CAMEL_CONFIG
 

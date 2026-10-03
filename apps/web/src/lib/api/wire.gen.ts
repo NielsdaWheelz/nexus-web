@@ -6818,6 +6818,31 @@ export interface components {
              */
             updated_at: string;
         };
+        /**
+         * MediaProcessingSnapshotOut
+         * @description The complete data frame for media processing state and done events.
+         */
+        MediaProcessingSnapshotOut: {
+            capabilities: components["schemas"]["CapabilitiesOut"];
+            /** Failure Stage */
+            failure_stage: string | null;
+            /** Last Error Code */
+            last_error_code: string | null;
+            /**
+             * Processing Status
+             * @enum {string}
+             */
+            processing_status: "pending" | "extracting" | "ready_for_reading" | "failed" | "suspended";
+            /** Retrieval Status */
+            retrieval_status: string | null;
+            /** Retrieval Status Reason */
+            retrieval_status_reason: string | null;
+            source_progress: components["schemas"]["Presence_Annotated_Union_SourceStageProgress__SourceCountedProgress___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+            transcript_coverage: components["schemas"]["TranscriptCoverage"] | null;
+            transcript_state: components["schemas"]["TranscriptState"] | null;
+            /** Updated At */
+            updated_at: string;
+        };
         /** MediaSummaryOut */
         MediaSummaryOut: {
             /** Contributors */
