@@ -1,4 +1,4 @@
-"""Owned value types for import history (`imports-workspace-hard-cutover.md`).
+"""Owned value types for import history (`docs/modules/imports.md`).
 
 Two append-only tables record what happened to one import: `media_upload_events`
 for an upload session and `media_processing_events` for a media's source and
@@ -131,10 +131,8 @@ def assume_safe_failure_code(raw: str) -> SafeFailureCode:
     read for a failed source (copied onto its attempt, or the outcome a reused
     URL's attempt is born with)."""
     if raw not in SAFE_FAILURE_CODES:
-        # justify-defect: a kernel proof scans every module that writes those
-        # columns at those moments for the codes it writes, and migration 0227
-        # rejects a database whose attempt or verification columns hold one this
-        # catalog does not name.
+        # justify-defect: owned failure columns carry a catalogued code;
+        # an unknown stored value violates that closed writer contract.
         raise AssertionError(f"uncatalogued import failure code {raw!r}")
     return cast(SafeFailureCode, raw)
 

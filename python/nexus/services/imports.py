@@ -1,4 +1,4 @@
-"""The Imports query owner (spec `imports-workspace-hard-cutover.md`).
+"""The Imports query owner (spec `docs/modules/imports.md`).
 
 One classification over two owners: every upload session the viewer created and
 every viewer-visible media row that has a source attempt. An upload keeps its

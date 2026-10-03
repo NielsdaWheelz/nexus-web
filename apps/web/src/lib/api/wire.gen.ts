@@ -3611,6 +3611,15 @@ export interface components {
              */
             at: string;
         };
+        /** Capabilities */
+        Capabilities: {
+            /** Can Open */
+            can_open: boolean;
+            /** Can Remove */
+            can_remove: boolean;
+            recovery: components["schemas"]["Presence_Annotated_Union_RetryUploadOffer__RetrySourceOffer__RepairSourceOffer__RepairSearchOffer___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+            unavailable_reason: components["schemas"]["Presence_Literal__NotOwner____SameSourceTerminal____SourceNotReacquirable____UploadRejected___"];
+        };
         /** CapabilitiesOut */
         CapabilitiesOut: {
             /**
@@ -4271,6 +4280,24 @@ export interface components {
              */
             updated_at: string;
         };
+        /** CorrectSourceTypeRecovery */
+        CorrectSourceTypeRecovery: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "CorrectSourceType";
+            /**
+             * New Source Attempt Id
+             * Format: uuid
+             */
+            new_source_attempt_id: string;
+            /**
+             * Source Type
+             * @constant
+             */
+            source_type: "remote_epub_url";
+        };
         /** CreateConversationRequest */
         CreateConversationRequest: {
             /** Initial Context Refs */
@@ -4460,6 +4487,22 @@ export interface components {
         /** Data[DossierHeadOut] */
         Data_DossierHeadOut_: {
             data: components["schemas"]["DossierHeadOut"];
+        };
+        /** Data[HistoryPage] */
+        Data_HistoryPage_: {
+            data: components["schemas"]["HistoryPage"];
+        };
+        /** Data[ImportDetail] */
+        Data_ImportDetail_: {
+            data: components["schemas"]["ImportDetail"];
+        };
+        /** Data[ImportPage] */
+        Data_ImportPage_: {
+            data: components["schemas"]["ImportPage"];
+        };
+        /** Data[ImportSummary] */
+        Data_ImportSummary_: {
+            data: components["schemas"]["ImportSummary"];
         };
         /** Data[LibraryEntryRemovalOut] */
         Data_LibraryEntryRemovalOut_: {
@@ -4966,6 +5009,16 @@ export interface components {
             detail: components["schemas"]["Presence_str_"];
             failure_code: components["schemas"]["DossierBuildFailureCode"];
         };
+        /** FailedSourceBaselineOutcome */
+        FailedSourceBaselineOutcome: {
+            /** Failure Code */
+            failure_code: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_BILLING_REQUIRED" | "E_CAPTURE_TOO_LARGE" | "E_FORBIDDEN" | "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_LLM_BAD_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_PODCAST_QUOTA_EXCEEDED" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_UPLOAD_TRANSPORT_FAILED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE");
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Failed";
+        };
         /** FinishLecternItemCommand */
         FinishLecternItemCommand: {
             /**
@@ -5050,6 +5103,14 @@ export interface components {
              */
             url: string;
         };
+        /** FullHistoryCoverage */
+        FullHistoryCoverage: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Full";
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -5073,6 +5134,32 @@ export interface components {
             y3: number;
             /** Y4 */
             y4: number;
+        };
+        /**
+         * HistoryEntry
+         * @description One recorded event as every reader sees it.
+         */
+        HistoryEntry: {
+            /** Facts */
+            facts: components["schemas"]["UploadAccepted"] | components["schemas"]["UploadExecutionStarted"] | components["schemas"]["UploadFailed"] | components["schemas"]["UploadRecoveryAccepted"] | components["schemas"]["UploadPublished"] | components["schemas"]["UploadHistoryBaseline"] | components["schemas"]["SourceAccepted"] | components["schemas"]["SourceExecutionStarted"] | components["schemas"]["SourceStageChanged"] | components["schemas"]["SourceRetryScheduled"] | components["schemas"]["SourceFailed"] | components["schemas"]["SourceRecoveryAccepted"] | components["schemas"]["SourceSucceeded"] | components["schemas"]["SourceSuperseded"] | components["schemas"]["SourceHistoryBaseline"] | components["schemas"]["IndexAccepted"] | components["schemas"]["IndexExecutionStarted"] | components["schemas"]["IndexRetryScheduled"] | components["schemas"]["IndexFailed"] | components["schemas"]["IndexRecoveryAccepted"] | components["schemas"]["IndexSucceeded"] | components["schemas"]["IndexSuperseded"];
+            failure_code: components["schemas"]["Presence_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_BILLING_REQUIRED____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_LLM_BAD_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_PODCAST_QUOTA_EXCEEDED____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_NOT_READABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            stage: components["schemas"]["Presence_Literal__Upload____Validate____Extract____Finalize____Index____SourceProcessing___"];
+        };
+        /** HistoryPage */
+        HistoryPage: {
+            /** Entries */
+            entries: components["schemas"]["HistoryEntry"][];
+            next_cursor: components["schemas"]["Presence_str_"];
         };
         /** IdeaDossierIdentityOut */
         IdeaDossierIdentityOut: {
@@ -5128,6 +5215,285 @@ export interface components {
             locator: string;
             /** Reason */
             reason: string;
+        };
+        /** ImportDetail */
+        ImportDetail: {
+            /** History Coverage */
+            history_coverage: components["schemas"]["FullHistoryCoverage"] | components["schemas"]["PartialHistoryCoverage"];
+            item: components["schemas"]["ImportItem"];
+            readiness: components["schemas"]["ImportReadiness"];
+            source_issues: components["schemas"]["Presence_ImportSourceIssues_"];
+        };
+        /** ImportItem */
+        ImportItem: {
+            /**
+             * Accepted At
+             * Format: date-time
+             */
+            accepted_at: string;
+            capabilities: components["schemas"]["Capabilities"];
+            matched_event: components["schemas"]["Presence_HistoryEntry_"];
+            /**
+             * Media Kind
+             * @enum {string}
+             */
+            media_kind: "web_article" | "epub" | "pdf" | "podcast_episode" | "video";
+            media_ref: components["schemas"]["Presence_Annotated_str__AfterValidator__"];
+            /** Ref */
+            ref: string;
+            /** Source Issue Count */
+            source_issue_count: number;
+            source_label: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____"];
+            /** State */
+            state: components["schemas"]["ImportStateActive"] | components["schemas"]["ImportStateNeedsAttention"] | components["schemas"]["ImportStateComplete"];
+            /** Title */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** ImportPage */
+        ImportPage: {
+            /** Groups */
+            groups: components["schemas"]["ImportStageGroup"][];
+            /** Items */
+            items: components["schemas"]["ImportItem"][];
+            /** Matched Count */
+            matched_count: number;
+            next_cursor: components["schemas"]["Presence_str_"];
+            /**
+             * Observed At
+             * Format: date-time
+             */
+            observed_at: string;
+        };
+        /** ImportReadiness */
+        ImportReadiness: {
+            /** Can Play */
+            can_play: boolean;
+            /** Can Read */
+            can_read: boolean;
+            /** Can Search */
+            can_search: boolean;
+        };
+        /** ImportSourceIssues */
+        ImportSourceIssues: {
+            /** Generation */
+            generation: number;
+            /** Issues */
+            issues: (components["schemas"]["MissingImage"] | components["schemas"]["UnresolvedNavigationTarget"])[];
+        };
+        /** ImportStageGroup */
+        ImportStageGroup: {
+            /** Count */
+            count: number;
+            /**
+             * Stage
+             * @enum {string}
+             */
+            stage: "Upload" | "Validate" | "Extract" | "Finalize" | "Index" | "SourceProcessing";
+        };
+        /** ImportStateActive */
+        ImportStateActive: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Active";
+            next_retry_at: components["schemas"]["Presence_datetime_"];
+            progress: components["schemas"]["Presence_Annotated_Union_SourceStageProgress__SourceCountedProgress___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+            /**
+             * Stage
+             * @enum {string}
+             */
+            stage: "Upload" | "Validate" | "Extract" | "Finalize" | "Index" | "SourceProcessing";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "Queued" | "Processing";
+            waiting_reason: components["schemas"]["Presence_Literal__Queue____Capacity____RetryBackoff___"];
+        };
+        /** ImportStateComplete */
+        ImportStateComplete: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Complete";
+        };
+        /** ImportStateNeedsAttention */
+        ImportStateNeedsAttention: {
+            failure_code: components["schemas"]["Presence_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_BILLING_REQUIRED____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_LLM_BAD_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_PODCAST_QUOTA_EXCEEDED____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_NOT_READABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "NeedsAttention";
+            /**
+             * Stage
+             * @enum {string}
+             */
+            stage: "Upload" | "Validate" | "Extract" | "Finalize" | "Index" | "SourceProcessing";
+        };
+        /** ImportSummary */
+        ImportSummary: {
+            /** Active Count */
+            active_count: number;
+            /** Needs Attention Count */
+            needs_attention_count: number;
+            /**
+             * Observed At
+             * Format: date-time
+             */
+            observed_at: string;
+        };
+        /** InFlightSourceBaselineOutcome */
+        InFlightSourceBaselineOutcome: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "InFlight";
+        };
+        /** IndexAccepted */
+        IndexAccepted: {
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "IndexAccepted";
+            /** Revision */
+            revision: number;
+        };
+        /** IndexExecutionStarted */
+        IndexExecutionStarted: {
+            /**
+             * Execution Id
+             * Format: uuid
+             */
+            execution_id: string;
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "IndexExecutionStarted";
+            /** Revision */
+            revision: number;
+        };
+        /** IndexFailed */
+        IndexFailed: {
+            execution_id: components["schemas"]["Presence_UUID_"];
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "IndexFailed";
+            /**
+             * Origin
+             * @constant
+             */
+            origin: "Execution";
+            /** Revision */
+            revision: number;
+            /** Terminal */
+            terminal: boolean;
+        };
+        /** IndexRecoveryAccepted */
+        IndexRecoveryAccepted: {
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "IndexRecoveryAccepted";
+            /** Revision */
+            revision: number;
+        };
+        /** IndexRetryScheduled */
+        IndexRetryScheduled: {
+            execution_id: components["schemas"]["Presence_UUID_"];
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "IndexRetryScheduled";
+            /**
+             * Next Attempt At
+             * Format: date-time
+             */
+            next_attempt_at: string;
+            /** Revision */
+            revision: number;
+        };
+        /** IndexSucceeded */
+        IndexSucceeded: {
+            /**
+             * Execution Id
+             * Format: uuid
+             */
+            execution_id: string;
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "IndexSucceeded";
+            /** Revision */
+            revision: number;
+        };
+        /**
+         * IndexSuperseded
+         * @description A claimed execution observed a newer revision and stopped.
+         */
+        IndexSuperseded: {
+            /**
+             * Execution Id
+             * Format: uuid
+             */
+            execution_id: string;
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "IndexSuperseded";
+            /** Revision */
+            revision: number;
         };
         /** InheritedLibraryPlacementRelationOut */
         InheritedLibraryPlacementRelationOut: {
@@ -6018,6 +6384,23 @@ export interface components {
             /** Refresh Token */
             refresh_token: string;
         };
+        /** MissingImage */
+        MissingImage: {
+            /**
+             * Fragment Id
+             * Format: uuid
+             */
+            fragment_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "MissingImage";
+            /** Marker Ordinal */
+            marker_ordinal: number;
+            /** Resource Path */
+            resource_path: string;
+        };
         /** MoveOccurrenceSurfaceCommand */
         MoveOccurrenceSurfaceCommand: {
             /**
@@ -6290,6 +6673,22 @@ export interface components {
              * @constant
              */
             version: "v1";
+        };
+        /**
+         * PartialHistoryCoverage
+         * @description Detailed execution history was not recorded before `recorded_since`.
+         */
+        PartialHistoryCoverage: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Partial";
+            /**
+             * Recorded Since
+             * Format: date-time
+             */
+            recorded_since: string;
         };
         /** PasteOutlineSurfaceCommand */
         PasteOutlineSurfaceCommand: {
@@ -6739,16 +7138,20 @@ export interface components {
         Presence_ActivitySessionOut_: components["schemas"]["Absent"] | components["schemas"]["Present_ActivitySessionOut_"];
         Presence_Annotated_Union_MediaAbstractBuildingOut__MediaAbstractReadyOut__MediaAbstractStaleOut__MediaAbstractFailedOut__MediaAbstractNotAvailableOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_Union_MediaAbstractBuildingOut__MediaAbstractReadyOut__MediaAbstractStaleOut__MediaAbstractFailedOut__MediaAbstractNotAvailableOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
         Presence_Annotated_Union_ResourceDossierIdentityOut__IdeaDossierIdentityOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_Union_ResourceDossierIdentityOut__IdeaDossierIdentityOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+        Presence_Annotated_Union_RetryUploadOffer__RetrySourceOffer__RepairSourceOffer__RepairSearchOffer___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_Union_RetryUploadOffer__RetrySourceOffer__RepairSourceOffer__RepairSearchOffer___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
         Presence_Annotated_Union_SourceStageProgress__SourceCountedProgress___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_Union_SourceStageProgress__SourceCountedProgress___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+        Presence_Annotated_Union_UploadTransportNetworkFailure__UploadTransportTimeoutFailure__UploadTransportHttpRejectedFailure__UploadTransportAbortedFailure___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_Union_UploadTransportNetworkFailure__UploadTransportTimeoutFailure__UploadTransportHttpRejectedFailure__UploadTransportAbortedFailure___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
         Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____"];
         Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____"];
         Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____"];
         Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_9223372036854775807_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_9223372036854775807_____"];
         Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___Ge_ge_0___Le_le_2147483647_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___Ge_ge_0___Le_le_2147483647_____"];
         Presence_Annotated_list_Literal__media____library____evidence_span____content_chunk____highlight____page____note_block____fragment____conversation____message____oracle_reading____oracle_passage_anchor____artifact____artifact_revision____external_snapshot____contributor____podcast____reader_apparatus_item____passage_anchor_____FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_list_Literal__media____library____evidence_span____content_chunk____highlight____page____note_block____fragment____conversation____message____oracle_reading____oracle_passage_anchor____artifact____artifact_revision____external_snapshot____contributor____podcast____reader_apparatus_item____passage_anchor_____FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____"];
+        Presence_Annotated_str__AfterValidator__: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__AfterValidator__"];
         Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____"];
         Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1___MaxLen_max_length_128_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1___MaxLen_max_length_128_____"];
         Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1___MaxLen_max_length_200_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1___MaxLen_max_length_200_____"];
+        Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____"];
         Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__"];
         Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____"];
         Presence_Annotated_str__StringConstraints__AfterValidator__: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__StringConstraints__AfterValidator__"];
@@ -6760,9 +7163,14 @@ export interface components {
         Presence_DossierBuildSummary_: components["schemas"]["Absent"] | components["schemas"]["Present_DossierBuildSummary_"];
         Presence_DossierRevisionOut_: components["schemas"]["Absent"] | components["schemas"]["Present_DossierRevisionOut_"];
         Presence_FailedEventPayload_: components["schemas"]["Absent"] | components["schemas"]["Present_FailedEventPayload_"];
+        Presence_HistoryEntry_: components["schemas"]["Absent"] | components["schemas"]["Present_HistoryEntry_"];
+        Presence_ImportSourceIssues_: components["schemas"]["Absent"] | components["schemas"]["Present_ImportSourceIssues_"];
         Presence_Literal__Current____Stale___: components["schemas"]["Absent"] | components["schemas"]["Present_Literal__Current____Stale___"];
+        Presence_Literal__NotOwner____SameSourceTerminal____SourceNotReacquirable____UploadRejected___: components["schemas"]["Absent"] | components["schemas"]["Present_Literal__NotOwner____SameSourceTerminal____SourceNotReacquirable____UploadRejected___"];
         Presence_Literal__Off____Natural___: components["schemas"]["Absent"] | components["schemas"]["Present_Literal__Off____Natural___"];
         Presence_Literal__Publisher____Imported____Generated___: components["schemas"]["Absent"] | components["schemas"]["Present_Literal__Publisher____Imported____Generated___"];
+        Presence_Literal__Queue____Capacity____RetryBackoff___: components["schemas"]["Absent"] | components["schemas"]["Present_Literal__Queue____Capacity____RetryBackoff___"];
+        Presence_Literal__Upload____Validate____Extract____Finalize____Index____SourceProcessing___: components["schemas"]["Absent"] | components["schemas"]["Present_Literal__Upload____Validate____Extract____Finalize____Index____SourceProcessing___"];
         Presence_MediaDurationOut_: components["schemas"]["Absent"] | components["schemas"]["Present_MediaDurationOut_"];
         Presence_PlayerDescriptor_: components["schemas"]["Absent"] | components["schemas"]["Present_PlayerDescriptor_"];
         Presence_PodcastPlaybackPreference_: components["schemas"]["Absent"] | components["schemas"]["Present_PodcastPlaybackPreference_"];
@@ -6771,7 +7179,9 @@ export interface components {
         Presence_ReaderSelectionInput_: components["schemas"]["Absent"] | components["schemas"]["Present_ReaderSelectionInput_"];
         Presence_ReaderTimeRange_: components["schemas"]["Absent"] | components["schemas"]["Present_ReaderTimeRange_"];
         Presence_ShareMembersOut_: components["schemas"]["Absent"] | components["schemas"]["Present_ShareMembersOut_"];
+        Presence_SourceFailureProgress_: components["schemas"]["Absent"] | components["schemas"]["Present_SourceFailureProgress_"];
         Presence_UUID_: components["schemas"]["Absent"] | components["schemas"]["Present_UUID_"];
+        Presence_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_BILLING_REQUIRED____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_LLM_BAD_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_PODCAST_QUOTA_EXCEEDED____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_NOT_READABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____: components["schemas"]["Absent"] | components["schemas"]["Present_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_BILLING_REQUIRED____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_LLM_BAD_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_PODCAST_QUOTA_EXCEEDED____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_NOT_READABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____"];
         Presence_datetime_: components["schemas"]["Absent"] | components["schemas"]["Present_datetime_"];
         Presence_int_: components["schemas"]["Absent"] | components["schemas"]["Present_int_"];
         Presence_str_: components["schemas"]["Absent"] | components["schemas"]["Present_str_"];
@@ -6804,6 +7214,16 @@ export interface components {
             /** Value */
             value: components["schemas"]["ResourceDossierIdentityOut"] | components["schemas"]["IdeaDossierIdentityOut"];
         };
+        /** Present[Annotated[Union[RetryUploadOffer, RetrySourceOffer, RepairSourceOffer, RepairSearchOffer], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
+        Present_Annotated_Union_RetryUploadOffer__RetrySourceOffer__RepairSourceOffer__RepairSearchOffer___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /** Value */
+            value: components["schemas"]["RetryUploadOffer"] | components["schemas"]["RetrySourceOffer"] | components["schemas"]["RepairSourceOffer"] | components["schemas"]["RepairSearchOffer"];
+        };
         /** Present[Annotated[Union[SourceStageProgress, SourceCountedProgress], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
         Present_Annotated_Union_SourceStageProgress__SourceCountedProgress___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
             /**
@@ -6813,6 +7233,16 @@ export interface components {
             kind: "Present";
             /** Value */
             value: components["schemas"]["SourceStageProgress"] | components["schemas"]["SourceCountedProgress"];
+        };
+        /** Present[Annotated[Union[UploadTransportNetworkFailure, UploadTransportTimeoutFailure, UploadTransportHttpRejectedFailure, UploadTransportAbortedFailure], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
+        Present_Annotated_Union_UploadTransportNetworkFailure__UploadTransportTimeoutFailure__UploadTransportHttpRejectedFailure__UploadTransportAbortedFailure___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /** Value */
+            value: components["schemas"]["UploadTransportNetworkFailure"] | components["schemas"]["UploadTransportTimeoutFailure"] | components["schemas"]["UploadTransportHttpRejectedFailure"] | components["schemas"]["UploadTransportAbortedFailure"];
         };
         /** Present[Annotated[float, FieldInfo(annotation=NoneType, required=True, metadata=[Ge(ge=0), Le(le=1)])]] */
         Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____: {
@@ -6874,6 +7304,16 @@ export interface components {
             /** Value */
             value: ("media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "artifact" | "artifact_revision" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor")[];
         };
+        /** Present[Annotated[str, AfterValidator]] */
+        Present_Annotated_str__AfterValidator__: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /** Value */
+            value: string;
+        };
         /** Present[Annotated[str, FieldInfo(annotation=NoneType, required=True, metadata=[MaxLen(max_length=4000)])]] */
         Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____: {
             /**
@@ -6896,6 +7336,16 @@ export interface components {
         };
         /** Present[Annotated[str, FieldInfo(annotation=NoneType, required=True, metadata=[MinLen(min_length=1), MaxLen(max_length=200)])]] */
         Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1___MaxLen_max_length_200_____: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /** Value */
+            value: string;
+        };
+        /** Present[Annotated[str, FieldInfo(annotation=NoneType, required=True, metadata=[MinLen(min_length=1)])]] */
+        Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -7006,6 +7456,24 @@ export interface components {
             kind: "Present";
             value: components["schemas"]["FailedEventPayload"];
         };
+        /** Present[HistoryEntry] */
+        Present_HistoryEntry_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["HistoryEntry"];
+        };
+        /** Present[ImportSourceIssues] */
+        Present_ImportSourceIssues_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["ImportSourceIssues"];
+        };
         /** Present[Literal['Current', 'Stale']] */
         Present_Literal__Current____Stale___: {
             /**
@@ -7018,6 +7486,19 @@ export interface components {
              * @enum {string}
              */
             value: "Current" | "Stale";
+        };
+        /** Present[Literal['NotOwner', 'SameSourceTerminal', 'SourceNotReacquirable', 'UploadRejected']] */
+        Present_Literal__NotOwner____SameSourceTerminal____SourceNotReacquirable____UploadRejected___: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /**
+             * Value
+             * @enum {string}
+             */
+            value: "NotOwner" | "SameSourceTerminal" | "SourceNotReacquirable" | "UploadRejected";
         };
         /** Present[Literal['Off', 'Natural']] */
         Present_Literal__Off____Natural___: {
@@ -7044,6 +7525,32 @@ export interface components {
              * @enum {string}
              */
             value: "Publisher" | "Imported" | "Generated";
+        };
+        /** Present[Literal['Queue', 'Capacity', 'RetryBackoff']] */
+        Present_Literal__Queue____Capacity____RetryBackoff___: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /**
+             * Value
+             * @enum {string}
+             */
+            value: "Queue" | "Capacity" | "RetryBackoff";
+        };
+        /** Present[Literal['Upload', 'Validate', 'Extract', 'Finalize', 'Index', 'SourceProcessing']] */
+        Present_Literal__Upload____Validate____Extract____Finalize____Index____SourceProcessing___: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /**
+             * Value
+             * @enum {string}
+             */
+            value: "Upload" | "Validate" | "Extract" | "Finalize" | "Index" | "SourceProcessing";
         };
         /** Present[MediaDurationOut] */
         Present_MediaDurationOut_: {
@@ -7117,6 +7624,15 @@ export interface components {
             kind: "Present";
             value: components["schemas"]["ShareMembersOut"];
         };
+        /** Present[SourceFailureProgress] */
+        Present_SourceFailureProgress_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["SourceFailureProgress"];
+        };
         /** Present[UUID] */
         Present_UUID_: {
             /**
@@ -7129,6 +7645,16 @@ export interface components {
              * Format: uuid
              */
             value: string;
+        };
+        /** Present[Union[Literal['E_SOURCE_INTEGRITY', 'E_INVALID_FILE_TYPE', 'E_FILE_TOO_LARGE', 'E_CAPTURE_TOO_LARGE'], Literal['E_ARCHIVE_UNSAFE', 'E_BILLING_REQUIRED', 'E_CAPTURE_TOO_LARGE', 'E_FORBIDDEN', 'E_IDEMPOTENCY_KEY_REPLAY_MISMATCH', 'E_INGEST_FAILED', 'E_INGEST_TIMEOUT', 'E_INTERNAL', 'E_INVALID_CONTENT_TYPE', 'E_INVALID_KIND', 'E_INVALID_REQUEST', 'E_LLM_BAD_REQUEST', 'E_MEDIA_NOT_FOUND', 'E_MEDIA_NOT_READY', 'E_OWNER_REQUIRED', 'E_PDF_PASSWORD_REQUIRED', 'E_PDF_TEXT_UNAVAILABLE', 'E_PODCAST_PROVIDER_UNAVAILABLE', 'E_PODCAST_QUOTA_EXCEEDED', 'E_REPAIR_NOT_ALLOWED', 'E_RESOURCE_CONFLICT', 'E_RESOURCE_LIMIT', 'E_RETRY_INVALID_STATE', 'E_RETRY_NOT_ALLOWED', 'E_SANITIZATION_FAILED', 'E_SELECTION_CHANGED', 'E_SIGN_UPLOAD_FAILED', 'E_SOURCE_ACCESS_DENIED', 'E_SOURCE_FETCH_FAILED', 'E_SOURCE_NOT_READABLE', 'E_SOURCE_TOO_LARGE', 'E_SSRF_BLOCKED', 'E_STORAGE_ERROR', 'E_STORAGE_MISSING', 'E_TRANSCRIPTION_FAILED', 'E_TRANSCRIPTION_TIMEOUT', 'E_TRANSCRIPT_UNAVAILABLE', 'E_UPLOAD_CAPABILITY_EXPIRED', 'E_UPLOAD_TRANSPORT_FAILED', 'E_WORKER_HANDLER_FAILED', 'E_WORKER_INTERRUPTED', 'E_X_POST_UNAVAILABLE', 'E_X_PROVIDER_AUTH_REJECTED', 'E_X_PROVIDER_CREDITS_DEPLETED', 'E_X_PROVIDER_RATE_LIMITED', 'E_X_PROVIDER_TIMEOUT', 'E_X_PROVIDER_UNAVAILABLE']]] */
+        Present_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_BILLING_REQUIRED____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_LLM_BAD_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_PODCAST_QUOTA_EXCEEDED____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_NOT_READABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /** Value */
+            value: ("E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE") | ("E_ARCHIVE_UNSAFE" | "E_BILLING_REQUIRED" | "E_CAPTURE_TOO_LARGE" | "E_FORBIDDEN" | "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH" | "E_INGEST_FAILED" | "E_INGEST_TIMEOUT" | "E_INTERNAL" | "E_INVALID_CONTENT_TYPE" | "E_INVALID_KIND" | "E_INVALID_REQUEST" | "E_LLM_BAD_REQUEST" | "E_MEDIA_NOT_FOUND" | "E_MEDIA_NOT_READY" | "E_OWNER_REQUIRED" | "E_PDF_PASSWORD_REQUIRED" | "E_PDF_TEXT_UNAVAILABLE" | "E_PODCAST_PROVIDER_UNAVAILABLE" | "E_PODCAST_QUOTA_EXCEEDED" | "E_REPAIR_NOT_ALLOWED" | "E_RESOURCE_CONFLICT" | "E_RESOURCE_LIMIT" | "E_RETRY_INVALID_STATE" | "E_RETRY_NOT_ALLOWED" | "E_SANITIZATION_FAILED" | "E_SELECTION_CHANGED" | "E_SIGN_UPLOAD_FAILED" | "E_SOURCE_ACCESS_DENIED" | "E_SOURCE_FETCH_FAILED" | "E_SOURCE_NOT_READABLE" | "E_SOURCE_TOO_LARGE" | "E_SSRF_BLOCKED" | "E_STORAGE_ERROR" | "E_STORAGE_MISSING" | "E_TRANSCRIPTION_FAILED" | "E_TRANSCRIPTION_TIMEOUT" | "E_TRANSCRIPT_UNAVAILABLE" | "E_UPLOAD_CAPABILITY_EXPIRED" | "E_UPLOAD_TRANSPORT_FAILED" | "E_WORKER_HANDLER_FAILED" | "E_WORKER_INTERRUPTED" | "E_X_POST_UNAVAILABLE" | "E_X_PROVIDER_AUTH_REJECTED" | "E_X_PROVIDER_CREDITS_DEPLETED" | "E_X_PROVIDER_RATE_LIMITED" | "E_X_PROVIDER_TIMEOUT" | "E_X_PROVIDER_UNAVAILABLE");
         };
         /** Present[datetime] */
         Present_datetime_: {
@@ -7536,6 +8062,63 @@ export interface components {
             /** Title */
             title?: string | null;
         };
+        /** RepairSearchOffer */
+        RepairSearchOffer: {
+            /**
+             * Expected Job Id
+             * Format: uuid
+             */
+            expected_job_id: string;
+            /** Expected Revision */
+            expected_revision: number;
+            /**
+             * Input
+             * @default PublishedContent
+             * @constant
+             */
+            input: "PublishedContent";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "RepairSearch";
+        };
+        /** RepairSourceOffer */
+        RepairSourceOffer: {
+            /**
+             * Expected Attempt Id
+             * Format: uuid
+             */
+            expected_attempt_id: string;
+            /**
+             * Expected Job Id
+             * Format: uuid
+             */
+            expected_job_id: string;
+            /**
+             * Input
+             * @enum {string}
+             */
+            input: "StoredSource" | "RefetchSource";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "RepairSource";
+        };
+        /** RepairSourceRecovery */
+        RepairSourceRecovery: {
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "RepairSource";
+        };
         /** ReplyInsertion */
         ReplyInsertion: {
             /** Branch Anchor */
@@ -7550,6 +8133,19 @@ export interface components {
              * Format: uuid
              */
             parent_message_id: string;
+        };
+        /** ReprocessSourceRecovery */
+        ReprocessSourceRecovery: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ReprocessSource";
+            /**
+             * New Source Attempt Id
+             * Format: uuid
+             */
+            new_source_attempt_id: string;
         };
         /** ResetProgressCommand */
         ResetProgressCommand: {
@@ -7761,6 +8357,37 @@ export interface components {
              */
             from_stage: "metadata";
         };
+        /** RetrySourceOffer */
+        RetrySourceOffer: {
+            /**
+             * Expected Attempt Id
+             * Format: uuid
+             */
+            expected_attempt_id: string;
+            /**
+             * Input
+             * @enum {string}
+             */
+            input: "StoredSource" | "RefetchSource";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "RetrySource";
+        };
+        /** RetrySourceRecovery */
+        RetrySourceRecovery: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "RetrySource";
+            /**
+             * New Source Attempt Id
+             * Format: uuid
+             */
+            new_source_attempt_id: string;
+        };
         /** RetrySourceRequest */
         RetrySourceRequest: {
             /** Client Mutation Id */
@@ -7775,6 +8402,22 @@ export interface components {
              * @enum {string}
              */
             from_stage: "source";
+        };
+        /** RetryUploadOffer */
+        RetryUploadOffer: {
+            /** Expected Generation */
+            expected_generation: number;
+            /**
+             * Input
+             * @default ChooseOriginalFile
+             * @constant
+             */
+            input: "ChooseOriginalFile";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "RetryUpload";
         };
         /** RetryUploadSessionRequest */
         RetryUploadSessionRequest: {
@@ -8636,6 +9279,21 @@ export interface components {
             /** Userhandle */
             userHandle: string;
         };
+        /** SourceAccepted */
+        SourceAccepted: {
+            /** Attempt No */
+            attempt_no: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "SourceAccepted";
+            /**
+             * Source Attempt Id
+             * Format: uuid
+             */
+            source_attempt_id: string;
+        };
         /** SourceCountedProgress */
         SourceCountedProgress: {
             /** Completed */
@@ -8664,6 +9322,85 @@ export interface components {
              */
             updated_at: string;
         };
+        /** SourceExecutionStarted */
+        SourceExecutionStarted: {
+            /**
+             * Execution Id
+             * Format: uuid
+             */
+            execution_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "SourceExecutionStarted";
+            /**
+             * Source Attempt Id
+             * Format: uuid
+             */
+            source_attempt_id: string;
+        };
+        /** SourceFailed */
+        SourceFailed: {
+            execution_id: components["schemas"]["Presence_UUID_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "SourceFailed";
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "Execution" | "Domain";
+            progress: components["schemas"]["Presence_SourceFailureProgress_"];
+            /**
+             * Source Attempt Id
+             * Format: uuid
+             */
+            source_attempt_id: string;
+            /** Terminal */
+            terminal: boolean;
+        };
+        /** SourceFailureProgress */
+        SourceFailureProgress: {
+            /** Completed */
+            completed: number;
+            total: components["schemas"]["Presence_int_"];
+            unit: components["schemas"]["Presence_str_"];
+        };
+        /** SourceHistoryBaseline */
+        SourceHistoryBaseline: {
+            /** Attempt No */
+            attempt_no: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "SourceHistoryBaseline";
+            /** Outcome */
+            outcome: components["schemas"]["SucceededSourceBaselineOutcome"] | components["schemas"]["FailedSourceBaselineOutcome"] | components["schemas"]["InFlightSourceBaselineOutcome"];
+            /**
+             * Source Attempt Id
+             * Format: uuid
+             */
+            source_attempt_id: string;
+        };
+        /** SourceRecoveryAccepted */
+        SourceRecoveryAccepted: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "SourceRecoveryAccepted";
+            /** Recovery */
+            recovery: components["schemas"]["RetrySourceRecovery"] | components["schemas"]["RepairSourceRecovery"] | components["schemas"]["ReprocessSourceRecovery"] | components["schemas"]["CorrectSourceTypeRecovery"];
+            /**
+             * Source Attempt Id
+             * Format: uuid
+             */
+            source_attempt_id: string;
+        };
         /**
          * SourceRepairRequest
          * @description Requeue the exact dead job of one nonterminal source attempt.
@@ -8687,6 +9424,43 @@ export interface components {
              */
             kind: "Source";
         };
+        /** SourceRetryScheduled */
+        SourceRetryScheduled: {
+            execution_id: components["schemas"]["Presence_UUID_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "SourceRetryScheduled";
+            /**
+             * Next Attempt At
+             * Format: date-time
+             */
+            next_attempt_at: string;
+            /**
+             * Source Attempt Id
+             * Format: uuid
+             */
+            source_attempt_id: string;
+        };
+        /** SourceStageChanged */
+        SourceStageChanged: {
+            /**
+             * Execution Id
+             * Format: uuid
+             */
+            execution_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "SourceStageChanged";
+            /**
+             * Source Attempt Id
+             * Format: uuid
+             */
+            source_attempt_id: string;
+        };
         /** SourceStageProgress */
         SourceStageProgress: {
             /**
@@ -8704,6 +9478,42 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /**
+         * SourceSucceeded
+         * @description `execution_id` is Absent for an attempt born succeeded and for an
+         *     execution that predates the execution-identity cut.
+         */
+        SourceSucceeded: {
+            execution_id: components["schemas"]["Presence_UUID_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "SourceSucceeded";
+            /**
+             * Source Attempt Id
+             * Format: uuid
+             */
+            source_attempt_id: string;
+        };
+        /** SourceSuperseded */
+        SourceSuperseded: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "SourceSuperseded";
+            /**
+             * Source Attempt Id
+             * Format: uuid
+             */
+            source_attempt_id: string;
+            /**
+             * Winner Media Id
+             * Format: uuid
+             */
+            winner_media_id: string;
         };
         /** SplitNoteSurfaceCommand */
         SplitNoteSurfaceCommand: {
@@ -8774,6 +9584,14 @@ export interface components {
         SucceededEventPayload: {
             /** Artifact Revision Ref */
             artifact_revision_ref: string;
+        };
+        /** SucceededSourceBaselineOutcome */
+        SucceededSourceBaselineOutcome: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Succeeded";
         };
         /** SurfaceAfterPosition */
         SurfaceAfterPosition: {
@@ -8954,6 +9772,18 @@ export interface components {
              */
             kind: "UndoCompletion";
         };
+        /** UnresolvedNavigationTarget */
+        UnresolvedNavigationTarget: {
+            /** Href */
+            href: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "UnresolvedNavigationTarget";
+            /** Node Id */
+            node_id: string;
+        };
         /** UpdateHighlightRequest */
         UpdateHighlightRequest: {
             /** Anchor */
@@ -9015,6 +9845,51 @@ export interface components {
             /** Request Id */
             request_id: string;
         };
+        /** UploadAccepted */
+        UploadAccepted: {
+            /** Generation */
+            generation: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "UploadAccepted";
+        };
+        /** UploadExecutionStarted */
+        UploadExecutionStarted: {
+            /** Generation */
+            generation: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "UploadExecutionStarted";
+        };
+        /**
+         * UploadFailed
+         * @description Transport Present is a client-reported upload failure; Absent is a
+         *     server-side verification rejection whose code is on the envelope.
+         */
+        UploadFailed: {
+            /** Generation */
+            generation: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "UploadFailed";
+            transport: components["schemas"]["Presence_Annotated_Union_UploadTransportNetworkFailure__UploadTransportTimeoutFailure__UploadTransportHttpRejectedFailure__UploadTransportAbortedFailure___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+        };
+        /** UploadHistoryBaseline */
+        UploadHistoryBaseline: {
+            /** Generation */
+            generation: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "UploadHistoryBaseline";
+        };
         /** UploadHttpRejectedFailureRequest */
         UploadHttpRejectedFailureRequest: {
             /** Duration Ms */
@@ -9045,6 +9920,36 @@ export interface components {
             /** Request Id */
             request_id: string;
         };
+        /** UploadPublished */
+        UploadPublished: {
+            /** Generation */
+            generation: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "UploadPublished";
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            /**
+             * Source Attempt Id
+             * Format: uuid
+             */
+            source_attempt_id: string;
+        };
+        /** UploadRecoveryAccepted */
+        UploadRecoveryAccepted: {
+            /** Generation */
+            generation: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "UploadRecoveryAccepted";
+        };
         /** UploadTimeoutFailureRequest */
         UploadTimeoutFailureRequest: {
             /** Duration Ms */
@@ -9058,6 +9963,40 @@ export interface components {
             kind: "Timeout";
             /** Request Id */
             request_id: string;
+        };
+        /** UploadTransportAbortedFailure */
+        UploadTransportAbortedFailure: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Aborted";
+        };
+        /** UploadTransportHttpRejectedFailure */
+        UploadTransportHttpRejectedFailure: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "HttpRejected";
+            /** Status */
+            status: number;
+        };
+        /** UploadTransportNetworkFailure */
+        UploadTransportNetworkFailure: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Network";
+        };
+        /** UploadTransportTimeoutFailure */
+        UploadTransportTimeoutFailure: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Timeout";
         };
         /** UserAudienceIn */
         UserAudienceIn: {
@@ -11095,9 +12034,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ImportPage_"];
                 };
             };
             /** @description Validation Error */
@@ -11126,9 +12063,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ImportSummary_"];
                 };
             };
         };
@@ -11150,9 +12085,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ImportDetail_"];
                 };
             };
             /** @description Validation Error */
@@ -11186,9 +12119,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_HistoryPage_"];
                 };
             };
             /** @description Validation Error */

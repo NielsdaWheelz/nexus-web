@@ -3,8 +3,8 @@
 **Status:** open (Track D2 found it; register OI-003)
 **Origin:** Imports workspace cutover, Track D2 re-review 3, 2026-09-08, at
 `512ed5693ef61967831bc550bcffe9232cdca7d0` + the cutover working tree
-**Area:** `apps/web/src/lib/imports/useImportsPage.ts:113-127,146`;
-`apps/web/src/lib/imports/useImportDetail.ts:58-70,86`;
+**Area:** `apps/web/src/lib/imports/useImportsPage.ts:133-147`;
+`apps/web/src/lib/imports/useImportDetail.ts:59-71,86`;
 `apps/web/src/lib/imports/ImportsProvider.tsx:138-146,154,190-193`
 
 ## What is wrong
@@ -13,7 +13,7 @@
 that re-keyed their read, because the keyed `useResource` read is that
 observation's answer (otherwise every invalidation costs two page-one reads).
 The suppression compares the observation revision the last tick ran under
-(`tickedRevisionRef`, `useImportsPage.ts:115,126-128`) with the current one.
+(`tickedRevisionRef`, `useImportsPage.ts:134,145-147`) with the current one.
 
 When a manual refresh or an invalidation re-keys the read
 (`ImportsProvider.tsx:190-193` bumps `revision`) and *its own summary read then

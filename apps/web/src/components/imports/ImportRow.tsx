@@ -17,8 +17,7 @@ import {
 } from "@/lib/imports/ImportsProvider";
 import type {
   ImportItem,
-  MediaRecoveryOffer,
-  RecoveryOffer,
+  ReadRecoveryOffer,
 } from "@/lib/imports/importsClient";
 import { getFileUploadKind } from "@/lib/media/ingestionClient";
 import type { MediaKind } from "@/lib/media/kind";
@@ -40,7 +39,7 @@ import {
 import styles from "./ImportsWorkspace.module.css";
 
 const RECOVERY_ACTION_ID: Readonly<
-  Record<MediaRecoveryOffer["kind"], ResourceActionId>
+  Record<Exclude<ReadRecoveryOffer, { kind: "RetryUpload" }>["kind"], ResourceActionId>
 > = {
   RetrySource: "ResourceOperation.Media.RetryProcessing",
   RepairSource: "ResourceOperation.Media.RepairSource",
@@ -54,7 +53,7 @@ const STATE_TONE: Readonly<Record<ImportItem["state"]["kind"], PillTone>> = {
 };
 
 /** The upload this import is still waiting for, if its obligation is the upload. */
-function uploadObligation(item: ImportItem): RecoveryOffer | null {
+function uploadObligation(item: ImportItem): ReadRecoveryOffer | null {
   if (!isUploadObligation(item)) return null;
   return item.capabilities.recovery.kind === "Present"
     ? item.capabilities.recovery.value
@@ -87,7 +86,7 @@ function MediaRecoveryAction({
   offer,
 }: {
   readonly subject: ResourceActionSubject;
-  readonly offer: MediaRecoveryOffer;
+  readonly offer: Exclude<ReadRecoveryOffer, { kind: "RetryUpload" }>;
 }) {
   const model = useResourceActionMenuModel(subject);
   const descriptor = model.descriptors.find(
@@ -119,7 +118,7 @@ function UploadActions({
   offer,
 }: {
   readonly item: ImportItem;
-  readonly offer: RecoveryOffer | null;
+  readonly offer: ReadRecoveryOffer | null;
 }) {
   const { pending, dispatchUpload } = useImports();
   const feedback = useFeedback();
@@ -148,7 +147,7 @@ function UploadActions({
   const chooseFile = (file: File) => {
     // An import Nexus can accept bytes for is a PDF or an EPUB; anything else
     // has no upload kind to match, so no file can be the original.
-    const expectedKind = uploadFileKind(item.mediaKind);
+    const expectedKind = uploadFileKind(item.media_kind);
     if (
       expectedKind === null ||
       file.name !== item.title ||
@@ -165,7 +164,7 @@ function UploadActions({
       kind: "RetryUpload",
       ref: item.ref,
       file,
-      expectedGeneration: offer.expectedGeneration,
+      expectedGeneration: offer.expected_generation,
     });
   };
 
@@ -209,7 +208,7 @@ function UploadActions({
           </Button>
         </>
       ) : null}
-      {item.capabilities.canRemove ? (
+      {item.capabilities.can_remove ? (
         <Button
           variant="secondary"
           size="sm"
@@ -227,7 +226,7 @@ function UploadActions({
 /** Every action one import offers, in one place per row and per inspector. */
 export function ImportActions({ item }: { readonly item: ImportItem }) {
   const upload = uploadObligation(item);
-  const mediaRef = item.mediaRef.kind === "Present" ? item.mediaRef.value : null;
+  const mediaRef = item.media_ref.kind === "Present" ? item.media_ref.value : null;
   const subject = useMemo<ResourceActionSubject | null>(
     () => (mediaRef === null ? null : { ref: mediaRef }),
     [mediaRef],
@@ -270,8 +269,8 @@ export default function ImportRow({
   const reason = importReasonLine(item);
   const now = new Date();
   const matched =
-    item.matchedEvent.kind === "Present"
-      ? historyMatchLine(item.matchedEvent.value, display, now)
+    item.matched_event.kind === "Present"
+      ? historyMatchLine(item.matched_event.value, display, now)
       : null;
   const age = importAgeLine(item, display, now);
   return (
@@ -291,19 +290,19 @@ export default function ImportRow({
       title={item.title}
       supporting={
         <>
-          <span>{importKindLabel(item.mediaKind)}</span>
-          {item.sourceLabel.kind === "Present" ? (
+          <span>{importKindLabel(item.media_kind)}</span>
+          {item.source_label.kind === "Present" ? (
             <>
               <span aria-hidden="true"> · </span>
               <span className="sr-only">, </span>
-              <span>{item.sourceLabel.value}</span>
+              <span>{item.source_label.value}</span>
             </>
           ) : null}
         </>
       }
       status={
         <span className={styles.rowStatus}>
-          <Pill tone={item.sourceIssueCount > 0 ? "warning" : STATE_TONE[item.state.kind]} size="sm">
+          <Pill tone={item.source_issue_count > 0 ? "warning" : STATE_TONE[item.state.kind]} size="sm">
             {importStateLabel(item)}
           </Pill>
           <span className={styles.rowStatusLine}>{importStatusLine(item)}</span>

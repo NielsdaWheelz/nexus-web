@@ -23,7 +23,7 @@ import type {
   ImportState,
   ImportSummary,
   ModeledRecoveryRestriction,
-  RecoveryOffer,
+  ReadRecoveryOffer,
 } from "@/lib/imports/importsClient";
 import { UploadSessionError } from "@/lib/media/ingestionClient";
 import type { MediaKind } from "@/lib/media/kind";
@@ -474,15 +474,15 @@ function progressLine(progress: MediaSourceProgress): string {
  */
 export function isUploadObligation(item: ImportItem): boolean {
   return (
-    uploadSessionHandle(item.ref) !== null && item.mediaRef.kind === "Absent"
+    uploadSessionHandle(item.ref) !== null && item.media_ref.kind === "Absent"
   );
 }
 
 function attentionLine(item: ImportItem, state: Extract<ImportState, { kind: "NeedsAttention" }>): string {
   if (isUploadObligation(item)) {
     if (state.stage !== "Upload") return UPLOAD_REJECTED_LABEL;
-    return state.failureCode.kind === "Present" &&
-      state.failureCode.value === "E_UPLOAD_CAPABILITY_EXPIRED"
+    return state.failure_code.kind === "Present" &&
+      state.failure_code.value === "E_UPLOAD_CAPABILITY_EXPIRED"
       ? IMPORT_FAILURE_COPY.E_UPLOAD_CAPABILITY_EXPIRED.reason
       : IMPORT_STAGE_COPY.Upload.failed;
   }
@@ -499,10 +499,10 @@ export function importStatusLine(item: ImportItem): string {
           // Why this is waiting was not recorded: name the stage it is queued
           // for rather than claim the queue as the reason (spec, absent
           // evidence).
-          if (state.waitingReason.kind === "Absent") {
+          if (state.waiting_reason.kind === "Absent") {
             return `${IMPORT_STAGE_COPY[state.stage].label} queued`;
           }
-          switch (state.waitingReason.value) {
+          switch (state.waiting_reason.value) {
             case "Queue":
               return "Waiting in queue";
             case "Capacity":
@@ -511,7 +511,7 @@ export function importStatusLine(item: ImportItem): string {
               return "Waiting to retry";
             default:
               return assertNever(
-                state.waitingReason.value,
+                state.waiting_reason.value,
                 "Unreachable waiting reason",
               );
           }
@@ -525,8 +525,8 @@ export function importStatusLine(item: ImportItem): string {
     case "NeedsAttention":
       return attentionLine(item, state);
     case "Complete":
-      return item.sourceIssueCount > 0
-        ? `${item.sourceIssueCount} source ${item.sourceIssueCount === 1 ? "issue" : "issues"} recorded`
+      return item.source_issue_count > 0
+        ? `${item.source_issue_count} source ${item.source_issue_count === 1 ? "issue" : "issues"} recorded`
         : "Imported";
     default:
       return assertNever(state, "Unreachable import state");
@@ -540,8 +540,8 @@ export function importStatusLine(item: ImportItem): string {
 export function importReasonLine(item: ImportItem): string | null {
   const state = item.state;
   if (state.kind !== "NeedsAttention") return null;
-  return state.failureCode.kind === "Present"
-    ? IMPORT_FAILURE_COPY[state.failureCode.value].reason
+  return state.failure_code.kind === "Present"
+    ? IMPORT_FAILURE_COPY[state.failure_code.value].reason
     : null;
 }
 
@@ -618,7 +618,7 @@ export function importStateLabel(item: ImportItem): string {
     case "NeedsAttention":
       return "Needs attention";
     case "Complete":
-      return item.sourceIssueCount > 0 ? "Readable with issues" : "Complete";
+      return item.source_issue_count > 0 ? "Readable with issues" : "Complete";
     default:
       return assertNever(item.state, "Unreachable import state");
   }
@@ -631,23 +631,23 @@ export function importStateLabel(item: ImportItem): string {
  */
 export function importConsequenceLine(
   item: ImportItem,
-  readiness: { readonly canRead: boolean },
+  readiness: { readonly can_read: boolean },
 ): string {
   const state = item.state;
   if (state.kind === "NeedsAttention" && state.stage === "Index") {
-    return readiness.canRead
+    return readiness.can_read
       ? "Search indexing failed. You can still read this document."
       : "Search indexing failed.";
   }
-  if (state.kind === "NeedsAttention" && state.failureCode.kind === "Present") {
-    const copy = IMPORT_FAILURE_COPY[state.failureCode.value];
+  if (state.kind === "NeedsAttention" && state.failure_code.kind === "Present") {
+    const copy = IMPORT_FAILURE_COPY[state.failure_code.value];
     return `${copy.title} ${copy.explanation}`;
   }
   if (state.kind === "Complete") {
-    if (item.sourceIssueCount > 0 && readiness.canRead) {
+    if (item.source_issue_count > 0 && readiness.can_read) {
       return "Some source content is unavailable. You can read the available content.";
     }
-    return readiness.canRead
+    return readiness.can_read
       ? "Imported. You can read this document."
       : "Imported.";
   }
@@ -655,7 +655,7 @@ export function importConsequenceLine(
 }
 
 /** What a recovery command reuses and what it repeats. */
-export function importRecoveryScopeLine(offer: RecoveryOffer): string {
+export function importRecoveryScopeLine(offer: ReadRecoveryOffer): string {
   switch (offer.kind) {
     case "RetryUpload":
       return "Sends the same file again and repeats verification. Nothing already imported is replaced.";
@@ -867,8 +867,8 @@ export function historyEventLine(entry: HistoryEntry): string {
   const label = historyEventLabel(entry);
   const facts = entry.facts;
   const reason =
-    entry.failureCode.kind === "Present"
-      ? ` ${IMPORT_FAILURE_COPY[entry.failureCode.value].reason}.`
+    entry.failure_code.kind === "Present"
+      ? ` ${IMPORT_FAILURE_COPY[entry.failure_code.value].reason}.`
       : "";
   if (facts.kind === "UploadFailed") {
     // A transport failure records what the transport did; a rejection records
@@ -886,7 +886,7 @@ export function historyEventLine(entry: HistoryEntry): string {
         return `${label}. This attempt succeeded.`;
       case "Failed":
         return `${label}. This attempt failed: ${
-          IMPORT_FAILURE_COPY[facts.outcome.failureCode].reason
+          IMPORT_FAILURE_COPY[facts.outcome.failure_code].reason
         }.`;
       case "InFlight":
         return `${label}. This attempt was still running.`;
@@ -973,7 +973,7 @@ export function historyMatchLine(
   context: DisplayContext,
   now: Date,
 ): string {
-  return `Matched: ${historyEventLabel(entry)} · ${importDayText(entry.occurredAt, context, now)}`;
+  return `Matched: ${historyEventLabel(entry)} · ${importDayText(entry.occurred_at, context, now)}`;
 }
 
 interface ImportAge {
@@ -993,7 +993,7 @@ export function importAgeLine(
   now: Date,
 ): ImportAge {
   const active = item.state.kind === "Active";
-  const value = active ? item.acceptedAt : item.updatedAt;
+  const value = active ? item.accepted_at : item.updated_at;
   const relative = formattedInstant(
     value,
     formatRelativeTime(value, context, now),
@@ -1032,11 +1032,11 @@ export const IMPORTS_SETTLED_LINE = "All imports are settled";
 /** The one summary line: `3 need attention · 2 in progress`. */
 export function importsSummaryLine(summary: ImportSummary): string {
   const parts: string[] = [];
-  if (summary.needsAttentionCount > 0) {
-    parts.push(importsAttentionPhrase(summary.needsAttentionCount));
+  if (summary.needs_attention_count > 0) {
+    parts.push(importsAttentionPhrase(summary.needs_attention_count));
   }
-  if (summary.activeCount > 0) {
-    parts.push(importsActivePhrase(summary.activeCount));
+  if (summary.active_count > 0) {
+    parts.push(importsActivePhrase(summary.active_count));
   }
   return parts.length === 0 ? IMPORTS_SETTLED_LINE : parts.join(" · ");
 }

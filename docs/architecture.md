@@ -1119,7 +1119,7 @@ and offered recovery cannot disagree. A published upload keeps its
 History. its compact collection row keeps the committed query and applied
 constraints visible; a failed later page retains loaded rows, marks the loaded
 count as failed, and offers one retry of that cursor. See
-`docs/cutovers/imports-workspace-hard-cutover.md`.
+[the imports read owner](modules/imports.md).
 
 **Recovery/deletion:** `reconcile_stale_ingest_media` requeues/fails stale
 `extracting` rows and repairs content/semantic indexes. Upload-session expiry is
