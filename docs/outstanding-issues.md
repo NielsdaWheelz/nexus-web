@@ -70,7 +70,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] api / operations · 2026-09-27 release preflight · a read-only live source-hash probe exited 137 and restarted the api once: [ticket](tickets/live-api-source-hash-probe-restarted-container.md).
 - [open] reader / selection · 2026-09-24 reader-inspector-controls · retained selection geometry ignores a canonical reset: [ticket](tickets/retained-selection-geometry-ignores-canonical-reset.md).
 - [open] workspace / geometry · 2026-09-24 reader-inspector-controls · pdf inspector overflows the viewport at the pane minimum: [ticket](tickets/pdf-inspector-overflows-viewport-at-pane-minimum.md).
-- [open] workspace / rendering · 2026-09-24 reader-inspector-controls · PaneRuntimeFrame memo never bails out: [ticket](tickets/pane-runtime-frame-memo-never-bails-out.md).
 - [open] workspace / copy · 2026-09-24 reader-inspector-controls · secondary tab close label case differs from pane close: [ticket](tickets/secondary-tab-close-label-case.md).
 - [open] epub ingest · 2026-09-26 fragment-only nav fix review · unsafe authored nav hrefs lack source issues: [ticket](tickets/epub-unsafe-nav-targets-have-no-source-issue.md).
 - [open] worker / indexing · 2026-09-24 reader-inspector-controls · a missing indexing credential is classified as a child defect: [ticket](tickets/indexing-without-credential-is-a-child-defect.md).
