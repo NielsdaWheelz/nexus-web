@@ -1,9 +1,9 @@
 """SSE replay/tail routes for durable runs and media processing status.
 
-All six browser-callable streams live under ``/stream/`` (auth via stream-token
+all five browser-callable streams live under ``/stream/`` (auth via stream-token
 bearer; see ``stream_paths.is_stream_path``). Three are append-cursor durable-run
 streams (chat run, oracle reading, Dossier build) that share one generic factory;
-media processing, Podcast refresh runs, and Podcast subscription lifecycles use
+media processing and podcast subscription lifecycles use
 snapshot/diff streams.
 
 Push-driven: an AFTER trigger ``pg_notify``s the per-entity channel on each new

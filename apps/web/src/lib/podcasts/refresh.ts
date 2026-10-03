@@ -1,61 +1,34 @@
 import { apiFetch } from "@/lib/api/client";
+import type { ApiJson } from "@/lib/api/wire";
 import { isAbortError } from "@/lib/errors";
-import type {
-  PodcastRefreshProgress,
-  PodcastRefreshResult,
-  PodcastRefreshScope,
-} from "@/lib/podcasts/types";
-import { expectExactRecord, expectNonnegativeInteger } from "@/lib/validation";
-
-interface RunPodcastRefreshOptions {
-  readonly signal: AbortSignal;
-  readonly onProgress: (progress: PodcastRefreshProgress) => void;
-}
-
-function abortError(signal: AbortSignal): Error {
-  return signal.reason instanceof Error
-    ? signal.reason
-    : new DOMException("Podcast refresh aborted", "AbortError");
-}
+import type { PodcastRefreshScope } from "@/lib/podcasts/types";
 
 /**
- * Ask the server to enqueue a sync for every in-scope subscription. Each
- * subscription settles on its own; the panes observe their own sync state.
+ * request admission for every in-scope subscription, including active joins.
+ * each subscription settles separately; panes observe their own sync state.
  */
-export async function runPodcastRefresh(
+export async function requestPodcastRefresh(
   scope: PodcastRefreshScope,
-  options: RunPodcastRefreshOptions,
-): Promise<PodcastRefreshResult> {
-  let requestedCount: number;
+  signal: AbortSignal,
+): Promise<number> {
   try {
-    const data = expectExactRecord(
-      expectExactRecord(
-        await apiFetch<unknown>("/api/podcasts/refresh", {
-          method: "POST",
-          body: JSON.stringify(scope),
-          signal: options.signal,
-        }),
-        ["data"],
-        "PodcastRefreshAccepted",
-      ).data,
-      ["requestedCount"],
-      "PodcastRefreshAccepted.data",
+    const response = await apiFetch<ApiJson<"/podcasts/refresh", "post">>(
+      "/api/podcasts/refresh",
+      { method: "POST", body: JSON.stringify(scope), signal },
     );
-    requestedCount = expectNonnegativeInteger(
-      data.requestedCount,
-      "requestedCount",
-    );
+    return response.data.requestedCount;
   } catch (error) {
-    if (options.signal.aborted || isAbortError(error))
-      throw abortError(options.signal);
+    if (signal.aborted || isAbortError(error)) {
+      throw signal.reason instanceof Error
+        ? signal.reason
+        : new DOMException("Podcast refresh aborted", "AbortError");
+    }
     throw error;
   }
-  options.onProgress({ finishedCount: requestedCount, requestedCount });
-  return {
-    kind: "Complete",
-    announcement:
-      requestedCount === 0
-        ? "Nothing to refresh"
-        : `Refreshing ${requestedCount} show${requestedCount === 1 ? "" : "s"}`,
-  };
+}
+
+export function podcastRefreshRequestAnnouncement(requestedCount: number): string {
+  return requestedCount === 0
+    ? "Nothing to refresh"
+    : `Refresh requested for ${requestedCount} show${requestedCount === 1 ? "" : "s"}`;
 }

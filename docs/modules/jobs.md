@@ -139,7 +139,7 @@ Five kinds declare a projection:
   cursor digest; dead rows remain operator-visible.
 - `PodcastSubscriptionSync` (`podcast_sync_subscription_job`) exact-matches
   subscription epoch, generation, job, and attempt before marking the subscription
-  and every joined refresh item Failed.
+  Failed.
 
 Every other kind declares `"None"`; its failure is recorded on its own domain row.
 
@@ -213,20 +213,31 @@ later.
 
 ## Podcast Live Sync And Backfill
 
-`podcast_sync_subscription_job` is the current-window live path. Subscribe,
-OPML, scheduled due admission, and manual refresh use one generation-admission
+`podcast_sync_subscription_job` is the current-window live path. subscribe,
+scheduled due admission, and manual refresh use one generation-admission
 primitive and the same per-subscription job. Its payload names subscription
 epoch, viewer, Podcast, and generation; the handler also requires the exact
-queue job/attempt lease. It fetches RSS once, persists a fenced ingest
-checkpoint, and finishes auto-queue, subscription state, all joined refresh
-items, parent aggregates, and collection revisions in a fresh SERIALIZABLE
-transaction. Modeled failures are terminal domain results; unexpected defects
+queue job/attempt lease. it fetches provider/RSS facts outside the database
+transaction, then commits lease-fenced ingest, auto-queue, subscription state
+and collection revisions together. modeled failures are terminal domain results;
+unexpected defects
 use ordinary queue retries, and exhausted retries invoke the exact dead-letter
 finalizer.
 
 `podcast_refresh_due_job` is a 15-minute background schedule that admits a
-bounded oldest-due set and creates one refresh run per affected viewer. It is
-not a maintenance-only operation.
+bounded oldest-due set. it is not a maintenance-only operation.
+
+manual `POST /podcasts/refresh` returns 202 `{data:{requestedCount}}` after
+queue/subscription admission commits. the count is selected subscriptions,
+including active-generation joins, rather than newly created jobs or completed
+syncs. Podcast scope requires the viewer's subscription; Library requires
+membership and selects its placed shows, with Default selecting all the viewer's
+subscriptions. an empty valid scope returns zero. admission joins/promotes an
+active generation or opens one Pending generation with one deduped job.
+there is no refresh-run ledger or per-request progress/completion protocol.
+the browser [refresh owner](panes-tabs.md#refresh) requests admission and reloads
+its own view; existing subscription lifecycle streams observe later sync/backfill
+settlement independently.
 
 `podcast_backfill_subscription` is a separate durable history traversal seeded
 once by Subscribe. Each payload carries `backfillId` and `expectedStepNo`. The

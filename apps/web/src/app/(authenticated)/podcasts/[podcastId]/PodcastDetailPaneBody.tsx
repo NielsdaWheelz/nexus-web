@@ -93,7 +93,10 @@ import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import { isAbortError } from "@/lib/errors";
 import { useRevalidationSettlement } from "@/lib/panes/useRevalidationSettlement";
-import { runPodcastRefresh } from "@/lib/podcasts/refresh";
+import {
+  podcastRefreshRequestAnnouncement,
+  requestPodcastRefresh,
+} from "@/lib/podcasts/refresh";
 import {
   isPodcastSubscriptionLifecycleProtocolError,
   isPodcastSubscriptionLifecycleTerminal,
@@ -1220,7 +1223,7 @@ export default function PodcastDetailPaneBody() {
   ]);
 
   const executeRefresh = useCallback<PaneRefreshExecute>(
-    async ({ signal, reportProgress }) => {
+    async ({ signal }) => {
       if (!podcastId) {
         return {
           kind: "Failed",
@@ -1228,22 +1231,14 @@ export default function PodcastDetailPaneBody() {
         };
       }
       try {
-        const result = await runPodcastRefresh(
+        const requestedCount = await requestPodcastRefresh(
           { kind: "Podcast", podcastId },
-          {
-            signal,
-            onProgress: ({ finishedCount, requestedCount }) =>
-              reportProgress({
-                kind: "Determinate",
-                finishedCount,
-                requestedCount,
-              }),
-          },
+          signal,
         );
         await revalidatePodcastDetail(signal);
         return {
-          kind: result.kind,
-          announcement: result.announcement,
+          kind: "Complete",
+          announcement: podcastRefreshRequestAnnouncement(requestedCount),
         };
       } catch (refreshError: unknown) {
         if (isAbortError(refreshError)) throw refreshError;
@@ -1286,11 +1281,11 @@ export default function PodcastDetailPaneBody() {
       void (async () => {
         let refreshCommitted = false;
         try {
-          await runPodcastRefresh(
+          await requestPodcastRefresh(
             { kind: "Podcast", podcastId },
-            { signal: new AbortController().signal, onProgress: () => {} },
+            new AbortController().signal,
           );
-          // The refresh run has reached its terminal/observation boundary.
+          // The subscription refresh request is durably admitted.
           // Settle the global invocation before projecting the mounted pane so
           // a local revalidation failure cannot turn a committed refresh into
           // an aborted action.
