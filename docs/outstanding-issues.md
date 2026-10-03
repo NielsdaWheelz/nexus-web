@@ -256,7 +256,6 @@ unexpected timeouts. See
 - [open] latest model end-to-end proof · 2026-09-25 model cutover · final permitted provider, codex shell and brave paths passed; background, lifecycle, auth-refresh and owner-blocked anthropic cells remain: [ticket](tickets/latest-model-end-to-end-qualification-incomplete.md).
 - [open] codex background effects · 2026-09-27 shell qualification · a cited dossier ignored a persisted note-create instruction despite `CodexShell` authority: [ticket](tickets/codex-background-write-instruction-ignored.md).
 - [deferred] anthropic nexus cells · 2026-09-27 owner decision · 20 browser/api/worker cells remain blocked by the retention decision: [ticket](tickets/anthropic-nexus-live-cells-owner-blocked.md).
-- [open] nexus · 2026-09-28 launcher rewrite review · bare `/p ` or `/c ` then Enter runs the previous query's active row: [ticket](tickets/nexus-bare-slash-command-keeps-stale-active-row.md).
 - [open] nexus url ingress · 2026-09-28 launcher rewrite review · `?nexus=1` returns after a reload via the SSR pane href: [ticket](tickets/nexus-url-ingress-reappears-after-reload.md).
 - [open] daily page · 2026-09-28 launcher rewrite review · the Today editor drops focus ~150 ms after mobile Add to Today: [ticket](tickets/add-to-today-editor-loses-focus.md).
 - [open] nexus pane warm · 2026-09-28 launcher rewrite review · the first pane warm delays the active-row commit ~60 ms, so a fast Enter hits the previous row: [ticket](tickets/nexus-first-pane-warm-delays-active-row.md).

@@ -109,6 +109,7 @@ export function useNexusController() {
   const handoff = useRef<MobileQuickNoteHandoffHandle>(null);
 
   const parsed = useMemo(() => parseNexusQuery(query), [query]);
+  const listIdentity = parsed.norm ? `${parsed.intent.kind}:${parsed.norm}` : "";
   const find = useNexusFind({ open, query: parsed });
   const panes = useMemo<NexusPane[]>(
     () =>
@@ -135,7 +136,7 @@ export function useNexusController() {
     () => candidateRows({ query: parsed, panes, frecency: find.frecency, hints, openables: find.openables, search: find.search }),
     [find.frecency, find.openables, find.search, hints, panes, parsed],
   );
-  useLayoutEffect(() => setList((previous) => mergeResults(previous, parsed.norm, candidates)), [candidates, parsed.norm]);
+  useLayoutEffect(() => setList((previous) => mergeResults(previous, listIdentity, candidates)), [candidates, listIdentity]);
 
   useEffect(() => {
     setToday(readToday(accountId, todayDate));
