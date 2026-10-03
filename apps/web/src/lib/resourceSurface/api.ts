@@ -1,5 +1,5 @@
 import { apiFetch } from "@/lib/api/client";
-import type { Schema } from "@/lib/api/wire";
+import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { FrozenRequest } from "@/lib/notes/writingSession";
 import {
   normalizeResourceSurface,
@@ -60,7 +60,7 @@ function wireCommand(command: ResourceSurfaceCommand): Record<string, unknown> {
 }
 
 export async function fetchResourceSurface(sourceRef: string): Promise<ResourceSurface> {
-  const response = await apiFetch<{ data: unknown }>(
+  const response = await apiFetch<ApiJson<"/resource-items/{resource_ref}/surface", "get">>(
     `/api/resource-items/${encodeURIComponent(sourceRef)}/surface`,
     { cache: "no-store" },
   );

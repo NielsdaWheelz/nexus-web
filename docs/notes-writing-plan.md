@@ -138,8 +138,9 @@ completion with an undefined reply and keeps its declared 204 behavior. body
 submission only projects its existing optional envelope to data once.
 
 capture/title/command structural response decoders retire in favor of generated
-contracts and existing item/prose/surface conversion. title and command outputs
-are typed models; the always-sent title versions map is required. capture keeps
+contracts and canonical prose/surface conversion. resource items use the generated
+output directly. title and command outputs are typed models; the always-sent
+title versions map is required. capture keeps
 page/source/body and request mutation/date checks. the direct share-capture
 facade retains conversion-error mapping to api invalid-response, then performs
 request mismatch checks in their existing stage. request preparation, leases,
