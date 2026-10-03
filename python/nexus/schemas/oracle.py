@@ -231,7 +231,7 @@ class OracleReadingImageOut(BaseModel):
     attribution_text: str
     artist: str
     work_title: str
-    year: str | None = None
+    year: str | None
     width: int = Field(gt=0)
     height: int = Field(gt=0)
 
@@ -247,7 +247,7 @@ class OracleMetaEventPayload(BaseModel):
 
 class OracleBindEventPayload(BaseModel):
     folio_motto: str = Field(min_length=1, max_length=80)
-    folio_motto_gloss: str | None = Field(default=None, min_length=1, max_length=120)
+    folio_motto_gloss: str | None = Field(min_length=1, max_length=120)
     folio_theme: OracleFolioTheme
 
     model_config = ConfigDict(extra="forbid")

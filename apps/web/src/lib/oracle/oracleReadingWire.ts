@@ -93,15 +93,9 @@ const ORACLE_FOLIO_THEMES = [
 
 type OracleFolioTheme = (typeof ORACLE_FOLIO_THEMES)[number];
 
-export interface OracleImagePayload {
+export type OracleImagePayload = Omit<Schema<"OracleReadingImageOut">, "url"> & {
   url: OraclePlateImageSrc;
-  attribution_text: string;
-  artist: string;
-  work_title: string;
-  year: string | null;
-  width: number;
-  height: number;
-}
+};
 
 export type OraclePassagePayload = Schema<"OracleReadingPassageOut">;
 
@@ -114,11 +108,7 @@ interface OracleMetaEvent {
 interface OracleBindEvent {
   seq: number;
   event_type: "bind";
-  payload: {
-    folio_motto: string;
-    folio_motto_gloss: string | null;
-    folio_theme: OracleFolioTheme;
-  };
+  payload: Schema<"OracleBindEventPayload">;
 }
 
 interface OracleArgumentEvent {
