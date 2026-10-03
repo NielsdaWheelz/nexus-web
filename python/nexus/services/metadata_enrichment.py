@@ -279,7 +279,11 @@ def build_enrichment_user_content(
     for name in ("current_title", "current_publisher", "current_description", "podcast_title"):
         value = hints.get(name)
         if isinstance(value, str):
-            hints[name] = _bounded_utf8_text(_clean_sample_text(value), _HINT_MAX_BYTES)
+            hints[name] = (
+                _clean_sample_text(value)
+                .encode("utf-8")[:_HINT_MAX_BYTES]
+                .decode("utf-8", errors="ignore")
+            )
     context = {
         "known_metadata": hints,
         "metadata_facts_digest": facts_digest,
@@ -316,10 +320,6 @@ def admitted_contributor_handles(user_content: str) -> frozenset[str]:
         for credit in context["known_metadata"]["current_contributors"]
         if credit["contributor_handle"] is not None
     )
-
-
-def _bounded_utf8_text(value: str, max_bytes: int) -> str:
-    return value.encode("utf-8")[:max_bytes].decode("utf-8", errors="ignore")
 
 
 def merge_enrichment(
