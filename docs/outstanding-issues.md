@@ -362,6 +362,5 @@ unexpected timeouts. See
 - [open] local dependency setup · 2026-10-02 cleanup verification · make setup omits the codex-agent extra required by checked runtime imports: [ticket](tickets/local-setup-omits-codex-agent-extra.md).
 - [open] walknote / transcription · 2026-10-02 cleanup audit · the async upload route makes blocking deepgram http calls, delaying unrelated requests and streams: [ticket](tickets/walknote-transcription-blocks-api-event-loop.md).
 - [open] atlas / caching · 2026-10-02 cleanup audit · position timestamps alone do not invalidate changed titles, highlight counts, memberships, library names or edges: [ticket](tickets/atlas-etag-ignores-read-model-changes.md).
-- [open] workspace / database · 2026-10-02 isolated search baseline · the workspace session model reads `order_key`, absent from the fresh schema at 0252: [ticket](tickets/workspace-session-model-reads-nonexistent-order-key.md).
 - [open] contributor / typed wire · 2026-10-02 cleanup audit · nullable defaults make five always-sent embedded credit keys optional in generated types: [ticket](tickets/contributor-credit-wire-optionalizes-sent-fields.md).
 - [open] workspace / saving · 2026-10-02 cleanup audit · scheduled snapshots count as saved; non-auth failures disappear and pagehide skips retry: [ticket](tickets/workspace-session-failed-save-discards-dirty-state.md).

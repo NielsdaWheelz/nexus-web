@@ -2757,7 +2757,6 @@ class WorkspaceSession(Base):
         nullable=False,
     )
     device_id: Mapped[str] = mapped_column(Text, nullable=False)
-    order_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     state: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),

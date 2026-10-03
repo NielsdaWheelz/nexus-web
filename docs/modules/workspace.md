@@ -10,6 +10,38 @@ sheets are mounted.
 Frontend owners live under `apps/web/src/components/workspace/*` and
 `apps/web/src/lib/workspace/*`.
 
+## persisted workspace sessions
+
+durable state is one json object per authenticated user/device pair.
+[`workspace_sessions.py`](../../python/nexus/services/workspace_sessions.py)
+owns reads and last-write-wins saves; pane order lives in
+`WorkspaceState.primaryPaneOrder` inside that object. the table has no separate
+order key. saves commit the state and database timestamp together.
+
+`GET /me/workspace-session?device_id=...` returns
+`{data:{own,most_recent_elsewhere}}`. each value is null or `{state,updated_at}`;
+both are scoped to the authenticated user. elsewhere excludes the requested
+device and selects newest by `updated_at DESC`, then `id DESC`.
+api put accepts `{device_id,state}` and returns `{data:{state,updated_at}}`.
+device length, state-size validation, authentication and error envelopes belong
+to the existing [schema](../../python/nexus/schemas/workspace_session.py) and
+[routes](../../python/nexus/api/routes/me.py).
+
+browser [put](../../apps/web/src/app/api/me/workspace-session/route.ts) accepts
+exactly `{state}`, validates the persisted shape, and injects the server-owned
+httpOnly `nx_device` cookie. supplied device identity is rejected with 400
+`E_INVALID_WORKSPACE_STATE`; an absent cookie is a 500 `E_INTERNAL` defect.
+restore is a direct server api read, with no browser get route.
+[`bootstrap.server.ts`](../../apps/web/src/lib/workspace/bootstrap.server.ts)
+loads it within the existing 500 ms deadline: nontrivial own state wins, then
+nontrivial newest elsewhere, then the current deep-link/default state.
+[`workspaceRestore.ts`](../../apps/web/src/lib/workspace/workspaceRestore.ts)
+owns validation, width adjustment and deep-link merging.
+[`useWorkspaceSession.ts`](../../apps/web/src/lib/workspace/useWorkspaceSession.ts)
+debounces edits for 1 s and flushes pending writes on pagehide/hidden with
+keepalive. its separate [failed-save gap](../tickets/workspace-session-failed-save-discards-dirty-state.md)
+remains unresolved.
+
 ## Layout Modes
 
 `WorkspaceHost` owns the workspace layout mode. Viewport classification comes
