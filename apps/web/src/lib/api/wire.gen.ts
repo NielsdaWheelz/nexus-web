@@ -4713,6 +4713,10 @@ export interface components {
         Data_TranscriptRequestOut_: {
             data: components["schemas"]["TranscriptRequestOut"];
         };
+        /** Data[WalknoteTranscriptionOut] */
+        Data_WalknoteTranscriptionOut_: {
+            data: components["schemas"]["WalknoteTranscriptionOut"];
+        };
         /** Data[list[FragmentOut]] */
         Data_list_FragmentOut__: {
             /** Data */
@@ -11701,6 +11705,13 @@ export interface components {
              */
             occurredAt: string;
         };
+        /** WalknoteTranscriptionOut */
+        WalknoteTranscriptionOut: {
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Transcript */
+            transcript: string;
+        };
         /** WebReaderResumeState */
         WebReaderResumeState: {
             /**
@@ -18539,9 +18550,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_WalknoteTranscriptionOut_"];
                 };
             };
             /** @description Validation Error */

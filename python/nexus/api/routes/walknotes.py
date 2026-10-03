@@ -7,7 +7,8 @@ from starlette.concurrency import run_in_threadpool
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.responses import success_response
+from nexus.responses import Data
+from nexus.schemas.walknotes import WalknoteTranscriptionOut
 from nexus.services.podcasts.deepgram_adapter import get_deepgram_client
 
 router = APIRouter(tags=["walknotes"])
@@ -20,7 +21,7 @@ async def transcribe_walknote_audio(
     audio: Annotated[UploadFile, File()],
     content_type: Annotated[str, Form()],
     viewer: Annotated[Viewer, Depends(get_viewer)],
-) -> dict:
+) -> Data[WalknoteTranscriptionOut]:
     """10 MB-bounded Deepgram transcription."""
     audio_bytes = await audio.read()
     if len(audio_bytes) > _MAX_AUDIO_BYTES:
@@ -40,9 +41,9 @@ async def transcribe_walknote_audio(
             result.error_message or "Transcription failed",
         )
 
-    return success_response(
-        {
-            "transcript": " ".join(seg["text"] for seg in result.segments),
-            "duration_ms": result.segments[-1]["t_end_ms"] if result.segments else None,
-        }
+    return Data(
+        data=WalknoteTranscriptionOut(
+            transcript=" ".join(seg["text"] for seg in result.segments),
+            duration_ms=result.segments[-1]["t_end_ms"] if result.segments else None,
+        )
     )
