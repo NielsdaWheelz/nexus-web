@@ -200,7 +200,6 @@ interface CommittedLibraryView {
   readonly entries: readonly LibraryEntry[];
   readonly collectionRevision: CollectionRevision;
   readonly nextCursor: Presence<CollectionCursor>;
-  readonly exhaustion: "Partial" | "Complete";
   // The fact revisions this committed page was fetched at; a later reacted-to
   // advance reconciles the current view against fresh authoritative truth.
   readonly revisions: LibraryRevisions;
@@ -1028,10 +1027,6 @@ export default function LibraryPaneBody() {
               entries: result.page.items,
               collectionRevision: result.page.collectionRevision,
               nextCursor: result.page.nextCursor,
-              exhaustion:
-                result.page.nextCursor.kind === "Absent"
-                  ? "Complete"
-                  : "Partial",
               revisions: result.request.revisions,
             },
           },
@@ -1117,7 +1112,6 @@ export default function LibraryPaneBody() {
             entries: libraryResource.data.entries,
             collectionRevision: libraryResource.data.collectionRevision,
             nextCursor: libraryResource.data.nextCursor,
-            exhaustion: libraryResource.data.exhaustion,
             revisions: seedRevisions,
           },
         });
@@ -1219,10 +1213,6 @@ export default function LibraryPaneBody() {
         entries: firstPageResource.data.page.items,
         collectionRevision: firstPageResource.data.page.collectionRevision,
         nextCursor: firstPageResource.data.page.nextCursor,
-        exhaustion:
-          firstPageResource.data.page.nextCursor.kind === "Absent"
-            ? "Complete"
-            : "Partial",
         revisions: committedRevisions,
       },
     });
@@ -1451,7 +1441,6 @@ export default function LibraryPaneBody() {
           ...current.entries,
           entries: merged,
           nextCursor: page.nextCursor,
-        exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
         },
       };
       controllerRef.current = next;
@@ -1486,7 +1475,7 @@ export default function LibraryPaneBody() {
     if (
       !viewIsCommitted ||
       !canReorder ||
-      controller?.entries.exhaustion !== "Complete" ||
+      controller?.entries.nextCursor.kind !== "Absent" ||
       entryExhaustion.kind !== "Complete"
     ) {
       return;
@@ -1580,7 +1569,7 @@ export default function LibraryPaneBody() {
     [entries, isVisibleEntry],
   );
   const entryCollectionComplete =
-    controller?.entries.exhaustion === "Complete" &&
+    controller?.entries.nextCursor.kind === "Absent" &&
     entryExhaustion.kind === "Complete";
   const invalidView = decodedView.kind === "Invalid" || viewInvalid;
   const orderPresetIds = useMemo(
@@ -2044,7 +2033,7 @@ export default function LibraryPaneBody() {
     committedView.projection.kind === "AllItems" &&
     committedView.projection.completion === "all" &&
     committedView.entryType.kind === "AllTypes" &&
-    controller?.entries.exhaustion === "Complete" &&
+    controller?.entries.nextCursor.kind === "Absent" &&
     entryExhaustion.kind === "Complete";
   const entryFooter = <CollectionExhaustionNotice state={entryExhaustion} />;
   const retryEntryReconciliation = entryReconciliationRequest
@@ -2417,7 +2406,7 @@ export default function LibraryPaneBody() {
           {mainBody}
         </div>
         {currentLibrary !== null &&
-        controller?.entries.exhaustion === "Complete" &&
+        controller?.entries.nextCursor.kind === "Absent" &&
         entryExhaustion.kind === "Complete" ? (
           <ReadingSlateSection
             returnScope="Library.ReadingSlate"

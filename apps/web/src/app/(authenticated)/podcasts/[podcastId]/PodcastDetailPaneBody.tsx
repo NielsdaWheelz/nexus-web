@@ -212,7 +212,6 @@ interface PodcastDetailSnapshot {
   readonly queryIdentity: string;
   readonly collectionRevision: CollectionRevision;
   readonly nextCursor: Presence<CollectionCursor>;
-  readonly exhaustion: "Partial" | "Complete";
   readonly podcastLibraries: readonly LibraryPlacementOption[];
 }
 
@@ -558,8 +557,6 @@ export default function PodcastDetailPaneBody() {
         queryIdentity: episodeQueryIdentity,
         collectionRevision: result.episodes.collectionRevision,
         nextCursor: result.episodes.nextCursor,
-        exhaustion:
-          result.episodes.nextCursor.kind === "Absent" ? "Complete" : "Partial",
         podcastLibraries: result.podcastLibraries,
       };
       controllerRef.current = snapshot;
@@ -895,7 +892,6 @@ export default function PodcastDetailPaneBody() {
         ...current,
         episodes: nextEpisodes,
         nextCursor: page.nextCursor,
-        exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       };
       controllerRef.current = next;
       setController(next);

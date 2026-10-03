@@ -98,7 +98,6 @@ interface LibrariesSnapshot {
   readonly libraries: readonly Library[];
   readonly collectionRevision: CollectionRevision;
   readonly nextCursor: Presence<CollectionCursor>;
-  readonly exhaustion: "Partial" | "Complete";
 }
 
 const LIBRARIES_VISIT_DATA = definePaneVisitDataKey<LibrariesSnapshot>(
@@ -318,8 +317,6 @@ export default function LibrariesPaneBody() {
         libraries: firstPage.data.items,
         collectionRevision: firstPage.data.collectionRevision,
         nextCursor: firstPage.data.nextCursor,
-        exhaustion:
-          firstPage.data.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       };
       committedSnapshotRef.current = next;
       setController(next);
@@ -391,7 +388,6 @@ export default function LibrariesPaneBody() {
         libraries,
         collectionRevision: page.collectionRevision,
         nextCursor: page.nextCursor,
-        exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       };
       committedSnapshotRef.current = next;
       setController(next);

@@ -104,7 +104,6 @@ function seedFromPage(
     conversations: page.items,
     collectionRevision: page.collectionRevision,
     nextCursor: page.nextCursor,
-    exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
   };
 }
 
@@ -344,7 +343,6 @@ export default function ConversationsPaneBody() {
         conversations,
         collectionRevision: page.collectionRevision,
         nextCursor: page.nextCursor,
-        exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       };
       committedSnapshotRef.current = next;
       setController(next);

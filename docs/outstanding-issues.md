@@ -30,6 +30,9 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
+- [open] configuration publication · 2026-10-02 cleanup operations audit · vercel env removal reports absence after any command failure: [ticket](tickets/vercel-env-removal-claims-absence-on-any-failure.md).
+- [open] deployment / model history · 2026-10-02 cleanup operations audit · the sole release wrapper cannot forward the reviewed census required for 0246: [ticket](tickets/deploy-entrypoint-cannot-pass-model-cutover-census.md).
+- [open] tool catalog / presentation · 2026-10-02 cleanup audit · the catalog retains an unused presentation projection: [ticket](tickets/tool-catalog-retains-unused-presentation-projection.md).
 - [open] transcript / chapter projection · 2026-10-02 cleanup audit · three consumers repeat chapter normalization and shape types after strict decoding: [ticket](tickets/transcript-chapters-repeat-normalization-and-shape.md).
 - [open] web resource prefetch · 2026-10-02 cleanup audit · an old consumed promise can overwrite or delete a newer same-key prefetch entry: [ticket](tickets/resource-prefetch-old-completion-overwrites-replacement.md).
 - [open] operator credentials · 2026-10-02 cleanup workflow · skid's three peer bearer fields were printed into a tool transcript; coordinate rotation with active sessions: [ticket](tickets/local-qualification-credential-transcript-exposure.md).

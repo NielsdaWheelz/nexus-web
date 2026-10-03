@@ -379,8 +379,6 @@ export default function AuthorPaneBody() {
         works: firstPage.data.items,
         collectionRevision: firstPage.data.collectionRevision,
         nextCursor: firstPage.data.nextCursor,
-        exhaustion:
-          firstPage.data.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       };
       committedSnapshotRef.current = committed;
       setData(committed);
@@ -521,7 +519,6 @@ export default function AuthorPaneBody() {
         ...current,
         works,
         nextCursor: page.nextCursor,
-        exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       };
       committedSnapshotRef.current = next;
       setData(next);
