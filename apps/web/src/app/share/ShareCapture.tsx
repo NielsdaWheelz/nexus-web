@@ -5,8 +5,8 @@ import LibraryDestinationField from "@/components/libraries/LibraryDestinationFi
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { decodeAuthenticatedAccount } from "@/lib/account/contract";
 import {
+  apiTransportFeedback,
   isApiError,
-  isSameSystemApiDefect,
   isUnauthenticatedApiError,
 } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
@@ -41,19 +41,27 @@ type CaptureResult =
       feedback: FeedbackContent;
     };
 
-function shareCaptureErrorContent(error: unknown): FeedbackContent {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  switch (error.code) {
-    case "E_NETWORK":
-      return {
+function failedCaptureResult(
+  label: string,
+  error: unknown,
+): Extract<CaptureResult, { ok: false }> {
+  if (isUnauthenticatedApiError(error)) {
+    return {
+      label,
+      ok: false,
+      reason: "Unauthenticated",
+      feedback: {
         tone: "Danger",
-        title: "Couldn’t save",
-        message: "Check your connection and retry.",
+        title: "Sign in to save this",
+        message: "Open Nexus, sign in, then share again.",
         requestId: error.requestId,
-      };
-    default:
-      throw error;
+      },
+    };
   }
+  if (!isApiError(error) || error.code !== "E_NETWORK") throw error;
+  const feedback = apiTransportFeedback(error, "Couldn’t save");
+  if (feedback === null) throw error;
+  return { label, ok: false, reason: "Capture", feedback };
 }
 
 export default function ShareCapture({
@@ -141,31 +149,8 @@ export default function ShareCapture({
           },
         ]);
       } catch (error) {
-        if (isUnauthenticatedApiError(error)) {
-          setResults([
-            {
-              label: trimmed,
-              ok: false,
-              reason: "Unauthenticated",
-              feedback: {
-                tone: "Danger",
-                title: "Sign in to save this",
-                message: "Open Nexus, sign in, then share again.",
-                requestId: error.requestId,
-              },
-            },
-          ]);
-          return;
-        }
         try {
-          setResults([
-            {
-              label: trimmed,
-              ok: false,
-              reason: "Capture",
-              feedback: shareCaptureErrorContent(error),
-            },
-          ]);
+          setResults([failedCaptureResult(trimmed, error)]);
         } catch (captureDefect) {
           setDefect({ error: captureDefect });
         }
@@ -339,14 +324,7 @@ export default function ShareCapture({
   const visibleResults: CaptureResult[] | null =
     results ??
     (accountResource.status === "error"
-      ? [
-          {
-            label: trimmed,
-            ok: false,
-            reason: "Capture",
-            feedback: shareCaptureErrorContent(accountResource.error),
-          },
-        ]
+      ? [failedCaptureResult(trimmed, accountResource.error)]
       : null);
 
   if (visibleResults === null || saving) {
