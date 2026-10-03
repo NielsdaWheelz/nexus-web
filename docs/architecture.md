@@ -818,11 +818,10 @@ object parsed at the
 edge; the user-facing taxonomy is **six kinds** (Documents, Notes, Highlights,
 Conversations, People, Web) folding the internal result types, with
 operator-backed filter chips (`format:`/`author:`/`role:`/`in:`) — not the raw
-result-type grid. The package owns one concern per module (`kinds`, `query`, `scope`,
-`embedding`, `ranking`, `projection`, `cursor`, `batch`, `retrievers/*`, `resolver`,
-`service`). `service` owns query execution and page orchestration; `resolver` owns
-validated durable-reference dispatch and the single public projection of the
-resolved internal result. Neither module re-exports the other.
+result-type grid. `services/search/service.py` owns query execution, scope and
+page orchestration. `query.py` and `scope.py` parse its inputs; `retrievers.py`
+and `chunks.py` read candidates; `results.py` owns internal ranked records and
+cross-type ranking; `projection.py` constructs the typed public result union.
 Ranking/retrieval is extracted below that public projection into one internal
 pre-projection candidate seam (`search/candidates.py`); **resource target
 search** (`services/resource_items/targets.py`, `POST
@@ -856,53 +855,15 @@ plus only note blocks classified by a visible `resource_edges.origin =
 "highlight_note"` edge before ranking and limiting. Clients never infer owner
 identity or highlight-note origin from result type or URL.
 
-`schemas/search_types.py` is the sole authority for public search-result
-discriminants. The public response union, retrieval contexts, and durable
-retrieval-result references must cover every discriminant. `search/resolver.py`
-validates persisted raw discriminants against that authority, narrows them to the
-exhaustive typed dispatcher, decodes the durable UUID once, delegates semantic
-visibility and reconstruction to the owning retriever, and projects once. The
-conversations retriever owns both candidate retrieval and durable rematerialization for
-Conversation, Message, and Conversation Dossier (`artifact`) results under one
-visibility contract. It excludes pending Messages; Dossier rematerialization is
-owner-only, masks foreign subjects as not found, and returns the current revision
-while keeping the Conversation subject as result identity. The notes retriever
-likewise owns candidate retrieval and durable rematerialization for Page and Note
-Block results: Pages are owner-only, and Note Blocks must be owner-visible,
-nonempty, and backed by a ready content index; highlight-note origin is derived
-from the same visible `highlight_note` edge contract in both paths. The media
-retriever owns candidate retrieval and durable rematerialization for Media,
-Episode, Video, and Podcast results. Rematerialization reuses canonical media or
-Podcast visibility, requires the requested discriminant to match the stored media
-kind exactly, and projects contributor credits through the shared credit decoder.
-Document-occurrence search is split by semantic owner: the content-chunk,
-fragment, and evidence-span retrievers each own candidate retrieval and durable
-rematerialization for their result type. Durable content chunks require visible
-media, a ready index, their primary canonical evidence span, and an exact match
-when the caller supplies evidence-span ids. Fragments reuse the same visibility
-and index-readiness contract and emit only canonical source locators. Evidence
-spans admit visible media or viewer-owned note blocks, require a ready owner
-index, and preserve that media or note block as the canonical owner identity.
-The Highlights retriever owns candidate retrieval and durable rematerialization
-under one visible, ready-indexed typed-anchor row contract. Fragment-offset and
-PDF-geometry hits share one strict locator decoder; stale, cross-media, missing,
-or schema-invalid anchors are omitted from search and masked as not found when a
-durable reference is reopened.
-The Reader Apparatus retriever likewise owns candidate retrieval and durable
-rematerialization under one visible publication-row contract: only `ready` or
-`partial` apparatus states with a non-missing locator participate. Both paths
-decode persisted locator JSON through the canonical retrieval schema, omitting
-or masking malformed rows instead of leaking a projection failure.
-The Web retriever owns persisted public-Web candidate retrieval and durable
-rematerialization through one visible Conversation-ledger row and the canonical
-`WebRetrievalResultRef` decoder. Nexus external-snapshot identity remains
-distinct from provider result identity; foreign snapshots and malformed or
-incomplete ledger refs are omitted or masked as not found.
-The Contributor retriever owns candidate retrieval and durable
-rematerialization. Discovery admits only identities with visible credited
-targets; durable reopening intentionally widens to the canonical Contributor
-visibility contract so a viewer-linked identity with zero current visible
-credits remains resolvable, while unrelated identities stay masked.
+`schemas/search_types.py` owns the result discriminants; `schemas/search.py`
+owns the response union. `projection.py` maps each ranked record to its exact
+occurrence ref, owner ref, action subject and activation, validates required
+locators, and emits the corresponding response model. A result without usable
+activation is a defect. The browser projects that generated wire union once into
+its row contract; [the search result boundary](modules/search.md) specifies
+variants, representation, consumers and verification. Durable resource reopening
+and visibility belong to `services/resource_graph/resolve.py`, independently of
+this browser projection.
 
 - **Indexing** (`services/content_indexing.py`, `semantic_chunks.py`): text-bearing
   media flows `fragment → content_blocks → chunks → embeddings`; note bodies
@@ -914,8 +875,8 @@ credits remains resolvable, while unrelated identities stay masked.
 - **Retrieval** is hybrid — and hybrid is an _invariant_, not a per-request toggle:
   a vector ANN arm (cosine over pgvector, joined on the _active_ embedding config)
   **UNION** a lexical FTS arm, reranked by a weighted score (lexical hit + semantic
-  similarity + recency), filtered by a similarity floor, then resolved through the
-  locator resolver. There is no `semantic` flag; the query embedding is built once
+  similarity + recency), filtered by a similarity floor, and projected with typed
+  retrieval locators. There is no `semantic` flag; the query embedding is built once
   for any semantic-capable kind regardless of structured filters. For chat, candidates are
   selected under a context-char budget; candidate/rerank/selection is a transient in-memory
   pass and `message_retrievals` is the sole durable per-result record. Selected rows become

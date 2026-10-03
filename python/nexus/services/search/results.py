@@ -248,6 +248,7 @@ def _build_search_source(
         title=title,
         contributors=_parse_contributor_credits(contributors),
         original_published_date=presence_from_nullable(original_published_date),
+        summary_md=None,
     )
 
 

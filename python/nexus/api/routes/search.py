@@ -47,7 +47,7 @@ def search(
         le=MAX_LIMIT,
         description=f"Maximum results per page (default {DEFAULT_LIMIT}, max {MAX_LIMIT})",
     ),
-) -> dict:
+) -> SearchResponse:
     """Hybrid search (full text ∪ vector ANN) across everything the viewer may see.
 
     Returns 404 for a scope the viewer cannot read — never 403, so existence
@@ -64,9 +64,7 @@ def search(
         cursor=cursor,
         limit=limit,
     )
-    return search_service(db=db, viewer_id=viewer.user_id, query=query).model_dump(
-        mode="json", by_alias=True
-    )
+    return search_service(db=db, viewer_id=viewer.user_id, query=query)
 
 
 def _comma_list(value: str | None) -> list[str] | None:

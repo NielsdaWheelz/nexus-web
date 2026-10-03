@@ -26,3 +26,8 @@ input through the sole wrapper and forward it explicitly; update
 prove locally that a reviewed census reaches the backend controller through
 the wrapper, absent census still refuses a crossing, and releases not crossing
 0246 retain the existing command. do not deploy production as part of this fix.
+
+independent read-only public version probes on 2026-10-02 confirmed production
+sha `7dc68929b4d5ddfd77eb1a50228d477fa0148b5d` and expected revision `0241`.
+no production release was attempted. the duplicate operations finding was
+consolidated into this ticket during the search cleanup rebase.
