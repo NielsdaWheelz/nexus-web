@@ -4001,9 +4001,9 @@ export interface components {
              */
             id: string;
             /** Media Id */
-            media_id?: string | null;
+            media_id: string | null;
             /** Media Kind */
-            media_kind?: string | null;
+            media_kind: string | null;
             /** Owner Resource Ref */
             owner_resource_ref: string;
             /** Resource Ref */
@@ -4018,7 +4018,7 @@ export interface components {
             /** Snippet */
             snippet: string;
             /** Source Label */
-            source_label?: string | null;
+            source_label: string | null;
             /** Subject Ref */
             subject_ref: string;
             /** Title */
@@ -7254,7 +7254,7 @@ export interface components {
              */
             has_more: boolean;
             /** Next Cursor */
-            next_cursor?: string | null;
+            next_cursor: string | null;
         };
         /**
          * SearchRepairRequest
@@ -7281,9 +7281,9 @@ export interface components {
          * @description A mixed, ordered page of typed search results.
          */
         SearchResponse: {
-            page?: components["schemas"]["SearchPageInfo"];
+            page: components["schemas"]["SearchPageInfo"];
             /** Results */
-            results?: (components["schemas"]["SearchResultMediaOut"] | components["schemas"]["SearchResultPodcastOut"] | components["schemas"]["SearchResultContentChunkOut"] | components["schemas"]["SearchResultFragmentOut"] | components["schemas"]["SearchResultContributorOut"] | components["schemas"]["SearchResultPageOut"] | components["schemas"]["SearchResultNoteBlockOut"] | components["schemas"]["SearchResultHighlightOut"] | components["schemas"]["SearchResultMessageOut"] | components["schemas"]["SearchResultEvidenceSpanOut"] | components["schemas"]["SearchResultReaderApparatusItemOut"] | components["schemas"]["SearchResultConversationOut"] | components["schemas"]["ConversationArtifactSearchOut"] | components["schemas"]["SearchResultWebOut"])[];
+            results: (components["schemas"]["SearchResultMediaOut"] | components["schemas"]["SearchResultPodcastOut"] | components["schemas"]["SearchResultContentChunkOut"] | components["schemas"]["SearchResultFragmentOut"] | components["schemas"]["SearchResultContributorOut"] | components["schemas"]["SearchResultPageOut"] | components["schemas"]["SearchResultNoteBlockOut"] | components["schemas"]["SearchResultHighlightOut"] | components["schemas"]["SearchResultMessageOut"] | components["schemas"]["SearchResultEvidenceSpanOut"] | components["schemas"]["SearchResultReaderApparatusItemOut"] | components["schemas"]["SearchResultConversationOut"] | components["schemas"]["ConversationArtifactSearchOut"] | components["schemas"]["SearchResultWebOut"])[];
         };
         /**
          * SearchResultActivationOut
@@ -7294,7 +7294,7 @@ export interface components {
          */
         SearchResultActivationOut: {
             /** Href */
-            href?: string | null;
+            href: string | null;
             /**
              * Kind
              * @enum {string}
@@ -7303,7 +7303,7 @@ export interface components {
             /** Resource Ref */
             resource_ref: string;
             /** Unresolved Reason */
-            unresolved_reason?: string | null;
+            unresolved_reason: string | null;
         };
         /**
          * SearchResultContentChunkOut
@@ -7319,7 +7319,7 @@ export interface components {
             citation_target: string | null;
             context_ref: components["schemas"]["SearchResultContextRefOut"];
             /** Evidence Span Ids */
-            evidence_span_ids?: string[];
+            evidence_span_ids: string[];
             /**
              * Id
              * Format: uuid
@@ -7328,9 +7328,9 @@ export interface components {
             /** Locator */
             locator: components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
             /** Media Id */
-            media_id?: string | null;
+            media_id: string | null;
             /** Media Kind */
-            media_kind?: string | null;
+            media_kind: string | null;
             /** Owner Resource Ref */
             owner_resource_ref: string;
             /** Resource Ref */
@@ -7343,7 +7343,7 @@ export interface components {
             /** Source Kind */
             source_kind: string;
             /** Source Label */
-            source_label?: string | null;
+            source_label: string | null;
             /** Title */
             title: string;
             /**
@@ -7352,8 +7352,22 @@ export interface components {
              */
             type: "content_chunk";
         };
+        /**
+         * SearchResultContextRefOut
+         * @description Backend-owned context reference for model retrieval and citations.
+         */
         SearchResultContextRefOut: {
-            [key: string]: unknown;
+            /** Evidence Span Ids */
+            evidence_span_ids?: string[];
+            /** Id */
+            id: string;
+            /** Locator */
+            locator?: (components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"]) | null;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "media" | "podcast" | "episode" | "video" | "content_chunk" | "fragment" | "contributor" | "page" | "note_block" | "highlight" | "message" | "evidence_span" | "conversation" | "artifact" | "web_result" | "reader_apparatus_item";
         };
         /**
          * SearchResultContributorIdentityOut
@@ -7382,9 +7396,9 @@ export interface components {
             /** Id */
             id: string;
             /** Media Id */
-            media_id?: string | null;
+            media_id: string | null;
             /** Media Kind */
-            media_kind?: string | null;
+            media_kind: string | null;
             /** Owner Resource Ref */
             owner_resource_ref: string;
             /** Resource Ref */
@@ -7394,7 +7408,7 @@ export interface components {
             /** Snippet */
             snippet: string;
             /** Source Label */
-            source_label?: string | null;
+            source_label: string | null;
             /** Title */
             title: string;
             /**
@@ -7420,9 +7434,9 @@ export interface components {
              */
             id: string;
             /** Media Id */
-            media_id?: string | null;
+            media_id: string | null;
             /** Media Kind */
-            media_kind?: string | null;
+            media_kind: string | null;
             /** Owner Resource Ref */
             owner_resource_ref: string;
             /** Resource Ref */
@@ -7432,7 +7446,7 @@ export interface components {
             /** Snippet */
             snippet: string;
             /** Source Label */
-            source_label?: string | null;
+            source_label: string | null;
             /** Title */
             title: string;
             /**
@@ -7467,9 +7481,9 @@ export interface components {
             /** Locator */
             locator: components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
             /** Media Id */
-            media_id?: string | null;
+            media_id: string | null;
             /** Media Kind */
-            media_kind?: string | null;
+            media_kind: string | null;
             /** Owner Resource Ref */
             owner_resource_ref: string;
             /** Resource Ref */
@@ -7480,7 +7494,7 @@ export interface components {
             snippet: string;
             source: components["schemas"]["SearchResultSourceOut"];
             /** Source Label */
-            source_label?: string | null;
+            source_label: string | null;
             /** Title */
             title: string;
             /**
@@ -7498,7 +7512,7 @@ export interface components {
             actionSubjectRef: string;
             activation: components["schemas"]["SearchResultActivationOut"];
             /** Citation Label */
-            citation_label?: string | null;
+            citation_label: string | null;
             /** Citation Target */
             citation_target: string | null;
             context_ref: components["schemas"]["SearchResultContextRefOut"];
@@ -7510,9 +7524,9 @@ export interface components {
             /** Locator */
             locator: components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
             /** Media Id */
-            media_id?: string | null;
+            media_id: string | null;
             /** Media Kind */
-            media_kind?: string | null;
+            media_kind: string | null;
             /** Owner Resource Ref */
             owner_resource_ref: string;
             /** Resource Ref */
@@ -7523,7 +7537,7 @@ export interface components {
             snippet: string;
             source: components["schemas"]["SearchResultSourceOut"];
             /** Source Label */
-            source_label?: string | null;
+            source_label: string | null;
             /** Title */
             title: string;
             /**
@@ -7541,7 +7555,7 @@ export interface components {
             actionSubjectRef: string;
             activation: components["schemas"]["SearchResultActivationOut"];
             /** Citation Label */
-            citation_label?: string | null;
+            citation_label: string | null;
             /** Citation Target */
             citation_target: string | null;
             /** Color */
@@ -7557,9 +7571,9 @@ export interface components {
             /** Locator */
             locator: components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
             /** Media Id */
-            media_id?: string | null;
+            media_id: string | null;
             /** Media Kind */
-            media_kind?: string | null;
+            media_kind: string | null;
             /** Owner Resource Ref */
             owner_resource_ref: string;
             /** Resource Ref */
@@ -7570,7 +7584,7 @@ export interface components {
             snippet: string;
             source: components["schemas"]["SearchResultSourceOut"];
             /** Source Label */
-            source_label?: string | null;
+            source_label: string | null;
             /** Title */
             title: string;
             /**
@@ -7634,9 +7648,9 @@ export interface components {
             /** Locator */
             locator: components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
             /** Media Id */
-            media_id?: string | null;
+            media_id: string | null;
             /** Media Kind */
-            media_kind?: string | null;
+            media_kind: string | null;
             /** Owner Resource Ref */
             owner_resource_ref: string;
             /** Resource Ref */
@@ -7648,7 +7662,7 @@ export interface components {
             /** Snippet */
             snippet: string;
             /** Source Label */
-            source_label?: string | null;
+            source_label: string | null;
             /** Title */
             title: string;
             /**
@@ -7671,7 +7685,7 @@ export interface components {
             citation_target: string | null;
             context_ref: components["schemas"]["SearchResultContextRefOut"];
             /** Highlight Excerpt */
-            highlight_excerpt?: string | null;
+            highlight_excerpt: string | null;
             /**
              * Id
              * Format: uuid
@@ -7680,9 +7694,9 @@ export interface components {
             /** Locator */
             locator: components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
             /** Media Id */
-            media_id?: string | null;
+            media_id: string | null;
             /** Media Kind */
-            media_kind?: string | null;
+            media_kind: string | null;
             /**
              * Note Origin
              * @enum {string}
@@ -7697,7 +7711,7 @@ export interface components {
             /** Snippet */
             snippet: string;
             /** Source Label */
-            source_label?: string | null;
+            source_label: string | null;
             /** Title */
             title: string;
             /**
@@ -7723,9 +7737,9 @@ export interface components {
              */
             id: string;
             /** Media Id */
-            media_id?: string | null;
+            media_id: string | null;
             /** Media Kind */
-            media_kind?: string | null;
+            media_kind: string | null;
             /** Owner Resource Ref */
             owner_resource_ref: string;
             /** Resource Ref */
@@ -7735,7 +7749,7 @@ export interface components {
             /** Snippet */
             snippet: string;
             /** Source Label */
-            source_label?: string | null;
+            source_label: string | null;
             /** Title */
             title: string;
             /**
@@ -7756,16 +7770,16 @@ export interface components {
             citation_target: string | null;
             context_ref: components["schemas"]["SearchResultContextRefOut"];
             /** Contributors */
-            contributors?: components["schemas"]["ContributorCreditOut"][];
+            contributors: components["schemas"]["ContributorCreditOut"][];
             /**
              * Id
              * Format: uuid
              */
             id: string;
             /** Media Id */
-            media_id?: string | null;
+            media_id: string | null;
             /** Media Kind */
-            media_kind?: string | null;
+            media_kind: string | null;
             /** Owner Resource Ref */
             owner_resource_ref: string;
             /** Resource Ref */
@@ -7775,7 +7789,7 @@ export interface components {
             /** Snippet */
             snippet: string;
             /** Source Label */
-            source_label?: string | null;
+            source_label: string | null;
             /** Title */
             title: string;
             /**
@@ -7805,9 +7819,9 @@ export interface components {
             /** Locator */
             locator: components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
             /** Media Id */
-            media_id?: string | null;
+            media_id: string | null;
             /** Media Kind */
-            media_kind?: string | null;
+            media_kind: string | null;
             /** Owner Resource Ref */
             owner_resource_ref: string;
             /** Resource Ref */
@@ -7818,7 +7832,7 @@ export interface components {
             snippet: string;
             source: components["schemas"]["SearchResultSourceOut"];
             /** Source Label */
-            source_label?: string | null;
+            source_label: string | null;
             /** Title */
             title: string;
             /**
@@ -7833,7 +7847,7 @@ export interface components {
          */
         SearchResultSourceOut: {
             /** Contributors */
-            contributors?: components["schemas"]["ContributorCreditOut"][];
+            contributors: components["schemas"]["ContributorCreditOut"][];
             /**
              * Media Id
              * Format: uuid
@@ -7843,7 +7857,7 @@ export interface components {
             media_kind: string;
             original_published_date: components["schemas"]["Presence_Annotated_str__StringConstraints__AfterValidator__"];
             /** Summary Md */
-            summary_md?: string | null;
+            summary_md: string | null;
             /** Title */
             title: string;
         };
@@ -7859,27 +7873,27 @@ export interface components {
             citation_target: string | null;
             context_ref: components["schemas"]["SearchResultContextRefOut"];
             /** Display Url */
-            display_url?: string | null;
+            display_url: string | null;
             /** Extra Snippets */
-            extra_snippets?: string[];
+            extra_snippets: string[];
             /** Id */
             id: string;
             /** Locator */
             locator: components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"];
             /** Media Id */
-            media_id?: string | null;
+            media_id: string | null;
             /** Media Kind */
-            media_kind?: string | null;
+            media_kind: string | null;
             /** Owner Resource Ref */
             owner_resource_ref: string;
             /** Provider */
-            provider?: string | null;
+            provider: string | null;
             /** Provider Request Id */
-            provider_request_id?: string | null;
+            provider_request_id: string | null;
             /** Published At */
-            published_at?: string | null;
+            published_at: string | null;
             /** Rank */
-            rank?: number | null;
+            rank: number | null;
             /** Resource Ref */
             resource_ref: string;
             /** Result Ref */
@@ -7898,9 +7912,9 @@ export interface components {
             /** Source Id */
             source_id: string;
             /** Source Label */
-            source_label?: string | null;
+            source_label: string | null;
             /** Source Name */
-            source_name?: string | null;
+            source_name: string | null;
             /** Title */
             title: string;
             /**
