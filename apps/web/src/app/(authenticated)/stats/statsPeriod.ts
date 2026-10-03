@@ -90,46 +90,17 @@ export function shiftAnchor(anchor: string, period: StatsPeriod, amount: number)
   return new Date(shifted).toISOString().slice(0, 10);
 }
 
-/**
- * The first instant of a local date: the earliest of three readings of its midnight that shows
- * that midnight or later. The readings use the zone's offset at UTC midnight, at the first
- * reading, and three hours before the second, so the earlier reading of a repeated midnight
- * wins, a skipped midnight starts at the transition, and so does a skipped date. The SQL bucket
- * edges follow the same rule.
- */
-function zonedMidnight(date: string, timeZone: string): string {
-  const fields = { year: "numeric", month: "numeric", day: "numeric", hour: "numeric" } as const;
-  const format = new Intl.DateTimeFormat("en-US", {
-    ...fields,
-    minute: "numeric",
-    second: "numeric",
-    hourCycle: "h23",
-    timeZone,
-  });
-  const offset = (instant: number) => {
-    const part = Object.fromEntries(format.formatToParts(instant).map((p) => [p.type, +p.value]));
-    const { year, month, day, hour, minute, second } = part;
-    return Date.UTC(year, month - 1, day, hour, minute, second) - instant;
-  };
-  const midnight = Date.parse(`${date}T00:00:00Z`);
-  const first = midnight - offset(midnight);
-  const second = midnight - offset(first);
-  const early = midnight - offset(second - 3 * 3_600_000);
-  const starts = [first, second, early].filter((instant) => instant + offset(instant) >= midnight);
-  return new Date(Math.min(...starts)).toISOString();
-}
-
 /** The Stats query of a view: its range in `timeZone`, bucket grain and filters. */
 export function statsQuery(state: StatsUrlState, timeZone: string): URLSearchParams {
   const period = state.view === "year" ? "year" : state.period;
   const query = new URLSearchParams({ timeZone, bucket: BUCKET[period] });
   if (period === "all") {
     const tomorrow = shiftLocalDate(formatLocalDateInTimeZone(new Date(), timeZone), 1);
-    query.set("end", zonedMidnight(tomorrow, timeZone));
+    query.set("end", tomorrow);
   } else {
     const start = periodStart(state.anchor, period);
-    query.set("start", zonedMidnight(start, timeZone));
-    query.set("end", zonedMidnight(shiftAnchor(start, period, 1), timeZone));
+    query.set("start", start);
+    query.set("end", shiftAnchor(start, period, 1));
   }
   for (const key of FILTER_KEYS) {
     const value = state.filters[key];

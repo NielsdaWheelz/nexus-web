@@ -75,13 +75,22 @@ the write transaction, and memoizes the result under
 `Consumption.ActivityExclusions`. No command accepts a duration.
 
 `GET /consumption/stats` and `GET /consumption/sessions` are private,
-`no-store` factual reads over an instant range. The pane resolves a local period
-to the first instant of each bounding local midnight (`statsPeriod.ts`); Day,
-Week, Month and Year bucket edges follow the same rule in SQL, so a repeated
-midnight starts at its earlier reading and a skipped one at its transition; a
-date the zone skips entirely has no bucket of its own. Session device summaries
-are required because every session is observed. Raw device IDs and span
-payloads never reach presentation.
+`no-store` factual reads. finite requests supply exact `YYYY-MM-DD` start and
+exclusive end dates in `timeZone`; timestamp and numeric inputs are rejected.
+one service resolver and calendar buckets share the existing sql three-hour
+midnight rule. the resolved Scope remains utc instants; absent start remains
+`None`, with the existing utc floor used by activity queries. equivalent
+canonical browser-issued utc scopes retain their cursor identity.
+
+equal civil dates and dates the zone skips entirely return empty facts,
+sessions and buckets. unrepresentable endpoints or derived edges are refused
+before driver decoding; thirty-minute context expansion saturates at datetime
+bounds. timeline instants encode utc. PostgreSQL owns range and bucket edges
+and local day/hour aggregation; Python ZoneInfo retains zone validation,
+streak today, timeline labels/offsets and device first-seen dates. these retained
+projections agree on the verified named calendar fixtures. session device
+summaries are required because every session is observed. raw device ids and
+span payloads never reach presentation.
 both embedded and continuation session pages use the same `items,nextCursor` contract.
 The Stats pane binds a session continuation to the exact committed Stats path
 and decoded URL state, never the still-pending requested view. The shared manual

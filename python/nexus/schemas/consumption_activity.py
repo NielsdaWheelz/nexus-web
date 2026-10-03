@@ -6,14 +6,25 @@ arrive only through the BFF; only sealed handles go out.
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from typing import Annotated, Literal, Self
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 from nexus.schemas.presence import Absent, Presence
+
+
+def _civil_date(value: object) -> str:
+    if not isinstance(value, str) or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value) is None:
+        raise ValueError("Expected YYYY-MM-DD")
+    return value
+
+
+ConsumptionDate = Annotated[date, BeforeValidator(_civil_date)]
+
 
 ActivityModality = Literal["Reading", "Listening", "Viewing"]
 ActivityDeviceClass = Literal["Desktop", "Mobile"]

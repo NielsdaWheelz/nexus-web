@@ -12,7 +12,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 from uuid import UUID
@@ -41,6 +41,9 @@ _LABEL = {
     "Year": "%Y",
 }
 _FLOOR = datetime(1970, 1, 1, tzinfo=UTC)
+_MINIMUM = datetime.min.replace(tzinfo=UTC)
+_MAXIMUM = datetime.max.replace(tzinfo=UTC)
+_CONTEXT = timedelta(minutes=30)
 _QUALIFYING_DAY_MS = 300_000
 _TOP = 25
 _PAGE = 50
@@ -60,25 +63,77 @@ class Scope:
     device_id: str | None = None
 
 
+def _calendar_edge_sql(edge: str) -> str:
+    """The existing three-hour rule for one local calendar edge."""
+    early = f"(({edge} - interval '3 hours') AT TIME ZONE :time_zone + interval '3 hours')"
+    return f"""CASE WHEN {early} AT TIME ZONE :time_zone = {edge} THEN {early}
+                    ELSE {edge} AT TIME ZONE :time_zone END"""
+
+
 def resolve_scope(
-    db: Session, scope: Scope, *, contributor_handle: str | None, device_handle: str | None
+    db: Session,
+    *,
+    viewer_id: UUID,
+    start: date | None,
+    end: date,
+    time_zone: str,
+    current_device_id: str,
+    modality: wire.ActivityModality | None,
+    media_id: UUID | None,
+    contributor_handle: str | None,
+    device_handle: str | None,
 ) -> Scope:
-    """``scope`` with its handles resolved; 400 for an empty range, unknown zone or bad handle."""
-    if scope.start is not None and scope.start >= scope.end:
+    """Civil bounds resolved once to UTC; 400 for invalid ranges, zones or handles."""
+    if start is not None and start > end:
         raise InvalidRequestError(message="Invalid Consumption range")
     try:
-        ZoneInfo(scope.time_zone)
+        ZoneInfo(time_zone)
     except (ZoneInfoNotFoundError, ValueError) as exc:
         raise InvalidRequestError(message="Invalid timeZone") from exc
+    edges = db.execute(
+        text(f"""WITH dates AS (
+            SELECT CAST(:start AS date)::timestamp AS local_start,
+                   CAST(:end AS date)::timestamp AS local_end
+        ), resolved AS (
+            SELECT {_calendar_edge_sql("local_start")} AS start,
+                   {_calendar_edge_sql("local_end")} AS "end"
+            FROM dates
+        )
+        SELECT start AT TIME ZONE 'UTC' AS start, "end" AT TIME ZONE 'UTC' AS "end"
+        FROM resolved
+        WHERE (start IS NULL OR start BETWEEN :minimum AND :maximum)
+          AND "end" BETWEEN :minimum AND :maximum"""),
+        {
+            "start": start,
+            "end": end,
+            "time_zone": time_zone,
+            "minimum": _MINIMUM,
+            "maximum": _MAXIMUM,
+        },
+    ).one_or_none()
+    if edges is None:
+        raise InvalidRequestError(message="Invalid Consumption range")
+    resolved_start = edges.start.replace(tzinfo=UTC) if edges.start is not None else None
+    resolved_end = edges.end.replace(tzinfo=UTC)
+    if resolved_start is not None and resolved_start > resolved_end:
+        raise InvalidRequestError(message="Invalid Consumption range")
     contributor = try_parse_contributor_handle(contributor_handle) if contributor_handle else None
     if contributor_handle and contributor is None:
         raise InvalidRequestError(message="Invalid contributorHandle")
     device_id = (
-        resolve_device(db, viewer_id=scope.viewer_id, handle=device_handle)
-        if device_handle
-        else None
+        resolve_device(db, viewer_id=viewer_id, handle=device_handle) if device_handle else None
     )
-    return replace(scope, contributor=contributor, device_id=device_id)
+    return Scope(
+        viewer_id=viewer_id,
+        start=resolved_start,
+        end=resolved_end,
+        time_zone=time_zone,
+        current_device_id=current_device_id,
+        modality=modality,
+        media_id=media_id,
+        contributor=contributor,
+        device_id=device_id,
+    )
 
 
 def resolve_device(db: Session, *, viewer_id: UUID, handle: str) -> str:
@@ -114,8 +169,10 @@ def _params(scope: Scope, as_of: datetime) -> dict[str, Any]:
     return asdict(scope) | {
         "start": start,
         "as_of": as_of,
-        "context_start": start - timedelta(minutes=30),
-        "context_end": scope.end + timedelta(minutes=30),
+        "context_start": start - _CONTEXT if start >= _MINIMUM + _CONTEXT else _MINIMUM,
+        "context_end": scope.end + _CONTEXT if scope.end <= _MAXIMUM - _CONTEXT else _MAXIMUM,
+        "minimum": _MINIMUM,
+        "maximum": _MAXIMUM,
     }
 
 
@@ -137,7 +194,7 @@ def _flagged_sql(scope: Scope) -> str:
               AND s.occurred_at + s.duration_ms * interval '1 millisecond' > :context_start
               {_filters(scope, "s")}
         ), clipped AS (
-            SELECT spans.*, occurred_at < :end AND span_end > :start AS in_range,
+            SELECT spans.*, :start < :end AND occurred_at < :end AND span_end > :start AS in_range,
                    GREATEST(occurred_at, :start) AS clipped_start,
                    LEAST(span_end, :end) AS clipped_end,
                    EXISTS (
@@ -276,7 +333,10 @@ def consumption_stats(db: Session, scope: Scope, bucket: Bucket) -> wire.Consump
             LEFT JOIN flagged f ON f.effective
                  AND f.clipped_start < b.bucket_end AND f.clipped_end > b.bucket_start
         )
-        SELECT bucket_start AS start, bucket_end AS "end",
+        SELECT CASE WHEN bucket_start BETWEEN :minimum AND :maximum
+                    THEN bucket_start AT TIME ZONE 'UTC' END AS start,
+               CASE WHEN bucket_end BETWEEN :minimum AND :maximum
+                    THEN bucket_end AT TIME ZONE 'UTC' END AS "end",
                coalesce(sum(ms) FILTER (WHERE modality = 'Reading'), 0)::bigint
                    AS reading_active_ms,
                coalesce(sum(ms) FILTER (WHERE modality = 'Listening'), 0)::bigint
@@ -288,6 +348,11 @@ def consumption_stats(db: Session, scope: Scope, bucket: Bucket) -> wire.Consump
         ORDER BY bucket_start""",
         params,
     )
+    for row in timeline:
+        if row["start"] is None or row["end"] is None:
+            raise InvalidRequestError(message="Invalid Consumption range")
+        row["start"] = row["start"].replace(tzinfo=UTC)
+        row["end"] = row["end"].replace(tzinfo=UTC)
     if len(timeline) > 400:
         raise InvalidRequestError(message="Consumption timeline exceeds 400 buckets")
 
@@ -601,25 +666,20 @@ def _scope_hash(scope: Scope) -> str:
 
 
 def _series(bucket: Bucket) -> str:
-    """Bucket starts. Hours step in UTC; longer grains step in local wall time, each edge the
-    first instant of its local midnight. Postgres reads a repeated wall time at its later
-    instant and a skipped one at the transition, so the midnight is also read at the offset in
-    force three hours before it (``early``), which wins whenever it really shows the midnight:
-    then it is the earlier reading of a repeated midnight, or the same instant. A date the zone
-    skips entirely shares its edge with the next one, so edges are distinct. The pane's
-    ``zonedMidnight`` resolves range edges by the same rule."""
+    """Hours step in UTC; larger grains share the civil range-edge rule, distinct when
+    a skipped whole date shares its edge with the next date. Empty ranges have no buckets.
+    """
     if bucket == "Hour":
         return """SELECT edge AS bucket_start
-            FROM generate_series(:start, :end - interval '1 microsecond', interval '1 hour') edge"""
+            FROM generate_series(:start, :end - interval '1 microsecond', interval '1 hour') edge
+            WHERE :start < :end"""
     grain = bucket.lower()
-    return f"""SELECT DISTINCT CASE WHEN early AT TIME ZONE :time_zone = edge THEN early
-                                    ELSE edge AT TIME ZONE :time_zone END AS bucket_start
+    return f"""SELECT DISTINCT {_calendar_edge_sql("edge")} AS bucket_start
             FROM generate_series(date_trunc('{grain}', :start AT TIME ZONE :time_zone),
                                  date_trunc('{grain}', (:end - interval '1 microsecond')
                                                        AT TIME ZONE :time_zone),
-                                 interval '1 {grain}') edge,
-                 LATERAL (SELECT (edge - interval '3 hours') AT TIME ZONE :time_zone
-                                 + interval '3 hours' AS early) reading"""
+                                 interval '1 {grain}') edge
+            WHERE :start < :end"""
 
 
 def _rows(db: Session, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:

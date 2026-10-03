@@ -5,7 +5,6 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response
-from pydantic import AwareDatetime
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
@@ -18,6 +17,7 @@ from nexus.schemas.consumption_activity import (
     ActivityModality,
     ActivityRecordIn,
     ActivitySessionPageOut,
+    ConsumptionDate,
     ConsumptionStatsOut,
     ExcludeActivityIn,
 )
@@ -37,10 +37,10 @@ def _media_id(raw: str) -> UUID:
 def _scope(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_repeatable_read_db)],
-    end: Annotated[AwareDatetime, Query()],
+    end: Annotated[ConsumptionDate, Query()],
     time_zone: Annotated[str, Query(alias="timeZone", min_length=1, max_length=100)],
     current_device_id: Annotated[str, Query(alias="currentDeviceId", min_length=1, max_length=200)],
-    start: Annotated[AwareDatetime | None, Query()] = None,
+    start: Annotated[ConsumptionDate | None, Query()] = None,
     modality: Annotated[ActivityModality | None, Query()] = None,
     media_ref: Annotated[str | None, Query(alias="mediaRef", max_length=100)] = None,
     contributor_handle: Annotated[
@@ -48,7 +48,8 @@ def _scope(
     ] = None,
     device_handle: Annotated[str | None, Query(alias="deviceHandle", max_length=100)] = None,
 ) -> stats.Scope:
-    scope = stats.Scope(
+    return stats.resolve_scope(
+        db,
         viewer_id=viewer.user_id,
         start=start,
         end=end,
@@ -56,9 +57,8 @@ def _scope(
         current_device_id=current_device_id,
         modality=modality,
         media_id=_media_id(media_ref) if media_ref else None,
-    )
-    return stats.resolve_scope(
-        db, scope, contributor_handle=contributor_handle, device_handle=device_handle
+        contributor_handle=contributor_handle,
+        device_handle=device_handle,
     )
 
 
