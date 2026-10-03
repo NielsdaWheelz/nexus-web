@@ -259,7 +259,6 @@ unexpected timeouts. See
 - [open] nexus url ingress · 2026-09-28 launcher rewrite review · `?nexus=1` returns after a reload via the SSR pane href: [ticket](tickets/nexus-url-ingress-reappears-after-reload.md).
 - [open] daily page · 2026-09-28 launcher rewrite review · the Today editor drops focus ~150 ms after mobile Add to Today: [ticket](tickets/add-to-today-editor-loses-focus.md).
 - [open] nexus pane warm · 2026-09-28 launcher rewrite review · the first pane warm delays the active-row commit ~60 ms, so a fast Enter hits the previous row: [ticket](tickets/nexus-first-pane-warm-delays-active-row.md).
-- [open] nexus / api client · 2026-09-28 launcher rewrite · Nexus transport-failure copy duplicates `apiTransportFeedback` with different wording: [ticket](tickets/nexus-failure-copy-duplicates-api-transport-feedback.md).
 - [open] typed wire / search · 2026-09-28 launcher rewrite · `/search` and openables search, consumed by the Nexus, keep hand decoders and defect classes: [ticket](tickets/nexus-consumed-search-routes-keep-hand-decoders.md).
 - [deferred] nexus history · 2026-09-28 launcher rewrite (F7, owner decision) · `nexus_usages.source`/`created_at`/`updated_at` and the selection response have no reader: [ticket](tickets/nexus-usage-provenance-columns-have-no-reader.md).
 - [deferred] nexus url ingress · 2026-09-28 launcher rewrite (F10, owner decision) · `?nexus=1&intent=&action=` has no producer; delete or document it: [ticket](tickets/nexus-url-ingress-has-no-producer.md).
@@ -344,3 +343,6 @@ unexpected timeouts. See
 - local stopped-container inventory fails on missing docker snapshot; see [ticket](tickets/local-docker-stopped-container-snapshot-missing.md).
 
 - [open] native auth / handoff · 2026-10-02 route contract census · session-installation rejection is ignored before the success redirect: [ticket](tickets/auth-handoff-ignores-session-installation-rejection.md).
+- [open] local setup documentation · 2026-10-02 source review · README omits the shellcheck prerequisite enforced by the sole static gate: [ticket](tickets/local-setup-readme-omits-shellcheck-prerequisite.md).
+- [open] inbound share / account policy candidate · 2026-10-02 producer review · valid dependency failures reach the defect owner; terminal recovery policy is undecided, source-verified/live not_run: [ticket](tickets/share-account-transient-failures-escape-inline-feedback.md).
+- [open] nexus / command policy candidate · 2026-10-02 producer review · valid auth-dependency503 reaches all three writes; terminal recovery policy is undecided, source-verified/live not_run: [ticket](tickets/nexus-auth-dependency-failure-escapes-retry-feedback.md).

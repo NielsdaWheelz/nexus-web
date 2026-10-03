@@ -6,6 +6,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type { MobileQuickNoteHandoffHandle } from "@/components/switchboard/MobileQuickNoteHandoff";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
+import { apiTransportFeedback, isApiError } from "@/lib/api/client";
 import { isAndroidShellRestrictedRouteId } from "@/lib/androidShell";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { matchesKeyEvent } from "@/lib/keybindings";
@@ -30,7 +31,7 @@ import {
 } from "@/lib/nexus/model";
 import { NEXUS_COMMANDS, parseNexusQuery } from "@/lib/nexus/query";
 import { candidateRows, choiceRows, EMPTY_LIST, mergeResults, nexusGroups, playbackRow } from "@/lib/nexus/rows";
-import { nexusFailure, TRANSPORT_CODES, useNexusFind } from "@/lib/nexus/useNexusFind";
+import { TRANSPORT_CODES, useNexusFind } from "@/lib/nexus/useNexusFind";
 import { createNotePage } from "@/lib/notes/api";
 import { DailyDraftStorageError, readDailyDraft, subscribeDailyDraft } from "@/lib/notes/dailyDraftStore";
 import { resolveDailyLocalDate, useOpenDailyPage } from "@/lib/notes/openDailyPage";
@@ -50,6 +51,14 @@ const ADOPT: NexusTargetActivation = { disposition: { kind: "Adopt" }, modality:
 const TODAY_DRAFT_OPEN = "Open Today to finish the current embedded draft";
 const STORAGE_UNAVAILABLE = "Device storage is unavailable. Open Today to review any unsaved text.";
 const CREATE_CODES = [...TRANSPORT_CODES, "E_FORBIDDEN", "E_LIBRARY_FORBIDDEN", "E_INVALID_REQUEST", "E_RESOURCE_CONFLICT"];
+const FORBIDDEN = "This account can’t make that change.";
+const CREATE_FAILURE_COPY: Record<string, string | undefined> = {
+  E_FORBIDDEN: FORBIDDEN,
+  E_LIBRARY_FORBIDDEN: FORBIDDEN,
+  E_INVALID_REQUEST: "Review the request and retry.",
+  E_NAME_INVALID: "Enter a non-reserved library name between 1 and 100 characters.",
+  E_RESOURCE_CONFLICT: "The saved create request conflicts with another resource.",
+};
 
 type Completion = Retained["completion"];
 type Dispatchable = Extract<NexusTarget, { kind: "InternalHref" | "PaneOpen" }> | MaterializedOpenDailyPageTarget;
@@ -279,9 +288,15 @@ export function useNexusController() {
   /** Nexus copy for an expected create failure; anything else becomes a workspace defect. */
   function createFailure(error: unknown, title: string, codes: readonly string[]): FeedbackContent | null {
     if (handleUnauthenticatedApiError(error)) return null;
-    const content = nexusFailure(error, title, codes);
-    if (content === null) setDefect({ error });
-    return content;
+    if (isApiError(error) && codes.includes(error.code)) {
+      const content = apiTransportFeedback(error, title);
+      if (content !== null) return content;
+      const message = CREATE_FAILURE_COPY[error.code];
+      if (message !== undefined) return { tone: "Danger", title, message, requestId: error.requestId };
+    }
+    // justify-defect: creation admits only declared outcomes with complete feedback.
+    setDefect({ error });
+    return null;
   }
 
   function createPage(pageId: string, titleDraft: string, activation: NexusTargetActivation) {

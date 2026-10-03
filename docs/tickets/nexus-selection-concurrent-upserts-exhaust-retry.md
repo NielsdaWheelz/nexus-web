@@ -8,7 +8,7 @@ lookup, one `INSERT … ON CONFLICT DO UPDATE` on `nexus_usages` and the replay 
 `(user_id, query_normalized, target_href)` row, the losers keep failing serialization on
 the conflict path, run out of attempts and answer 500 `E_INTERNAL`
 (`DatabaseRetryExhaustedError`). the web treats `E_INTERNAL` on a history write as a defect
-(`nexusFailure` in `apps/web/src/lib/nexus/useNexusFind.ts` returns null), so the workspace
+(the history feedback gate in `apps/web/src/lib/nexus/useNexusFind.ts` rejects it), so the workspace
 error boundary replaces every pane. the pre-rewrite service (select, then insert, with the
 unique constraint listed as retryable) failed the same way, but its client journal sent one
 write at a time; the rewrite sends each acceptance's POST at once, so overlapping selections
