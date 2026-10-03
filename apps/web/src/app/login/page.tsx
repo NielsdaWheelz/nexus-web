@@ -2,8 +2,11 @@ import type { Metadata } from "next";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { isAndroidShellUserAgent } from "@/lib/androidShell";
-import { getSessionVerification } from "@/lib/auth/dal";
-import { planLoginEntry } from "@/lib/auth/login-entry";
+import {
+  getSessionVerification,
+  type SessionVerification,
+} from "@/lib/auth/dal";
+import { AuthDependencyError } from "@/lib/auth/session-response";
 import {
   buildAuthSessionRecoveryUrl,
   getFirstSearchParamValue,
@@ -33,22 +36,34 @@ export const metadata: Metadata = {
 export default async function LoginPage({ searchParams }: LoginPageProps) {
   const params = await searchParams;
   const nextPath = parseAuthReturnTarget(getFirstSearchParamValue(params.next));
-  const entry = await planLoginEntry(nextPath, getSessionVerification);
+  const recover = (): never => {
+    const recoveryUrl = buildAuthSessionRecoveryUrl(
+      getEnv().appPublicOrigin,
+      nextPath,
+    );
+    redirect(`${recoveryUrl.pathname}${recoveryUrl.search}`);
+  };
 
-  switch (entry.kind) {
-    case "Target":
-      redirect(entry.target);
-    case "Recover": {
-      const recoveryUrl = buildAuthSessionRecoveryUrl(
-        getEnv().appPublicOrigin,
-        entry.target,
-      );
-      redirect(`${recoveryUrl.pathname}${recoveryUrl.search}`);
+  let verification: SessionVerification;
+  try {
+    verification = await getSessionVerification();
+  } catch (error) {
+    if (!(error instanceof AuthDependencyError)) {
+      throw error;
     }
-    case "Render":
+    return recover();
+  }
+
+  switch (verification.kind) {
+    case "Verified":
+      redirect(nextPath);
+    case "RefreshRequired":
+    case "SessionEnded":
+      recover();
+    case "Anonymous":
       break;
     default:
-      entry satisfies never;
+      verification satisfies never;
   }
 
   const cookieStore = await cookies();
