@@ -6888,7 +6888,7 @@ export interface components {
             /** Folio Motto */
             folio_motto: string;
             /** Folio Motto Gloss */
-            folio_motto_gloss?: string | null;
+            folio_motto_gloss: string | null;
             folio_theme: components["schemas"]["OracleFolioTheme"];
         };
         /**
@@ -6962,7 +6962,7 @@ export interface components {
             /** Work Title */
             work_title: string;
             /** Year */
-            year?: string | null;
+            year: string | null;
         };
         /**
          * OracleReadingPassageOut

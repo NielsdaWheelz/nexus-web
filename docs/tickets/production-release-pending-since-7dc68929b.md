@@ -25,12 +25,24 @@ status: open · origin: 2026-09-28 cleanup campaign · area: release / productio
 
 the activation cut adds the `0253` receipt-key and oracle nullable-key
 migration, with paired snake API/web output. production has 24 exact camel
-activation paths in 22 targeted receipts at `0241`; chat/oracle event populations
-were empty in the reviewed aggregate census. migration shape guards still run
-with writers stopped. merging/checks/preview publication do not establish a
+activation paths in 22 targeted receipts at `0241`. only chat
+`citation_index`/`context_ref_added` and oracle `passage` populations were counted
+and empty; plate/bind were not queried. source base `e92d6c6d9`, query sha256
+`65de77483069113f23ce5e66db644cd03c18e8c01fdf0c1cca4d6af7203800ca`,
+safe receipt `/tmp/nexus-resource-activation-production-preflight.receipt.json`.
+migration shape guards still run with writers stopped. merging/checks/preview publication do not establish a
 matched live application; release the same API/web sha only after migration and
 backend health, through the existing controller. no promotion is requested by
 this cleanup slice.
+
+the separate plate/bind read-only census at `0241`, 2026-10-03 11:11:24–27 utc,
+found zero rows for each type (`/tmp/nexus-oracle-nullable-production-preflight.receipt.json`,
+query sha256 `0054460ae3ea9f39fe8ef40377caa21c34b59114a3d1afb7010fa2ed1fcdc691`).
+the required-nullable year/gloss source cut deliberately rejects raw stored
+omissions previously defaulted to null. bounded initial/current and previously
+observed deployed writer history includes both members; no omission-producing
+writer was found. this is not proof about unavailable historical backups.
+no migration or new revision is added for that contract change.
 
 ## what to do
 
