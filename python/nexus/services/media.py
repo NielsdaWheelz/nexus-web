@@ -720,7 +720,6 @@ def _hydrate_media_out(
                     provider_id=row["provider_id"],
                 ),
                 listening_state=_listening_state(row),
-                episode_state=None,
                 chapters=chapters_by_media.get(media_id, []),
                 capabilities=derive_capabilities(
                     kind=kind_value,

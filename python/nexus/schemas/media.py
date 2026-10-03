@@ -236,7 +236,6 @@ class MediaOut(BaseModel):
     last_error_code: str | None
     playback_source: PlaybackSourceOut | None
     listening_state: ListeningStateOut | None
-    episode_state: Literal["unplayed", "in_progress", "played"] | None
     chapters: list[PodcastEpisodeChapterOut]
     capabilities: CapabilitiesOut
     document_embed_summary: DocumentEmbedSummaryOut | None

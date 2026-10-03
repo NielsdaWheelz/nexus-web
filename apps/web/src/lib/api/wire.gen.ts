@@ -6268,8 +6268,6 @@ export interface components {
             duration: components["schemas"]["Presence_MediaDurationOut_"];
             edition_isbn: components["schemas"]["Presence_str_"];
             edition_published_date: components["schemas"]["Presence_Annotated_str__StringConstraints__AfterValidator__"];
-            /** Episode State */
-            episode_state: ("unplayed" | "in_progress" | "played") | null;
             /** Failure Stage */
             failure_stage: string | null;
             /**
