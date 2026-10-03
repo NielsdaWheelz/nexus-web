@@ -4697,6 +4697,10 @@ export interface components {
         Data_ResourceSurfaceCommandOut_: {
             data: components["schemas"]["ResourceSurfaceCommandOut"];
         };
+        /** Data[ResourceSurfaceOut] */
+        Data_ResourceSurfaceOut_: {
+            data: components["schemas"]["ResourceSurfaceOut"];
+        };
         /** Data[ResourceTargetSearchResponse] */
         Data_ResourceTargetSearchResponse_: {
             data: components["schemas"]["ResourceTargetSearchResponse"];
@@ -17919,9 +17923,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ResourceSurfaceOut_"];
                 };
             };
             /** @description Validation Error */

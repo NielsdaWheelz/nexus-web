@@ -37,7 +37,7 @@ import { subscribeLinkMutations, type LinkMutation } from "@/lib/resourceGraph/l
 import { resolveResourceLocator } from "@/lib/resources/resourceLocators";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { copyText } from "@/lib/ui/copyText";
-import { decodeResourceItem, type ResourceSurface, type ResourceSurfaceNode } from "@/lib/resources/resourceItems";
+import type { ResourceSurface, ResourceSurfaceNode } from "@/lib/resources/resourceItems";
 import {
   acceptResourceSurfaceCommand,
   fetchResourceSurface,
@@ -572,12 +572,11 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
     if (operation.kind !== "title") throw new Error("submitted operation is not a title edit");
     const previous = acknowledgedRef.current;
     if (!previous) throw new Error("surface owner disappeared during acknowledgement");
-    const item = decodeResourceItem(data.item);
     acceptSurface({
       ...previous,
       source: {
         ...previous.source,
-        item,
+        item: data.item,
         content: previous.source.content.kind === "page_title"
           ? { kind: "page_title", title: operation.title }
           : previous.source.content,

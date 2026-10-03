@@ -24,6 +24,7 @@ from nexus.schemas.resource_items import (
     ResourceLocatorResolveResponse,
     ResourceSurfaceCommandOut,
     ResourceSurfaceCommandRequest,
+    ResourceSurfaceOut,
     ResourceTitleMutationOut,
     ResourceTitleMutationRequest,
 )
@@ -100,10 +101,11 @@ def search_openable_resources(
 
 
 @router.get("/{resource_ref}/surface")
-def get_resource_surface(resource_ref: str, viewer: ViewerDep, db: ReadDbDep) -> dict:
-    return ok(
-        surfaces.get_surface(db, viewer_id=viewer.user_id, source=_parse_ref(resource_ref)),
-        by_alias=True,
+def get_resource_surface(
+    resource_ref: str, viewer: ViewerDep, db: ReadDbDep
+) -> Data[ResourceSurfaceOut]:
+    return Data(
+        data=surfaces.get_surface(db, viewer_id=viewer.user_id, source=_parse_ref(resource_ref)),
     )
 
 
