@@ -58,14 +58,14 @@ def read_atlas(
         text(
             f"""
             SELECT m.id AS media_id, m.title, m.kind,
-                   p.x, p.y, p.computed_at,
+                   p.x, p.y,
                    COUNT(DISTINCT h.id) AS magnitude
             FROM media m
             JOIN ({_PERSONAL_MEDIA_SQL}) v ON v.media_id = m.id
             LEFT JOIN media_atlas_positions p ON p.media_id = m.id
             LEFT JOIN highlights h
                    ON h.anchor_media_id = m.id AND h.user_id = :viewer_id
-            GROUP BY m.id, m.title, m.kind, p.x, p.y, p.computed_at
+            GROUP BY m.id, m.title, m.kind, p.x, p.y
             """
         ),
         params,
