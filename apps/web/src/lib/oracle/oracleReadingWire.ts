@@ -7,6 +7,7 @@
  * grammar and returns a closed discriminated union.
  */
 
+import type { Schema } from "@/lib/api/wire";
 import { decodeCitationOut, type CitationOut } from "@/lib/conversations/citationOut";
 import {
   requireOraclePlateImageSrc,
@@ -102,16 +103,7 @@ export interface OracleImagePayload {
   height: number;
 }
 
-export interface OraclePassagePayload {
-  phase: OracleReadingPhase;
-  source_kind: "user_media" | "public_domain";
-  exact_snippet: string;
-  locator_label: string;
-  attribution_text: string;
-  marginalia_text: string;
-  deep_link: string | null;
-  citation: CitationOut | null;
-}
+export type OraclePassagePayload = Schema<"OracleReadingPassageOut">;
 
 interface OracleMetaEvent {
   seq: number;

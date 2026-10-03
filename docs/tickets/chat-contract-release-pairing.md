@@ -22,6 +22,16 @@ production preflight, and verify the release backup. release one exact current
 main sha through `deploy/hetzner/deploy.sh`; do not promote a staged web build
 against the old backend or add a dual-shape decoder for this hard cutover.
 
+2026-10-03 activation qualification: reviewed production SQL still reports
+`0241` with 24 camel activation paths in stored mutation receipts. the selected
+canonical-snake cut adds `0253` bounded receipt-key/oracle nullable-key
+migration and paired HTTP/SSE/web contracts. staged preview and exact-head CI
+prove the candidate, not matching live API/web publication. migrate and establish
+backend health before promoting that same web sha; no deployment was requested.
+source ownership: `deploy.sh:109-116` verifies staged version, invokes the backend
+controller, then promotes; custom-domain auto-assignment must remain disabled
+(`deployment.md:77-79`). no new live config/settings inspection was performed.
+
 acceptance: the release controller proves the same sha on the backend and
 custom-domain web, at the baked database head; authenticated new and saved chat
 reads, send, same-run stream recovery and stop succeed after promotion. if an

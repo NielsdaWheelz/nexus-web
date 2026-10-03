@@ -1,10 +1,8 @@
 """Wire schemas for resource items.
 
-Two serialization families live here and the split is load-bearing: the item /
-activation / capability / locator / mutation models are camelCase on the wire
-(:class:`CamelModel`), while the surface and command models stay snake_case — the web
-decodes both key-exact, so a blanket alias generator over the module would break the
-surface routes.
+Item / capability / locator / mutation models are camelCase on the wire
+(:class:`CamelModel`). The shared activation, surface and command models stay
+snake_case; a blanket alias generator would break their contracts.
 """
 
 from __future__ import annotations
@@ -254,7 +252,9 @@ class ResourceItemCapabilitiesOut(CamelModel):
     expandable: bool
 
 
-class ResourceActivationOut(CamelModel):
+class ResourceActivationOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     resource_ref: str
     kind: Literal["route", "external", "none"]
     href: str | None

@@ -330,7 +330,7 @@ export default function Conversation() {
       disposition: WorkspaceTargetDisposition,
     ) => {
       if (target) dispatchReaderSourceActivation(target);
-      if (resourceRef === activation.resourceRef) {
+      if (resourceRef === activation.resource_ref) {
         return true;
       }
       return activateResource(activation, {

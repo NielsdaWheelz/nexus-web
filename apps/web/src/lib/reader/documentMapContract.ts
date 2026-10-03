@@ -9,7 +9,7 @@ import { decodeMediaNavigation } from "@/lib/media/readerNavigation";
 import { EDGE_KINDS, EDGE_ORIGINS } from "@/lib/resourceGraph/connections";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import {
-  decodeSnakeCaseResourceActivation,
+  decodeResourceActivation,
   type ResourceActivation,
 } from "@/lib/resources/activation";
 import {
@@ -480,7 +480,7 @@ function decodeSourceTarget(
     name,
   );
   const ref = expectResourceRef(value.ref, `${name}.ref`);
-  const activation = decodeSnakeCaseResourceActivation(
+  const activation = decodeResourceActivation(
     value.activation,
     `${name}.activation`,
   );
@@ -594,7 +594,7 @@ function decodeEvidenceObject(
   const commonKeys = ["ref", "kind", "label", "excerpt", "activation"];
   const base = () => {
     const ref = expectResourceRef(value.ref, `${name}.ref`);
-    const activation = decodeSnakeCaseResourceActivation(
+    const activation = decodeResourceActivation(
       value.activation,
       `${name}.activation`,
     );
@@ -657,7 +657,7 @@ function evidenceActionSubject(
   name: string,
 ): ResourceActionSubject {
   const subject = decodeResourceActionSubject({ ref }, `${name}.actionSubject`);
-  if (activation.resourceRef !== subject.ref) {
+  if (activation.resource_ref !== subject.ref) {
     defect(`${name}.activation.resource_ref must equal ${name}.ref`);
   }
   return subject;

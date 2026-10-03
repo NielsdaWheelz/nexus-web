@@ -15,7 +15,7 @@
 import { apiFetch } from "@/lib/api/client";
 import type { ResourceScheme } from "@/lib/resourceGraph/resourceRef";
 import {
-  decodeCamelCaseResourceActivation,
+  decodeResourceActivation,
   type ResourceActivation,
 } from "@/lib/resources/activation";
 import {
@@ -105,13 +105,13 @@ function decodeResourceTarget(raw: unknown): ResourceTarget {
       record.candidateRef,
       "passage resource target.candidateRef",
     );
-    const activation = decodeCamelCaseResourceActivation(
+    const activation = decodeResourceActivation(
       record.activation,
       "passage resource target.activation",
     );
-    if (activation.resourceRef !== candidateRef) {
+    if (activation.resource_ref !== candidateRef) {
       throw new TypeError(
-        "passage resource target.activation.resourceRef must match candidateRef",
+        "passage resource target.activation.resource_ref must match candidateRef",
       );
     }
     return {
