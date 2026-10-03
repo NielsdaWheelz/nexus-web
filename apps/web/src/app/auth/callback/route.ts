@@ -1,18 +1,17 @@
 import { handleAuthCallback } from "@/lib/auth/callback";
 import { AUTH_CALLBACK_FAILURE_MESSAGE } from "@/lib/auth/messages";
 import { mintHandoffCode } from "@/lib/auth/mint-handoff-code";
-import { createRouteHandlerClient } from "@/lib/supabase/route-handler";
+import { createSessionEstablishmentClient } from "@/lib/supabase/route-handler";
 import { NextResponse } from "next/server";
 
 export async function GET(request: Request) {
-  const { supabase, applyCookies, settlePendingCookieWrites } =
-    await createRouteHandlerClient();
+  const { supabase, applyCookies } =
+    await createSessionEstablishmentClient();
   try {
     const response = await handleAuthCallback(request, {
       exchangeCodeForSession: async (code) => {
         try {
           const result = await supabase.auth.exchangeCodeForSession(code);
-          await settlePendingCookieWrites();
           return {
             data: { session: result.data.session ?? null },
             error: result.error

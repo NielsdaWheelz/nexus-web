@@ -224,10 +224,6 @@ export async function updatePasswordFlow(input: {
   supabase: PasswordUpdateClient;
   password: string;
 }): Promise<PasswordUpdateOutcome> {
-  if (input.password.length < 15) {
-    return { kind: "PolicyRejected", reasons: ["length"] };
-  }
-
   let result: Awaited<ReturnType<PasswordUpdateClient["auth"]["updateUser"]>>;
   try {
     result = await input.supabase.auth.updateUser({

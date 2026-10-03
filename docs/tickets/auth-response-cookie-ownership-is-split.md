@@ -9,6 +9,21 @@ implements another effective jar and pending writes. both feed the same
 with refresh output (`app/auth/password/update/route.ts:64-144`). paths here
 are under `apps/web/src/` at main `bed71343cc`.
 
+current native failure contract, source-qualified at `ca1bb2e629`:
+`app/auth/native/google/route.ts:13-16,48-58` finishes the failed mint's 502 with
+`auth.applyCookies(response)` and its default `Preserve` effect. if google
+sign-in established cookies before the mint failed, the route adapter promotes
+pending writes to `Rotate` (`lib/supabase/route-handler.ts:80-123`) and publishes
+them. it does not clear them. the credential-input candidate preserves this
+behavior: `actual-native-mint-failure` in
+`/tmp/nexus-auth-startup.E0TlcS/actual-after.receipt.json` records 502 with a live
+auth cookie, two writes before return and no later writes, using the actual
+route/sdk with synthetic loopback provider and a controlled mint failure.
+hosted auth and native-device delivery were not exercised.
+the failed-mint clearing acceptance below is a desired policy change, not
+behavior to claim conserved during an adapter cleanup. it is a separate pending
+repair, currently unselected for this slice; its own change must verify cleanup.
+
 fix: give response-owning auth operations one cookie adapter; keep server
 actions' writable store and server components' read-only contract explicit.
 do not merge distinct capabilities just to reduce file count. preserve sdk
