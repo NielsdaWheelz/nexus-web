@@ -57,14 +57,12 @@ export interface AuthorPaneSeed {
   works: readonly ContributorWorkItem[];
   collectionRevision: CollectionRevision;
   nextCursor: Presence<CollectionCursor>;
-  exhaustion: "Partial" | "Complete";
 }
 
 export interface ConversationsPaneSeed {
   conversations: readonly ConversationListItem[];
   collectionRevision: CollectionRevision;
   nextCursor: Presence<CollectionCursor>;
-  exhaustion: "Partial" | "Complete";
 }
 
 export interface LibraryPaneSeed {
@@ -72,7 +70,6 @@ export interface LibraryPaneSeed {
   entries: readonly LibraryEntryListItem[];
   collectionRevision: CollectionRevision;
   nextCursor: Presence<CollectionCursor>;
-  exhaustion: "Partial" | "Complete";
 }
 
 // One transport-agnostic loader per prefetchable pane — the single definition of
@@ -201,7 +198,6 @@ export const paneResourceLoaders: Partial<
         entries: page.items,
         collectionRevision: page.collectionRevision,
         nextCursor: page.nextCursor,
-        exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       };
     },
   },
@@ -229,7 +225,6 @@ export const paneResourceLoaders: Partial<
         works: page.items,
         collectionRevision: page.collectionRevision,
         nextCursor: page.nextCursor,
-        exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       };
     },
   },
@@ -250,7 +245,6 @@ export const paneResourceLoaders: Partial<
         conversations: page.items,
         collectionRevision: page.collectionRevision,
         nextCursor: page.nextCursor,
-        exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       };
     },
   },

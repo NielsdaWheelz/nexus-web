@@ -1918,9 +1918,12 @@ pane URL
 ```
 
 The URL is requested state. Each pane controller commits
-`{view, rows, collectionRevision, nextCursor, exhaustion}` atomically, retains
+`{view, rows, collectionRevision, nextCursor}` atomically, retains
 the previously committed rows until the exact first page of the new view
 arrives, and disables continuation while requested and committed disagree.
+the loaded tail cursor determines whether the snapshot has another page;
+`useExhaustivePagination` owns the separate draining, complete, retry, and refresh
+states. seeds and visit-return snapshots carry the tail cursor directly.
 `python/nexus/services/collection_keyset.py` is the single owner of the
 plan → `ORDER BY` → keyset predicate → cursor-value mechanics, so those four can
 never disagree; each collection owner keeps its own plan construction because

@@ -150,7 +150,6 @@ interface PodcastsSnapshot {
   readonly queryIdentity: string;
   readonly collectionRevision: CollectionRevision;
   readonly nextCursor: Presence<CollectionCursor>;
-  readonly exhaustion: "Partial" | "Complete";
   readonly libraries: readonly MemberLibrary[];
 }
 
@@ -292,7 +291,6 @@ export default function PodcastsPaneBody() {
       queryIdentity: subscriptionQueryIdentity,
       collectionRevision: page.collectionRevision,
       nextCursor: page.nextCursor,
-      exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       libraries: initialLibrariesRef.current,
     };
     controllerRef.current = snapshot;
@@ -516,7 +514,6 @@ export default function PodcastsPaneBody() {
         ...current,
         subscriptions,
         nextCursor: page.nextCursor,
-        exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       };
       controllerRef.current = next;
       setController(next);
