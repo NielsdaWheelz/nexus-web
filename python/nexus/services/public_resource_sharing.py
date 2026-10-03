@@ -21,7 +21,6 @@ from uuid import UUID
 from sqlalchemy import RowMapping, text
 from sqlalchemy.orm import Session
 
-from nexus.config import get_settings
 from nexus.db.models import ResourceGrant
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.presence import presence_from_nullable
@@ -50,6 +49,7 @@ from nexus.services.media_file_access import MediaFileSource, get_media_file_sou
 from nexus.services.public_html import sanitize_public_html
 from nexus.services.public_source_urls import public_source_url
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.sealed_handles import derive_handle_key
 from nexus.storage.client import StorageError, get_storage_client, read_object_checked
 
 Readiness = Literal["ProjectionNotReady", "ProjectionUnsupported"]
@@ -210,11 +210,9 @@ def _epub_digest(
 
 
 def _tag(domain: _HandleDomain, grant: ResourceGrant, share: _Share, body: bytes) -> bytes:
-    root = base64.b64decode(get_settings().effective_stream_token_signing_key)
-    key = hmac.new(root, b"nexus-handle-key\0" + domain.encode() + b"\0" + b"1", hashlib.sha256)
     message = b"nexus-public-handle\0" + domain.encode() + b"\0" + b"1" + b"\0"
     message += grant.id.bytes + share.media_id.bytes + body
-    return hmac.new(key.digest(), message, hashlib.sha256).digest()[:16]
+    return hmac.new(derive_handle_key(domain, "1"), message, hashlib.sha256).digest()[:16]
 
 
 def _seal(domain: _HandleDomain, grant: ResourceGrant, share: _Share, ordinal: int) -> str:
