@@ -196,7 +196,7 @@ function ResolvedPaneRouteView({ route }: { route: ResolvedPaneRouteModel }) {
 // shell, including chrome and routed body content.
 // ---------------------------------------------------------------------------
 
-const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
+function PaneRuntimeFrame({
   paneId,
   visitId,
   isActive,
@@ -359,7 +359,7 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
       </PaneSecondaryContext.Provider>
     </PaneRuntimeProvider>
   );
-});
+}
 
 // ---------------------------------------------------------------------------
 // PaneContent - renders the routed body content for a single pane.
