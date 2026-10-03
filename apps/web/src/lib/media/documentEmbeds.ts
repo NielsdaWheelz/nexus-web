@@ -39,7 +39,7 @@ export interface DocumentEmbedLocator {
 }
 
 export type DocumentEmbedDisplayMode =
-  "resolved" | "unsupported" | "failed";
+  "resolved" | "pending" | "unsupported" | "failed";
 
 export type DocumentEmbedActionKind =
   "open_child_media" | "open_original" | "retry_child" | "refresh_parent";
@@ -362,7 +362,7 @@ function decodeDisplay(raw: unknown, name: string): DocumentEmbedDisplay {
   return {
     mode: expectOneOf(
       value.mode,
-      ["resolved", "unsupported", "failed"] as const,
+      ["resolved", "pending", "unsupported", "failed"] as const,
       `${name}.mode`,
     ),
     label: expectString(value.label, `${name}.label`),
@@ -510,13 +510,21 @@ export function renderDocumentEmbedsInHtml(
   }
 
   for (const embed of normalizeDocumentEmbeds(embeds)) {
-    const card = buildDocumentEmbedCard(document, embed, classNames);
     const placeholder = findDocumentEmbedPlaceholder(
       root,
       embed.occurrence_key,
     );
     if (placeholder) {
-      placeholder.replaceWith(card);
+      if (
+        embed.provider === "x" &&
+        embed.kind === "post" &&
+        embed.source_shape === "provider_json"
+      ) {
+        renderXQuotePostReference(document, embed, placeholder, classNames);
+      } else {
+        // Source captions and highlight nodes retain their canonical provenance.
+        placeholder.append(buildDocumentEmbedCard(document, embed, classNames));
+      }
     }
   }
 
@@ -542,17 +550,10 @@ function buildDocumentEmbedCard(
   embed: DocumentEmbed,
   classNames: DocumentEmbedClassNames,
 ): HTMLElement {
-  if (
-    embed.provider === "x" &&
-    embed.kind === "post" &&
-    embed.source_shape === "provider_json"
-  ) {
-    return buildXQuotePostReference(document, embed, classNames);
-  }
-
   const card = document.createElement("figure");
   card.className = classNames.card;
-  card.setAttribute("data-nexus-document-embed-id", embed.occurrence_key);
+  // Renderer-only UI is excluded by canonicalCursor; source HTML never owns it.
+  card.setAttribute("data-document-embed-ui", "");
   card.setAttribute("data-document-embed-state", embed.display.mode);
   card.setAttribute("data-document-embed-provider", embed.provider);
   card.setAttribute("data-document-embed-kind", embed.kind);
@@ -619,11 +620,12 @@ function buildDocumentEmbedCard(
   return card;
 }
 
-function buildXQuotePostReference(
+function renderXQuotePostReference(
   document: Document,
   embed: DocumentEmbed,
+  placeholder: Element,
   classNames: DocumentEmbedClassNames,
-): HTMLElement {
+): void {
   const label = embed.locator.placeholder_text;
   if (!label.trim() || label !== embed.display.label) {
     throw new Error(
@@ -632,16 +634,17 @@ function buildXQuotePostReference(
   }
 
   const target = xQuotePostReferenceTarget(embed);
-  const reference = document.createElement("div");
-  reference.className = classNames.card;
-  reference.setAttribute(
-    "data-nexus-document-embed-id",
-    embed.occurrence_key,
-  );
-  reference.setAttribute("data-document-embed-state", embed.display.mode);
-  reference.setAttribute("data-document-embed-provider", embed.provider);
-  reference.setAttribute("data-document-embed-kind", embed.kind);
-  reference.setAttribute(
+  const caption = placeholder.querySelector("figcaption");
+  if (!caption) {
+    throw new Error(
+      `X quote-post reference ${embed.occurrence_key} has no source caption`,
+    );
+  }
+  placeholder.className = classNames.card;
+  placeholder.setAttribute("data-document-embed-state", embed.display.mode);
+  placeholder.setAttribute("data-document-embed-provider", embed.provider);
+  placeholder.setAttribute("data-document-embed-kind", embed.kind);
+  placeholder.setAttribute(
     "data-document-embed-presentation",
     "compact-reference",
   );
@@ -649,13 +652,12 @@ function buildXQuotePostReference(
   const link = document.createElement("a");
   link.className = classNames.action;
   link.href = target.href;
-  link.textContent = label;
+  link.append(...caption.childNodes);
   if (target.external) {
     link.target = "_blank";
     link.rel = "noreferrer";
   }
-  reference.append(link);
-  return reference;
+  caption.append(link);
 }
 
 function xQuotePostReferenceTarget(
@@ -775,6 +777,8 @@ function formatDocumentEmbedState(state: DocumentEmbedDisplayMode): string {
   switch (state) {
     case "resolved":
       return "Resolved";
+    case "pending":
+      return "Pending";
     case "unsupported":
       return "Unsupported";
     case "failed":
