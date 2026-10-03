@@ -5,7 +5,8 @@ import {
   buildPublicReaderContentSecurityPolicy,
   generateNonce,
 } from "@/lib/security/csp";
-import { getEnv, isDevBuild } from "@/lib/env";
+import { getEnv } from "@/lib/env";
+import { isDevBuild } from "@/lib/build-mode";
 import { updateSession } from "@/lib/supabase/middleware";
 
 /**

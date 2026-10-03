@@ -10,8 +10,6 @@ import {
 } from "react";
 import type { AuthenticatedAccount } from "@/lib/account/contract";
 
-export type { AuthenticatedAccount } from "@/lib/account/contract";
-
 interface AuthenticatedAccountContextValue extends AuthenticatedAccount {
   setCalendarTimeZone: (timeZone: string) => void;
 }

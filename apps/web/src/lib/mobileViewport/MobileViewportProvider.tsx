@@ -20,8 +20,6 @@ import {
 import { readMobileCssLength } from "@/lib/mobileViewport/readMobileCssLength";
 import { isTextEntryTarget } from "@/lib/ui/isTextEntryTarget";
 
-export type { MobileBottomSurfaceId } from "@/lib/mobileViewport/model";
-
 export interface MobileViewportCapability {
   registerBottomSurface(
     id: MobileBottomSurfaceId,
