@@ -12,7 +12,7 @@ import {
   buildLoginUrl,
   parseAuthReturnTarget,
 } from "@/lib/auth/redirects";
-import { createRouteHandlerClient } from "@/lib/supabase/route-handler";
+import { createSessionEstablishmentClient } from "@/lib/supabase/route-handler";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -130,14 +130,13 @@ export async function GET(request: Request): Promise<NextResponse> {
       );
     }
 
-    const { supabase, applyCookies, settlePendingCookieWrites } =
-      await createRouteHandlerClient();
+    const { supabase, applyCookies } =
+      await createSessionEstablishmentClient();
 
     await supabase.auth.setSession({
       access_token: accessToken,
       refresh_token: refreshToken,
     });
-    await settlePendingCookieWrites();
 
     return applyCookies(
       preserve(

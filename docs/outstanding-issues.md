@@ -291,12 +291,10 @@ unexpected timeouts. See
 - [open] 2026-09-21 cleanup audit · offline reading store retains unused construction modes: [ticket](tickets/cleanup-offline-reading-unused-construction-seams.md).
 - [deferred] 2026-09-23 firefox v1 · the signed unlisted build needs AMO credentials and the production origins: [ticket](tickets/extension-firefox-distribution-consent-is-undeclared.md).
 - [open] 2026-09-23 firefox v1 track a · remove the browser-capture conversion command after its production run: [ticket](tickets/remove-browser-capture-conversion-command.md).
-- [open] 2026-09-21 auth audit · cookie polling misses successor writes from unjoined sdk startup refresh: [ticket](tickets/auth-cookie-settlement-polls-an-awaited-sdk-callback.md).
-- [open] 2026-09-21 auth audit · one refresh can rotate the provider session twice: [ticket](tickets/auth-refresh-can-rotate-the-provider-session-twice.md).
 - [open] 2026-09-21 auth audit · response cookie ownership is split between route clients and refresh: [ticket](tickets/auth-response-cookie-ownership-is-split.md).
 - [open] 2026-09-21 auth audit · auth flows retain unused injection seams: [ticket](tickets/auth-flows-retain-unused-injection-seams.md).
 - [open] 2026-09-21 auth audit · default android debug origin disagrees with bff csrf configuration: [ticket](tickets/android-debug-origin-disagrees-with-bff-csrf-origin.md).
-- [open] 2026-09-21 auth audit · sdk operation deadlines end before response bodies: [ticket](tickets/supabase-operation-deadline-ends-at-response-headers.md).
+- [open] 2026-09-21 auth audit · sdk fetch deadlines do not cover body reads or refresh retry/backoff: [ticket](tickets/supabase-operation-deadline-ends-at-response-headers.md).
 - [open] 2026-09-25 local qualification · credential values appeared in an internal tool transcript; rotate outside the transcript's trust boundary: [ticket](tickets/local-qualification-credential-transcript-exposure.md).
 
 - [open] 2026-09-26 processing review · 24 diagnosed imports still need individual owned recovery: [ticket](tickets/processing-backlog-needs-owned-recovery.md).
@@ -343,3 +341,5 @@ unexpected timeouts. See
 - author non-media work dates have no producer: [ticket](tickets/author-nonmedia-work-dates-have-no-producer.md).
 
 - local stopped-container inventory fails on missing docker snapshot; see [ticket](tickets/local-docker-stopped-container-snapshot-missing.md).
+
+- [open] native auth / handoff · 2026-10-02 route contract census · session-installation rejection is ignored before the success redirect: [ticket](tickets/auth-handoff-ignores-session-installation-rejection.md).

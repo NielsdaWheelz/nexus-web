@@ -44,7 +44,7 @@ export const getSessionVerification = cache(
 
     switch (session.state) {
       case "active": {
-        const supabase = await createSessionVerifierClient();
+        const supabase = createSessionVerifierClient();
         let timeout: ReturnType<typeof setTimeout> | undefined;
         let result: Awaited<ReturnType<typeof supabase.auth.getClaims>>;
         try {

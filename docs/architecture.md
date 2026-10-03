@@ -788,6 +788,19 @@ Identities projects only Google and GitHub; an OAuth identity can be unlinked
 only while another supported OAuth identity remains, so unlink safety never
 depends on inferred password presence.
 
+web auth clients expose the credential capability their operation needs.
+`createSessionEstablishmentClient` retains incoming cookie names for chunk
+removal and the pkce verifier, while withholding old session values;
+`createCurrentSessionClient` supplies the effective current session for password
+update and identity linking. each command awaits its own sdk completion before
+the response adapter publishes ordered cookies and headers; no timer poll or
+extra session pre-read establishes readiness. explicit refresh receives the
+decoded refresh credential and requests one grant. the read-only verifier has
+empty storage and verifies its explicit access token; writable server actions
+retain their distinct cookie-store capability. response finalization preserves
+clear precedence and private, no-store headers. sdk retry/backoff can outlast
+the fetch budget; these capabilities do not add a full-operation deadline.
+
 Other identity surfaces:
 
 - **Stream tokens** (`services/stream_tokens.py`, route `api/routes/stream_tokens.py`):

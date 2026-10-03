@@ -45,12 +45,11 @@ export async function createClient() {
  * refresh or mutate the session cookie jar. A cookie write is a contract
  * violation and fails loudly; the request-time resolver owns that transition.
  */
-export async function createSessionVerifierClient() {
-  const cookieStore = await cookies();
+export function createSessionVerifierClient() {
   return createSupabaseServerClient(
     {
       getAll() {
-        return cookieStore.getAll();
+        return [];
       },
       setAll() {
         throw new Error(
