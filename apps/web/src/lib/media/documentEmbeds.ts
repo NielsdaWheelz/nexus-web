@@ -134,13 +134,14 @@ function buildDocumentEmbedCard(
   title.textContent = embed.display.label;
   body.append(title);
 
+  const targetTitle = embed.target.title?.trim();
+  const displayDescription = embed.display.description.trim();
   const description = document.createElement("p");
   description.className = classNames.description;
-  description.textContent =
-    embed.target.title?.trim() || embed.display.description;
+  description.textContent = targetTitle || embed.display.description;
   body.append(description);
 
-  if (embed.target.title?.trim() && embed.display.description.trim()) {
+  if (targetTitle && displayDescription && displayDescription !== targetTitle) {
     const detail = document.createElement("p");
     detail.className = classNames.description;
     detail.textContent = embed.display.description;
