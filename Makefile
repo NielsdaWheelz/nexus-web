@@ -64,7 +64,7 @@ help:
 	@echo "  make logs               - Show local compose service logs"
 
 setup:
-	uv sync --extra dev --locked --directory python
+	uv sync --extra dev --extra codex-agent --locked --directory python
 	bun install --frozen-lockfile --cwd apps/web
 	bun install --frozen-lockfile --cwd node/ingest
 
