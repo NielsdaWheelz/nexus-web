@@ -50,7 +50,11 @@ export function finalizeSessionResponse<T extends NextResponse>(
       break;
     case "Rotate":
       for (const { name, value, options } of effect.cookiesToSet) {
-        response.cookies.set(name, value, options);
+        if (options?.maxAge === 0) {
+          response.cookies.delete({ name, ...options });
+        } else {
+          response.cookies.set(name, value, options);
+        }
       }
       break;
     case "Clear":

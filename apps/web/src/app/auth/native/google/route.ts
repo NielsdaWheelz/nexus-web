@@ -46,23 +46,29 @@ export async function POST(request: Request): Promise<NextResponse> {
       ));
     }
 
-    const mintResult = await mintHandoffCode({
-      accessToken: data.session.access_token,
-      refreshToken: data.session.refresh_token,
-      challenge: hc,
-    });
-    if ("error" in mintResult) {
-      // justify-ignore-error: a timed-out, non-2xx, or malformed mint all
-      // surface to the native caller as a single handoff_mint_failed.
-      return finish(NextResponse.json(
-        { error: "handoff_mint_failed" },
-        { status: 502 }
-      ));
-    }
+    try {
+      const mintResult = await mintHandoffCode({
+        accessToken: data.session.access_token,
+        refreshToken: data.session.refresh_token,
+        challenge: hc,
+      });
+      if ("error" in mintResult) {
+        // justify-ignore-error: expected mint failures share one public reply.
+        return auth.clearSession(
+          NextResponse.json({ error: "handoff_mint_failed" }, { status: 502 }),
+        );
+      }
 
-    return finish(
-      NextResponse.json({ data: { code: mintResult.code } }, { status: 200 }),
-    );
+      return finish(
+        NextResponse.json({ data: { code: mintResult.code } }, { status: 200 }),
+      );
+    } catch {
+      // justify-defect: any failure after establishment must publish cleanup
+      // with the existing internal-error response, including non-Error throws.
+      return auth.clearSession(
+        NextResponse.json({ error: "internal_error" }, { status: 500 }),
+      );
+    }
   } catch (error) {
     if (!(error instanceof Error)) {
       throw error;
