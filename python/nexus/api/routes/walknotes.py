@@ -3,6 +3,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
+from starlette.concurrency import run_in_threadpool
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.errors import ApiError, ApiErrorCode
@@ -28,7 +29,9 @@ async def transcribe_walknote_audio(
             f"Audio body exceeds the 10 MB limit ({len(audio_bytes)} bytes received).",
         )
 
-    result = get_deepgram_client().transcribe_raw_audio(audio_bytes, content_type)
+    result = await run_in_threadpool(
+        get_deepgram_client().transcribe_raw_audio, audio_bytes, content_type
+    )
     if result.status != "completed":
         raise ApiError(
             ApiErrorCode[result.error_code]

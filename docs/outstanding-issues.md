@@ -325,7 +325,7 @@ unexpected timeouts. See
 - [open] consumption / stats contracts · 2026-09-28 reauthoring, qualified 2026-10-03 · unproduced `Week` remains; retain read `recordedActiveMs` pending precision/conservation proof: [ticket](tickets/consumption-stats-over-its-line-target.md).
 - [open] consumption / stats pane · 2026-09-28 consumption-stats reauthoring · p3 · timeline modalities all paint `CanvasText` in forced colors: [ticket](tickets/stats-timeline-modalities-merge-in-forced-colors.md).
 - [open] consumption activity / web outbox · 2026-09-28 consumption-stats reauthoring · p3 · batches follow creation order, so two tabs on one work can fail a whole batch as out of order: [ticket](tickets/activity-outbox-batches-rows-in-creation-order.md).
-- [open] walknote / transcription · 2026-10-02 cleanup audit · the async upload route makes blocking deepgram http calls, delaying unrelated requests and streams: [ticket](tickets/walknote-transcription-blocks-api-event-loop.md).
+- [open] transcription / provider result · 2026-10-03 walknote repair verification · malformed deepgram `results` escapes the adapter's failure mapping and returns an internal error: [ticket](tickets/deepgram-malformed-results-escape-failure-mapping.md).
 - author non-media work dates have no producer: [ticket](tickets/author-nonmedia-work-dates-have-no-producer.md).
 
 
