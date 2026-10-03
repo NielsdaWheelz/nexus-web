@@ -1,7 +1,7 @@
 # metadata enrichment verification
 
 status: local metadata behavior GREEN; final native delivery NOT_READY;
-metadata's genuine bibliographic cases NOT_RUN. observed 2026-10-02 on `feature/metadata-enrichment`, based on
+metadata's genuine bibliographic cases NOT_RUN. observed 2026-10-03 utc on `feature/metadata-enrichment`, based on
 `a494f743eb402b0cbb6069066fca4143b24036f0`. no production deployment or repair.
 verified metadata implementation commit:
 `603c0e0c1d9b00a2f992d468f2204a2be503c36c`.
@@ -89,21 +89,43 @@ collapse is retained in its [ticket](tickets/reader-find-preview-collapses-toolb
 
 the installed candidate's genuine public `execute_generation` receipt now proves
 personal `gpt-6-luna`/`xhigh`, closed strict json and useful results from all four
-actual tools. receipt `/tmp/nexus-native-research.json`, generation
+actual tools. historical receipt path `/tmp/nexus-native-research.json`, generation
 `73e1c192-e2a8-4171-b47d-8b15fbdcbedb`; the matching stock `0.160.0` rollout
 confirms actual model/effort and only declared callbacks. installed nexus files
 match adapter `c087faba0529095a076e83b559774a510b513dab`; module origins are
 site-packages, without source overlays. candidate actual-postgres
 SIGKILL/cold-reclaim recovery also passed
 with original terminal/usage and zero catalog/provider calls. these are separate
-proofs: genuine research and controlled recovery faults. neither establishes
+proofs: genuine research and controlled recovery faults. that receipt path now
+contains the newer generation below; the earlier observation is historical.
+neither establishes
 final installed metadata acceptance; the recovery probe uses
 `metadata_enrichment` / `native-proof`. metadata still needs its actual
 `enrich_metadata` / `codex/metadata` recovery with frozen inputs and publication
 fences after source, credits or access change.
 
-no final qualified adapter/provider/tools pin set is available. the installed
-research candidate uses provider `23bd67420c9aaac78f5a6689d795b1eb02a1d5e9`,
+new installed candidate independently reviewed on 2026-10-03 utc: adapter
+`d108c085411f1ceacba31422f472e973e9168886`, committed frozen lock sha256
+`13827ea453e7a3332a8bae86fee62da50e0a4d554e6c41e4ac1803a18377172a`,
+provider `98913f35ab4c9bef2af85d90fd6e4bed747bd64c`, kernel
+`b91a9e41269ec721ed0d7403f2baaec30cb6764e`, tools
+`2adb9790fc7a54de5342effaca9391c2f3d24ff9`. installed package files byte-match
+those git objects; origins/direct-url metadata confirm noneditable installation.
+generation `8c5f4732-2e52-49dd-8d36-765e71e7205a` receipt sha256
+`4fd98492134958fc702c69735664445add7bdae94ad9677ac350bfa33c9164e7`.
+the original stock rollout independently confirms actual luna/xhigh, all four
+declarations, original callback arguments/replies and final text. rollout sha256
+`e24ad07bf232057afa90b7214061e82b4ec6d09973ba94e42943e2b2dd6ac101`.
+strict schema comes from original recorded `turn/start`; stock's rollout omits
+that field. all four actual tools return useful results. this five-field capability
+probe does not qualify metadata's eight-field output or bibliographic judgments.
+later kernel `96bc85af0fde10d4fc2d88573fc00c919dbaed27` changes base instructions
+v2→v3. nexus's reviewed lock already contains pyjwt 2.15.1; the provider owner's
+later lock/audit cleanup and final tuple remain unqualified.
+nexus's final installed repeat is independent of jarvis domain progress content.
+
+no final qualified adapter/provider/tools pin set is available. the earlier
+research candidate above uses provider `23bd67420c9aaac78f5a6689d795b1eb02a1d5e9`,
 kernel `ece3cda0c9898d2041cb74041b711d83b6361c74` and tools
 `cad13af1289c247897236959bfff0d6791956d4b`. its frozen lock is an uncommitted
 urllib3 2.8.0 variant; final cleanup, committed locks and consumer qualification
