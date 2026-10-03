@@ -292,7 +292,7 @@ unexpected timeouts. See
 - [open] highlight interaction · 2026-09-21 reader cleanup · hook keeps unused focus callbacks and hover metadata: [ticket](tickets/highlight-interaction-unused-api.md).
 - [deferred] 2026-09-23 firefox v1 · the signed unlisted build needs AMO credentials and the production origins: [ticket](tickets/extension-firefox-distribution-consent-is-undeclared.md).
 - [open] 2026-09-23 firefox v1 track a · remove the browser-capture conversion command after its production run: [ticket](tickets/remove-browser-capture-conversion-command.md).
-- [open] 2026-09-21 auth audit · cookie settlement polls callbacks already awaited by the sdk: [ticket](tickets/auth-cookie-settlement-polls-an-awaited-sdk-callback.md).
+- [open] 2026-09-21 auth audit · cookie settlement retirement needs locked-sdk subscriber-startup qualification: [ticket](tickets/auth-cookie-settlement-polls-an-awaited-sdk-callback.md).
 - [open] 2026-09-21 auth audit · one refresh can rotate the provider session twice: [ticket](tickets/auth-refresh-can-rotate-the-provider-session-twice.md).
 - [open] 2026-09-21 auth audit · response cookie ownership is split between route clients and refresh: [ticket](tickets/auth-response-cookie-ownership-is-split.md).
 - [open] 2026-09-21 auth audit · auth flows retain unused injection seams: [ticket](tickets/auth-flows-retain-unused-injection-seams.md).
@@ -340,8 +340,9 @@ unexpected timeouts. See
 - [open] consumption / stats pane · 2026-09-28 consumption-stats reauthoring · p3 · the day view of a date its zone skips sends `start == end` and shows "Stats could not load": [ticket](tickets/stats-day-view-fails-on-a-zone-skipped-date.md).
 - [open] consumption / stats pane · 2026-09-28 consumption-stats reauthoring · p3 · timeline modalities all paint `CanvasText` in forced colors: [ticket](tickets/stats-timeline-modalities-merge-in-forced-colors.md).
 - [open] consumption activity / web outbox · 2026-09-28 consumption-stats reauthoring · p3 · batches follow creation order, so two tabs on one work can fail a whole batch as out of order: [ticket](tickets/activity-outbox-batches-rows-in-creation-order.md).
-- [open] inbound share capture / auth · 2026-10-02 frontend cleanup map · a plain-text share account-read `401 E_UNAUTHENTICATED` escapes render instead of showing sign-in guidance: [ticket](tickets/share-account-auth-failure-escapes-inline-feedback.md).
 - [open] local dependency setup · 2026-10-02 cleanup verification · make setup omits the codex-agent extra required by checked runtime imports: [ticket](tickets/local-setup-omits-codex-agent-extra.md).
 - [open] walknote / transcription · 2026-10-02 cleanup audit · the async upload route makes blocking deepgram http calls, delaying unrelated requests and streams: [ticket](tickets/walknote-transcription-blocks-api-event-loop.md).
 - [open] atlas / query · 2026-10-02 representation repair · the star query still selects/groups an unused position timestamp: [ticket](tickets/atlas-star-query-reads-unused-position-timestamp.md).
 - author non-media work dates have no producer: [ticket](tickets/author-nonmedia-work-dates-have-no-producer.md).
+
+- local stopped-container inventory fails on missing docker snapshot; see [ticket](tickets/local-docker-stopped-container-snapshot-missing.md).

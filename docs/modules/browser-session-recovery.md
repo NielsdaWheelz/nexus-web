@@ -43,10 +43,10 @@ recognized failure remains handled while this runtime survives.
 the context hook is a present scope contract: outside the authenticated
 boundary its default handler returns false. `app/share/page.tsx:10-13`
 deliberately keeps the share capture outside the shell and login flow;
-`ShareCapture.tsx:89-92` uses `useResource` for its account read there. a failed
+`ShareCapture.tsx` uses `useResource` for its account read there. a failed
 share account read remains available to that screen's error handling and must
-not navigate to login. its current auth-error rendering defect is separate:
-[share account auth failure](../tickets/share-account-auth-failure-escapes-inline-feedback.md).
+not navigate to login. inline auth guidance is owned and separately qualified by
+[share capture recovery](share-capture-recovery.md).
 explicit direct-handler callers retain their
 existing decision to invoke global recovery. no alternate provider, scope
 option, or compatibility api is added.
@@ -69,7 +69,8 @@ navigation count alone was not its oracle. fresh `/login` did not redirect;
 a separate non-browser invocation returned false. outside-scope context calls
 returned false, a real `useResource` account read retained its auth error with
 no navigation, and anonymous `/share` retained sign-in guidance on `/share`.
-the expired mounted `ShareCapture` rendering defect above remains open.
+the expired mounted `ShareCapture` rendering defect was outside this auth slice;
+its later repair is qualified in the separate share capture recovery receipt.
 
 tested source: base `56b889bdc6708d2d913982e22e7566a141b024d6` with only this
 production source change. boundary sha256:
