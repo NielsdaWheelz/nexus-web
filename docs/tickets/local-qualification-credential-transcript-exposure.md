@@ -29,3 +29,18 @@ rotates affected macbook, devbox, and arch peer credentials outside it.
 coordinate replacement with active sessions; do not mutate shared auth blindly.
 invalidate the exposed credentials and confirm skid connects with replacements.
 configuration inspection now uses an explicit nonsecret field allowlist.
+
+## 2026-10-04 library fixture incident
+
+before source edits, psycopg rejected a sqlalchemy-style task dsn and included
+its synthetic loopback connection uri in a tool traceback. this was the owned
+`nexus-cleanup-library-wire-pg-20261004` database; no production credential/data
+or protected env file was involved. no uri or value is copied here. the fixture
+now needs driver-compatible scheme handling and exception reporting that cannot
+print connection arguments; safe receipts contain only resource metadata.
+
+this synthetic incident is resolved: exact owned container
+`30212c78be78` and its private input were removed after the gate passed;
+`/tmp/nexus-library-wire-workflow-cleanup.receipt.json` records both absent.
+the driver scheme/reporting was corrected before the frozen proof. earlier
+production/skid exposures remain open.
