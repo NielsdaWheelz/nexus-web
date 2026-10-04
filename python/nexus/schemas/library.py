@@ -23,9 +23,14 @@ LibraryEntryKind = Literal["media", "podcast"]
 
 
 class _Camel(BaseModel):
-    """camelCase wire model: every response key the web decodes exactly."""
+    """camelCase output model with every serialized field declared."""
 
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+        json_schema_serialization_defaults_required=True,
+    )
 
 
 class _CamelRow(_Camel):
@@ -47,7 +52,7 @@ class _CamelIn(BaseModel):
 class _Snake(BaseModel):
     """snake_case wire model nested inside a camelCase envelope."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
 
 class CreateLibraryRequest(BaseModel):
@@ -205,7 +210,7 @@ class LibraryPageInfo(BaseModel):
     has_more: bool = False
     next_cursor: str | None = None
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
 
 class LibraryGovernancePageInfo(_Camel):

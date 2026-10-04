@@ -53,6 +53,21 @@ created_at DESC, id DESC"`), the locked `ensure_entry` append, deletes and
 Media capabilities call these services to attach or validate visibility, then
 return to their own owners for ingestion, playback, files, or assets.
 
+## output contract
+
+`api/routes/libraries.py` returns typed `Data` or `DataPage` models for every
+json success; its three bodyless commands retain 204. generated wire types own
+both server seed and browser transport shapes. collection pages carry their
+revision and presence cursor inside `data`; governance pages carry a presence
+cursor in `page`; writable destinations retain their snake-case page fields.
+
+web projections retain media presentation, progress presence, zero-count
+suppression, subscription sync and request identity and value-coherence checks. the
+library slate uses its generated output contract; other untyped slate producers
+and the versioned extension destination boundary retain their decoders. the
+router keeps its default serializer and existing aliases, nullable keys and
+response bytes.
+
 ## Membership sharing versus resource sharing
 
 A library is shared only through membership/invitation governance. It never has

@@ -1,7 +1,9 @@
 import { apiFetch } from "@/lib/api/client";
+import type { ApiJson } from "@/lib/api/wire";
 import {
   decodeQuickReadsEnvelope,
   decodeSlateEnvelope,
+  slateSnapshotFromWire,
   type SlateSnapshot,
 } from "@/lib/resonance/contract";
 
@@ -21,9 +23,9 @@ export async function getLibrarySlate(
   libraryId: string,
   signal?: AbortSignal,
 ): Promise<SlateSnapshot> {
-  return decodeSlateEnvelope(
-    await apiFetch<unknown>(`/api/libraries/${encodeURIComponent(libraryId)}/slate`, {
-      signal,
-    }),
+  const response = await apiFetch<ApiJson<"/libraries/{library_id}/slate", "get">>(
+    `/api/libraries/${encodeURIComponent(libraryId)}/slate`,
+    { signal },
   );
+  return slateSnapshotFromWire(response.data);
 }
