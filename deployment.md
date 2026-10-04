@@ -25,7 +25,7 @@ the expected Oracle manifest digest.
 
 ## Non-negotiable rules
 
-- `deploy/hetzner/deploy.sh <source-sha>` is the only application release
+- `deploy/hetzner/deploy.sh <source-sha> [--model-cutover-snapshot <reviewed-json>]` is the only application release
   entrypoint. It converges the backend and then binds the frontend.
 - The release is **linear and idempotent**. There is no attempt state, no
   resume mode and no rollback settlement: after a failure, repair the named
@@ -49,8 +49,10 @@ the expected Oracle manifest digest.
 ## Operator prerequisites
 
 Install the repository's locked dependencies and authenticate `gh`, SSH and
-Vercel. The release needs `curl`, `gh`, `git`, `jq`, `python3`, `scp`, `ssh`,
-`timeout`, and the locked Vercel CLI under `apps/web/node_modules`.
+Vercel. the release needs `curl`, `gh`, `git`, `jq`, `python3`, `scp`, `ssh`,
+`timeout`, `uv`, the installed locked backend environment at `python/.venv`,
+and the locked vercel cli under `apps/web/node_modules`. the controller uses
+`uv run --frozen --no-sync`; a release never creates or updates dependencies.
 
 ```bash
 export VERCEL_TOKEN=<vercel-token>
@@ -156,7 +158,8 @@ it binds, and re-proves the public `/version`.
    runtime identity against the manifest.
 4. **backup** — read the current Alembic revision, prove it descends from the
    candidate head, stop `api`, `worker-interactive` and `worker-background`,
-   then stop the Codex host and require its clean exit before running
+   then stop the codex host with at least 45 seconds of grace and require clean
+   exit from every writer and host before running
    `nexus.release_backup create`: one pass that streams `pg_dump`
    into a private R2 multipart upload, reads the remote bytes back through
    `pg_restore`, publishes a `database.json` recovery manifest beside the
@@ -176,6 +179,55 @@ it binds, and re-proves the public `/version`.
 Steps 4 and 5 are the ordered guarantee: writers stop, the dump is verified and
 off-host, and only then does the schema move.
 
+### reviewed model-history reset
+
+crossing 0246 requires the optional input above. this is one current, strict
+`ReviewedModelCutover` contract in `python/nexus/model_cutover_archive.py`.
+`python -m nexus.model_cutover_preflight --snapshot` prints a read-only starting
+census; it grants no disposal authority. keep the no-use window closed through
+this finite operator sequence:
+
+1. drain admissions and stop all writers and the native host cleanly. preserve
+   all original unknown provider outcomes; remote calls may still bill.
+2. collect a fresh exact starting census. take a fresh backup with the existing
+   `nexus.release_backup create` owner for the chosen target sha, source database
+   identity and actual revision. a 0230/0236 receipt cannot qualify a 0241 reset.
+3. actually restore those exact bytes in an isolated postgres/pgvector copy.
+   prove the complete starting census, actual starting-revision-to-target chain,
+   preserved domain data and completed-write undo, refused unfinished writes,
+   stale admission/job rejection and whole-transaction rollback. archive
+   traversal alone is insufficient; a preliminary live dump is not this final
+   drained backup.
+4. review the complete input: deployed and target source shas, source database
+   identity/revision, all ordered row hashes, exact null-parent abandonment,
+   exact orphan-parent acknowledgement, every frozen/metadata job retirement,
+   reviewer, `BackupEvidence`, and the small actual-restore attestation bound to
+   the backup/census/target and private proof receipt hashes.
+5. use the aligned release command with that input. it rejects incomplete or
+   stale authority, rechecks the complete census and existing archive bytes,
+   then supplies typed alembic `Config.attributes` authority. the entry hook,
+   effect preservation, archival audit, queue-claim retirement and entire reset
+   share the existing migration transaction. any later refusal rolls back all
+   of them. the production cli has no restored-copy identity override.
+
+the census includes settled and unknown parents, model turns, continuations,
+positions, all chat runs, generation-bearing jobs of every status and every
+metadata job, leases, original memos/replay grants, authorship/tool-call refs,
+workspace state, affected bibliography/credits/manual author pins and reader
+publication identity. originals remain in the verified backup. missing original
+write ownership or unfinished write effects block; acknowledged orphan parents
+receive no fabricated owner, terminal or executable authority. completed write
+receipts remain inspectable and undoable after history deletion.
+
+one `model_cutover_archives` row records the reviewed disposition and both source
+and execution database identities. restored-copy qualification uses the explicit
+trusted migration interface, with its own execution identity and the same
+original census. ordinary releases retain the existing backup and plain
+migration path. the canonical suffix is 0252 -> resource 0253 -> atlas 0254 ->
+native 0255 -> metadata 0256 -> effects 0257. post-reset 0256 databases gain
+receipt/audit storage through 0257; 0256's metadata uncertainty barrier stays
+intact.
+
 ## Codex agent host isolation
 
 The isolation is **declared**, not re-derived:
@@ -185,7 +237,7 @@ The isolation is **declared**, not re-derived:
 | non-root, read-only rootfs, `cap_drop: ALL`, `no-new-privileges`, private pid/ipc, no ports | `deploy/hetzner/docker-compose.yml` |
 | default docker apparmor/seccomp confinement | same |
 | internal, gateway-less private bridge; DNS to the egress proxy only | same, `networks.codex_private` |
-| tmpfs layout, ulimits, cgroup limits, 15 s stop grace, `restart: "no"` | same |
+| tmpfs layout, ulimits, cgroup limits, 45 s stop grace, `restart: "no"` | same |
 | exactly one host bind: the private account directory inside the LUKS volume | same |
 | uid/gid 10001; shared native socket volume `0700`, resolved socket `0660`; workers receive no account state | same; `apps/codex_agent/native_server.py` |
 | the credential underlay is closed before Docker starts | `codex-state-boot-guard.sh`, `nexus-codex-state-boot-guard.service`, `docker-codex-state-guard.conf` |
@@ -208,7 +260,7 @@ limits to a running container out of band.
 ## Verification
 
 ```bash
-PYTHONPATH=python python3 deploy/hetzner/release.py --check
+PYTHONPATH=python uv run --project python --frozen --no-sync python deploy/hetzner/release.py --check
 ```
 
 It reads the host's `current` pointer, runs preflight against that SHA, reports
@@ -223,7 +275,10 @@ stops working for it.
 
 ## Failure and recovery
 
-Rerun `deploy/hetzner/deploy.sh <source-sha>`. Every step is idempotent: images
+rerun the same release command while its starting revision still crosses 0246.
+after the reviewed reset commits, omit `--model-cutover-snapshot`; the audit row
+records that disposition and the input no longer names the current revision.
+every step is idempotent: images
 are content-addressed, the backup resumes from its receipt under
 `/var/backups/nexus/r2/<sha>/`, `alembic upgrade head` is a no-op at head, and
 `up --wait` converges. Nothing has to be unwound first.

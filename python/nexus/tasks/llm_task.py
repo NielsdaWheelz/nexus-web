@@ -50,7 +50,8 @@ def run_llm_task[R](
             trust_env=False,
         ) as http_client:
             tools = compose_tool_runtime(
-                compose_configured_web_search_provider(http_client, settings=settings)
+                compose_configured_web_search_provider(http_client, settings=settings),
+                embedding_available=bool(settings.openai_api_key),
             )
             return await handler(
                 db,

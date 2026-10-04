@@ -10,16 +10,16 @@ from datetime import UTC, datetime
 from typing import Literal, cast
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.engine import RowMapping
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from nexus.auth.permissions import (
     can_read_media,
     non_system_media_ref_exists_sql,
     visible_media_ids_cte_sql,
 )
-from nexus.db.models import MediaKind, TranscriptCoverage, TranscriptState
+from nexus.db.models import Media, MediaKind, TranscriptCoverage, TranscriptState
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
@@ -34,6 +34,7 @@ from nexus.schemas.media import (
     SourceProgress,
 )
 from nexus.schemas.media_summary import MediaDurationOut, MediaProcessingStatus, MediaSummaryOut
+from nexus.schemas.metadata_enrichment import MetadataEnrichmentView, MetadataRetry
 from nexus.schemas.presence import (
     Absent,
     Presence,
@@ -62,6 +63,7 @@ from nexus.services.media_source_ingest import (
     source_recovery,
     source_repairable_sql,
 )
+from nexus.services.metadata_operations import metadata_enrichment_views
 from nexus.services.offline_download_source import (
     derive_offline_download_source,
     derive_offline_download_title,
@@ -159,6 +161,8 @@ _SELECT_EXPRESSIONS: dict[str, str] = {
     "kind": "m.kind",
     "title": "m.title",
     "canonical_source_url": "m.canonical_source_url",
+    "requested_url": "m.requested_url",
+    "canonical_url": "m.canonical_url",
     "external_playback_url": "m.external_playback_url",
     "persisted_processing_status": "m.processing_status",
     # A repairable latest source attempt displays as suspended whatever the row says.
@@ -215,6 +219,8 @@ _COLLECTION_ALIASES = tuple(
         "failure_stage",
         "provider",
         "provider_id",
+        "requested_url",
+        "canonical_url",
         "updated_at",
         "edition_published_date",
         "edition_isbn",
@@ -313,6 +319,7 @@ class CollectionMedia:
     audio_playable: bool
     has_original_file: bool
     capabilities: CollectionMediaCapabilities
+    metadata_retry: MetadataRetry
     recovery: Presence[MediaRecoveryOffer]
     """The offer the viewer's own authority yields."""
     applicable_recovery: Presence[MediaRecoveryOffer]
@@ -513,6 +520,7 @@ def list_collection_media_for_viewer_by_ids(
         ],
     )
 
+    metadata_views = _metadata_views(db, viewer_id=viewer_id, media_ids=visible_ids)
     collection: list[CollectionMedia] = []
     for media_id in visible_ids:
         row = row_by_media_id[media_id]
@@ -538,6 +546,7 @@ def list_collection_media_for_viewer_by_ids(
                 source_refresh_available=bool(row["source_refresh_available"]),
                 source_recovery=source,
                 search_recovery=search,
+                metadata_retry=metadata_views[media_id].retry,
             )
             for actor, (source, search) in zip((is_creator, True), answers, strict=True)
         ]
@@ -587,9 +596,13 @@ def list_collection_media_for_viewer_by_ids(
                     can_edit_authors=viewer_caps.can_edit_authors,
                     can_delete=viewer_caps.can_delete,
                     refresh_source_applicable=applicable_caps.can_refresh_source,
-                    retry_metadata_applicable=applicable_caps.can_retry_metadata,
+                    # Research eligibility may change while an admitted request
+                    # still needs receipt confirmation. The retry answer owns
+                    # eligibility; every supported media retains its capability.
+                    retry_metadata_applicable=True,
                     edit_authors_applicable=applicable_caps.can_edit_authors,
                 ),
+                metadata_retry=metadata_views[media_id].retry,
                 recovery=_recovery_offer(*answers[0]),
                 applicable_recovery=_recovery_offer(*answers[1]),
                 created_at=cast(datetime, row["created_at"]),
@@ -628,6 +641,25 @@ def _load_chapters(
             PodcastEpisodeChapterOut.model_validate(dict(row))
         )
     return chapters
+
+
+def _metadata_views(
+    db: Session, *, viewer_id: UUID, media_ids: Sequence[UUID]
+) -> dict[UUID, MetadataEnrichmentView]:
+    items = db.scalars(
+        select(Media)
+        .options(
+            load_only(
+                Media.id,
+                Media.kind,
+                Media.processing_status,
+                Media.created_by_user_id,
+                Media.metadata_enriched_at,
+            )
+        )
+        .where(Media.id.in_(media_ids))
+    ).all()
+    return metadata_enrichment_views(db, viewer_id=viewer_id, media=items)
 
 
 def _hydrate_media_out(
@@ -678,6 +710,7 @@ def _hydrate_media_out(
         else {}
     )
 
+    metadata_views = _metadata_views(db, viewer_id=viewer_id, media_ids=media_ids)
     media_list: list[MediaOut] = []
     for media_id, row in zip(media_ids, rows, strict=True):
         kind_value = _status_to_str(row["kind"])
@@ -694,6 +727,10 @@ def _hydrate_media_out(
                 kind=MediaKind(kind_value),
                 title=str(row["title"]),
                 canonical_source_url=row["canonical_source_url"],
+                provider=presence_from_nullable(row["provider"]),
+                provider_id=presence_from_nullable(row["provider_id"]),
+                requested_url=presence_from_nullable(row["requested_url"]),
+                canonical_url=presence_from_nullable(row["canonical_url"]),
                 processing_status=cast(
                     "MediaProcessingStatus", _status_to_str(row["processing_status"])
                 ),
@@ -737,6 +774,7 @@ def _hydrate_media_out(
                     source_refresh_available=bool(row["source_refresh_available"]),
                     source_recovery=source_answer,
                     search_recovery=search_answer,
+                    metadata_retry=metadata_views[media_id].retry,
                 ),
                 document_embed_summary=embed_summaries.get(media_id),
                 contributors=contributors_by_media.get(media_id, []),
@@ -751,6 +789,7 @@ def _hydrate_media_out(
                 description_html=row["podcast_description_html"],
                 description_text=row["podcast_description_text"],
                 metadata_enriched_at=row["metadata_enriched_at"],
+                metadata_enrichment=metadata_views[media_id],
                 read_state=read_state.state,
                 progress_fraction=read_state.progress_fraction,
                 progress_resettable=read_state.progress_resettable,

@@ -30,6 +30,7 @@ from nexus.schemas.conversation import (
 )
 from nexus.schemas.execution import ChatRunExecutionOut, DurableExecutionOut
 from nexus.schemas.media import MediaProcessingSnapshotOut
+from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.oracle import (
     OracleBindEventPayload,
     OracleCompleteDoneEventPayload,
@@ -47,6 +48,7 @@ from nexus.schemas.podcast import PodcastSubscriptionLifecycleSnapshotOut
 # path strips their audit fields, so no model is the wire).
 SSE_PAYLOADS_BY_NAME = (
     MediaProcessingSnapshotOut,
+    MetadataEnrichmentView,
     ChatRunMetaEventPayload,
     ChatRunAssistantActivityEventPayload,
     ChatRunAssistantTextDeltaEventPayload,

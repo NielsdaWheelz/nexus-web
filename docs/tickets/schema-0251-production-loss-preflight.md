@@ -2,6 +2,22 @@
 
 status: open; release preflight unverified · origin: 2026-09-28 pr #413 (`0de14e39a`) · area: schema migration
 
+2026-10-03 preparation: actual `0241` production archive restored locally;
+owner-populated clone ran the complete transaction through `0250`, with its
+loss inventory captured before `0251`. target `617baf70e`. private evidence:
+`/private/tmp/nexus-metadata-release-uy48cjy2/actual-0241-loss-inventory.json`
+and `pre-0251-loss-inventory.json`. these are restored-copy counts, not final
+drained-release authorization or post-production repair receipts.
+
+non-null losses include 711,008 evidence-span block pointers/offsets; 15,792
+epub source rows' manifest/linear/media-type/order fields; 785 normalized credit
+names; 473 source request ids, 573 run counts and 569 start times; 751 processing
+attempt counts and 523 completion times; 502 atlas projection versions and
+87 oracle resolution times. the pdf text-anchor table is empty. the single old
+chat prompt is removed by `0246` before `0251`; original values remain in the
+verified preliminary archive. owner review and the final drained backup/restore
+remain required; this ticket stays open.
+
 `migrations/alembic/versions/0251_drop_write_only_schema.py:26-80`
 irreversibly drops `highlight_pdf_text_anchors`, 39 columns including the
 chat prompt manifest, and stored reindex `request_id` values. pr #413 proved

@@ -67,7 +67,7 @@ from nexus.schemas.media import (
     SourceRetryAdmission,
 )
 from nexus.schemas.media_summary import MediaProcessingStatus
-from nexus.schemas.presence import Presence, absent, present
+from nexus.schemas.presence import Presence, Present, absent, present
 from nexus.services import library_entries, library_governance
 from nexus.services import media_source_types as source_types
 from nexus.services.capabilities import (
@@ -2101,12 +2101,13 @@ def _run_fenced_attempt(
     if attempt.created_by_user_id is not None and outcome.metadata_enrichment:
         post_success_db = session_factory()
         try:
-            if try_enqueue_metadata_enrichment(
+            metadata_job = try_enqueue_metadata_enrichment(
                 post_success_db,
                 media_id=terminal_media_id,
                 requester_user_id=attempt.created_by_user_id,
                 request_id=request_id,
-            ):
+            )
+            if isinstance(metadata_job, Present):
                 post_success_db.commit()
         finally:
             post_success_db.close()

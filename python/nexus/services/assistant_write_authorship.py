@@ -1,4 +1,4 @@
-"""Durable machine-authorship owner for additive Chat write targets.
+"""Durable machine-authorship owner for additive assistant-write targets.
 
 One normalized association links each concrete created target to the canonical
 generation tool position that owns its stable effect identity.  The association
@@ -50,15 +50,16 @@ _ALLOWED_TARGETS_BY_TOOL: dict[str, frozenset[MachineAuthorshipTargetKind]] = {
 def persist_assistant_write_authorships(
     db: Session,
     *,
-    viewer_id: UUID,
-    tool_call_id: UUID,
     position: ToolPositionRecord,
     created_refs: Sequence[Mapping[str, object]],
 ) -> tuple[MachineAuthorshipOut, ...]:
     """Stage exact target associations in the write's terminal transaction."""
 
-    expected_effect_identity = _expected_effect_identity(position)
-    if position.effect_identity != expected_effect_identity:
+    if position.effect_identity != {
+        "effect_id": str(position.id),
+        "generation_id": str(position.generation_id),
+        "position_path": position.path,
+    }:
         raise AssertionError("assistant write position lacks its exact stable effect identity")
     if position.canonical_tool_id not in _ALLOWED_TARGETS_BY_TOOL:
         raise AssertionError("machine authorship received a non-write tool position")
@@ -238,14 +239,6 @@ def _machine_authorship_out(
         position_path=f"generation/{authorship.generation_seq}/tool/{authorship.tool_position}",
         effect_id=authorship.tool_position_id,
     )
-
-
-def _expected_effect_identity(position: ToolPositionRecord) -> dict[str, object]:
-    return {
-        "effect_id": str(position.id),
-        "generation_id": str(position.generation_id),
-        "position_path": position.path,
-    }
 
 
 def _authorship_id(

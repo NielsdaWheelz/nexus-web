@@ -14,11 +14,16 @@ from nexus.config import get_settings
 from nexus.jobs.dead_letter_projections import DeadLetterProjection
 from nexus.jobs.history_projections import HistoryProjection
 from nexus.jobs.process_executor import ChildRuntime
-from nexus.jobs.queue import JobExecutionContext, JobResourceClass, RescheduleRequested
+from nexus.jobs.queue import (
+    JobExecutionContext,
+    JobResourceClass,
+    RescheduleRequested,
+    TerminalJobFailure,
+)
 from nexus.services.podcasts.types import PODCAST_SYNC_JOB_LEASE_SECONDS
 
 type Payload = Mapping[str, Any]
-type JobResult = Mapping[str, Any] | RescheduleRequested | None
+type JobResult = Mapping[str, Any] | RescheduleRequested | TerminalJobFailure | None
 type ResourceFailureProjection = Literal["Job", "SourceAttemptMedia"]
 JobHandler = Callable[..., JobResult]
 Context = JobExecutionContext
@@ -46,6 +51,7 @@ class JobDefinition:
     # Dead rows of this kind are never pruned: a failed import, teardown, chat
     # run or dossier stays operator-discoverable and requeueable.
     never_prune_dead: bool = False
+    never_prune_succeeded: bool = False
 
 
 def get_default_registry() -> dict[str, JobDefinition]:
@@ -107,6 +113,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             retry_delays_seconds=(0,),
             lease_seconds=300,
             never_prune_dead=True,
+            never_prune_succeeded=True,
         ),
         "chat_run": JobDefinition(
             kind="chat_run",

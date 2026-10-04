@@ -714,10 +714,3 @@ export async function refreshMediaSource(mediaId: string): Promise<void> {
   );
   publishImportsInvalidation();
 }
-
-export async function retryMediaMetadata(mediaId: string): Promise<void> {
-  await apiFetch<unknown>(`/api/media/${encodeURIComponent(mediaId)}/retry`, {
-    method: "POST",
-    body: JSON.stringify({ from_stage: "metadata" }),
-  });
-}

@@ -84,6 +84,9 @@ kind is a frozen `JobDefinition`:
   periodic exception at priority -1000. The priority is stamped when a slot is
   enqueued, so a change applies to newly scheduled slots only.
 - `failed_result_statuses` — see the gotcha below.
+- `never_prune_dead`, `never_prune_succeeded` — terminal retention policy.
+  metadata retains both states so an older failure cannot become latest after
+  ordinary success pruning; it uses existing jobs as its inspectable history.
 - `dead_letter_projection` — a member of the closed `DeadLetterProjection` union
   applied once retries are exhausted; a projection may finalize domain state,
   project suspension, or only record safe diagnostics according to that kind's
@@ -141,7 +144,8 @@ Five kinds declare a projection:
   subscription epoch, generation, job, and attempt before marking the subscription
   Failed.
 
-Every other kind declares `"None"`; its failure is recorded on its own domain row.
+every other kind declares `"None"`; its owner records the failure on its domain
+row or in its retained job outcome.
 
 ### The `failed_result_statuses` gotcha
 
@@ -152,6 +156,16 @@ failure is recorded on the domain row (e.g. `media`), and recovery relies on the
 stale reconciler plus manual API retry, not queue-level retries. This is
 deliberate: a handler that completed its work and recorded a domain failure has
 not crashed, so re-running it would be wasteful.
+
+metadata instead returns `TerminalJobFailure(result_payload, error_code,
+error_message)` for a known unsuccessful result. the worker recognizes it before
+mapping conversion, calls `fail_job(force_dead=True)` under the live claim and
+runs the ordinary history/dead-letter hooks once. the bounded-child protocol
+preserves the same result. no-findings, invalid output and terminal research
+failures therefore settle `dead` without retrying a completed provider call.
+accepted findings settle `succeeded`; known retryable pre-submission failures and
+waits retain ordinary queue semantics. provider success is not domain success.
+see [media-metadata.md](media-metadata.md).
 
 Chat hard-cuts this generic convention at its task boundary:
 `execute_chat_run` returns a closed `Published | Degraded | Failed | Cancelled |
@@ -189,7 +203,7 @@ globally while leaving eligible Light work claimable. Domain handlers never
 touch capacity state.
 
 Metadata enrichment runs in the interactive worker alongside Chat and Dossier.
-Its remote generation and scoped reads do not occupy the parser capacity slot
+its remote generation and generation-owner tools do not occupy the parser capacity slot
 once an eligible route is approved. It shares the interactive process's
 memory boundary and serial job execution: an admitted metadata run can delay
 Chat for its 300-second generation budget plus bounded setup and drain.
@@ -286,8 +300,11 @@ decoder. Model, effort, capability, timeouts, and stream bounds come from
 `generation_policy.py`. `enrich_metadata` now uses this same command, client,
 journal, and `llm_calls` path.
 
-metadata research uses the scoped `MetadataRead` plan and an explicit requester;
-see [media metadata](media-metadata.md) for date ownership and maintenance.
+metadata research uses an explicit requester and the generation owner's admitted
+codex authority. its research prompt requests four read/search tools; prompt
+instructions do not narrow the current account-wide codex shell grant. see
+[media metadata](media-metadata.md) for domain acceptance, date ownership and
+source-only maintenance.
 
 `dossier_build` is one generic kind for Media, Conversation, Library, Podcast,
 Contributor, Page, Note, and internal Idea subjects. Its immutable registration

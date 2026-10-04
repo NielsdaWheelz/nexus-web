@@ -33,6 +33,7 @@ from nexus.jobs.queue import (
     RescheduleSchedule,
     ScheduleAfter,
     ScheduleAt,
+    TerminalJobFailure,
 )
 from nexus.logging import get_logger
 
@@ -126,6 +127,13 @@ class ChildReschedule:
 
 
 @dataclass(frozen=True, slots=True)
+class ChildTerminalFailure:
+    result_payload: dict[str, Any]
+    error_code: str
+    error_message: str
+
+
+@dataclass(frozen=True, slots=True)
 class ChildModeledFailure:
     error_code: str
     message: str
@@ -168,6 +176,7 @@ class ChildClaimLost:
 type ChildExecutionResult = (
     ChildSucceeded
     | ChildReschedule
+    | ChildTerminalFailure
     | ChildModeledFailure
     | ChildDefect
     | ChildResourceFailure
@@ -391,6 +400,12 @@ def _decode_result(encoded: bytes) -> ChildExecutionResult:
                 ),
                 payload=value["payload"],
             )
+        case "TerminalFailure":
+            return ChildTerminalFailure(
+                result_payload=dict(value["result_payload"]),
+                error_code=str(value["error_code"]),
+                error_message=str(value["error_message"]),
+            )
         case "ModeledFailure":
             return ChildModeledFailure(
                 error_code=str(value["error_code"]),
@@ -403,9 +418,16 @@ def _decode_result(encoded: bytes) -> ChildExecutionResult:
 
 
 def _encode_handler_result(
-    result: Mapping[str, Any] | RescheduleRequested | None,
+    result: Mapping[str, Any] | RescheduleRequested | TerminalJobFailure | None,
 ) -> dict[str, Any]:
     """Encode one handler return value for the result channel."""
+    if isinstance(result, TerminalJobFailure):
+        return {
+            "kind": "TerminalFailure",
+            "result_payload": dict(result.result_payload),
+            "error_code": result.error_code,
+            "error_message": result.error_message,
+        }
     if isinstance(result, RescheduleRequested):
         schedule = result.schedule
         return {
@@ -429,8 +451,8 @@ def _encode_handler_result(
 def _modeled_failure(exc: Exception) -> dict[str, Any] | None:
     """Project only an owned, closed-code domain failure across the child boundary.
 
-    Anything else is a defect, so ``background_jobs.error_code`` can only ever
-    hold a member of the closed ``ApiErrorCode`` space.
+    Other raised exceptions are defects. A handler's normal terminal-failure
+    result instead carries the owning job's explicit bookkeeping code.
     """
     if not isinstance(exc, ApiError) or not isinstance(exc.code, ApiErrorCode):
         return None

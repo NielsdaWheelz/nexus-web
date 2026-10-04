@@ -10,6 +10,7 @@ import {
   type SetStateAction,
 } from "react";
 import { useResource } from "@/lib/api/useResource";
+import { ApiError } from "@/lib/api/client";
 import {
   useReaderProgress,
   type ComposedProgressAuthority,
@@ -36,6 +37,9 @@ type SessionProgressOptions = Omit<
 
 export interface DocumentReaderSessionComposition {
   readonly reload: () => void;
+  readonly refreshPublication: (signal: AbortSignal) => Promise<void>;
+  /** Mounted content identity; verified metadata changes preserve positions. */
+  readonly contentGeneration: number | null;
   readonly progress: ReaderProgress;
   readonly navigation: ReaderResource<ReaderNavigation>;
   readonly textDocument: ReaderResource<ReaderTextDocument>;
@@ -153,8 +157,21 @@ export function useDocumentReaderSession({
     cacheKey: navigationRefreshKey,
     load: (signal) => session.loadNavigation(signal),
   });
-  const currentNavigation =
+  const [publication, setPublication] = useState<{
+    session: DocumentReaderSession;
+    loadAttempt: number;
+    navigationKey: string | null;
+    navigation: ReaderNavigation;
+    contentGeneration: number;
+    fragment: EpubFragmentContent | null;
+  } | null>(null);
+  const retainedPublication = publication?.session === session
+    && publication.loadAttempt === loadAttempt && publication.navigationKey === navigation.cacheKey
+      ? publication : null;
+  const baseNavigation =
     navigationRefreshKey === null ? navigationResource : refreshedNavigation;
+  const currentNavigation = useMemo<ReaderResource<ReaderNavigation>>(() => retainedPublication
+    ? { status: "ready", data: retainedPublication.navigation } : baseNavigation, [baseNavigation, retainedPublication]);
 
   const [loadedEpubFragment, setActiveEpubFragment] =
     useState<EpubFragmentContent | null>(null);
@@ -173,7 +190,9 @@ export function useDocumentReaderSession({
       : null;
   const epubFragmentInitial = useMemo(
     () =>
-      initial.status === "ready" &&
+      retainedPublication?.fragment?.fragment_id === epubFragmentId
+        ? { status: "ready" as const, data: retainedPublication.fragment }
+        : initial.status === "ready" &&
       initial.data.document.kind === "Epub" &&
       currentNavigation.status === "ready" &&
       initial.data.document.fragment.generation === currentNavigation.data.generation &&
@@ -182,7 +201,7 @@ export function useDocumentReaderSession({
       initial.data.document.fragment.fragment_id === epubFragmentId
         ? ({ status: "ready", data: initial.data.document.fragment } as const)
         : null,
-    [currentNavigation, epubFragmentId, epubSourceGeneration, initial],
+    [currentNavigation, epubFragmentId, epubSourceGeneration, initial, retainedPublication],
   );
   const epubFragmentFetch = useResource<EpubFragmentContent>({
     cacheKey:
@@ -280,8 +299,54 @@ export function useDocumentReaderSession({
     [initial, retryLoad],
   );
 
+  const contentGeneration = retainedPublication?.contentGeneration ?? (currentNavigation.status === "ready" ? currentNavigation.data.generation : null);
+  const publicationStateRef = useRef({ session, currentNavigation, contentGeneration, textDocumentResource, activeEpubFragment, loadAttempt, navigationKey: navigation.cacheKey });
+  publicationStateRef.current = { session, currentNavigation, contentGeneration, textDocumentResource, activeEpubFragment, loadAttempt, navigationKey: navigation.cacheKey };
+  const refreshPublication = useCallback(async (signal: AbortSignal): Promise<void> => {
+    const before = publicationStateRef.current;
+    if (before.currentNavigation.status !== "ready") {
+      throw new ApiError(409, "E_READER_CONTENT_CHANGED", "Reader publication is not ready to refresh.");
+    }
+    const previous = before.currentNavigation.data;
+    const fresh = await session.loadPublicationRefresh(before.activeEpubFragment
+      ? { kind: "Present", value: before.activeEpubFragment.fragment_id } : { kind: "Absent" }, previous.generation, signal);
+    const current = publicationStateRef.current;
+    if (signal.aborted) return;
+    if (current.session !== session || current.currentNavigation !== before.currentNavigation
+      || current.activeEpubFragment !== before.activeEpubFragment) {
+      throw new ApiError(409, "E_READER_CONTENT_CHANGED", "The active reader changed while refreshing. Retry metadata reload.");
+    }
+    if (fresh.navigation.generation === previous.generation) return;
+    const { generation: previousGeneration, ...previousStructure } = previous;
+    const { generation: freshGeneration, ...freshStructure } = fresh.navigation;
+    let unchanged = JSON.stringify(previousStructure) === JSON.stringify(freshStructure);
+    if (previous.kind === "web_article") {
+      unchanged = unchanged && before.textDocumentResource.status === "ready" && fresh.textDocument.kind === "Present"
+        && JSON.stringify(before.textDocumentResource.data) === JSON.stringify(fresh.textDocument.value);
+    } else {
+      if (!before.activeEpubFragment || fresh.epubFragment.kind !== "Present") unchanged = false;
+      else {
+        const { generation: previousFragmentGeneration, ...previousContent } = before.activeEpubFragment;
+        const { generation: freshFragmentGeneration, ...freshContent } = fresh.epubFragment.value;
+        unchanged = unchanged && previousFragmentGeneration === previousGeneration && freshFragmentGeneration === freshGeneration
+          && JSON.stringify(previousContent) === JSON.stringify(freshContent);
+      }
+    }
+    if (!unchanged) { retryLoad(); return; }
+    // Actual byte/anchor equality was proven under one generation. Preserve
+    // array and DOM identity; only publication attestation advances here.
+    const fragment = fresh.epubFragment.kind === "Present" && before.activeEpubFragment
+      ? { ...before.activeEpubFragment, generation: freshGeneration } : null;
+    if (fragment) setActiveEpubFragment(fragment);
+    setPublication({ session, loadAttempt: before.loadAttempt, navigationKey: before.navigationKey,
+      contentGeneration: before.contentGeneration ?? previousGeneration,
+      navigation: { ...previous, generation: freshGeneration }, fragment });
+  }, [session, retryLoad]);
+
   return {
     reload: retryLoad,
+    refreshPublication,
+    contentGeneration,
     initial,
     progress: readerProgress,
     navigation: currentNavigation,

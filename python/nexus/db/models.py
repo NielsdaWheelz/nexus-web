@@ -60,16 +60,13 @@ class ProcessingStatus(str, PyEnum):
 class FailureStage(str, PyEnum):
     """Stage at which processing failed.
 
-    Used to determine reset behavior on retry. `metadata` is a soft warning
-    set by enrich_metadata; it coexists with readable media
-    rather than implying a terminal failure.
+    Metadata research has its own background operation outcomes.
     """
 
     upload = "upload"
     extract = "extract"
     transcribe = "transcribe"
     embed = "embed"
-    metadata = "metadata"
     other = "other"
 
 
@@ -1440,6 +1437,8 @@ class PodcastEpisode(Base):
     description_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     description_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     rss_transcript_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Unknown until a real feed observation; enriched Media values cannot seed it.
+    rss_metadata_fingerprint: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -2129,6 +2128,33 @@ class MessageToolCall(Base):
     )
 
 
+class GenerationEffectReceipt(Base):
+    """Completed additive-write facts independent of resettable LLM history.
+
+    ``id`` is the original canonical position/effect UUID. Generation and owner
+    identities are audit facts, not foreign keys to disposable history. Undo
+    changes only ``reverted_at``; the original identity and result stay intact.
+    """
+
+    __tablename__ = "generation_effect_receipts"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    principal_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    owner_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    generation_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    generation_seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    tool_position: Mapped[int] = mapped_column(Integer, nullable=False)
+    canonical_tool_id: Mapped[str] = mapped_column(Text, nullable=False)
+    effect_identity: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    result_evidence: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    reverted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+
 class AssistantWriteAuthorship(Base):
     """Durable machine authorship for one concrete additive-write target.
 
@@ -2143,6 +2169,7 @@ class AssistantWriteAuthorship(Base):
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
     tool_position_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
+        ForeignKey("generation_effect_receipts.id"),
         nullable=False,
     )
     generation_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)

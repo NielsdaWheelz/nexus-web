@@ -46,24 +46,23 @@ authority. owner scope, eight-live-write limit, receipts, and undo remain
 enforced. historical read-only runs retain their frozen facts.
 canonical ids are the only executable identities.
 
-api models receive the frozen plan as provider functions and call the
-`GenerationToolExecutor` with its authorization, position ledger, evidence,
-citations, trust, and undo. codex instead runs an isolated native shell with
-public internet and a private, authenticated generation api. every codex run,
-including background work, receives the same frozen account-wide api profile;
-the chat context and operation prompt do not narrow that grant. nexus records
-and can undo its domain-api writes, but shell and public-network effects are
-outside that ledger. there is no exact model-visible native tool grant. see
-[the shell authority contract](../codex-shell-cutover-plan.md). the sole
-position path for provider functions is `generation/{generation_seq}/tool/{n}`;
-its one-based ordinal never restarts at an api child turn.
+api models receive the frozen plan as `ProviderFunctions`; codex receives it as
+`CodexCallbacks`. both use the same `GenerationToolExecutor`, principal, scope,
+position ledger, evidence, citations, trust, and undo. host-owned authentication
+and the shared native adapter do not broaden the operation grant. see
+[backend composition](llms.md#backend-composition). provider-function positions
+use `generation/{generation_seq}/tool/{n}`; their one-based ordinal never
+restarts at an api child turn.
 
 Completed child calls and tool positions are replay input, never cache hints.
 An accepted ambiguous model call, external read, or write is never blindly
 redispatched. Operator reconciliation or user cancellation acts on the same
 run; neither creates a compatibility run. Code defects emit no `done`.
-Conversation deletion deletes every owned Chat job and post-cutover generation
-row.
+conversation deletion removes its chat projections and queue owners. completed
+write receipts and target authorship survive independently of generation
+history. account settings lists all owned completed assistant writes, including
+failed attempts and successes that created no items. only successful writes
+with created items offer undo; chat and account settings share the same owner.
 
 `ChatRunOut.execution` and trust-run `execution` are required `Presence` values.
 nonterminal runs project `Queued | Running | Recovering | Suspended` plus

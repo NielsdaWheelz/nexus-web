@@ -18,6 +18,11 @@ def prune_background_jobs_job(request_id: str) -> dict[str, int]:
         for definition in get_default_registry().values()
         if definition.never_prune_dead
     }
+    excluded_succeeded_kinds = {
+        definition.kind
+        for definition in get_default_registry().values()
+        if definition.never_prune_succeeded
+    }
 
     session_factory = get_session_factory()
     with session_factory() as db:
@@ -27,6 +32,7 @@ def prune_background_jobs_job(request_id: str) -> dict[str, int]:
             dead_after_days=settings.background_job_prune_dead_after_days,
             limit=settings.background_job_prune_batch_size,
             excluded_dead_kinds=excluded_dead_kinds,
+            excluded_succeeded_kinds=excluded_succeeded_kinds,
         )
         db.commit()
 

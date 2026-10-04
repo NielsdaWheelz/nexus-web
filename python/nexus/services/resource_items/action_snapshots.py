@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
+from nexus.schemas.metadata_enrichment import MetadataRetryAllowed
 from nexus.schemas.offline_reading_package import OFFLINE_READING_MAX_TITLE_CODEPOINTS
 from nexus.schemas.presence import Present
 from nexus.schemas.resource_action_snapshots import (
@@ -50,6 +51,7 @@ from nexus.schemas.resource_action_snapshots import (
     ResourceActionCapabilityOut,
     ResourceActionSnapshotOut,
     ResourceActionSnapshotResolveResponse,
+    RetryMetadataResourceActionCapabilityOut,
     RetrySourceOfferOut,
     ServerActionAvailabilityAvailableOut,
     ServerActionAvailabilityBlockedOut,
@@ -568,7 +570,25 @@ def _extend_media(
     if ops.refresh_source_applicable:
         capabilities.append(_simple("RefreshSource", _authorized(ops.can_refresh_source)))
     if ops.retry_metadata_applicable:
-        capabilities.append(_simple("RetryMetadata", _authorized(ops.can_retry_metadata)))
+        retry = media.metadata_retry
+        availability = (
+            _available()
+            if isinstance(retry, MetadataRetryAllowed)
+            else _blocked(
+                cast(
+                    _BlockReason,
+                    {
+                        "not_creator": "PermissionDenied",
+                        "not_eligible": "TemporarilyUnavailable",
+                        "active": "Processing",
+                        "uncertain": "Locked",
+                    }[retry.reason],
+                )
+            )
+        )
+        capabilities.append(
+            RetryMetadataResourceActionCapabilityOut(availability=availability, retry=retry)
+        )
     if ops.edit_authors_applicable:
         capabilities.append(_simple("EditAuthors", _authorized(ops.can_edit_authors)))
     capabilities.append(_simple("RemoveMedia", _authorized(ops.can_delete)))

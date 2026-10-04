@@ -186,22 +186,23 @@ export async function retrySourceImport({
   readonly expectedAttemptId: string;
   readonly clientMutationId: string;
 }): Promise<SourceAdmission> {
-  const body = await apiFetch<unknown>(
+  const request: Schema<"RetrySourceRequest"> = {
+    from_stage: "source",
+    client_mutation_id: clientMutationId,
+    expected_attempt_id: expectedAttemptId,
+  };
+  const response = await apiFetch<ApiJson<"/media/{media_id}/retry", "post">>(
     `/api/media/${encodeURIComponent(mediaId)}/retry`,
     {
       method: "POST",
-      body: JSON.stringify({
-        from_stage: "source",
-        client_mutation_id: clientMutationId,
-        expected_attempt_id: expectedAttemptId,
-      }),
+      body: JSON.stringify(request),
     },
   );
-  return decodeApiPayload(
-    body,
-    (payload) => decodeSourceAdmission(payload, "SourceRetry"),
-    "POST /api/media/:id/retry",
-  );
+  return {
+    mediaId: response.data.media_id,
+    sourceAttemptId: response.data.source_attempt_id,
+    jobId: response.data.job_id,
+  };
 }
 
 export async function repairSourceImport({

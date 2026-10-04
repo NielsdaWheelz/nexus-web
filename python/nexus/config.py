@@ -397,11 +397,10 @@ class Settings(BaseSettings):
         alias="TRANSCRIPT_EMBEDDING_DIMENSIONS",
     )
 
-    # Metadata enrichment settings. The generation-host wire input-byte invariant
-    # is owned solely by build_enrichment_user_content's byte clamp; this cap
-    # only sizes the sampled text.
-    metadata_enrichment_max_content_chars: int = Field(
-        default=2000, alias="METADATA_ENRICHMENT_MAX_CONTENT_CHARS", ge=1
+    # Metadata input bytes and raw source reads are bounded by the research owner.
+    # This setting only reduces the normalized opening passage's word allowance.
+    metadata_enrichment_max_content_words: int = Field(
+        default=1000, alias="METADATA_ENRICHMENT_MAX_CONTENT_WORDS", ge=1, le=1000
     )
     codex_native_socket: Path = Field(
         default=Path("/tmp/codex-daemon-10001/app-server.sock"),

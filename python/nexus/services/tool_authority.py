@@ -686,6 +686,17 @@ class ToolPositionRecorder:
                 row.completed_at = func.now()
                 self.db.flush()
                 record = _position_record(row, generation_seq=self.authority.generation_seq)
+                if record.effect_identity is not None:
+                    from nexus.services.generation_effects import (
+                        persist_generation_effect_receipt_in_current_transaction,
+                    )
+
+                    persist_generation_effect_receipt_in_current_transaction(
+                        self.db,
+                        principal_user_id=self.authority.user_id,
+                        owner=self.authority.owner,
+                        position=record,
+                    )
                 if self.authority.projection is not None:
                     self.authority.projection.stage_terminal(
                         self.db,
@@ -693,18 +704,6 @@ class ToolPositionRecorder:
                         position=record,
                         result=result,
                         audit=self.audit,
-                    )
-                elif result["type"] == "Success" and record.effect_identity is not None:
-                    from nexus.services.assistant_write_authorship import (
-                        persist_assistant_write_authorships,
-                    )
-
-                    persist_assistant_write_authorships(
-                        self.db,
-                        viewer_id=self.authority.user_id,
-                        tool_call_id=record.id,
-                        position=record,
-                        created_refs=self.audit.created_refs,
                     )
                 self.position_record = record
                 # Handler-owned domain effects, the canonical terminal receipt, and

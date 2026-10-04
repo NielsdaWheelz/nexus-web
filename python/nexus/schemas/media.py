@@ -4,16 +4,18 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, FiniteFloat, model_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, model_validator
 from pydantic.alias_generators import to_camel
 
 from nexus.db.models import MediaKind
 from nexus.db.models import TranscriptCoverage as MediaTranscriptCoverage
 from nexus.db.models import TranscriptState as MediaTranscriptState
+from nexus.schemas.client_mutation import ClientMutationUuidText
 from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.media_summary import MediaDurationOut, MediaProcessingStatus
+from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.presence import Presence, Present
 from nexus.schemas.publication_dates import PublicationDate
 from nexus.schemas.source_issues import SourceIssue
@@ -35,6 +37,10 @@ _CAMEL_CONFIG = ConfigDict(alias_generator=to_camel, populate_by_name=True, extr
 
 MediaSourceAttemptStatus = Literal["accepted", "queued", "running", "succeeded", "failed"]
 MediaReadState = Literal["unread", "in_progress", "finished"]
+TranscriptState = Literal[
+    "not_requested", "queued", "running", "ready", "partial", "unavailable", "failed_provider"
+]
+TranscriptCoverage = Literal["none", "partial", "full"]
 
 
 class CapabilitiesOut(BaseModel):
@@ -241,6 +247,10 @@ class MediaOut(BaseModel):
     kind: MediaKind
     title: str
     canonical_source_url: str | None
+    provider: Presence[str]
+    provider_id: Presence[str]
+    requested_url: Presence[str]
+    canonical_url: Presence[str]
     processing_status: MediaProcessingStatus
     source_progress: Presence[SourceProgress]
     transcript_state: MediaTranscriptState | None
@@ -267,6 +277,7 @@ class MediaOut(BaseModel):
     description_html: str | None
     description_text: str | None
     metadata_enriched_at: datetime | None
+    metadata_enrichment: MetadataEnrichmentView
     read_state: MediaReadState | None
     progress_fraction: float | None = Field(ge=0.0, le=1.0)
     progress_resettable: bool
@@ -339,20 +350,6 @@ class FragmentOut(BaseModel):
     model_config = ConfigDict(
         from_attributes=True, json_schema_serialization_defaults_required=True
     )
-
-
-def _canonical_uuid_text(value: str) -> str:
-    """Replay keys are text columns, so only the canonical spelling is a key."""
-    try:
-        parsed = UUID(value)
-    except ValueError as exc:
-        raise ValueError("client_mutation_id must be canonical lowercase UUID text") from exc
-    if str(parsed) != value:
-        raise ValueError("client_mutation_id must be canonical lowercase UUID text")
-    return value
-
-
-ClientMutationUuidText = Annotated[str, AfterValidator(_canonical_uuid_text)]
 
 
 class CreateUploadSessionRequest(_Strict):
@@ -477,17 +474,6 @@ class RetrySourceRequest(_Strict):
     expected_attempt_id: UUID
 
 
-class RetryMetadataRequest(_Strict):
-    """Re-enrich metadata; no idempotency ledger."""
-
-    from_stage: Literal["metadata"]
-
-
-RetryRequest = Annotated[
-    RetrySourceRequest | RetryMetadataRequest, Field(discriminator="from_stage")
-]
-
-
 class SourceRepairRequest(_Strict):
     """Requeue the exact dead job of one nonterminal source attempt."""
 
@@ -539,12 +525,6 @@ TranscriptRequestReason = Literal[
 
 class TranscriptRequestRequest(_Strict):
     reason: TranscriptRequestReason = "episode_open"
-
-
-TranscriptState = Literal[
-    "not_requested", "queued", "running", "ready", "partial", "unavailable", "failed_provider"
-]
-TranscriptCoverage = Literal["none", "partial", "full"]
 
 
 class TranscriptRequestOut(BaseModel):

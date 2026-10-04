@@ -6,8 +6,10 @@ import hashlib
 import re
 import unicodedata
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Final, Literal, NewType, get_args
+
+from nexus.schemas.presence import Presence, absent
 
 ContributorRole = Literal[
     "author",
@@ -126,11 +128,12 @@ class ContributorObservation:
     role: str
     raw_role: str | None
     identity_key: ContributorIdentityKey | None
+    contributor_handle: Presence[ContributorHandle] = field(default_factory=absent)
 
 
 @dataclass(frozen=True, slots=True)
 class ObservedRoleSlices:
-    """A completely-observed set of role slices; each managed role owns 1..20 rows."""
+    """Complete role slices; declared roles own 0..20 credits, omitted roles stay untouched."""
 
     managed_roles: frozenset[str]
     credits: tuple[ContributorObservation, ...]

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Literal
 
-from nexus.schemas.llm import Ready
+from nexus.schemas.llm import OperatorActionRequired, Ready
 from nexus.schemas.presence import Absent, Presence, Present
 from nexus.services.generation_admission import (
     GenerationConfigurationDefect,
@@ -266,7 +267,15 @@ class GenerationService:
 def _require_available_bindings(operation: FrozenToolOperation, *, owner: str) -> None:
     unavailable = unavailable_tool_ids(operation)
     if unavailable:
-        raise GenerationOperationUnavailable(owner, {"unavailable_tools": unavailable})
+        raise GenerationOperationUnavailable(
+            owner,
+            OperatorActionRequired(
+                code="required_tool_unavailable",
+                explanation=f"required tools are unavailable: {', '.join(unavailable)}",
+                action="configure the required tool dependencies and restart nexus",
+                last_checked=datetime.now(UTC),
+            ),
+        )
 
 
 def _validate_host_policy(

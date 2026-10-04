@@ -44,8 +44,8 @@ from nexus.schemas.execution import (
 )
 from nexus.services import chat_runs as chat_runs_service
 from nexus.services import media as media_service
+from nexus.services import metadata_operations, run_kit
 from nexus.services import oracle as oracle_service
-from nexus.services import run_kit
 from nexus.services.artifacts import engine as artifact_engine
 from nexus.services.chat_run_execution import chat_run_execution
 from nexus.services.durable_step_journal import DurableExecutionPhase
@@ -241,6 +241,30 @@ async def stream_media_events(
             listener=listener,
             read_snapshot=lambda: _read_media_snapshot(viewer_id, media_id),
         ),
+        media_type="text/event-stream; charset=utf-8",
+        headers=_SSE_HEADERS,
+    )
+
+
+@router.get("/stream/media/{media_id}/metadata/events")
+async def stream_metadata_events(
+    request: Request,
+    media_id: UUID,
+    viewer_id: Annotated[UUID, Depends(get_stream_viewer)],
+) -> StreamingResponse:
+    await run_in_threadpool(_assert_media_readable, viewer_id, media_id)
+    listener = await open_sse_listener("media_events", str(media_id))
+
+    def snapshot() -> tuple[dict[str, Any], bool]:
+        with get_session_factory()() as db:
+            get_repeatable_read_db(db)
+            view = metadata_operations.metadata_enrichment_for_viewer(
+                db, viewer_id=viewer_id, media_id=media_id
+            )
+            return view.model_dump(mode="json"), False
+
+    return StreamingResponse(
+        tail_snapshot_stream(request=request, listener=listener, read_snapshot=snapshot),
         media_type="text/event-stream; charset=utf-8",
         headers=_SSE_HEADERS,
     )

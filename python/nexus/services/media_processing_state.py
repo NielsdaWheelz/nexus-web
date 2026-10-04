@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import FailureStage, Media, MediaKind, ProcessingStatus
 
-type MediaFailureStage = Literal["upload", "extract", "transcribe", "embed", "metadata", "other"]
+type MediaFailureStage = Literal["upload", "extract", "transcribe", "embed", "other"]
 
 _MEDIA_FAILURE_STAGES = frozenset(stage.value for stage in FailureStage)
 

@@ -1,65 +1,110 @@
 # media metadata
 
-`services/metadata_enrichment.py` owns bibliographic meaning and generated-output
-acceptance. source adapters observe the encountered edition; one scoped metadata
-generation identifies the original work. both write through the existing media
-publication transaction and collection invalidation.
+`services/metadata_enrichment.py` owns bibliographic meaning, bounded input and
+strict generated-output acceptance. `tasks/enrich_metadata.py` composes it with
+the contributor owner and generation service. `services/metadata_operations.py`
+projects the existing jobs; it stores no shadow activity state. the implementation
+contract is [metadata-enrichment-plan.md](../metadata-enrichment-plan.md).
 
-- `original_published_date`: first public publication of the identified work,
-  including serialization. translations and revisions retain the work's date;
-  a collection uses its own first publication.
-- `edition_published_date`: publication of the encountered edition/version.
-- `edition_isbn`: valid isbn-10/13 from epub package metadata, normalized to isbn-13.
+## bibliography
 
-dates preserve year, month, or day precision. source instants become utc calendar
-days. file creation, scanning, fetching, and modification do not establish
-publication. the shared validator lives in `schemas/publication_dates.py`.
+- `original_published_date`: a book's first **book** publication, excluding prior
+  serialization, broadcasts and lectures; a collection's own first book
+  publication; a separately saved essay's first publication, including periodicals.
+  other media use the identified item's first public release.
+- `edition_published_date`: the encountered edition/version's publication.
+- `edition_isbn`: canonical checksum-valid isbn-13. source adapters may normalize
+  isbn-10; generated output must already be canonical.
 
-a valid source observation replaces the edition date; missing or invalid source
-observations leave it alone. an accepted generation replaces both dates, including
-null. failed, stale, or uncertain generation publishes neither. other metadata
-retains its existing merge and manual-author rules.
+translations and reprints retain the work's original date. container format does
+not establish work type. preserve year/month/day precision through
+`schemas/publication_dates.py`; never infer publication from file or acquisition
+times. lists, search, author chronology and recency use the original date without
+an edition fallback. source edition observations retain their own ingestion rules.
 
-the `MetadataRead` plan admits `web.search`, `web.read`, `nexus.document.search`,
-and `nexus.resource.read` for one media resource and its admitted children.
-`requester_user_id` supplies authorization from the successful source attempt,
-podcast sync, retry, or explicit maintenance viewer. execution, replay, budgets,
-and uncertain dispatch remain owned by the shared generation runtime.
-metadata runs as a light job on the interactive worker, which owns the callable
-model-tool listener. parsing and indexing retain the bounded background worker.
-chat has higher queue priority, but waits for an already running metadata turn;
-research retains its 300-second generation limit and existing bounded drain.
-the plan requires the existing brave search configuration; unavailable bindings
-fail admission instead of silently reducing the research capability.
+generated json has exactly eight required nullable fields: title, contributors,
+original date, edition date, edition isbn, publisher, language and description.
+`schemas/metadata_enrichment.py` owns the closed schema. malformed output rejects
+the entire result; there is no repair generation. accepted nulls become
+`Presence<T>` immediately. unknown scalars preserve stored facts. all-null output
+is `no_findings`, not success. partial findings and unchanged non-null confirmation
+are successful research.
 
-initial sampling reads source prefixes bounded in sql by
-`metadata_enrichment_max_content_chars` before normalization. source order stays
-plain text, ready indexed chunks, fragments, podcast notes, then description.
-leading whitespace or markup consumes that raw window; the agent can inspect
-further through its scoped tools. metadata row queries defer
-the full plain text so sampling does not load the whole document into the light
-worker.
+contributors are complete ordered observations of specified roles, not one
+authors list. admitted handles preserve person identity across credited-name
+changes; unbound names use the contributor owner's exact resolver. observed
+spellings remain nonresolving aliases. duplicate identity within one role rejects
+the result. an explicit empty role slice may clear that role; unresolved roles
+remain untouched. the existing manual-author pin withholds differing automatic
+author proposals, and the outcome reports that fact. no new manual field pins.
 
-lists, search, author chronology, and media recency use the original date without
-an edition fallback. the shared media response and reader's media info show both.
-provider scheduling timestamps, acquisition, and consumption keep their own
-contracts. `services/metadata_enrichment.py` owns tool limits and acceptance.
+## research input and capability
 
-stored-media collection responses carry one `MediaSummaryOut`: media identity,
-title, ordered credits, original publication, processing status, and optional
-modality-specific duration. `services/media.py` composes it in batches from
-visible media; `consumption/projection.py` supplies audio duration and current
-position. rows show only author-role credits, original publication, time, and
-failure. publisher and all credits remain in full media metadata. the shared
-`presentMedia` projects each eligible occurrence without a detail request.
+metadata policy selects codex personal, `gpt-6-luna`, `xhigh`: 300 seconds,
+32,768 utf-8 input bytes, a 64,000-token context budget and an 8,000-token output
+reservation. the generation owner admits that selection or fails visibly.
+no model substitution.
+native execution and genuine tool qualification belong to the separate kernel
+integration. stock 0.160 has no native hard context/output token-cap field;
+the user accepted admission/reservation semantics on 2026-10-02. frozen budgets
+and observed usage are not proof of enforced ceilings.
 
-the `MediaMetadata` capability appears on every visible stored-media resource,
-including pending and failed media. its canonical `metadata…` action opens one
-self-loading overlay through `resourceOverlaysController`, using `GET /media/{id}`.
-the overlay groups publication, source, reading/listening, activity, and
-availability facts; it does not aggregate related-resource histories. the
-invoking menu trigger owns focus return, with pane chrome as fallback. an old
-request cannot install into a newer overlay session.
+input includes current metadata, complete ordered credits/handles, source and
+provider identifiers, media reference and up to 1,000 normalized opening words.
+`metadata_enrichment_max_content_words` configures that allocation. raw reads are
+bounded to 64,000 characters total; source order remains plain text, ready indexed
+chunks, fragments, podcast notes, then description. all serialized content,
+including frozen admission facts, fits the utf-8 budget. descriptive hints are
+clamped, then the excerpt shrinks to fit. identifiers, dates and credit rosters
+are never silently truncated. oversized fixed context fails before dispatch.
+
+the prompt requests `nexus.document.search`, `nexus.resource.read`, `web.search`
+and `web.read`; public queries use identifying strings, not private passages.
+source text is evidence, never instructions. the frozen `MetadataResearch` grant
+permits exactly those four tools; local reads use the admitted media scope.
+`CodexCallbacks` executes that plan through the shared generation owner.
+required search bindings need configured brave and embedding credentials;
+absent local configuration yields typed unavailability before submission.
+see [llms.md](llms.md). metadata owns no provider adapter or
+second context builder. exact model/effort and successful search/read require a
+real live receipt before release; controlled responses qualify domain behavior
+only.
+
+## operation and publication
+
+one `enrich_metadata` job is one operation. its stable `codex/metadata` step
+stores accepted metadata and publication outcome in the existing memo. provider
+terminal truth, domain acceptance and queue settlement are separate facts.
+
+publication locks media before the exact job claim, rechecks authorization,
+eligibility and frozen source/credit context, then commits changed facts,
+collection invalidations, successful timestamp and outcome together. it performs
+no network call or nested transaction. contributor identity validation precedes
+all writes. stale context, lost claim or revoked access cannot publish.
+
+successful timestamps use database time, strictly later than the previous stamp;
+the outcome uses the same instant. accepted unchanged values do not replace
+identical credit rows or republish the reader title. completed memo replay reuses
+the stored outcome without merging, restamping or buying another generation.
+
+accepted findings settle `succeeded`. no findings, invalid output and terminal
+research/domain failures return `TerminalJobFailure` and settle `dead` without
+retrying paid research. known retryable pre-submission failures use the ordinary
+bounded queue retry. terminal native quota failures settle failed; shell quota
+parking is retired. unresolved submission blocks
+fresh research until the generation owner settles it. metadata failures never
+write source-processing error fields. successful and dead metadata jobs are
+retained indefinitely so pruning cannot revive an older failure as latest.
+
+`generation_has_local_recovery` authorizes only local settlement from the exact
+original native seal or authoritative non-submission evidence. metadata reuses
+the original frozen spec, intent and handles before mutable domain reads;
+execution recovers before provider/catalog calls. publication still checks
+current source, credits, access and claim. a parent terminal or process stop
+alone never unlocks research. completed-journal publication replay remains
+metadata-owned.
+
+## api and observation
 
 `GET /media/{id}` owns the generated `Data[MediaOut]` contract, including required
 nullable fields and nested player aliases. it keeps the existing default
@@ -70,27 +115,91 @@ receive local brands. requested-media identity stays checked. chapter
 presentation remains owned by that ingress as described in the
 [reader module](reader-implementation.md).
 
-author works sort oldest first by default on `media.original_published_date`.
-podcasts and catalogue-only gutenberg works have unknown publication dates and
-sort last in either date direction. the gutenberg mirror stores no date.
+- `POST /media/{id}/metadata-enrichment`: creator-only, replayable admission;
+  body `{client_mutation_id, expected_job_id: Presence<UUID>}`; 202 returns
+  `{media_id, job_id}` in the existing data envelope.
+- `GET /media/{id}` includes `metadata_enrichment`: latest operation, precise
+  retry permission and `last_enriched_at`.
+- `/stream/media/{id}/metadata/events` emits the same typed view, authorizes each
+  snapshot and stays open after terminal/absent activity to discover later jobs.
 
-the forward-only `0229` migration requires maintenance, drained publication work,
-and stopped old api/workers. it drops the mixed old date without copying it and
-advances affected collection revisions. deploy api, workers, and web together.
+replay follows authorization and precedes fresh-admission barriers. a fresh
+request must name the latest observed job; any pending/running/scheduled retry or
+uncertain retained step blocks it. a lost response resends the original intent.
+automatic source-triggered jobs retain their existing timing and use the same
+result contract; they are not coalesced with stale work. every enqueue locks the
+media and stamps a strictly ordered database creation time.
 
-after migration, from `python/`, run:
+rss ingestion stores one nullable `rss_metadata_fingerprint` on its episode row.
+new/changed normalized bibliography enqueues fresh research, including supplied
+authors; identical feed replay preserves model corrections and creates no job.
+old rows initialize from the first actual feed observation and may enqueue once.
+diagnostic alias promotion remains independent: it spends no research and does
+not restore feed bibliography. promotion during a turn may invalidate its frozen
+input and require a deliberate rerun. chapters/transcript source mechanics retain
+their existing owners.
 
-```sh
-uv run --frozen --no-sync python scripts/backfill_media_publication_dates.py --viewer-id <uuid>
-```
+detail/action snapshots batch the same projection. detail and each stream
+snapshot use repeatable read. existing `media_events` notifications announce
+semantic job changes; heartbeats do not. the successful timestamp independently
+invalidates facts when an older job publishes behind a newer latest job.
 
-the command reads only that viewer's authorized media in batches of 100. it
-hydrates epub edition/isbn hints from the stored opf and enqueues ordinary,
-deduplicated metadata jobs. unfinished document imports remain with ingestion.
-it reports queued, skipped, and failed counts; the ordinary job history records
-research outcomes. source/access changes detected before enqueue are command
-skips; rerun after they settle. already queued jobs retain their dedupe key and
-history, so rerunning does not repeat research. failed research follows ordinary
-job handling; explicit metadata retry is available for the viewer's readable
-media and pending videos/episodes, after any uncertain turn is resolved. it does
-not rebuild content or indexes. dates remain unknown until research succeeds.
+one shared browser observer serves visible details and the `metadata…` overlay
+for each media id. no collection-row subscriptions or browser polling. reconnect
+reconciles missed work; closing details detaches observation without cancelling
+research. bibliographic rereads preserve reader locator, selection and playback.
+changed research refreshes existing collection revision owners; unchanged success
+refreshes activity only. row menus use their inspected action expectation.
+
+each successful stamp checks the text reader's authoritative navigation version;
+the same version needs no content reread. a different version verifies current
+navigation/content/navigation and exact byte/anchor equality through the reader
+owner before advancing attestation while keeping mounted coordinates. a missed
+title change back to the original spelling is still detected. changed content
+uses the existing composed reload; pdf metadata does not reopen its viewer.
+this costs one small navigation read per successful text-reader enrichment.
+
+the metadata overlay remains available for readable, pending and failed media.
+it separates reading status from research, preserves existing facts during
+reread, and shows safe outcomes/model activity without prompts or tracebacks.
+live-disconnected and detail-reread failures have distinct reconnect/reread
+actions. neither action starts new research.
+
+the publication description displays `Media.description`; retained podcast
+notes remain in their listening/source view and never replace this bibliographic
+field.
+
+the same detail response exposes stored `provider`, `provider_id`, `requested_url`
+and `canonical_url` as required presences. the overlay's source group shows the
+exact provider identity and distinct stored urls alongside `canonical_source_url`;
+it reconstructs no identifier or url and adds no reads. an absent provider says
+`not recorded`; absent provider ids/urls are omitted. identical requested and
+canonical urls distinct from the source url share one descriptive label.
+
+## hard cutover and source repair
+
+`0256` requires stopped writers and the verified release backup. unresolved
+metadata jobs or generations block migration. settled legacy metadata jobs are
+archived in that backup and removed from the live projection; existing facts,
+successful stamps and generation evidence remain. only legacy metadata source
+errors are cleared. deploy api, worker and web together; rollback restores the
+verified backup, never an old decoder over new memos.
+
+the sole suffix is `0252` → resource `0253` → atlas `0254` → native `0255` →
+metadata `0256` → effects `0257`. undeployed metadata migration identifiers are
+renamed/reparented; disposable databases are rebuilt, never stamped or aliased
+into this chain. historical receipts retain their actual revisions.
+combined verification must preserve historical effect/principal evidence and
+roll back the entire transaction if metadata's later guard rejects the upgrade.
+qualified immutable pins and genuine exact-model four-tool research are
+delivered. metadata's installed job and bibliographic acceptance are separate
+from that capability proof. production release additionally requires the
+historical uncertainty disposition and actual starting-revision effect/undo
+restore proof in [the plan](../metadata-enrichment-plan.md#9-hard-cutover-and-verification).
+
+`python/scripts/repair_epub_contributors.py` previews by default and applies only
+explicitly requested source-observation repair. it uses retained originals,
+bounded parsing, source/credit fences and existing identities. it changes neither
+reader state nor research timestamps. ambiguous items remain reported. see
+[epub.md](epub.md). the old publication-date backfill and metadata arm of
+`/media/{id}/retry` are removed; ordinary metadata admission is the research path.

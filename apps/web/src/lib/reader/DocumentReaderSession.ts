@@ -1,6 +1,6 @@
 "use client";
 
-import { absent, present } from "@/lib/api/presence";
+import { absent, present, type Presence } from "@/lib/api/presence";
 import { ApiError } from "@/lib/api/client";
 
 import type { EpubFragmentContent } from "@/lib/media/epubFragment";
@@ -57,6 +57,12 @@ export interface DocumentReaderSession {
   seedDescriptor(descriptor: ReaderMedia): void;
   seedInitialEpubTarget(target: ReaderInitialEpubTarget | null): void;
   loadNavigation(signal: AbortSignal): Promise<ReaderNavigation>;
+  /** Read current rendered bytes under one stable publication generation. */
+  loadPublicationRefresh(fragmentId: Presence<string>, mountedGeneration: number, signal: AbortSignal): Promise<{
+    navigation: ReaderNavigation;
+    textDocument: Presence<ReaderTextDocument>;
+    epubFragment: Presence<EpubFragmentContent>;
+  }>;
   loadEpubFragment(
     fragmentId: string,
     signal: AbortSignal,
@@ -315,6 +321,22 @@ export function createDocumentReaderSession({
     // reserved for explicit source invalidation after the mounted session is
     // already visible.
     loadNavigation: (signal) => source.loadNavigation(mediaId, signal),
+    loadPublicationRefresh: async (fragmentId, mountedGeneration, signal) => {
+      const navigation = await source.loadNavigation(mediaId, signal);
+      if (navigation.generation === mountedGeneration) {
+        return { navigation, textDocument: absent<ReaderTextDocument>(), epubFragment: absent<EpubFragmentContent>() };
+      }
+      const textDocument = navigation.kind === "web_article"
+        ? present(await source.loadTextDocument(mediaId, signal)) : absent<ReaderTextDocument>();
+      const epubFragment = navigation.kind === "epub" && fragmentId.kind === "Present"
+        ? present(await source.loadEpubFragment(mediaId, fragmentId.value, signal)) : absent<EpubFragmentContent>();
+      const confirmed = await source.loadNavigation(mediaId, signal);
+      if (confirmed.generation !== navigation.generation
+        || (navigation.kind === "epub" && (epubFragment.kind === "Absent" || epubFragment.value.generation !== navigation.generation))) {
+        throw new ApiError(409, "E_READER_CONTENT_CHANGED", "Reader publication changed while refreshing. Reload the document.");
+      }
+      return { navigation, textDocument, epubFragment };
+    },
     loadEpubFragment: (fragmentId, signal) =>
       source.loadEpubFragment(mediaId, fragmentId, signal),
     openPdf: (signal) => source.openPdf(mediaId, signal),

@@ -60,12 +60,12 @@ def _parse_ref(raw: str) -> ResourceRef:
 
 @router.post("/action-snapshots/resolve")
 def resolve_action_snapshots(
-    request: ResourceActionSnapshotResolveRequest, viewer: ViewerDep, db: DbDep
+    request: ResourceActionSnapshotResolveRequest, viewer: ViewerDep, db: ReadDbDep
 ) -> Data[ResourceActionSnapshotResolveResponse]:
     return Data(
         data=action_snapshots.resolve_action_snapshots(
             db, viewer_id=viewer.user_id, refs=[_parse_ref(raw) for raw in request.refs]
-        )
+        ),
     )
 
 

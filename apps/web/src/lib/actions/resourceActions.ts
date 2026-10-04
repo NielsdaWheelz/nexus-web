@@ -262,7 +262,7 @@ export const RESOURCE_ACTION_CATALOG = {
     group: "Manage",
   },
   "ResourceOperation.Media.RetryMetadata": {
-    label: "Re-enrich metadata",
+    label: "re-enrich metadata",
     icon: Sparkles,
     group: "Manage",
   },

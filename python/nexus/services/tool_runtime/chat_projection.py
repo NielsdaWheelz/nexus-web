@@ -270,18 +270,6 @@ class ChatToolExecutionProjection:
                 ],
             )
         )
-        if not is_error and declaration.spec.effect is ToolEffect.Write:
-            from nexus.services.assistant_write_authorship import (
-                persist_assistant_write_authorships,
-            )
-
-            persist_assistant_write_authorships(
-                db,
-                viewer_id=authority.user_id,
-                tool_call_id=tool_call_id,
-                position=position,
-                created_refs=audit.created_refs,
-            )
 
     def render_output(
         self,

@@ -85,6 +85,32 @@ generation fence. it preserves fragment bytes, ids, assets, and reading offsets.
 stored source digest, package hrefs, canonical text, and source-anchor positions
 must agree before a repair can write.
 
+## contributor observations and saved repair
+
+`epub_ingest.py` reads epub2 `opf:role`, epub3 role refinements and
+`dc:contributor`. one opf element is one credited entity, possibly holding
+several roles; semicolons never split it. an untyped creator defaults to author;
+explicit roles override that default. an untyped contributor is unknown.
+supported marc roles map through the existing contributor taxonomy. unsupported
+labels remain `unknown/raw_role`, joined in source order.
+
+overlong/ambiguous entities are reported and withheld. more than twenty credits
+in one role leaves the entire role unobserved, rather than publishing an incomplete
+first twenty. ordinary source job results retain these observation issues.
+
+`python/scripts/repair_epub_contributors.py --viewer-id <uuid> [--media-id <uuid>]`
+previews source-only repair; `--apply` applies it. the command reads bounded,
+checksum-verified retained originals outside the database transaction. apply
+locks media, rechecks source identity and affected credits, and uses the existing
+contributor owner. only uniquely matched historical `epub_opf` observations move;
+unrelated sources and manual author protection remain. previously split names,
+ambiguous matches and changed sources are skipped explicitly. reports include
+media id, moved/added credits, skip reason and before/after counts.
+
+repair preserves reader publications, fragments, navigation, progress, index
+generations and `metadata_enriched_at`. it is source correction, not another
+research job or reader reingestion. see [media-metadata.md](media-metadata.md).
+
 ## Bounded Parse
 
 `epub_ingest.py` reads each archive entry once; staged XHTML is parsed in bounded

@@ -66,7 +66,8 @@ import HighlightQuickNoteComposer, {
   type QuickNoteSession,
 } from "@/components/highlights/HighlightQuickNoteComposer";
 import { absent, present, type Presence } from "@/lib/api/presence";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { mediaResource } from "@/lib/api/resource";
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
@@ -84,7 +85,8 @@ import {
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { useMediaProcessingStatus } from "@/lib/media/useMediaProcessingStatus";
-import type { MediaDetail } from "@/lib/media/mediaDetail";
+import { mediaDetailFromResponse, type MediaDetail } from "@/lib/media/mediaDetail";
+import { useMediaMetadataOperations } from "@/lib/media/mediaMetadataOperations";
 import { mediaErrorMessage } from "@/lib/media/mediaErrorMessage";
 import {
   applyHighlightsToHtml,
@@ -159,6 +161,7 @@ import {
   usePaneSearchParams,
   useSetPaneLabel,
   usePaneIsActive,
+  usePaneIsVisible,
   usePaneRuntime,
   requirePaneRuntime,
 } from "@/lib/panes/paneRuntime";
@@ -495,6 +498,7 @@ export default function MediaPaneBody() {
   const consumptionActivityStatus = activityStatus(activitySnapshot);
   const paneRuntime = requirePaneRuntime(usePaneRuntime(), "MediaPaneBody");
   const isPaneActive = usePaneIsActive();
+  const isPaneVisible = usePaneIsVisible();
   const activatePaneTarget = paneRuntime.activateTarget;
   const id = usePaneParam("id");
   if (!id) {
@@ -680,6 +684,11 @@ export default function MediaPaneBody() {
 
   // ---- Core data state ----
   const [media, setMedia] = useState<MediaDetail | null>(null);
+  const metadataObservation = useMediaMetadataOperations(isPaneVisible && media !== null ? id : null);
+  const metadataStamp = metadataObservation.view?.last_enriched_at.kind === "Present"
+    ? metadataObservation.view.last_enriched_at.value : null;
+  const [metadataReread, setMetadataReread] = useState(0);
+  const metadataReadRef = useRef<{ mediaId: string; stamp: string; retry: number } | null>(null);
   const [loading, setLoading] = useState(media === null);
   const [initialHeaderFailure, setInitialHeaderFailure] = useState<
     "unavailable" | "failed" | null
@@ -1455,6 +1464,7 @@ export default function MediaPaneBody() {
     (loadedDocumentMap.generation.kind === "Absent" || loadedDocumentMap.generation.value !== readerNavigation.generation);
   const invalidatedMapPairRef = useRef<string | null>(null);
   const reloadDocumentReader = documentReader.reload;
+  const refreshReaderPublication = documentReader.refreshPublication;
   useEffect(() => {
     if (!mapGenerationMismatch || !readerNavigation || !loadedDocumentMap) return;
     const pair = `${id}:${readerNavigation.generation}:${loadedDocumentMap.generation.kind === "Present" ? loadedDocumentMap.generation.value : "absent"}`;
@@ -1639,7 +1649,7 @@ export default function MediaPaneBody() {
     isPdf,
   ]);
   const activeTextPublicationKey = activeContent && readerLocatorKind
-    ? `${id}:${readerLocatorKind}:${readerNavigation?.generation ?? "transcript"}:${activeContent.fragmentId}`
+    ? `${id}:${readerLocatorKind}:${documentReader.contentGeneration ?? "transcript"}:${activeContent.fragmentId}`
     : null;
   renderedFragmentIdRef.current = activeContent?.fragmentId ?? null;
 
@@ -1928,7 +1938,7 @@ export default function MediaPaneBody() {
         ? `${id}:transcript:${transcriptFindSnapshot.sourceKey}`
         : null
       : readerNavigation
-        ? `${id}:${readerNavigation.generation}`
+        ? `${id}:${documentReader.contentGeneration}`
         : null;
   // Both navigation adoption and lifecycle saves address the visible timeline.
   // The selected detail is retained separately so a detour can restore it.
@@ -2185,6 +2195,62 @@ export default function MediaPaneBody() {
       setLoading(false);
     }
   }, [initialMediaResource]);
+
+  useEffect(() => {
+    if (!isPaneVisible || media?.id !== id || metadataStamp === null) return;
+    const previous = metadataReadRef.current;
+    if (previous?.mediaId === id && previous.stamp === metadataStamp && previous.retry === metadataReread) return;
+    metadataReadRef.current = { mediaId: id, stamp: metadataStamp, retry: metadataReread };
+    if (media.metadata_enriched_at === metadataStamp) return;
+    const controller = new AbortController();
+    let settled = false;
+    void apiFetch<ApiJson<"/media/{media_id}", "get">>(`/api/media/${encodeURIComponent(id)}`, { signal: controller.signal })
+      .then(async (response) => {
+        if (controller.signal.aborted) return;
+        const current = mediaDetailFromResponse(response, id);
+        if (current.kind === "web_article" || current.kind === "epub") {
+          await refreshReaderPublication(controller.signal);
+          if (controller.signal.aborted) return;
+        }
+        settled = true;
+        // Only bibliography changes here. Source progress, transcript, reader
+        // locator, selection and playback remain under their existing owners.
+        setMedia((previous) => previous?.id === id ? {
+          ...previous,
+          title: current.title,
+          contributors: current.contributors,
+          author_mode: current.author_mode,
+          original_published_date: current.original_published_date,
+          edition_published_date: current.edition_published_date,
+          edition_isbn: current.edition_isbn,
+          publisher: current.publisher,
+          language: current.language,
+          description: current.description,
+          description_html: current.description_html,
+          description_text: current.description_text,
+          metadata_enriched_at: current.metadata_enriched_at,
+          metadata_enrichment: current.metadata_enrichment,
+          updated_at: current.updated_at,
+          capabilities: { ...previous.capabilities, can_retry_metadata: current.capabilities.can_retry_metadata },
+        } : previous);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted || handleUnauthenticatedApiError(error)) return;
+        settled = true;
+        if (!isApiError(error) || isSameSystemApiDefect(error)) { setAsyncDefect({ error }); return; }
+        feedback.publish({
+          kind: "Hud",
+          key: `metadata-reread:${id}`,
+          content: { tone: "Danger", title: "metadata updated; couldn’t load current values" },
+          actions: [{ label: "reload metadata", onClick: () => setMetadataReread((value) => value + 1) }],
+        });
+      });
+    return () => {
+      controller.abort();
+      // A visibility or route change may abort before publication is installed.
+      if (!settled && metadataReadRef.current?.mediaId === id) metadataReadRef.current = null;
+    };
+  }, [refreshReaderPublication, feedback, id, isPaneVisible, media?.id, media?.metadata_enriched_at, metadataReread, metadataStamp]);
 
   const handleTranscriptStateChange = useCallback(
     ({
@@ -2990,7 +3056,7 @@ export default function MediaPaneBody() {
     restoreSessionIdRef.current += 1;
     pendingCursorApplyRef.current?.resolve("cancelled_by_user");
     pendingCursorApplyRef.current = null;
-  }, [id, readerNavigation?.generation]);
+  }, [id, documentReader.contentGeneration]);
 
   canonicalPositionRef.current = async (snapshot, signal) => {
     if (snapshot.state === "Empty") {

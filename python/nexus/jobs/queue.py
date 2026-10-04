@@ -71,6 +71,7 @@ class JobRow:
     last_error: str | None
     result: dict[str, Any] | None
     started_at: datetime | None
+    finished_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
@@ -130,6 +131,15 @@ class RescheduleRequested:
 
     schedule: RescheduleSchedule
     payload: Mapping[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class TerminalJobFailure:
+    """An unsuccessful domain terminal that must never consume a retry."""
+
+    result_payload: Mapping[str, Any]
+    error_code: str
+    error_message: str
 
 
 def lock_chat_generation_admission_in_current_transaction(db: Session) -> None:
@@ -204,6 +214,7 @@ def enqueue_job(
     max_attempts: int = 3,
     available_at: datetime | None = None,
     dedupe_key: str | None = None,
+    created_at: datetime | None = None,
 ) -> JobRow:
     """Insert one background job row without forcing commit."""
     if kind == "chat_run":
@@ -211,9 +222,9 @@ def enqueue_job(
     row = _fetch_one_job(
         db,
         """
-        INSERT INTO background_jobs (kind, payload, priority, max_attempts, available_at, dedupe_key)
+        INSERT INTO background_jobs (kind, payload, priority, max_attempts, available_at, dedupe_key, created_at)
         VALUES (:kind, CAST(:payload AS jsonb), :priority, :max_attempts,
-                COALESCE(:available_at, now()), :dedupe_key)
+                COALESCE(:available_at, now()), :dedupe_key, COALESCE(:created_at, now()))
         RETURNING *
         """,
         kind=kind,
@@ -222,6 +233,7 @@ def enqueue_job(
         max_attempts=max_attempts,
         available_at=available_at,
         dedupe_key=dedupe_key,
+        created_at=created_at,
     )
     _notify(db, kind)
     return row
@@ -236,6 +248,7 @@ def enqueue_unique_job(
     priority: int = 100,
     max_attempts: int = 3,
     available_at: datetime | None = None,
+    created_at: datetime | None = None,
 ) -> tuple[JobRow, bool]:
     """Insert one deduped job, returning the row and whether this call inserted it."""
     existing = _fetch_job(db, _BY_DEDUPE_KEY_SQL, dedupe_key=dedupe_key)
@@ -251,6 +264,7 @@ def enqueue_unique_job(
                 max_attempts=max_attempts,
                 available_at=available_at,
                 dedupe_key=dedupe_key,
+                created_at=created_at,
             )
         return inserted, True
     except IntegrityError as exc:
@@ -882,6 +896,25 @@ def lock_jobs_for_payload(
     )
 
 
+def list_jobs_for_payload_values(
+    db: Session, *, kind: str, payload_key: str, values: Sequence[str]
+) -> list[JobRow]:
+    """Batch-read one owner's jobs without locks or per-resource queries."""
+    if not values:
+        return []
+    return _fetch_jobs(
+        db,
+        """
+        SELECT * FROM background_jobs
+        WHERE kind = :kind AND payload ->> :payload_key = ANY(CAST(:values AS text[]))
+        ORDER BY created_at DESC, id DESC
+        """,
+        kind=kind,
+        payload_key=payload_key,
+        values=list(values),
+    )
+
+
 def current_dead_job_for_payload(
     db: Session, *, kind: str, expected_payload_match: Mapping[str, Any]
 ) -> JobRow | None:
@@ -933,6 +966,7 @@ def prune_terminal_jobs(
     dead_after_days: int,
     limit: int,
     excluded_dead_kinds: Collection[str] = (),
+    excluded_succeeded_kinds: Collection[str] = (),
 ) -> int:
     """Delete old terminal rows; dead rows of excluded kinds stay discoverable."""
     deleted = db.execute(
@@ -942,7 +976,8 @@ def prune_terminal_jobs(
             WHERE id IN (
                 SELECT id FROM background_jobs
                 WHERE (status = 'succeeded' AND finished_at IS NOT NULL
-                       AND finished_at < now() - (CAST(:succeeded_days AS integer) * interval '1 day'))
+                       AND finished_at < now() - (CAST(:succeeded_days AS integer) * interval '1 day')
+                       AND NOT (kind = ANY(CAST(:excluded_succeeded_kinds AS text[]))))
                    OR (status = 'dead' AND finished_at IS NOT NULL
                        AND finished_at < now() - (CAST(:dead_days AS integer) * interval '1 day')
                        AND NOT (kind = ANY(CAST(:excluded_dead_kinds AS text[]))))
@@ -958,6 +993,7 @@ def prune_terminal_jobs(
             "dead_days": dead_after_days,
             "limit": limit,
             "excluded_dead_kinds": list(excluded_dead_kinds),
+            "excluded_succeeded_kinds": list(excluded_succeeded_kinds),
         },
     ).all()
     return len(deleted)
@@ -1010,6 +1046,7 @@ def _row_to_job(row: Mapping[Any, Any]) -> JobRow:
         last_error=row["last_error"],
         result=dict(row["result"]) if row["result"] is not None else None,
         started_at=row["started_at"],
+        finished_at=row["finished_at"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

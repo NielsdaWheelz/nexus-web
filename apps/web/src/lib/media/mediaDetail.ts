@@ -9,6 +9,7 @@ import {
 import type { MediaDuration } from "@/lib/media/mediaSummary";
 import type { TranscriptChapter } from "@/lib/media/transcriptView";
 
+/** Generated API facts with the reader's existing branded identities and units. */
 export type MediaDetail = Omit<
   Schema<"MediaOut">,
   | "id"
@@ -26,44 +27,34 @@ export type MediaDetail = Omit<
   playerDescriptor: Presence<PlayerDescriptor>;
 };
 
+function mapPresence<T, U>(value: Presence<T>, map: (value: T) => U): Presence<U> {
+  return value.kind === "Present" ? present(map(value.value)) : value;
+}
+
 export function mediaDetailFromResponse(
   response: ApiJson<"/media/{media_id}", "get">,
   expectedMediaId: string,
 ): MediaDetail {
-  const value = response.data;
-  const id = value.id as MediaId;
+  const media = response.data;
+  const id = parseMediaId(media.id);
   if (id !== parseMediaId(expectedMediaId)) {
+    // justify-defect: one detail response cannot identify a different reader.
     throw new TypeError("MediaOut.id must match the requested media");
   }
   return {
-    ...value,
+    ...media,
     id,
-    original_published_date:
-      value.original_published_date.kind === "Present"
-        ? present(value.original_published_date.value as PublicationDate)
-        : value.original_published_date,
-    edition_published_date:
-      value.edition_published_date.kind === "Present"
-        ? present(value.edition_published_date.value as PublicationDate)
-        : value.edition_published_date,
-    duration:
-      value.duration.kind === "Present"
-        ? present({
-            modality: value.duration.value.modality,
-            estimate: {
-              totalMinutes: {
-                value: value.duration.value.estimate.totalMinutes,
-              },
-              remainingMinutes:
-                value.duration.value.estimate.remainingMinutes.kind === "Present"
-                  ? present({
-                      value: value.duration.value.estimate.remainingMinutes.value,
-                    })
-                  : value.duration.value.estimate.remainingMinutes,
-            },
-          })
-        : value.duration,
-    chapters: value.chapters
+    // PublicationDate's calendar validation belongs to the generated schema owner.
+    original_published_date: mapPresence(media.original_published_date, (date) => date as PublicationDate),
+    edition_published_date: mapPresence(media.edition_published_date, (date) => date as PublicationDate),
+    duration: mapPresence(media.duration, (duration) => ({
+      modality: duration.modality,
+      estimate: {
+        totalMinutes: { value: duration.estimate.totalMinutes },
+        remainingMinutes: mapPresence(duration.estimate.remainingMinutes, (value) => ({ value })),
+      },
+    })),
+    chapters: media.chapters
       .map((chapter) => ({ ...chapter, title: chapter.title.trim() }))
       .filter((chapter) => chapter.title.length > 0)
       .sort(
@@ -71,12 +62,9 @@ export function mediaDetailFromResponse(
           left.t_start_ms - right.t_start_ms ||
           left.chapter_idx - right.chapter_idx,
       ),
-    playerDescriptor:
-      value.playerDescriptor.kind === "Present"
-        ? present({
-            ...value.playerDescriptor.value,
-            mediaId: value.playerDescriptor.value.mediaId as MediaId,
-          })
-        : value.playerDescriptor,
+    playerDescriptor: mapPresence(media.playerDescriptor, (descriptor) => ({
+      ...descriptor,
+      mediaId: parseMediaId(descriptor.mediaId),
+    })),
   };
 }

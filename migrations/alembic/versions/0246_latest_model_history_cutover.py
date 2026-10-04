@@ -16,6 +16,11 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
+from nexus.db.generation_effect_receipts_migration import (
+    preserve_generation_effect_receipts,
+)
+from nexus.model_cutover_archive import archive_model_cutover, model_cutover_snapshot
+
 revision: str = "0246"
 down_revision: str | Sequence[str] | None = "0245"
 branch_labels: str | Sequence[str] | None = None
@@ -70,36 +75,22 @@ def _reset_workspace_chat_visits(state: object) -> dict[str, object] | None:
 
 
 def upgrade() -> None:
-    # Stop writers and native processes first. A queued or running chat can
-    # still have effects that its history does not yet record.
-    op.execute(
-        """
-        DO $$ BEGIN
-            IF EXISTS (
-                SELECT 1 FROM chat_runs
-                WHERE status NOT IN ('complete', 'error', 'cancelled')
-            ) THEN
-                RAISE EXCEPTION 'unsettled chat run blocks model history cutover';
-            END IF;
-            IF EXISTS (
-                SELECT 1 FROM background_jobs
-                WHERE kind = 'chat_run' AND status NOT IN ('succeeded', 'dead')
-            ) THEN
-                RAISE EXCEPTION 'unsettled chat job blocks model history cutover';
-            END IF;
-            IF EXISTS (
-                SELECT 1 FROM llm_calls
-                WHERE owner_kind = 'chat_run' AND outcome IS NULL
-            ) THEN
-                RAISE EXCEPTION 'unsettled chat generation blocks model history cutover';
-            END IF;
-        END $$
-        """
-    )
+    connection = op.get_bind()
+    authority = op.get_context().config.attributes.get("model_cutover_authority")
+    if authority is None:
+        census = model_cutover_snapshot(connection).census
+        if census.parents or census.chat_runs or census.jobs:
+            raise ValueError(
+                "0246 history reset requires reviewed archival disposition and actual restored backup"
+            )
+    # Completed tools own their actual effects even when their original parent
+    # is uncertain. Any unresolved write aborts before archive or deletion.
+    preserve_generation_effect_receipts(connection, source="Before0246")
+    if authority is not None:
+        archive_model_cutover(connection, authority)
 
     # The old conversation ids disappear below. Rewrite only pre-cutover
     # persisted visits; a permanent restore rule would break new chats.
-    connection = op.get_bind()
     for session_id, state in connection.execute(
         sa.text("SELECT id, state FROM workspace_sessions FOR UPDATE")
     ):
@@ -257,22 +248,17 @@ def upgrade() -> None:
         WHERE j.kind = 'dossier_build' AND a.subject_scheme = 'conversation'
         """
     )
-    # Frozen domain admissions can replay retired models even after their
-    # ledger parent is removed. Quiescence alone is insufficient: failed and
-    # dead jobs are replayable. Their owner must settle/archive them first.
+    # The reviewed archive retired every frozen generation job, including
+    # settled jobs. No retained queue entry may replay a deleted ledger owner.
     op.execute(
         """
         DO $$ BEGIN
             IF EXISTS (
                 SELECT 1 FROM background_jobs AS j
                 WHERE j.id NOT IN (SELECT id FROM _latest_model_removed_jobs)
-                  AND j.status <> 'succeeded'
                   AND j.payload ? 'generation_admissions'
-            ) OR EXISTS (
-                SELECT 1 FROM llm_calls AS c
-                WHERE c.owner_kind <> 'chat_run' AND c.outcome IS NULL
             ) THEN
-                RAISE EXCEPTION 'unsettled domain generation blocks model history cutover';
+                RAISE EXCEPTION 'frozen domain generation job blocks model history cutover';
             END IF;
         END $$
         """

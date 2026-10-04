@@ -44,6 +44,7 @@ from nexus.db.models import (
 )
 from nexus.errors import ApiErrorCode, ResourceFailureDimension
 from nexus.ids import new_uuid7
+from nexus.schemas.isbn import Isbn13, normalize_source_isbn
 from nexus.schemas.presence import Presence, Present, absent, nullable_from_presence, present
 from nexus.schemas.publication_dates import PublicationDate, normalize_source_publication_date
 from nexus.schemas.reader_apparatus import NotesGroup
@@ -54,6 +55,17 @@ from nexus.schemas.source_issues import (
     source_issues_payload,
 )
 from nexus.services.canonicalize import CanonicalStructure, canonicalize_structure
+from nexus.services.contributor_taxonomy import (
+    MAX_CONTRIBUTOR_NAME_CODE_POINTS,
+    MAX_CREDITS_PER_MANAGED_ROLE,
+    MAX_RAW_ROLE_LENGTH,
+    NOT_OBSERVED,
+    ContributorObservation,
+    ContributorObservationBatch,
+    ObservedRoleSlices,
+    clean_contributor_display,
+    contributor_match_key,
+)
 from nexus.services.epub_sanitize import (
     local_name,
     materialize_epub_body_anchor,
@@ -142,17 +154,32 @@ _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
 @dataclass(frozen=True)
+class EpubContributorEntity:
+    kind: Literal["creator", "contributor"]
+    credited_name: str
+    credits: tuple[ContributorObservation, ...]
+
+
+@dataclass(frozen=True)
+class EpubContributorIssue:
+    code: Literal["unrepresentable_entity", "unobserved_role"]
+    detail: str
+
+
+@dataclass(frozen=True)
 class EpubExtractionResult:
     fragment_count: int = 0
     toc_node_count: int = 0
     asset_count: int = 0
     title: str | None = None
-    creators: list[str] = field(default_factory=list)
+    contributor_entities: tuple[EpubContributorEntity, ...] = ()
+    contributor_observation: ContributorObservationBatch = NOT_OBSERVED
+    contributor_issues: tuple[EpubContributorIssue, ...] = ()
     publisher: str | None = None
     language: str | None = None
     description: str | None = None
     edition_published_date: Presence[PublicationDate] = field(default_factory=absent)
-    edition_isbn: Presence[str] = field(default_factory=absent)
+    edition_isbn: Presence[Isbn13] = field(default_factory=absent)
 
 
 @dataclass(frozen=True)
@@ -747,7 +774,9 @@ def _build_plan(
             toc_node_count=len(toc_nodes),
             asset_count=len(package.asset_entries),
             title=title,
-            creators=opf_meta.creators,
+            contributor_entities=opf_meta.contributor_entities,
+            contributor_observation=opf_meta.contributor_observation,
+            contributor_issues=opf_meta.contributor_issues,
             publisher=opf_meta.publisher,
             language=opf_meta.language,
             description=opf_meta.description,
@@ -1100,11 +1129,7 @@ def _normalize_title(raw: str) -> str:
 
 def _extract_opf_metadata(opf: ET.Element) -> EpubExtractionResult:
     """Read Dublin Core metadata, keeping only unambiguous dates and ISBNs."""
-    creators = [
-        element.text.strip()
-        for element in opf.findall(".//opf:metadata/dc:creator", _NS)
-        if element.text and element.text.strip()
-    ]
+    entities, observation, issues = _extract_opf_contributors(opf)
     publisher = opf.findtext(".//opf:metadata/dc:publisher", namespaces=_NS)
     language = opf.findtext(".//opf:metadata/dc:language", namespaces=_NS)
     description = opf.findtext(".//opf:metadata/dc:description", namespaces=_NS)
@@ -1125,16 +1150,18 @@ def _extract_opf_metadata(opf: ET.Element) -> EpubExtractionResult:
     primary_isbns: set[str] = set()
     primary_id = opf.get("unique-identifier")
     for identifier in opf.findall(".//opf:metadata/dc:identifier", _NS):
-        value = _isbn13(identifier.text or "")
-        if value is None:
+        value = normalize_source_isbn(identifier.text or "")
+        if not isinstance(value, Present):
             continue
-        isbns.add(value)
+        isbns.add(value.value)
         if primary_id is not None and identifier.get("id") == primary_id:
-            primary_isbns.add(value)
+            primary_isbns.add(value.value)
     selected = primary_isbns or isbns
 
     return EpubExtractionResult(
-        creators=creators,
+        contributor_entities=entities,
+        contributor_observation=observation,
+        contributor_issues=issues,
         publisher=publisher.strip() or None if publisher is not None else None,
         language=language.strip() or None if language is not None else None,
         description=description.strip() or None if description is not None else None,
@@ -1145,26 +1172,140 @@ def _extract_opf_metadata(opf: ET.Element) -> EpubExtractionResult:
     )
 
 
-def _isbn13(raw_identifier: str) -> str | None:
-    """Return the checksum-valid ISBN-13 of an identifier, converting ISBN-10."""
-    raw = re.sub(
-        r"^(?:urn:isbn:|isbn(?:-1[03])?:?)[ \t]*",
-        "",
-        raw_identifier.strip(),
-        flags=re.IGNORECASE,
+_MARC_CONTRIBUTOR_ROLES = {
+    "aut": "author",
+    "edt": "editor",
+    "trl": "translator",
+    "hst": "host",
+    "gst": "guest",
+    "nrt": "narrator",
+    "cre": "creator",
+    "pro": "producer",
+    "pbl": "publisher",
+}
+
+
+def _extract_opf_contributors(
+    opf: ET.Element,
+) -> tuple[
+    tuple[EpubContributorEntity, ...], ContributorObservationBatch, tuple[EpubContributorIssue, ...]
+]:
+    """One DC element is one entity; explicit role evidence overrides creator defaults."""
+    metadata = opf.find("opf:metadata", _NS)
+    if metadata is None:
+        return (), NOT_OBSERVED, ()
+    entries = [
+        element
+        for element in metadata
+        if element.tag in {f"{{{_NS['dc']}}}creator", f"{{{_NS['dc']}}}contributor"}
+    ]
+    id_counts: dict[str, int] = {}
+    for element in opf.iter():
+        if identifier := element.get("id"):
+            id_counts[identifier] = id_counts.get(identifier, 0) + 1
+    refinements: dict[str, list[tuple[str, str]]] = {}
+    for element in metadata.findall("opf:meta", _NS):
+        if element.get("property") == "role" and (refines := element.get("refines", "")).startswith(
+            "#"
+        ):
+            refinements.setdefault(refines[1:], []).append(
+                (
+                    element.get("scheme", "marc:relators"),
+                    clean_contributor_display(element.text or ""),
+                )
+            )
+
+    entities: list[EpubContributorEntity] = []
+    issues: list[EpubContributorIssue] = []
+    for ordinal, element in enumerate(entries, 1):
+        name = clean_contributor_display(element.text or "")
+        if not name:
+            continue
+        if len(name) > MAX_CONTRIBUTOR_NAME_CODE_POINTS:
+            issues.append(
+                EpubContributorIssue(
+                    "unrepresentable_entity",
+                    f"entity {ordinal}: credited name exceeds 200 characters",
+                )
+            )
+            continue
+        identifier = element.get("id", "")
+        if id_counts.get(identifier, 0) > 1 and identifier in refinements:
+            issues.append(
+                EpubContributorIssue(
+                    "unrepresentable_entity",
+                    f"entity {ordinal}: duplicate id makes role refinements ambiguous",
+                )
+            )
+            continue
+        roles: list[tuple[str, str]] = []
+        raw_role = element.get(f"{{{_NS['opf']}}}role")
+        if raw_role is not None:
+            roles.append(("marc:relators", clean_contributor_display(raw_role)))
+        roles.extend(refinements.get(identifier, []))
+        by_role: dict[str, list[str]] = {}
+        for scheme, raw_role in roles:
+            label = raw_role if scheme == "marc:relators" else f"{scheme}:{raw_role}"
+            role = (
+                _MARC_CONTRIBUTOR_ROLES.get(raw_role, "unknown")
+                if scheme == "marc:relators"
+                else "unknown"
+            )
+            labels = by_role.setdefault(role, [])
+            if label not in labels:
+                labels.append(label)
+        if not roles:
+            by_role["author" if element.tag.endswith("}creator") else "unknown"] = []
+        if any(not label for _, label in roles) or any(
+            len("; ".join(labels)) > MAX_RAW_ROLE_LENGTH or any(not label for label in labels)
+            for labels in by_role.values()
+        ):
+            issues.append(
+                EpubContributorIssue(
+                    "unrepresentable_entity",
+                    f"entity {ordinal}: role evidence cannot fit its 80-character contract",
+                )
+            )
+            continue
+        entities.append(
+            EpubContributorEntity(
+                "creator" if element.tag.endswith("}creator") else "contributor",
+                name,
+                tuple(
+                    ContributorObservation(name, role, "; ".join(labels) or None, None)
+                    for role, labels in by_role.items()
+                ),
+            )
+        )
+
+    credits: list[ContributorObservation] = []
+    seen: set[tuple[str, str]] = set()
+    for entity in entities:
+        for credit in entity.credits:
+            pair = (credit.role, contributor_match_key(credit.credited_name))
+            if pair not in seen:
+                seen.add(pair)
+                credits.append(credit)
+    role_counts: dict[str, int] = {}
+    for credit in credits:
+        role_counts[credit.role] = role_counts.get(credit.role, 0) + 1
+    overflow_roles = {
+        role for role, count in role_counts.items() if count > MAX_CREDITS_PER_MANAGED_ROLE
+    }
+    for role in sorted(overflow_roles):
+        issues.append(
+            EpubContributorIssue(
+                "unobserved_role",
+                f"{role}: {role_counts[role]} credits exceed the 20-credit contract",
+            )
+        )
+    credits = [credit for credit in credits if credit.role not in overflow_roles]
+    observation = (
+        ObservedRoleSlices(frozenset(credit.role for credit in credits), tuple(credits))
+        if credits
+        else NOT_OBSERVED
     )
-    value = re.sub(r"[\s-]", "", raw).upper()
-    if re.fullmatch(r"[0-9]{9}[0-9X]", value):
-        digits = [10 if char == "X" else int(char) for char in value]
-        if sum((10 - index) * digit for index, digit in enumerate(digits)) % 11:
-            return None
-        body = "978" + value[:9]
-        checksum = sum(int(char) * (1 if index % 2 == 0 else 3) for index, char in enumerate(body))
-        return body + str((-checksum) % 10)
-    if re.fullmatch(r"97[89][0-9]{10}", value):
-        checksum = sum(int(char) * (1 if index % 2 == 0 else 3) for index, char in enumerate(value))
-        return None if checksum % 10 else value
-    return None
+    return tuple(entities), observation, tuple(issues)
 
 
 def _resolve_epub_path(base_dir: str, href: str) -> str | None:

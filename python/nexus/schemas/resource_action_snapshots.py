@@ -29,6 +29,7 @@ from pydantic.alias_generators import to_camel
 
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
+from nexus.schemas.metadata_enrichment import MetadataRetry
 from nexus.schemas.resource_items import ResourceActivationOut
 
 _MAX_REFS = 100
@@ -91,7 +92,6 @@ SimpleResourceActionCapabilityKind = Literal[
     "PlayNext",
     "DownloadOriginal",
     "RefreshSource",
-    "RetryMetadata",
     "EditAuthors",
     "ResetProgress",
     "LibrarySettings",
@@ -123,6 +123,14 @@ SimpleResourceActionCapabilityKind = Literal[
 class SimpleResourceActionCapabilityOut(BaseModel):
     kind: SimpleResourceActionCapabilityKind
     availability: ServerActionAvailabilityOut
+
+    model_config = _OUT_CONFIG
+
+
+class RetryMetadataResourceActionCapabilityOut(BaseModel):
+    kind: Literal["RetryMetadata"] = "RetryMetadata"
+    availability: ServerActionAvailabilityOut
+    retry: MetadataRetry
 
     model_config = _OUT_CONFIG
 
@@ -275,6 +283,7 @@ type HighlightNoteResourceActionCapabilityOut = Annotated[
 
 ResourceActionCapabilityOut = Annotated[
     SimpleResourceActionCapabilityOut
+    | RetryMetadataResourceActionCapabilityOut
     | RecoveryResourceActionCapabilityOut
     | OfflineReadingResourceActionCapabilityOut
     | OpenSourceResourceActionCapabilityOut

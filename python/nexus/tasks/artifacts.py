@@ -61,9 +61,9 @@ def dossier_build(
                     job=job,
                     execution_context=context,
                     llm_runtime=runtime,
-                    research_tool_operation=compose_tool_runtime(provider).operations[
-                        "idea_dossier_research"
-                    ],
+                    research_tool_operation=compose_tool_runtime(
+                        provider, embedding_available=bool(settings.openai_api_key)
+                    ).operations["idea_dossier_research"],
                     settings=settings,
                 ),
             )

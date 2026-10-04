@@ -14,26 +14,24 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
-from nexus.responses import ok, success_response
+from nexus.responses import Data, ok
 from nexus.schemas.extension_capture import LocalFile
 from nexus.schemas.media import (
     ConfirmUploadSessionRequest,
     CreateUploadSessionRequest,
     FromUrlRequest,
     MediaRepairRequest,
-    RetryMetadataRequest,
-    RetryRequest,
     RetrySourceRequest,
     RetryUploadSessionRequest,
     SearchRepairRequest,
     SourceRepairRequest,
+    SourceRetryAdmission,
     UploadTransportFailureRequest,
 )
 from nexus.services import (
     content_indexing,
     media_source_ingest,
     media_upload_sessions,
-    metadata_dispatch,
 )
 from nexus.services.capabilities import ViewerRecovery
 
@@ -158,32 +156,22 @@ def delete_upload_session(
 @router.post("/media/{media_id}/retry", status_code=202)
 def retry_ingest(
     media_id: UUID,
-    body: RetryRequest,
+    body: RetrySourceRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     request: Request,
-) -> dict:
-    """Admit a new source attempt, or re-enrich metadata, for a viewer's media."""
-    match body:
-        case RetrySourceRequest():
-            return ok(
-                media_source_ingest.retry_source_for_viewer(
-                    db,
-                    viewer_id=viewer.user_id,
-                    media_id=media_id,
-                    client_mutation_id=body.client_mutation_id,
-                    expected_attempt_id=body.expected_attempt_id,
-                    request_id=_request_id(request),
-                )
-            )
-        case RetryMetadataRequest():
-            return success_response(
-                metadata_dispatch.retry_metadata_for_viewer(
-                    db, viewer.user_id, media_id, request_id=_request_id(request)
-                )
-            )
-        case _:
-            assert_never(body)
+) -> Data[SourceRetryAdmission]:
+    """Admit one source retry; metadata has its own operation contract."""
+    return Data(
+        data=media_source_ingest.retry_source_for_viewer(
+            db,
+            viewer_id=viewer.user_id,
+            media_id=media_id,
+            client_mutation_id=body.client_mutation_id,
+            expected_attempt_id=body.expected_attempt_id,
+            request_id=_request_id(request),
+        )
+    )
 
 
 @router.post("/media/{media_id}/repair", status_code=202)

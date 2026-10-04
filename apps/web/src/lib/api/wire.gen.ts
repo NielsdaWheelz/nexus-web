@@ -765,8 +765,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Undo Background Generation Write */
-        post: operations["undo_background_generation_write_generation_effects__position_id__undo_post"];
+        /** Undo Assistant Write */
+        post: operations["undo_assistant_write_generation_effects__position_id__undo_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1940,6 +1940,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/media/{media_id}/metadata-enrichment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Enrich Media Metadata */
+        post: operations["enrich_media_metadata_media__media_id__metadata_enrichment_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/media/{media_id}/navigation": {
         parameters: {
             query?: never;
@@ -2099,7 +2116,7 @@ export interface paths {
         put?: never;
         /**
          * Retry Ingest
-         * @description Admit a new source attempt, or re-enrich metadata, for a viewer's media.
+         * @description Admit one source retry; metadata has its own operation contract.
          */
         post: operations["retry_ingest_media__media_id__retry_post"];
         delete?: never;
@@ -3034,6 +3051,23 @@ export interface paths {
         };
         /** Stream Media Events */
         get: operations["stream_media_events_stream_media__media_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stream/media/{media_id}/metadata/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream Metadata Events */
+        get: operations["stream_metadata_events_stream_media__media_id__metadata_events_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4594,6 +4628,10 @@ export interface components {
         Data_MediaOut_: {
             data: components["schemas"]["MediaOut"];
         };
+        /** Data[MetadataEnrichmentAccepted] */
+        Data_MetadataEnrichmentAccepted_: {
+            data: components["schemas"]["MetadataEnrichmentAccepted"];
+        };
         /** Data[NexusHistoryOut] */
         Data_NexusHistoryOut_: {
             data: components["schemas"]["NexusHistoryOut"];
@@ -4677,6 +4715,10 @@ export interface components {
         /** Data[ResourceTitleMutationOut] */
         Data_ResourceTitleMutationOut_: {
             data: components["schemas"]["ResourceTitleMutationOut"];
+        };
+        /** Data[SourceRetryAdmission] */
+        Data_SourceRetryAdmission_: {
+            data: components["schemas"]["SourceRetryAdmission"];
         };
         /** Data[TranscriptRequestOut] */
         Data_TranscriptRequestOut_: {
@@ -6699,6 +6741,7 @@ export interface components {
             author_mode: "automatic" | "manual";
             /** Canonical Source Url */
             canonical_source_url: string | null;
+            canonical_url: components["schemas"]["Presence_str_"];
             capabilities: components["schemas"]["CapabilitiesOut"];
             /** Chapters */
             chapters: components["schemas"]["PodcastEpisodeChapterOut"][];
@@ -6736,6 +6779,7 @@ export interface components {
             listening_state: components["schemas"]["ListeningStateOut"] | null;
             /** Metadata Enriched At */
             metadata_enriched_at: string | null;
+            metadata_enrichment: components["schemas"]["MetadataEnrichmentView"];
             original_published_date: components["schemas"]["Presence_Annotated_str__StringConstraints__AfterValidator__"];
             playback_source: components["schemas"]["PlaybackSourceOut"] | null;
             playerDescriptor: components["schemas"]["Presence_PlayerDescriptor_"];
@@ -6748,10 +6792,13 @@ export interface components {
             progress_fraction: number | null;
             /** Progress Resettable */
             progress_resettable: boolean;
+            provider: components["schemas"]["Presence_str_"];
+            provider_id: components["schemas"]["Presence_str_"];
             /** Publisher */
             publisher: string | null;
             /** Read State */
             read_state: ("unread" | "in_progress" | "finished") | null;
+            requested_url: components["schemas"]["Presence_str_"];
             /** Retrieval Status */
             retrieval_status: string | null;
             /** Retrieval Status Reason */
@@ -6830,6 +6877,274 @@ export interface components {
              * @enum {string}
              */
             type: "message_offsets";
+        };
+        /** MetadataCompletedOperation */
+        MetadataCompletedOperation: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            generation_id: components["schemas"]["Presence_UUID_"];
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            outcome: components["schemas"]["MetadataCompletedOutcome"];
+            selection: components["schemas"]["Presence_MetadataSelection_"];
+            started_at: components["schemas"]["Presence_AwareDatetime_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            status: "completed";
+        };
+        /** MetadataCompletedOutcome */
+        MetadataCompletedOutcome: {
+            /** Changed Fields */
+            changed_fields: components["schemas"]["MetadataField"][];
+            /**
+             * Completed At
+             * Format: date-time
+             */
+            completed_at: string;
+            /** Retained Manual Authors */
+            retained_manual_authors: boolean;
+            /**
+             * Status
+             * @default completed
+             * @constant
+             */
+            status: "completed";
+            /** Unresolved Fields */
+            unresolved_fields: components["schemas"]["MetadataField"][];
+        };
+        /** MetadataEnrichmentAccepted */
+        MetadataEnrichmentAccepted: {
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+        };
+        /** MetadataEnrichmentRequest */
+        MetadataEnrichmentRequest: {
+            /** Client Mutation Id */
+            client_mutation_id: string;
+            expected_job_id: components["schemas"]["Presence_UUID_"];
+        };
+        /** MetadataEnrichmentView */
+        MetadataEnrichmentView: {
+            last_enriched_at: components["schemas"]["Presence_AwareDatetime_"];
+            operation: components["schemas"]["Presence_MetadataOperationOut_"];
+            retry: components["schemas"]["MetadataRetry"];
+        };
+        /** MetadataFailedOperation */
+        MetadataFailedOperation: {
+            code: components["schemas"]["MetadataFailureCode"];
+            /**
+             * Completed At
+             * Format: date-time
+             */
+            completed_at: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            generation_id: components["schemas"]["Presence_UUID_"];
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            selection: components["schemas"]["Presence_MetadataSelection_"];
+            started_at: components["schemas"]["Presence_AwareDatetime_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            status: "failed";
+        };
+        /** @enum {string} */
+        MetadataFailureCode: "catalog_unavailable" | "configuration_error" | "model_unavailable" | "authentication_failed" | "quota_unavailable" | "research_timeout" | "invalid_output" | "input_too_large" | "output_limit" | "stale_input" | "no_longer_eligible" | "access_revoked" | "cancelled" | "policy_violation" | "worker_interrupted" | "execution_failed";
+        /** @enum {string} */
+        MetadataField: "title" | "contributors" | "original_published_date" | "edition_published_date" | "edition_isbn" | "publisher" | "language" | "description";
+        /** MetadataNoFindingsOperation */
+        MetadataNoFindingsOperation: {
+            /**
+             * Completed At
+             * Format: date-time
+             */
+            completed_at: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            generation_id: components["schemas"]["Presence_UUID_"];
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            selection: components["schemas"]["Presence_MetadataSelection_"];
+            started_at: components["schemas"]["Presence_AwareDatetime_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            status: "no_findings";
+        };
+        MetadataOperationOut: components["schemas"]["MetadataQueuedOperation"] | components["schemas"]["MetadataRunningOperation"] | components["schemas"]["MetadataRecoveringOperation"] | components["schemas"]["MetadataUncertainOperation"] | components["schemas"]["MetadataWaitingOperation"] | components["schemas"]["MetadataCompletedOperation"] | components["schemas"]["MetadataNoFindingsOperation"] | components["schemas"]["MetadataFailedOperation"];
+        /** MetadataQueuedOperation */
+        MetadataQueuedOperation: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            generation_id: components["schemas"]["Presence_UUID_"];
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            selection: components["schemas"]["Presence_MetadataSelection_"];
+            started_at: components["schemas"]["Presence_AwareDatetime_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            status: "queued";
+        };
+        /** MetadataRecoveringOperation */
+        MetadataRecoveringOperation: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            generation_id: components["schemas"]["Presence_UUID_"];
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            selection: components["schemas"]["Presence_MetadataSelection_"];
+            started_at: components["schemas"]["Presence_AwareDatetime_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            status: "recovering";
+        };
+        MetadataRetry: components["schemas"]["MetadataRetryAllowed"] | components["schemas"]["MetadataRetryBlocked"];
+        /** MetadataRetryAllowed */
+        MetadataRetryAllowed: {
+            expected_job_id: components["schemas"]["Presence_UUID_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            status: "allowed";
+        };
+        /** MetadataRetryBlocked */
+        MetadataRetryBlocked: {
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "not_creator" | "not_eligible" | "active" | "uncertain";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            status: "blocked";
+        };
+        /** MetadataRunningOperation */
+        MetadataRunningOperation: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            generation_id: components["schemas"]["Presence_UUID_"];
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            selection: components["schemas"]["Presence_MetadataSelection_"];
+            started_at: components["schemas"]["Presence_AwareDatetime_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            status: "running";
+        };
+        /** MetadataSelection */
+        MetadataSelection: {
+            /** Model */
+            model: string;
+            /** Provider */
+            provider: string;
+            /** Reasoning */
+            reasoning: string;
+        };
+        /** MetadataUncertainOperation */
+        MetadataUncertainOperation: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            generation_id: components["schemas"]["Presence_UUID_"];
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            selection: components["schemas"]["Presence_MetadataSelection_"];
+            started_at: components["schemas"]["Presence_AwareDatetime_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            status: "uncertain";
+        };
+        /** MetadataWaitingOperation */
+        MetadataWaitingOperation: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            generation_id: components["schemas"]["Presence_UUID_"];
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /**
+             * Reason
+             * @constant
+             */
+            reason: "retry";
+            selection: components["schemas"]["Presence_MetadataSelection_"];
+            started_at: components["schemas"]["Presence_AwareDatetime_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            status: "waiting";
+            until: components["schemas"]["Presence_AwareDatetime_"];
         };
         /** MeteredApiBilling */
         MeteredApiBilling: {
@@ -7816,6 +8131,7 @@ export interface components {
         Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__"];
         Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____"];
         Presence_Annotated_str__StringConstraints__AfterValidator__: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__StringConstraints__AfterValidator__"];
+        Presence_AwareDatetime_: components["schemas"]["Absent"] | components["schemas"]["Present_AwareDatetime_"];
         Presence_CancelledEventPayload_: components["schemas"]["Absent"] | components["schemas"]["Present_CancelledEventPayload_"];
         Presence_ChatPublicationWarning_: components["schemas"]["Absent"] | components["schemas"]["Present_ChatPublicationWarning_"];
         Presence_DailyPageSummaryOut_: components["schemas"]["Absent"] | components["schemas"]["Present_DailyPageSummaryOut_"];
@@ -7834,6 +8150,8 @@ export interface components {
         Presence_Literal__Upload____Validate____Extract____Finalize____Index____SourceProcessing___: components["schemas"]["Absent"] | components["schemas"]["Present_Literal__Upload____Validate____Extract____Finalize____Index____SourceProcessing___"];
         Presence_MediaDurationOut_: components["schemas"]["Absent"] | components["schemas"]["Present_MediaDurationOut_"];
         Presence_MediaNavigationOut_: components["schemas"]["Absent"] | components["schemas"]["Present_MediaNavigationOut_"];
+        Presence_MetadataOperationOut_: components["schemas"]["Absent"] | components["schemas"]["Present_MetadataOperationOut_"];
+        Presence_MetadataSelection_: components["schemas"]["Absent"] | components["schemas"]["Present_MetadataSelection_"];
         Presence_NavigationTextPointOut_: components["schemas"]["Absent"] | components["schemas"]["Present_NavigationTextPointOut_"];
         Presence_NavigationTextRangeOut_: components["schemas"]["Absent"] | components["schemas"]["Present_NavigationTextRangeOut_"];
         Presence_PlayerDescriptor_: components["schemas"]["Absent"] | components["schemas"]["Present_PlayerDescriptor_"];
@@ -8068,6 +8386,19 @@ export interface components {
             /** Value */
             value: string;
         };
+        /** Present[AwareDatetime] */
+        Present_AwareDatetime_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /**
+             * Value
+             * Format: date-time
+             */
+            value: string;
+        };
         /** Present[CancelledEventPayload] */
         Present_CancelledEventPayload_: {
             /**
@@ -8253,6 +8584,24 @@ export interface components {
              */
             kind: "Present";
             value: components["schemas"]["MediaNavigationOut"];
+        };
+        /** Present[MetadataOperationOut] */
+        Present_MetadataOperationOut_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["MetadataOperationOut"];
+        };
+        /** Present[MetadataSelection] */
+        Present_MetadataSelection_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["MetadataSelection"];
         };
         /** Present[NavigationTextPointOut] */
         Present_NavigationTextPointOut_: {
@@ -9464,7 +9813,7 @@ export interface components {
         ResourceActionSnapshotOut: {
             activation: components["schemas"]["ResourceActivationOut"];
             /** Capabilities */
-            capabilities: (components["schemas"]["SimpleResourceActionCapabilityOut"] | components["schemas"]["RecoveryResourceActionCapabilityOut"] | components["schemas"]["OfflineReadingResourceActionCapabilityOut"] | components["schemas"]["OpenSourceResourceActionCapabilityOut"] | components["schemas"]["PlaybackResourceActionCapabilityOut"] | components["schemas"]["ConsumptionResourceActionCapabilityOut"] | components["schemas"]["EpisodeConsumptionResourceActionCapabilityOut"] | components["schemas"]["PodcastSubscriptionResourceActionCapabilityOut"] | components["schemas"]["TranscriptResourceActionCapabilityOut"] | components["schemas"]["LecternMembershipResourceActionCapabilityOut"] | components["schemas"]["HighlightNoteResourceActionCapabilityOut"])[];
+            capabilities: (components["schemas"]["SimpleResourceActionCapabilityOut"] | components["schemas"]["RetryMetadataResourceActionCapabilityOut"] | components["schemas"]["RecoveryResourceActionCapabilityOut"] | components["schemas"]["OfflineReadingResourceActionCapabilityOut"] | components["schemas"]["OpenSourceResourceActionCapabilityOut"] | components["schemas"]["PlaybackResourceActionCapabilityOut"] | components["schemas"]["ConsumptionResourceActionCapabilityOut"] | components["schemas"]["EpisodeConsumptionResourceActionCapabilityOut"] | components["schemas"]["PodcastSubscriptionResourceActionCapabilityOut"] | components["schemas"]["TranscriptResourceActionCapabilityOut"] | components["schemas"]["LecternMembershipResourceActionCapabilityOut"] | components["schemas"]["HighlightNoteResourceActionCapabilityOut"])[];
             /** Missing */
             missing: boolean;
             /** Ref */
@@ -9870,16 +10219,16 @@ export interface components {
             /** Noteblocks */
             noteBlocks: number;
         };
-        /**
-         * RetryMetadataRequest
-         * @description Re-enrich metadata; no idempotency ledger.
-         */
-        RetryMetadataRequest: {
+        /** RetryMetadataResourceActionCapabilityOut */
+        RetryMetadataResourceActionCapabilityOut: {
+            /** Availability */
+            availability: components["schemas"]["ServerActionAvailabilityAvailableOut"] | components["schemas"]["ServerActionAvailabilityBlockedOut"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            from_stage: "metadata";
+            kind: "RetryMetadata";
+            retry: components["schemas"]["MetadataRetry"];
         };
         /** RetrySourceOffer */
         RetrySourceOffer: {
@@ -9940,8 +10289,8 @@ export interface components {
              */
             expected_attempt_id: string;
             /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
+             * From Stage
+             * @constant
              */
             from_stage: "source";
         };
@@ -10830,7 +11179,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditAuthors" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "LearnHighlight" | "LibraryPlacement" | "LibrarySettings" | "LinkHighlight" | "MediaMetadata" | "OfflineAudio" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastSettings" | "RefreshPodcast" | "RefreshSource" | "RegenerateArtifact" | "RegenerateMessage" | "RemoveMedia" | "RerunMessage" | "ResetProgress" | "RetryMetadata" | "RetryPodcastBackfill" | "Share" | "WalkMessageSources";
+            kind: "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditAuthors" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "LearnHighlight" | "LibraryPlacement" | "LibrarySettings" | "LinkHighlight" | "MediaMetadata" | "OfflineAudio" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastSettings" | "RefreshPodcast" | "RefreshSource" | "RegenerateArtifact" | "RegenerateMessage" | "RemoveMedia" | "RerunMessage" | "ResetProgress" | "RetryPodcastBackfill" | "Share" | "WalkMessageSources";
         };
         /** SourceAccepted */
         SourceAccepted: {
@@ -10976,6 +11325,30 @@ export interface components {
              * @enum {string}
              */
             kind: "Source";
+        };
+        /** SourceRetryAdmission */
+        SourceRetryAdmission: {
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /**
+             * Kind
+             * @default SourceRetry
+             * @constant
+             */
+            kind: "SourceRetry";
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            /**
+             * Source Attempt Id
+             * Format: uuid
+             */
+            source_attempt_id: string;
         };
         /** SourceRetryScheduled */
         SourceRetryScheduled: {
@@ -13362,7 +13735,7 @@ export interface operations {
             };
         };
     };
-    undo_background_generation_write_generation_effects__position_id__undo_post: {
+    undo_assistant_write_generation_effects__position_id__undo_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -15768,6 +16141,41 @@ export interface operations {
             };
         };
     };
+    enrich_media_metadata_media__media_id__metadata_enrichment_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MetadataEnrichmentRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_MetadataEnrichmentAccepted_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_media_navigation_media__media_id__navigation_get: {
         parameters: {
             query?: never;
@@ -16160,7 +16568,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RetrySourceRequest"] | components["schemas"]["RetryMetadataRequest"];
+                "application/json": components["schemas"]["RetrySourceRequest"];
             };
         };
         responses: {
@@ -16170,9 +16578,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_SourceRetryAdmission_"];
                 };
             };
             /** @description Validation Error */
@@ -18132,6 +18538,37 @@ export interface operations {
         };
     };
     stream_media_events_stream_media__media_id__events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stream_metadata_events_stream_media__media_id__metadata_events_get: {
         parameters: {
             query?: never;
             header?: never;

@@ -1,3 +1,4 @@
+import type { ApiJson } from "@/lib/api/wire";
 import {
   AUTHOR_WORKS_LIMIT,
   contributorResource,
@@ -49,7 +50,6 @@ import type {
   ContributorWorkItem,
 } from "@/lib/contributors/types";
 import { conversationIndexPage } from "@/lib/conversations/indexApi";
-import type { ApiJson } from "@/lib/api/wire";
 import type { ConversationListItem } from "@/lib/conversations/types";
 
 // The author pane's composed first-paint seed: the lightweight contributor

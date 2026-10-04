@@ -17,7 +17,6 @@ from nexus.errors import (
 from nexus.logging import get_logger
 from nexus.schemas.presence import Present
 from nexus.services.collection_revisions import CollectionFamily, bump_all_collection_families
-from nexus.services.contributor_taxonomy import RawCreditEntry, build_observation
 from nexus.services.epub_ingest import (
     EpubExtractionError,
     EpubExtractionPlan,
@@ -117,17 +116,20 @@ def publish_epub_source(
             "title": result.title,
             "metadata_enrichment": True,
         }
-        # Each OPF creator is one credited name; only semicolons split a single
-        # creator string into several people (D-31: ``Last, First`` stays one name).
-        names: list[str] = []
-        for creator in result.creators:
-            names.extend(part.strip() for part in creator.split(";") if part.strip())
-        observation, truncated = build_observation(
-            {"author": [RawCreditEntry(credited_name=name) for name in names]}
+        for issue in result.contributor_issues:
+            logger.warning(
+                "epub_contributor_observation_unrepresentable",
+                media_id=str(media_id),
+                code=issue.code,
+                detail=issue.detail,
+            )
+        if result.contributor_issues:
+            response["contributor_issues"] = [
+                {"code": issue.code, "detail": issue.detail} for issue in result.contributor_issues
+            ]
+        attach_author_observation(
+            response, observation=result.contributor_observation, source="epub_opf"
         )
-        if truncated:
-            logger.info("epub_author_truncation", media_id=str(media_id), truncated=truncated)
-        attach_author_observation(response, observation=observation, source="epub_opf")
         return response, old_storage_paths
 
     response, old_storage_paths = replace_reader_publication(

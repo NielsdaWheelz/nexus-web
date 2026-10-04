@@ -78,18 +78,17 @@ resolves one of:
 
 - `NoModelTools`;
 - `ChatReadAdditiveWrite` for every new chat send, rerun, and regeneration;
-- `MetadataRead`;
+- `MetadataResearch`;
 - `LibraryDossierRead`;
 - `IdeaDossierRead`.
 
 on provider api chat, `ExactModelTools` grants `AdditiveWrites` over
 `ChatAdmittedContext`: `web.search`, five nexus reads, and five owner-gated
 additive writes. the two dossier plans grant only the five nexus reads over
-their exact frozen evidence scope when used as provider functions. metadata
-enrichment's provider-function plan publishes `web.search`, `web.read`,
-`nexus.document.search`, and `nexus.resource.read`. other background
-provider-function plans publish no model-tool schema. idea host research
-remains a separate bounded, durable three-search preparation plan.
+their exact frozen evidence scope. metadata enrichment selects codex personal
+and freezes exactly `web.search`, `web.read`, `nexus.document.search`, and
+`nexus.resource.read`. idea host research remains a separate bounded, durable
+three-search preparation plan.
 
 codex freezes `CodexCallbacks` authority using the same operation-selected
 portable declarations as `ProviderFunctions`. metadata publishes exactly the four
@@ -143,8 +142,11 @@ state.
 
 One parent generation row records the frozen spec and terminal truth. One child
 row records each independently accepted model call: normally one for Codex and
-one per ProviderRuntime call in an API tool loop. Tool positions and their
-effect receipts are separate durable children. Credentials, raw
+one per ProviderRuntime call in an API tool loop. tool positions belong to that
+execution ledger. completed additive writes also commit independent effect
+receipts and target authorship in the same transaction. receipts retain the
+original principal, effect identity, result and undo state after history reset
+or conversation deletion. credentials, raw
 prompts, and decrypted continuation bytes never enter catalog, history,
 evidence, or logs.
 
@@ -172,11 +174,14 @@ raw provider-api billing/admission keeps its existing contract.
 migration 0255 backfills original historical principals, retains original effect
 and continuation bytes without invented seals, then deletes shell credentials.
 uncertain legacy shell work blocks migration. historical undo uses persisted
-principal/effect ownership. this branch's canonical chain is
-0252 -> resource0253 -> atlas0254 -> native0255. metadata separately owns the
-following metadata0256 -> effects0257 migrations. qualification of the earlier
-0252 -> native0254 -> metadata0255 candidate is historical; it does not qualify
-the integrated chain.
+principal/effect ownership. the single combined chain is
+0252 -> resource 0253 -> atlas 0254 -> native 0255 -> metadata 0256 -> effects 0257.
+metadata owns 0256 and the independent receipt contract in 0257. the pre-release
+0246 reset preserves original completed write receipts before deleting history;
+0257 also backfills surviving post-metadata positions.
+missing ownership or unfinished writes block either path. runtime
+consumers use one receipt contract. earlier numbered integration receipts stay
+historical and do not qualify this final graph.
 
 ## Product API and reset boundary
 
@@ -187,14 +192,18 @@ chat history, sse meta, and trust projections expose immutable dispatch
 selection and frozen authority derived from the saved generation spec, plus
 safe execution disclosure. saved run/tree/active-path and cancel reads do not
 need a live model catalog; current availability is checked for new admission.
-historical authority is a description of what was frozen at dispatch, not an
-exact native tool list. these projections never expose
+historical authority describes the exact grant frozen at dispatch. these
+projections never expose
 credentials, dispatch aliases, continuation bytes, or a generation default.
 
-The hard-cut migration deletes the complete legacy Chat aggregate and all
-historical generation/metering rows. Users, media, libraries, knowledge,
-resource graph data not owned by conversations, and non-conversation artifacts
-remain. Consequently every surviving Chat run was admitted under this contract;
+the hard-cut migration deletes the complete legacy chat aggregate and all
+historical generation/metering rows. users, media, libraries, knowledge,
+resource graph data not owned by conversations, non-conversation artifacts,
+and independent completed-write receipts remain. crossing 0246 with history
+requires stopped writers, an exact reviewed census and disposition, a verified
+backup, and proof from an actual restore of that archive. historical orphan
+parents require explicit acknowledgement; missing write principals remain
+blocking. archival abandonment never invents provider or job completion.
 there is no legacy eligibility decoder or historical selection translation.
 
 ## Invariants
