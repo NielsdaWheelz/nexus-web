@@ -3,14 +3,11 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   apiFetch,
-  decodeApiPayload,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import {
-  decodeGenerationCatalogResponse,
-  type GenerationCatalog,
-} from "@/lib/conversations/generationCatalog";
+import type { GenerationCatalog } from "@/lib/conversations/generationCatalog";
+import type { ApiJson } from "@/lib/api/wire";
 
 let cachedCatalog: GenerationCatalog | null = null;
 let catalogRequest: Promise<GenerationCatalog> | null = null;
@@ -27,14 +24,8 @@ export function loadGenerationCatalog(input?: {
     return Promise.resolve(cachedCatalog);
   }
   if (catalogRequest !== null) return catalogRequest;
-  catalogRequest = apiFetch<unknown>("/api/llm-catalog", { cache: "no-store" })
-    .then((raw) =>
-      decodeApiPayload(
-        raw,
-        decodeGenerationCatalogResponse,
-        "Generation catalog",
-      ),
-    )
+  catalogRequest = apiFetch<ApiJson<"/llm-catalog", "get">>("/api/llm-catalog", { cache: "no-store" })
+    .then((response) => response.data)
     .then((catalog) => {
       cachedCatalog = catalog;
       notifyListeners();

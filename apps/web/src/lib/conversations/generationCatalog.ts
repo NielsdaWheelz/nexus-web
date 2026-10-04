@@ -1,139 +1,37 @@
-import { decodePresence, type Presence } from "@/lib/api/presence";
+import type { ApiJson, Schema } from "@/lib/api/wire";
 import {
   expectArray,
   expectExactRecord,
-  expectIsoInstant,
   expectNonemptyString,
   expectOneOf,
   expectString,
 } from "@/lib/validation";
 
-export type GenerationApiProvider =
-  | "openai"
-  | "anthropic"
-  | "gemini"
-  | "deepseek"
-  | "xai";
-
+export type GenerationApiProvider = Schema<"GenerationApiProvider">;
 export type GenerationSelectionSpec =
-  | {
-      readonly route: "CodexPersonal";
-      readonly model: string;
-      readonly reasoning: string;
-    }
-  | {
-      readonly route: "ProviderApi";
-      readonly model_ref: string;
-      readonly reasoning: string;
-    };
-
+  | Schema<"CodexPersonalSelection">
+  | Schema<"ProviderApiSelection">;
 export type GenerationRoute =
-  | { readonly kind: "CodexPersonal" }
-  | {
-      readonly kind: "ProviderApi";
-      readonly provider: GenerationApiProvider;
-    };
-
+  | Schema<"CodexPersonalRoute">
+  | Schema<"ProviderApiRoute">;
 export type GenerationReadiness =
-  | { readonly kind: "Ready"; readonly last_checked: string }
-  | {
-      readonly kind: "OperatorActionRequired";
-      readonly code: GenerationReadinessCode;
-      readonly explanation: string;
-      readonly action: string;
-      readonly last_checked: string;
-    }
-  | {
-      readonly kind: "TemporarilyUnavailable";
-      readonly code: GenerationReadinessCode;
-      readonly explanation: string;
-      readonly action: string;
-      readonly last_checked: string;
-    };
-
-export type GenerationReadinessCode =
-  | "catalog_refresh_failed"
-  | "codex_host_unavailable"
-  | "credential_unavailable"
-  | "required_tool_unavailable";
-
+  | Schema<"Ready">
+  | Schema<"OperatorActionRequired">
+  | Schema<"TemporarilyUnavailable">;
 export type GenerationSelectionState =
-  | { readonly kind: "Selectable" }
-  | {
-      readonly kind: "Ineligible";
-      readonly code: "unsupported_capability" | "selection_not_configured";
-      readonly explanation: string;
-    }
-  | Extract<GenerationReadiness, { readonly kind: "OperatorActionRequired" }>
-  | Extract<GenerationReadiness, { readonly kind: "TemporarilyUnavailable" }>;
-
-type BillingDisclosure =
-  | { readonly kind: "Subscription"; readonly label: "Codex subscription" }
-  | { readonly kind: "MeteredApi"; readonly label: "Metered API" };
-
-export interface PrivacyDisclosure {
-  readonly summary: string;
-  readonly retention: string;
-  readonly training: string;
-}
-
-export interface ProcessorChain {
-  readonly processors: readonly string[];
-}
-
-export interface SelectionPresentation {
-  readonly route_label: string;
-  readonly model_label: string;
-  readonly reasoning_label: string;
-  readonly billing: BillingDisclosure;
-  readonly privacy: PrivacyDisclosure;
-  readonly processor_chain: ProcessorChain;
-}
-
-export interface GenerationReasoningRow {
-  readonly key: string;
-  readonly label: string;
-  readonly readiness: GenerationReadiness;
-  readonly chat_state: GenerationSelectionState;
-}
-
-export interface GenerationModelRow {
-  readonly key: string;
-  readonly label: string;
-  readonly description: string;
-  readonly source_context_window: Presence<number>;
-  readonly source_max_output_tokens: Presence<number>;
-  readonly effective_chat_context_budget_tokens: number;
-  readonly effective_chat_output_budget_tokens: number;
-  readonly readiness: GenerationReadiness;
-  readonly input_modalities: readonly ("text" | "image")[];
-  readonly source_default_reasoning: Presence<string>;
-  readonly reasoning: readonly GenerationReasoningRow[];
-}
-
-export interface GenerationCatalogRoute {
-  readonly route: GenerationRoute;
-  readonly label: string;
-  readonly readiness: GenerationReadiness;
-  readonly billing: BillingDisclosure;
-  readonly privacy: PrivacyDisclosure;
-  readonly processor_chain: ProcessorChain;
-  readonly models: readonly GenerationModelRow[];
-}
-
-export interface ChatSeed {
-  readonly policy_revision: string;
-  readonly selection: GenerationSelectionSpec;
-  readonly state: GenerationSelectionState;
-  readonly presentation: SelectionPresentation;
-}
-
-export interface GenerationCatalog {
-  readonly definition_revision: string;
-  readonly observed_at: string;
-  readonly chat_seed: ChatSeed;
-  readonly routes: readonly GenerationCatalogRoute[];
-}
+  | Schema<"Selectable">
+  | Schema<"Ineligible">
+  | Schema<"OperatorActionRequired">
+  | Schema<"TemporarilyUnavailable">;
+type BillingDisclosure = Schema<"SubscriptionBilling"> | Schema<"MeteredApiBilling">;
+export type PrivacyDisclosure = Schema<"PrivacyDisclosure">;
+export type ProcessorChain = Schema<"ProcessorChain">;
+export type SelectionPresentation = Schema<"SelectionPresentation">;
+export type GenerationReasoningRow = Schema<"GenerationReasoningRow">;
+export type GenerationModelRow = Schema<"GenerationModelRow">;
+export type GenerationCatalogRoute = Schema<"GenerationCatalogRoute">;
+export type ChatSeed = Schema<"ChatSeed">;
+export type GenerationCatalog = ApiJson<"/llm-catalog", "get">["data"];
 
 export interface RunSelectionOut {
   readonly selection: GenerationSelectionSpec;
@@ -162,16 +60,6 @@ const PROVIDERS = [
   "deepseek",
   "xai",
 ] as const;
-const READINESS_CODES = [
-  "catalog_refresh_failed",
-  "codex_host_unavailable",
-  "credential_unavailable",
-  "required_tool_unavailable",
-] as const;
-const INELIGIBLE_CODES = [
-  "unsupported_capability",
-  "selection_not_configured",
-] as const;
 const SHA256_RE = /^[0-9a-f]{64}$/;
 const CODEX_MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const MODEL_REF_RE = /^[a-z0-9][a-z0-9._:/-]{0,255}$/;
@@ -182,13 +70,6 @@ function expectSha256(raw: unknown, name: string): string {
     throw new TypeError(`${name} must be a lowercase SHA-256 digest`);
   }
   return value;
-}
-
-function expectPositiveInteger(raw: unknown, name: string): number {
-  if (typeof raw !== "number" || !Number.isInteger(raw) || raw <= 0) {
-    throw new TypeError(`${name} must be a positive integer`);
-  }
-  return raw;
 }
 
 function expectPattern(raw: unknown, name: string, pattern: RegExp): string {
@@ -234,60 +115,6 @@ export function decodeGenerationSelectionSpec(
     model_ref: expectPattern(base.model_ref, `${name}.model_ref`, MODEL_REF_RE),
     reasoning: expectReasoningKey(base.reasoning, `${name}.reasoning`),
   };
-}
-
-function decodeReadiness(raw: unknown, name: string): GenerationReadiness {
-  if (typeof raw !== "object" || raw === null || !("kind" in raw)) {
-    throw new TypeError(`${name} must be a readiness object`);
-  }
-  if (raw.kind === "Ready") {
-    const value = expectExactRecord(raw, ["kind", "last_checked"], name);
-    return {
-      kind: "Ready",
-      last_checked: expectIsoInstant(value.last_checked, `${name}.last_checked`),
-    };
-  }
-  if (raw.kind !== "OperatorActionRequired" && raw.kind !== "TemporarilyUnavailable") {
-    throw new TypeError(`${name}.kind is not a supported readiness variant`);
-  }
-  const value = expectExactRecord(
-    raw,
-    ["kind", "code", "explanation", "action", "last_checked"],
-    name,
-  );
-  return {
-    kind: raw.kind,
-    code: expectOneOf(value.code, READINESS_CODES, `${name}.code`),
-    explanation: expectNonemptyString(value.explanation, `${name}.explanation`),
-    action: expectNonemptyString(value.action, `${name}.action`),
-    last_checked: expectIsoInstant(value.last_checked, `${name}.last_checked`),
-  };
-}
-
-function decodeSelectionState(
-  raw: unknown,
-  name: string,
-): GenerationSelectionState {
-  if (typeof raw !== "object" || raw === null || !("kind" in raw)) {
-    throw new TypeError(`${name} must be a selection-state object`);
-  }
-  if (raw.kind === "Selectable") {
-    expectExactRecord(raw, ["kind"], name);
-    return { kind: "Selectable" };
-  }
-  if (raw.kind === "Ineligible") {
-    const value = expectExactRecord(raw, ["kind", "code", "explanation"], name);
-    return {
-      kind: "Ineligible",
-      code: expectOneOf(value.code, INELIGIBLE_CODES, `${name}.code`),
-      explanation: expectNonemptyString(value.explanation, `${name}.explanation`),
-    };
-  }
-  const readiness = decodeReadiness(raw, name);
-  if (readiness.kind === "Ready") {
-    throw new TypeError(`${name}.kind Ready is not a selection-state variant`);
-  }
-  return readiness;
 }
 
 function decodeBilling(raw: unknown, name: string): BillingDisclosure {
@@ -356,104 +183,6 @@ export function decodeSelectionPresentation(
   };
 }
 
-function decodeReasoning(
-  raw: unknown,
-  name: string,
-): GenerationReasoningRow {
-  const value = expectExactRecord(
-    raw,
-    [
-      "key",
-      "label",
-      "readiness",
-      "chat_state",
-    ],
-    name,
-  );
-  return {
-    key: expectReasoningKey(value.key, `${name}.key`),
-    label: expectNonemptyString(value.label, `${name}.label`),
-    readiness: decodeReadiness(value.readiness, `${name}.readiness`),
-    chat_state: decodeSelectionState(value.chat_state, `${name}.chat_state`),
-  };
-}
-
-function decodeModel(raw: unknown, name: string): GenerationModelRow {
-  const value = expectExactRecord(
-    raw,
-    [
-      "key",
-      "label",
-      "description",
-      "source_context_window",
-      "source_max_output_tokens",
-      "effective_chat_context_budget_tokens",
-      "effective_chat_output_budget_tokens",
-      "readiness",
-      "input_modalities",
-      "source_default_reasoning",
-      "reasoning",
-    ],
-    name,
-  );
-  const reasoning = expectArray(
-    value.reasoning,
-    (entry, index) => decodeReasoning(entry, `${name}.reasoning[${index}]`),
-    `${name}.reasoning`,
-  );
-  if (reasoning.length === 0) {
-    throw new TypeError(`${name}.reasoning must not be empty`);
-  }
-  if (new Set(reasoning.map((option) => option.key)).size !== reasoning.length) {
-    throw new TypeError(`${name}.reasoning contains duplicate keys`);
-  }
-  const sourceDefaultReasoning = decodePresence(
-    value.source_default_reasoning,
-    (reasoningKey) =>
-      expectReasoningKey(reasoningKey, `${name}.source_default_reasoning.value`),
-  );
-  if (
-    sourceDefaultReasoning.kind === "Present" &&
-    !reasoning.some((option) => option.key === sourceDefaultReasoning.value)
-  ) {
-    throw new TypeError(`${name}.source_default_reasoning is absent from reasoning`);
-  }
-  return {
-    key: expectNonemptyString(value.key, `${name}.key`),
-    label: expectNonemptyString(value.label, `${name}.label`),
-    description: expectNonemptyString(value.description, `${name}.description`),
-    source_context_window: decodePresence(value.source_context_window, (capacity) =>
-      expectPositiveInteger(capacity, `${name}.source_context_window.value`),
-    ),
-    source_max_output_tokens: decodePresence(
-      value.source_max_output_tokens,
-      (capacity) =>
-        expectPositiveInteger(capacity, `${name}.source_max_output_tokens.value`),
-    ),
-    effective_chat_context_budget_tokens: expectPositiveInteger(
-      value.effective_chat_context_budget_tokens,
-      `${name}.effective_chat_context_budget_tokens`,
-    ),
-    effective_chat_output_budget_tokens: expectPositiveInteger(
-      value.effective_chat_output_budget_tokens,
-      `${name}.effective_chat_output_budget_tokens`,
-    ),
-    readiness: decodeReadiness(value.readiness, `${name}.readiness`),
-    input_modalities: expectArray(
-      value.input_modalities,
-      (modality, index) =>
-        expectOneOf(
-          modality,
-          ["text", "image"] as const,
-          `${name}.input_modalities[${index}]`,
-        ),
-      `${name}.input_modalities`,
-    ),
-    source_default_reasoning: sourceDefaultReasoning,
-    reasoning,
-  };
-}
-
 export function decodeGenerationRoute(raw: unknown, name: string): GenerationRoute {
   const routeValue = expectExactRecord(
     raw,
@@ -470,102 +199,6 @@ export function decodeGenerationRoute(raw: unknown, name: string): GenerationRou
     kind: "ProviderApi",
     provider: expectOneOf(routeValue.provider, PROVIDERS, `${name}.provider`),
   };
-}
-
-function decodeRoute(raw: unknown, name: string): GenerationCatalogRoute {
-  const value = expectExactRecord(
-    raw,
-    ["route", "label", "readiness", "billing", "privacy", "processor_chain", "models"],
-    name,
-  );
-  const route = decodeGenerationRoute(value.route, `${name}.route`);
-  const models = expectArray(
-    value.models,
-    (model, index) => decodeModel(model, `${name}.models[${index}]`),
-    `${name}.models`,
-  );
-  if (models.length === 0) throw new TypeError(`${name}.models must not be empty`);
-  return {
-    route,
-    label: expectNonemptyString(value.label, `${name}.label`),
-    readiness: decodeReadiness(value.readiness, `${name}.readiness`),
-    billing: decodeBilling(value.billing, `${name}.billing`),
-    privacy: decodePrivacy(value.privacy, `${name}.privacy`),
-    processor_chain: decodeProcessorChain(
-      value.processor_chain,
-      `${name}.processor_chain`,
-    ),
-    models,
-  };
-}
-
-function decodeGenerationCatalog(raw: unknown): GenerationCatalog {
-  const value = expectExactRecord(
-    raw,
-    ["definition_revision", "observed_at", "chat_seed", "routes"],
-    "generation catalog",
-  );
-  const seed = expectExactRecord(
-    value.chat_seed,
-    ["policy_revision", "selection", "state", "presentation"],
-    "generation catalog.chat_seed",
-  );
-  const routes = expectArray(
-    value.routes,
-    (route, index) => decodeRoute(route, `generation catalog.routes[${index}]`),
-    "generation catalog.routes",
-  );
-  if (routes.length === 0) {
-    throw new TypeError("generation catalog.routes must not be empty");
-  }
-  const modelRefs = new Set<string>();
-  for (const route of routes) {
-    for (const model of route.models) {
-      const identity = `${route.route.kind}\u0000${model.key}`;
-      if (modelRefs.has(identity)) {
-        throw new TypeError(`generation catalog contains duplicate model ${model.key}`);
-      }
-      modelRefs.add(identity);
-    }
-  }
-  const catalog: GenerationCatalog = {
-    definition_revision: expectSha256(
-      value.definition_revision,
-      "generation catalog.definition_revision",
-    ),
-    observed_at: expectIsoInstant(
-      value.observed_at,
-      "generation catalog.observed_at",
-    ),
-    chat_seed: {
-      policy_revision: expectNonemptyString(
-        seed.policy_revision,
-        "generation catalog.chat_seed.policy_revision",
-      ),
-      selection: decodeGenerationSelectionSpec(
-        seed.selection,
-        "generation catalog.chat_seed.selection",
-      ),
-      state: decodeSelectionState(
-        seed.state,
-        "generation catalog.chat_seed.state",
-      ),
-      presentation: decodeSelectionPresentation(
-        seed.presentation,
-        "generation catalog.chat_seed.presentation",
-      ),
-    },
-    routes,
-  };
-  if (findGenerationCandidate(catalog, catalog.chat_seed.selection) === null) {
-    throw new TypeError("generation catalog.chat_seed is absent from routes");
-  }
-  return catalog;
-}
-
-export function decodeGenerationCatalogResponse(raw: unknown): GenerationCatalog {
-  const envelope = expectExactRecord(raw, ["data"], "generation catalog response");
-  return decodeGenerationCatalog(envelope.data);
 }
 
 export function decodeRunSelectionOut(raw: unknown, name: string): RunSelectionOut {
