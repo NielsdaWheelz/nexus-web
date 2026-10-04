@@ -1,6 +1,7 @@
 "use client";
 
 import { apiFetch, isApiError, type ApiPath } from "@/lib/api/client";
+import type { Schema } from "@/lib/api/wire";
 import { createRandomId } from "@/lib/createRandomId";
 import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHandoff";
 import type { NoteBodyEdit, NoteBodyEditorDocument, NoteBodySelection } from "@/components/notes/NoteBodyEditor";
@@ -28,10 +29,10 @@ export class WritingUnknownOutcomeError extends Error {
 }
 export type FrozenRequest = Readonly<{ path: ApiPath; method: "PATCH" | "PUT" | "POST" | "DELETE"; body: string }>;
 export type BodyAck = { body: NoteBodyValue; version: number };
+type BodyObserver = (ack: BodyAck, createdVersions?: Schema<"NoteBodyVersionsOut">) => void | Promise<void>;
 export type BodyAdapter = {
   prepare: (input: { body: NoteBodyValue; expectedBody: ExpectedBody; clientMutationId: string }) => FrozenRequest;
-  acknowledge: (data: unknown) => BodyAck;
-  onAcknowledge?: (ack: BodyAck) => void | Promise<void>;
+  onAcknowledge?: BodyObserver;
 };
 export type WritingSnapshot = {
   document: NoteBodyEditorDocument;
@@ -88,9 +89,9 @@ type BodyRuntime = {
   entry: BodyEntry | null;
   snapshot: WritingSnapshot;
   histories: Map<string, { undo: HistoryItem[]; redo: HistoryItem[]; group: number }>;
-  observers: Map<string, (ack: BodyAck) => void | Promise<void>>;
-  submittedObservers: Map<string, (ack: BodyAck) => void | Promise<void>> | null;
-  submittedAdapterObserver: ((ack: BodyAck) => void | Promise<void>) | null;
+  observers: Map<string, BodyObserver>;
+  submittedObservers: Map<string, BodyObserver> | null;
+  submittedAdapterObserver: BodyObserver | null;
   idleTimer: number | null;
   maxTimer: number | null;
   ready: boolean;
@@ -307,7 +308,7 @@ export class WritingSession {
     this.bodies.get(noteRef)?.histories.delete(viewId);
     this.bodies.get(noteRef)?.observers.delete(viewId);
   }
-  observeBodyAcknowledgement(noteRef: string, viewId: string, callback: ((ack: BodyAck) => void | Promise<void>) | undefined): void {
+  observeBodyAcknowledgement(noteRef: string, viewId: string, callback: BodyObserver | undefined): void {
     const body = this.state(noteRef);
     if (callback) body.observers.set(viewId, callback);
     else body.observers.delete(viewId);
@@ -630,17 +631,17 @@ export class WritingSession {
       runtime.ready = false;
       runtime.lease ??= runtime.onMutationStarted?.() ?? null;
       this.snapshot(runtime, runtime.snapshot.localRetained ? "saving" : "storage_failed", runtime.snapshot.localRetained);
-      void this.execute<{ data: unknown } | undefined>(entry.submitted.request).then(async (reply) => {
-        const data = reply?.data;
-        const submitted = entry.submitted!;
-        let ack: BodyAck;
-        try {
-          ack = submitted.expectedBody.kind === "absent"
-            ? runtime.adapter!.acknowledge(data)
-            : this.acknowledgeCanonicalBody(data);
-        } catch (error) {
-          throw new WritingUnknownOutcomeError(error);
-        }
+      const submitted = entry.submitted;
+      let createdVersions: Schema<"NoteBodyVersionsOut"> | undefined;
+      const acknowledgement = submitted.expectedBody.kind === "absent"
+        ? this.completeOperation<Schema<"Data_LinkedNoteBlockRef_">, BodyAck>(submitted.request, ({ data }) => {
+          if (`note_block:${data.note_block_id}` !== entry.noteRef) throw new TypeError("annotation save changed note identity");
+          const body = decodeNoteBodyValue(data.body_pm_json, data.body_text, "created note body");
+          createdVersions = data.version_by_lane;
+          return { body, version: createdVersions.body };
+        })
+        : this.completeOperation<{ data: unknown } | undefined, BodyAck>(submitted.request, (reply) => this.acknowledgeCanonicalBody(reply?.data));
+      void acknowledgement.then(async (ack) => {
         entry.acknowledged = ack;
         runtime.version = ack.version;
         entry.submitted = null;
@@ -664,7 +665,7 @@ export class WritingSession {
         if (runtime.submittedAdapterObserver) observers.add(runtime.submittedAdapterObserver);
         runtime.submittedObservers = null; runtime.submittedAdapterObserver = null;
         for (const observer of observers) {
-          void Promise.resolve().then(() => observer(ack)).catch((error: unknown) => runtime.onError?.(error));
+          void Promise.resolve().then(() => observer(ack, createdVersions)).catch((error: unknown) => runtime.onError?.(error));
         }
       }).catch((error: unknown) => this.failBody(entry, runtime, error)).finally(() => {
         this.active = null; this.pump();
@@ -700,10 +701,10 @@ export class WritingSession {
     }).finally(() => { this.active = null; this.pump(); });
   }
 
-  private completeOperation = async <R>(request: FrozenRequest, acknowledge: (reply: R) => void): Promise<void> => {
+  private completeOperation = async <R, Result = void>(request: FrozenRequest, acknowledge: (reply: R) => Result): Promise<Result> => {
     const reply = await this.execute<R>(request);
     try {
-      acknowledge(reply);
+      return acknowledge(reply);
     } catch (error) {
       // A committed request stays frozen until exact replay repairs its projection.
       throw new WritingUnknownOutcomeError(error);

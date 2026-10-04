@@ -41,6 +41,7 @@ from nexus.schemas.highlights import (
     UpdateHighlightRequest,
 )
 from nexus.schemas.reader import ResolvedHighlightReaderTarget
+from nexus.schemas.resource_items import NoteBodyVersionsOut
 from nexus.services import locator_resolver, text_quote
 from nexus.services.capabilities import is_text_document_ready
 from nexus.services.passage_anchors import normalize_quote_text
@@ -362,7 +363,7 @@ def _project_anchored(
                 note_block_id=block.id,
                 body_pm_json=block.body_pm_json,
                 body_text=block.body_text,
-                version_by_lane=note_versions[block.id],
+                version_by_lane=NoteBodyVersionsOut.model_validate(note_versions[block.id]),
             )
             for block in blocks
         ]

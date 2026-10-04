@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession
-from nexus.responses import ok, success_response
+from nexus.responses import Data, ok, success_response
 from nexus.schemas.highlights import (
     CreateHighlightRequest,
     CreatePdfHighlightRequest,
@@ -16,6 +16,7 @@ from nexus.schemas.highlights import (
     UpdateHighlightRequest,
 )
 from nexus.schemas.reader import ResolvedHighlightReaderTargetResponse
+from nexus.schemas.resource_items import NoteBodyVersionsOut
 from nexus.services import highlights as highlights_service
 from nexus.services import notes as notes_service
 from nexus.services import pdf_highlights as pdf_highlights_service
@@ -107,7 +108,7 @@ def update_highlight(
 @router.put("/highlights/{highlight_id}/note")
 def set_highlight_note(
     highlight_id: UUID, request: SetHighlightNoteRequest, viewer: ViewerDep, db: DbSession
-) -> dict:
+) -> Data[LinkedNoteBlockRef]:
     block = notes_service.set_highlight_note_body_pm_json(
         db,
         viewer.user_id,
@@ -117,12 +118,12 @@ def set_highlight_note(
         expected_body=request.expected_body,
         client_mutation_id=request.client_mutation_id,
     )
-    return ok(
-        LinkedNoteBlockRef(
+    return Data(
+        data=LinkedNoteBlockRef(
             note_block_id=block.id,
             body_pm_json=block.body_pm_json,
             body_text=block.body_text,
-            version_by_lane=block.version_by_lane,
+            version_by_lane=NoteBodyVersionsOut.model_validate(block.version_by_lane),
         )
     )
 

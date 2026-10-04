@@ -4514,6 +4514,51 @@ export interface components {
             /** Generation */
             generation: number;
         };
+        /** ConnectionCitationOut */
+        ConnectionCitationOut: {
+            activation: components["schemas"]["ResourceActivationOut"];
+            /** Ordinal */
+            ordinal: number;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "context" | "supports" | "contradicts";
+            /** Snapshot */
+            snapshot: {
+                [key: string]: unknown;
+            };
+            target_reader: components["schemas"]["ConnectionReaderTargetOut"] | null;
+            /**
+             * Target Status
+             * @enum {string}
+             */
+            target_status: "current" | "missing" | "forbidden" | "unanchorable";
+        };
+        /** ConnectionEndpointOut */
+        ConnectionEndpointOut: {
+            activation: components["schemas"]["ResourceActivationOut"];
+            /** Description */
+            description: string | null;
+            /** Href */
+            href: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Label */
+            label: string | null;
+            /** Missing */
+            missing: boolean;
+            /** Ref */
+            ref: string;
+            /**
+             * Scheme
+             * @enum {string}
+             */
+            scheme: "media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "artifact" | "artifact_revision" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor";
+        };
         /** ConnectionFiltersRequest */
         ConnectionFiltersRequest: {
             /** Kinds */
@@ -4536,6 +4581,58 @@ export interface components {
             preview: string | null;
             /** Ref */
             ref: string;
+        };
+        /** ConnectionOut */
+        ConnectionOut: {
+            citation: components["schemas"]["ConnectionCitationOut"] | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "incoming" | "outgoing" | "undirected";
+            /**
+             * Edge Id
+             * Format: uuid
+             */
+            edge_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "context" | "supports" | "contradicts";
+            link_note: components["schemas"]["ConnectionLinkNoteOut"] | null;
+            /** Ordinal */
+            ordinal: number | null;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "user" | "citation" | "system" | "note_body" | "highlight_note" | "synapse" | "document_embed" | "assistant" | "link_note";
+            other: components["schemas"]["ConnectionEndpointOut"];
+            /** Snapshot */
+            snapshot: {
+                [key: string]: unknown;
+            } | null;
+            source: components["schemas"]["ConnectionEndpointOut"];
+            /** Source Order Key */
+            source_order_key: string | null;
+            /** Source Ref */
+            source_ref: string;
+            target: components["schemas"]["ConnectionEndpointOut"];
+            /** Target Ref */
+            target_ref: string;
+        };
+        /** ConnectionPageOut */
+        ConnectionPageOut: {
+            /** Items */
+            items: components["schemas"]["ConnectionOut"][];
+            /** Next Cursor */
+            next_cursor: string | null;
         };
         /** ConnectionQueryRequest */
         ConnectionQueryRequest: {
@@ -4560,6 +4657,15 @@ export interface components {
              * @enum {string}
              */
             rollup: "exact" | "owner";
+        };
+        /** ConnectionReaderTargetOut */
+        ConnectionReaderTargetOut: {
+            /** Locator */
+            locator: {
+                [key: string]: unknown;
+            } | null;
+            /** Media Id */
+            media_id: string | null;
         };
         /** ConstellationOut */
         ConstellationOut: {
@@ -5121,6 +5227,14 @@ export interface components {
              */
             name: string;
         };
+        /** CreateLinkOut */
+        CreateLinkOut: {
+            connection: components["schemas"]["ConnectionOut"];
+            /** Created */
+            created: boolean;
+            /** Created Source Ref */
+            created_source_ref: string | null;
+        };
         /** CreateLinkRequest */
         CreateLinkRequest: {
             /** Client Mutation Id */
@@ -5322,6 +5436,10 @@ export interface components {
         Data_CollectionPage_PodcastSubscriptionListItemOut__: {
             data: components["schemas"]["CollectionPage_PodcastSubscriptionListItemOut_"];
         };
+        /** Data[ConnectionPageOut] */
+        Data_ConnectionPageOut_: {
+            data: components["schemas"]["ConnectionPageOut"];
+        };
         /** Data[ConsumptionResult] */
         Data_ConsumptionResult_: {
             data: components["schemas"]["ConsumptionResult"];
@@ -5341,6 +5459,10 @@ export interface components {
         /** Data[ConversationTreeOut] */
         Data_ConversationTreeOut_: {
             data: components["schemas"]["ConversationTreeOut"];
+        };
+        /** Data[CreateLinkOut] */
+        Data_CreateLinkOut_: {
+            data: components["schemas"]["CreateLinkOut"];
         };
         /** Data[CreateResourceShareOut] */
         Data_CreateResourceShareOut_: {
@@ -5413,6 +5535,14 @@ export interface components {
         /** Data[LibraryRenameOut] */
         Data_LibraryRenameOut_: {
             data: components["schemas"]["LibraryRenameOut"];
+        };
+        /** Data[LinkNoteOut] */
+        Data_LinkNoteOut_: {
+            data: components["schemas"]["LinkNoteOut"];
+        };
+        /** Data[LinkedNoteBlockRef] */
+        Data_LinkedNoteBlockRef_: {
+            data: components["schemas"]["LinkedNoteBlockRef"];
         };
         /** Data[ListeningHeartbeatResult] */
         Data_ListeningHeartbeatResult_: {
@@ -5549,6 +5679,10 @@ export interface components {
         /** Data[SourceRetryAdmission] */
         Data_SourceRetryAdmission_: {
             data: components["schemas"]["SourceRetryAdmission"];
+        };
+        /** Data[StanceOut] */
+        Data_StanceOut_: {
+            data: components["schemas"]["StanceOut"];
         };
         /** Data[TranscriptRequestOut] */
         Data_TranscriptRequestOut_: {
@@ -7728,6 +7862,22 @@ export interface components {
             /** Start Offset */
             start_offset: number;
         };
+        /** LinkNoteOut */
+        LinkNoteOut: {
+            /** Body Pm Json */
+            body_pm_json: {
+                [key: string]: unknown;
+            };
+            /** Body Text */
+            body_text: string;
+            connection: components["schemas"]["ConnectionOut"];
+            /**
+             * Note Block Id
+             * Format: uuid
+             */
+            note_block_id: string;
+            version_by_lane: components["schemas"]["NoteBodyVersionsOut"];
+        };
         /**
          * LinkPassageTarget
          * @description A transient passage candidate, materialized into a ``passage_anchor`` on confirm.
@@ -7807,6 +7957,21 @@ export interface components {
             kind: "Link";
             /** Publichref */
             publicHref: string;
+        };
+        /** LinkedNoteBlockRef */
+        LinkedNoteBlockRef: {
+            /** Body Pm Json */
+            body_pm_json: {
+                [key: string]: unknown;
+            };
+            /** Body Text */
+            body_text: string;
+            /**
+             * Note Block Id
+             * Format: uuid
+             */
+            note_block_id: string;
+            version_by_lane: components["schemas"]["NoteBodyVersionsOut"];
         };
         /** ListeningActivityBatchIn */
         ListeningActivityBatchIn: {
@@ -9171,6 +9336,13 @@ export interface components {
              * @enum {string}
              */
             kind: "note_body";
+        };
+        /** NoteBodyVersionsOut */
+        NoteBodyVersionsOut: {
+            /** Body */
+            body: number;
+            /** Links */
+            links: number;
         };
         /** NoteInputManifestV1 */
         NoteInputManifestV1: {
@@ -14135,6 +14307,10 @@ export interface components {
              */
             type: "split_note";
         };
+        /** StanceOut */
+        StanceOut: {
+            connection: components["schemas"]["ConnectionOut"];
+        };
         /** StarOut */
         StarOut: {
             /** Kind */
@@ -17092,9 +17268,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_LinkedNoteBlockRef_"];
                 };
             };
             /** @description Validation Error */
@@ -20949,9 +21123,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ConnectionPageOut_"];
                 };
             };
             /** @description Validation Error */
@@ -20984,9 +21156,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_CreateLinkOut_"];
                 };
             };
             /** @description Validation Error */
@@ -21050,9 +21220,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_LinkNoteOut_"];
                 };
             };
             /** @description Validation Error */
@@ -21117,9 +21285,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_StanceOut_"];
                 };
             };
             /** @description Validation Error */

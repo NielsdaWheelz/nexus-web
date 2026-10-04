@@ -35,6 +35,7 @@ from nexus.schemas.resource_graph import (
     StanceOut,
     connection_out,
 )
+from nexus.schemas.resource_items import NoteBodyVersionsOut
 from nexus.services import highlights, note_bodies, passage_anchors, pdf_highlights
 from nexus.services.note_indexing import enqueue_note_reindex
 from nexus.services.resource_graph import cleanup, connections, edges
@@ -229,8 +230,10 @@ def put_link_note(
             note_block_id=block.id,
             body_pm_json=block.body_pm_json,
             body_text=block.body_text,
-            version_by_lane=versions.versions_for_ref(
-                db, viewer_id=viewer_id, ref=note_bodies.note_ref(block.id)
+            version_by_lane=NoteBodyVersionsOut.model_validate(
+                versions.versions_for_ref(
+                    db, viewer_id=viewer_id, ref=note_bodies.note_ref(block.id)
+                )
             ),
             connection=connection_out(
                 _connection(

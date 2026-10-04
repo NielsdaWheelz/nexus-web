@@ -201,9 +201,6 @@ function noteBodyAdapter() {
     prepare(): FrozenRequest {
       throw new Error("surface note creation must commit before its body");
     },
-    acknowledge(): never {
-      throw new Error("surface note body acknowledgement is owned by the canonical resource endpoint");
-    },
   };
 }
 

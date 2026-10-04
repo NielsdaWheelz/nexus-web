@@ -19,7 +19,6 @@ import { emptyNoteBody } from "@/lib/notes/prosemirror/schema";
 import { useNoteEditorSession } from "@/lib/notes/useNoteEditorSession";
 import { getWritingSession, WritingStorageError, WritingUnknownOutcomeError, type BodyAdapter, type OperationCallbacks, type PendingBodyIdentity, type RecoveryCandidate } from "@/lib/notes/writingSession";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { decodeLinkNoteOut } from "@/lib/resourceGraph/links";
 import { resolveResourceLocator } from "@/lib/resources/resourceLocators";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { expectExactRecord, expectOneOf, expectRecord, expectString } from "@/lib/validation";
@@ -214,21 +213,13 @@ function AnnotationBody({
         body_pm_json: body.bodyPmJson,
       }),
     }),
-    acknowledge: (data) => {
-      const saved = target.kind === "highlight"
-        ? decodeHighlightLinkedNoteBlock(data)
-        : decodeLinkNoteOut(data);
-      if (saved.note_block_id !== noteBlockId) throw new TypeError("annotation save changed note identity");
-      projection.current = {
-        note_block_id: saved.note_block_id,
-        body_pm_json: saved.body_pm_json,
-        body_text: saved.body_text,
-        version_by_lane: saved.version_by_lane,
-      };
-      return { body: { bodyPmJson: saved.body_pm_json, bodyText: saved.body_text }, version: saved.version_by_lane.body };
-    },
-    onAcknowledge: async (ack) => {
-      let previous = projection.current;
+    onAcknowledge: async (ack, createdVersions) => {
+      let previous = createdVersions ? {
+        note_block_id: noteBlockId,
+        body_pm_json: ack.body.bodyPmJson,
+        body_text: ack.body.bodyText,
+        version_by_lane: createdVersions,
+      } : projection.current;
       if (!previous) {
         const response = await apiFetch<{ data: unknown }>(`/api/notes/blocks/${encodeURIComponent(noteBlockId)}`);
         const block = expectRecord(response.data, "saved annotation note");
