@@ -3,6 +3,7 @@
 import { apiFetch, decodeApiPayload } from "@/lib/api/client";
 import {
   decodeCollectionRevision,
+  ZERO_REVISION,
   type CollectionRevision,
 } from "@/lib/api/collectionPage";
 import { decodePresence, type Presence } from "@/lib/api/presence";
@@ -108,9 +109,21 @@ export function runPodcastSubscriptionSettingsMutation<T>(
   return result;
 }
 
+const confirmedLibraryEntriesRevisions = new Map<string, CollectionRevision>();
+
+export function confirmedLibraryEntriesRevision(accountId: string): CollectionRevision {
+  return confirmedLibraryEntriesRevisions.get(accountId) ?? ZERO_REVISION;
+}
+
 async function publishInstall(
   install: PodcastSubscriptionSettingsInstall,
 ): Promise<void> {
+  if (install.kind === "Settings") {
+    const { user_id, libraryEntriesCollectionRevision } = install.settings;
+    if (libraryEntriesCollectionRevision > confirmedLibraryEntriesRevision(user_id)) {
+      confirmedLibraryEntriesRevisions.set(user_id, libraryEntriesCollectionRevision);
+    }
+  }
   await Promise.all(
     [...listeners].map((listener) => listener(install)),
   );
