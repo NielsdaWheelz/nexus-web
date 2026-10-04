@@ -12,6 +12,7 @@ import {
 } from "react";
 import Link from "next/link";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import type { ApiJson } from "@/lib/api/wire";
 import {
   decodeCollectionPage,
   type CollectionCursor,
@@ -72,7 +73,6 @@ import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import {
-  decodePodcastDetailResponse,
   retryPodcastSubscriptionBackfill,
   type PodcastBackfillRecord,
   type PodcastDetailResponse,
@@ -233,7 +233,7 @@ function formatBackfillFact(backfill: PodcastBackfillRecord): string {
       : backfill.state === "SourceLimited"
         ? "Backfill source limited"
         : `Backfill ${backfill.state.toLowerCase()}`;
-  return `${label} · ${backfill.processed_count} processed · ${backfill.added_count} added`;
+  return `${label} · ${backfill.processedCount} processed · ${backfill.addedCount} added`;
 }
 
 function formatEpisodeUpdateStatus(
@@ -506,14 +506,14 @@ export default function PodcastDetailPaneBody() {
         // initial ingest/backfill writes committed before this read. Episodes
         // must start after that fence, otherwise parallel reads can combine a
         // pre-terminal empty page with terminal detail and suppress observation.
-        const detailResp = await apiFetch<unknown>(
+        const detailResp = await apiFetch<ApiJson<"/podcasts/{podcast_id}", "get">>(
           `/api/podcasts/${podcastId}`,
           fetchOptions,
         );
         if (signal?.aborted) {
           throw signal.reason ?? new DOMException("Aborted", "AbortError");
         }
-        const decodedDetail = decodePodcastDetailResponse(detailResp);
+        const decodedDetail = detailResp.data;
         const [episodesResp, podcastLibraries] = await Promise.all([
           apiFetch<unknown>(
             `/api/podcasts/${podcastId}/episodes?${episodeParams}`,
@@ -662,8 +662,8 @@ export default function PodcastDetailPaneBody() {
             backfill: {
               id: detail.subscription.backfill.id,
               state: detail.subscription.backfill.state,
-              processedCount: detail.subscription.backfill.processed_count,
-              addedCount: detail.subscription.backfill.added_count,
+              processedCount: detail.subscription.backfill.processedCount,
+              addedCount: detail.subscription.backfill.addedCount,
             },
           }
         : null,
@@ -1123,12 +1123,7 @@ export default function PodcastDetailPaneBody() {
               ...current,
               subscription: {
                 ...current.subscription,
-                backfill: {
-                  id: result.backfill.id,
-                  state: result.backfill.state,
-                  processed_count: result.backfill.processedCount,
-                  added_count: result.backfill.addedCount,
-                },
+                backfill: result.backfill,
               },
             }
           : current,
