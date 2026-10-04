@@ -6,11 +6,13 @@ import styles from "./LoadMoreFooter.module.css";
 export default function LoadMoreFooter({
   hasMore,
   loading,
+  disabled = false,
   onLoadMore,
   label = "Load more",
 }: {
   hasMore: boolean;
   loading: boolean;
+  disabled?: boolean;
   onLoadMore: () => void;
   label?: string;
 }) {
@@ -21,7 +23,7 @@ export default function LoadMoreFooter({
       <Button
         variant="secondary"
         loading={loading}
-        disabled={loading}
+        disabled={loading || disabled}
         onClick={onLoadMore}
       >
         {label}
