@@ -142,6 +142,9 @@ class TerminalJobFailure:
     error_message: str
 
 
+type JobResult = Mapping[str, Any] | RescheduleRequested | TerminalJobFailure | None
+
+
 def lock_chat_generation_admission_in_current_transaction(db: Session) -> None:
     """Serialize Chat queue admission against new background generations."""
     db.execute(

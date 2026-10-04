@@ -17,13 +17,11 @@ from nexus.jobs.process_executor import ChildRuntime
 from nexus.jobs.queue import (
     JobExecutionContext,
     JobResourceClass,
-    RescheduleRequested,
-    TerminalJobFailure,
+    JobResult,
 )
 from nexus.services.podcasts.types import PODCAST_SYNC_JOB_LEASE_SECONDS
 
 type Payload = Mapping[str, Any]
-type JobResult = Mapping[str, Any] | RescheduleRequested | TerminalJobFailure | None
 type ResourceFailureProjection = Literal["Job", "SourceAttemptMedia"]
 JobHandler = Callable[..., JobResult]
 Context = JobExecutionContext
