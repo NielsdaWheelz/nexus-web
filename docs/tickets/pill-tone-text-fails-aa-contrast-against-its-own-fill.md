@@ -48,8 +48,7 @@ warning, info and success tones (`ImportRow.tsx` `STATE_TONE`,
 `ImportsWorkspace.tsx` tab counts, `ImportsBadge.tsx`, `ImportInspector.tsx`), all
 three of which measured above 4.5:1 in the original browser check. The two
 remaining tones are painted by other surfaces (`CollectionRow`,
-`ConnectionsSurface`, `SettingsLocalVaultPaneBody`,
-`MediaPaneBody`, `EvidenceItemRow`), none of which is in this cutover's ownership.
+`ConnectionsSurface`, `MediaPaneBody`, `EvidenceItemRow`), none of which is in this cutover's ownership.
 
 ## Evidence
 

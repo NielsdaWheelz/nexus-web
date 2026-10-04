@@ -70,7 +70,7 @@ leverage):
 Three shifts, all visible in embryo today:
 
 1. **Your tools become tool-servers.** The chat-shaped interface stops being
-   the only agent in the room. Your corpus — retrieval, graph, units, vault —
+   the only agent in the room. Your corpus — retrieval, graph, units —
    exposed over MCP to *any* agent you run (your coding agent reads the book
    you highlighted last night; your research agent files evidence into your
    graph under its own origin). Single-user + platform credentials + origin

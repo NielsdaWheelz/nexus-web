@@ -74,8 +74,7 @@ export type RetainedTarget = Extract<MaterializedNexusTarget, { kind: "InternalH
 export type NexusDispatchOutcome =
   | { readonly kind: "Accepted" }
   | { readonly kind: "DailyPageAccepted"; readonly activationId: string; readonly localDate: string }
-  | { readonly kind: "Rejected"; readonly target: RetainedTarget }
-  | { readonly kind: "Restricted" };
+  | { readonly kind: "Rejected"; readonly target: RetainedTarget };
 
 export type NexusAction =
   | { readonly kind: "Available"; readonly target: NexusTarget }
@@ -153,8 +152,7 @@ export type NexusPage =
     }
   | { readonly kind: "Add"; readonly sessionId: string; readonly activation: NexusTargetActivation }
   | { readonly kind: "Blocked"; readonly retained: Retained }
-  | { readonly kind: "ManageTabs"; readonly retained: Retained | null; readonly restoreBlocked: string | null }
-  | { readonly kind: "Restricted" };
+  | { readonly kind: "ManageTabs"; readonly retained: Retained | null; readonly restoreBlocked: string | null };
 
 export type NexusOpenIntent =
   | { readonly kind: "Root" }

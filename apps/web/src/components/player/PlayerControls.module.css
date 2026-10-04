@@ -233,20 +233,6 @@
   accent-color: var(--accent);
 }
 
-.capture[data-recording="true"] {
-  color: var(--danger);
-}
-
-.count {
-  min-width: var(--size-xs);
-  padding-inline: var(--space-1);
-  border: var(--stroke-hairline) solid var(--edge);
-  border-radius: var(--radius-full);
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-  font-variant-numeric: tabular-nums;
-}
-
 .miniProgress {
   display: block;
   width: 100%;

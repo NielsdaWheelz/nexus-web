@@ -15,9 +15,7 @@ import {
 import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import { playerTransportLocked } from "@/lib/player/playerChromeModel";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import type { PlayerCaptureController } from "@/lib/walknotes/usePlayerCapture";
 import {
-  PlayerCaptureButton,
   PlayerIdentity,
   PlayerMiniProgress,
   PlayerRecordingActionsMenu,
@@ -26,7 +24,6 @@ import {
   playerContentsAction,
   playerOpenLecternAction,
   playerPreviewActions,
-  playerReviewCapturesAction,
   playerTitle,
   type PresentPlayerChrome,
 } from "./PlayerControls";
@@ -34,7 +31,6 @@ import styles from "./MobileMiniPlayer.module.css";
 
 export default function MobileMiniPlayer({
   model,
-  capture,
   suspended,
   openerRef,
   onOpenNowPlaying,
@@ -45,7 +41,6 @@ export default function MobileMiniPlayer({
   onDismiss,
 }: {
   readonly model: PresentPlayerChrome;
-  readonly capture: PlayerCaptureController;
   readonly suspended: boolean;
   readonly openerRef: RefObject<HTMLButtonElement | null>;
   readonly onOpenNowPlaying: () => void;
@@ -69,7 +64,6 @@ export default function MobileMiniPlayer({
   }, [hidden, mobileViewport]);
 
   const options: ActionDescriptor[] = [
-    ...playerReviewCapturesAction(model, capture),
     {
       id: "Player.Playback",
       kind: "command",
@@ -132,9 +126,6 @@ export default function MobileMiniPlayer({
           buttonRef={openerRef}
           onOpen={onOpenNowPlaying}
         />
-        {model.kind === "Canonical" ? (
-          <PlayerCaptureButton model={model} capture={capture} />
-        ) : null}
         <PlayerTransport model={model} compact />
         <PlayerRecordingActionsMenu
           model={model}

@@ -157,8 +157,7 @@ export async function loadMediaPane(
 // (cacheKey embeds the editor saveScope), conversation (streaming, multi-fetch
 // snapshot), podcastDetail / podcasts (cacheKey embeds mutable filter/sort/search UI
 // state), settingsIdentities (Supabase server action, no FastAPI path),
-// settingsLocalVault (client-only File System data), search (query-driven,
-// no route-keyed primary). Lectern's canonical ordered queue remains exclusively
+// search (query-driven, no route-keyed primary). Lectern's canonical ordered queue remains exclusively
 // owned by the shell-mounted LecternProvider; only its independent Slate read is
 // seeded here.
 export const paneResourceLoaders: Partial<

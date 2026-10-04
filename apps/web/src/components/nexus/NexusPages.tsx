@@ -209,12 +209,6 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
         </section>
       );
     }
-    case "Restricted":
-      return (
-        <section className={styles.page}>
-          <Header title="Local Vault isn’t available in the Android app" onBack={controller.back} />
-        </section>
-      );
   }
 }
 

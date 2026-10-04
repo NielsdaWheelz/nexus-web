@@ -63,24 +63,6 @@ def note_blocks_for_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) 
     )
 
 
-def note_block_ids_with_highlight_notes(
-    db: Session, viewer_id: UUID, block_ids: list[UUID]
-) -> set[UUID]:
-    """Which of the given note blocks are attached to a highlight."""
-    if not block_ids:
-        return set()
-    return set(
-        db.scalars(
-            select(ResourceEdge.target_id).where(
-                ResourceEdge.user_id == viewer_id,
-                ResourceEdge.origin == "highlight_note",
-                ResourceEdge.target_scheme == "note_block",
-                ResourceEdge.target_id.in_(block_ids),
-            )
-        )
-    )
-
-
 def highlight_excerpts_for_note_blocks(
     db: Session, viewer_id: UUID, note_ids: list[UUID]
 ) -> dict[UUID, str]:

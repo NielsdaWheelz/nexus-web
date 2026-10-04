@@ -141,7 +141,7 @@ async function loadSession(
 // reader profile, server-restored workspace, and hydration cache of every restored visible
 // pane's data — so the first paint shows the right panes, with their data, and no client
 // round-trip.
-export async function loadWorkspaceBootstrap(androidShell: boolean): Promise<{
+export async function loadWorkspaceBootstrap(): Promise<{
   account: AuthenticatedAccount;
   readerProfile: ReaderProfile;
   initialState: WorkspaceState;
@@ -186,7 +186,6 @@ export async function loadWorkspaceBootstrap(androidShell: boolean): Promise<{
     session.own,
     session.mostRecentElsewhere,
     metrics,
-    androidShell,
   );
   let initialState: WorkspaceState;
   switch (entryIntent.kind) {

@@ -460,20 +460,6 @@ export const PANE_ROUTE_MODELS = [
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
-    id: "settingsLocalVault",
-    header: {
-      kind: "Section",
-      destinationId: "settings",
-      context: "Destination",
-    },
-    pattern: ["settings", "local-vault"],
-    defaultLabel: "Local vault",
-    labelMode: "static",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
     id: "settingsIdentities",
     header: {
       kind: "Section",

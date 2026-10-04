@@ -4,7 +4,6 @@
 // resolvePaneRouteModel. Owns the workspace-state algebra (construct/clamp/merge) the reducer
 // also reuses, plus exact session selection and structural equality.
 
-import { isAndroidShellRestrictedRouteId } from "@/lib/androidShell";
 import {
   MAX_PANES,
   createDefaultWorkspaceState,
@@ -26,10 +25,7 @@ import {
 import { WORKSPACE_DEFAULT_FALLBACK_HREF } from "@/lib/workspace/workspaceHref";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 import { hasSamePaneResource, hasSamePaneRoute } from "@/lib/panes/paneIdentity";
-import {
-  paneRouteAllowsSecondaryGroup,
-  resolvePaneRouteModel,
-} from "@/lib/panes/paneRouteModel";
+import { paneRouteAllowsSecondaryGroup } from "@/lib/panes/paneRouteModel";
 import {
   getSecondaryWidthPolicy,
   resolveEffectiveSecondarySizing,
@@ -275,20 +271,9 @@ export function mergeRestoredWorkspaceWithDeepLink(
 export function prepareRestoredState(
   raw: unknown,
   workspacePrimaryMetrics: WorkspacePrimaryMetrics,
-  androidShell: boolean,
 ): WorkspaceState {
   const persisted = parsePersistedWorkspaceState(raw);
-  const primaryPanes = getWorkspacePrimaryPanes(persisted)
-    .filter(
-      (pane) =>
-        !(
-          androidShell &&
-          isAndroidShellRestrictedRouteId(
-            resolvePaneRouteModel(pane.currentVisit.href).id,
-          )
-        ),
-    )
-    .map((pane) => ({
+  const primaryPanes = getWorkspacePrimaryPanes(persisted).map((pane) => ({
       ...pane,
       primaryWidthPx: clampPaneWidth(
         pane.primaryWidthPx,
@@ -355,16 +340,15 @@ export function selectRestoredState(
   own: unknown,
   mostRecentElsewhere: unknown,
   workspacePrimaryMetrics: WorkspacePrimaryMetrics,
-  androidShell: boolean,
 ): WorkspaceState | null {
   const ownState =
-    own != null ? prepareRestoredState(own, workspacePrimaryMetrics, androidShell) : null;
+    own != null ? prepareRestoredState(own, workspacePrimaryMetrics) : null;
   if (ownState && isNonTrivialSession(ownState)) {
     return ownState;
   }
   const elsewhereState =
     mostRecentElsewhere != null
-      ? prepareRestoredState(mostRecentElsewhere, workspacePrimaryMetrics, androidShell)
+      ? prepareRestoredState(mostRecentElsewhere, workspacePrimaryMetrics)
       : null;
   if (elsewhereState && isNonTrivialSession(elsewhereState)) {
     return elsewhereState;

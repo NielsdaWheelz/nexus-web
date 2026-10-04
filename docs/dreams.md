@@ -96,9 +96,6 @@ In order:
 
 - **Voice Marginalia** — hold M, speak into the margin; Deepgram → quick-note
   composer.
-- **Walknotes** — tap the player mid-podcast, speak; come home to a highlight
-  anchored to that transcript line with your voice beneath it.
-  → spec `cutovers/walknotes-hard-cutover.md`
 - **Sortes** — cast the Oracle without a question; recency-weighted toward the
   forgotten. **The Text Reads Itself** — cast a reading from a highlight.
   **The Vigil** (epoch) — a declared 7/21/40-day arc of daily unbidden readings.

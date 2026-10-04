@@ -175,7 +175,8 @@ migration 0255 backfills original historical principals, retains original effect
 and continuation bytes without invented seals, then deletes shell credentials.
 uncertain legacy shell work blocks migration. historical undo uses persisted
 principal/effect ownership. the single combined chain is
-0252 -> resource 0253 -> atlas 0254 -> native 0255 -> metadata 0256 -> effects 0257.
+0252 -> resource 0253 -> atlas 0254 -> native 0255 -> metadata 0256 -> effects 0257
+-> local vault history 0258.
 metadata owns 0256 and the independent receipt contract in 0257. the pre-release
 0246 reset preserves original completed write receipts before deleting history;
 0257 also backfills surviving post-metadata positions.

@@ -217,28 +217,23 @@ def update_page(
 
 
 def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> None:
+    from nexus.services.artifacts import engine as artifact_engine
+
     def attempt() -> None:
-        delete_page_in_current_transaction(db, viewer_id, page_id)
+        page = get_page_for_owner_or_404(db, viewer_id, page_id)
+        ref = _page_ref(page.id)
+        artifact_engine.on_subject_deleted(db, ref)
+        delete_edges_for_deleted_resource(db, ref=ref)
+        db.execute(
+            delete(DailyPageBinding).where(
+                DailyPageBinding.user_id == viewer_id, DailyPageBinding.page_id == page.id
+            )
+        )
+        delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
+        db.delete(page)
         db.commit()
 
     retry_read_committed(db, "delete_page", attempt)
-
-
-def delete_page_in_current_transaction(db: Session, viewer_id: UUID, page_id: UUID) -> None:
-    """Stage one page deletion inside the composing caller's retry attempt."""
-    from nexus.services.artifacts import engine as artifact_engine
-
-    page = get_page_for_owner_or_404(db, viewer_id, page_id)
-    ref = _page_ref(page.id)
-    artifact_engine.on_subject_deleted(db, ref)
-    delete_edges_for_deleted_resource(db, ref=ref)
-    db.execute(
-        delete(DailyPageBinding).where(
-            DailyPageBinding.user_id == viewer_id, DailyPageBinding.page_id == page.id
-        )
-    )
-    delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
-    db.delete(page)
 
 
 def read_daily_page(db: Session, viewer_id: UUID, local_date: date) -> DailyPageDescriptor:

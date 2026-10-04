@@ -212,11 +212,3 @@ export function decodeHighlightEnvelope(raw: unknown): Highlight {
   const envelope = expectExactRecord(raw, ["data"], "HighlightResponse");
   return decodeHighlight(envelope.data, "HighlightResponse.data");
 }
-
-export function decodeHighlightNoteEnvelope(raw: unknown): HighlightLinkedNoteBlock {
-  const envelope = expectExactRecord(raw, ["data"], "HighlightNoteResponse");
-  return decodeHighlightLinkedNoteBlock(
-    envelope.data,
-    "HighlightNoteResponse.data",
-  );
-}
