@@ -102,16 +102,6 @@ def list_epub_fragment_sources(
     ]
 
 
-def get_epub_fragment_source(
-    db: Session,
-    *,
-    media_id: UUID,
-    ordinal: int,
-) -> EpubFragmentSourceContent | None:
-    rows = list_epub_fragment_sources(db, media_id=media_id, after_ordinal=ordinal - 1, limit=1)
-    return rows[0] if rows and rows[0].ordinal == ordinal else None
-
-
 def require_readable_epub(db: Session, viewer_id: UUID, media_id: UUID) -> int:
     """Enforce visibility, then kind, then readiness; return the publication generation."""
     if not can_read_media(db, viewer_id, media_id):
