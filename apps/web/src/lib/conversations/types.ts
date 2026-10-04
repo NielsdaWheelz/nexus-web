@@ -165,7 +165,7 @@ export interface MachineAuthorship {
 }
 
 export interface MessageToolCall {
-  id?: string;
+  id?: string | null;
   record_kind: ToolRecordKind;
   canonical_tool_id: string | null;
   provider_wire_name: string | null;
@@ -184,12 +184,12 @@ export interface MessageToolCall {
   result_count?: number;
   selected_count?: number;
   status: MessageToolStatus;
-  input_preview?: string;
+  input_preview?: string | null;
   // Undo lifecycle for assistant write tool calls; set once reverted (amanuensis).
   reverted_at?: string | null;
   created_at?: string;
   updated_at?: string;
-  retrievals: MessageRetrieval[];
+  retrievals: Array<MessageRetrieval | Schema<"TrustRetrievalOut">>;
 }
 
 export interface MessageDocument {
@@ -292,7 +292,7 @@ export interface ConversationMessage {
   parent_message_id?: string | null;
   branch_root_message_id?: string | null;
   branch_anchor_kind?: BranchAnchorKind;
-  branch_anchor?: BranchAnchor | null;
+  branch_anchor?: Record<string, unknown> | null;
   trust_trail: AssistantTrustTrail | null;
   /**
    * Citation chips (the `[N]` markers in the assistant prose), built backend-side
@@ -415,7 +415,6 @@ export interface ConversationTreeResponse {
   fork_options_by_parent_id: Record<string, ForkOption[]>;
   path_cache_by_leaf_id: Record<string, ConversationMessage[]>;
   branch_graph: BranchGraph;
-  page: { before_cursor: string | null };
 }
 
 export interface ConversationForksResponse {
@@ -446,27 +445,7 @@ export interface ChatRun {
   updated_at: string;
 }
 
-export interface ChatRunStreamState {
-  status:
-    "queued" | "running" | "complete" | "error" | "cancelled";
-  last_event_seq: number;
-  folded_event_seq: number;
-  assistant_current_text: string;
-  tool_calls: MessageToolCall[];
-  activity: {
-    phase:
-      | "queued"
-      | "thinking"
-      | "writing"
-      | "tool_calling"
-      | "waiting"
-      | "retrying"
-      | "cancelling";
-    label: string | null;
-  } | null;
-  reconnectable: boolean;
-  terminal: boolean;
-}
+export type ChatRunStreamState = Schema<"ChatRunStreamStateOut">;
 
 export interface ChatRunResponse {
   data: {

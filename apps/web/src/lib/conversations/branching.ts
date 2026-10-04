@@ -98,7 +98,7 @@ export function upsertForkOptionForRun(
   };
 }
 
-export function selectedPathMessageIds(messages: ConversationMessage[]): Set<string> {
+export function selectedPathMessageIds(messages: readonly { id: string }[]): Set<string> {
   return new Set(messages.map((message) => message.id));
 }
 
@@ -154,11 +154,7 @@ function branchAnchorPreview(
   anchor: ChatRunData["user_message"]["branch_anchor"],
 ): string | null {
   if (!anchor) return null;
-  switch (anchor.kind) {
-    case "none":
-    case "assistant_message":
-      return null;
-    case "assistant_selection":
-      return anchor.exact;
-  }
+  return anchor.kind === "assistant_selection" && typeof anchor.exact === "string"
+    ? anchor.exact
+    : null;
 }

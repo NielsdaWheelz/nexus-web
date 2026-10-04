@@ -154,11 +154,11 @@ export function isChatReloadRequired(error: unknown): error is ApiError {
  * taxonomy without weakening the decoder or misclassifying the failure as a
  * network problem.
  */
-export function decodeApiPayload<T>(
-  body: unknown,
-  decode: (body: unknown) => T,
+export function decodeApiPayload<Input, Output>(
+  body: Input,
+  decode: (body: Input) => Output,
   context: string,
-): T {
+): Output {
   try {
     return decode(body);
   } catch (error) {

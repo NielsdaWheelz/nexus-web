@@ -1,5 +1,6 @@
 import { apiFetch, decodeApiPayload } from "@/lib/api/client";
-import { decodeChatRunResponse } from "./messageWire";
+import type { ApiJson } from "@/lib/api/wire";
+import { chatRunFromWire } from "./messageWire";
 import type { ChatRunResponse } from "./types";
 import type { AcceptedChatAdmission } from "./chatAdmission";
 
@@ -7,13 +8,13 @@ import type { AcceptedChatAdmission } from "./chatAdmission";
 export async function readAdmittedChatRun(
   receipt: AcceptedChatAdmission,
 ): Promise<ChatRunResponse["data"]> {
-  const response = await apiFetch<unknown>(
+  const response = await apiFetch<ApiJson<"/chat-runs/{run_id}", "get">>(
     `/api/chat-runs/${receipt.outcome.run_id}`,
   );
   return decodeApiPayload(
     response,
-    () => {
-      const data = decodeChatRunResponse(response).data;
+    (body) => {
+      const data = chatRunFromWire(body).data;
       const target = receipt.outcome;
       if (
         data.run.id !== target.run_id ||

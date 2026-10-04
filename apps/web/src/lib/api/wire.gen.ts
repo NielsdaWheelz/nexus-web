@@ -3571,6 +3571,62 @@ export interface components {
             /** Suffix */
             suffix?: string | null;
         };
+        /** AssistantTrustTrailOut */
+        AssistantTrustTrailOut: {
+            /**
+             * Assistant Message Id
+             * Format: uuid
+             */
+            assistant_message_id: string;
+            /** Chat Run Id */
+            chat_run_id: string | null;
+            /** Citations */
+            citations: components["schemas"]["TrustCitationOut"][];
+            /** Context Refs Added */
+            context_refs_added: components["schemas"]["TrustContextRefAddedOut"][];
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Integrity Notices */
+            integrity_notices: components["schemas"]["TrustIntegrityNoticeOut"][];
+            prompt: components["schemas"]["TrustPromptAssemblyOut"] | null;
+            run: components["schemas"]["TrustRunOut"] | null;
+            /**
+             * Schema Version
+             * @default assistant_trust_trail.v1
+             * @constant
+             */
+            schema_version: "assistant_trust_trail.v1";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "running" | "complete" | "error" | "cancelled";
+            /** Tool Calls */
+            tool_calls: components["schemas"]["TrustToolCallOut"][];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** AssistantUnavailableChatFailure */
+        AssistantUnavailableChatFailure: {
+            /** Can Rerun */
+            can_rerun: boolean;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "assistant_unavailable";
+        };
         /** AtlasEdgeOut */
         AtlasEdgeOut: {
             /**
@@ -3659,6 +3715,81 @@ export interface components {
             /** Content Type */
             content_type: string;
         };
+        /** BranchGraphEdgeOut */
+        BranchGraphEdgeOut: {
+            /**
+             * From
+             * Format: uuid
+             */
+            from: string;
+            /**
+             * To
+             * Format: uuid
+             */
+            to: string;
+        };
+        /** BranchGraphNodeOut */
+        BranchGraphNodeOut: {
+            /** Active Path */
+            active_path: boolean;
+            /** Branch Anchor Preview */
+            branch_anchor_preview: string | null;
+            /** Child Count */
+            child_count: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Depth */
+            depth: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Leaf */
+            leaf: boolean;
+            /**
+             * Leaf Message Id
+             * Format: uuid
+             */
+            leaf_message_id: string;
+            /** Message Count */
+            message_count: number;
+            /**
+             * Message Id
+             * Format: uuid
+             */
+            message_id: string;
+            /** Parent Message Id */
+            parent_message_id: string | null;
+            /** Preview */
+            preview: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+            /** Row */
+            row: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "complete" | "pending" | "error" | "cancelled";
+            /** Title */
+            title: string | null;
+        };
+        /** BranchGraphOut */
+        BranchGraphOut: {
+            /** Edges */
+            edges: components["schemas"]["BranchGraphEdgeOut"][];
+            /** Nodes */
+            nodes: components["schemas"]["BranchGraphNodeOut"][];
+            /** Root Message Id */
+            root_message_id: string | null;
+        };
         BrowseCandidate: components["schemas"]["OwnedMediaCandidate"] | components["schemas"]["EpubCandidate"] | components["schemas"]["WebArticleCandidate"] | components["schemas"]["VideoCandidate"] | components["schemas"]["PodcastCandidate"];
         /**
          * BrowseKind
@@ -3710,6 +3841,16 @@ export interface components {
             size_bytes: number;
             /** Source Url */
             source_url: string;
+        };
+        /** CancelledChatFailure */
+        CancelledChatFailure: {
+            /** Can Rerun */
+            can_rerun: boolean;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "cancelled";
         };
         /** CancelledEventPayload */
         CancelledEventPayload: {
@@ -3970,6 +4111,56 @@ export interface components {
             /** Resource Ref */
             resource_ref: string;
         };
+        /** ChatRunOut */
+        ChatRunOut: {
+            /**
+             * Assistant Message Id
+             * Format: uuid
+             */
+            assistant_message_id: string;
+            /** Completed At */
+            completed_at: string | null;
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Error Code */
+            error_code: string | null;
+            execution: components["schemas"]["Presence_ChatRunExecutionOut_"];
+            /** Failure */
+            failure: (components["schemas"]["CancelledChatFailure"] | components["schemas"]["ContextTooLargeChatFailure"] | components["schemas"]["InvalidOutputChatFailure"] | components["schemas"]["IncompleteChatFailure"] | components["schemas"]["AssistantUnavailableChatFailure"] | components["schemas"]["OperatorDefectChatFailure"]) | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            publication_warning: components["schemas"]["Presence_ChatPublicationWarning_"];
+            run_selection: components["schemas"]["RunSelectionOut"];
+            /** Started At */
+            started_at: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "complete" | "error" | "cancelled";
+            support_id: components["schemas"]["Presence_str_"];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /**
+             * User Message Id
+             * Format: uuid
+             */
+            user_message_id: string;
+        };
         /**
          * ChatRunRepeatRequest
          * @description Exact selection for rerun/regenerate.
@@ -3979,6 +4170,119 @@ export interface components {
             catalog_definition_revision: string;
             /** Selection */
             selection: components["schemas"]["CodexPersonalSelection"] | components["schemas"]["ProviderApiSelection"];
+        };
+        /** ChatRunResponse */
+        ChatRunResponse: {
+            assistant_message: components["schemas"]["MessageOut"];
+            conversation: components["schemas"]["ConversationOut"];
+            run: components["schemas"]["ChatRunOut"];
+            stream_state: components["schemas"]["ChatRunStreamStateOut"];
+            user_message: components["schemas"]["MessageOut"];
+        };
+        /** ChatRunStreamActivityOut */
+        ChatRunStreamActivityOut: {
+            /** Label */
+            label: string | null;
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "queued" | "thinking" | "writing" | "tool_calling" | "waiting" | "retrying" | "cancelling";
+        };
+        /**
+         * ChatRunStreamStateOut
+         * @description Materialized cursor state for reconnecting a chat stream.
+         */
+        ChatRunStreamStateOut: {
+            activity: components["schemas"]["ChatRunStreamActivityOut"] | null;
+            /** Assistant Current Text */
+            assistant_current_text: string;
+            /** Folded Event Seq */
+            folded_event_seq: number;
+            /** Last Event Seq */
+            last_event_seq: number;
+            /** Reconnectable */
+            reconnectable: boolean;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "complete" | "error" | "cancelled";
+            /** Terminal */
+            terminal: boolean;
+            /** Tool Calls */
+            tool_calls: components["schemas"]["ChatRunStreamToolCallOut"][];
+        };
+        /** ChatRunStreamToolCallOut */
+        ChatRunStreamToolCallOut: {
+            /** Activity Label */
+            activity_label: string;
+            /**
+             * Assistant Message Id
+             * Format: uuid
+             */
+            assistant_message_id: string;
+            /** Canonical Tool Id */
+            canonical_tool_id: string | null;
+            effect: components["schemas"]["ToolEffect"] | null;
+            /**
+             * Error Type
+             * @enum {unknown}
+             */
+            error_type: "BudgetExceeded" | "Conflict" | "DeadlineExceeded" | "InvalidInput" | "InvalidUpstreamResponse" | "InvalidUrl" | "QuoteAmbiguous" | "QuoteNotFound" | "RateLimited" | "ResourceUnavailable" | "TargetAmbiguous" | "TooLarge" | "ToolUnavailable" | "Uninspectable" | "Unreadable" | "UnsafeDestination" | "UnsupportedContent" | "UpstreamUnavailable" | "WriteCapReached" | null;
+            /** Id */
+            id: string | null;
+            /** Input Preview */
+            input_preview: string | null;
+            /** Provider Request Ids */
+            provider_request_ids: string[];
+            /** Provider Wire Name */
+            provider_wire_name: string | null;
+            /**
+             * Record Kind
+             * @enum {string}
+             */
+            record_kind: "attached_context" | "current_execution" | "historical_execution";
+            /** Requested Types */
+            requested_types: string[];
+            /**
+             * Result Count
+             * @default 0
+             */
+            result_count: number;
+            /**
+             * Result Kind
+             * @enum {string}
+             */
+            result_kind: "attached_context" | "mutation" | "navigation" | "retrieval";
+            /** Result Refs */
+            result_refs: {
+                [key: string]: unknown;
+            }[];
+            /** Retrievals */
+            retrievals: components["schemas"]["TrustRetrievalOut"][];
+            /**
+             * Scope
+             * @default provider_tool
+             */
+            scope: string;
+            /** Selected Context Refs */
+            selected_context_refs: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Selected Count
+             * @default 0
+             */
+            selected_count: number;
+            /**
+             * Status
+             * @default running
+             * @enum {string}
+             */
+            status: "pending" | "running" | "complete" | "error" | "cancelled";
+            /** Tool Call Index */
+            tool_call_index: number;
         };
         /** ChatRunToolCallDoneEventOut */
         ChatRunToolCallDoneEventOut: {
@@ -4417,6 +4721,20 @@ export interface components {
              */
             type: "content_chunk";
         };
+        /** ContextTooLargeChatFailure */
+        ContextTooLargeChatFailure: {
+            /**
+             * Can Rerun
+             * @default false
+             * @constant
+             */
+            can_rerun: false;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "context_too_large";
+        };
         /** ContributorActivityBreakdownOut */
         ContributorActivityBreakdownOut: {
             /** Rows */
@@ -4755,6 +5073,23 @@ export interface components {
              */
             type: "conversation";
         };
+        /** ConversationTreeOut */
+        ConversationTreeOut: {
+            /** Active Leaf Message Id */
+            active_leaf_message_id: string | null;
+            branch_graph: components["schemas"]["BranchGraphOut"];
+            conversation: components["schemas"]["ConversationOut"];
+            /** Fork Options By Parent Id */
+            fork_options_by_parent_id: {
+                [key: string]: components["schemas"]["ForkOptionOut"][];
+            };
+            /** Path Cache By Leaf Id */
+            path_cache_by_leaf_id: {
+                [key: string]: components["schemas"]["MessageOut"][];
+            };
+            /** Selected Path */
+            selected_path: components["schemas"]["MessageOut"][];
+        };
         /** CorrectSourceTypeRecovery */
         CorrectSourceTypeRecovery: {
             /**
@@ -4990,6 +5325,10 @@ export interface components {
         Data_BrowsePreview_: {
             data: components["schemas"]["BrowsePreview"];
         };
+        /** Data[ChatRunResponse] */
+        Data_ChatRunResponse_: {
+            data: components["schemas"]["ChatRunResponse"];
+        };
         /** Data[CollectionPage[Annotated[Union[LibraryMediaListItemOut, LibraryPodcastListItemOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]]] */
         Data_CollectionPage_Annotated_Union_LibraryMediaListItemOut__LibraryPodcastListItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind_____: {
             data: components["schemas"]["CollectionPage_Annotated_Union_LibraryMediaListItemOut__LibraryPodcastListItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
@@ -5017,6 +5356,10 @@ export interface components {
         /** Data[ContributorSearchPageOut] */
         Data_ContributorSearchPageOut_: {
             data: components["schemas"]["ContributorSearchPageOut"];
+        };
+        /** Data[ConversationTreeOut] */
+        Data_ConversationTreeOut_: {
+            data: components["schemas"]["ConversationTreeOut"];
         };
         /** Data[CreateResourceShareOut] */
         Data_CreateResourceShareOut_: {
@@ -5193,6 +5536,11 @@ export interface components {
         /** Data[WalknoteTranscriptionOut] */
         Data_WalknoteTranscriptionOut_: {
             data: components["schemas"]["WalknoteTranscriptionOut"];
+        };
+        /** Data[list[ChatRunResponse]] */
+        Data_list_ChatRunResponse__: {
+            /** Data */
+            data: components["schemas"]["ChatRunResponse"][];
         };
         /** Data[list[FragmentOut]] */
         Data_list_FragmentOut__: {
@@ -6068,6 +6416,61 @@ export interface components {
             /** Writerevision */
             writeRevision: number;
         };
+        /** ForkOptionOut */
+        ForkOptionOut: {
+            /** Active */
+            active: boolean;
+            /** Assistant Message Id */
+            assistant_message_id: string | null;
+            /**
+             * Branch Anchor Kind
+             * @enum {string}
+             */
+            branch_anchor_kind: "none" | "assistant_message" | "assistant_selection";
+            /** Branch Anchor Preview */
+            branch_anchor_preview: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Leaf Message Id
+             * Format: uuid
+             */
+            leaf_message_id: string;
+            /** Message Count */
+            message_count: number;
+            /**
+             * Parent Message Id
+             * Format: uuid
+             */
+            parent_message_id: string;
+            /** Preview */
+            preview: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "complete" | "pending" | "error" | "cancelled";
+            /** Title */
+            title: string | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /**
+             * User Message Id
+             * Format: uuid
+             */
+            user_message_id: string;
+        };
         /** FragmentAnchorUpdateRequest */
         FragmentAnchorUpdateRequest: {
             /** End Offset */
@@ -6593,6 +6996,16 @@ export interface components {
              */
             kind: "InNexusPodcast";
         };
+        /** IncompleteChatFailure */
+        IncompleteChatFailure: {
+            /** Can Rerun */
+            can_rerun: boolean;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "incomplete";
+        };
         /** IndexAccepted */
         IndexAccepted: {
             /**
@@ -6785,6 +7198,20 @@ export interface components {
              * @enum {string}
              */
             type: "insert_resource";
+        };
+        /** InvalidOutputChatFailure */
+        InvalidOutputChatFailure: {
+            /**
+             * Can Rerun
+             * @default false
+             * @constant
+             */
+            can_rerun: false;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "invalid_output";
         };
         /** InviteAcceptMembershipOut */
         InviteAcceptMembershipOut: {
@@ -7436,6 +7863,41 @@ export interface components {
             hour: number;
         };
         /**
+         * MachineAuthorshipOut
+         * @description One immutable target-to-generation provenance fact.
+         */
+        MachineAuthorshipOut: {
+            /**
+             * Effect Id
+             * Format: uuid
+             */
+            effect_id: string;
+            /**
+             * Generation Id
+             * Format: uuid
+             */
+            generation_id: string;
+            /** Generation Seq */
+            generation_seq: number;
+            /**
+             * Position Path
+             * @example generation/2147483647/tool/2147483647
+             */
+            position_path: string;
+            /**
+             * Target Id
+             * Format: uuid
+             */
+            target_id: string;
+            /**
+             * Target Kind
+             * @enum {string}
+             */
+            target_kind: "library_entry" | "note_block" | "highlight" | "resource_edge" | "queue_item";
+            /** Tool Position */
+            tool_position: number;
+        };
+        /**
          * ManualAuthorRowIn
          * @description One ordered manual author row. Every row is role ``author``.
          */
@@ -8006,6 +8468,32 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** MessageDocument */
+        MessageDocument: {
+            /** Blocks */
+            blocks: components["schemas"]["MessageDocumentTextBlock"][];
+            /**
+             * Type
+             * @default message_document
+             * @constant
+             */
+            type: "message_document";
+        };
+        /** MessageDocumentTextBlock */
+        MessageDocumentTextBlock: {
+            /**
+             * Format
+             * @enum {string}
+             */
+            format: "plain" | "markdown";
+            /** Text */
+            text: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "text";
+        };
         /** MessageOffsetsLocator */
         MessageOffsetsLocator: {
             /** Conversation Id */
@@ -8023,6 +8511,60 @@ export interface components {
              * @enum {string}
              */
             type: "message_offsets";
+        };
+        /** MessageOut */
+        MessageOut: {
+            /** Branch Anchor */
+            branch_anchor: {
+                [key: string]: unknown;
+            };
+            /**
+             * Branch Anchor Kind
+             * @default none
+             * @enum {string}
+             */
+            branch_anchor_kind: "none" | "assistant_message" | "assistant_selection";
+            /** Branch Root Message Id */
+            branch_root_message_id: string | null;
+            /**
+             * Can Rerun
+             * @default false
+             */
+            can_rerun: boolean;
+            /** Citations */
+            citations: components["schemas"]["CitationOut"][];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            message_document: components["schemas"]["MessageDocument"];
+            /** Parent Message Id */
+            parent_message_id: string | null;
+            reader_selection: components["schemas"]["Presence_ReaderSelectionOut_"];
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+            /** Seq */
+            seq: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "complete" | "error" | "cancelled";
+            trust_trail: components["schemas"]["AssistantTrustTrailOut"] | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /** MessageRetrievalResultRef */
         MessageRetrievalResultRef: {
@@ -8714,6 +9256,20 @@ export interface components {
              * Format: date-time
              */
             last_checked: string;
+        };
+        /** OperatorDefectChatFailure */
+        OperatorDefectChatFailure: {
+            /**
+             * Can Rerun
+             * @default false
+             * @constant
+             */
+            can_rerun: false;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "operator_defect";
         };
         /** OracleBindEventPayload */
         OracleBindEventPayload: {
@@ -9595,6 +10151,7 @@ export interface components {
         Presence_BrowseSort_: components["schemas"]["Absent"] | components["schemas"]["Present_BrowseSort_"];
         Presence_CancelledEventPayload_: components["schemas"]["Absent"] | components["schemas"]["Present_CancelledEventPayload_"];
         Presence_ChatPublicationWarning_: components["schemas"]["Absent"] | components["schemas"]["Present_ChatPublicationWarning_"];
+        Presence_ChatRunExecutionOut_: components["schemas"]["Absent"] | components["schemas"]["Present_ChatRunExecutionOut_"];
         Presence_ConsumptionOut_: components["schemas"]["Absent"] | components["schemas"]["Present_ConsumptionOut_"];
         Presence_DailyPageSummaryOut_: components["schemas"]["Absent"] | components["schemas"]["Present_DailyPageSummaryOut_"];
         Presence_DossierBuildAdmittedGenerationOut_: components["schemas"]["Absent"] | components["schemas"]["Present_DossierBuildAdmittedGenerationOut_"];
@@ -9623,6 +10180,7 @@ export interface components {
         Presence_PodcastReplacementConfirmation_: components["schemas"]["Absent"] | components["schemas"]["Present_PodcastReplacementConfirmation_"];
         Presence_PublicHighlightOut_: components["schemas"]["Absent"] | components["schemas"]["Present_PublicHighlightOut_"];
         Presence_ReaderSelectionInput_: components["schemas"]["Absent"] | components["schemas"]["Present_ReaderSelectionInput_"];
+        Presence_ReaderSelectionOut_: components["schemas"]["Absent"] | components["schemas"]["Present_ReaderSelectionOut_"];
         Presence_ReaderTimeRange_: components["schemas"]["Absent"] | components["schemas"]["Present_ReaderTimeRange_"];
         Presence_ReadingTimeEstimateOut_: components["schemas"]["Absent"] | components["schemas"]["Present_ReadingTimeEstimateOut_"];
         Presence_ShareMembersOut_: components["schemas"]["Absent"] | components["schemas"]["Present_ShareMembersOut_"];
@@ -9890,6 +10448,15 @@ export interface components {
              */
             kind: "Present";
             value: components["schemas"]["ChatPublicationWarning"];
+        };
+        /** Present[ChatRunExecutionOut] */
+        Present_ChatRunExecutionOut_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["ChatRunExecutionOut"];
         };
         /** Present[ConsumptionOut] */
         Present_ConsumptionOut_: {
@@ -10166,6 +10733,15 @@ export interface components {
              */
             kind: "Present";
             value: components["schemas"]["ReaderSelectionInput"];
+        };
+        /** Present[ReaderSelectionOut] */
+        Present_ReaderSelectionOut_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["ReaderSelectionOut"];
         };
         /** Present[ReaderTimeRange] */
         Present_ReaderTimeRange_: {
@@ -11065,6 +11641,27 @@ export interface components {
              * Format: uuid
              */
             media_id: string;
+        };
+        /** ReaderSelectionOut */
+        ReaderSelectionOut: {
+            activation: components["schemas"]["ResourceActivationOut"];
+            /** Exact */
+            exact: string;
+            key: components["schemas"]["ReaderSelectionKey"];
+            /** Locator */
+            locator: components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"];
+            /**
+             * Prefix
+             * @default
+             */
+            prefix: string;
+            /** Source Label */
+            source_label: string;
+            /**
+             * Suffix
+             * @default
+             */
+            suffix: string;
         };
         /** ReaderSourceHtmlOut */
         ReaderSourceHtmlOut: {
@@ -13354,6 +13951,266 @@ export interface components {
             /** Newowneruserhandle */
             newOwnerUserHandle: string;
         };
+        /** TrustCitationOut */
+        TrustCitationOut: {
+            citation: components["schemas"]["CitationOut"];
+            /**
+             * Citation Edge Id
+             * Format: uuid
+             */
+            citation_edge_id: string;
+            /** Ordinal */
+            ordinal: number;
+            /** Retrieval Id */
+            retrieval_id: string | null;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "context" | "supports" | "contradicts";
+            target_ref: components["schemas"]["CitationTargetRef"];
+            /** Tool Call Id */
+            tool_call_id: string | null;
+        };
+        /** TrustContextRefAddedOut */
+        TrustContextRefAddedOut: {
+            activation: components["schemas"]["ResourceActivationOut"];
+            /** Chat Run Event Seq */
+            chat_run_event_seq: number;
+            /** Citation Edge Id */
+            citation_edge_id: string | null;
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Label */
+            label: string;
+            /** Missing */
+            missing: boolean;
+            /** Resource Ref */
+            resource_ref: string;
+            /** Summary */
+            summary: string;
+        };
+        /** TrustIntegrityNoticeOut */
+        TrustIntegrityNoticeOut: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+        };
+        /** TrustPromptAssemblyOut */
+        TrustPromptAssemblyOut: {
+            /** Dropped Items */
+            dropped_items: {
+                [key: string]: unknown;
+            }[];
+            /** Estimated Input Tokens */
+            estimated_input_tokens: number;
+            /** Included Context Refs */
+            included_context_refs: {
+                [key: string]: unknown;
+            }[];
+            /** Included Message Ids */
+            included_message_ids: string[];
+            /** Input Budget Tokens */
+            input_budget_tokens: number;
+            /** Reserved Output Tokens */
+            reserved_output_tokens: number;
+        };
+        /** TrustRetrievalOut */
+        TrustRetrievalOut: {
+            citation_candidate_ordinal: components["schemas"]["Presence_int_"];
+            /** Citation Number */
+            citation_number: number | null;
+            /** Citation Role */
+            citation_role: ("context" | "supports" | "contradicts") | null;
+            /** Cited Edge Id */
+            cited_edge_id: string | null;
+            context_ref: components["schemas"]["RetrievalContextRef"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Deep Link */
+            deep_link: string | null;
+            /** Evidence Span Id */
+            evidence_span_id: string | null;
+            /** Exact Snippet */
+            exact_snippet: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Included In Prompt
+             * @default false
+             */
+            included_in_prompt: boolean;
+            /**
+             * Included In Prompt Source
+             * @default retrieval
+             * @enum {string}
+             */
+            included_in_prompt_source: "retrieval" | "prompt_assembly" | "none";
+            /** Locator */
+            locator: (components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["NoteBlockOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"] | components["schemas"]["MessageOffsetsLocator"] | components["schemas"]["ExternalUrlLocator"]) | null;
+            /** Media Id */
+            media_id: string | null;
+            /** Ordinal */
+            ordinal: number;
+            /** Result Ref */
+            result_ref: components["schemas"]["MediaRetrievalResultRef"] | components["schemas"]["PodcastRetrievalResultRef"] | components["schemas"]["EpisodeRetrievalResultRef"] | components["schemas"]["VideoRetrievalResultRef"] | components["schemas"]["ContentChunkRetrievalResultRef"] | components["schemas"]["FragmentRetrievalResultRef"] | components["schemas"]["ContributorRetrievalResultRef"] | components["schemas"]["PageRetrievalResultRef"] | components["schemas"]["NoteBlockRetrievalResultRef"] | components["schemas"]["HighlightRetrievalResultRef"] | components["schemas"]["MessageRetrievalResultRef"] | components["schemas"]["WebRetrievalResultRef"] | components["schemas"]["EvidenceSpanRetrievalResultRef"] | components["schemas"]["ReaderApparatusItemRetrievalResultRef"] | components["schemas"]["ConversationRetrievalResultRef"] | components["schemas"]["ArtifactRetrievalResultRef"];
+            /**
+             * Result Type
+             * @enum {string}
+             */
+            result_type: "media" | "podcast" | "episode" | "video" | "content_chunk" | "fragment" | "contributor" | "page" | "note_block" | "highlight" | "message" | "evidence_span" | "conversation" | "artifact" | "web_result" | "reader_apparatus_item";
+            /**
+             * Retrieval Status
+             * @default retrieved
+             * @enum {string}
+             */
+            retrieval_status: "attached_context" | "retrieved" | "selected" | "included_in_prompt" | "excluded_by_budget" | "excluded_by_scope" | "web_result";
+            /** Scope */
+            scope: string;
+            /** Score */
+            score: number | null;
+            /** Section Label */
+            section_label: string | null;
+            /** Selected */
+            selected: boolean;
+            /** Snippet Prefix */
+            snippet_prefix: string | null;
+            /** Snippet Suffix */
+            snippet_suffix: string | null;
+            /** Source Id */
+            source_id: string;
+            /** Source Title */
+            source_title: string | null;
+            /**
+             * Tool Call Id
+             * Format: uuid
+             */
+            tool_call_id: string;
+        };
+        /** TrustRunOut */
+        TrustRunOut: {
+            /** Completed At */
+            completed_at: string | null;
+            /** Error Code */
+            error_code: string | null;
+            execution: components["schemas"]["Presence_ChatRunExecutionOut_"];
+            /** Failure */
+            failure: (components["schemas"]["CancelledChatFailure"] | components["schemas"]["ContextTooLargeChatFailure"] | components["schemas"]["InvalidOutputChatFailure"] | components["schemas"]["IncompleteChatFailure"] | components["schemas"]["AssistantUnavailableChatFailure"] | components["schemas"]["OperatorDefectChatFailure"]) | null;
+            /** Final Chars */
+            final_chars: number | null;
+            publication_warning: components["schemas"]["Presence_ChatPublicationWarning_"];
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            run_selection: components["schemas"]["RunSelectionOut"];
+            /** Started At */
+            started_at: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "running" | "complete" | "error" | "cancelled";
+            support_id: components["schemas"]["Presence_str_"];
+            /** Usage */
+            usage: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** TrustToolCallOut */
+        TrustToolCallOut: {
+            /** Activity Label */
+            activity_label: string;
+            /** Canonical Tool Id */
+            canonical_tool_id: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            effect: components["schemas"]["ToolEffect"] | null;
+            /**
+             * Error Type
+             * @enum {unknown}
+             */
+            error_type: "BudgetExceeded" | "Conflict" | "DeadlineExceeded" | "InvalidInput" | "InvalidUpstreamResponse" | "InvalidUrl" | "QuoteAmbiguous" | "QuoteNotFound" | "RateLimited" | "ResourceUnavailable" | "TargetAmbiguous" | "TooLarge" | "ToolUnavailable" | "Uninspectable" | "Unreadable" | "UnsafeDestination" | "UnsupportedContent" | "UpstreamUnavailable" | "WriteCapReached" | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Latency Ms */
+            latency_ms: number | null;
+            /** Machine Authorships */
+            machine_authorships: components["schemas"]["MachineAuthorshipOut"][];
+            /** Provider Request Ids */
+            provider_request_ids: string[];
+            /** Provider Wire Name */
+            provider_wire_name: string | null;
+            /**
+             * Record Kind
+             * @enum {string}
+             */
+            record_kind: "attached_context" | "current_execution" | "historical_execution";
+            /** Requested Types */
+            requested_types: string[];
+            /** Result Count */
+            result_count: number;
+            /**
+             * Result Kind
+             * @enum {string}
+             */
+            result_kind: "attached_context" | "mutation" | "navigation" | "retrieval";
+            /** Result Refs */
+            result_refs: {
+                [key: string]: unknown;
+            }[];
+            /** Retrievals */
+            retrievals: components["schemas"]["TrustRetrievalOut"][];
+            /** Reverted At */
+            reverted_at: string | null;
+            /** Scope */
+            scope: string;
+            /** Selected Context Refs */
+            selected_context_refs: {
+                [key: string]: unknown;
+            }[];
+            /** Selected Count */
+            selected_count: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "running" | "complete" | "error" | "cancelled";
+            /** Tool Call Index */
+            tool_call_index: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
         /** UndoCompletionCommand */
         UndoCompletionCommand: {
             /**
@@ -14493,9 +15350,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_list_ChatRunResponse__"];
                 };
             };
             /** @description Validation Error */
@@ -14568,9 +15423,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ChatRunResponse_"];
                 };
             };
             /** @description Validation Error */
@@ -14604,9 +15457,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ChatRunResponse_"];
                 };
             };
             /** @description Validation Error */
@@ -15038,9 +15889,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ConversationTreeOut_"];
                 };
             };
             /** @description Validation Error */
@@ -15278,9 +16127,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ConversationTreeOut_"];
                 };
             };
             /** @description Validation Error */
@@ -18582,9 +19429,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ChatRunResponse_"];
                 };
             };
             /** @description Validation Error */
@@ -18623,9 +19468,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ChatRunResponse_"];
                 };
             };
             /** @description Validation Error */

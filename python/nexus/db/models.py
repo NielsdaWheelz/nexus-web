@@ -8,6 +8,7 @@ hand-written Alembic migrations: constraints and indexes are not mirrored here.
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum as PyEnum
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import (
@@ -1916,7 +1917,7 @@ class Message(Base):
         nullable=False,
     )
     seq: Mapped[int] = mapped_column(Integer, nullable=False)
-    role: Mapped[str] = mapped_column(Text, nullable=False)
+    role: Mapped[Literal["user", "assistant"]] = mapped_column(Text, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     message_document: Mapped[dict[str, object]] = mapped_column(
         JSONB,
@@ -1929,7 +1930,9 @@ class Message(Base):
     reader_selection_snapshot: Mapped[dict[str, object] | None] = mapped_column(
         JSONB(none_as_null=True), nullable=True
     )
-    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="complete")
+    status: Mapped[Literal["pending", "complete", "error", "cancelled"]] = mapped_column(
+        Text, nullable=False, server_default="complete"
+    )
     parent_message_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("messages.id"),

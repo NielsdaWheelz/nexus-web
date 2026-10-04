@@ -39,6 +39,7 @@ import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
 import type { ChatRunExecution } from "@/lib/api/executionAdvisory";
+import type { ApiJson } from "@/lib/api/wire";
 import { loadGenerationCatalog } from "@/components/chat/useGenerationCatalog";
 import { useStringIdSet, type StringIdSet } from "@/lib/useStringIdSet";
 import {
@@ -57,9 +58,9 @@ import type { ChatConnectionRecoveries } from "@/lib/conversations/chatConnectio
 import type { SSEContextRefAddedEvent } from "@/lib/api/sse/events";
 import { messageUpdateReducer } from "@/lib/conversations/messageUpdateReducer";
 import {
-  decodeChatRunListResponse,
-  decodeChatRunResponse,
-  decodeConversationTree,
+  chatRunListFromWire,
+  chatRunFromWire,
+  conversationTreeFromWire,
 } from "@/lib/conversations/messageWire";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type {
@@ -372,12 +373,12 @@ export function useConversation(
   );
   const treeRequestRef = useRef<{
     conversationId: string;
-    promise: Promise<{ data: ConversationTreeResponse }>;
+    promise: Promise<ApiJson<"/conversations/{conversation_id}/tree", "get">>;
   } | null>(null);
   const routeConversationIdRef = useRef(initialConversationId);
 
   const messageIdsForPath = useCallback(
-    (path: ConversationMessage[], leafMessageId: string | null = null) => {
+    (path: readonly { id: string }[], leafMessageId: string | null = null) => {
       const ids = selectedPathMessageIds(path);
       if (leafMessageId) ids.add(leafMessageId);
       return ids;
@@ -447,19 +448,19 @@ export function useConversation(
       })}` as ApiPath;
       let activeRuns: ChatRunListResponse;
       if (signal) {
-        const raw = await apiFetch<unknown>(path, { signal });
+        const raw = await apiFetch<ApiJson<"/chat-runs", "get">>(path, { signal });
         activeRuns = decodeApiPayload(
           raw,
-          decodeChatRunListResponse,
+          chatRunListFromWire,
           "Active chat runs",
         );
       } else {
         activeRuns = await (activeRunsRequestRef.current ??
-          (activeRunsRequestRef.current = apiFetch<unknown>(path)
+          (activeRunsRequestRef.current = apiFetch<ApiJson<"/chat-runs", "get">>(path)
             .then((response) =>
               decodeApiPayload(
                 response,
-                decodeChatRunListResponse,
+                chatRunListFromWire,
                 "Active chat runs",
               ),
             )
@@ -526,7 +527,7 @@ export function useConversation(
   const loadConversationTree = useCallback(
     (id: string, signal?: AbortSignal) => {
       if (signal) {
-        return apiFetch<{ data: ConversationTreeResponse }>(
+        return apiFetch<ApiJson<"/conversations/{conversation_id}/tree", "get">>(
           `/api/conversations/${id}/tree`,
           { signal },
         );
@@ -534,7 +535,7 @@ export function useConversation(
       if (treeRequestRef.current?.conversationId === id) {
         return treeRequestRef.current.promise;
       }
-      const request = apiFetch<{ data: ConversationTreeResponse }>(
+      const request = apiFetch<ApiJson<"/conversations/{conversation_id}/tree", "get">>(
         `/api/conversations/${id}/tree`,
       );
       const promise = request.finally(() => {
@@ -553,7 +554,7 @@ export function useConversation(
       try {
         const response = await loadConversationTree(id);
         if (conversationIdRef.current !== id) return false;
-        applyConversationTree(decodeConversationTree(response.data));
+        applyConversationTree(conversationTreeFromWire(response.data));
         setError(null);
         return true;
       } catch (err) {
@@ -604,7 +605,7 @@ export function useConversation(
       return {
         adoptionVersion,
         conversationId: id,
-        tree: decodeConversationTree(response.data),
+        tree: conversationTreeFromWire(response.data),
         activeRuns,
       };
     },
@@ -787,11 +788,11 @@ export function useConversation(
       const data = await readAdmittedChatRun(receipt);
       if (!isCurrent()) return false;
       const id = receipt.outcome.conversation_id;
-      const response = await apiFetch<{ data: ConversationTreeResponse }>(
+      const response = await apiFetch<ApiJson<"/conversations/{conversation_id}/tree", "get">>(
         `/api/conversations/${id}/tree`,
       );
       if (!isCurrent()) return false;
-      let tree = decodeConversationTree(response.data);
+      let tree = conversationTreeFromWire(response.data);
       const containsAdmittedPair = (path: ConversationMessage[]) => {
         const userIndex = path.findIndex(
           (message) => message.id === data.user_message.id,
@@ -816,7 +817,9 @@ export function useConversation(
           throw new Error(
             "Acknowledged chat target missing from canonical tree",
           );
-        const selected = await apiFetch<{ data: ConversationTreeResponse }>(
+        const selected = await apiFetch<
+          ApiJson<"/conversations/{conversation_id}/active-path", "post">
+        >(
           `/api/conversations/${id}/active-path`,
           {
             method: "POST",
@@ -824,7 +827,7 @@ export function useConversation(
           },
         );
         if (!isCurrent()) return false;
-        tree = decodeConversationTree(selected.data);
+        tree = conversationTreeFromWire(selected.data);
         if (
           tree.conversation.id !== id ||
           !containsAdmittedPair(tree.selected_path)
@@ -949,14 +952,17 @@ export function useConversation(
           };
           keysRef.current.set(assistantMessageId, command);
         }
-        const rawResponse = await apiFetch<unknown>(endpoint, {
+        const rawResponse = await apiFetch<
+          | ApiJson<"/messages/{assistant_message_id}/rerun", "post">
+          | ApiJson<"/messages/{assistant_message_id}/regenerate", "post">
+        >(endpoint, {
           method: "POST",
           headers: { "Idempotency-Key": command.idempotencyKey },
           body: JSON.stringify(command.request),
         });
         const response = decodeApiPayload(
           rawResponse,
-          decodeChatRunResponse,
+          chatRunFromWire,
           `${operation} assistant response`,
         );
         keysRef.current.delete(assistantMessageId);
@@ -1194,7 +1200,9 @@ export function useConversation(
       void tailVisibleActiveRuns(selectedPathIdsRef.current);
 
       try {
-        const response = await apiFetch<{ data: ConversationTreeResponse }>(
+        const response = await apiFetch<
+          ApiJson<"/conversations/{conversation_id}/active-path", "post">
+        >(
           `/api/conversations/${id}/active-path`,
           {
             method: "POST",
@@ -1203,7 +1211,7 @@ export function useConversation(
         );
         if (activePathSwitchSeqRef.current !== switchSeq) return false;
         scrollRef.current?.captureAnchor(anchorMessageId);
-        applyConversationTree(decodeConversationTree(response.data));
+        applyConversationTree(conversationTreeFromWire(response.data));
         void tailVisibleActiveRuns(
           messageIdsForPath(
             response.data.selected_path,

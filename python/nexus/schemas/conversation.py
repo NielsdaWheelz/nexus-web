@@ -16,7 +16,6 @@ from pydantic import (
     ConfigDict,
     Field,
     field_validator,
-    model_serializer,
     model_validator,
 )
 
@@ -115,13 +114,13 @@ class MessageDocument(BaseModel):
     type: Literal["message_document"] = "message_document"
     blocks: list[MessageDocumentTextBlock] = Field(default_factory=list)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
 
 class MessageOut(BaseModel):
     id: UUID
     seq: int
-    role: str  # "user" | "assistant"
+    role: Literal["user", "assistant"]
     message_document: MessageDocument = Field(default_factory=MessageDocument)
     citations: list[CitationOut] = Field(default_factory=list)
     trust_trail: AssistantTrustTrailOut | None = None
@@ -129,13 +128,17 @@ class MessageOut(BaseModel):
     branch_root_message_id: UUID | None = None
     branch_anchor_kind: BRANCH_ANCHOR_KINDS = "none"
     branch_anchor: dict[str, Any] = Field(default_factory=dict)
-    status: str  # "pending" | "complete" | "error" | "cancelled"
+    status: Literal["pending", "complete", "error", "cancelled"]
     can_rerun: bool = False
     reader_selection: Presence[ReaderSelectionOut] = Field(default_factory=absent)
     created_at: datetime
     updated_at: datetime
 
-    model_config = ConfigDict(from_attributes=True, extra="forbid")
+    model_config = ConfigDict(
+        from_attributes=True,
+        extra="forbid",
+        json_schema_serialization_defaults_required=True,
+    )
 
     @model_validator(mode="after")
     def validate_trust_trail_role(self) -> MessageOut:
@@ -538,7 +541,7 @@ class TrustRunOut(BaseModel):
     started_at: datetime | None = None
     completed_at: datetime | None = None
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
 
 class TrustRetrievalOut(MessageRetrievalOut):
@@ -547,6 +550,8 @@ class TrustRetrievalOut(MessageRetrievalOut):
     citation_number: int | None = None
     citation_role: CitationRole | None = None
     included_in_prompt_source: Literal["retrieval", "prompt_assembly", "none"] = "retrieval"
+
+    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
 
 class TrustToolCallOut(ToolProjectionOut):
@@ -567,7 +572,7 @@ class TrustToolCallOut(ToolProjectionOut):
     created_at: datetime
     updated_at: datetime
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
 
 class TrustCitationOut(BaseModel):
@@ -579,7 +584,7 @@ class TrustCitationOut(BaseModel):
     tool_call_id: UUID | None = None
     citation: CitationOut
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
 
 class TrustContextRefAddedOut(BaseModel):
@@ -594,7 +599,7 @@ class TrustContextRefAddedOut(BaseModel):
     created_at: datetime
     citation_edge_id: UUID | None = None
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
 
 class TrustIntegrityNoticeOut(BaseModel):
@@ -619,7 +624,7 @@ class AssistantTrustTrailOut(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
 
 MessageOut.model_rebuild()
@@ -693,6 +698,8 @@ class ForkOptionOut(BaseModel):
     updated_at: datetime
     active: bool
 
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
 
 class BranchGraphNodeOut(BaseModel):
     id: UUID
@@ -712,20 +719,20 @@ class BranchGraphNodeOut(BaseModel):
     leaf: bool
     created_at: datetime
 
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
 
 class BranchGraphEdgeOut(BaseModel):
-    from_message_id: UUID
+    from_message_id: UUID = Field(serialization_alias="from")
     to: UUID
-
-    @model_serializer(mode="plain")
-    def serialize_edge(self) -> dict[str, UUID]:
-        return {"from": self.from_message_id, "to": self.to}
 
 
 class BranchGraphOut(BaseModel):
     nodes: list[BranchGraphNodeOut] = Field(default_factory=list)
     edges: list[BranchGraphEdgeOut] = Field(default_factory=list)
     root_message_id: UUID | None = None
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
 
 class ConversationTreeOut(BaseModel):
@@ -735,7 +742,8 @@ class ConversationTreeOut(BaseModel):
     fork_options_by_parent_id: dict[str, list[ForkOptionOut]] = Field(default_factory=dict)
     path_cache_by_leaf_id: dict[str, list[MessageOut]] = Field(default_factory=dict)
     branch_graph: BranchGraphOut = Field(default_factory=BranchGraphOut)
-    page: dict[str, str | None] = Field(default_factory=lambda: {"before_cursor": None})
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
 
 class ConversationForksOut(BaseModel):
@@ -921,7 +929,11 @@ class ChatRunOut(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    model_config = ConfigDict(from_attributes=True, extra="forbid")
+    model_config = ConfigDict(
+        from_attributes=True,
+        extra="forbid",
+        json_schema_serialization_defaults_required=True,
+    )
 
 
 class ChatRunStreamActivityOut(BaseModel):
@@ -930,7 +942,7 @@ class ChatRunStreamActivityOut(BaseModel):
     ]
     label: str | None = None
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
 
 class ChatRunStreamToolCallOut(ToolProjectionOut):
@@ -948,7 +960,7 @@ class ChatRunStreamToolCallOut(ToolProjectionOut):
     retrievals: list[TrustRetrievalOut] = Field(default_factory=list)
     input_preview: str | None = None
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
 
 class ChatRunStreamStateOut(BaseModel):
@@ -963,7 +975,7 @@ class ChatRunStreamStateOut(BaseModel):
     reconnectable: bool
     terminal: bool
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
 
 class ChatRunResponse(BaseModel):

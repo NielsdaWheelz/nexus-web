@@ -1,8 +1,6 @@
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import {
-  expectArray,
   expectExactRecord,
-  expectNonemptyString,
   expectOneOf,
   expectString,
 } from "@/lib/validation";
@@ -23,23 +21,13 @@ export type GenerationSelectionState =
   | Schema<"Ineligible">
   | Schema<"OperatorActionRequired">
   | Schema<"TemporarilyUnavailable">;
-type BillingDisclosure = Schema<"SubscriptionBilling"> | Schema<"MeteredApiBilling">;
-export type PrivacyDisclosure = Schema<"PrivacyDisclosure">;
-export type ProcessorChain = Schema<"ProcessorChain">;
-export type SelectionPresentation = Schema<"SelectionPresentation">;
 export type GenerationReasoningRow = Schema<"GenerationReasoningRow">;
 export type GenerationModelRow = Schema<"GenerationModelRow">;
 export type GenerationCatalogRoute = Schema<"GenerationCatalogRoute">;
 export type ChatSeed = Schema<"ChatSeed">;
 export type GenerationCatalog = ApiJson<"/llm-catalog", "get">["data"];
 
-export interface RunSelectionOut {
-  readonly selection: GenerationSelectionSpec;
-  readonly catalog_definition_revision: string;
-  readonly source_catalog_definition_revision: string;
-  readonly display_at_dispatch: SelectionPresentation;
-  readonly tool_authority: "ReadOnly" | "AdditiveWrites";
-}
+export type RunSelectionOut = Schema<"RunSelectionOut">;
 
 export interface GenerationCandidate {
   readonly route: GenerationCatalogRoute;
@@ -60,17 +48,8 @@ const PROVIDERS = [
   "deepseek",
   "xai",
 ] as const;
-const SHA256_RE = /^[0-9a-f]{64}$/;
 const CODEX_MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const MODEL_REF_RE = /^[a-z0-9][a-z0-9._:/-]{0,255}$/;
-
-function expectSha256(raw: unknown, name: string): string {
-  const value = expectString(raw, name);
-  if (value.length !== 64 || !SHA256_RE.test(value)) {
-    throw new TypeError(`${name} must be a lowercase SHA-256 digest`);
-  }
-  return value;
-}
 
 function expectPattern(raw: unknown, name: string, pattern: RegExp): string {
   const value = expectString(raw, name);
@@ -117,72 +96,6 @@ export function decodeGenerationSelectionSpec(
   };
 }
 
-function decodeBilling(raw: unknown, name: string): BillingDisclosure {
-  const value = expectExactRecord(raw, ["kind", "label"], name);
-  if (value.kind === "Subscription" && value.label === "Codex subscription") {
-    return { kind: "Subscription", label: "Codex subscription" };
-  }
-  if (value.kind === "MeteredApi" && value.label === "Metered API") {
-    return { kind: "MeteredApi", label: "Metered API" };
-  }
-  throw new TypeError(`${name} must be a supported billing disclosure`);
-}
-
-function decodePrivacy(raw: unknown, name: string): PrivacyDisclosure {
-  const value = expectExactRecord(raw, ["summary", "retention", "training"], name);
-  return {
-    summary: expectNonemptyString(value.summary, `${name}.summary`),
-    retention: expectNonemptyString(value.retention, `${name}.retention`),
-    training: expectNonemptyString(value.training, `${name}.training`),
-  };
-}
-
-function decodeProcessorChain(raw: unknown, name: string): ProcessorChain {
-  const value = expectExactRecord(raw, ["processors"], name);
-  const processors = expectArray(
-    value.processors,
-    (processor, index) =>
-      expectNonemptyString(processor, `${name}.processors[${index}]`),
-    `${name}.processors`,
-  );
-  if (processors.length === 0 || processors.length > 4) {
-    throw new TypeError(`${name}.processors must contain one to four rows`);
-  }
-  return { processors };
-}
-
-export function decodeSelectionPresentation(
-  raw: unknown,
-  name: string,
-): SelectionPresentation {
-  const value = expectExactRecord(
-    raw,
-    [
-      "route_label",
-      "model_label",
-      "reasoning_label",
-      "billing",
-      "privacy",
-      "processor_chain",
-    ],
-    name,
-  );
-  return {
-    route_label: expectNonemptyString(value.route_label, `${name}.route_label`),
-    model_label: expectNonemptyString(value.model_label, `${name}.model_label`),
-    reasoning_label: expectNonemptyString(
-      value.reasoning_label,
-      `${name}.reasoning_label`,
-    ),
-    billing: decodeBilling(value.billing, `${name}.billing`),
-    privacy: decodePrivacy(value.privacy, `${name}.privacy`),
-    processor_chain: decodeProcessorChain(
-      value.processor_chain,
-      `${name}.processor_chain`,
-    ),
-  };
-}
-
 export function decodeGenerationRoute(raw: unknown, name: string): GenerationRoute {
   const routeValue = expectExactRecord(
     raw,
@@ -198,40 +111,6 @@ export function decodeGenerationRoute(raw: unknown, name: string): GenerationRou
   return {
     kind: "ProviderApi",
     provider: expectOneOf(routeValue.provider, PROVIDERS, `${name}.provider`),
-  };
-}
-
-export function decodeRunSelectionOut(raw: unknown, name: string): RunSelectionOut {
-  const value = expectExactRecord(
-    raw,
-    [
-      "selection",
-      "catalog_definition_revision",
-      "source_catalog_definition_revision",
-      "display_at_dispatch",
-      "tool_authority",
-    ],
-    name,
-  );
-  return {
-    selection: decodeGenerationSelectionSpec(value.selection, `${name}.selection`),
-    catalog_definition_revision: expectSha256(
-      value.catalog_definition_revision,
-      `${name}.catalog_definition_revision`,
-    ),
-    source_catalog_definition_revision: expectSha256(
-      value.source_catalog_definition_revision,
-      `${name}.source_catalog_definition_revision`,
-    ),
-    display_at_dispatch: decodeSelectionPresentation(
-      value.display_at_dispatch,
-      `${name}.display_at_dispatch`,
-    ),
-    tool_authority: expectOneOf(
-      value.tool_authority,
-      ["ReadOnly", "AdditiveWrites"] as const,
-      `${name}.tool_authority`,
-    ),
   };
 }
 

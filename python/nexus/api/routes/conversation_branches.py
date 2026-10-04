@@ -9,8 +9,12 @@ from sqlalchemy.orm import Session
 from nexus.api.deps import require_chat_contract_revision, require_tool_projection_revision
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db, get_repeatable_read_db
-from nexus.responses import ok
-from nexus.schemas.conversation import RenameBranchRequest, SetActivePathRequest
+from nexus.responses import Data, ok
+from nexus.schemas.conversation import (
+    ConversationTreeOut,
+    RenameBranchRequest,
+    SetActivePathRequest,
+)
 from nexus.services import conversation_branches as conversation_branches_service
 
 router = APIRouter(tags=["conversation-branches"])
@@ -27,10 +31,10 @@ async def get_conversation_tree(
     conversation_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> Data[ConversationTreeOut]:
     get_repeatable_read_db(db)
-    return ok(
-        conversation_branches_service.get_conversation_tree(
+    return Data(
+        data=conversation_branches_service.get_conversation_tree(
             db=db,
             viewer_id=viewer.user_id,
             conversation_id=conversation_id,
@@ -50,9 +54,9 @@ async def set_conversation_active_path(
     body: SetActivePathRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    return ok(
-        conversation_branches_service.set_active_path(
+) -> Data[ConversationTreeOut]:
+    return Data(
+        data=conversation_branches_service.set_active_path(
             db=db,
             viewer_id=viewer.user_id,
             conversation_id=conversation_id,
