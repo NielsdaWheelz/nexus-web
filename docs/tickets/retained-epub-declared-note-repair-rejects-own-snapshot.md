@@ -1,7 +1,0 @@
-# retained epub repair rejects a declared note from its own snapshot
-
-status: open. origin: 2026-10-04 apparatus baseline at `58ba9d45`; area: epub retained navigation repair. priority: p3.
-
-the official idpf `moby-dick.epub` (sha256 `05c2bdc61f45ce80b3fbb5fd30c78257aa97094a530ecd6a8621cecd033168fa`) passes the bounded full `_build_plan`: 144 fragments, a declared footnote/ref pair and one edge (frozen old receipt sha256 `eb1b7d6dd0d9aca6e97c72ceac2f68bf15e94ad48a3382ce16c7f21e38b48b70`). calling native `prepare_epub_navigation_repair` with exactly those produced fragment ids, html, canonical text and the same archive raises `ValueError: Retained EPUB marker disagrees with verified source semantics` in `html_apparatus.py:289`. the source declares `epub:type="noteref"` and `epub:type="footnote"`; retained sanitized html has the owner stamps but no `epub:type`. the retained verifier's fallback at `html_apparatus.py:253–265` requires a reciprocal backlink that this valid declared note does not carry. this is a local same-source repair rejection, not a publication or production observation.
-
-preserve the source-semantic and exact retained-coordinate checks while allowing the owner's own declared marker/body pair to verify across sanitization. acceptance: actual parse→retained repair of this same archive succeeds with unchanged item identities, body, locator, edge and navigation; a deliberately changed marker kind/target still fails.

@@ -263,7 +263,6 @@ def extract_html_apparatus(
                 corroborated is None
                 and confidence == "exact"
                 and facts.context.semantic is None
-                and facts.has_backlink
                 and source_marker.get("extraction_method") == "html_semantic"
                 and target is not None
                 and external_target is not None
