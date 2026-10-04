@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import Dialog from "@/components/ui/Dialog";
 import Button from "@/components/ui/Button";
-import WalknoteReviewPanel from "@/components/walknotes/WalknoteReviewPanel";
 import { presenceValueOr } from "@/lib/api/presence";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
@@ -13,7 +12,6 @@ import {
   usePlayerSettings,
 } from "@/lib/player/playerRuntime";
 import { projectPlayerChrome } from "@/lib/player/playerChromeModel";
-import { usePlayerCapture } from "@/lib/walknotes/usePlayerCapture";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import {
   findPaneChromeFocusTarget,
@@ -58,7 +56,6 @@ export default function GlobalPlayerSurfaces() {
   const session = usePlayerSession();
   const settings = usePlayerSettings();
   const commands = usePlayerCommands();
-  const capture = usePlayerCapture();
   const workspace = useWorkspaceStore();
   const { focus: returnPaneChromeFocus } = usePaneChromeFocusReturn();
   const isMobile = useIsMobileViewport();
@@ -79,8 +76,7 @@ export default function GlobalPlayerSurfaces() {
   const closeSubordinates = useCallback(() => {
     setPlaybackOpen(false);
     setContentsOpen(false);
-    capture.closeReview();
-  }, [capture]);
+  }, []);
 
   const collapse = useCallback(() => {
     closeSubordinates();
@@ -89,7 +85,6 @@ export default function GlobalPlayerSurfaces() {
 
   const dismiss = useCallback(() => {
     const activePaneId = workspace.state.activePrimaryPaneId;
-    capture.closeForPlayerDismissal();
     setPlaybackOpen(false);
     setContentsOpen(false);
     setNowPlayingOpen(false);
@@ -103,7 +98,6 @@ export default function GlobalPlayerSurfaces() {
       findPaneChromeFocusTarget(activePaneId)?.focus(),
     );
   }, [
-    capture,
     commands,
     isMobile,
     returnPaneChromeFocus,
@@ -118,7 +112,6 @@ export default function GlobalPlayerSurfaces() {
       activeSessionIdentityRef.current !== null &&
       activeSessionIdentityRef.current !== identity
     ) {
-      capture.closeForPlayerDismissal();
       setPlaybackOpen(false);
       setContentsOpen(false);
       if (identity === null) setAnnouncement("Player closed");
@@ -133,7 +126,7 @@ export default function GlobalPlayerSurfaces() {
       setNowPlayingOpen(false);
       setContentsOpen(false);
     }
-  }, [capture, isMobile, model]);
+  }, [isMobile, model]);
 
   useEffect(() => {
     if (model.kind === "Absent") {
@@ -159,12 +152,6 @@ export default function GlobalPlayerSurfaces() {
     const status = playerAnnouncement(model);
     if (status !== null) setAnnouncement(status);
   }, [model]);
-
-  useEffect(() => {
-    if (capture.announcement) {
-      setAnnouncement(capture.announcement);
-    }
-  }, [capture.announcement]);
 
   useEffect(() => {
     const remember = settings.playbackRate.remember;
@@ -317,9 +304,8 @@ export default function GlobalPlayerSurfaces() {
     model.kind === "Canonical"
       ? presenceValueOr(model.state.session.descriptor.subtitle, null)
       : null;
-  const modalActive =
-    nowPlayingOpen || playbackOpen || contentsOpen || capture.reviewOpen;
-  const subordinateActive = playbackOpen || contentsOpen || capture.reviewOpen;
+  const modalActive = nowPlayingOpen || playbackOpen || contentsOpen;
+  const subordinateActive = playbackOpen || contentsOpen;
 
   return (
     <>
@@ -328,7 +314,6 @@ export default function GlobalPlayerSurfaces() {
         <>
           <MobileMiniPlayer
             model={model}
-            capture={capture}
             suspended={modalActive}
             openerRef={miniPlayerButtonRef}
             onOpenNowPlaying={() => setNowPlayingOpen(true)}
@@ -341,7 +326,6 @@ export default function GlobalPlayerSurfaces() {
           <MobileNowPlaying
             active={nowPlayingOpen}
             model={model}
-            capture={capture}
             suspended={subordinateActive}
             miniPlayerButtonRef={miniPlayerButtonRef}
             playbackButtonRef={playbackButtonRef}
@@ -375,12 +359,11 @@ export default function GlobalPlayerSurfaces() {
         <>
           <DesktopListeningShelf
             model={model}
-            capture={capture}
             onOpenTarget={openPlayerTarget}
             onOpenLectern={openLectern}
             onOpenPlayback={() => openPlayback(playbackButtonRef.current)}
             onDismiss={dismiss}
-            suspended={capture.reviewOpen || playbackOpen}
+            suspended={playbackOpen}
             playbackButtonRef={playbackButtonRef}
           />
           <Dialog
@@ -397,17 +380,6 @@ export default function GlobalPlayerSurfaces() {
           </Dialog>
         </>
       )}
-      {model.kind === "Canonical" && capture.reviewOpen ? (
-        <WalknoteReviewPanel
-          playerTask
-          onClose={capture.closeReview}
-          returnFocusFallback={() =>
-            document.querySelector<HTMLElement>("[data-player-capture]") ??
-            findPaneLandmarkFocusTarget(workspace.state.activePrimaryPaneId)
-          }
-          onMaterializeComplete={capture.announceMaterialized}
-        />
-      ) : null}
     </>
   );
 }

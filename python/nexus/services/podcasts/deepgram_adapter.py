@@ -51,7 +51,8 @@ class DeepgramClient:
             validate_requested_url(normalized_audio_url)
         except InvalidRequestError:
             return _failure(ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value, "Transcript unavailable")
-        self._require_credentials()
+        if not self.api_key:
+            raise RuntimeError("Transcription provider credentials are not configured")
 
         diarized = self._listen(
             params={"diarize": "true", "utterances": "true"},
@@ -71,29 +72,18 @@ class DeepgramClient:
             )
         return fallback
 
-    def transcribe_raw_audio(self, audio_bytes: bytes, content_type: str) -> TranscriptionResult:
-        """Transcribe raw audio bytes posted directly as the request body."""
-        self._require_credentials()
-        return self._listen(params={}, content=audio_bytes, content_type=content_type)
-
-    def _require_credentials(self) -> None:
-        if not self.api_key:
-            raise RuntimeError("Transcription provider credentials are not configured")
-
     def _listen(
         self,
         *,
         params: dict[str, str],
-        json_body: dict[str, str] | None = None,
-        content: bytes | None = None,
-        content_type: str = "application/json",
+        json_body: dict[str, str],
     ) -> TranscriptionResult:
         try:
             response = httpx.post(
                 f"{self.base_url.rstrip('/')}{_LISTEN_PATH}",
                 headers={
                     "Authorization": f"Token {self.api_key}",
-                    "Content-Type": content_type,
+                    "Content-Type": "application/json",
                 },
                 params={
                     "model": self.model,
@@ -103,7 +93,6 @@ class DeepgramClient:
                     **params,
                 },
                 json=json_body,
-                content=content,
                 timeout=self.timeout_seconds,
             )
             response.raise_for_status()

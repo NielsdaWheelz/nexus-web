@@ -75,7 +75,7 @@ evidence for native persistence, package integrity, or signed APK wiring.
 ### native read boundary
 
 `GET /media/{id}/document-map`, `/fragments` and `/navigation` return their
-owned `Data` models. generated web types feed pane loading, walknotes and
+owned `Data` models. generated web types feed pane loading and
 `HostedReaderSource`. `documentMap.ts` decorates action subjects and uses the
 shared snake-case activation wire directly;
 its facts, markers, source content and associations remain server-owned.

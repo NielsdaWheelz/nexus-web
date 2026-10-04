@@ -3200,41 +3200,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/vault": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Export Vault */
-        get: operations["export_vault_vault_get"];
-        put?: never;
-        /** Sync Vault */
-        post: operations["sync_vault_vault_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/vault/download": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Download Vault */
-        get: operations["download_vault_vault_download_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/version": {
         parameters: {
             query?: never;
@@ -3249,26 +3214,6 @@ export interface paths {
         get: operations["get_version_version_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/walknotes/transcribe-audio": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Transcribe Walknote Audio
-         * @description 10 MB-bounded Deepgram transcription.
-         */
-        post: operations["transcribe_walknote_audio_walknotes_transcribe_audio_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3707,13 +3652,6 @@ export interface components {
              * @enum {string}
              */
             reason: "RequiresAdmin" | "RequiresSubscription" | "SystemManaged" | "Inherited";
-        };
-        /** Body_transcribe_walknote_audio_walknotes_transcribe_audio_post */
-        Body_transcribe_walknote_audio_walknotes_transcribe_audio_post: {
-            /** Audio */
-            audio: string;
-            /** Content Type */
-            content_type: string;
         };
         /** BranchGraphEdgeOut */
         BranchGraphEdgeOut: {
@@ -5544,10 +5482,6 @@ export interface components {
         /** Data[TranscriptRequestOut] */
         Data_TranscriptRequestOut_: {
             data: components["schemas"]["TranscriptRequestOut"];
-        };
-        /** Data[WalknoteTranscriptionOut] */
-        Data_WalknoteTranscriptionOut_: {
-            data: components["schemas"]["WalknoteTranscriptionOut"];
         };
         /** Data[list[ChatRunResponse]] */
         Data_list_ChatRunResponse__: {
@@ -14622,18 +14556,6 @@ export interface components {
             /** Error Type */
             type: string;
         };
-        /** VaultEditableFileIn */
-        VaultEditableFileIn: {
-            /** Content */
-            content: string;
-            /** Path */
-            path: string;
-        };
-        /** VaultSyncRequest */
-        VaultSyncRequest: {
-            /** Files */
-            files: components["schemas"]["VaultEditableFileIn"][];
-        };
         /** VersionExpectedBody */
         VersionExpectedBody: {
             /**
@@ -14806,13 +14728,6 @@ export interface components {
              * Format: date-time
              */
             occurredAt: string;
-        };
-        /** WalknoteTranscriptionOut */
-        WalknoteTranscriptionOut: {
-            /** Duration Ms */
-            duration_ms: number | null;
-            /** Transcript */
-            transcript: string;
         };
         /** WebArticleCandidate */
         WebArticleCandidate: {
@@ -21667,83 +21582,6 @@ export interface operations {
             };
         };
     };
-    export_vault_vault_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    sync_vault_vault_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["VaultSyncRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    download_vault_vault_download_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
     get_version_version_get: {
         parameters: {
             query?: never;
@@ -21762,39 +21600,6 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
-                };
-            };
-        };
-    };
-    transcribe_walknote_audio_walknotes_transcribe_audio_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "multipart/form-data": components["schemas"]["Body_transcribe_walknote_audio_walknotes_transcribe_audio_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_WalknoteTranscriptionOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

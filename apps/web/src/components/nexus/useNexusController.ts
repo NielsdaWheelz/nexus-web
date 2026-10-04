@@ -7,7 +7,6 @@ import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type { MobileQuickNoteHandoffHandle } from "@/components/switchboard/MobileQuickNoteHandoff";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { apiTransportFeedback, isApiError } from "@/lib/api/client";
-import { isAndroidShellRestrictedRouteId } from "@/lib/androidShell";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { matchesKeyEvent } from "@/lib/keybindings";
 import { useKeybindings, useKeybindingsController } from "@/lib/keybindingsProvider";
@@ -36,10 +35,9 @@ import { createNotePage } from "@/lib/notes/api";
 import { DailyDraftStorageError, readDailyDraft, subscribeDailyDraft } from "@/lib/notes/dailyDraftStore";
 import { resolveDailyLocalDate, useOpenDailyPage } from "@/lib/notes/openDailyPage";
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
-import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { usePaneWarm } from "@/lib/panes/paneWarm";
 import { usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
-import { useRenderEnvironment, useViewportState } from "@/lib/renderEnvironment/provider";
+import { useViewportState } from "@/lib/renderEnvironment/provider";
 import { dailyDraftAcceptsText } from "@/lib/resourceSurface/dailySurfacePersistence";
 import type { DismissDecision } from "@/lib/ui/useHistoryDismiss";
 import { getWorkspacePrimaryPanes } from "@/lib/workspace/schema";
@@ -82,7 +80,6 @@ export type NexusController = ReturnType<typeof useNexusController>;
 
 export function useNexusController() {
   const { accountId, calendarTimeZone } = useAuthenticatedAccount();
-  const { androidShell } = useRenderEnvironment();
   const viewport = useViewportState();
   const keybindings = useKeybindings();
   const { labelFor } = useKeybindingsController();
@@ -161,7 +158,6 @@ export function useNexusController() {
     navigationBaseline.current = navigationToken;
   }, [navigationToken, open]);
 
-  const restricted = (href: string) => androidShell && isAndroidShellRestrictedRouteId(resolvePaneRouteModel(href).id);
   const playback = player.state.kind === "Active" && player.state.phase === "Paused" ? player.state.session.descriptor : null;
   const groups = nexusGroups({
     desktop: !viewport.isMobile,
@@ -169,7 +165,7 @@ export function useNexusController() {
     list,
     panes,
     playback: playback && playbackRow(playback.title, playback.subtitle.kind === "Present" ? playback.subtitle.value : undefined),
-    recent: find.recent.filter((entry) => !restricted(entry.target_href)),
+    recent: find.recent,
     frecency: find.frecency,
     hints,
     todayAppend,
@@ -186,7 +182,6 @@ export function useNexusController() {
     }
     if (target.kind === "PaneOpen") {
       const pane = panes.find((candidate) => candidate.id === target.paneId)!;
-      if (restricted(pane.href)) return { kind: "Restricted" };
       if (activation.disposition.kind === "Fork") {
         return dispatch({ kind: "InternalHref", href: pane.href, labelHint: pane.label }, activation);
       }
@@ -194,7 +189,6 @@ export function useNexusController() {
       else workspace.activatePane(pane.id);
       return { kind: "Accepted" };
     }
-    if (restricted(target.href)) return { kind: "Restricted" };
     const result = workspace.activateWorkspaceTarget({
       originPaneId: state.activePrimaryPaneId,
       target: { href: target.href, labelHint: target.labelHint },
@@ -213,7 +207,7 @@ export function useNexusController() {
       setOpen(false);
       return true;
     }
-    setPage(outcome.kind === "Rejected" ? { kind: "Blocked", retained: { target: outcome.target, activation, completion } } : outcome);
+    setPage({ kind: "Blocked", retained: { target: outcome.target, activation, completion } });
     setOpen(true);
     return false;
   }

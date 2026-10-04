@@ -3,12 +3,10 @@
 import type { RefObject } from "react";
 import { Ellipsis, List, X } from "lucide-react";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import type { PlayerCaptureController } from "@/lib/walknotes/usePlayerCapture";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import { PlayerChapterList } from "./PlayerContentsSheet";
 import {
-  PlayerCaptureButton,
   PlayerIdentity,
   PlayerRecordingActionsMenu,
   PlayerSeek,
@@ -19,7 +17,6 @@ import {
   playerNextProvenance,
   playerOpenLecternAction,
   playerPreviewActions,
-  playerReviewCapturesAction,
   type PresentPlayerChrome,
 } from "./PlayerControls";
 import { PlayerPlaybackRateButton } from "./PlayerPlaybackControls";
@@ -27,7 +24,6 @@ import styles from "./DesktopListeningShelf.module.css";
 
 export default function DesktopListeningShelf({
   model,
-  capture,
   onOpenTarget,
   onOpenLectern,
   onOpenPlayback,
@@ -36,7 +32,6 @@ export default function DesktopListeningShelf({
   playbackButtonRef,
 }: {
   readonly model: PresentPlayerChrome;
-  readonly capture: PlayerCaptureController;
   readonly onOpenTarget: () => void;
   readonly onOpenLectern: () => void;
   readonly onOpenPlayback: () => void;
@@ -47,7 +42,6 @@ export default function DesktopListeningShelf({
   const chapters = playerChapters(model);
   const provenance = playerNextProvenance(model);
   const options: ActionDescriptor[] = [
-    ...playerReviewCapturesAction(model, capture),
     ...(chapters.length > 0
       ? [
           {
@@ -85,9 +79,6 @@ export default function DesktopListeningShelf({
       </div>
 
       <div className={styles.actionField}>
-        {model.kind === "Canonical" ? (
-          <PlayerCaptureButton model={model} capture={capture} />
-        ) : null}
         <PlayerPlaybackRateButton
           ref={playbackButtonRef}
           onClick={onOpenPlayback}

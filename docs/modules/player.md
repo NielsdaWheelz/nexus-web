@@ -316,10 +316,10 @@ Lectern pane is the sole full-list editor).
   owner-local purges and exposes no new binding until both acknowledge.
 - `apps/web/src/components/player/` — the Listening Shelf, MiniPlayer, full-
   screen Now Playing, and shared cadence-scoped controls. The surfaces share
-  one Capture controller and one provider-lifetime live region. They do not
+  one provider-lifetime live region. They do not
   mount media elements, mirror session state, or own queue/chapter data.
   Contents and Lectern affordances use canonical workspace activation. For
-  `PreviewAudio`, every surface omits canonical history, Capture, Contents,
+  `PreviewAudio`, every surface omits canonical history, Contents,
   completion, and durable-status actions.
 - `dismiss()` is a device-local teardown, not completion: it samples and
   flushes progress/activity before unloading audio, clears player history and

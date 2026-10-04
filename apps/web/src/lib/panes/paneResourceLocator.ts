@@ -87,7 +87,6 @@ const INTERNAL_ROUTE_IDS = new Set([
   "settingsAccount",
   "settingsReader",
   "settingsAppearance",
-  "settingsLocalVault",
   "settingsIdentities",
   "settingsKeybindings",
 ]);

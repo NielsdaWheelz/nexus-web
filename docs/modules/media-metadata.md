@@ -186,9 +186,10 @@ errors are cleared. deploy api, worker and web together; rollback restores the
 verified backup, never an old decoder over new memos.
 
 the sole suffix is `0252` → resource `0253` → atlas `0254` → native `0255` →
-metadata `0256` → effects `0257`. undeployed metadata migration identifiers are
-renamed/reparented; disposable databases are rebuilt, never stamped or aliased
-into this chain. historical receipts retain their actual revisions.
+metadata `0256` → effects `0257` → local vault history `0258`. undeployed
+metadata migration identifiers are renamed/reparented; disposable databases are
+rebuilt, never stamped or aliased into this chain. historical receipts retain
+their actual revisions.
 combined verification must preserve historical effect/principal evidence and
 roll back the entire transaction if metadata's later guard rejects the upgrade.
 qualified immutable pins and genuine exact-model four-tool research are

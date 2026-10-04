@@ -10,7 +10,6 @@ import {
 } from "react";
 import {
   List,
-  Mic,
   Pause,
   Play,
   RotateCcw,
@@ -40,7 +39,6 @@ import type { ChapterOut } from "@/lib/lectern/contract";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import type { PlayerCaptureController } from "@/lib/walknotes/usePlayerCapture";
 import styles from "./PlayerControls.module.css";
 
 export type PresentPlayerChrome = Extract<
@@ -114,22 +112,6 @@ export function playerChapters(
   return model.kind === "Canonical"
     ? model.state.session.descriptor.activation.chapters
     : [];
-}
-
-export function playerReviewCapturesAction(
-  model: PresentPlayerChrome,
-  capture: PlayerCaptureController,
-): ActionDescriptor[] {
-  if (model.kind !== "Canonical") return [];
-  return [
-    {
-      id: "Player.ReviewCaptures",
-      kind: "command",
-      label: `Review captures (${capture.waypointCount})`,
-      icon: <Mic aria-hidden="true" />,
-      onSelect: capture.openReview,
-    },
-  ];
 }
 
 export function playerContentsAction(
@@ -635,52 +617,6 @@ export function PlayerVolumeControl() {
         }
       />
     </label>
-  );
-}
-
-export function PlayerCaptureButton({
-  model,
-  capture,
-}: {
-  readonly model: Extract<PresentPlayerChrome, { readonly kind: "Canonical" }>;
-  readonly capture: PlayerCaptureController;
-}) {
-  const timeline = usePlayerTimeline();
-  return (
-    <Button
-      variant="ghost"
-      size="lg"
-      className={styles.capture}
-      data-player-capture
-      data-recording={capture.isRecording ? "true" : "false"}
-      aria-label="Capture this moment"
-      onPointerDown={(event) =>
-        capture.handlePointerDown(event, {
-          mediaId: model.state.session.descriptor.mediaId,
-          positionMs: timeline.positionMs,
-        })
-      }
-      onPointerUp={capture.handlePointerUp}
-      onPointerCancel={capture.handlePointerCancel}
-      onClick={(event) => {
-        if (event.detail !== 0) return;
-        capture.captureTap({
-          mediaId: model.state.session.descriptor.mediaId,
-          positionMs: timeline.positionMs,
-        });
-      }}
-      leadingIcon={<Mic aria-hidden="true" />}
-    >
-      Capture
-      {capture.waypointCount > 0 ? (
-        <span
-          className={styles.count}
-          aria-label={`${capture.waypointCount} captures`}
-        >
-          {capture.waypointCount}
-        </span>
-      ) : null}
-    </Button>
   );
 }
 

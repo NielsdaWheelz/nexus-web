@@ -71,7 +71,7 @@ class ModelCutoverRestore(BaseModel):
     backup_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     census_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     target_source_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
-    target_revision: str = Field(pattern=r"^0257$")
+    target_revision: str = Field(pattern=r"^0258$")
     restored_database_identity: str = Field(min_length=1)
     receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 

@@ -10,10 +10,8 @@ import {
   ModalLayerProvider,
   modalBackdropProjection,
 } from "@/lib/ui/useModalLayer";
-import type { PlayerCaptureController } from "@/lib/walknotes/usePlayerCapture";
 import {
   PlayerArtwork,
-  PlayerCaptureButton,
   PlayerContentsButton,
   PlayerCurrentChapterLine,
   PlayerSeek,
@@ -32,7 +30,6 @@ import styles from "./MobileNowPlaying.module.css";
 export default function MobileNowPlaying({
   active,
   model,
-  capture,
   suspended,
   miniPlayerButtonRef,
   playbackButtonRef,
@@ -46,7 +43,6 @@ export default function MobileNowPlaying({
 }: {
   readonly active: boolean;
   readonly model: PresentPlayerChrome;
-  readonly capture: PlayerCaptureController;
   readonly suspended: boolean;
   readonly miniPlayerButtonRef: RefObject<HTMLButtonElement | null>;
   readonly playbackButtonRef: RefObject<HTMLButtonElement | null>;
@@ -149,10 +145,6 @@ export default function MobileNowPlaying({
                 onClick={onOpenPlayback}
               />
 
-              {model.kind === "Canonical" ? (
-                <PlayerCaptureButton model={model} capture={capture} />
-              ) : null}
-
               <div className={styles.secondaryActions}>
                 {model.kind === "Canonical" && chapters.length > 0 ? (
                   <span data-player-contents>
@@ -191,18 +183,9 @@ export default function MobileNowPlaying({
                   </>
                 )}
                 {model.kind === "Canonical" ? (
-                  <>
-                    <Button
-                      variant="ghost"
-                      size="lg"
-                      onClick={capture.openReview}
-                    >
-                      Review captures ({capture.waypointCount})
-                    </Button>
-                    <Button variant="ghost" size="lg" onClick={onOpenLectern}>
-                      Open Lectern
-                    </Button>
-                  </>
+                  <Button variant="ghost" size="lg" onClick={onOpenLectern}>
+                    Open Lectern
+                  </Button>
                 ) : null}
               </div>
 

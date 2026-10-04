@@ -49,8 +49,6 @@ from nexus.api.routes.stream_tokens import router as stream_tokens_router
 from nexus.api.routes.synapse import router as synapse_router
 from nexus.api.routes.telemetry import router as telemetry_router
 from nexus.api.routes.users import router as users_router
-from nexus.api.routes.vault import router as vault_router
-from nexus.api.routes.walknotes import router as walknotes_router
 
 
 def create_api_router(*, podcasts: bool, email_ingest: bool) -> APIRouter:
@@ -97,9 +95,7 @@ def create_api_router(*, podcasts: bool, email_ingest: bool) -> APIRouter:
     api_router.include_router(llm_router)
     api_router.include_router(browse_router)
     api_router.include_router(search_router)
-    api_router.include_router(vault_router)
     api_router.include_router(users_router)
-    api_router.include_router(walknotes_router)
     api_router.include_router(atlas_router)
     # Lectern command ports (GET /lectern, POST /lectern/commands,
     # POST /consumption/commands). The listening heartbeat keeps its

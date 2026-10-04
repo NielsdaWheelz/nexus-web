@@ -6,7 +6,6 @@ import type { HighlightColor } from "@/lib/highlights/segmenter";
 import {
   decodeHighlightEnvelope,
   decodeHighlightListEnvelope,
-  decodeHighlightNoteEnvelope,
   type Highlight,
   type HighlightLinkedNoteBlock,
 } from "@/lib/highlights/highlightContract";
@@ -122,33 +121,6 @@ export async function deleteHighlight(highlightId: string): Promise<void> {
   await apiFetch(`/api/highlights/${highlightId}`, {
     method: "DELETE",
   });
-}
-
-export async function saveHighlightNote(
-  highlightId: string,
-  noteBlockId: string | null,
-  createBlockId: string,
-  bodyPmJson: Record<string, unknown>,
-  clientMutationId: string,
-  expectedBody: { kind: "absent" } | { kind: "version"; version: number },
-): Promise<HighlightLinkedNoteBlock> {
-  const response = await apiFetch<unknown>(
-    `/api/highlights/${highlightId}/note`,
-    {
-      method: "PUT",
-      body: JSON.stringify({
-        note_block_id: noteBlockId ?? createBlockId,
-        client_mutation_id: clientMutationId,
-        expected_body: expectedBody,
-        body_pm_json: bodyPmJson,
-      }),
-    },
-  );
-  return decodeApiPayload(
-    response,
-    decodeHighlightNoteEnvelope,
-    "Highlight note",
-  );
 }
 
 export function patchHighlightLinkedNoteBlock<

@@ -6,7 +6,6 @@ import Nexus from "@/components/nexus/Nexus";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
 import LecternMutationNotice from "@/components/LecternMutationNotice";
-import LocalVaultAutoSync from "./LocalVaultAutoSync";
 import DownloadsSurface from "@/components/offlineMedia/DownloadsSurface";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
@@ -15,7 +14,6 @@ import { OfflineReadingProvider } from "@/lib/offlineReading/OfflineReadingProvi
 import { ImportsProvider } from "@/lib/imports/ImportsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { CompletionUndoFeedbackOwner } from "@/lib/lectern/useCompletionUndo";
-import { WalknoteSessionProvider } from "@/lib/walknotes/walknoteSession";
 import { ReaderProvider } from "@/lib/reader/ReaderContext";
 import { ReaderProfileSaveFeedback } from "@/lib/reader/ReaderProfileSaveFeedback";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
@@ -66,7 +64,6 @@ export default function AuthenticatedShell({
       <RenderEnvironmentProvider value={renderEnvironment}>
         <UnauthenticatedApiBoundary>
           <ActivityCaptureLifecycle accountId={account.accountId} />
-          <LocalVaultAutoSync />
           <ResourceCacheProvider value={resources}>
             <KeybindingsProvider>
               <ReaderProvider initialProfile={readerProfile}>
@@ -172,11 +169,9 @@ function AuthenticatedWorkspace({
                               >
                                 <AppNav />
                                 <main className={styles.main}>
-                                  <WalknoteSessionProvider>
-                                    <WorkspaceHost />
-                                    <LecternMutationNotice />
-                                    <GlobalPlayerSurfaces />
-                                  </WalknoteSessionProvider>
+                                  <WorkspaceHost />
+                                  <LecternMutationNotice />
+                                  <GlobalPlayerSurfaces />
                                 </main>
                               </div>
                             </ImportsProvider>

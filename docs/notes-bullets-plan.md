@@ -202,7 +202,7 @@ rejects the entire action if one pair is protected by a link annotation.
 
 | package / owner | exclusive files / responsibility |
 | --- | --- |
-| a: graph/domain engineer | `python/nexus/services/resource_graph/{adjacency,edges,user_relations,schemas,connections,cleanup}.py`; `resource_items/{surfaces,versions,capabilities}.py`; affected `notes.py`, `vault.py`, `artifacts/subjects.py`, `highlight_notes.py`; backend schemas/models/migration and thin route changes |
+| a: graph/domain engineer | `python/nexus/services/resource_graph/{adjacency,edges,user_relations,schemas,connections,cleanup}.py`; `resource_items/{surfaces,versions,capabilities}.py`; affected `notes.py`, `artifacts/subjects.py`, `highlight_notes.py`; backend schemas/models/migration and thin route changes |
 | b: editor engineer | `apps/web/src/lib/resourceSurface/{model,api,useResourceSurfaceSession}.ts`, resource surface decoder in `lib/resources/resourceItems.ts`, structural commands/history in `lib/notes/prosemirror/*`, `NoteBodyEditor.tsx`; canonical graph projection and command adapter |
 | c: interaction engineer + outline/content designers | `ResourceSurfaceBodyEditor.tsx` and css, `ResourceSurfaceEditor.tsx` and css; bullet menus, path focus/fold/selection, accessible copy; no independent mutation/state owner |
 | d: independent reviewer | temporary live driver, migration/recovery rehearsal, acceptance receipts and owning docs/tickets |
@@ -221,12 +221,9 @@ IMPORTANT: directed conversation context also uses `origin=user` and order keys.
 exclude it, along with all other provenance/attachment relations, from this
 conversion. keep `source_order_key` for those real uses; remove the obsolete
 reserved `target_order_key` and the page/note outgoing-only adjacency path.
-update every active nested reader/writer, including vault, artifacts, capability
+update every active nested reader/writer, including artifacts, capability
 scope expansion and highlight-note ordering; no old/new traversal fallback.
-vault page sync exports canonical note bodies once and keeps their versioned
-body edits; it rejects topology-marker edits explicitly. its former
-single-parent markdown topology writer cannot represent diamonds or cycles and
-is removed. an editable graph-markdown format is outside this cutover.
+an editable graph-markdown format is outside this cutover.
 
 before cutover, census pairs/order/annotations and checkpoint or drain pending
 client requests. preserve/export undrainable raw drafts and their old identity
@@ -264,8 +261,6 @@ references; annotated relations require explicit removal.
 multi-selection supports copy/cut/remove, not batch indentation or reordering;
 native text selection takes priority over roam's conflicting reorder bindings.
 undo preserves generated note resources even after removing their new links.
-vault markdown no longer edits graph topology; it retains canonical body sync
-until a separate occurrence-aware graph-markdown contract exists.
 these differences are intentional and must appear in the implementation pr.
 
 completion: b1–b6 and desktop b7 require live receipts and final `./scripts/test`.
