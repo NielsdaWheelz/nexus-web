@@ -1,13 +1,15 @@
 import { expectExactRecord, expectRecord } from "@/lib/validation";
 import { apiFetch } from "@/lib/api/client";
+import type { ApiJson } from "@/lib/api/wire";
 import {
   decodeCollectionRevision,
   type CollectionRevision,
 } from "@/lib/api/collectionPage";
 import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
 import {
-  decodeBrowsePageEnvelope,
-  decodeBrowsePreviewEnvelope,
+  checkBrowsePageLeaves,
+  checkBrowsePreviewLeaves,
+  parseDiscoveryTargetHandle,
   type BrowseKind,
   type BrowsePage,
   type BrowsePreview,
@@ -104,28 +106,32 @@ export async function fetchBrowsePage(
   });
   if (input.sort === "Newest") params.set("sort", "Newest");
   if (input.cursor) params.set("cursor", input.cursor);
-  return bindBrowsePageIdentity(
-    decodeBrowsePageEnvelope(
-      await apiFetch<unknown>(`/api/browse?${params}`, { signal: input.signal }),
-    ),
-    input,
+  const response = await apiFetch<ApiJson<"/browse", "get">>(
+    `/api/browse?${params}`,
+    { signal: input.signal },
   );
+  checkBrowsePageLeaves(response.data);
+  return bindBrowsePageIdentity(response.data, input);
 }
 
 export async function fetchBrowsePreview(input: {
-  target: DiscoveryTargetHandle;
+  target: string;
   limit?: number;
   cursor?: string;
   signal?: AbortSignal;
 }): Promise<BrowsePreview> {
+  const target = parseDiscoveryTargetHandle(input.target);
   const params = new URLSearchParams({
-    target: input.target,
+    target,
     limit: String(input.limit ?? 20),
   });
   if (input.cursor) params.set("cursor", input.cursor);
-  const preview = decodeBrowsePreviewEnvelope(
-    await apiFetch<unknown>(`/api/browse/preview?${params}`, { signal: input.signal }),
+  const response = await apiFetch<ApiJson<"/browse/preview", "get">>(
+    `/api/browse/preview?${params}`,
+    { signal: input.signal },
   );
+  const preview = response.data;
+  checkBrowsePreviewLeaves(preview);
   if (
     preview.target !== input.target ||
     (preview.resolution.kind === "Preview" &&

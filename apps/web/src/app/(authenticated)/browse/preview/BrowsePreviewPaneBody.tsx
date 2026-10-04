@@ -31,6 +31,8 @@ import {
 } from "@/lib/browse/client";
 import {
   browsePreviewHref,
+  parseDiscoveryTargetHandle,
+  proxiedImageHref,
   type BrowsePreview,
   type DiscoveryTargetHandle,
   type PreviewEpisodeItem,
@@ -323,7 +325,7 @@ export default function BrowsePreviewPaneBody() {
         const result = await subscribeToPodcast({
           target: {
             kind: "Discovery",
-            target: resource.data.target,
+            target: parseDiscoveryTargetHandle(resource.data.target),
           },
           namedLibraryIds: command.namedLibraryIds,
           replacementConfirmation: command.replacementConfirmation,
@@ -333,7 +335,7 @@ export default function BrowsePreviewPaneBody() {
       }
       case "Episode": {
         const result = await addEpisodeFromDiscovery({
-          target: resource.data.target,
+          target: parseDiscoveryTargetHandle(resource.data.target),
           namedLibraryIds: command.namedLibraryIds,
           idempotencyKey: command.idempotencyKey,
         });
@@ -361,14 +363,14 @@ export default function BrowsePreviewPaneBody() {
       : null;
   const image =
     resource.data.image.kind === "Present"
-      ? resource.data.image.value
+      ? proxiedImageHref(resource.data.image.value, "BrowsePreview.image.value")
       : null;
   const episode =
     resource.data.kind === "Episode" ? resource.data : null;
   const acquisition = (
     <AcquisitionControl
       kind={resource.data.kind === "Podcast" ? "Subscribe" : "Add"}
-      previewTarget={resource.data.target}
+      previewTarget={parseDiscoveryTargetHandle(resource.data.target)}
       commit={commit}
       onCommitted={(href) =>
         router.replace(href, { labelHint: resource.data.title })
@@ -452,7 +454,7 @@ export default function BrowsePreviewPaneBody() {
                 variant="secondary"
                 onClick={() =>
                   playPreviewAudio({
-                    target: episode.target,
+                    target: parseDiscoveryTargetHandle(episode.target),
                     previewHref: browsePreviewHref(episode.target),
                     title: episode.title,
                     source: new URL(
@@ -460,7 +462,15 @@ export default function BrowsePreviewPaneBody() {
                     ).hostname,
                     sourceHref: episode.sourceHref,
                     audioUrl: episode.kindFacts.audioHref,
-                    imageUrl: episode.image,
+                    imageUrl: episode.image.kind === "Present"
+                      ? {
+                          kind: "Present",
+                          value: proxiedImageHref(
+                            episode.image.value,
+                            "BrowsePreview.image.value",
+                          ),
+                        }
+                      : { kind: "Absent" },
                     durationMs:
                       episode.kindFacts.durationSeconds.kind === "Present"
                         ? {
