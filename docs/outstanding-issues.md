@@ -84,13 +84,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] android / workspace · 2026-09-22 device verification · an intermediate compatibility probe showed an unproven transient bootstrap failure on reconnect: [ticket](tickets/android-reconnect-transient-workspace-bootstrap.md).
 - [open] collection docs · 2026-09-21 council · library and lectern contracts still point to deleted cutovers: [ticket](tickets/collection-contract-docs-reference-deleted-cutovers.md).
 
-### [OPEN] OI-003 — Imports live re-read loses one tick after a failed re-key
-frontend · opened 2026-09-08 by Claude (imports cutover, Track D2) · P3
-A manual refresh or invalidation whose own summary read fails re-keys the page
-and detail without delivering a tick, so the next successful observation is
-suppressed and the 5 s cadence of contract D10 slips once. See
-[docs/tickets/imports-live-reread-loses-one-tick-after-a-failed-rekey.md](tickets/imports-live-reread-loses-one-tick-after-a-failed-rekey.md).
-
 ### [OPEN] OI-005 — The Imports upload retry guard cannot check the file's size
 frontend · opened 2026-09-08 by Claude (imports cutover, Track E) · P3
 `ImportItem` carries no upload size, so a same-named file of a different size is

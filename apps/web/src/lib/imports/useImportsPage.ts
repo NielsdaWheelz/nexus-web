@@ -124,27 +124,16 @@ export function useImportsPage(
   const activeRef = useRef(0);
   activeRef.current = summary?.active_count ?? 0;
 
-  // The observation revision the shown page was read for. An observation that
-  // moved the revision re-keyed the read above and is answered by that keyed
-  // read alone, so it must not read page one a second time; every later
-  // observation is this pane's five-second tick. Only the provider's revision
-  // marks it: a query the reader changed re-keys the read too, and it is not an
-  // observation, so it must not cost the reader a tick.
-  const revision = observation.revision;
-  const tickedRevisionRef = useRef(revision);
-
-  // The provider's observation is the only clock here: a new `observedAt` is one
-  // successful summary read, which is this pane's five-second tick.
-  const observedAt = observation.observedAt;
+  // The provider owns which successful observations need live reads;
+  // `observedAt` remains the only clock, independent of query changes.
+  const { observedAt, reread } = observation;
   const lastObservedRef = useRef<string | null>(null);
   useEffect(() => {
     const previous = lastObservedRef.current;
     lastObservedRef.current = observedAt;
     // The provider's first observation is the read the keyed resource made.
     if (previous === null || previous === observedAt) return;
-    const ticked = tickedRevisionRef.current;
-    tickedRevisionRef.current = revision;
-    if (ticked !== revision) return;
+    if (!reread) return;
     const shown = shownRef.current;
     if (shown === null || activeRef.current === 0) return;
     const controller = new AbortController();
@@ -165,7 +154,7 @@ export function useImportsPage(
       setLive({ key: cacheKey, page: next });
     })();
     return () => controller.abort();
-  }, [absorbRereadFailure, cacheKey, observedAt, query, revision]);
+  }, [absorbRereadFailure, cacheKey, observedAt, query, reread]);
 
   const cursorPage = useMemo(
     () =>
