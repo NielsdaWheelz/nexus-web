@@ -27,6 +27,9 @@ from nexus.schemas.conversation import (
     ChatRunContextRefAddedEventPayload,
     ChatRunDoneEventPayload,
     ChatRunMetaEventPayload,
+    ChatRunToolCallDoneEventOut,
+    ChatRunToolCallStartEventOut,
+    ChatRunToolResultEventOut,
 )
 from nexus.schemas.execution import ChatRunExecutionOut, DurableExecutionOut
 from nexus.schemas.media import MediaProcessingSnapshotOut
@@ -44,12 +47,15 @@ from nexus.schemas.oracle import (
 from nexus.schemas.podcast import PodcastSubscriptionLifecycleSnapshotOut
 
 # Every model whose JSON is an SSE `data:` frame as-is (api/routes/stream.py),
-# split by how the stream dumps it. Not listed: chat tool_* payloads (the read
-# path strips their audit fields, so no model is the wire).
+# split by how the stream dumps it. Tool events use their public projections;
+# stored audit models never describe the wire.
 SSE_PAYLOADS_BY_NAME = (
     MediaProcessingSnapshotOut,
     MetadataEnrichmentView,
     ChatRunMetaEventPayload,
+    ChatRunToolCallDoneEventOut,
+    ChatRunToolCallStartEventOut,
+    ChatRunToolResultEventOut,
     ChatRunAssistantActivityEventPayload,
     ChatRunAssistantTextDeltaEventPayload,
     ChatRunDoneEventPayload,

@@ -32,6 +32,17 @@ source ownership: `deploy.sh:109-116` verifies staged version, invokes the backe
 controller, then promotes; custom-domain auto-assignment must remain disabled
 (`deployment.md:77-79`). no new live config/settings inspection was performed.
 
+2026-10-04 tool-vocabulary qualification: the locked declaration owner omits
+`CredentialRejected`; the pre-regeneration browser projection accepted it.
+local stream preparation returned 409 before replay. regenerating the browser
+projection restores current revision pairing and removes that tag. no production
+or historical stored-error census qualifies older `CredentialRejected` rows.
+inspect those rows and resolve their release policy before claiming saved-chat
+acceptance; current-vocabulary fixtures do not establish it. source evidence:
+`/tmp/nexus-cleanup-20261004-chat-sse-projection-owner-evidence.json`
+(`a93541ae05f5941006f8b9536826f8fdda19b48cddf7c836ad65a7416af08923`).
+the failed 409 response envelope was not retained; no production request ran.
+
 acceptance: the release controller proves the same sha on the backend and
 custom-domain web, at the baked database head; authenticated new and saved chat
 reads, send, same-run stream recovery and stop succeed after promotion. if an

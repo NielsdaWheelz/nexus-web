@@ -11,68 +11,29 @@
 
 import type { Schema } from "@/lib/api/wire";
 import { isRecord } from "@/lib/validation";
-import { decodePresence, type Presence } from "@/lib/api/presence";
 import {
   decodeChatExecutionAdvisory,
   EXECUTION_ADVISORY_EVENT_TYPE,
   type ChatRunExecution,
 } from "@/lib/api/executionAdvisory";
-import { decodeCitationOut } from "@/lib/conversations/citationOut";
-import {
-  decodeRunSelectionOut,
-  type RunSelectionOut,
-} from "@/lib/conversations/generationCatalog";
-import {
-  MESSAGE_TOOL_STATUSES,
-  type ChatPublicationWarning,
-  type MessageToolStatus,
-} from "@/lib/conversations/types";
 import {
   decodeToolProjectionFields,
   type ToolProjectionFields,
 } from "@/lib/conversations/toolProjectionWire";
 import { TOOL_CONTRACT_PROJECTION } from "@/lib/conversations/toolContractProjection";
-import {
-  decodeContextRef,
-  type ContextRefOut,
-} from "@/lib/resourceGraph/contextRefs";
+import type { ContextRefOut } from "@/lib/resourceGraph/contextRefs";
+import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { hasOnlyKeys, isOptionalString } from "./guards";
-import { isCitationEventData, type CitationEventData } from "./citations";
 
 /** Meta event: initial IDs and immutable dispatch selection snapshot. */
 interface SSEMetaEvent {
   type: "meta";
-  data: {
-    run_id: string;
-    conversation_id: string;
-    user_message_id: string;
-    assistant_message_id: string;
-    run_selection: RunSelectionOut;
-    chat_subject: {
-      requested_resource_ref: string;
-      resource_ref: string;
-      context_edge_id: string | null;
-      companions: string[];
-    } | null;
-  };
+  data: Schema<"ChatRunMetaEventPayload">;
 }
 
 interface SSEAssistantActivityEvent {
   type: "assistant_activity";
-  data: {
-    assistant_message_id: string;
-    phase:
-      | "queued"
-      | "thinking"
-      | "writing"
-      | "tool_calling"
-      | "waiting"
-      | "retrying"
-      | "cancelling";
-    label?: string | null;
-    provider_event_seq_start?: number | null;
-    provider_event_seq_end?: number | null;
-  };
+  data: Schema<"ChatRunAssistantActivityEventPayload">;
 }
 
 interface SSEExecutionAdvisoryEvent {
@@ -83,44 +44,32 @@ interface SSEExecutionAdvisoryEvent {
 /** Incremental assistant content. */
 interface SSEAssistantTextDeltaEvent {
   type: "assistant_text_delta";
-  data: {
-    assistant_message_id: string;
-    text: string;
-    provider_event_seq_start: number;
-    provider_event_seq_end: number;
-  };
+  data: Schema<"ChatRunAssistantTextDeltaEventPayload">;
 }
 
 /** Done event: stream completion. */
 interface SSEDoneEvent {
   type: "done";
-  data: {
-    status: "complete" | "error" | "cancelled";
-    error_code: Presence<string>;
-    support_id: Presence<string>;
-    publication_warning: Presence<ChatPublicationWarning>;
-    usage: Record<string, unknown> | null;
-    final_chars: number | null;
-    last_provider_event_seq: number | null;
-    cancelled: boolean;
-  };
+  data: Schema<"ChatRunDoneEventPayload">;
 }
 
 export interface SSEToolCallEvent {
   type: "tool_call_start";
-  data: ToolProjectionFields & {
-    tool_call_id?: string | null;
-    assistant_message_id: string;
-    tool_call_index: number;
-    provider_tool_call_id?: string | null;
-    provider_event_seq_start: number;
-    provider_event_seq_end: number;
-  };
+  data: Schema<"ChatRunToolCallStartEventOut">;
 }
+
+type LegacyToolCallData = ToolProjectionFields & {
+  tool_call_id?: string | null;
+  assistant_message_id: string;
+  tool_call_index: number;
+  provider_tool_call_id?: string | null;
+  provider_event_seq_start: number;
+  provider_event_seq_end: number;
+};
 
 export interface SSEToolCallDeltaEvent {
   type: "tool_call_delta";
-  data: SSEToolCallEvent["data"] & {
+  data: LegacyToolCallData & {
     input_delta: string;
     input_preview?: string | null;
   };
@@ -128,27 +77,12 @@ export interface SSEToolCallDeltaEvent {
 
 export interface SSEToolCallDoneEvent {
   type: "tool_call_done";
-  data: SSEToolCallEvent["data"] & {
-    input: Record<string, unknown>;
-  };
+  data: Schema<"ChatRunToolCallDoneEventOut">;
 }
 
 export interface SSEToolResultEvent {
   type: "tool_result";
-  data: ToolProjectionFields & {
-    tool_call_id?: string | null;
-    assistant_message_id: string;
-    tool_call_index: number;
-    status: MessageToolStatus;
-    scope: string;
-    types: string[];
-    result_count?: number | null;
-    selected_count?: number | null;
-    latency_ms?: number | null;
-    provider_request_ids?: string[];
-    filters: Record<string, unknown>;
-    results: CitationEventData[];
-  };
+  data: Schema<"ChatRunToolResultEventOut">;
 }
 
 export interface SSECitationIndexEvent {
@@ -156,7 +90,7 @@ export interface SSECitationIndexEvent {
   data: Schema<"ChatRunCitationIndexEventPayload">;
 }
 
-/** The decoder enriches the generated wire with the canonical action subject. */
+/** Enrich the generated wire with the canonical action subject. */
 export interface SSEContextRefAddedEvent {
   type: "context_ref_added";
   data: Schema<"ChatRunContextRefAddedEventPayload"> &
@@ -177,199 +111,7 @@ export type SSEEvent = (
   | SSEExecutionAdvisoryEvent
 ) & { seq: number };
 
-function parseMetaData(data: unknown): SSEMetaEvent["data"] {
-  if (
-    !isRecord(data) ||
-    !hasOnlyKeys(data, [
-      "run_id",
-      "conversation_id",
-      "user_message_id",
-      "assistant_message_id",
-      "run_selection",
-      "chat_subject",
-    ]) ||
-    typeof data.run_id !== "string" ||
-    typeof data.conversation_id !== "string" ||
-    typeof data.user_message_id !== "string" ||
-    typeof data.assistant_message_id !== "string" ||
-    (data.chat_subject !== null && !isMetaSubject(data.chat_subject))
-  ) {
-    throw new Error("Invalid SSE payload for meta");
-  }
-  let runSelection: RunSelectionOut;
-  try {
-    runSelection = decodeRunSelectionOut(
-      data.run_selection,
-      "SSE meta.run_selection",
-    );
-  } catch {
-    throw new Error("Invalid SSE payload for meta.run_selection");
-  }
-  return {
-    run_id: data.run_id,
-    conversation_id: data.conversation_id,
-    user_message_id: data.user_message_id,
-    assistant_message_id: data.assistant_message_id,
-    run_selection: runSelection,
-    chat_subject: data.chat_subject,
-  };
-}
-
-function isMetaSubject(
-  data: unknown,
-): data is SSEMetaEvent["data"]["chat_subject"] {
-  return (
-    isRecord(data) &&
-    hasOnlyKeys(data, [
-      "requested_resource_ref",
-      "resource_ref",
-      "context_edge_id",
-      "companions",
-    ]) &&
-    typeof data.requested_resource_ref === "string" &&
-    typeof data.resource_ref === "string" &&
-    (data.context_edge_id === null ||
-      typeof data.context_edge_id === "string") &&
-    Array.isArray(data.companions) &&
-    data.companions.every((item) => typeof item === "string")
-  );
-}
-
-function isOptionalNonNegativeInteger(value: unknown): boolean {
-  return (
-    value === undefined ||
-    value === null ||
-    (typeof value === "number" && Number.isInteger(value) && value >= 0)
-  );
-}
-
-function isAssistantActivityPhase(
-  value: unknown,
-): value is SSEAssistantActivityEvent["data"]["phase"] {
-  return (
-    value === "queued" ||
-    value === "thinking" ||
-    value === "writing" ||
-    value === "tool_calling" ||
-    value === "waiting" ||
-    value === "retrying" ||
-    value === "cancelling"
-  );
-}
-
-function parseAssistantActivityData(
-  data: unknown,
-): SSEAssistantActivityEvent["data"] {
-  if (
-    !isRecord(data) ||
-    !hasOnlyKeys(data, [
-      "assistant_message_id",
-      "phase",
-      "label",
-      "provider_event_seq_start",
-      "provider_event_seq_end",
-    ]) ||
-    typeof data.assistant_message_id !== "string" ||
-    !isAssistantActivityPhase(data.phase) ||
-    !isOptionalString(data.label) ||
-    !isOptionalNonNegativeInteger(data.provider_event_seq_start) ||
-    !isOptionalNonNegativeInteger(data.provider_event_seq_end)
-  ) {
-    throw new Error("Invalid SSE payload for assistant_activity");
-  }
-  return data as SSEAssistantActivityEvent["data"];
-}
-
-function parseAssistantTextDeltaData(
-  data: unknown,
-): SSEAssistantTextDeltaEvent["data"] {
-  if (
-    !isRecord(data) ||
-    !hasOnlyKeys(data, [
-      "assistant_message_id",
-      "text",
-      "provider_event_seq_start",
-      "provider_event_seq_end",
-    ]) ||
-    typeof data.assistant_message_id !== "string" ||
-    typeof data.text !== "string" ||
-    data.text.length === 0 ||
-    typeof data.provider_event_seq_start !== "number" ||
-    !Number.isInteger(data.provider_event_seq_start) ||
-    data.provider_event_seq_start < 0 ||
-    typeof data.provider_event_seq_end !== "number" ||
-    !Number.isInteger(data.provider_event_seq_end) ||
-    data.provider_event_seq_end < 0
-  ) {
-    throw new Error("Invalid SSE payload for assistant_text_delta");
-  }
-  return data as SSEAssistantTextDeltaEvent["data"];
-}
-
-function parseDoneData(data: unknown): SSEDoneEvent["data"] {
-  const keys = [
-    "status",
-    "error_code",
-    "support_id",
-    "publication_warning",
-    "usage",
-    "final_chars",
-    "last_provider_event_seq",
-    "cancelled",
-  ];
-  if (
-    !isRecord(data) ||
-    !hasOnlyKeys(data, keys) ||
-    !keys.every((key) => key in data) ||
-    (data.status !== "complete" &&
-      data.status !== "error" &&
-      data.status !== "cancelled") ||
-    (data.usage !== null && !isRecord(data.usage)) ||
-    (data.final_chars !== null &&
-      (typeof data.final_chars !== "number" ||
-        !Number.isInteger(data.final_chars) ||
-        data.final_chars < 0)) ||
-    (data.last_provider_event_seq !== null &&
-      (typeof data.last_provider_event_seq !== "number" ||
-        !Number.isInteger(data.last_provider_event_seq) ||
-        data.last_provider_event_seq < 0)) ||
-    typeof data.cancelled !== "boolean"
-  ) {
-    throw new Error("Invalid SSE payload for done");
-  }
-  return {
-    status: data.status,
-    error_code: decodePresence(data.error_code, (value) => {
-      if (typeof value !== "string") {
-        throw new Error("Invalid SSE payload for done");
-      }
-      return value;
-    }),
-    support_id: decodePresence(data.support_id, (value) => {
-      if (typeof value !== "string") {
-        throw new Error("Invalid SSE payload for done");
-      }
-      return value;
-    }),
-    publication_warning: decodePresence(data.publication_warning, (value) => {
-      if (
-        !isRecord(value) ||
-        !hasOnlyKeys(value, ["code"]) ||
-        Object.keys(value).length !== 1 ||
-        value.code !== "CitationsUnavailable"
-      ) {
-        throw new Error("Invalid SSE payload for done");
-      }
-      return { code: value.code };
-    }),
-    usage: data.usage,
-    final_chars: data.final_chars,
-    last_provider_event_seq: data.last_provider_event_seq,
-    cancelled: data.cancelled,
-  };
-}
-
-function parseToolCallStartData(data: unknown): SSEToolCallEvent["data"] {
+function parseToolCallStartData(data: unknown): LegacyToolCallData {
   const projection = decodeToolProjectionFields(data);
   if (
     !isRecord(data) ||
@@ -399,7 +141,7 @@ function parseToolCallStartData(data: unknown): SSEToolCallEvent["data"] {
   ) {
     throw new Error("Invalid SSE payload for tool_call_start");
   }
-  return { ...data, ...projection } as SSEToolCallEvent["data"];
+  return { ...data, ...projection } as LegacyToolCallData;
 }
 
 function parseToolCallDeltaData(data: unknown): SSEToolCallDeltaEvent["data"] {
@@ -430,155 +172,6 @@ function parseToolCallDeltaData(data: unknown): SSEToolCallDeltaEvent["data"] {
   };
 }
 
-function parseToolCallDoneData(data: unknown): SSEToolCallDoneEvent["data"] {
-  if (
-    !isRecord(data) ||
-    !hasOnlyKeys(data, [
-      ...TOOL_CONTRACT_PROJECTION.fields,
-      "tool_call_id",
-      "assistant_message_id",
-      "tool_call_index",
-      "provider_tool_call_id",
-      "input",
-      "provider_event_seq_start",
-      "provider_event_seq_end",
-    ]) ||
-    !isRecord(data.input)
-  ) {
-    throw new Error("Invalid SSE payload for tool_call_done");
-  }
-  const { input, ...base } = data;
-  return {
-    ...parseToolCallStartData(base),
-    input: input as Record<string, unknown>,
-  };
-}
-
-function parseToolResultData(data: unknown): SSEToolResultEvent["data"] {
-  const projection = decodeToolProjectionFields(data);
-  if (
-    !isRecord(data) ||
-    !hasOnlyKeys(data, [
-      ...TOOL_CONTRACT_PROJECTION.fields,
-      "tool_call_id",
-      "assistant_message_id",
-      "tool_call_index",
-      "status",
-      "scope",
-      "types",
-      "result_count",
-      "selected_count",
-      "latency_ms",
-      "provider_request_ids",
-      "filters",
-      "results",
-    ]) ||
-    typeof data.assistant_message_id !== "string" ||
-    !isOptionalString(data.tool_call_id) ||
-    typeof data.tool_call_index !== "number" ||
-    !Number.isInteger(data.tool_call_index) ||
-    data.tool_call_index < 0 ||
-    !isMessageToolStatus(data.status) ||
-    typeof data.scope !== "string" ||
-    data.scope.length === 0 ||
-    !Array.isArray(data.types) ||
-    !data.types.every((item) => typeof item === "string") ||
-    !isOptionalNonNegativeInteger(data.result_count) ||
-    !isOptionalNonNegativeInteger(data.selected_count) ||
-    (data.latency_ms !== undefined &&
-      data.latency_ms !== null &&
-      (typeof data.latency_ms !== "number" ||
-        !Number.isInteger(data.latency_ms) ||
-        data.latency_ms < 0)) ||
-    (data.provider_request_ids !== undefined &&
-      (!Array.isArray(data.provider_request_ids) ||
-        !data.provider_request_ids.every(
-          (item) => typeof item === "string",
-        ))) ||
-    !isRecord(data.filters) ||
-    !Array.isArray(data.results) ||
-    !data.results.every(isCitationEventData)
-  ) {
-    throw new Error("Invalid SSE payload for tool_result");
-  }
-  return { ...data, ...projection } as SSEToolResultEvent["data"];
-}
-
-function isMessageToolStatus(value: unknown): value is MessageToolStatus {
-  return (
-    typeof value === "string" &&
-    MESSAGE_TOOL_STATUSES.some((status) => status === value)
-  );
-}
-
-function parseCitationIndexData(data: unknown): SSECitationIndexEvent["data"] {
-  if (
-    !isRecord(data) ||
-    !hasOnlyKeys(data, ["assistant_message_id", "citations"]) ||
-    typeof data.assistant_message_id !== "string" ||
-    !Array.isArray(data.citations)
-  ) {
-    throw new Error("Invalid SSE payload for citation_index");
-  }
-  return {
-    assistant_message_id: data.assistant_message_id,
-    citations: data.citations.map(parseCitationIndexItem),
-  };
-}
-
-function parseCitationIndexItem(
-  item: unknown,
-): SSECitationIndexEvent["data"]["citations"][number] {
-  const citation =
-    isRecord(item) && "citation" in item
-      ? decodeCitationOut(item.citation)
-      : null;
-  if (
-    !isRecord(item) ||
-    !hasOnlyKeys(item, ["citation_edge_id", "citation"]) ||
-    typeof item.citation_edge_id !== "string" ||
-    citation === null ||
-    citation.ordinal < 1
-  ) {
-    throw new Error("Invalid SSE payload for citation_index");
-  }
-  return {
-    citation_edge_id: item.citation_edge_id,
-    citation,
-  };
-}
-
-function parseContextRefAddedData(
-  data: unknown,
-): SSEContextRefAddedEvent["data"] {
-  if (
-    !isRecord(data) ||
-    !hasOnlyKeys(data, [
-      "id",
-      "conversation_id",
-      "resource_ref",
-      "activation",
-      "label",
-      "summary",
-      "missing",
-      "created_at",
-      "citation_edge_id",
-    ]) ||
-    !("citation_edge_id" in data) ||
-    !(
-      typeof data.citation_edge_id === "string" ||
-      data.citation_edge_id === null
-    )
-  ) {
-    throw new Error("Invalid SSE payload for context_ref_added");
-  }
-  const { citation_edge_id, ...contextRef } = data;
-  return {
-    ...decodeContextRef(contextRef, "context_ref_added.data"),
-    citation_edge_id,
-  };
-}
-
 export function toChatSSEEvent(
   eventType: string,
   data: unknown,
@@ -597,26 +190,26 @@ export function toChatSSEEvent(
   }
   switch (eventType) {
     case "meta":
-      return { seq, type: "meta", data: parseMetaData(data) };
+      return { seq, type: "meta", data: data as SSEMetaEvent["data"] };
     case "assistant_activity":
       return {
         seq,
         type: "assistant_activity",
-        data: parseAssistantActivityData(data),
+        data: data as SSEAssistantActivityEvent["data"],
       };
     case "assistant_text_delta":
       return {
         seq,
         type: "assistant_text_delta",
-        data: parseAssistantTextDeltaData(data),
+        data: data as SSEAssistantTextDeltaEvent["data"],
       };
     case "done":
-      return { seq, type: "done", data: parseDoneData(data) };
+      return { seq, type: "done", data: data as SSEDoneEvent["data"] };
     case "tool_call_start":
       return {
         seq,
         type: "tool_call_start",
-        data: parseToolCallStartData(data),
+        data: data as SSEToolCallEvent["data"],
       };
     case "tool_call_delta":
       return {
@@ -625,21 +218,31 @@ export function toChatSSEEvent(
         data: parseToolCallDeltaData(data),
       };
     case "tool_call_done":
-      return { seq, type: "tool_call_done", data: parseToolCallDoneData(data) };
+      return { seq, type: "tool_call_done", data: data as SSEToolCallDoneEvent["data"] };
     case "tool_result":
-      return { seq, type: "tool_result", data: parseToolResultData(data) };
+      return { seq, type: "tool_result", data: data as SSEToolResultEvent["data"] };
     case "citation_index":
       return {
         seq,
         type: "citation_index",
-        data: parseCitationIndexData(data),
+        data: data as SSECitationIndexEvent["data"],
       };
-    case "context_ref_added":
+    case "context_ref_added": {
+      const contextRef = data as Schema<"ChatRunContextRefAddedEventPayload">;
+      const actionSubject = {
+        ref: assumeCanonicalResourceRef(contextRef.resource_ref),
+      };
+      if (contextRef.activation.resource_ref !== actionSubject.ref) {
+        throw new TypeError(
+          "context_ref_added.data.activation.resource_ref must equal context_ref_added.data.resource_ref",
+        );
+      }
       return {
         seq,
         type: "context_ref_added",
-        data: parseContextRefAddedData(data),
+        data: { ...contextRef, actionSubject },
       };
+    }
     default:
       throw new Error(`Unknown SSE event type: ${eventType || "message"}`);
   }
