@@ -4,7 +4,10 @@ status: open; production release gate
 origin: 2026-09-27 combined-release plan, `fbd08ba68`
 area: migration 0246
 
-metadata root owns preparation in `feature/metadata-enrichment`. fresh read-only
+tracking: [github #484](https://github.com/NielsdaWheelz/nexus-web/issues/484)
+
+preparation is delivered by [pr #482](https://github.com/NielsdaWheelz/nexus-web/pull/482).
+the application reset/release owner owns production disposition. fresh read-only
 census at 2026-10-03 22:56:47 UTC confirms deployed
 `7dc68929b4d5ddfd77eb1a50228d477fa0148b5d`, revision `0241`, 54 outcome-null
 parents: 52 media enrichment and two chat. the historical installed `617baf70e`

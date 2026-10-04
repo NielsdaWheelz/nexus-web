@@ -2,7 +2,10 @@
 
 status: open · origin: 2026-09-28 cleanup campaign · area: release / production
 
-metadata root owns release preparation in `feature/metadata-enrichment`.
+tracking: [github #483](https://github.com/NielsdaWheelz/nexus-web/issues/483)
+
+release preparation is delivered by [pr #482](https://github.com/NielsdaWheelz/nexus-web/pull/482).
+the application reset/release owner owns the remaining production execution.
 the frozen integrated source is `bcb86e0204ef2ea347a8836a9e5d48f031d09134`;
 the sole head is `0257`: `0252` → resource `0253` → atlas `0254` → native
 `0255` → metadata `0256` → effects `0257`. preparation is green. the earlier
@@ -97,7 +100,9 @@ not an applied production migration.
 1. run every linked preflight read-only against production, and resolve each one before releasing.
 2. follow [the finite reset sequence](../../deployment.md#reviewed-model-history-reset): fresh drained census, source/revision-bound R2 backup and actual restore/qualification of those exact bytes; reviewed original IDs and migration losses.
 3. after separate authorization, run `deploy/hetzner/deploy.sh <target sha> --model-cutover-snapshot <reviewed-json>` from a clean checkout. no clone fixture or preliminary live archive qualifies that input.
-4. after the release, run the three processing repairs and then land #387 ([processing-repairs-await-release-then-387](processing-repairs-await-release-then-387.md)), and finish [billing-0252-release-steps](billing-0252-release-steps.md). the remaining
+4. after release, complete [saved-epub contributor repair](epub-contributors-production-repair-pending.md)
+   and [saved lewis date repair](metadata-book-date-counts-serialization.md), with live verification.
+   run the three processing repairs and then land #387 ([processing-repairs-await-release-then-387](processing-repairs-await-release-then-387.md)), and finish [billing-0252-release-steps](billing-0252-release-steps.md). the remaining
    [web rate-limit copy cleanup](web-rate-limit-copy-outlives-limiter.md) can land
    before release because web and backend release together; the make-current and
    failed-quota source arms are already removed.

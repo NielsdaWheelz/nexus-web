@@ -11,9 +11,11 @@ zero tool positions does not prove native completion or absence of effects.
 exact rows/hashes and ownership:
 [reset ticket](model-history-cutover-blocked-by-uncertain-work.md).
 
-`617baf70e` qualifies exact original-job retirement and complete `0241→0256`
-migration on an actual restored copy, retaining domain facts and independent
-completed writes. no original production job was settled, replayed or deleted.
+current frozen `bcb86e020` qualifies exact original-job retirement and complete
+`0241→0257` on an actual controlled owner-populated restore, retaining domain
+facts and independent completed writes (`0257-metadata-restored-cutover.receipt.json`,
+`b0b50e9f192f`). the earlier `617baf70e/0256` proof stays historical.
+no original production job was settled, replayed or deleted.
 eight affected saved lewis units still have null first-publication dates;
 `production-disposition-preview.json` is a private review preview, not authority.
 
@@ -25,6 +27,6 @@ items; never redispatch an uncertain original or rewrite dates unconditionally.
 
 acceptance: actual release records exact old-job disposition while preserving
 original uncertainty in its archive; new jobs publish correct item-specific
-first dates and refresh open views. guarded epub contributor repair preserves
-unrelated credits/reader state. inspect skips and failures; close only with
-production receipts.
+first dates and refresh open views. [saved-date repair](metadata-book-date-counts-serialization.md)
+and [saved-epub repair](epub-contributors-production-repair-pending.md) own their
+production acceptance. inspect skips and failures; close only with production receipts.

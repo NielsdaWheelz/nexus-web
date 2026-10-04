@@ -1,32 +1,36 @@
-# saved first-publication dates need repair
+# saved lewis first-publication dates await production repair
 
-status: open; local contract qualified, saved-production repair blocked
+status: open; local contract qualified, production repair NOT_RUN
 origin: 2026-10-01 owner clarification
-area: bibliographic date meaning
+area: saved bibliographic metadata
 
-2026-10-03 utc: prompt, schemas and module docs implement the clarified rule.
-final `bcdaf51de` ordinary live jobs independently qualify *mere christianity*
-(1952), *of other worlds* (1966) and the standalone *weight of glory* essay
-(1941-11), with supported precision, edition separation and original stock
-luna/xhigh/four-tool evidence. see
-[verification](../metadata-enrichment-verification.md). targeted saved-production
-correction remains NOT_RUN behind the historical uncertainty/release gate.
-the evidence below is baseline.
+tracking: [github #485](https://github.com/NielsdaWheelz/nexus-web/issues/485)
 
-baseline problem: `python/nexus/services/metadata_enrichment.py:52–57` and
-`docs/modules/media-metadata.md:8–10` count serialization as original publication.
-the clarified requirement is first book publication for books and collections;
-earlier broadcasts, lectures and serialization do not establish that date.
-individual essays use their own first publication, including periodicals.
+evidence: current installed `bcb86e020` has three independently reviewed actual
+metadata jobs: *mere christianity* 1952, *of other worlds* 1966 and standalone
+*weight of glory* 1941-11. receipt `803fb8061934` qualifies original stock
+`gpt-6-luna/xhigh`, strict schema, useful four-tool research, supported precision,
+edition separation and contributor identities/roles. the earlier `bcdaf51de`
+cohort is historical. see [verification](../metadata-enrichment-verification.md).
+these isolated jobs do not correct saved production items.
 
-fix: update the metadata prompt and owning documentation together under
-`../metadata-enrichment-plan.md`. retain current date precision and separate
-edition date. determine the saved item's identity before applying the rule.
-existing stored dates under the old meaning need ordinary targeted re-enrichment
-after runtime recovery, not an unconditional date rewrite.
+problem: saved lewis items may retain dates produced under the old meaning or
+failed enrichment. the implemented contract uses first book publication for
+books/collections and the essay's own first publication for standalone essays.
 
-acceptance: a serialized-then-book work gets first book publication, a collection
-gets its own book date, and an individual essay gets its own first publication.
-delivery/broadcast dates and modern reprint dates do not replace those facts.
-inspect targeted saved-item corrections after the separately authorized aligned
-release; preserve original uncertainty and never rewrite dates unconditionally.
+prerequisites: resolve [production catalog failure](metadata-production-catalog-refresh-fails.md),
+complete [reviewed uncertainty disposition](model-history-cutover-blocked-by-uncertain-work.md)
+and the separately authorized [aligned release](production-release-pending-since-7dc68929b.md),
+including its fresh verified backup. preserve original uncertainty evidence.
+
+fix: identify each saved item's bibliographic unit and admit NEW ordinary
+metadata jobs as its creator. inspect their outcomes and persisted facts.
+never redispatch old uncertain work or rewrite dates unconditionally.
+
+acceptance: saved books/collections use first book publication; standalone essays
+use their own first publication with supported precision. earlier broadcasts or
+serialization do not replace a book's first book date; an essay's first periodical
+publication does count. reprints do not replace these facts. edition facts, credits
+and person identity remain correct. verify completed operations and updated dates
+in the live detail and already-open library/author views. failures remain visible
+without advancing `metadata_enriched_at`. retain production item/job ids and the repair report.
