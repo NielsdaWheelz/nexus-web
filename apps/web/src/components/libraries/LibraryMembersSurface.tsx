@@ -348,7 +348,6 @@ export default function LibraryMembersSurface({
               onUpdateRole={(role) =>
                 void controller.updateRole(
                   member.userHandle,
-                  member.role,
                   role,
                 )
               }
