@@ -180,7 +180,8 @@ metadata owns 0256 and the independent receipt contract in 0257. the pre-release
 0246 reset preserves original completed write receipts before deleting history;
 0257 also backfills surviving post-metadata positions.
 missing ownership or unfinished writes block either path. runtime
-consumers use one receipt contract.
+consumers use one receipt contract. earlier numbered integration receipts stay
+historical and do not qualify this final graph.
 
 ## Product API and reset boundary
 
