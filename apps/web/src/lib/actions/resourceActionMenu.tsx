@@ -70,9 +70,10 @@ import {
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { ActionSelectDetail } from "@/lib/ui/actionDescriptor";
 import {
+  artifactPaneHref,
   createDossierBuild,
-  learnDossierFromHighlight,
-} from "@/lib/dossiers/generationAdapter";
+  learnDossier,
+} from "@/lib/dossiers/dossierApi";
 import { requestHighlightActionIntent } from "@/lib/highlights/actionIntent";
 import {
   requestMessageActionIntent,
@@ -991,14 +992,11 @@ export function resourceActionDescriptors({
           capability,
           "ResourceOperation.Highlight.Learn",
           async (ports) => {
-            const outcome = await learnDossierFromHighlight({
-              highlightRef: ref,
-              idempotencyKey: crypto.randomUUID(),
-            });
+            const outcome = await learnDossier(ref, crypto.randomUUID());
             ports.workspace.activateWorkspaceTarget({
               originPaneId: ports.activePaneId,
               target: {
-                href: `/artifacts/${encodeURIComponent(outcome.artifact_ref)}`,
+                href: artifactPaneHref(outcome.artifact_ref),
                 labelHint: "Dossier",
               },
               disposition: { kind: "Follow" },
@@ -1011,12 +1009,11 @@ export function resourceActionDescriptors({
           capability,
           "ResourceOperation.Artifact.Regenerate",
           async () => {
-            await createDossierBuild({
-              target: { kind: "Artifact", artifactRef: ref },
-              artifactRef: ref,
-              instruction: null,
-              idempotencyKey: crypto.randomUUID(),
-            });
+            await createDossierBuild(
+              { kind: "Artifact", artifactRef: ref },
+              null,
+              crypto.randomUUID(),
+            );
           },
           { reconcile: subjectScope },
         );

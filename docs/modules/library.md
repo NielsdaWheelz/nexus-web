@@ -18,7 +18,7 @@ The domain is split into four owned modules, each owning its own tables:
   `validate_writable_library_destinations`,
   `resolve_writable_non_default_library_ids`,
   `default_library_id_for_user`), and Universal Dossier subject cleanup through
-  the generic artifact engine.
+  the dossier engine.
 - **`services/library_entries.py`** is the **sole writer and lifecycle owner of
   the `library_entries` table**. It owns the `EntryTarget` discriminated union
   (`{kind: "media"|"podcast", id}` — a faithful model of the
@@ -151,7 +151,7 @@ Every INSERT/UPDATE/DELETE on `library_entries` goes through
   read the table under an explicit allowlist: `auth/permissions.py`,
   `services/search/scope.py`, `services/contributors.py`,
   `services/agent_tools/app_search.py`, `services/note_indexing.py`, and
-  `services/artifacts/subjects.py`. `services/object_refs.py` is deleted;
+  `services/dossier/inputs.py`. `services/object_refs.py` is deleted;
   its former note/@-mention reads are superseded by `services/resource_items/
   targets.py` (target search) and the shared frontend target controller — see
   [universal-link-authoring-hard-cutover.md](../cutovers/universal-link-authoring-hard-cutover.md).
@@ -508,17 +508,17 @@ drawer, or second governance state machine exists.
 Library Dossier is one binding of the Universal Dossier engine. Its head is
 keyed by the Library subject and Library audience, so membership is the read and
 generation boundary. The binding collects direct entries, expands Podcast
-entries to Episodes, intersects all Media with audience visibility, and records
-typed coverage/freshness in the revision manifest. Generate, Regenerate,
+entries to Episodes, intersects all Media with the library owner's visibility,
+and offers the claims of the first eight members; the head stores the coverage
+counts and the input fingerprint freshness compares. Generate, Regenerate,
 provenance, and retry use the same API and surface as every other eligible
 resource.
 
 Dossier citations are `resource_edges` sourced from
 `artifact_revision:<id>`, never a Library-owned citation table. A successful
-regenerate repoints the stable `artifact:<id>` head and deletes the replaced
-revision with its citation edges.
+regenerate gives the stable `artifact:<id>` head a new revision id and deletes
+the replaced revision's citation edges.
 
-The current revision body is one accepted semantic `content_html` article plus
-its derived `content_text`. Library search/chat consume the text projection;
-the Dossier surface renders the article through the shared sandboxed document
-frame.
+The revision body is one accepted semantic `content_html` article plus its
+derived `content_text`, both on the head. Library search/chat consume the text;
+the Dossier surface renders the article into a shadow root of the pane.

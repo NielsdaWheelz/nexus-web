@@ -406,10 +406,9 @@ def unsubscribe_from_podcast(
             text("DELETE FROM podcast_subscriptions WHERE id = :subscription_id"),
             {"subscription_id": subscription_id},
         )
-        from nexus.services.artifacts.dossier_types import AudienceUser
-        from nexus.services.artifacts.engine import on_audience_visibility_changed
+        from nexus.services.dossier.engine import on_visibility_lost
 
-        on_audience_visibility_changed(db, audience=AudienceUser(user_id=viewer_id))
+        on_visibility_lost(db, user_id=viewer_id)
         _bump_subscription_collections(db, viewer_id, episodes=True)
         subscriptions_revision, library_entries_revision = _revisions(db, viewer_id)
         return PodcastUnsubscribedOut(

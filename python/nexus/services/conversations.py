@@ -776,11 +776,10 @@ def delete_conversation_rows_without_commit(db: Session, conversation_id: UUID) 
     conversation_ref = ResourceRef(scheme="conversation", id=conversation_id)
     graph_cleanup.delete_edges_for_deleted_resource(db, ref=conversation_ref)
 
-    # FK-less artifact subject cleanup: this conversation's Dossier head,
-    # revisions, events and citation edges.
-    from nexus.services.artifacts import engine as artifact_engine
+    # FK-less dossier subject cleanup: this conversation's head, builds and edges.
+    from nexus.services.dossier import engine as dossier_engine
 
-    artifact_engine.on_subject_deleted(db, conversation_ref)
+    dossier_engine.on_subject_deleted(db, conversation_ref)
 
     db.execute(
         text("DELETE FROM conversation_active_paths WHERE conversation_id = :conversation_id"),

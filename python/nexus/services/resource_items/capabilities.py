@@ -695,9 +695,7 @@ def expand_owned_child_refs(
         return _child_refs(
             db,
             "artifact_revision",
-            "SELECT r.id FROM artifact_revisions r "
-            "JOIN artifact_builds b ON b.id = r.build_id "
-            "WHERE b.artifact_id = :id",
+            "SELECT revision_id FROM artifacts WHERE id = :id AND revision_id IS NOT NULL",
             ref.id,
         )
     assert_never(policy)

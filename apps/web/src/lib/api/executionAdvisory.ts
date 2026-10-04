@@ -3,7 +3,6 @@ import type { Schema } from "./wire";
 
 /** Queue/coordination liveness. It is advisory-only and never a run status. */
 export type DurableExecutionPhase = Schema<"DurableExecutionPhase">;
-export type DurableExecution = Schema<"DurableExecutionOut">;
 export type ChatRunExecution = Schema<"ChatRunExecutionOut">;
 
 export const EXECUTION_ADVISORY_EVENT_TYPE = "ExecutionAdvisory";
@@ -25,36 +24,6 @@ export function decodeDurableExecutionPhase(
     return value;
   }
   return fail(what);
-}
-
-/** Strictly decode the one shared `{ phase }` execution shape. */
-export function decodeDurableExecution(
-  value: unknown,
-  what = "execution",
-): DurableExecution {
-  if (
-    !isRecord(value) ||
-    Object.keys(value).length !== 1 ||
-    !("phase" in value)
-  ) {
-    throw new Error(
-      `Invalid SSE payload for ${what} fields; must contain exactly phase`,
-    );
-  }
-  return {
-    phase: decodeDurableExecutionPhase(value.phase, `${what}.phase`),
-  };
-}
-
-/** Execution advisories must not carry an SSE id or advance the replay cursor. */
-export function decodeExecutionAdvisory(
-  value: unknown,
-  id = "",
-): DurableExecution {
-  if (id !== "") {
-    return fail("ExecutionAdvisory id");
-  }
-  return decodeDurableExecution(value, EXECUTION_ADVISORY_EVENT_TYPE);
 }
 
 export function decodeChatRunExecution(value: unknown): ChatRunExecution {

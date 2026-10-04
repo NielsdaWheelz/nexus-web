@@ -217,12 +217,12 @@ def update_page(
 
 
 def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> None:
-    from nexus.services.artifacts import engine as artifact_engine
+    from nexus.services.dossier import engine as dossier_engine
 
     def attempt() -> None:
         page = get_page_for_owner_or_404(db, viewer_id, page_id)
         ref = _page_ref(page.id)
-        artifact_engine.on_subject_deleted(db, ref)
+        dossier_engine.on_subject_deleted(db, ref)
         delete_edges_for_deleted_resource(db, ref=ref)
         db.execute(
             delete(DailyPageBinding).where(
@@ -534,10 +534,10 @@ def detach_highlight_note_in_current_transaction(
 
 def _delete_note_block(db: Session, viewer_id: UUID, block: NoteBlock) -> None:
     """The one note-block teardown: subject state, edges, anchors, index, row."""
-    from nexus.services.artifacts import engine as artifact_engine
+    from nexus.services.dossier import engine as dossier_engine
 
     ref = note_bodies.note_ref(block.id)
-    artifact_engine.on_subject_deleted(db, ref)
+    dossier_engine.on_subject_deleted(db, ref)
     delete_edges_for_deleted_resource(db, ref=ref)
     passage_anchors.delete_for_owner(db, owner_scheme="note_block", owner_id=block.id)
     delete_content_index(db, owner=IndexOwner("note_block", block.id))

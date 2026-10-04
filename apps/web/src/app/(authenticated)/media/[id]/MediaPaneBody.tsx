@@ -180,10 +180,7 @@ import {
 import type { FindSource, TextHit } from "@/lib/find/find";
 import { useFind } from "@/lib/find/useFind";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
-import {
-  artifactPaneHref,
-  learnDossierFromHighlight,
-} from "@/lib/dossiers/generationAdapter";
+import { artifactPaneHref, learnDossier } from "@/lib/dossiers/dossierApi";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { useReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import {
@@ -5157,25 +5154,25 @@ export default function MediaPaneBody() {
     (highlightId: string) => {
       const feedbackKey = `learn-dossier:${highlightId}`;
       // In-progress acknowledgement is harmless to miss — the real completion
-      // signal is the navigation to the new lesson pane — so it belongs on the
+      // signal is the navigation to the new dossier pane — so it belongs on the
       // HUD lane, not the persistent rail (Rule 7 reserves the rail for
       // required-action / unresolved failure). Only a definitive failure below
       // escalates to a persistent record.
       feedback.publish({
         kind: "Hud",
         key: feedbackKey,
-        content: { tone: "Neutral", title: "Creating lesson…" },
+        content: { tone: "Neutral", title: "Creating dossier…" },
       });
-      void learnDossierFromHighlight({
-        highlightRef: `highlight:${highlightId}`,
-        idempotencyKey: createRandomId("learn-dossier"),
-      })
+      void learnDossier(
+        `highlight:${highlightId}`,
+        createRandomId("learn-dossier"),
+      )
         .then((outcome) => {
           feedback.resolve(feedbackKey);
           activatePaneTarget({
             target: {
               href: artifactPaneHref(outcome.artifact_ref),
-              labelHint: "Lesson",
+              labelHint: "Dossier",
             },
             disposition: { kind: "Adopt" },
           });
@@ -5190,7 +5187,7 @@ export default function MediaPaneBody() {
               kind: "Persistent",
               key: feedbackKey,
               content: mediaPaneErrorMessage(error, "Learn"),
-              // Polite: a failed lesson creation loses no data and does not
+              // Polite: a failed dossier creation loses no data and does not
               // block reading; the unresolved failure persists on the rail.
               announcement: "Polite",
             });

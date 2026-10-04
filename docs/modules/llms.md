@@ -78,17 +78,14 @@ resolves one of:
 
 - `NoModelTools`;
 - `ChatReadAdditiveWrite` for every new chat send, rerun, and regeneration;
-- `MetadataResearch`;
-- `LibraryDossierRead`;
-- `IdeaDossierRead`.
+- `MetadataResearch`.
 
 on provider api chat, `ExactModelTools` grants `AdditiveWrites` over
 `ChatAdmittedContext`: `web.search`, five nexus reads, and five owner-gated
-additive writes. the two dossier plans grant only the five nexus reads over
-their exact frozen evidence scope. metadata enrichment selects codex personal
-and freezes exactly `web.search`, `web.read`, `nexus.document.search`, and
-`nexus.resource.read`. idea host research remains a separate bounded, durable
-three-search preparation plan.
+additive writes. dossiers publish `NoModelTools`; idea research calls the web
+search provider itself before the model turn. metadata enrichment selects codex
+personal and freezes exactly `web.search`, `web.read`, `nexus.document.search`,
+and `nexus.resource.read`.
 
 codex freezes `CodexCallbacks` authority using the same operation-selected
 portable declarations as `ProviderFunctions`. metadata publishes exactly the four

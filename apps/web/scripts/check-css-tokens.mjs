@@ -175,8 +175,8 @@ function collectFiles(dir, extensions, files = []) {
 }
 
 // Every font declaration in one file, whatever the file is: `.css` modules and
-// the hand-written stylesheet strings inside `.tsx` (the sealed dossier
-// document's two are the reason this scan is not CSS-only).
+// the hand-written stylesheet strings inside `.ts` (the dossier article's sheet
+// is the reason this scan is not CSS-only).
 function fontDeclarations(source) {
   return [
     ...source.matchAll(/@font-face\s*\{([^}]*)\}/g),
@@ -387,8 +387,8 @@ for (const { path, source } of cssSources) {
 }
 
 // The Tengwar absence lint runs over the modules too, not only the stylesheets:
-// the sealed dossier document's stylesheets are hand-written strings inside
-// `DossierDocumentFrame.tsx`, and a face bound there would be as real as one in
+// the dossier article's stylesheet is a hand-written string inside
+// `dossierSheet.ts`, and a face bound there would be as real as one in
 // a `.css` file and invisible to every other pass here.
 const tengwarViolations = [];
 for (const file of collectFiles(srcDir, [".ts", ".tsx"]).sort()) {

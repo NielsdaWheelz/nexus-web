@@ -256,8 +256,7 @@ def remove_library_member(
     db: Session, viewer_id: UUID, library_id: UUID, target_user_id: UUID
 ) -> None:
     """Remove a member and sweep their Dossier visibility. Admin-only; idempotent."""
-    from nexus.services.artifacts.dossier_types import AudienceUser
-    from nexus.services.artifacts.engine import on_audience_visibility_changed
+    from nexus.services.dossier.engine import on_visibility_lost
 
     def attempt() -> None:
         with transaction(db):
@@ -285,7 +284,7 @@ def remove_library_member(
                 [*governance.library_member_ids(db, library_id), target_user_id],
                 conversations=True,
             )
-            on_audience_visibility_changed(db, audience=AudienceUser(user_id=target_user_id))
+            on_visibility_lost(db, user_id=target_user_id)
 
     retry_serializable(db, "remove_library_member", attempt)
 

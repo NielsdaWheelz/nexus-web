@@ -1,10 +1,10 @@
 """SSE replay/tail routes for durable runs and media processing status.
 
-all five browser-callable streams live under ``/stream/`` (auth via stream-token
-bearer; see ``stream_paths.is_stream_path``). Three are append-cursor durable-run
-streams (chat run, oracle reading, Dossier build) that share one generic factory;
-media processing and podcast subscription lifecycles use
-snapshot/diff streams.
+every browser-callable stream lives under ``/stream/`` (auth via stream-token
+bearer; see ``stream_paths.is_stream_path``). Chat runs and oracle readings are
+append-cursor durable-run streams that share one generic factory; dossier builds,
+media processing, metadata and podcast subscription lifecycles use snapshot/diff
+streams.
 
 Push-driven: an AFTER trigger ``pg_notify``s the per-entity channel on each new
 event/state change; the tail uses the shared stream LISTEN resource and re-reads
@@ -37,18 +37,13 @@ from nexus.api.routes._sse import (
 from nexus.db.session import get_repeatable_read_db, get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.schemas.execution import (
-    EXECUTION_ADVISORY_EVENT_TYPE,
-    ChatRunExecutionOut,
-    DurableExecutionOut,
-)
+from nexus.schemas.execution import EXECUTION_ADVISORY_EVENT_TYPE, ChatRunExecutionOut
 from nexus.services import chat_runs as chat_runs_service
 from nexus.services import media as media_service
 from nexus.services import metadata_operations, run_kit
 from nexus.services import oracle as oracle_service
-from nexus.services.artifacts import engine as artifact_engine
 from nexus.services.chat_run_execution import chat_run_execution
-from nexus.services.durable_step_journal import DurableExecutionPhase
+from nexus.services.dossier import engine as dossier_engine
 from nexus.services.podcasts import subscriptions as podcast_subscription_service
 
 router = APIRouter(tags=["streaming"])
@@ -71,9 +66,7 @@ class CursorStreamKind:
     run_kind: run_kit.RunStreamKind
     assert_viewer: Callable[[Session, UUID, UUID], None]
     read_after: Callable[[Session, UUID, UUID, int], tuple[Sequence[Any], bool]]
-    read_advisory: (
-        Callable[[Session, UUID, UUID], DurableExecutionPhase | ChatRunExecutionOut | None] | None
-    ) = None
+    read_advisory: Callable[[Session, UUID, UUID], ChatRunExecutionOut | None] | None = None
 
 
 _CHAT_RUN_KIND = CursorStreamKind(
@@ -94,19 +87,6 @@ _ORACLE_READING_KIND = CursorStreamKind(
     ),
     read_after=lambda db, viewer_id, reading_id, after: run_kit.get_run_events(
         db, run_kit.RunStreamKind.OracleReading, reading_id, after
-    ),
-)
-
-_ARTIFACT_BUILD_KIND = CursorStreamKind(
-    run_kind=run_kit.RunStreamKind.ArtifactBuild,
-    assert_viewer=lambda db, viewer_id, build_id: artifact_engine.assert_build_viewer(
-        db, viewer_id=viewer_id, build_id=build_id
-    ),
-    read_after=lambda db, viewer_id, build_id, after: run_kit.get_run_events(
-        db, run_kit.RunStreamKind.ArtifactBuild, build_id, after
-    ),
-    read_advisory=lambda db, viewer_id, build_id: artifact_engine.build_execution_phase(
-        db, build_id=build_id, viewer_id=viewer_id
     ),
 )
 
@@ -135,12 +115,7 @@ async def make_cursor_stream_response(
             advisory = kind.read_advisory(db, viewer_id, entity_id)
             if advisory is None:
                 return None
-            payload = (
-                advisory.model_dump(mode="json")
-                if isinstance(advisory, ChatRunExecutionOut)
-                else DurableExecutionOut(phase=advisory).model_dump(mode="json")
-            )
-            return EXECUTION_ADVISORY_EVENT_TYPE, payload
+            return EXECUTION_ADVISORY_EVENT_TYPE, advisory.model_dump(mode="json")
 
     await run_in_threadpool(assert_viewer)
     listener = await open_sse_listener(run_kit.notify_channel(kind.run_kind), str(entity_id))
@@ -212,16 +187,21 @@ async def stream_artifact_build_events(
     request: Request,
     artifact_build_id: UUID,
     viewer_id: Annotated[UUID, Depends(get_stream_viewer)],
-    after: int | None = Query(default=None, ge=0),
-    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
 ) -> StreamingResponse:
-    cursor = after if after is not None else _parse_last_event_id(last_event_id)
-    return await make_cursor_stream_response(
-        _ARTIFACT_BUILD_KIND,
-        request=request,
-        entity_id=artifact_build_id,
-        viewer_id=viewer_id,
-        after=cursor,
+    """The build's ``DossierBuildOut`` on each change; ``done`` once it is not Active."""
+
+    def read_snapshot() -> tuple[dict[str, Any], bool]:
+        with get_session_factory()() as db:
+            get_repeatable_read_db(db)
+            build = dossier_engine.build_state(db, build_id=artifact_build_id, viewer_id=viewer_id)
+        return build.model_dump(mode="json"), build.status != "Active"
+
+    await run_in_threadpool(read_snapshot)
+    listener = await open_sse_listener("artifact_builds", str(artifact_build_id))
+    return StreamingResponse(
+        tail_snapshot_stream(request=request, listener=listener, read_snapshot=read_snapshot),
+        media_type="text/event-stream; charset=utf-8",
+        headers=_SSE_HEADERS,
     )
 
 

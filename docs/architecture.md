@@ -497,17 +497,17 @@ endpoint), folded by `connections.py` into a single `ConnectionOut.link_note`
 field — the attachment edges themselves never render as separate rows.
 
 **Universal Dossiers** — `artifacts` is the stable head keyed by subject plus
-derived audience; `artifact_builds` records each manual generation attempt;
-`artifact_revisions`, `artifact_build_failures`, and
-`artifact_build_cancellations` are mutually exclusive terminal children; and
-`artifact_build_events` is the strict replayable build stream. A successful
-revision stores one accepted semantic `content_html` article, its derived
-`content_text`, a typed input manifest, and at least one citation edge. Eight
-subject policies/bindings cover Media, Conversation, Library, Podcast,
-Contributor, Page, Note, and the internal user-owned Idea subject. One generic
-engine, API and `dossier_build` job own the lifecycle; a head keeps only its
-current revision, and a success replaces it and deletes the replaced revision
-with its build, events, job and edges in the same transaction.
+derived audience, and carries its one revision: `revision_id` (the
+`artifact_revision:` identity), one accepted semantic `content_html` article,
+its `content_text`, its `coverage` (counts plus the input fingerprint) and its
+provenance. `artifact_builds` records each generation attempt with a `status`
+(`active | succeeded | failed | cancelled`, at most one active per head by a
+partial unique index) and a failure code. Eight subject bindings cover Media,
+Conversation, Library, Podcast, Contributor, Page, Note, and the internal
+user-owned Idea (`artifact_idea_subjects`, seeded by `artifact_idea_seeds`). One
+engine, API and `dossier_build` job own the lifecycle; a success swaps the
+revision columns and citation edges and deletes every other build of the head in
+one transaction.
 
 **Conversations / chat** — `conversations`, `messages` (the message tree with
 branch pointers), `conversation_branches`, `conversation_active_paths`
@@ -633,7 +633,7 @@ keepalive, never drops it.
 | ----------------------- | --------------------------------- | ---------------- |
 | `chat_run_events`       | insert on `chat_run_events`       | chat SSE tail    |
 | `oracle_reading_events` | insert on `oracle_reading_events` | oracle SSE tail  |
-| `artifact_build_events` | insert on `artifact_build_events` | Dossier SSE tail |
+| `artifact_builds`       | insert, status change, delete     | Dossier SSE tail |
 | `media_events`          | update on `media`                 | media-status SSE |
 | `nexus_background_jobs` | enqueue in `jobs/queue.py`        | worker wake-up   |
 
@@ -743,11 +743,12 @@ accepted child model turn through the private UDS host; a ProviderRuntime API
 tool loop creates one child per accepted provider call and advances only from a
 sealed persisted continuation. Completed children replay without dispatch;
 accepted ambiguity requires exact operator reconciliation.
-Within `dossier_build`, `services/artifacts/generation.py` is the sole
-Artifact owner of the exact `synthesis` request fingerprint, memoized result
-envelope, and `Prepared | Uncertain | Completed` transitions; the engine keeps
-its streaming transport explicit. The existing PostgreSQL queue, leases, and
-publication owners remain unchanged.
+Within `dossier_build`, `services/dossier/synthesis.py` owns the one `synthesis`
+step: its prompt, its `Published | Failed | Stopped` outcome memo, and the
+rule that an Uncertain step without native recovery evidence dead-letters
+instead of dispatching again. Idea research journals only its billed
+`research/web` step. The existing PostgreSQL queue, leases, and publication
+owners remain unchanged.
 See [modules/llms.md](modules/llms.md).
 
 Eligible Chat and background runs use one canonical tool authority. Provider
@@ -959,11 +960,10 @@ after fresh per-run consent:
   **`nexus.queue.add`** — the five additive, owner-gated Write operations. They
   persist their exact effects with the tool result and support scoped Undo.
 
-Library and Idea Dossier model turns receive only the five Nexus reads over
-their exact admitted evidence scope. Idea host research separately freezes its
-bounded three-search preparation plan. Other background operations retain their
-direct evidence algorithms and publish `NoModelTools`; none inherit Chat
-authority. Provider API functions adapt eligible plans to the executor. Tool
+Dossier model turns, Idea ones included, carry no model tools: Idea research
+calls the web search provider directly from the build, before the model turn.
+Other background operations retain their direct evidence algorithms and publish
+`NoModelTools`; none inherit Chat authority. Provider API functions adapt eligible plans to the executor. Tool
 declarations, grants, limits, replay policy, and durable
 execution are owned by `services/tool_runtime/` and `tool_authority.py`;
 `services/agent_tools/` remains the domain-adapter layer, not a second tool
@@ -993,31 +993,25 @@ synchronously reasserts the same publication before requesting its surface, so
 publication cleanup and command acceptance cannot race or silently discard a
 valid first click.
 
-The backend separates three owners:
+The backend (`services/dossier/`) separates its owners:
 
-- subject policy derives the subject, audience, authorization, deletion, and
-  canonical activation;
-- one of eight bindings collects inputs and owns prompt, operation,
-  manifest, coverage, freshness, citation materialization, and final document
-  compilation;
-- the generic engine owns idempotent build creation, durable execution,
-  document acceptance, terminal children, latest-revision replacement,
-  cancellation, and events.
+- `subjects.py` is the one eight-entry binding table: prompt phrase, operation,
+  the subject's visibility predicate (one sql string serving the single check
+  and the batch `CASE` of `head_visible_sql`), input collector, media
+  intelligence ensure, shared library audience, and route handle;
+- `inputs.py` collects each subject purely, so a build and a head's freshness
+  check call the same function; `research.py` gathers the Idea's sources;
+- `document.py` accepts the model article against the closed grammar and
+  compiles citations; `synthesis.py` runs the one model turn;
+- `engine.py` owns heads, builds and every status transition (compare-and-set
+  out of `active`), publish, purge and the head read; `run.py` is one worker
+  attempt.
 
-`services/artifacts/subjects.py` holds the one eight-entry binding table.
-Callers look a subject scheme up once; there is no second mutable policy map or
-package-initializer registration side effect.
-
-Revision responses expose the binding's stored `input_manifest` as the sole
-coverage source, including the Idea subject id for its owning user. The browser
-derives its coverage label from this typed manifest; the head carries no second
-coverage projection. The eight manifest variants and their counts, included
-inputs, and omissions retain their stored shape. Revision content, citations,
-freshness, authorization, and build outcomes retain their contracts; a head
-without a revision has no manifest or coverage label. Head reads never generate
-or mutate a dossier. Idea subject routes remain unavailable.
-Failure facts contain a code and optional diagnostic detail. Build identifiers
-are UUIDs, with authorization checked separately on the owning Artifact.
+A revision's `coverage` (`unit`, `included`, `omitted`) is the coverage line;
+its stored fingerprint against the live collection is `stale`. Head reads
+never generate or mutate a dossier. Idea subject routes remain unavailable.
+Failure facts reach the browser as a code; the diagnostic detail stays in the
+database. Build identifiers are UUIDs, authorized through the owning head.
 
 Resource bootstrap/Inspector lookup uses
 `GET /artifacts/dossiers/{subject_scheme}/{subject_handle}`,
@@ -1028,20 +1022,17 @@ canonical authorized head read. Selection Learn uses
 `POST /artifacts/dossiers/learn`, resolves an internal Idea, records the
 Highlight as a seed, and adopts the standalone Artifact pane. The remaining
 API is `POST /artifact-builds/{artifact_build_id}/cancel`. Build streaming is
-`GET /stream/artifact-builds/{artifact_build_id}/events`; persisted
-`Started | Progress | Succeeded | Failed | Cancelled` events are build-keyed
-and replayable. `lib/dossiers/generationAdapter.ts` is the one browser Dossier
-transport boundary: head, build and learn responses are generated wire types
-(typed-wire); Cancel is an exact 204. Artifact-build streaming is an
-`artifact-builds` generation-run kind and delegates token minting, encoded path
-construction, and SSE lifecycle to `lib/api/useGenerationRun.ts`; no Dossier
-token or direct-SSE path exists beside it. The browser renders a revision in a
-sandboxed, Nexus-styled document frame; rejected or partial HTML is never
-emitted as an event. Media
-Intelligence reaches the web only inside the Dossier read model as
-`media_abstract` (`services/artifacts/subjects.py` `media_abstract`); the Media
-Dossier renders it as a compact Abstract and consumes the same fingerprinted
-projection as generation input.
+`GET /stream/artifact-builds/{artifact_build_id}/events`, a snapshot stream:
+`state` frames carry the build's `DossierBuildOut` whenever it changes and
+`done` closes it once the build is no longer active. `lib/dossiers/dossierApi.ts`
+is the one browser Dossier transport boundary over generated wire types
+(typed-wire); Cancel is an exact 204. The browser renders a revision into an
+open shadow root of the app document under the app's nonce csp, after
+re-proving the grammar on the exact nodes it adopts (`DossierDocument`), with
+one delegated click listener for citations. Media Intelligence reaches the web
+only inside the Dossier read model as `media_abstract`; the Media Dossier
+renders it as a compact Abstract and offers the same claims as generation
+input.
 
 ---
 
@@ -1491,8 +1482,8 @@ the hide-finished completion filter for reads — no DML on
   Resource Inspector; Members is present only for mutable Libraries the viewer
   can administer, and Dossier remains default. Its audience is the Library
   membership scope; direct entries and expanded Podcast episodes are
-  intersected with audience-visible Media, and freshness follows the binding's
-  typed manifest.
+  intersected with audience-visible Media (the library owner's), and freshness
+  compares the stored input fingerprint with the same collection run live.
 
 ### 8.6 Contributors
 
@@ -2302,7 +2293,7 @@ The things most likely to bite you, distilled:
 | Oracle                                                            | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_corpus.py`, `python/nexus/services/oracle_plates.py`                                                                                  |
 | Search / retrieval / indexing / resource target/openable search   | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation}.py`, `python/nexus/services/search/candidates.py`, `python/nexus/services/resource_items/{targets,openables}.py`   |
 | Resource graph (edges, refs, citations, connections, Link/stance) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `connections`, `context`, `citations`, `cleanup`, `user_relations`, `policy`)                                                     |
-| Universal Dossiers / Media Intelligence                           | `python/nexus/services/artifacts/`, `python/nexus/services/media_intelligence.py`, `python/nexus/api/routes/dossiers.py`                                                                               |
+| Universal Dossiers / Media Intelligence                           | `python/nexus/services/dossier/`, `python/nexus/services/media_intelligence.py`, `python/nexus/api/routes/dossiers.py`                                                                               |
 | Agent tools                                                       | `python/nexus/services/agent_tools/`                                                                                                                                                                   |
 | Libraries / contributors / notes                                  | `python/nexus/services/{library_governance,library_entries,library_invitations,contributors,notes}.py`                                                                                                 |
 | Resource grants / public sharing                                  | [`modules/resource-sharing.md`](modules/resource-sharing.md), `python/nexus/services/{resource_grants,resource_sharing,public_resource_sharing}.py`, `apps/web/src/{components,lib}/sharing/`, `apps/web/src/app/s/` |

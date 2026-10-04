@@ -418,15 +418,15 @@ def _metadata_parts(include: Callable[[str], bool]) -> list[str]:
         parts.append(
             _branch(
                 "artifact",
-                f"""a.id, {_tier_score(library_name, "r.content_text")} AS score,
+                f"""a.id, {_tier_score(library_name, "a.content_text")} AS score,
                 jsonb_build_object('library_id', a.subject_id, 'library_name', {library_name},
-                    'content_text', r.content_text) AS payload
+                    'content_text', a.content_text) AS payload
                 FROM artifacts a
                 JOIN libraries l ON l.id = a.subject_id
                 JOIN memberships mem ON mem.library_id = l.id AND mem.user_id = :viewer_id
-                JOIN artifact_revisions r ON r.id = a.current_revision_id
                 WHERE a.subject_scheme = 'library' AND a.audience_scheme = 'library'
-                  AND a.audience_id = a.subject_id::text AND {_matches("r.content_text")}
+                  AND a.audience_id = a.subject_id AND a.revision_id IS NOT NULL
+                  AND {_matches("a.content_text")}
                 ORDER BY score DESC, a.id ASC LIMIT :limit""",
             )
         )

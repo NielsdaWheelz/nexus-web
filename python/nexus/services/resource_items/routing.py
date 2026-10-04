@@ -302,24 +302,15 @@ def _dynamic_routes_for_refs(
 
     routes: dict[str, str] = {}
     # Imported here: the dossier binding table sits above resource routing.
-    from nexus.services.artifacts.subjects import visible_persisted_subject_sql
+    from nexus.services.dossier.subjects import head_visible_sql
 
     artifact_refs = by_scheme["artifact"]
     if artifact_refs:
         rows = db.execute(
             text(
-                f"""
-                SELECT a.id
-                FROM artifacts a
-                WHERE a.id = ANY(:ids)
-                  AND {visible_persisted_subject_sql("a")}
-                """
+                f"SELECT a.id FROM artifacts a WHERE a.id = ANY(:ids) AND {head_visible_sql('a')}"
             ),
-            {
-                "ids": [ref.id for ref in artifact_refs],
-                "viewer_id": viewer_id,
-                "viewer_id_text": str(viewer_id),
-            },
+            {"ids": [ref.id for ref in artifact_refs], "viewer_id": viewer_id},
         ).all()
         routes.update({f"artifact:{row[0]}": f"/artifacts/artifact:{row[0]}" for row in rows})
 
@@ -327,20 +318,10 @@ def _dynamic_routes_for_refs(
     if revision_refs:
         rows = db.execute(
             text(
-                f"""
-                SELECT r.id, a.id
-                FROM artifact_revisions r
-                JOIN artifact_builds b ON b.id = r.build_id
-                JOIN artifacts a ON a.id = b.artifact_id
-                WHERE r.id = ANY(:ids)
-                  AND {visible_persisted_subject_sql("a")}
-                """
+                "SELECT a.revision_id, a.id FROM artifacts a "
+                f"WHERE a.revision_id = ANY(:ids) AND {head_visible_sql('a')}"
             ),
-            {
-                "ids": [ref.id for ref in revision_refs],
-                "viewer_id": viewer_id,
-                "viewer_id_text": str(viewer_id),
-            },
+            {"ids": [ref.id for ref in revision_refs], "viewer_id": viewer_id},
         ).all()
         routes.update(
             {f"artifact_revision:{row[0]}": f"/artifacts/artifact:{row[1]}" for row in rows}
