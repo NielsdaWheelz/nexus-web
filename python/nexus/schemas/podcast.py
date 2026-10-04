@@ -110,7 +110,7 @@ class PodcastSubscribeDestinationOutcomeOut(BaseModel):
 
 
 class PodcastSubscribeOut(BaseModel):
-    href: str
+    href: str = Field(min_length=1)
     podcast_id: UUID
     outcome: Literal["Subscribed", "AlreadySubscribed", "DestinationsAdded"]
     destinations: list[PodcastSubscribeDestinationOutcomeOut]
@@ -155,12 +155,14 @@ class PodcastSubscriptionStatusOut(BaseModel):
     sync_status: PodcastSyncStatus
     sync_error_code: str | None = None
     sync_error_message: str | None = None
-    sync_attempts: int
+    sync_attempts: int = Field(ge=0)
     sync_started_at: datetime | None = None
     sync_completed_at: datetime | None = None
     last_checked_at: datetime | None = None
     updated_at: datetime
     backfill: PodcastBackfillOut
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
 
 class PodcastSubscriptionSettingsOut(PodcastSubscriptionStatusOut):
@@ -169,18 +171,11 @@ class PodcastSubscriptionSettingsOut(PodcastSubscriptionStatusOut):
         alias="libraryEntriesCollectionRevision"
     )
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-
-class PodcastSubscriptionLifecycleBackfillOut(BaseModel):
-    """The lifecycle stream's stable, browser-shaped backfill projection."""
-
-    id: UUID
-    state: PodcastBackfillState
-    processed_count: int = Field(ge=0)
-    added_count: int = Field(ge=0)
-
-    model_config = _CAMEL
+    model_config = ConfigDict(
+        populate_by_name=True,
+        extra="forbid",
+        json_schema_serialization_defaults_required=True,
+    )
 
 
 class PodcastSubscriptionLifecycleSnapshotOut(BaseModel):
@@ -188,7 +183,7 @@ class PodcastSubscriptionLifecycleSnapshotOut(BaseModel):
 
     podcast_id: UUID
     sync_status: PodcastSyncStatus
-    backfill: PodcastSubscriptionLifecycleBackfillOut
+    backfill: PodcastBackfillOut
 
     model_config = _CAMEL
 

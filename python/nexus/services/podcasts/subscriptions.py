@@ -31,7 +31,6 @@ from nexus.schemas.podcast import (
     PodcastSubscribeDestinationOutcomeOut,
     PodcastSubscribeOut,
     PodcastSubscribeRequest,
-    PodcastSubscriptionLifecycleBackfillOut,
     PodcastSubscriptionLifecycleSnapshotOut,
     PodcastSubscriptionSettingsOut,
     PodcastSubscriptionSettingsPatchRequest,
@@ -197,7 +196,7 @@ def read_subscription_lifecycle(
         snapshot=PodcastSubscriptionLifecycleSnapshotOut(
             podcast_id=UUID(str(row["subscription_podcast_id"])),
             sync_status=row["sync_status"],
-            backfill=PodcastSubscriptionLifecycleBackfillOut(
+            backfill=PodcastBackfillOut(
                 id=UUID(str(row["backfill_id"])),
                 state=backfill_state,
                 processed_count=int(row["backfill_processed_count"]),

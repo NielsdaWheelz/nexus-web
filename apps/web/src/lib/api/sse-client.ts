@@ -25,10 +25,10 @@ interface SseConnection {
   token: string;
 }
 
-interface SseClientDirectCommon<TEvent> {
+interface SseClientDirectCommon<TEvent, TPayload> {
   /** Browser-authored same-system contract headers for the direct request. */
   requestHeaders?: HeadersInit;
-  decode: (type: string, data: unknown, id: string) => TEvent;
+  decode: (type: string, data: TPayload, id: string) => TEvent;
   isTerminal: (event: TEvent) => boolean;
   onEvent: (event: TEvent) => void;
   onError: (err: Error) => void;
@@ -44,7 +44,8 @@ interface SseClientDirectCommon<TEvent> {
 
 /** Exactly one bootstrap mode: a known URL, or a lazy URL/token pair acquired
  * inside the reconnect loop. */
-export type SseClientDirectArgs<TEvent> = SseClientDirectCommon<TEvent> &
+export type SseClientDirectArgs<TEvent, TPayload = unknown> =
+  SseClientDirectCommon<TEvent, TPayload> &
   (
     | { url: string; initialConnection?: never }
     | { url?: never; initialConnection: () => Promise<SseConnection> }
@@ -67,8 +68,8 @@ export type SseClientDirectArgs<TEvent> = SseClientDirectCommon<TEvent> &
  * no retry). `onReconnect` fires before each backoff; resolving `"stop"` ends
  * the stream cleanly (`onComplete`, no error).
  */
-export function sseClientDirect<TEvent>(
-  args: SseClientDirectArgs<TEvent>,
+export function sseClientDirect<TEvent, TPayload = unknown>(
+  args: SseClientDirectArgs<TEvent, TPayload>,
 ): () => void {
   const {
     url,
@@ -212,7 +213,13 @@ export function sseClientDirect<TEvent>(
         await parseSSEJsonStream(
           response.body,
           (jsonEvent) => {
-            const event = decode(jsonEvent.type, jsonEvent.data, jsonEvent.id);
+            // justify-type-assertion: the selected same-deploy server event schema
+            // owns TPayload; the shared SSE parser cannot infer a caller's model.
+            const event = decode(
+              jsonEvent.type,
+              jsonEvent.data as TPayload,
+              jsonEvent.id,
+            );
             onEvent(event);
             // A cursor acknowledges an accepted event, not merely a parsed SSE
             // frame. Advancing before the domain decoder/onEvent succeeds can

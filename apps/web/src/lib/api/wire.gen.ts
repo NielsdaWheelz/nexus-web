@@ -5477,6 +5477,18 @@ export interface components {
         Data_PodcastRefreshAcceptedOut_: {
             data: components["schemas"]["PodcastRefreshAcceptedOut"];
         };
+        /** Data[PodcastSubscribeOut] */
+        Data_PodcastSubscribeOut_: {
+            data: components["schemas"]["PodcastSubscribeOut"];
+        };
+        /** Data[PodcastSubscriptionSettingsOut] */
+        Data_PodcastSubscriptionSettingsOut_: {
+            data: components["schemas"]["PodcastSubscriptionSettingsOut"];
+        };
+        /** Data[PodcastSubscriptionStatusOut] */
+        Data_PodcastSubscriptionStatusOut_: {
+            data: components["schemas"]["PodcastSubscriptionStatusOut"];
+        };
         /** Data[PublicSectionOut] */
         Data_PublicSectionOut_: {
             data: components["schemas"]["PublicSectionOut"];
@@ -9709,6 +9721,23 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** PodcastBackfillOut */
+        PodcastBackfillOut: {
+            /** Addedcount */
+            addedCount: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Processedcount */
+            processedCount: number;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "Pending" | "Running" | "Complete" | "SourceLimited" | "Failed";
+        };
         /** PodcastCandidate */
         PodcastCandidate: {
             /** Contributors */
@@ -10060,6 +10089,41 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** PodcastSubscribeDestinationOutcomeOut */
+        PodcastSubscribeDestinationOutcomeOut: {
+            /**
+             * Libraryid
+             * Format: uuid
+             */
+            libraryId: string;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "Added" | "AlreadyPresent";
+        };
+        /** PodcastSubscribeOut */
+        PodcastSubscribeOut: {
+            backfill: components["schemas"]["PodcastBackfillOut"];
+            /** Collectionrevision */
+            collectionRevision: number;
+            /** Destinations */
+            destinations: components["schemas"]["PodcastSubscribeDestinationOutcomeOut"][];
+            /** Href */
+            href: string;
+            /** Libraryentriescollectionrevision */
+            libraryEntriesCollectionRevision: number;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "Subscribed" | "AlreadySubscribed" | "DestinationsAdded";
+            /**
+             * Podcastid
+             * Format: uuid
+             */
+            podcastId: string;
+        };
         /** PodcastSubscribeRequest */
         PodcastSubscribeRequest: {
             /** Namedlibraryids */
@@ -10069,31 +10133,11 @@ export interface components {
             target: components["schemas"]["PodcastDiscoveryCommitTarget"] | components["schemas"]["PodcastCanonicalCommitTarget"];
         };
         /**
-         * PodcastSubscriptionLifecycleBackfillOut
-         * @description The lifecycle stream's stable, browser-shaped backfill projection.
-         */
-        PodcastSubscriptionLifecycleBackfillOut: {
-            /** Addedcount */
-            addedCount: number;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Processedcount */
-            processedCount: number;
-            /**
-             * State
-             * @enum {string}
-             */
-            state: "Pending" | "Running" | "Complete" | "SourceLimited" | "Failed";
-        };
-        /**
          * PodcastSubscriptionLifecycleSnapshotOut
          * @description One viewer-owned subscription's live sync and initial-backfill state.
          */
         PodcastSubscriptionLifecycleSnapshotOut: {
-            backfill: components["schemas"]["PodcastSubscriptionLifecycleBackfillOut"];
+            backfill: components["schemas"]["PodcastBackfillOut"];
             /**
              * Podcastid
              * Format: uuid
@@ -10116,12 +10160,94 @@ export interface components {
              */
             state: "Subscribed" | "Unsubscribed";
         };
+        /** PodcastSubscriptionSettingsOut */
+        PodcastSubscriptionSettingsOut: {
+            /**
+             * Auto Queue
+             * @default false
+             */
+            auto_queue: boolean;
+            backfill: components["schemas"]["PodcastBackfillOut"];
+            /** Collectionrevision */
+            collectionRevision: number;
+            default_playback_speed: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____"];
+            /** Last Checked At */
+            last_checked_at: string | null;
+            /** Libraryentriescollectionrevision */
+            libraryEntriesCollectionRevision: number;
+            pause_shortening_mode: components["schemas"]["Presence_Literal__Off____Natural___"];
+            /**
+             * Podcast Id
+             * Format: uuid
+             */
+            podcast_id: string;
+            /** Sync Attempts */
+            sync_attempts: number;
+            /** Sync Completed At */
+            sync_completed_at: string | null;
+            /** Sync Error Code */
+            sync_error_code: string | null;
+            /** Sync Error Message */
+            sync_error_message: string | null;
+            /** Sync Started At */
+            sync_started_at: string | null;
+            sync_status: components["schemas"]["PodcastSyncStatus"];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+        };
         /** PodcastSubscriptionSettingsPatchRequest */
         PodcastSubscriptionSettingsPatchRequest: {
             /** Auto Queue */
             auto_queue?: boolean | null;
             default_playback_speed?: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____"];
             pause_shortening_mode?: components["schemas"]["Presence_Literal__Off____Natural___"];
+        };
+        /** PodcastSubscriptionStatusOut */
+        PodcastSubscriptionStatusOut: {
+            /**
+             * Auto Queue
+             * @default false
+             */
+            auto_queue: boolean;
+            backfill: components["schemas"]["PodcastBackfillOut"];
+            default_playback_speed: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____"];
+            /** Last Checked At */
+            last_checked_at: string | null;
+            pause_shortening_mode: components["schemas"]["Presence_Literal__Off____Natural___"];
+            /**
+             * Podcast Id
+             * Format: uuid
+             */
+            podcast_id: string;
+            /** Sync Attempts */
+            sync_attempts: number;
+            /** Sync Completed At */
+            sync_completed_at: string | null;
+            /** Sync Error Code */
+            sync_error_code: string | null;
+            /** Sync Error Message */
+            sync_error_message: string | null;
+            /** Sync Started At */
+            sync_started_at: string | null;
+            sync_status: components["schemas"]["PodcastSyncStatus"];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
         };
         /** @enum {string} */
         PodcastSyncStatus: "Pending" | "Running" | "Complete" | "SourceLimited" | "Failed";
@@ -20095,9 +20221,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_PodcastSubscribeOut_"];
                 };
             };
             /** @description Validation Error */
@@ -20128,9 +20252,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_PodcastSubscriptionStatusOut_"];
                 };
             };
             /** @description Validation Error */
@@ -20235,9 +20357,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_PodcastSubscriptionSettingsOut_"];
                 };
             };
             /** @description Validation Error */

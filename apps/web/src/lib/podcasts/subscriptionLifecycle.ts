@@ -1,27 +1,13 @@
 import { sseClientDirect } from "@/lib/api/sse-client";
 import { fetchStreamToken } from "@/lib/api/streamToken";
-import {
-  decodePodcastBackfillState,
-  decodePodcastSyncStatus,
-  type PodcastBackfillState,
-  type PodcastSyncStatus,
+import type { Schema } from "@/lib/api/wire";
+import type {
+  PodcastBackfillState,
+  PodcastSyncStatus,
 } from "@/lib/podcasts/types";
-import {
-  expectExactRecord,
-  expectNonnegativeInteger,
-  expectString,
-} from "@/lib/validation";
 
-export interface PodcastSubscriptionLifecycleSnapshot {
-  readonly podcastId: string;
-  readonly syncStatus: PodcastSyncStatus;
-  readonly backfill: {
-    readonly id: string;
-    readonly state: PodcastBackfillState;
-    readonly processedCount: number;
-    readonly addedCount: number;
-  };
-}
+export type PodcastSubscriptionLifecycleSnapshot =
+  Schema<"PodcastSubscriptionLifecycleSnapshotOut">;
 
 type PodcastSubscriptionLifecycleEvent = {
   readonly type: "state" | "done";
@@ -75,68 +61,15 @@ export function isPodcastSubscriptionLifecycleProtocolError(
   ].some((prefix) => error.message.startsWith(prefix));
 }
 
-function decodeLifecycleSnapshot(
-  raw: unknown,
-  expectedPodcastId: string,
-): PodcastSubscriptionLifecycleSnapshot {
-  const value = expectExactRecord(
-    raw,
-    ["podcastId", "syncStatus", "backfill"],
-    "Podcast subscription lifecycle snapshot",
-  );
-  const podcastId = expectString(
-    value.podcastId,
-    "Podcast subscription lifecycle snapshot.podcastId",
-  );
-  if (podcastId !== expectedPodcastId) {
-    throw new TypeError(
-      "Podcast subscription lifecycle snapshot changed Podcast identity",
-    );
-  }
-  const backfill = expectExactRecord(
-    value.backfill,
-    ["id", "state", "processedCount", "addedCount"],
-    "Podcast subscription lifecycle snapshot.backfill",
-  );
-  return {
-    podcastId,
-    syncStatus: decodePodcastSyncStatus(
-      value.syncStatus,
-      "Podcast subscription lifecycle snapshot.syncStatus",
-    ),
-    backfill: {
-      id: expectString(
-        backfill.id,
-        "Podcast subscription lifecycle snapshot.backfill.id",
-      ),
-      state: decodePodcastBackfillState(
-        backfill.state,
-        "Podcast subscription lifecycle snapshot.backfill.state",
-      ),
-      processedCount: expectNonnegativeInteger(
-        backfill.processedCount,
-        "Podcast subscription lifecycle snapshot.backfill.processedCount",
-      ),
-      addedCount: expectNonnegativeInteger(
-        backfill.addedCount,
-        "Podcast subscription lifecycle snapshot.backfill.addedCount",
-      ),
-    },
-  };
-}
-
 export function decodePodcastSubscriptionLifecycleEvent(
   type: string,
-  raw: unknown,
+  data: PodcastSubscriptionLifecycleSnapshot,
   expectedPodcastId: string,
 ): PodcastSubscriptionLifecycleEvent {
   if (type !== "state" && type !== "done") {
     throw new Error(`Unknown SSE event type: ${type}`);
   }
-  let data: PodcastSubscriptionLifecycleSnapshot;
-  try {
-    data = decodeLifecycleSnapshot(raw, expectedPodcastId);
-  } catch {
+  if (data.podcastId !== expectedPodcastId) {
     throw new Error(
       "Invalid SSE payload for Podcast subscription lifecycle",
     );
@@ -159,7 +92,10 @@ export function observePodcastSubscriptionLifecycle(
     readonly onError: (error: Error) => void;
   },
 ): () => void {
-  return sseClientDirect<PodcastSubscriptionLifecycleEvent>({
+  return sseClientDirect<
+    PodcastSubscriptionLifecycleEvent,
+    PodcastSubscriptionLifecycleSnapshot
+  >({
     initialConnection: async () => {
       const connection = await fetchStreamToken();
       return {

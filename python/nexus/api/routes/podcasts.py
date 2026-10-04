@@ -16,8 +16,11 @@ from nexus.schemas.podcast import (
     PodcastEpisodeSelection,
     PodcastRefreshAcceptedOut,
     PodcastRefreshManualScope,
+    PodcastSubscribeOut,
     PodcastSubscribeRequest,
+    PodcastSubscriptionSettingsOut,
     PodcastSubscriptionSettingsPatchRequest,
+    PodcastSubscriptionStatusOut,
 )
 from nexus.services.podcasts import episode_acquisition as podcast_episode_acquisition_service
 from nexus.services.podcasts import episodes as podcast_episodes_service
@@ -42,13 +45,12 @@ def subscribe_to_podcast(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     idempotency_key: IdempotencyKey,
-) -> dict:
+) -> Data[PodcastSubscribeOut]:
     """Subscribe the viewer and enqueue the first sync and history backfill."""
-    return ok(
-        podcast_subscription_service.subscribe_to_podcast(
+    return Data(
+        data=podcast_subscription_service.subscribe_to_podcast(
             db, viewer.user_id, body, idempotency_key=idempotency_key
-        ),
-        by_alias=True,
+        )
     )
 
 
@@ -114,9 +116,11 @@ def get_subscription_status(
     podcast_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> Data[PodcastSubscriptionStatusOut]:
     """Read viewer-visible sync status for one podcast subscription."""
-    return ok(podcast_subscription_service.get_subscription_status(db, viewer.user_id, podcast_id))
+    return Data(
+        data=podcast_subscription_service.get_subscription_status(db, viewer.user_id, podcast_id)
+    )
 
 
 @router.post("/podcasts/subscriptions/{podcast_id}/backfill/retry")
@@ -141,13 +145,12 @@ def patch_subscription_settings(
     body: PodcastSubscriptionSettingsPatchRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> Data[PodcastSubscriptionSettingsOut]:
     """Patch per-subscription playback settings for the authenticated viewer."""
-    return ok(
-        podcast_subscription_service.update_subscription_settings_for_viewer(
+    return Data(
+        data=podcast_subscription_service.update_subscription_settings_for_viewer(
             db, viewer.user_id, podcast_id, body
-        ),
-        by_alias=True,
+        )
     )
 
 
