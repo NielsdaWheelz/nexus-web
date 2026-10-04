@@ -30,7 +30,6 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
-- [local documents access blocks owned cleanup](tickets/local-documents-access-blocks-owned-cleanup.md): host access denies source reads and cleanup of an unused owned writing checkout; product behavior is unaffected.
 
 - [open] operator credentials · 2026-10-02 cleanup workflow · skid's three peer bearer fields were printed into a tool transcript; coordinate rotation with active sessions: [ticket](tickets/local-qualification-credential-transcript-exposure.md).
 - [open] processing recovery / release · 2026-09-28 pr #387 investigation · the keats normalizations and gutenberg correction never ran in production (commands are unreleased); run them after the release, then land #387: [ticket](tickets/processing-repairs-await-release-then-387.md).
@@ -42,6 +41,10 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] web / python comments · 2026-09-28 pr-06 library placement · 25 code comments cite deleted `docs/cutovers/` files as rule owners: [ticket](tickets/code-comments-cite-deleted-cutovers.md).
 - [open] ingest-imports web · 2026-09-28 pr-06 library placement · Add Content still rereads and decides settlement-unknown placement writes and publishes the bus by hand, where the overlay now resends: [ticket](tickets/add-content-placement-unknown-machine.md).
 - [open] typed wire / chat sse · 2026-09-28 typed-wire foundation · projected chat tool_* frames still lack public wire models and keep hand decoders; media state/done now uses a generated snapshot type: [ticket](tickets/sse-payloads-without-wire-models.md).
+- [open] jobs / documentation · 2026-10-04 backend owner audit · the jobs module still describes retired chat result kinds and a media-unit failed-result declaration absent from the registry: [ticket](tickets/jobs-handler-outcome-docs-stale.md).
+- [open] jobs / child result · 2026-10-04 backend owner audit · child success/reschedule/terminal-failure variants duplicate the handler result contract before worker settlement: [ticket](tickets/jobs-child-results-repeat-handler-contract.md).
+- [open] library governance / web · 2026-10-04 frontend source audit · failed role command feedback does not use the authoritative reread; actual user-visible ambiguity needs diagnosis: [ticket](tickets/library-role-feedback-needs-outcome-qualification.md).
+- [open] reader apparatus / ingest · 2026-10-04 source audit · locator binding and note grouping rebuild an already available canonical structure: [ticket](tickets/apparatus-binding-recomputes-canonical-structure.md).
 - [open] collections / offline audio · 2026-09-27 cleanup pr 01 · episode rows lost download status in #385; CollectionRow's localAvailability path is dead until restored or deleted: [ticket](tickets/media-rows-lost-offline-download-status.md).
 - [open] android / offline-hosted handoff · 2026-09-26 reader navigation acceptance · shelf-to-hosted bootstrap can fail in mobile viewport and leave a late bridge reply; cold restart recovers: [ticket](tickets/android-offline-to-hosted-deep-link-transient-boundary.md).
 - [open] reader / accessibility · 2026-09-26 reader navigation acceptance · talkback exposed the held-position live region, but its spoken words could not be independently observed: [ticket](tickets/reader-navigation-talkback-spoken-announcement-unverified.md).

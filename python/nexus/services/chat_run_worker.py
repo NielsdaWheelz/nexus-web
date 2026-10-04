@@ -9,7 +9,6 @@ boundary; publication is the final effect, taken under the run lock.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 from collections.abc import Mapping
 from contextlib import suppress
@@ -123,7 +122,6 @@ CHAT_TEXT_FLUSH_MAX_BYTES = 2048
 CHAT_CANCEL_POLL_INTERVAL_SECONDS = 0.25
 
 _GENERATION_STEP = "generation/1"
-_PUBLICATION_STEP = "publication"
 
 
 # =============================================================================
@@ -169,25 +167,8 @@ class GenerationStepResultEnvelope(RootModel[GenerationStepResult]):
     model_config = ConfigDict(frozen=True)
 
 
-class PublicationRequest(_StateModel):
-    generated_markdown: str
-    usage: Presence[dict[str, JsonValue]]
-    last_provider_event_seq: Presence[int]
-
-
 class LostChatJobLease(RuntimeError):
     """The claimed attempt lost its queue lease before a checkpoint landed."""
-
-
-def step_fingerprint(value: BaseModel) -> str:
-    return hashlib.sha256(
-        json.dumps(
-            value.model_dump(mode="json"),
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
-    ).hexdigest()
 
 
 class ChatStepRuntime:
@@ -435,21 +416,6 @@ def _publish(
     last_provider_event_seq: int | None,
 ) -> None:
     """Canonicalize citations and make the answer reader-visible, once."""
-
-    fingerprint = step_fingerprint(
-        PublicationRequest(
-            generated_markdown=generated_markdown,
-            usage=_presence(usage),
-            last_provider_event_seq=_presence(last_provider_event_seq),
-        )
-    )
-    state = steps.read(_PUBLICATION_STEP)
-    if state is None:
-        state = steps.prepare(_PUBLICATION_STEP, fingerprint)
-    elif state.request_fingerprint != present(fingerprint):
-        raise AssertionError("durable chat step request fingerprint changed")
-    if state.dispatch_phase is not Prepared:
-        raise AssertionError("publication step cannot be replayed on an active run")
 
     # Publication is the final domain-effect boundary. Lock the run before the
     # queue claim so cancellation and every publication effect share one global
