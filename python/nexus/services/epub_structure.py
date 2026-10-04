@@ -89,6 +89,10 @@ class _Section:
     owns_container: bool = False
 
 
+def _heading_location_id(media_id: UUID, fragment_id: UUID, start_offset: int, rank: int) -> str:
+    return "heading:" + str(uuid5(media_id, f"{fragment_id}:{start_offset}:{rank}"))
+
+
 def build_epub_structure(
     *,
     media_id: UUID,
@@ -282,8 +286,8 @@ def build_epub_structure(
                 # A publisher's adjacent number/title group claims both headings;
                 # only its first heading owns the section boundary.
                 continue
-            location_id = "heading:" + str(
-                uuid5(media_id, f"{fragment.fragment_id}:{element.start_offset}:{rank}")
+            location_id = _heading_location_id(
+                media_id, fragment.fragment_id, element.start_offset, rank
             )
             if location_id in used_ids:
                 raise ValueError("EPUB heading identity is duplicated")
@@ -494,8 +498,8 @@ def _supplemental_toc_nodes(
         section_id: str | None,
     ) -> EpubStructureTocNode:
         element = fragment.canonical.elements[index]
-        node_id = "source-heading:" + str(
-            uuid5(media_id, f"{fragment.fragment_id}:{element.start_offset}:{element.tag}")
+        node_id = _heading_location_id(
+            media_id, fragment.fragment_id, element.start_offset, int(element.tag[1])
         )
         if node_id in used_ids:
             raise ValueError("EPUB source contents identity is duplicated")

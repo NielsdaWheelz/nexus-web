@@ -21,7 +21,6 @@ import type {
   DocumentReaderSession,
   LoadedDocumentReaderSession,
   ReaderResource,
-  ReaderInitialEpubTarget,
 } from "./DocumentReaderSession";
 import type { EpubFragmentContent } from "@/lib/media/epubFragment";
 import type {
@@ -76,7 +75,6 @@ export function useDocumentReaderSession({
   progress,
   navigation,
   loadCacheKey,
-  initialEpubTarget,
   epub,
   pdf,
 }: {
@@ -87,11 +85,9 @@ export function useDocumentReaderSession({
     readonly expectedKind: "epub" | "web_article" | null;
   };
   readonly loadCacheKey: string | null;
-  readonly initialEpubTarget: ReaderInitialEpubTarget | null;
   readonly epub?: DocumentReaderSessionEpubOptions;
   readonly pdf?: DocumentReaderSessionPdfOptions;
 }): DocumentReaderSessionComposition {
-  session.seedInitialEpubTarget(initialEpubTarget);
   const initialKeysRef = useRef<{
     readonly load: string | null;
     readonly navigation: string | null;

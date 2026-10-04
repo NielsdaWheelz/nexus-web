@@ -253,6 +253,7 @@ import {
 import ReaderNavigationStatus, { type ReaderNavigationStatusView } from "@/components/reader/ReaderNavigationStatus";
 import { usePlayerCommands } from "@/lib/player/playerRuntime";
 import {
+  findReaderNavigationLocation,
   type ReaderNavigationSection,
   type ReaderNavigationTextPoint,
 } from "@/lib/media/readerNavigation";
@@ -910,7 +911,6 @@ export default function MediaPaneBody() {
         media?.kind === "pdf")
         ? `${id}:reader-session`
         : null,
-    initialEpubTarget: null,
     epub: {
       fragmentId: isEpub ? activeEpubFragmentId : null,
       cacheKey:
@@ -4599,7 +4599,7 @@ export default function MediaPaneBody() {
   useEffect(() => {
     if (!isEpub && media?.kind !== "web_article") return;
     if (coldQueryMode !== "open" && target?.kind !== "loc" && target?.kind !== "evidence") return;
-    if (initialReaderResumeState === undefined || !readerLayoutReady ||
+    if (initialReaderResumeState === undefined || !readerLayoutReady || readerNavigation === null ||
         navigationSource === null || isMismatchDisabled) return;
     if (activeRequestedReaderLoc === null) {
       appliedRequestedReaderLocRef.current = null;
@@ -4607,10 +4607,8 @@ export default function MediaPaneBody() {
       return;
     }
     if (appliedRequestedReaderLocRef.current === activeRequestedReaderLoc) return;
-    const section = (isEpub ? epubSections : webSections)?.find(
-      (candidate) => candidate.section_id === activeRequestedReaderLoc,
-    );
-    if (!section) {
+    const location = findReaderNavigationLocation(readerNavigation, activeRequestedReaderLoc);
+    if (!location) {
       setError({ tone: "Warning", title: "The requested section is unavailable." });
       return;
     }
@@ -4624,10 +4622,11 @@ export default function MediaPaneBody() {
     const entry = !initialReaderLocReadyRef.current;
     initialReaderLocReadyRef.current = true;
     appliedRequestedReaderLocRef.current = activeRequestedReaderLoc;
-    const destination: HostedNavigationTarget = section.anchor_id.kind === "Present"
-      ? { kind: "SourceAnchor", focus: "Destination", fragmentId: section.target.fragment_id, anchorId: section.anchor_id.value }
-      : { kind: "Text", focus: "Destination", fragmentId: section.target.fragment_id,
-          startOffset: section.target.offset, endOffset: section.target.offset };
+    const point = location.kind === "Section" ? location.section.target : location.point;
+    const destination: HostedNavigationTarget = location.kind === "Section" && location.section.anchor_id.kind === "Present"
+      ? { kind: "SourceAnchor", focus: "Destination", fragmentId: point.fragment_id, anchorId: location.section.anchor_id.value }
+      : { kind: "Text", focus: "Destination", fragmentId: point.fragment_id,
+          startOffset: point.offset, endOffset: point.offset };
     const arrival = entry
       ? navigationInspectEntry(destination,
           initialReaderResumeState === null ? absent() : present(initialReaderResumeState))
@@ -4641,10 +4640,10 @@ export default function MediaPaneBody() {
       }
       if (target?.kind === "loc" && targetStatus === "pending") markActive(target);
     });
-  }, [activeRequestedReaderLoc, coldQueryMode, epubSections,
+  }, [activeRequestedReaderLoc, coldQueryMode,
     initialReaderResumeState, isEpub, isMismatchDisabled, markActive, media?.kind,
     navigationInspect, navigationInspectEntry, navigationSource, readerLayoutReady,
-    requestedEvidenceId, resolvedEvidence, setError, target, targetStatus, webSections]);
+    readerNavigation, requestedEvidenceId, resolvedEvidence, setError, target, targetStatus]);
 
   const sectionSteps = useMemo(
     () => documentStructure.kind === "Present" ? documentStructure.value.steps : [],
