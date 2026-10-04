@@ -169,18 +169,19 @@ canonical urls distinct from the source url share one descriptive label.
 
 ## hard cutover and source repair
 
-`0255` requires stopped writers and the verified release backup. unresolved
+`0256` requires stopped writers and the verified release backup. unresolved
 metadata jobs or generations block migration. settled legacy metadata jobs are
 archived in that backup and removed from the live projection; existing facts,
 successful stamps and generation evidence remain. only legacy metadata source
 errors are cleared. deploy api, worker and web together; rollback restores the
 verified backup, never an old decoder over new memos.
 
-the sole migration chain is `0252` → native `0254` → metadata `0255`.
-the undeployed standalone `0253` is removed; its disposable databases are
-rebuilt, never stamped into this chain.
+the sole suffix is `0252` → resource `0253` → atlas `0254` → native `0255` →
+metadata `0256` → effects `0257`. undeployed metadata migration identifiers are
+renamed/reparented; disposable databases are rebuilt, never stamped or aliased
+into this chain. historical receipts retain their actual revisions.
 combined verification must preserve historical effect/principal evidence and
-leave schema/data at `0252` if metadata's later guard rejects the upgrade.
+roll back the entire transaction if metadata's later guard rejects the upgrade.
 qualified immutable pins and genuine exact-model four-tool research are
 delivered. metadata's installed job and bibliographic acceptance are separate
 from that capability proof. production release additionally requires the
