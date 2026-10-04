@@ -1,7 +1,4 @@
-"""Strict camelCase wire contracts for the deterministic Resonance slates.
-
-Every variant is key-exact against ``apps/web/src/lib/resonance/contract.ts``.
-"""
+"""Strict camelCase output contracts for the deterministic resonance slates."""
 
 from collections.abc import Callable
 from typing import Annotated, Literal, Self
@@ -47,6 +44,8 @@ class ResonanceModel(BaseModel):
 
 
 class MediaSlateTargetOut(ResonanceModel):
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
     kind: Literal["Media"] = "Media"
     ref: MediaResourceRefUri
     media_summary: MediaSummaryOut
@@ -55,6 +54,8 @@ class MediaSlateTargetOut(ResonanceModel):
 
 
 class PodcastSlateTargetOut(ResonanceModel):
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
     kind: Literal["Podcast"] = "Podcast"
     ref: PodcastResourceRefUri
     title: str

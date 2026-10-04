@@ -6,11 +6,19 @@ not the app, so it needs no settings, database, network or secrets.
 """
 
 import json
+from typing import Any
 
+from fastapi._compat import (
+    ModelField,
+    get_definitions,
+    get_flat_models_from_fields,
+    get_model_name_map,
+)
 from fastapi.encoders import jsonable_encoder
-from fastapi.openapi.models import Components
-from fastapi.openapi.utils import get_openapi
-from pydantic.json_schema import models_json_schema
+from fastapi.openapi.models import OpenAPI
+from fastapi.openapi.utils import get_fields_from_routes, get_openapi_path
+from fastapi.routing import APIRoute
+from pydantic.fields import FieldInfo
 
 from nexus.api.routes import create_api_router
 from nexus.schemas.artifact import (
@@ -82,22 +90,55 @@ SSE_PAYLOADS_BY_ALIAS = (PodcastSubscriptionLifecycleSnapshotOut,)
 
 def wire_schema() -> dict:
     router = create_api_router(podcasts=True, email_ingest=True)
-    schema = get_openapi(title="Nexus API", version="0.1.0", routes=router.routes)
-    components = schema["components"]["schemas"]
-    for models, by_alias in ((SSE_PAYLOADS_BY_NAME, False), (SSE_PAYLOADS_BY_ALIAS, True)):
-        _, definitions = models_json_schema(
-            [(model, "serialization") for model in models],
-            by_alias=by_alias,
-            ref_template="#/components/schemas/{model}",
+    fields = get_fields_from_routes(router.routes)
+    # current by-name SSE models have no aliased fields, including nested models.
+    # one native batch coordinates their refs with HTTP's input/output schemas.
+    fields.extend(
+        ModelField(
+            field_info=FieldInfo(annotation=model),
+            name=model.__name__,
+            mode="serialization",
         )
-        # Normalized the way get_openapi normalizes its own, so equal schemas compare equal.
-        normalized = jsonable_encoder(
-            Components(schemas=definitions["$defs"]), by_alias=True, exclude_none=True
-        )["schemas"]
-        for name, definition in normalized.items():
-            if components.setdefault(name, definition) != definition:
-                raise ValueError(f"two different schemas are named {name}")
-    return schema
+        for model in SSE_PAYLOADS_BY_NAME + SSE_PAYLOADS_BY_ALIAS
+    )
+    flat_models = get_flat_models_from_fields(fields, known_models=set())
+    model_name_map = get_model_name_map(flat_models)
+    field_mapping, definitions = get_definitions(fields=fields, model_name_map=model_name_map)
+    paths: dict[str, dict[str, Any]] = {}
+    security_schemes: dict[str, Any] = {}
+    operation_ids: set[str] = set()
+    for route in router.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        result = get_openapi_path(
+            route=route,
+            operation_ids=operation_ids,
+            model_name_map=model_name_map,
+            field_mapping=field_mapping,
+        )
+        if result:
+            path, security, path_definitions = result
+            if path:
+                paths.setdefault(route.path_format, {}).update(path)
+            security_schemes.update(security)
+            definitions.update(path_definitions)
+    components: dict[str, dict[str, Any]] = {
+        "schemas": {name: definitions[name] for name in sorted(definitions)}
+    }
+    if security_schemes:
+        components["securitySchemes"] = security_schemes
+    return jsonable_encoder(
+        OpenAPI.model_validate(
+            {
+                "openapi": "3.1.0",
+                "info": {"title": "Nexus API", "version": "0.1.0"},
+                "paths": paths,
+                "components": components,
+            }
+        ),
+        by_alias=True,
+        exclude_none=True,
+    )
 
 
 if __name__ == "__main__":

@@ -3211,7 +3211,18 @@ export interface components {
          * Absent
          * @description The `Presence<T>` absent variant. Carries no value.
          */
-        Absent: {
+        "Absent-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Absent";
+        };
+        /**
+         * Absent
+         * @description The `Presence<T>` absent variant. Carries no value.
+         */
+        "Absent-Output": {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -3775,7 +3786,7 @@ export interface components {
         };
         /** CancelledEventPayload */
         CancelledEventPayload: {
-            actor: components["schemas"]["Presence_UUID_"];
+            actor: components["schemas"]["Presence_UUID_-Output"];
             /**
              * At
              * Format: date-time
@@ -3848,7 +3859,7 @@ export interface components {
         };
         /** ChapterOut */
         ChapterOut: {
-            endMs: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____"];
+            endMs: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____-Output"];
             /** Startms */
             startMs: number;
             /** Title */
@@ -4421,7 +4432,7 @@ export interface components {
             /** Release */
             release: string;
             request_id: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1___MaxLen_max_length_200_____"];
-            run_id: components["schemas"]["Presence_UUID_"];
+            run_id: components["schemas"]["Presence_UUID_-Input"];
             /** Visit Id */
             visit_id: string;
         };
@@ -4571,7 +4582,7 @@ export interface components {
         };
         /** ConsumptionOut */
         ConsumptionOut: {
-            progress: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____"];
+            progress: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____-Output"];
             /** Progressresettable */
             progressResettable: boolean;
             /**
@@ -4592,7 +4603,7 @@ export interface components {
              * @enum {string}
              */
             kind: "Removed";
-            nextItemId: components["schemas"]["Presence_UUID_"];
+            nextItemId: components["schemas"]["Presence_UUID_-Output"];
         };
         /** ConsumptionResourceActionCapabilityOut */
         ConsumptionResourceActionCapabilityOut: {
@@ -5403,6 +5414,14 @@ export interface components {
         Data_LibraryRenameOut_: {
             data: components["schemas"]["LibraryRenameOut"];
         };
+        /** Data[ListeningHeartbeatResult] */
+        Data_ListeningHeartbeatResult_: {
+            data: components["schemas"]["ListeningHeartbeatResult"];
+        };
+        /** Data[ListeningStateOut] */
+        Data_ListeningStateOut_: {
+            data: components["schemas"]["nexus__schemas__consumption__ListeningStateOut"];
+        };
         /** Data[MediaNavigationOut] */
         Data_MediaNavigationOut_: {
             data: components["schemas"]["MediaNavigationOut"];
@@ -5482,6 +5501,10 @@ export interface components {
         /** Data[PublicShareOut] */
         Data_PublicShareOut_: {
             data: components["schemas"]["PublicShareOut"];
+        };
+        /** Data[QuickReadsOut] */
+        Data_QuickReadsOut_: {
+            data: components["schemas"]["QuickReadsOut"];
         };
         /** Data[ReaderDocumentMapOut] */
         Data_ReaderDocumentMapOut_: {
@@ -5849,12 +5872,12 @@ export interface components {
             failure: components["schemas"]["Presence_FailedEventPayload_"];
             /** Handle */
             handle: string;
-            instruction: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____"];
-            requester_user_id: components["schemas"]["Presence_UUID_"];
+            instruction: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____-Output"];
+            requester_user_id: components["schemas"]["Presence_UUID_-Output"];
         };
         /** DossierGenerateRequest */
         DossierGenerateRequest: {
-            instruction: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____"];
+            instruction: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____-Input"];
         };
         /**
          * DossierHeadOut
@@ -5865,7 +5888,7 @@ export interface components {
          */
         DossierHeadOut: {
             active_build: components["schemas"]["Presence_DossierBuildSummary_"];
-            artifact_id: components["schemas"]["Presence_UUID_"];
+            artifact_id: components["schemas"]["Presence_UUID_-Output"];
             artifact_ref: components["schemas"]["Presence_str_"];
             current_revision: components["schemas"]["Presence_DossierRevisionOut_"];
             freshness: components["schemas"]["Presence_Literal__Current____Stale___"];
@@ -5893,10 +5916,10 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
-            creator_user_id: components["schemas"]["Presence_UUID_"];
+            creator_user_id: components["schemas"]["Presence_UUID_-Output"];
             /** Input Manifest */
             input_manifest: components["schemas"]["MediaInputManifestV1"] | components["schemas"]["ConversationInputManifestV1"] | components["schemas"]["LibraryInputManifestV1"] | components["schemas"]["PodcastInputManifestV1"] | components["schemas"]["ContributorInputManifestV1"] | components["schemas"]["PageInputManifestV1"] | components["schemas"]["NoteInputManifestV1"] | components["schemas"]["IdeaInputManifestV1"];
-            instruction: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____"];
+            instruction: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____-Output"];
             model_name: components["schemas"]["Presence_str_"];
             model_provider: components["schemas"]["Presence_str_"];
             /** Revision Ref */
@@ -6364,14 +6387,14 @@ export interface components {
             artworkUrl: components["schemas"]["Presence_str_"];
             /** Chapters */
             chapters: components["schemas"]["ChapterOut"][];
-            consumptionOverrideRevision: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____"];
-            durationMs: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____"];
+            consumptionOverrideRevision: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____-Output"];
+            durationMs: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____-Output"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             kind: "FooterAudio";
-            pauseShorteningMode: components["schemas"]["Presence_Literal__Off____Natural___"];
+            pauseShorteningMode: components["schemas"]["Presence_Literal__Off____Natural___-Output"];
             playbackRate: components["schemas"]["PlaybackRateResolution"];
             /** Positionms */
             positionMs: number;
@@ -7011,7 +7034,7 @@ export interface components {
         };
         /** IndexFailed */
         IndexFailed: {
-            execution_id: components["schemas"]["Presence_UUID_"];
+            execution_id: components["schemas"]["Presence_UUID_-Output"];
             /**
              * Job Id
              * Format: uuid
@@ -7049,7 +7072,7 @@ export interface components {
         };
         /** IndexRetryScheduled */
         IndexRetryScheduled: {
-            execution_id: components["schemas"]["Presence_UUID_"];
+            execution_id: components["schemas"]["Presence_UUID_-Output"];
             /**
              * Job Id
              * Format: uuid
@@ -7467,8 +7490,8 @@ export interface components {
              * @default false
              */
             autoQueue: boolean;
-            defaultPlaybackSpeed: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____"];
-            pauseShorteningMode: components["schemas"]["Presence_Literal__Off____Natural___"];
+            defaultPlaybackSpeed: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____-Output"];
+            pauseShorteningMode: components["schemas"]["Presence_Literal__Off____Natural___-Output"];
             syncStatus: components["schemas"]["PodcastSyncStatus"];
         };
         /** LibraryEntryRemovalOut */
@@ -7811,13 +7834,13 @@ export interface components {
              * Format: date-time
              */
             occurredAt: string;
-            progressEnd: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____"];
-            progressStart: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____"];
+            progressEnd: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____-Input"];
+            progressStart: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____-Input"];
         };
         /** ListeningHeartbeatIn */
         ListeningHeartbeatIn: {
-            durationMs: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____"];
-            episodePlaybackRate: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____"];
+            durationMs: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____-Input"];
+            episodePlaybackRate: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____-Input"];
             /** Expectedresetepoch */
             expectedResetEpoch: number;
             /** Expectedwriterevision */
@@ -7831,6 +7854,17 @@ export interface components {
             heartbeatSequence: number;
             /** Positionms */
             positionMs: number;
+        };
+        /** ListeningHeartbeatResult */
+        ListeningHeartbeatResult: {
+            /**
+             * Heartbeatgeneration
+             * Format: uuid
+             */
+            heartbeatGeneration: string;
+            /** Heartbeatsequence */
+            heartbeatSequence: number;
+            listeningState: components["schemas"]["nexus__schemas__consumption__ListeningStateOut"];
         };
         /** LocalDayOut */
         LocalDayOut: {
@@ -8616,7 +8650,7 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
-            generation_id: components["schemas"]["Presence_UUID_"];
+            generation_id: components["schemas"]["Presence_UUID_-Output"];
             /**
              * Job Id
              * Format: uuid
@@ -8668,7 +8702,7 @@ export interface components {
         MetadataEnrichmentRequest: {
             /** Client Mutation Id */
             client_mutation_id: string;
-            expected_job_id: components["schemas"]["Presence_UUID_"];
+            expected_job_id: components["schemas"]["Presence_UUID_-Input"];
         };
         /** MetadataEnrichmentView */
         MetadataEnrichmentView: {
@@ -8689,7 +8723,7 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
-            generation_id: components["schemas"]["Presence_UUID_"];
+            generation_id: components["schemas"]["Presence_UUID_-Output"];
             /**
              * Job Id
              * Format: uuid
@@ -8719,7 +8753,7 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
-            generation_id: components["schemas"]["Presence_UUID_"];
+            generation_id: components["schemas"]["Presence_UUID_-Output"];
             /**
              * Job Id
              * Format: uuid
@@ -8741,7 +8775,7 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
-            generation_id: components["schemas"]["Presence_UUID_"];
+            generation_id: components["schemas"]["Presence_UUID_-Output"];
             /**
              * Job Id
              * Format: uuid
@@ -8762,7 +8796,7 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
-            generation_id: components["schemas"]["Presence_UUID_"];
+            generation_id: components["schemas"]["Presence_UUID_-Output"];
             /**
              * Job Id
              * Format: uuid
@@ -8779,7 +8813,7 @@ export interface components {
         MetadataRetry: components["schemas"]["MetadataRetryAllowed"] | components["schemas"]["MetadataRetryBlocked"];
         /** MetadataRetryAllowed */
         MetadataRetryAllowed: {
-            expected_job_id: components["schemas"]["Presence_UUID_"];
+            expected_job_id: components["schemas"]["Presence_UUID_-Output"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -8806,7 +8840,7 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
-            generation_id: components["schemas"]["Presence_UUID_"];
+            generation_id: components["schemas"]["Presence_UUID_-Output"];
             /**
              * Job Id
              * Format: uuid
@@ -8836,7 +8870,7 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
-            generation_id: components["schemas"]["Presence_UUID_"];
+            generation_id: components["schemas"]["Presence_UUID_-Output"];
             /**
              * Job Id
              * Format: uuid
@@ -8857,7 +8891,7 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
-            generation_id: components["schemas"]["Presence_UUID_"];
+            generation_id: components["schemas"]["Presence_UUID_-Output"];
             /**
              * Job Id
              * Format: uuid
@@ -9998,7 +10032,7 @@ export interface components {
              * Format: uuid
              */
             podcastId: string;
-            value: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____"];
+            value: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____-Output"];
         };
         /** PodcastPreview */
         PodcastPreview: {
@@ -10225,9 +10259,9 @@ export interface components {
             auto_queue: boolean;
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][];
-            default_playback_speed: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____"];
+            default_playback_speed: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____-Output"];
             latest_episode_published_at: components["schemas"]["Presence_datetime_"];
-            pause_shortening_mode: components["schemas"]["Presence_Literal__Off____Natural___"];
+            pause_shortening_mode: components["schemas"]["Presence_Literal__Off____Natural___-Output"];
             /**
              * Podcast Id
              * Format: uuid
@@ -10264,12 +10298,12 @@ export interface components {
             backfill: components["schemas"]["PodcastBackfillOut"];
             /** Collectionrevision */
             collectionRevision: number;
-            default_playback_speed: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____"];
+            default_playback_speed: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____-Output"];
             /** Last Checked At */
             last_checked_at: string | null;
             /** Libraryentriescollectionrevision */
             libraryEntriesCollectionRevision: number;
-            pause_shortening_mode: components["schemas"]["Presence_Literal__Off____Natural___"];
+            pause_shortening_mode: components["schemas"]["Presence_Literal__Off____Natural___-Output"];
             /**
              * Podcast Id
              * Format: uuid
@@ -10301,8 +10335,8 @@ export interface components {
         PodcastSubscriptionSettingsPatchRequest: {
             /** Auto Queue */
             auto_queue?: boolean | null;
-            default_playback_speed?: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____"];
-            pause_shortening_mode?: components["schemas"]["Presence_Literal__Off____Natural___"];
+            default_playback_speed?: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____-Input"];
+            pause_shortening_mode?: components["schemas"]["Presence_Literal__Off____Natural___-Input"];
         };
         /** PodcastSubscriptionStatusOut */
         PodcastSubscriptionStatusOut: {
@@ -10312,10 +10346,10 @@ export interface components {
              */
             auto_queue: boolean;
             backfill: components["schemas"]["PodcastBackfillOut"];
-            default_playback_speed: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____"];
+            default_playback_speed: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____-Output"];
             /** Last Checked At */
             last_checked_at: string | null;
-            pause_shortening_mode: components["schemas"]["Presence_Literal__Off____Natural___"];
+            pause_shortening_mode: components["schemas"]["Presence_Literal__Off____Natural___-Output"];
             /**
              * Podcast Id
              * Format: uuid
@@ -10345,76 +10379,83 @@ export interface components {
         };
         /** @enum {string} */
         PodcastSyncStatus: "Pending" | "Running" | "Complete" | "SourceLimited" | "Failed";
-        Presence_ActivitySessionOut_: components["schemas"]["Absent"] | components["schemas"]["Present_ActivitySessionOut_"];
-        Presence_Annotated_Union_MediaAbstractBuildingOut__MediaAbstractReadyOut__MediaAbstractStaleOut__MediaAbstractFailedOut__MediaAbstractNotAvailableOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_Union_MediaAbstractBuildingOut__MediaAbstractReadyOut__MediaAbstractStaleOut__MediaAbstractFailedOut__MediaAbstractNotAvailableOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
-        Presence_Annotated_Union_ResourceDossierIdentityOut__IdeaDossierIdentityOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_Union_ResourceDossierIdentityOut__IdeaDossierIdentityOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
-        Presence_Annotated_Union_RetryUploadOffer__RetrySourceOffer__RepairSourceOffer__RepairSearchOffer___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_Union_RetryUploadOffer__RetrySourceOffer__RepairSourceOffer__RepairSearchOffer___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
-        Presence_Annotated_Union_SourceStageProgress__SourceCountedProgress___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_Union_SourceStageProgress__SourceCountedProgress___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
-        Presence_Annotated_Union_UploadTransportNetworkFailure__UploadTransportTimeoutFailure__UploadTransportHttpRejectedFailure__UploadTransportAbortedFailure___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_Union_UploadTransportNetworkFailure__UploadTransportTimeoutFailure__UploadTransportHttpRejectedFailure__UploadTransportAbortedFailure___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
-        Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__0__0_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__0__0_____"];
-        Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____"];
-        Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____"];
-        Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____"];
-        Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_9223372036854775807_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_9223372036854775807_____"];
-        Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___Ge_ge_0___Le_le_2147483647_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___Ge_ge_0___Le_le_2147483647_____"];
-        Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___Ge_ge_1_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___Ge_ge_1_____"];
-        Presence_Annotated_list_Literal__media____library____evidence_span____content_chunk____highlight____page____note_block____fragment____conversation____message____oracle_reading____oracle_passage_anchor____artifact____artifact_revision____external_snapshot____contributor____podcast____reader_apparatus_item____passage_anchor_____FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_list_Literal__media____library____evidence_span____content_chunk____highlight____page____note_block____fragment____conversation____message____oracle_reading____oracle_passage_anchor____artifact____artifact_revision____external_snapshot____contributor____podcast____reader_apparatus_item____passage_anchor_____FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____"];
-        Presence_Annotated_str__AfterValidator__: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__AfterValidator__"];
-        Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____"];
-        Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1___MaxLen_max_length_128_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1___MaxLen_max_length_128_____"];
-        Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1___MaxLen_max_length_200_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1___MaxLen_max_length_200_____"];
-        Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____"];
-        Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__"];
-        Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____"];
-        "Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata___PydanticGeneralMetadata_pattern___ncc1_____A-Za-z0-9_-__22______A-Za-z0-9_-__22________": components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata___PydanticGeneralMetadata_pattern___ncc1_____A-Za-z0-9_-__22______A-Za-z0-9_-__22________"];
-        Presence_Annotated_str__StringConstraints__AfterValidator__: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__StringConstraints__AfterValidator__"];
-        Presence_AwareDatetime_: components["schemas"]["Absent"] | components["schemas"]["Present_AwareDatetime_"];
-        Presence_BrowseSort_: components["schemas"]["Absent"] | components["schemas"]["Present_BrowseSort_"];
-        Presence_CancelledEventPayload_: components["schemas"]["Absent"] | components["schemas"]["Present_CancelledEventPayload_"];
-        Presence_ChatPublicationWarning_: components["schemas"]["Absent"] | components["schemas"]["Present_ChatPublicationWarning_"];
-        Presence_ChatRunExecutionOut_: components["schemas"]["Absent"] | components["schemas"]["Present_ChatRunExecutionOut_"];
-        Presence_ConsumptionOut_: components["schemas"]["Absent"] | components["schemas"]["Present_ConsumptionOut_"];
-        Presence_DailyPageSummaryOut_: components["schemas"]["Absent"] | components["schemas"]["Present_DailyPageSummaryOut_"];
-        Presence_DossierBuildAdmittedGenerationOut_: components["schemas"]["Absent"] | components["schemas"]["Present_DossierBuildAdmittedGenerationOut_"];
-        Presence_DossierBuildExecution_: components["schemas"]["Absent"] | components["schemas"]["Present_DossierBuildExecution_"];
-        Presence_DossierBuildSummary_: components["schemas"]["Absent"] | components["schemas"]["Present_DossierBuildSummary_"];
-        Presence_DossierRevisionOut_: components["schemas"]["Absent"] | components["schemas"]["Present_DossierRevisionOut_"];
-        Presence_FailedEventPayload_: components["schemas"]["Absent"] | components["schemas"]["Present_FailedEventPayload_"];
-        Presence_HistoryEntry_: components["schemas"]["Absent"] | components["schemas"]["Present_HistoryEntry_"];
-        Presence_ImportSourceIssues_: components["schemas"]["Absent"] | components["schemas"]["Present_ImportSourceIssues_"];
-        Presence_LecternItemOut_: components["schemas"]["Absent"] | components["schemas"]["Present_LecternItemOut_"];
-        Presence_LibraryEntryPlacementOut_: components["schemas"]["Absent"] | components["schemas"]["Present_LibraryEntryPlacementOut_"];
-        Presence_LibraryEntryPodcastSubscriptionOut_: components["schemas"]["Absent"] | components["schemas"]["Present_LibraryEntryPodcastSubscriptionOut_"];
-        Presence_ListeningStateOut_: components["schemas"]["Absent"] | components["schemas"]["Present_ListeningStateOut_"];
-        Presence_Literal__Current____Stale___: components["schemas"]["Absent"] | components["schemas"]["Present_Literal__Current____Stale___"];
-        Presence_Literal__NotOwner____SameSourceTerminal____SourceNotReacquirable____UploadRejected___: components["schemas"]["Absent"] | components["schemas"]["Present_Literal__NotOwner____SameSourceTerminal____SourceNotReacquirable____UploadRejected___"];
-        Presence_Literal__Off____Natural___: components["schemas"]["Absent"] | components["schemas"]["Present_Literal__Off____Natural___"];
-        Presence_Literal__Publisher____Imported____Generated___: components["schemas"]["Absent"] | components["schemas"]["Present_Literal__Publisher____Imported____Generated___"];
-        Presence_Literal__Queue____Capacity____RetryBackoff___: components["schemas"]["Absent"] | components["schemas"]["Present_Literal__Queue____Capacity____RetryBackoff___"];
-        Presence_Literal__Upload____Validate____Extract____Finalize____Index____SourceProcessing___: components["schemas"]["Absent"] | components["schemas"]["Present_Literal__Upload____Validate____Extract____Finalize____Index____SourceProcessing___"];
-        Presence_MediaDurationOut_: components["schemas"]["Absent"] | components["schemas"]["Present_MediaDurationOut_"];
-        Presence_MediaNavigationOut_: components["schemas"]["Absent"] | components["schemas"]["Present_MediaNavigationOut_"];
-        Presence_MediaProgressState_: components["schemas"]["Absent"] | components["schemas"]["Present_MediaProgressState_"];
-        Presence_MetadataOperationOut_: components["schemas"]["Absent"] | components["schemas"]["Present_MetadataOperationOut_"];
-        Presence_MetadataSelection_: components["schemas"]["Absent"] | components["schemas"]["Present_MetadataSelection_"];
-        Presence_NavigationTextPointOut_: components["schemas"]["Absent"] | components["schemas"]["Present_NavigationTextPointOut_"];
-        Presence_NavigationTextRangeOut_: components["schemas"]["Absent"] | components["schemas"]["Present_NavigationTextRangeOut_"];
-        Presence_PlayerDescriptor_: components["schemas"]["Absent"] | components["schemas"]["Present_PlayerDescriptor_"];
-        Presence_PlayerDisplay_: components["schemas"]["Absent"] | components["schemas"]["Present_PlayerDisplay_"];
-        Presence_PodcastPlaybackPreference_: components["schemas"]["Absent"] | components["schemas"]["Present_PodcastPlaybackPreference_"];
-        Presence_PodcastReplacementConfirmation_: components["schemas"]["Absent"] | components["schemas"]["Present_PodcastReplacementConfirmation_"];
-        Presence_PublicHighlightOut_: components["schemas"]["Absent"] | components["schemas"]["Present_PublicHighlightOut_"];
-        Presence_ReaderSelectionInput_: components["schemas"]["Absent"] | components["schemas"]["Present_ReaderSelectionInput_"];
-        Presence_ReaderSelectionOut_: components["schemas"]["Absent"] | components["schemas"]["Present_ReaderSelectionOut_"];
-        Presence_ReaderTimeRange_: components["schemas"]["Absent"] | components["schemas"]["Present_ReaderTimeRange_"];
-        Presence_ReadingTimeEstimateOut_: components["schemas"]["Absent"] | components["schemas"]["Present_ReadingTimeEstimateOut_"];
-        Presence_ShareMembersOut_: components["schemas"]["Absent"] | components["schemas"]["Present_ShareMembersOut_"];
-        Presence_SourceFailureProgress_: components["schemas"]["Absent"] | components["schemas"]["Present_SourceFailureProgress_"];
-        Presence_UUID_: components["schemas"]["Absent"] | components["schemas"]["Present_UUID_"];
-        Presence_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_BILLING_REQUIRED____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_LLM_BAD_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_PODCAST_QUOTA_EXCEEDED____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_NOT_READABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____: components["schemas"]["Absent"] | components["schemas"]["Present_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_BILLING_REQUIRED____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_LLM_BAD_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_PODCAST_QUOTA_EXCEEDED____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_NOT_READABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____"];
-        Presence_datetime_: components["schemas"]["Absent"] | components["schemas"]["Present_datetime_"];
-        Presence_int_: components["schemas"]["Absent"] | components["schemas"]["Present_int_"];
-        Presence_str_: components["schemas"]["Absent"] | components["schemas"]["Present_str_"];
+        Presence_ActivitySessionOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ActivitySessionOut_"];
+        Presence_Annotated_Union_MediaAbstractBuildingOut__MediaAbstractReadyOut__MediaAbstractStaleOut__MediaAbstractFailedOut__MediaAbstractNotAvailableOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_Union_MediaAbstractBuildingOut__MediaAbstractReadyOut__MediaAbstractStaleOut__MediaAbstractFailedOut__MediaAbstractNotAvailableOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+        Presence_Annotated_Union_ResourceDossierIdentityOut__IdeaDossierIdentityOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_Union_ResourceDossierIdentityOut__IdeaDossierIdentityOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+        Presence_Annotated_Union_RetryUploadOffer__RetrySourceOffer__RepairSourceOffer__RepairSearchOffer___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_Union_RetryUploadOffer__RetrySourceOffer__RepairSourceOffer__RepairSearchOffer___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+        Presence_Annotated_Union_SourceStageProgress__SourceCountedProgress___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_Union_SourceStageProgress__SourceCountedProgress___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+        Presence_Annotated_Union_UploadTransportNetworkFailure__UploadTransportTimeoutFailure__UploadTransportHttpRejectedFailure__UploadTransportAbortedFailure___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_Union_UploadTransportNetworkFailure__UploadTransportTimeoutFailure__UploadTransportHttpRejectedFailure__UploadTransportAbortedFailure___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+        Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__0__0_____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__0__0_____"];
+        "Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____-Input": components["schemas"]["Absent-Input"] | components["schemas"]["Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____-Input"];
+        "Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____-Output": components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____-Output"];
+        "Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____-Input": components["schemas"]["Absent-Input"] | components["schemas"]["Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____-Input"];
+        "Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____-Output": components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____-Output"];
+        "Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____-Input": components["schemas"]["Absent-Input"] | components["schemas"]["Present_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____-Input"];
+        "Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____-Output": components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____-Output"];
+        Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_9223372036854775807_____: components["schemas"]["Absent-Input"] | components["schemas"]["Present_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_9223372036854775807_____"];
+        Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___Ge_ge_0___Le_le_2147483647_____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___Ge_ge_0___Le_le_2147483647_____"];
+        Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___Ge_ge_1_____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___Ge_ge_1_____"];
+        Presence_Annotated_list_Literal__media____library____evidence_span____content_chunk____highlight____page____note_block____fragment____conversation____message____oracle_reading____oracle_passage_anchor____artifact____artifact_revision____external_snapshot____contributor____podcast____reader_apparatus_item____passage_anchor_____FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____: components["schemas"]["Absent-Input"] | components["schemas"]["Present_Annotated_list_Literal__media____library____evidence_span____content_chunk____highlight____page____note_block____fragment____conversation____message____oracle_reading____oracle_passage_anchor____artifact____artifact_revision____external_snapshot____contributor____podcast____reader_apparatus_item____passage_anchor_____FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____"];
+        Presence_Annotated_str__AfterValidator__: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_str__AfterValidator__"];
+        "Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____-Input": components["schemas"]["Absent-Input"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____-Input"];
+        "Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____-Output": components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____-Output"];
+        Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1___MaxLen_max_length_128_____: components["schemas"]["Absent-Input"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1___MaxLen_max_length_128_____"];
+        Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1___MaxLen_max_length_200_____: components["schemas"]["Absent-Input"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1___MaxLen_max_length_200_____"];
+        Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____"];
+        "Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__-Input": components["schemas"]["Absent-Input"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__-Input"];
+        "Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__-Output": components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__-Output"];
+        Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____"];
+        "Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata___PydanticGeneralMetadata_pattern___ncc1_____A-Za-z0-9_-__22______A-Za-z0-9_-__22________": components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata___PydanticGeneralMetadata_pattern___ncc1_____A-Za-z0-9_-__22______A-Za-z0-9_-__22________"];
+        Presence_Annotated_str__StringConstraints__AfterValidator__: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_str__StringConstraints__AfterValidator__"];
+        Presence_AwareDatetime_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_AwareDatetime_"];
+        Presence_BrowseSort_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_BrowseSort_"];
+        Presence_CancelledEventPayload_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_CancelledEventPayload_"];
+        Presence_ChatPublicationWarning_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ChatPublicationWarning_"];
+        Presence_ChatRunExecutionOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ChatRunExecutionOut_"];
+        Presence_ConsumptionOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ConsumptionOut_"];
+        Presence_DailyPageSummaryOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_DailyPageSummaryOut_"];
+        Presence_DossierBuildAdmittedGenerationOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_DossierBuildAdmittedGenerationOut_"];
+        Presence_DossierBuildExecution_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_DossierBuildExecution_"];
+        Presence_DossierBuildSummary_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_DossierBuildSummary_"];
+        Presence_DossierRevisionOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_DossierRevisionOut_"];
+        Presence_FailedEventPayload_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_FailedEventPayload_"];
+        Presence_HistoryEntry_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_HistoryEntry_"];
+        Presence_ImportSourceIssues_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ImportSourceIssues_"];
+        Presence_LecternItemOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_LecternItemOut_"];
+        Presence_LibraryEntryPlacementOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_LibraryEntryPlacementOut_"];
+        Presence_LibraryEntryPodcastSubscriptionOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_LibraryEntryPodcastSubscriptionOut_"];
+        Presence_ListeningStateOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ListeningStateOut_"];
+        Presence_Literal__Current____Stale___: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Literal__Current____Stale___"];
+        Presence_Literal__NotOwner____SameSourceTerminal____SourceNotReacquirable____UploadRejected___: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Literal__NotOwner____SameSourceTerminal____SourceNotReacquirable____UploadRejected___"];
+        "Presence_Literal__Off____Natural___-Input": components["schemas"]["Absent-Input"] | components["schemas"]["Present_Literal__Off____Natural___-Input"];
+        "Presence_Literal__Off____Natural___-Output": components["schemas"]["Absent-Output"] | components["schemas"]["Present_Literal__Off____Natural___-Output"];
+        Presence_Literal__Publisher____Imported____Generated___: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Literal__Publisher____Imported____Generated___"];
+        Presence_Literal__Queue____Capacity____RetryBackoff___: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Literal__Queue____Capacity____RetryBackoff___"];
+        Presence_Literal__Upload____Validate____Extract____Finalize____Index____SourceProcessing___: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Literal__Upload____Validate____Extract____Finalize____Index____SourceProcessing___"];
+        Presence_MediaDurationOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MediaDurationOut_"];
+        Presence_MediaNavigationOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MediaNavigationOut_"];
+        Presence_MediaProgressState_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MediaProgressState_"];
+        Presence_MetadataOperationOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MetadataOperationOut_"];
+        Presence_MetadataSelection_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MetadataSelection_"];
+        Presence_NavigationTextPointOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_NavigationTextPointOut_"];
+        Presence_NavigationTextRangeOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_NavigationTextRangeOut_"];
+        Presence_PlayerDescriptor_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_PlayerDescriptor_"];
+        Presence_PlayerDisplay_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_PlayerDisplay_"];
+        Presence_PodcastPlaybackPreference_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_PodcastPlaybackPreference_"];
+        Presence_PodcastReplacementConfirmation_: components["schemas"]["Absent-Input"] | components["schemas"]["Present_PodcastReplacementConfirmation_"];
+        Presence_PublicHighlightOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_PublicHighlightOut_"];
+        Presence_ReaderSelectionInput_: components["schemas"]["Absent-Input"] | components["schemas"]["Present_ReaderSelectionInput_"];
+        Presence_ReaderSelectionOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ReaderSelectionOut_"];
+        Presence_ReaderTimeRange_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ReaderTimeRange_"];
+        Presence_ReadingTimeEstimateOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ReadingTimeEstimateOut_"];
+        Presence_ShareMembersOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ShareMembersOut_"];
+        Presence_SourceFailureProgress_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_SourceFailureProgress_"];
+        "Presence_UUID_-Input": components["schemas"]["Absent-Input"] | components["schemas"]["Present_UUID_-Input"];
+        "Presence_UUID_-Output": components["schemas"]["Absent-Output"] | components["schemas"]["Present_UUID_-Output"];
+        Presence_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_BILLING_REQUIRED____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_LLM_BAD_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_PODCAST_QUOTA_EXCEEDED____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_NOT_READABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_BILLING_REQUIRED____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_LLM_BAD_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_PODCAST_QUOTA_EXCEEDED____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_NOT_READABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____"];
+        Presence_datetime_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_datetime_"];
+        Presence_int_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_int_"];
+        Presence_str_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_str_"];
         /** Present[ActivitySessionOut] */
         Present_ActivitySessionOut_: {
             /**
@@ -10485,7 +10526,17 @@ export interface components {
             value: number;
         };
         /** Present[Annotated[float, FieldInfo(annotation=NoneType, required=True, metadata=[Ge(ge=0), Le(le=1)])]] */
-        Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____: {
+        "Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /** Value */
+            value: number;
+        };
+        /** Present[Annotated[float, FieldInfo(annotation=NoneType, required=True, metadata=[Ge(ge=0), Le(le=1)])]] */
+        "Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____-Output": {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -10495,7 +10546,17 @@ export interface components {
             value: number;
         };
         /** Present[Annotated[float, FieldInfo(annotation=NoneType, required=True, metadata=[Strict(strict=True), Ge(ge=0.5), Le(le=3)])]] */
-        Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____: {
+        "Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /** Value */
+            value: number;
+        };
+        /** Present[Annotated[float, FieldInfo(annotation=NoneType, required=True, metadata=[Strict(strict=True), Ge(ge=0.5), Le(le=3)])]] */
+        "Present_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____-Output": {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -10505,7 +10566,17 @@ export interface components {
             value: number;
         };
         /** Present[Annotated[int, FieldInfo(annotation=NoneType, required=True, metadata=[Ge(ge=0), Le(le=2147483647)])]] */
-        Present_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____: {
+        "Present_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /** Value */
+            value: number;
+        };
+        /** Present[Annotated[int, FieldInfo(annotation=NoneType, required=True, metadata=[Ge(ge=0), Le(le=2147483647)])]] */
+        "Present_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____-Output": {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -10565,7 +10636,17 @@ export interface components {
             value: string;
         };
         /** Present[Annotated[str, FieldInfo(annotation=NoneType, required=True, metadata=[MaxLen(max_length=4000)])]] */
-        Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____: {
+        "Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /** Value */
+            value: string;
+        };
+        /** Present[Annotated[str, FieldInfo(annotation=NoneType, required=True, metadata=[MaxLen(max_length=4000)])]] */
+        "Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____-Output": {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -10605,7 +10686,17 @@ export interface components {
             value: string;
         };
         /** Present[Annotated[str, FieldInfo(annotation=NoneType, required=True, metadata=[MinLen(min_length=1)]), AfterValidator]] */
-        Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__: {
+        "Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /** Value */
+            value: string;
+        };
+        /** Present[Annotated[str, FieldInfo(annotation=NoneType, required=True, metadata=[MinLen(min_length=1)]), AfterValidator]] */
+        "Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__-Output": {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -10837,7 +10928,20 @@ export interface components {
             value: "NotOwner" | "SameSourceTerminal" | "SourceNotReacquirable" | "UploadRejected";
         };
         /** Present[Literal['Off', 'Natural']] */
-        Present_Literal__Off____Natural___: {
+        "Present_Literal__Off____Natural___-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /**
+             * Value
+             * @enum {string}
+             */
+            value: "Off" | "Natural";
+        };
+        /** Present[Literal['Off', 'Natural']] */
+        "Present_Literal__Off____Natural___-Output": {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -11051,7 +11155,20 @@ export interface components {
             value: components["schemas"]["SourceFailureProgress"];
         };
         /** Present[UUID] */
-        Present_UUID_: {
+        "Present_UUID_-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /**
+             * Value
+             * Format: uuid
+             */
+            value: string;
+        };
+        /** Present[UUID] */
+        "Present_UUID_-Output": {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -11108,7 +11225,7 @@ export interface components {
         };
         /** PreviewPositionIn */
         PreviewPositionIn: {
-            durationMs: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____"];
+            durationMs: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____-Input"];
             /** Positionms */
             positionMs: number;
         };
@@ -11314,6 +11431,11 @@ export interface components {
             /** Target Ref */
             target_ref: string;
         };
+        /** QuickReadsOut */
+        QuickReadsOut: {
+            /** Items */
+            items: components["schemas"]["SlateItemOut"][];
+        };
         /** ReadableActivation */
         ReadableActivation: {
             /**
@@ -11452,7 +11574,7 @@ export interface components {
         };
         /** ReaderEpubTarget */
         "ReaderEpubTarget-Input": {
-            anchor_id: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__"];
+            anchor_id: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__-Input"];
             /**
              * Fragment Id
              * Format: uuid
@@ -11463,7 +11585,7 @@ export interface components {
         };
         /** ReaderEpubTarget */
         "ReaderEpubTarget-Output": {
-            anchor_id: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__"];
+            anchor_id: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__-Output"];
             /**
              * Fragment Id
              * Format: uuid
@@ -12055,8 +12177,8 @@ export interface components {
              * Format: date-time
              */
             occurredAt: string;
-            progressEnd: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____"];
-            progressStart: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____"];
+            progressEnd: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____-Input"];
+            progressStart: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____-Input"];
             wordEnd: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_9223372036854775807_____"];
             wordStart: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_9223372036854775807_____"];
         };
@@ -13674,7 +13796,7 @@ export interface components {
              * Format: uuid
              */
             clientMutationId: string;
-            expectedConsumptionOverrideRevision: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____"];
+            expectedConsumptionOverrideRevision: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____-Input"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -13790,7 +13912,7 @@ export interface components {
         };
         /** SourceFailed */
         SourceFailed: {
-            execution_id: components["schemas"]["Presence_UUID_"];
+            execution_id: components["schemas"]["Presence_UUID_-Output"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -13898,7 +14020,7 @@ export interface components {
         };
         /** SourceRetryScheduled */
         SourceRetryScheduled: {
-            execution_id: components["schemas"]["Presence_UUID_"];
+            execution_id: components["schemas"]["Presence_UUID_-Output"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -13957,7 +14079,7 @@ export interface components {
          *     execution that predates the execution-identity cut.
          */
         SourceSucceeded: {
-            execution_id: components["schemas"]["Presence_UUID_"];
+            execution_id: components["schemas"]["Presence_UUID_-Output"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -14142,8 +14264,8 @@ export interface components {
         };
         /** TerminalListeningIn */
         TerminalListeningIn: {
-            durationMs: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____"];
-            episodePlaybackRate: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____"];
+            durationMs: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____-Input"];
+            episodePlaybackRate: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____-Input"];
             /** Expectedresetepoch */
             expectedResetEpoch: number;
             /** Expectedwriterevision */
@@ -15188,8 +15310,8 @@ export interface components {
         };
         /** ListeningStateOut */
         nexus__schemas__consumption__ListeningStateOut: {
-            durationMs: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____"];
-            episodePlaybackRate: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____"];
+            durationMs: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____-Output"];
+            episodePlaybackRate: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____-Output"];
             /** Positionms */
             positionMs: number;
             /** Resetepoch */
@@ -17352,9 +17474,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_QuickReadsOut_"];
                 };
             };
         };
@@ -17374,9 +17494,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_SlateOut_"];
                 };
             };
         };
@@ -19099,9 +19217,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ListeningStateOut_"];
                 };
             };
             /** @description Validation Error */
@@ -19136,9 +19252,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ListeningHeartbeatResult_"];
                 };
             };
             /** @description Validation Error */

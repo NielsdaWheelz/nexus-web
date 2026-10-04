@@ -27,7 +27,7 @@ class Absent(BaseModel):
 
     kind: Literal["Absent"] = "Absent"
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
 
 class Present[T](BaseModel):
@@ -36,7 +36,7 @@ class Present[T](BaseModel):
     kind: Literal["Present"] = "Present"
     value: T
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
 
 # Generic alias usable directly as a field annotation, e.g. `Presence[int]`.

@@ -1,40 +1,21 @@
-/** Lectern and consumption HTTP transport with one native-to-domain projection. */
+/** native responses cross the HTTP boundary once, then acquire domain identities. */
 
 import { apiFetch, decodeApiPayload } from "@/lib/api/client";
 import { decodeCollectionRevision } from "@/lib/api/collectionPage";
-import { absent, present } from "@/lib/api/presence";
-import type { ApiJson, Schema } from "@/lib/api/wire";
+import type { ApiJson } from "@/lib/api/wire";
 import {
-  assumeAppHref,
-  assumeLecternItemId,
-  assumeMediaId,
+  lecternItemFromWire,
+  lecternSnapshotFromWire,
   parseCompletionHandle,
+  parseLecternItemId,
+  parseMediaId,
   type ConsumptionCommand,
   type ConsumptionResult,
   type LecternCommand,
-  type LecternItem,
   type LecternResult,
   type LecternSnapshot,
 } from "@/lib/lectern/contract";
-import { mediaSummaryFromWire } from "@/lib/media/mediaSummary";
-import { canonicalResourceRef } from "@/lib/sharing/targets";
-
-function itemFromWire(item: Schema<"LecternItemOut">): LecternItem {
-  const mediaSummary = mediaSummaryFromWire(item.mediaSummary);
-  return {
-    ...item,
-    itemId: assumeLecternItemId(item.itemId),
-    mediaSummary,
-    href: assumeAppHref(item.href),
-    actionSubject: {
-      ref: canonicalResourceRef({ scheme: "media", id: mediaSummary.mediaId }),
-    },
-  };
-}
-
-function snapshotFromWire(snapshot: Schema<"LecternSnapshot">): LecternSnapshot {
-  return { items: snapshot.items.map(itemFromWire) };
-}
+import { parseReaderCursorSnapshot } from "@/lib/reader/readerProgress";
 
 export async function getLectern(options: {
   signal?: AbortSignal;
@@ -43,7 +24,7 @@ export async function getLectern(options: {
   const body = await apiFetch<ApiJson<"/lectern", "get">>("/api/lectern", options);
   return decodeApiPayload(
     body,
-    ({ data }) => snapshotFromWire(data),
+    (response) => lecternSnapshotFromWire(response.data),
     "GET /api/lectern",
   );
 }
@@ -58,22 +39,16 @@ export async function postLecternCommand(
   );
   return decodeApiPayload(
     body,
-    ({ data }): LecternResult => {
-      const lectern = snapshotFromWire(data.lectern);
-      switch (data.outcome.kind) {
-        case "Placed":
-          return {
-            outcome: { kind: "Placed", itemIds: data.outcome.itemIds.map(assumeLecternItemId) },
-            lectern,
-          };
-        case "Removed":
-          return {
-            outcome: { kind: "Removed", itemId: assumeLecternItemId(data.outcome.itemId) },
-            lectern,
-          };
-        case "Ordered":
-          return { outcome: { kind: "Ordered" }, lectern };
-      }
+    (response): LecternResult => {
+      const { outcome, lectern } = response.data;
+      return {
+        outcome: outcome.kind === "Placed"
+          ? { ...outcome, itemIds: outcome.itemIds.map(parseLecternItemId) }
+          : outcome.kind === "Removed"
+            ? { ...outcome, itemId: parseLecternItemId(outcome.itemId) }
+            : outcome,
+        lectern: lecternSnapshotFromWire(lectern),
+      };
     },
     "POST /api/lectern/commands",
   );
@@ -89,33 +64,41 @@ export async function postConsumptionCommand(
   );
   return decodeApiPayload(
     body,
-    ({ data }): ConsumptionResult => ({
-      outcome: data.outcome.kind === "Removed"
-        ? {
-            kind: "Removed",
-            itemId: assumeLecternItemId(data.outcome.itemId),
-            nextItemId: data.outcome.nextItemId.kind === "Present"
-              ? present(assumeLecternItemId(data.outcome.nextItemId.value))
-              : absent(),
-          }
-        : data.outcome,
-      lectern: snapshotFromWire(data.lectern),
-      nextItem: data.nextItem.kind === "Present"
-        ? present(itemFromWire(data.nextItem.value))
-        : absent(),
-      progressState: data.progressState.kind === "Present"
-        ? present({
-            ...data.progressState.value,
-            mediaId: assumeMediaId(data.progressState.value.mediaId),
-          })
-        : absent(),
-      completionHandle: data.completionHandle.kind === "Present"
-        ? present(parseCompletionHandle(data.completionHandle.value))
-        : absent(),
-      libraryEntriesCollectionRevision: decodeCollectionRevision(
-        data.libraryEntriesCollectionRevision,
-      ),
-    }),
+    (response): ConsumptionResult => {
+      const result = response.data;
+      const outcome = result.outcome;
+      return {
+        outcome: outcome.kind === "Removed"
+          ? {
+              ...outcome,
+              itemId: parseLecternItemId(outcome.itemId),
+              nextItemId: outcome.nextItemId.kind === "Present"
+                ? { kind: "Present", value: parseLecternItemId(outcome.nextItemId.value) }
+                : outcome.nextItemId,
+            }
+          : outcome,
+        lectern: lecternSnapshotFromWire(result.lectern),
+        nextItem: result.nextItem.kind === "Present"
+          ? { kind: "Present", value: lecternItemFromWire(result.nextItem.value) }
+          : result.nextItem,
+        progressState: result.progressState.kind === "Present"
+          ? {
+              kind: "Present",
+              value: {
+                ...result.progressState.value,
+                mediaId: parseMediaId(result.progressState.value.mediaId),
+                readerCursor: parseReaderCursorSnapshot(result.progressState.value.readerCursor),
+              },
+            }
+          : result.progressState,
+        completionHandle: result.completionHandle.kind === "Present"
+          ? { kind: "Present", value: parseCompletionHandle(result.completionHandle.value) }
+          : result.completionHandle,
+        libraryEntriesCollectionRevision: decodeCollectionRevision(
+          result.libraryEntriesCollectionRevision,
+        ),
+      };
+    },
     "POST /api/consumption/commands",
   );
 }
