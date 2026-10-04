@@ -3935,6 +3935,16 @@ export interface components {
             /** Selection */
             selection: components["schemas"]["CodexPersonalSelection"] | components["schemas"]["ProviderApiSelection"];
         };
+        /** ChatSeed */
+        ChatSeed: {
+            /** Policy Revision */
+            policy_revision: string;
+            presentation: components["schemas"]["SelectionPresentation"];
+            /** Selection */
+            selection: components["schemas"]["CodexPersonalSelection"] | components["schemas"]["ProviderApiSelection"];
+            /** State */
+            state: components["schemas"]["Selectable"] | components["schemas"]["Ineligible"] | components["schemas"]["OperatorActionRequired"] | components["schemas"]["TemporarilyUnavailable"];
+        };
         /** CitationOut */
         CitationOut: {
             activation: components["schemas"]["ResourceActivationOut"];
@@ -4003,6 +4013,14 @@ export interface components {
             run_id: components["schemas"]["Presence_UUID_"];
             /** Visit Id */
             visit_id: string;
+        };
+        /** CodexPersonalRoute */
+        CodexPersonalRoute: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "CodexPersonal";
         };
         /** CodexPersonalSelection */
         CodexPersonalSelection: {
@@ -4700,6 +4718,10 @@ export interface components {
         /** Data[DossierHeadOut] */
         Data_DossierHeadOut_: {
             data: components["schemas"]["DossierHeadOut"];
+        };
+        /** Data[GenerationCatalog] */
+        Data_GenerationCatalog_: {
+            data: components["schemas"]["GenerationCatalog"];
         };
         /** Data[HistoryPage] */
         Data_HistoryPage_: {
@@ -5707,6 +5729,69 @@ export interface components {
              */
             kind: "Full";
         };
+        /** @enum {string} */
+        GenerationApiProvider: "openai" | "anthropic" | "gemini" | "deepseek" | "xai";
+        /** GenerationCatalog */
+        GenerationCatalog: {
+            chat_seed: components["schemas"]["ChatSeed"];
+            /** Definition Revision */
+            definition_revision: string;
+            /**
+             * Observed At
+             * Format: date-time
+             */
+            observed_at: string;
+            /** Routes */
+            routes: components["schemas"]["GenerationCatalogRoute"][];
+        };
+        /** GenerationCatalogRoute */
+        GenerationCatalogRoute: {
+            /** Billing */
+            billing: components["schemas"]["SubscriptionBilling"] | components["schemas"]["MeteredApiBilling"];
+            /** Label */
+            label: string;
+            /** Models */
+            models: components["schemas"]["GenerationModelRow"][];
+            privacy: components["schemas"]["PrivacyDisclosure"];
+            processor_chain: components["schemas"]["ProcessorChain"];
+            /** Readiness */
+            readiness: components["schemas"]["Ready"] | components["schemas"]["OperatorActionRequired"] | components["schemas"]["TemporarilyUnavailable"];
+            /** Route */
+            route: components["schemas"]["CodexPersonalRoute"] | components["schemas"]["ProviderApiRoute"];
+        };
+        /** GenerationModelRow */
+        GenerationModelRow: {
+            /** Description */
+            description: string;
+            /** Effective Chat Context Budget Tokens */
+            effective_chat_context_budget_tokens: number;
+            /** Effective Chat Output Budget Tokens */
+            effective_chat_output_budget_tokens: number;
+            /** Input Modalities */
+            input_modalities: ("text" | "image")[];
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Readiness */
+            readiness: components["schemas"]["Ready"] | components["schemas"]["OperatorActionRequired"] | components["schemas"]["TemporarilyUnavailable"];
+            /** Reasoning */
+            reasoning: components["schemas"]["GenerationReasoningRow"][];
+            source_context_window: components["schemas"]["Presence_int_"];
+            source_default_reasoning: components["schemas"]["Presence_str_"];
+            source_max_output_tokens: components["schemas"]["Presence_int_"];
+        };
+        /** GenerationReasoningRow */
+        GenerationReasoningRow: {
+            /** Chat State */
+            chat_state: components["schemas"]["Selectable"] | components["schemas"]["Ineligible"] | components["schemas"]["OperatorActionRequired"] | components["schemas"]["TemporarilyUnavailable"];
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Readiness */
+            readiness: components["schemas"]["Ready"] | components["schemas"]["OperatorActionRequired"] | components["schemas"]["TemporarilyUnavailable"];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -6149,6 +6234,21 @@ export interface components {
             kind: "IndexSuperseded";
             /** Revision */
             revision: number;
+        };
+        /** Ineligible */
+        Ineligible: {
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "unsupported_capability" | "selection_not_configured";
+            /** Explanation */
+            explanation: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Ineligible";
         };
         /** InheritedLibraryPlacementRelationOut */
         InheritedLibraryPlacementRelationOut: {
@@ -7967,6 +8067,28 @@ export interface components {
              */
             kind: "OpenSource";
         };
+        /** OperatorActionRequired */
+        OperatorActionRequired: {
+            /** Action */
+            action: string;
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "catalog_refresh_failed" | "codex_host_unavailable" | "credential_unavailable" | "required_tool_unavailable";
+            /** Explanation */
+            explanation: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "OperatorActionRequired";
+            /**
+             * Last Checked
+             * Format: date-time
+             */
+            last_checked: string;
+        };
         /** OracleBindEventPayload */
         OracleBindEventPayload: {
             /** Folio Motto */
@@ -9462,6 +9584,15 @@ export interface components {
             /** Phase */
             phase: string;
         };
+        /** ProviderApiRoute */
+        ProviderApiRoute: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ProviderApi";
+            provider: components["schemas"]["GenerationApiProvider"];
+        };
         /** ProviderApiSelection */
         ProviderApiSelection: {
             /** Model Ref */
@@ -10262,6 +10393,19 @@ export interface components {
             remainingMinutes: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___Ge_ge_0___Le_le_2147483647_____"];
             /** Totalminutes */
             totalMinutes: number;
+        };
+        /** Ready */
+        Ready: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Ready";
+            /**
+             * Last Checked
+             * Format: date-time
+             */
+            last_checked: string;
         };
         /** ReceivedUserShareOut */
         ReceivedUserShareOut: {
@@ -11707,6 +11851,14 @@ export interface components {
             /** Url */
             url: string;
         };
+        /** Selectable */
+        Selectable: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Selectable";
+        };
         /** SelectionPresentation */
         SelectionPresentation: {
             /** Billing */
@@ -12268,6 +12420,28 @@ export interface components {
         SynapseScanRequest: {
             /** Ref */
             ref: string;
+        };
+        /** TemporarilyUnavailable */
+        TemporarilyUnavailable: {
+            /** Action */
+            action: string;
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "catalog_refresh_failed" | "codex_host_unavailable" | "credential_unavailable" | "required_tool_unavailable";
+            /** Explanation */
+            explanation: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "TemporarilyUnavailable";
+            /**
+             * Last Checked
+             * Format: date-time
+             */
+            last_checked: string;
         };
         /** TerminalListeningIn */
         TerminalListeningIn: {
@@ -15868,9 +16042,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_GenerationCatalog_"];
                 };
             };
         };
