@@ -44,8 +44,6 @@ export interface LoadedDocumentReaderSession {
   readonly progress: ReaderProgressView;
 }
 
-export type ReaderInitialEpubTarget = { kind: "Section" | "Fragment"; id: string };
-
 export interface DocumentReaderSession {
   load(signal: AbortSignal): Promise<LoadedDocumentReaderSession>;
   /**
@@ -55,7 +53,6 @@ export interface DocumentReaderSession {
    */
   invalidate(): void;
   seedDescriptor(descriptor: ReaderMedia): void;
-  seedInitialEpubTarget(target: ReaderInitialEpubTarget | null): void;
   loadNavigation(signal: AbortSignal): Promise<ReaderNavigation>;
   /** Read current rendered bytes under one stable publication generation. */
   loadPublicationRefresh(fragmentId: Presence<string>, mountedGeneration: number, signal: AbortSignal): Promise<{
@@ -206,7 +203,6 @@ export function createDocumentReaderSession({
   let loaded: LoadedDocumentReaderSession | null = null;
   let pendingLoad: Promise<LoadedDocumentReaderSession> | null = null;
   let loadGeneration = 0;
-  let initialEpubTarget: ReaderInitialEpubTarget | null = null;
 
   const loadOnce = async (
     signal: AbortSignal,
@@ -248,14 +244,8 @@ export function createDocumentReaderSession({
       case "epub": {
         const navigation = await source.loadNavigation(mediaId, signal);
         const locator = preferredReaderLocator(progressView);
-        const initialFragmentId = initialEpubTarget === null
-          ? navigation.fragments[0]?.fragment_id
-          : initialEpubTarget.kind === "Fragment"
-            ? initialEpubTarget.id
-            : navigation.sections.find((section) => section.section_id === initialEpubTarget?.id)?.target.fragment_id;
-        const fragmentId = initialEpubTarget?.kind === "Fragment"
-          ? initialFragmentId
-          : locator?.kind === "epub" ? locator.target.fragment_id : initialFragmentId;
+        const fragmentId = locator?.kind === "epub"
+          ? locator.target.fragment_id : navigation.fragments[0]?.fragment_id;
         if (fragmentId === undefined || !navigation.fragments.some((fragment) => fragment.fragment_id === fragmentId)) {
           throw new ApiError(409, "E_READER_CONTENT_CHANGED", "The requested EPUB fragment is unavailable. Reload the document.");
         }
@@ -305,11 +295,6 @@ export function createDocumentReaderSession({
     progress,
     seedDescriptor: (descriptor) => {
       descriptorSeed = descriptor;
-    },
-    seedInitialEpubTarget: (target) => {
-      if (loaded === null && pendingLoad === null) {
-        initialEpubTarget = target;
-      }
     },
     load,
     invalidate: () => {
