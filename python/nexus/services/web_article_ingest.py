@@ -27,7 +27,11 @@ from nexus.services.document_embeds import (
     replace_document_embed_artifact,
 )
 from nexus.services.fragment_blocks import insert_fragment_blocks
-from nexus.services.html_apparatus import attach_fragment_locators, derive_fragment_note_groups
+from nexus.services.html_apparatus import (
+    accepted_apparatus_spans,
+    attach_fragment_locators,
+    derive_fragment_note_groups,
+)
 from nexus.services.media_author_observation_seam import attach_author_observation
 from nexus.services.node_ingest import (
     IngestError,
@@ -270,6 +274,7 @@ def _replace_projection(
     if ingest_result.title:
         media.title = ingest_result.title[:255]
     _persist_web_metadata(db, media, ingest_result)
+    accepted_spans = accepted_apparatus_spans(prepared.structure, prepared.canonical_text)
     replace_media_apparatus(
         db,
         media_id=media_id,
@@ -279,6 +284,7 @@ def _replace_projection(
             media_kind="web_article",
             canonical_text=prepared.canonical_text,
             items=source_apparatus.apparatus_items,
+            accepted_spans=accepted_spans,
             html_sanitized=prepared.html_sanitized,
         ),
         edges=source_apparatus.apparatus_edges,
@@ -286,6 +292,8 @@ def _replace_projection(
             prepared.html_sanitized,
             prepared.canonical_text,
             fragment.id,
+            structure=prepared.structure,
+            accepted_spans=accepted_spans,
             source_html=ingest_result.content_html,
         ),
     )

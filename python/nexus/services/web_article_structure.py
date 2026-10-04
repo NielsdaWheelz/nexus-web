@@ -18,6 +18,7 @@ from nexus.schemas.presence import Presence, Present, absent, present
 from nexus.schemas.reader_apparatus import NoteRegion
 from nexus.services.canonicalize import (
     HEADING_TAGS,
+    CanonicalStructure,
     canonicalize_structure,
     generate_canonical_text,
 )
@@ -78,12 +79,16 @@ class WebArticleDocumentEmbed:
 @dataclass(frozen=True)
 class WebArticlePreparedFragment:
     html_sanitized: str
-    canonical_text: str
+    structure: CanonicalStructure
     fragment_blocks: list[FragmentBlockSpec]
     apparatus_items: list[dict[str, object]]
     apparatus_edges: list[dict[str, object]]
     document_embeds: list[WebArticleDocumentEmbed]
     document_embed_extraction_failed: bool = False
+
+    @property
+    def canonical_text(self) -> str:
+        return self.structure.text
 
 
 @dataclass(frozen=True)
@@ -195,12 +200,13 @@ def prepare_web_article_fragment(
         ),
         fragment_idx=fragment_idx,
     )
-    canonical_text = generate_canonical_text(html_sanitized)
+    structure = canonicalize_structure(html_sanitized)
+    canonical_text = structure.text
     document_embeds = _bind_document_embeds(canonical_text, detected_embeds)
     if not canonical_text.strip():
         return WebArticlePreparedFragment(
             html_sanitized=html_sanitized,
-            canonical_text=canonical_text,
+            structure=structure,
             fragment_blocks=[FragmentBlockSpec(0, 0, 0)],
             apparatus_items=[],
             apparatus_edges=[],
@@ -209,7 +215,7 @@ def prepare_web_article_fragment(
         )
     return WebArticlePreparedFragment(
         html_sanitized=html_sanitized,
-        canonical_text=canonical_text,
+        structure=structure,
         fragment_blocks=[
             FragmentBlockSpec(block_idx=index, start_offset=start, end_offset=end)
             for index, (start, end, _text) in enumerate(

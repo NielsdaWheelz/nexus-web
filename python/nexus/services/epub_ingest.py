@@ -87,6 +87,7 @@ from nexus.services.fragment_blocks import (
 from nexus.services.html_apparatus import (
     HtmlApparatusAmbiguousMarker,
     HtmlApparatusTargetLimitExceeded,
+    accepted_apparatus_spans,
     attach_fragment_locators,
     collect_html_apparatus_candidate_backlinks,
     collect_html_apparatus_marker_backlinks,
@@ -666,8 +667,10 @@ def _build_plan(
                 apparatus_items=apparatus_items,
                 source_canonical_text=source_canonical_text,
                 source_html_sanitized=source_html_sanitized,
+                source_spans=accepted_apparatus_spans(source_structure, source_canonical_text),
                 retained_canonical_text=retained.canonical_text,
                 retained_html_sanitized=html_sanitized,
+                retained_spans=accepted_apparatus_spans(canonical, retained.canonical_text),
             )
             _verify_retained_epub_targets(
                 source=source_structure,
@@ -713,7 +716,9 @@ def _build_plan(
 
     apparatus_items: list[dict[str, object]] = []
     note_groups: list[NotesGroup] = []
-    for spec in fragment_specs:
+    for spec, structure_fragment in zip(fragment_specs, structure_fragments, strict=True):
+        structure = structure_fragment.canonical
+        accepted_spans = accepted_apparatus_spans(structure, spec.fragment.canonical_text)
         apparatus_items.extend(
             attach_fragment_locators(
                 media_id=media_id,
@@ -721,6 +726,7 @@ def _build_plan(
                 media_kind="epub",
                 canonical_text=spec.fragment.canonical_text,
                 items=spec.apparatus_items,
+                accepted_spans=accepted_spans,
                 html_sanitized=spec.fragment.html_sanitized,
             )
         )
@@ -729,6 +735,8 @@ def _build_plan(
                 spec.fragment.html_sanitized,
                 spec.fragment.canonical_text,
                 spec.fragment.id,
+                structure=structure,
+                accepted_spans=accepted_spans,
                 source_html=(
                     attempt_directory / f"chapter-{spec.chapter.spine_idx}.html"
                 ).read_text(encoding="utf-8"),
@@ -1366,8 +1374,10 @@ def _verify_retained_epub_markers(
     apparatus_items: list[dict[str, object]],
     source_canonical_text: str,
     source_html_sanitized: str,
+    source_spans: dict[str, tuple[int, int, str]],
     retained_canonical_text: str,
     retained_html_sanitized: str,
+    retained_spans: dict[str, tuple[int, int, str]],
 ) -> None:
     """Require each repaired marker to denote the same local source occurrence."""
     if not source_markers:
@@ -1380,6 +1390,7 @@ def _verify_retained_epub_markers(
             media_kind="epub",
             canonical_text=source_canonical_text,
             items=list(source_markers.values()),
+            accepted_spans=source_spans,
             html_sanitized=source_html_sanitized,
         )
     }
@@ -1391,6 +1402,7 @@ def _verify_retained_epub_markers(
             media_kind="epub",
             canonical_text=retained_canonical_text,
             items=[item for item in apparatus_items if str(item["stable_key"]) in source_markers],
+            accepted_spans=retained_spans,
             html_sanitized=retained_html_sanitized,
         )
     }
