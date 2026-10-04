@@ -13,21 +13,33 @@ from sqlalchemy.orm import Session
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
-from nexus.responses import Data, ok, ok_page
+from nexus.responses import Data, DataPage
+from nexus.schemas.collection_page import CollectionPage
 from nexus.schemas.library import (
+    AcceptLibraryInviteResponse,
     CreateLibraryInviteRequest,
     CreateLibraryRequest,
+    DeclineLibraryInviteResponse,
+    LibraryDeleteOut,
+    LibraryDestinationOut,
+    LibraryEntryListItemOut,
     LibraryEntryOrderRequest,
+    LibraryGovernancePageInfo,
+    LibraryInvitationOut,
     LibraryInvitationStatusValue,
+    LibraryMemberOut,
     LibraryOut,
     LibraryPageInfo,
     LibraryPlacementOptionOut,
+    LibraryRenameOut,
     PodcastPlacementAdditionOut,
     PodcastPlacementRemovalOut,
     TransferLibraryOwnershipRequest,
     UpdateLibraryMemberRequest,
     UpdateLibraryRequest,
+    ViewerLibraryInvitationOut,
 )
+from nexus.schemas.resonance import SlateOut
 from nexus.services import (
     library_entries,
     library_entry_listing,
@@ -57,10 +69,10 @@ def list_viewer_invites(
     db: Annotated[Session, Depends(get_db)],
     status: Annotated[LibraryInvitationStatusValue, _STATUS_QUERY] = "pending",
     limit: Annotated[int, _LIMIT_QUERY] = 100,
-) -> dict:
+) -> Data[list[ViewerLibraryInvitationOut]]:
     """List invitations addressed to the current viewer."""
     result = library_sharing.list_viewer_invites(db, viewer.user_id, status=status, limit=limit)
-    return ok(result, by_alias=True)
+    return Data(data=result)
 
 
 @router.post("/libraries/invites/{invitation_handle}/accept")
@@ -68,10 +80,10 @@ def accept_library_invite(
     invitation_handle: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> Data[AcceptLibraryInviteResponse]:
     """Accept a library invitation. Invitee-only; idempotent when already accepted."""
     result = library_sharing.accept_library_invite(db, viewer.user_id, invitation_handle)
-    return ok(result, by_alias=True)
+    return Data(data=result)
 
 
 @router.post("/libraries/invites/{invitation_handle}/decline")
@@ -79,10 +91,10 @@ def decline_library_invite(
     invitation_handle: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> Data[DeclineLibraryInviteResponse]:
     """Decline a library invitation. Invitee-only; idempotent when already declined."""
     result = library_sharing.decline_library_invite(db, viewer.user_id, invitation_handle)
-    return ok(result, by_alias=True)
+    return Data(data=result)
 
 
 @router.delete("/libraries/invites/{invitation_handle}", status_code=204)
@@ -101,7 +113,7 @@ def list_libraries(
     request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_repeatable_read_db)],
-) -> dict:
+) -> Data[CollectionPage[LibraryOut]]:
     """List the viewer's libraries in the requested view."""
     view, query = library_governance.parse_libraries_index_query(request.query_params.multi_items())
     page = library_governance.list_libraries(
@@ -112,7 +124,7 @@ def list_libraries(
         collection_revision=query.collection_revision,
         limit=query.limit,
     )
-    return ok(page, by_alias=True)
+    return Data(data=page)
 
 
 @router.get("/libraries/writable-destinations")
@@ -122,13 +134,13 @@ def list_writable_library_destinations(
     q: str | None = Query(default=None, max_length=100, description="Name search query"),
     cursor: Annotated[str | None, _CURSOR_QUERY] = None,
     limit: int = Query(default=25, ge=1, le=50, description="Maximum results"),
-) -> dict:
+) -> DataPage[LibraryDestinationOut, LibraryPageInfo]:
     """Rank the named libraries the viewer may file into."""
     result, next_cursor = library_governance.list_writable_library_destinations(
         db, viewer.user_id, q=(q or "").strip().lower(), cursor=cursor, limit=limit
     )
-    return ok_page(
-        result, LibraryPageInfo(has_more=next_cursor is not None, next_cursor=next_cursor)
+    return DataPage(
+        data=result, page=LibraryPageInfo(has_more=next_cursor is not None, next_cursor=next_cursor)
     )
 
 
@@ -160,9 +172,9 @@ def get_library(
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> Data[LibraryOut]:
     """Read one library. Non-members get a masked 404."""
-    return ok(library_governance.get_library(db, viewer.user_id, library_id), by_alias=True)
+    return Data(data=library_governance.get_library(db, viewer.user_id, library_id))
 
 
 @router.patch("/libraries/{library_id}")
@@ -171,10 +183,10 @@ def rename_library(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     body: UpdateLibraryRequest,
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> Data[LibraryRenameOut]:
     """Rename a library. Admin-only; not the default or a system library."""
     result = library_governance.rename_library(db, viewer.user_id, library_id, body.name)
-    return ok(result, by_alias=True)
+    return Data(data=result)
 
 
 @router.delete("/libraries/{library_id}")
@@ -182,9 +194,9 @@ def delete_library(
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> Data[LibraryDeleteOut]:
     """Delete a library. Owner-only; a non-owner admin gets E_OWNER_REQUIRED."""
-    return ok(library_governance.delete_library(db, viewer.user_id, library_id), by_alias=True)
+    return Data(data=library_governance.delete_library(db, viewer.user_id, library_id))
 
 
 @router.post("/libraries/{library_id}/invites", status_code=201)
@@ -193,12 +205,12 @@ def create_library_invite(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     body: CreateLibraryInviteRequest,
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> Data[LibraryInvitationOut]:
     """Invite an existing user to a library. Admin-only."""
     result = library_sharing.create_library_invite(
         db, viewer.user_id, library_id, body.invitee, body.role
     )
-    return ok(result, by_alias=True)
+    return Data(data=result)
 
 
 @router.get("/libraries/{library_id}/invites")
@@ -209,12 +221,12 @@ def list_library_invites(
     status: Annotated[LibraryInvitationStatusValue, _STATUS_QUERY] = "pending",
     cursor: Annotated[str | None, _CURSOR_QUERY] = None,
     limit: Annotated[int, _LIMIT_QUERY] = 100,
-) -> dict:
+) -> DataPage[LibraryInvitationOut, LibraryGovernancePageInfo]:
     """List a library's invitations, newest first. Admin-only."""
     result, page = library_sharing.list_library_invites(
         db, viewer.user_id, library_id, status=status, cursor=cursor, limit=limit
     )
-    return ok_page(result, page, by_alias=True)
+    return DataPage(data=result, page=page)
 
 
 @router.get("/libraries/{library_id}/members")
@@ -224,12 +236,12 @@ def list_library_members(
     db: Annotated[Session, Depends(get_db)],
     cursor: Annotated[str | None, _CURSOR_QUERY] = None,
     limit: Annotated[int, _LIMIT_QUERY] = 100,
-) -> dict:
+) -> DataPage[LibraryMemberOut, LibraryGovernancePageInfo]:
     """List a library's members by immutable member identity. Admin-only."""
     result, page = library_sharing.list_library_members(
         db, viewer.user_id, library_id, cursor=cursor, limit=limit
     )
-    return ok_page(result, page, by_alias=True)
+    return DataPage(data=result, page=page)
 
 
 @router.patch("/libraries/{library_id}/members/{user_handle}")
@@ -239,12 +251,12 @@ def update_library_member_role(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     body: UpdateLibraryMemberRequest,
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> Data[LibraryMemberOut]:
     """Set a member's role. Admin-only; the owner's role is fixed."""
     result = library_sharing.update_library_member_role(
         db, viewer.user_id, library_id, _user_id(user_handle), body.role
     )
-    return ok(result, by_alias=True)
+    return Data(data=result)
 
 
 @router.delete("/libraries/{library_id}/members/{user_handle}", status_code=204)
@@ -265,12 +277,12 @@ def transfer_library_ownership(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     body: TransferLibraryOwnershipRequest,
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> Data[LibraryOut]:
     """Transfer ownership to another member. Owner-only."""
     result = library_sharing.transfer_library_ownership(
         db, viewer.user_id, library_id, _user_id(body.new_owner_user_handle)
     )
-    return ok(result, by_alias=True)
+    return Data(data=result)
 
 
 @router.get("/libraries/{library_id}/entries")
@@ -279,7 +291,7 @@ def list_library_entries(
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_repeatable_read_db)],
-) -> dict:
+) -> Data[CollectionPage[LibraryEntryListItemOut]]:
     """List a library's entries under a view lens (see `parse_entries_query`)."""
     view, query = library_entry_listing.parse_entries_query(request.query_params.multi_items())
     page = library_entry_listing.list_library_entries(
@@ -291,7 +303,7 @@ def list_library_entries(
         cursor=query.cursor,
         collection_revision=query.collection_revision,
     )
-    return ok(page, by_alias=True)
+    return Data(data=page)
 
 
 @router.get("/libraries/{library_id}/slate")
@@ -300,7 +312,7 @@ def get_library_slate(
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_repeatable_read_db)],
-) -> dict:
+) -> Data[SlateOut]:
     """Read the library's Reading Slate."""
     if request.query_params:
         raise InvalidRequestError(
@@ -309,7 +321,7 @@ def get_library_slate(
     slate = resonance_service.build_library_slate(
         db, viewer_id=viewer.user_id, library_id=library_id
     )
-    return ok(slate, by_alias=True)
+    return Data(data=slate)
 
 
 @router.patch("/libraries/{library_id}/entries/reorder", status_code=204)

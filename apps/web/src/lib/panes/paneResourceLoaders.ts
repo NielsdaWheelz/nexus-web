@@ -31,18 +31,17 @@ import {
   contributorWorksPageFromWire,
 } from "@/lib/contributors/api";
 import {
-  decodeCollectionPage,
   type CollectionCursor,
   type CollectionRevision,
 } from "@/lib/api/collectionPage";
 import type { Presence } from "@/lib/api/presence";
 import {
-  expectLibraryOut,
-  expectLibraryOutForId,
+  librariesPageFromWire,
+  libraryOutForId,
   type LibraryOut,
 } from "@/lib/libraries/contract";
 import {
-  decodeLibraryEntryListItem,
+  libraryEntryPageFromWire,
   type LibraryEntryListItem,
 } from "@/lib/libraries/entryListItem";
 import type {
@@ -176,10 +175,15 @@ export const paneResourceLoaders: Partial<
   libraries: {
     cacheKey: () => librariesResource.cacheKey({ refreshVersion: 0 }),
     load: async (request) =>
-      decodeCollectionPage(
-        await request(librariesResource, { refreshVersion: 0, limit: 100 }),
-        (row, index) => expectLibraryOut(row, `LibraryOut items[${index}]`),
-      ),
+      librariesPageFromWire((
+        await request<
+          { refreshVersion: number; limit: number },
+          ApiJson<"/libraries", "get">
+        >(
+          librariesResource,
+          { refreshVersion: 0, limit: 100 },
+        )
+      ).data),
   },
 
   library: {
@@ -187,15 +191,16 @@ export const paneResourceLoaders: Partial<
     load: async (request, p): Promise<LibraryPaneSeed> => {
       const params = { id: p.id };
       const [library, entriesEnvelope] = await Promise.all([
-        request<{ id: string }, { data: unknown }>(libraryResource, params),
-        request<{ id: string }, unknown>(libraryEntriesResource, params),
+        request<{ id: string }, ApiJson<"/libraries/{library_id}", "get">>(
+          libraryResource, params,
+        ),
+        request<{ id: string }, ApiJson<"/libraries/{library_id}/entries", "get">>(
+          libraryEntriesResource, params,
+        ),
       ]);
-      const page = decodeCollectionPage(
-        entriesEnvelope,
-        decodeLibraryEntryListItem,
-      );
+      const page = libraryEntryPageFromWire(entriesEnvelope.data);
       return {
-        library: expectLibraryOutForId(
+        library: libraryOutForId(
           library.data,
           p.id,
           "Library pane response.data",

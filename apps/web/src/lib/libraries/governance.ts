@@ -1,14 +1,10 @@
 "use client";
 
 import { apiCommand204, apiFetch } from "@/lib/api/client";
+import type { ApiJson } from "@/lib/api/wire";
 import {
   LibraryContractDefect,
-  expectLibraryInvitation,
-  expectLibraryInvitationsPage,
-  expectLibraryMember,
-  expectLibraryMembersPage,
-  expectLibraryOutEnvelopeForId,
-  expectViewerLibraryInvitations,
+  libraryOutForId,
   type LibraryGovernanceCursor,
   type LibraryGovernancePage,
   type LibraryInvitation,
@@ -22,34 +18,8 @@ import {
   expectLibraryInvitationHandle,
   expectUserHandle,
 } from "@/lib/sharing/wireValidation";
-import { isRecord } from "@/lib/validation";
 
 export const LIBRARY_GOVERNANCE_PAGE_LIMIT = 100;
-
-function exactRecord(
-  raw: unknown,
-  name: string,
-  keys: readonly string[],
-): Record<string, unknown> {
-  if (!isRecord(raw)) {
-    throw new LibraryContractDefect(`${name} must be an object`);
-  }
-  const actual = Object.keys(raw).sort();
-  const expected = [...keys].sort();
-  if (
-    actual.length !== expected.length ||
-    actual.some((key, index) => key !== expected[index])
-  ) {
-    throw new LibraryContractDefect(
-      `${name} has keys [${actual.join(", ")}], expected [${expected.join(", ")}]`,
-    );
-  }
-  return raw;
-}
-
-function responseData(raw: unknown, name: string): unknown {
-  return exactRecord(raw, name, ["data"]).data;
-}
 
 function governancePagePath(
   libraryId: string,
@@ -72,11 +42,9 @@ export async function listLibraryMembers(input: {
   limit?: number;
   signal?: AbortSignal;
 }): Promise<LibraryGovernancePage<LibraryMember>> {
-  return expectLibraryMembersPage(
-    await apiFetch<unknown>(
-      governancePagePath(input.libraryId, "members", input),
-      { signal: input.signal },
-    ),
+  return apiFetch<ApiJson<"/libraries/{library_id}/members", "get">>(
+    governancePagePath(input.libraryId, "members", input),
+    { signal: input.signal },
   );
 }
 
@@ -86,11 +54,9 @@ export async function listPendingLibraryInvites(input: {
   limit?: number;
   signal?: AbortSignal;
 }): Promise<LibraryGovernancePage<LibraryInvitation>> {
-  const page = expectLibraryInvitationsPage(
-    await apiFetch<unknown>(
-      governancePagePath(input.libraryId, "invites", input),
-      { signal: input.signal },
-    ),
+  const page = await apiFetch<ApiJson<"/libraries/{library_id}/invites", "get">>(
+    governancePagePath(input.libraryId, "invites", input),
+    { signal: input.signal },
   );
   for (const invitation of page.data) {
     if (
@@ -108,12 +74,11 @@ export async function listPendingLibraryInvites(input: {
 export async function fetchViewerLibraryInvites(
   signal?: AbortSignal,
 ): Promise<ViewerLibraryInvitation[]> {
-  return expectViewerLibraryInvitations(
-    await apiFetch<unknown>("/api/libraries/invites", {
-      cache: "no-store",
-      signal,
-    }),
+  const response = await apiFetch<ApiJson<"/libraries/invites", "get">>(
+    "/api/libraries/invites",
+    { cache: "no-store", signal },
   );
+  return response.data;
 }
 
 export async function acceptLibraryInvite(
@@ -123,23 +88,12 @@ export async function acceptLibraryInvite(
     invitationHandle,
     "accept invite.invitationHandle",
   );
-  const data = exactRecord(
-    responseData(
-      await apiFetch<unknown>(
-        `/api/libraries/invites/${encodeURIComponent(handle)}/accept`,
-        { method: "POST" },
-      ),
-      "accept invite response",
-    ),
-    "accept invite response.data",
-    ["invite", "membership", "idempotent"],
-  );
-  const invitation = expectLibraryInvitation(
-    data.invite,
-    "accept invite response.data.invite",
+  const response = await apiFetch<ApiJson<"/libraries/invites/{invitation_handle}/accept", "post">>(
+    `/api/libraries/invites/${encodeURIComponent(handle)}/accept`,
+    { method: "POST" },
   );
   publishLibraryPlacementChange("Unknown");
-  return invitation;
+  return response.data.invite;
 }
 
 export async function declineLibraryInvite(
@@ -149,21 +103,11 @@ export async function declineLibraryInvite(
     invitationHandle,
     "decline invite.invitationHandle",
   );
-  const data = exactRecord(
-    responseData(
-      await apiFetch<unknown>(
-        `/api/libraries/invites/${encodeURIComponent(handle)}/decline`,
-        { method: "POST" },
-      ),
-      "decline invite response",
-    ),
-    "decline invite response.data",
-    ["invite", "idempotent"],
+  const response = await apiFetch<ApiJson<"/libraries/invites/{invitation_handle}/decline", "post">>(
+    `/api/libraries/invites/${encodeURIComponent(handle)}/decline`,
+    { method: "POST" },
   );
-  return expectLibraryInvitation(
-    data.invite,
-    "decline invite response.data.invite",
-  );
+  return response.data.invite;
 }
 
 export async function createLibraryInvite(input: {
@@ -175,22 +119,17 @@ export async function createLibraryInvite(input: {
     input.userHandle,
     "create invite.userHandle",
   );
-  return expectLibraryInvitation(
-    responseData(
-      await apiFetch<unknown>(
-        `/api/libraries/${encodeURIComponent(input.libraryId)}/invites`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            invitee: { kind: "User", userHandle },
-            role: input.role,
-          }),
-        },
-      ),
-      "create invite response",
-    ),
-    "create invite response.data",
+  const response = await apiFetch<ApiJson<"/libraries/{library_id}/invites", "post">>(
+    `/api/libraries/${encodeURIComponent(input.libraryId)}/invites`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        invitee: { kind: "User", userHandle },
+        role: input.role,
+      }),
+    },
   );
+  return response.data;
 }
 
 export async function updateLibraryMemberRole(input: {
@@ -202,16 +141,11 @@ export async function updateLibraryMemberRole(input: {
     input.userHandle,
     "update member.userHandle",
   );
-  return expectLibraryMember(
-    responseData(
-      await apiFetch<unknown>(
-        `/api/libraries/${encodeURIComponent(input.libraryId)}/members/${encodeURIComponent(userHandle)}`,
-        { method: "PATCH", body: JSON.stringify({ role: input.role }) },
-      ),
-      "update member response",
-    ),
-    "update member response.data",
+  const response = await apiFetch<ApiJson<"/libraries/{library_id}/members/{user_handle}", "patch">>(
+    `/api/libraries/${encodeURIComponent(input.libraryId)}/members/${encodeURIComponent(userHandle)}`,
+    { method: "PATCH", body: JSON.stringify({ role: input.role }) },
   );
+  return response.data;
 }
 
 export async function removeLibraryMember(input: {
@@ -249,15 +183,14 @@ export async function transferLibraryOwnership(input: {
     input.newOwnerUserHandle,
     "transfer ownership.newOwnerUserHandle",
   );
-  return expectLibraryOutEnvelopeForId(
-    await apiFetch<unknown>(
-      `/api/libraries/${encodeURIComponent(input.libraryId)}/transfer-ownership`,
-      {
-        method: "POST",
-        body: JSON.stringify({ newOwnerUserHandle }),
-      },
-    ),
-    input.libraryId,
-    "transfer ownership response",
+  const response = await apiFetch<ApiJson<"/libraries/{library_id}/transfer-ownership", "post">>(
+    `/api/libraries/${encodeURIComponent(input.libraryId)}/transfer-ownership`,
+    {
+      method: "POST",
+      body: JSON.stringify({ newOwnerUserHandle }),
+    },
+  );
+  return libraryOutForId(
+    response.data, input.libraryId, "transfer ownership response.data",
   );
 }

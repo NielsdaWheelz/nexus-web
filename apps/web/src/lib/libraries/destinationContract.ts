@@ -1,9 +1,7 @@
-// The writable-destination wire contract the library chooser and the extension
-// share: the destination row, its selection projection and decoder, the search
-// page, the strict page decoder, and the defect a malformed same-system page
-// raises.
-// It depends on nothing but the validation primitives, so the extension bundle
-// carries it without the web transport.
+// destination wire types are generated; runtime decoding remains for independently
+// deployed extension responses and persisted selections.
+
+import type { ApiJson, Schema } from "@/lib/api/wire";
 
 import {
   expectArray,
@@ -22,12 +20,7 @@ export class LibraryDestinationContractDefect extends Error {
   }
 }
 
-export interface LibraryDestination {
-  id: string;
-  name: string;
-  created_at: string;
-  updated_at: string;
-}
+export type LibraryDestination = Schema<"LibraryDestinationOut">;
 
 export type LibraryDestinationSelection = Pick<LibraryDestination, "id" | "name">;
 
@@ -44,13 +37,7 @@ export function decodeLibraryDestinationSelection(
   };
 }
 
-export interface LibraryDestinationPage {
-  data: LibraryDestination[];
-  page: {
-    has_more: boolean;
-    next_cursor: string | null;
-  };
-}
+export type LibraryDestinationPage = ApiJson<"/libraries/writable-destinations", "get">;
 
 export function decodeWritableLibraryDestinationPage(
   raw: unknown,

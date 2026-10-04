@@ -3306,6 +3306,13 @@ export interface components {
              */
             kind: "Absent";
         };
+        /** AcceptLibraryInviteResponse */
+        AcceptLibraryInviteResponse: {
+            /** Idempotent */
+            idempotent: boolean;
+            invite: components["schemas"]["LibraryInvitationOut"];
+            membership: components["schemas"]["InviteAcceptMembershipOut"];
+        };
         /** ActiveExclusionOut */
         ActiveExclusionOut: {
             device: components["schemas"]["DeviceSummaryOut"];
@@ -3980,6 +3987,14 @@ export interface components {
              */
             route: "CodexPersonal";
         };
+        /** CollectionPage[Annotated[Union[LibraryMediaListItemOut, LibraryPodcastListItemOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
+        CollectionPage_Annotated_Union_LibraryMediaListItemOut__LibraryPodcastListItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
+            /** Collectionrevision */
+            collectionRevision: number;
+            /** Items */
+            items: (components["schemas"]["LibraryMediaListItemOut"] | components["schemas"]["LibraryPodcastListItemOut"])[];
+            nextCursor: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____"];
+        };
         /** CollectionPage[Annotated[Union[MediaContributorWorkItemOut, PodcastContributorWorkItemOut, ExternalContributorWorkItemOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
         CollectionPage_Annotated_Union_MediaContributorWorkItemOut__PodcastContributorWorkItemOut__ExternalContributorWorkItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
             /** Collectionrevision */
@@ -3994,6 +4009,14 @@ export interface components {
             collectionRevision: number;
             /** Items */
             items: components["schemas"]["ConversationListItemOut"][];
+            nextCursor: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____"];
+        };
+        /** CollectionPage[LibraryOut] */
+        CollectionPage_LibraryOut_: {
+            /** Collectionrevision */
+            collectionRevision: number;
+            /** Items */
+            items: components["schemas"]["LibraryOut"][];
             nextCursor: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____"];
         };
         /** CompletionStatsSectionOut */
@@ -4079,6 +4102,17 @@ export interface components {
             code: string;
             /** Verifier */
             verifier: string;
+        };
+        /** ConsumptionOut */
+        ConsumptionOut: {
+            progress: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____"];
+            /** Progressresettable */
+            progressResettable: boolean;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "Unread" | "InProgress" | "Finished";
         };
         /** ConsumptionResourceActionCapabilityOut */
         ConsumptionResourceActionCapabilityOut: {
@@ -4538,6 +4572,28 @@ export interface components {
             data: components["schemas"]["ConversationOut"][];
             page: components["schemas"]["PageInfo"];
         };
+        /** DataPage[LibraryDestinationOut, LibraryPageInfo] */
+        DataPage_LibraryDestinationOut_LibraryPageInfo_: {
+            /** Data */
+            data: components["schemas"]["LibraryDestinationOut"][];
+            page: components["schemas"]["LibraryPageInfo"];
+        };
+        /** DataPage[LibraryInvitationOut, LibraryGovernancePageInfo] */
+        DataPage_LibraryInvitationOut_LibraryGovernancePageInfo_: {
+            /** Data */
+            data: components["schemas"]["LibraryInvitationOut"][];
+            page: components["schemas"]["LibraryGovernancePageInfo"];
+        };
+        /** DataPage[LibraryMemberOut, LibraryGovernancePageInfo] */
+        DataPage_LibraryMemberOut_LibraryGovernancePageInfo_: {
+            /** Data */
+            data: components["schemas"]["LibraryMemberOut"][];
+            page: components["schemas"]["LibraryGovernancePageInfo"];
+        };
+        /** Data[AcceptLibraryInviteResponse] */
+        Data_AcceptLibraryInviteResponse_: {
+            data: components["schemas"]["AcceptLibraryInviteResponse"];
+        };
         /** Data[ActivityExclusionResultOut] */
         Data_ActivityExclusionResultOut_: {
             data: components["schemas"]["ActivityExclusionResultOut"];
@@ -4560,6 +4616,10 @@ export interface components {
         Data_AtlasOut_: {
             data: components["schemas"]["AtlasOut"];
         };
+        /** Data[CollectionPage[Annotated[Union[LibraryMediaListItemOut, LibraryPodcastListItemOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]]] */
+        Data_CollectionPage_Annotated_Union_LibraryMediaListItemOut__LibraryPodcastListItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind_____: {
+            data: components["schemas"]["CollectionPage_Annotated_Union_LibraryMediaListItemOut__LibraryPodcastListItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+        };
         /** Data[CollectionPage[Annotated[Union[MediaContributorWorkItemOut, PodcastContributorWorkItemOut, ExternalContributorWorkItemOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]]] */
         Data_CollectionPage_Annotated_Union_MediaContributorWorkItemOut__PodcastContributorWorkItemOut__ExternalContributorWorkItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind_____: {
             data: components["schemas"]["CollectionPage_Annotated_Union_MediaContributorWorkItemOut__PodcastContributorWorkItemOut__ExternalContributorWorkItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
@@ -4567,6 +4627,10 @@ export interface components {
         /** Data[CollectionPage[ConversationListItemOut]] */
         Data_CollectionPage_ConversationListItemOut__: {
             data: components["schemas"]["CollectionPage_ConversationListItemOut_"];
+        };
+        /** Data[CollectionPage[LibraryOut]] */
+        Data_CollectionPage_LibraryOut__: {
+            data: components["schemas"]["CollectionPage_LibraryOut_"];
         };
         /** Data[ConsumptionStatsOut] */
         Data_ConsumptionStatsOut_: {
@@ -4587,6 +4651,10 @@ export interface components {
         /** Data[DailyCaptureResult] */
         Data_DailyCaptureResult_: {
             data: components["schemas"]["DailyCaptureResult"];
+        };
+        /** Data[DeclineLibraryInviteResponse] */
+        Data_DeclineLibraryInviteResponse_: {
+            data: components["schemas"]["DeclineLibraryInviteResponse"];
         };
         /** Data[DossierBuildCreatedOut] */
         Data_DossierBuildCreatedOut_: {
@@ -4612,13 +4680,29 @@ export interface components {
         Data_ImportSummary_: {
             data: components["schemas"]["ImportSummary"];
         };
+        /** Data[LibraryDeleteOut] */
+        Data_LibraryDeleteOut_: {
+            data: components["schemas"]["LibraryDeleteOut"];
+        };
         /** Data[LibraryEntryRemovalOut] */
         Data_LibraryEntryRemovalOut_: {
             data: components["schemas"]["LibraryEntryRemovalOut"];
         };
+        /** Data[LibraryInvitationOut] */
+        Data_LibraryInvitationOut_: {
+            data: components["schemas"]["LibraryInvitationOut"];
+        };
+        /** Data[LibraryMemberOut] */
+        Data_LibraryMemberOut_: {
+            data: components["schemas"]["LibraryMemberOut"];
+        };
         /** Data[LibraryOut] */
         Data_LibraryOut_: {
             data: components["schemas"]["LibraryOut"];
+        };
+        /** Data[LibraryRenameOut] */
+        Data_LibraryRenameOut_: {
+            data: components["schemas"]["LibraryRenameOut"];
         };
         /** Data[MediaNavigationOut] */
         Data_MediaNavigationOut_: {
@@ -4716,6 +4800,10 @@ export interface components {
         Data_ResourceTitleMutationOut_: {
             data: components["schemas"]["ResourceTitleMutationOut"];
         };
+        /** Data[SlateOut] */
+        Data_SlateOut_: {
+            data: components["schemas"]["SlateOut"];
+        };
         /** Data[SourceRetryAdmission] */
         Data_SourceRetryAdmission_: {
             data: components["schemas"]["SourceRetryAdmission"];
@@ -4737,6 +4825,17 @@ export interface components {
         Data_list_LibraryPlacementOptionOut__: {
             /** Data */
             data: components["schemas"]["LibraryPlacementOptionOut"][];
+        };
+        /** Data[list[ViewerLibraryInvitationOut]] */
+        Data_list_ViewerLibraryInvitationOut__: {
+            /** Data */
+            data: components["schemas"]["ViewerLibraryInvitationOut"][];
+        };
+        /** DeclineLibraryInviteResponse */
+        DeclineLibraryInviteResponse: {
+            /** Idempotent */
+            idempotent: boolean;
+            invite: components["schemas"]["LibraryInvitationOut"];
         };
         /** DeviceActivityOut */
         DeviceActivityOut: {
@@ -5930,6 +6029,21 @@ export interface components {
              */
             type: "insert_resource";
         };
+        /** InviteAcceptMembershipOut */
+        InviteAcceptMembershipOut: {
+            /**
+             * Libraryid
+             * Format: uuid
+             */
+            libraryId: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "admin" | "member";
+            /** Userhandle */
+            userHandle: string;
+        };
         /** JoinNotesSurfaceCommand */
         JoinNotesSurfaceCommand: {
             /** Body Pm Json */
@@ -6053,15 +6167,135 @@ export interface components {
              */
             kind: "Lectern";
         };
+        /** LibraryDeleteOut */
+        LibraryDeleteOut: {
+            /** Collectionrevision */
+            collectionRevision: number;
+            /**
+             * Libraryid
+             * Format: uuid
+             */
+            libraryId: string;
+        };
+        /** LibraryDestinationOut */
+        LibraryDestinationOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** LibraryEntryMediaCapabilitiesOut */
+        LibraryEntryMediaCapabilitiesOut: {
+            /** Can Delete */
+            can_delete: boolean;
+            /** Can Edit Authors */
+            can_edit_authors: boolean;
+            /** Can Quote */
+            can_quote: boolean;
+            /** Can Refresh Source */
+            can_refresh_source: boolean;
+            /** Can Retry */
+            can_retry: boolean;
+            /** Can Retry Metadata */
+            can_retry_metadata: boolean;
+        };
+        /** LibraryEntryMediaOut */
+        LibraryEntryMediaOut: {
+            /**
+             * Author Mode
+             * @enum {string}
+             */
+            author_mode: "automatic" | "manual";
+            /** Canonical Source Url */
+            canonical_source_url: string | null;
+            capabilities: components["schemas"]["LibraryEntryMediaCapabilitiesOut"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Last Engaged At */
+            last_engaged_at: string | null;
+            /** Progress Fraction */
+            progress_fraction: number | null;
+            /** Progress Resettable */
+            progress_resettable: boolean;
+            /**
+             * Read State
+             * @enum {string}
+             */
+            read_state: "unread" | "in_progress" | "finished";
+        };
         /** LibraryEntryOrderRequest */
         LibraryEntryOrderRequest: {
             /** Entry Ids */
             entry_ids: string[];
         };
+        /** LibraryEntryPlacementOut */
+        LibraryEntryPlacementOut: {
+            /**
+             * Libraryentryid
+             * Format: uuid
+             */
+            libraryEntryId: string;
+            /** Position */
+            position: number;
+        };
+        /** LibraryEntryPodcastOut */
+        LibraryEntryPodcastOut: {
+            /** Contributors */
+            contributors: components["schemas"]["ContributorCreditOut"][];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            publishedDate: components["schemas"]["Presence_datetime_"];
+            /** Title */
+            title: string;
+            /**
+             * Unplayedcount
+             * @default 0
+             */
+            unplayedCount: number;
+        };
+        /** LibraryEntryPodcastSubscriptionOut */
+        LibraryEntryPodcastSubscriptionOut: {
+            /**
+             * Autoqueue
+             * @default false
+             */
+            autoQueue: boolean;
+            defaultPlaybackSpeed: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____"];
+            pauseShorteningMode: components["schemas"]["Presence_Literal__Off____Natural___"];
+            syncStatus: components["schemas"]["PodcastSyncStatus"];
+        };
         /** LibraryEntryRemovalOut */
         LibraryEntryRemovalOut: {
             /** Libraryentriescollectionrevision */
             libraryEntriesCollectionRevision: number;
+        };
+        /** LibraryGovernancePageInfo */
+        LibraryGovernancePageInfo: {
+            nextCursor: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____"];
         };
         /** LibraryIdentityOut */
         LibraryIdentityOut: {
@@ -6091,6 +6325,38 @@ export interface components {
              */
             version: "v1";
         };
+        /** LibraryInvitationOut */
+        LibraryInvitationOut: {
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /** Invitationhandle */
+            invitationHandle: string;
+            inviteeDisplayName: components["schemas"]["Presence_str_"];
+            inviteeEmail: components["schemas"]["Presence_str_"];
+            /** Inviteeuserhandle */
+            inviteeUserHandle: string;
+            /** Inviteruserhandle */
+            inviterUserHandle: string;
+            /**
+             * Libraryid
+             * Format: uuid
+             */
+            libraryId: string;
+            respondedAt: components["schemas"]["Presence_datetime_"];
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "admin" | "member";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "accepted" | "declined" | "revoked";
+        };
         /** LibraryLibraryPlacementDestinationOut */
         LibraryLibraryPlacementDestinationOut: {
             /**
@@ -6099,6 +6365,41 @@ export interface components {
              */
             kind: "Library";
             library: components["schemas"]["LibraryIdentityOut"];
+        };
+        /** LibraryMediaListItemOut */
+        LibraryMediaListItemOut: {
+            /**
+             * Addedat
+             * Format: date-time
+             */
+            addedAt: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "media";
+            media: components["schemas"]["LibraryEntryMediaOut"];
+            mediaSummary: components["schemas"]["MediaSummaryOut"];
+            placement: components["schemas"]["Presence_LibraryEntryPlacementOut_"];
+        };
+        /** LibraryMemberOut */
+        LibraryMemberOut: {
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            displayName: components["schemas"]["Presence_str_"];
+            email: components["schemas"]["Presence_str_"];
+            /** Isowner */
+            isOwner: boolean;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "admin" | "member";
+            /** Userhandle */
+            userHandle: string;
         };
         /** LibraryOut */
         LibraryOut: {
@@ -6141,6 +6442,16 @@ export interface components {
              */
             updatedAt: string;
         };
+        /** LibraryPageInfo */
+        LibraryPageInfo: {
+            /**
+             * Has More
+             * @default false
+             */
+            has_more: boolean;
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
         /** LibraryPlacementOptionOut */
         LibraryPlacementOptionOut: {
             /** Availability */
@@ -6149,6 +6460,29 @@ export interface components {
             destination: components["schemas"]["SavedInNexusLibraryPlacementDestinationOut"] | components["schemas"]["LibraryLibraryPlacementDestinationOut"];
             /** Relation */
             relation: components["schemas"]["AbsentLibraryPlacementRelationOut"] | components["schemas"]["DirectLibraryPlacementRelationOut"] | components["schemas"]["InheritedLibraryPlacementRelationOut"];
+        };
+        /** LibraryPodcastListItemOut */
+        LibraryPodcastListItemOut: {
+            /**
+             * Addedat
+             * Format: date-time
+             */
+            addedAt: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "podcast";
+            placement: components["schemas"]["Presence_LibraryEntryPlacementOut_"];
+            podcast: components["schemas"]["LibraryEntryPodcastOut"];
+            readingTimeEstimate: components["schemas"]["Presence_ReadingTimeEstimateOut_"];
+            subscription: components["schemas"]["Presence_LibraryEntryPodcastSubscriptionOut_"];
+        };
+        /** LibraryRenameOut */
+        LibraryRenameOut: {
+            /** Collectionrevision */
+            collectionRevision: number;
+            library: components["schemas"]["LibraryOut"];
         };
         /** LinkAudienceIn */
         LinkAudienceIn: {
@@ -6839,6 +7173,20 @@ export interface components {
             transcript_state: components["schemas"]["TranscriptState"] | null;
             /** Updated At */
             updated_at: string;
+        };
+        /** MediaSlateTargetOut */
+        MediaSlateTargetOut: {
+            /** Href */
+            href: string;
+            imageUrl: components["schemas"]["Presence_str_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Media";
+            mediaSummary: components["schemas"]["MediaSummaryOut"];
+            /** Ref */
+            ref: string;
         };
         /** MediaSummaryOut */
         MediaSummaryOut: {
@@ -8044,6 +8392,22 @@ export interface components {
             /** Conflictfingerprint */
             conflictFingerprint: string;
         };
+        /** PodcastSlateTargetOut */
+        PodcastSlateTargetOut: {
+            /** Href */
+            href: string;
+            imageUrl: components["schemas"]["Presence_str_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Podcast";
+            /** Ref */
+            ref: string;
+            subtitle: components["schemas"]["Presence_str_"];
+            /** Title */
+            title: string;
+        };
         /** PodcastSubscribeRequest */
         PodcastSubscribeRequest: {
             /** Namedlibraryids */
@@ -8134,6 +8498,7 @@ export interface components {
         Presence_AwareDatetime_: components["schemas"]["Absent"] | components["schemas"]["Present_AwareDatetime_"];
         Presence_CancelledEventPayload_: components["schemas"]["Absent"] | components["schemas"]["Present_CancelledEventPayload_"];
         Presence_ChatPublicationWarning_: components["schemas"]["Absent"] | components["schemas"]["Present_ChatPublicationWarning_"];
+        Presence_ConsumptionOut_: components["schemas"]["Absent"] | components["schemas"]["Present_ConsumptionOut_"];
         Presence_DailyPageSummaryOut_: components["schemas"]["Absent"] | components["schemas"]["Present_DailyPageSummaryOut_"];
         Presence_DossierBuildAdmittedGenerationOut_: components["schemas"]["Absent"] | components["schemas"]["Present_DossierBuildAdmittedGenerationOut_"];
         Presence_DossierBuildExecution_: components["schemas"]["Absent"] | components["schemas"]["Present_DossierBuildExecution_"];
@@ -8142,6 +8507,8 @@ export interface components {
         Presence_FailedEventPayload_: components["schemas"]["Absent"] | components["schemas"]["Present_FailedEventPayload_"];
         Presence_HistoryEntry_: components["schemas"]["Absent"] | components["schemas"]["Present_HistoryEntry_"];
         Presence_ImportSourceIssues_: components["schemas"]["Absent"] | components["schemas"]["Present_ImportSourceIssues_"];
+        Presence_LibraryEntryPlacementOut_: components["schemas"]["Absent"] | components["schemas"]["Present_LibraryEntryPlacementOut_"];
+        Presence_LibraryEntryPodcastSubscriptionOut_: components["schemas"]["Absent"] | components["schemas"]["Present_LibraryEntryPodcastSubscriptionOut_"];
         Presence_Literal__Current____Stale___: components["schemas"]["Absent"] | components["schemas"]["Present_Literal__Current____Stale___"];
         Presence_Literal__NotOwner____SameSourceTerminal____SourceNotReacquirable____UploadRejected___: components["schemas"]["Absent"] | components["schemas"]["Present_Literal__NotOwner____SameSourceTerminal____SourceNotReacquirable____UploadRejected___"];
         Presence_Literal__Off____Natural___: components["schemas"]["Absent"] | components["schemas"]["Present_Literal__Off____Natural___"];
@@ -8160,6 +8527,7 @@ export interface components {
         Presence_PublicHighlightOut_: components["schemas"]["Absent"] | components["schemas"]["Present_PublicHighlightOut_"];
         Presence_ReaderSelectionInput_: components["schemas"]["Absent"] | components["schemas"]["Present_ReaderSelectionInput_"];
         Presence_ReaderTimeRange_: components["schemas"]["Absent"] | components["schemas"]["Present_ReaderTimeRange_"];
+        Presence_ReadingTimeEstimateOut_: components["schemas"]["Absent"] | components["schemas"]["Present_ReadingTimeEstimateOut_"];
         Presence_ShareMembersOut_: components["schemas"]["Absent"] | components["schemas"]["Present_ShareMembersOut_"];
         Presence_SourceFailureProgress_: components["schemas"]["Absent"] | components["schemas"]["Present_SourceFailureProgress_"];
         Presence_UUID_: components["schemas"]["Absent"] | components["schemas"]["Present_UUID_"];
@@ -8417,6 +8785,15 @@ export interface components {
             kind: "Present";
             value: components["schemas"]["ChatPublicationWarning"];
         };
+        /** Present[ConsumptionOut] */
+        Present_ConsumptionOut_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["ConsumptionOut"];
+        };
         /** Present[DailyPageSummaryOut] */
         Present_DailyPageSummaryOut_: {
             /**
@@ -8488,6 +8865,24 @@ export interface components {
              */
             kind: "Present";
             value: components["schemas"]["ImportSourceIssues"];
+        };
+        /** Present[LibraryEntryPlacementOut] */
+        Present_LibraryEntryPlacementOut_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["LibraryEntryPlacementOut"];
+        };
+        /** Present[LibraryEntryPodcastSubscriptionOut] */
+        Present_LibraryEntryPodcastSubscriptionOut_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["LibraryEntryPodcastSubscriptionOut"];
         };
         /** Present[Literal['Current', 'Stale']] */
         Present_Literal__Current____Stale___: {
@@ -8674,6 +9069,15 @@ export interface components {
              */
             kind: "Present";
             value: components["schemas"]["ReaderTimeRange"];
+        };
+        /** Present[ReadingTimeEstimateOut] */
+        Present_ReadingTimeEstimateOut_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["ReadingTimeEstimateOut"];
         };
         /** Present[ShareMembersOut] */
         Present_ShareMembersOut_: {
@@ -11181,6 +11585,17 @@ export interface components {
              */
             kind: "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditAuthors" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "LearnHighlight" | "LibraryPlacement" | "LibrarySettings" | "LinkHighlight" | "MediaMetadata" | "OfflineAudio" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastSettings" | "RefreshPodcast" | "RefreshSource" | "RegenerateArtifact" | "RegenerateMessage" | "RemoveMedia" | "RerunMessage" | "ResetProgress" | "RetryPodcastBackfill" | "Share" | "WalkMessageSources";
         };
+        /** SlateItemOut */
+        SlateItemOut: {
+            consumption: components["schemas"]["Presence_ConsumptionOut_"];
+            /** Target */
+            target: components["schemas"]["MediaSlateTargetOut"] | components["schemas"]["PodcastSlateTargetOut"];
+        };
+        /** SlateOut */
+        SlateOut: {
+            /** Items */
+            items: components["schemas"]["SlateItemOut"][];
+        };
         /** SourceAccepted */
         SourceAccepted: {
             /** Attempt No */
@@ -12017,6 +12432,40 @@ export interface components {
             kind: "version";
             /** Version */
             version: number;
+        };
+        /** ViewerLibraryInvitationOut */
+        ViewerLibraryInvitationOut: {
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /** Invitationhandle */
+            invitationHandle: string;
+            inviteeDisplayName: components["schemas"]["Presence_str_"];
+            inviteeEmail: components["schemas"]["Presence_str_"];
+            /** Inviteeuserhandle */
+            inviteeUserHandle: string;
+            /** Inviteruserhandle */
+            inviterUserHandle: string;
+            /**
+             * Libraryid
+             * Format: uuid
+             */
+            libraryId: string;
+            /** Libraryname */
+            libraryName: string;
+            respondedAt: components["schemas"]["Presence_datetime_"];
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "admin" | "member";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "accepted" | "declined" | "revoked";
         };
         /** ViewingActivityBatchIn */
         ViewingActivityBatchIn: {
@@ -14316,9 +14765,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_CollectionPage_LibraryOut__"];
                 };
             };
         };
@@ -14376,9 +14823,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_list_ViewerLibraryInvitationOut__"];
                 };
             };
             /** @description Validation Error */
@@ -14438,9 +14883,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_AcceptLibraryInviteResponse_"];
                 };
             };
             /** @description Validation Error */
@@ -14471,9 +14914,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_DeclineLibraryInviteResponse_"];
                 };
             };
             /** @description Validation Error */
@@ -14509,9 +14950,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DataPage_LibraryDestinationOut_LibraryPageInfo_"];
                 };
             };
             /** @description Validation Error */
@@ -14542,9 +14981,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_LibraryOut_"];
                 };
             };
             /** @description Validation Error */
@@ -14575,9 +15012,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_LibraryDeleteOut_"];
                 };
             };
             /** @description Validation Error */
@@ -14612,9 +15047,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_LibraryRenameOut_"];
                 };
             };
             /** @description Validation Error */
@@ -14645,9 +15078,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_CollectionPage_Annotated_Union_LibraryMediaListItemOut__LibraryPodcastListItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind_____"];
                 };
             };
             /** @description Validation Error */
@@ -14718,9 +15149,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DataPage_LibraryInvitationOut_LibraryGovernancePageInfo_"];
                 };
             };
             /** @description Validation Error */
@@ -14755,9 +15184,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_LibraryInvitationOut_"];
                 };
             };
             /** @description Validation Error */
@@ -14793,9 +15220,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DataPage_LibraryMemberOut_LibraryGovernancePageInfo_"];
                 };
             };
             /** @description Validation Error */
@@ -14861,9 +15286,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_LibraryMemberOut_"];
                 };
             };
             /** @description Validation Error */
@@ -14958,9 +15381,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_SlateOut_"];
                 };
             };
             /** @description Validation Error */
@@ -14995,9 +15416,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_LibraryOut_"];
                 };
             };
             /** @description Validation Error */

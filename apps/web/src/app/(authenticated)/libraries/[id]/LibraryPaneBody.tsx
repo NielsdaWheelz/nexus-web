@@ -19,9 +19,9 @@ import {
   isApiError,
   isInvalidViewError,
 } from "@/lib/api/client";
+import type { ApiJson } from "@/lib/api/wire";
 import { present, type Presence } from "@/lib/api/presence";
 import {
-  decodeCollectionPage,
   type CollectionCursor,
   type CollectionPage,
   type CollectionRevision,
@@ -151,7 +151,7 @@ import {
   requestPodcastRefresh,
 } from "@/lib/podcasts/refresh";
 import {
-  decodeLibraryEntryListItem,
+  libraryEntryPageFromWire,
   type LibraryEntryListItem,
 } from "@/lib/libraries/entryListItem";
 import { slateTargetId } from "@/lib/resonance/contract";
@@ -197,11 +197,6 @@ interface LibraryEntryPageResult {
   page: LibraryEntryPage;
   revisions: LibraryRevisions;
 }
-
-function decodeLibraryEntryPage(page: unknown): LibraryEntryPage {
-  return decodeCollectionPage(page, decodeLibraryEntryListItem);
-}
-
 type LibraryPaneResource = LibraryPaneSeed;
 
 interface CommittedLibraryView {
@@ -716,9 +711,11 @@ export default function LibraryPaneBody() {
         // justify-defect: a non-null resource key is built from this request.
         throw new Error("Library entry-view request lost its identity");
       }
-      let page: unknown;
+      let page: ApiJson<"/libraries/{library_id}/entries", "get">;
       try {
-        page = await apiFetch<unknown>(path, { signal });
+        page = await apiFetch<ApiJson<"/libraries/{library_id}/entries", "get">>(
+          path, { signal },
+        );
       } catch (requestError) {
         if (
           !isAbortError(requestError) &&
@@ -734,7 +731,7 @@ export default function LibraryPaneBody() {
           requestKey,
           requestedViewKey: requestedKey,
           view: requestedView,
-          page: decodeLibraryEntryPage(page),
+          page: libraryEntryPageFromWire(page.data),
           revisions,
         };
       } catch (decodeError) {
@@ -948,7 +945,11 @@ export default function LibraryPaneBody() {
       }
       return {
         request,
-        page: decodeLibraryEntryPage(await apiFetch<unknown>(path, { signal })),
+        page: libraryEntryPageFromWire((
+          await apiFetch<ApiJson<"/libraries/{library_id}/entries", "get">>(
+            path, { signal },
+          )
+        ).data),
       };
     },
     { debounceMs: 0 },
@@ -1432,18 +1433,17 @@ export default function LibraryPaneBody() {
       if (exactView === undefined) {
         throw new Error("Library continuation lost its committed view");
       }
-      return decodeLibraryEntryPage(
-        await apiFetch<unknown>(
-          libraryEntriesResource.clientPath({
-            id,
-            view: exactView,
-            cursor,
-            collectionRevision: revision,
-            limit: 100,
-          }),
-          { signal },
-        ),
+      const response = await apiFetch<ApiJson<"/libraries/{library_id}/entries", "get">>(
+        libraryEntriesResource.clientPath({
+          id,
+          view: exactView,
+          cursor,
+          collectionRevision: revision,
+          limit: 100,
+        }),
+        { signal },
       );
+      return libraryEntryPageFromWire(response.data);
     },
     [id],
   );

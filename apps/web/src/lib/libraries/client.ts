@@ -4,21 +4,19 @@ import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { librariesResource } from "@/lib/api/resource";
 import type { ApiJson } from "@/lib/api/wire";
 import {
-  decodeCollectionPage,
   decodeCollectionRevision,
   type CollectionCursor,
   type CollectionPage,
   type CollectionRevision,
 } from "@/lib/api/collectionPage";
 import {
-  expectLibraryOut,
-  expectLibraryOutEnvelopeForId,
+  libraryOutForId,
+  librariesPageFromWire,
   isLibraryContractDefect,
   type LibraryOut,
 } from "@/lib/libraries/contract";
 import {
   LibraryDestinationContractDefect,
-  decodeWritableLibraryDestinationPage,
   type LibraryDestinationPage,
 } from "@/lib/libraries/destinationContract";
 import {
@@ -26,7 +24,6 @@ import {
   type LibrariesIndexView,
 } from "@/lib/libraries/libraryIndexView";
 import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
-import { expectExactRecord, expectString } from "@/lib/validation";
 
 export function isLibraryDestinationDefect(error: unknown): boolean {
   return (
@@ -83,18 +80,17 @@ export async function fetchLibrariesPage({
   limit?: number;
   signal?: AbortSignal;
 }): Promise<CollectionPage<MemberLibrary>> {
-  return decodeLibrariesPage(
-    await apiFetch<unknown>(
-      librariesResource.clientPath({
-        refreshVersion: 0,
-        view,
-        cursor,
-        collectionRevision,
-        limit,
-      }),
-      { signal },
-    ),
+  const response = await apiFetch<ApiJson<"/libraries", "get">>(
+    librariesResource.clientPath({
+      refreshVersion: 0,
+      view,
+      cursor,
+      collectionRevision,
+      limit,
+    }),
+    { signal },
   );
+  return librariesPageFromWire(response.data);
 }
 
 export async function searchWritableLibraryDestinations({
@@ -114,11 +110,16 @@ export async function searchWritableLibraryDestinations({
   if (cursor) params.set("cursor", cursor);
   params.set("limit", String(limit));
   const suffix = params.toString();
-  const response = await apiFetch<unknown>(
+  const response = await apiFetch<ApiJson<"/libraries/writable-destinations", "get">>(
     `/api/libraries/writable-destinations${suffix ? `?${suffix}` : ""}`,
     { signal },
   );
-  return decodeWritableLibraryDestinationPage(response);
+  if (response.page.has_more !== (response.page.next_cursor !== null)) {
+    throw new LibraryDestinationContractDefect(
+      "Invalid library destination response: page.has_more must agree with page.next_cursor.",
+    );
+  }
+  return response;
 }
 
 export async function createLibrary({
@@ -148,37 +149,22 @@ export async function getMemberLibrary(
   libraryId: string,
   signal?: AbortSignal,
 ): Promise<LibraryOut> {
-  return expectLibraryOutEnvelopeForId(
-    await apiFetch<unknown>(`/api/libraries/${encodeURIComponent(libraryId)}`, {
-      signal,
-    }),
-    libraryId,
-    "get Library response",
+  const response = await apiFetch<ApiJson<"/libraries/{library_id}", "get">>(
+    `/api/libraries/${encodeURIComponent(libraryId)}`,
+    { signal },
   );
+  return libraryOutForId(response.data, libraryId, "get Library response.data");
 }
 
 export async function deleteMemberLibrary(
   libraryId: string,
 ): Promise<CollectionRevision> {
-  const envelope = expectExactRecord(
-    await apiFetch<unknown>(`/api/libraries/${encodeURIComponent(libraryId)}`, {
-      method: "DELETE",
-    }),
-    ["data"],
-    "delete Library response",
+  const { data } = await apiFetch<ApiJson<"/libraries/{library_id}", "delete">>(
+    `/api/libraries/${encodeURIComponent(libraryId)}`,
+    { method: "DELETE" },
   );
-  const data = expectExactRecord(
-    envelope.data,
-    ["libraryId", "collectionRevision"],
-    "delete Library response.data",
-  );
-  if (
-    expectString(data.libraryId, "delete Library response.data.libraryId") !==
-    libraryId
-  ) {
-    throw new TypeError(
-      "delete Library response identity does not match request",
-    );
+  if (data.libraryId !== libraryId) {
+    throw new TypeError("delete Library response identity does not match request");
   }
   const collectionRevision = decodeCollectionRevision(data.collectionRevision);
   // Library deletion changes placement reachability for every former member.
@@ -195,27 +181,13 @@ export async function renameMemberLibrary(
   readonly library: MemberLibrary;
   readonly collectionRevision: CollectionRevision;
 }> {
-  const envelope = expectExactRecord(
-    await apiFetch<unknown>(`/api/libraries/${encodeURIComponent(libraryId)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ name }),
-    }),
-    ["data"],
-    "rename Library response",
+  const { data } = await apiFetch<ApiJson<"/libraries/{library_id}", "patch">>(
+    `/api/libraries/${encodeURIComponent(libraryId)}`,
+    { method: "PATCH", body: JSON.stringify({ name }) },
   );
-  const data = expectExactRecord(
-    envelope.data,
-    ["library", "collectionRevision"],
-    "rename Library response.data",
-  );
-  const library = expectLibraryOut(
-    data.library,
-    "rename Library response.data.library",
-  );
+  const library = data.library;
   if (library.id !== libraryId) {
-    throw new TypeError(
-      "rename Library response identity does not match request",
-    );
+    throw new TypeError("rename Library response identity does not match request");
   }
   // A Library name is presented by the Libraries index and every placement
   // editor. Reuse the domain's broad revision so all mounted projections
@@ -225,12 +197,4 @@ export async function renameMemberLibrary(
     library,
     collectionRevision: decodeCollectionRevision(data.collectionRevision),
   };
-}
-
-export function decodeLibrariesPage(
-  raw: unknown,
-): CollectionPage<MemberLibrary> {
-  return decodeCollectionPage(raw, (row, index) =>
-    expectLibraryOut(row, `LibraryOut items[${index}]`),
-  );
 }
