@@ -45,6 +45,7 @@ from nexus.services.generation_policy import (
     ExactModelTools,
     GenerationPolicy,
     OperationWorkflowSpec,
+    OutputContract,
 )
 from nexus.services.generation_spec import (
     CodexDispatchTargetSnapshot,
@@ -77,7 +78,6 @@ _PROVIDER_ORDER: tuple[GenerationApiProvider, ...] = (
     "deepseek",
     "xai",
 )
-_CHAT_CAPABILITY: TransportCapability = "TextWithTools"
 _DEFINITION_TTL_SECONDS = 300
 _READINESS_TTL_SECONDS = 60
 
@@ -371,11 +371,12 @@ def compose_generation_catalog(
         model_rows: list[GenerationModelRow] = []
         for source in sources:
             route_readiness = readiness.route(route_key)
-            state = _selection_state(
-                source,
-                route_readiness,
-                tool_readiness if route_key != "CodexPersonal" else None,
+            chat_capability = required_transport_capability(
+                chat_workflow.output_contract,
+                model_tools=True,
+                codex_native=isinstance(source.dispatch_target, CodexDispatchTargetSnapshot),
             )
+            state = _selection_state(source, chat_capability, route_readiness, tool_readiness)
             context_budget, output_budget = _effective_budget(source, chat_workflow)
             reasoning_rows: list[GenerationReasoningRow] = []
             for reasoning in source.reasoning:
@@ -494,28 +495,37 @@ def validate_background_policy(
         pair = snapshot.pair(entry.selection)
         if pair is None:
             raise AssertionError(f"{operation} selection is absent from the catalog")
-        required = workflow_transport_capability(
-            entry.workflow, codex_native=isinstance(entry.selection, CodexPersonalSelection)
+        required = required_transport_capability(
+            entry.workflow.output_contract,
+            model_tools=isinstance(entry.workflow.model_tool_policy, ExactModelTools),
+            codex_native=isinstance(entry.selection, CodexPersonalSelection),
         )
         if required not in pair.capabilities:
             raise AssertionError(f"{operation} target does not support its workflow")
 
 
-def workflow_transport_capability(
-    workflow: OperationWorkflowSpec, *, codex_native: bool = False
+def required_transport_capability(
+    output_contract: OutputContract, *, model_tools: bool, codex_native: bool
 ) -> TransportCapability:
-    if codex_native:
-        return "TextWithTools" if workflow.output_contract == "Text" else "StructuredWithTools"
-    has_tools = isinstance(workflow.model_tool_policy, ExactModelTools)
-    if workflow.output_contract == "Text":
-        return "TextWithTools" if has_tools else "Text"
-    return "StructuredWithTools" if has_tools else "StrictStructured"
+    """The one rule admission, dispatch, and catalog eligibility share.
+
+    Codex native runs every generation inside its callback loop, so it needs the
+    tool-capable mode even when the frozen plan grants no model tools.
+    """
+
+    with_tools = model_tools or codex_native
+    if output_contract == "Text":
+        return "TextWithTools" if with_tools else "Text"
+    return "StructuredWithTools" if with_tools else "StrictStructured"
 
 
 def _selection_state(
-    source: _SourceModel, readiness: Readiness, tool_readiness: OperatorActionRequired | None
+    source: _SourceModel,
+    chat_capability: TransportCapability,
+    readiness: Readiness,
+    tool_readiness: OperatorActionRequired | None,
 ) -> SelectionState:
-    if _CHAT_CAPABILITY not in source.capabilities:
+    if chat_capability not in source.capabilities:
         return Ineligible(
             code="unsupported_capability",
             explanation="this route cannot run chat with its required tools.",
