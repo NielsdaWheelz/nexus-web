@@ -10,10 +10,9 @@ from typing import Annotated, assert_never
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, Response
-from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import DbSession
 from nexus.responses import Data, ok
 from nexus.schemas.extension_capture import LocalFile
 from nexus.schemas.media import (
@@ -46,7 +45,7 @@ def _request_id(request: Request) -> str | None:
 def create_from_url(
     request_body: FromUrlRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     request: Request,
 ) -> dict:
     """Accept a URL source; the service classifies the kind. Clients then poll GET /media/{id}."""
@@ -66,7 +65,7 @@ def create_from_url(
 def create_upload_session(
     request_body: CreateUploadSessionRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     request: Request,
 ) -> dict:
     return ok(
@@ -86,7 +85,7 @@ def record_upload_transport_failure(
     session_handle: str,
     request_body: UploadTransportFailureRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Response:
     media_upload_sessions.record_transport_failure(
         db=db,
@@ -103,7 +102,7 @@ def retry_upload_session(
     session_handle: str,
     request_body: RetryUploadSessionRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     return ok(
         media_upload_sessions.retry_upload_session(
@@ -122,7 +121,7 @@ def confirm_upload_session(
     session_handle: str,
     request_body: ConfirmUploadSessionRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     request: Request,
 ) -> dict:
     return ok(
@@ -142,7 +141,7 @@ def confirm_upload_session(
 def delete_upload_session(
     session_handle: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Response:
     # The account credential removes its own unpublished session of either
     # origin: a browser capture's bytes live in the extension, which alone can
@@ -158,7 +157,7 @@ def retry_ingest(
     media_id: UUID,
     body: RetrySourceRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     request: Request,
 ) -> Data[SourceRetryAdmission]:
     """Admit one source retry; metadata has its own operation contract."""
@@ -179,7 +178,7 @@ def repair_media(
     media_id: UUID,
     body: MediaRepairRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     """Requeue the exact dead job the viewer inspected: source or search."""
     actor = ViewerRecovery(viewer_id=viewer.user_id, client_mutation_id=body.client_mutation_id)

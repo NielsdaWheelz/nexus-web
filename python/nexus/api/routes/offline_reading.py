@@ -22,7 +22,7 @@ from starlette.concurrency import run_in_threadpool
 from nexus.auth.bearer import parse_bearer_token
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.auth.permissions import can_read_media
-from nexus.db.session import get_db, get_session_factory
+from nexus.db.session import DbSession, get_session_factory
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.responses import success_response
 from nexus.schemas.offline_reading_package import (
@@ -79,7 +79,7 @@ def get_offline_reading_account_binding(
 def create_offline_reading_token(
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     """Authorize current visibility/generation before minting one narrow token."""
     if not can_read_media(db, viewer.user_id, media_id):
@@ -108,7 +108,7 @@ def create_offline_reading_token(
 async def get_offline_reading_package(
     request: Request,
     media_id: UUID,
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> FileResponse:
     """Verify one package token and transfer one verified immutable ZIP.
 

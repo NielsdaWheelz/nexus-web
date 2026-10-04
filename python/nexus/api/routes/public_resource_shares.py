@@ -7,11 +7,10 @@ headers on every response under this prefix, errors included.
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Response
+from fastapi import APIRouter, Header, Response
 from fastapi.responses import JSONResponse, StreamingResponse
-from sqlalchemy.orm import Session
 
-from nexus.db.session import get_db
+from nexus.db.session import DbSession
 from nexus.errors import ApiErrorCode
 from nexus.responses import Data, error_response
 from nexus.schemas.public_resource_sharing import PublicSectionOut, PublicShareOut
@@ -20,25 +19,24 @@ from nexus.services.media_file_access import parse_single_byte_range
 from nexus.storage.client import get_storage_client
 
 router = APIRouter(prefix="/public/resource-share", tags=["public-resource-sharing"])
-DbDep = Annotated[Session, Depends(get_db)]
 ShareToken = Annotated[str, Header(alias="X-Nexus-Share-Token")]
 
 
 @router.get("")
-def get_public_resource_share(db: DbDep, share_token: ShareToken = "") -> Data[PublicShareOut]:
+def get_public_resource_share(db: DbSession, share_token: ShareToken = "") -> Data[PublicShareOut]:
     return Data(data=public_resource_sharing.read_share(db, share_token))
 
 
 @router.get("/sections/{section_handle}")
 def get_public_resource_share_section(
-    section_handle: str, db: DbDep, share_token: ShareToken = ""
+    section_handle: str, db: DbSession, share_token: ShareToken = ""
 ) -> Data[PublicSectionOut]:
     return Data(data=public_resource_sharing.read_section(db, share_token, section_handle))
 
 
 @router.get("/assets/{asset_handle}")
 def get_public_resource_share_asset(
-    asset_handle: str, db: DbDep, share_token: ShareToken = ""
+    asset_handle: str, db: DbSession, share_token: ShareToken = ""
 ) -> Response:
     data, content_type = public_resource_sharing.read_asset(db, share_token, asset_handle)
     return Response(data, media_type=content_type)
@@ -46,7 +44,7 @@ def get_public_resource_share_asset(
 
 @router.get("/file")
 def get_public_resource_share_file(
-    db: DbDep,
+    db: DbSession,
     share_token: ShareToken = "",
     range_header: Annotated[str | None, Header(alias="Range")] = None,
 ) -> Response:

@@ -1,22 +1,19 @@
-"""Database session management and transaction helpers.
+"""database sessions and transaction helpers.
 
-Provides:
-- Request-scoped database sessions via get_db() dependency
-- Transaction context manager for mutations
+function-scoped dependencies release request sessions before body transfer.
 """
 
-from collections.abc import Generator
+from collections.abc import AsyncIterator, Generator
 from contextlib import contextmanager
 from functools import lru_cache
-from typing import Annotated, Any
+from typing import Annotated
 
-from fastapi import Depends, Request
+from anyio import CancelScope, CapacityLimiter, to_thread
+from fastapi import Depends
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.engine import get_engine
-
-REQUEST_DB_SESSIONS_STATE_KEY = "_nexus_request_db_sessions"
 
 
 def create_session_factory() -> sessionmaker[Session]:
@@ -35,29 +32,28 @@ def get_session_factory() -> sessionmaker[Session]:
     return create_session_factory()
 
 
-def get_db(request: Request) -> Generator[Session, None, None]:
-    """FastAPI dependency that provides a database session.
-
-    Yields:
-        A database session that is automatically closed after use.
-
-    Usage:
-        @app.get("/endpoint")
-        def endpoint(db: Session = Depends(get_db)):
-            ...
-    """
-    SessionLocal = get_session_factory()
-    db = SessionLocal()
-    track_request_db_session(request, db)
+def _release_session(db: Session) -> None:
     try:
-        yield db
+        if db.in_transaction():
+            db.rollback()
     finally:
         db.close()
 
 
-def get_repeatable_read_db(
-    db: Annotated[Session, Depends(get_db)],
-) -> Session:
+async def get_db() -> AsyncIterator[Session]:
+    """yield one request session through handler execution and serialization."""
+    db = get_session_factory()()
+    try:
+        yield db
+    finally:
+        with CancelScope(shield=True):
+            await to_thread.run_sync(_release_session, db, limiter=CapacityLimiter(1))
+
+
+DbSession = Annotated[Session, Depends(get_db, scope="function")]
+
+
+def get_repeatable_read_db(db: DbSession) -> Session:
     """Start one strict read-only snapshot on a fresh request session."""
 
     if db.in_transaction():
@@ -67,26 +63,7 @@ def get_repeatable_read_db(
     return db
 
 
-def track_request_db_session(request: Request, db: Session) -> None:
-    """Track a request-scoped session for response-start connection release."""
-    sessions = getattr(request.state, REQUEST_DB_SESSIONS_STATE_KEY, None)
-    if sessions is None:
-        sessions = []
-        setattr(request.state, REQUEST_DB_SESSIONS_STATE_KEY, sessions)
-    sessions.append(db)
-
-
-def release_tracked_request_db_sessions(scope_state: dict[str, Any]) -> None:
-    """Release all DB sessions tracked for one ASGI request scope."""
-    sessions = scope_state.get(REQUEST_DB_SESSIONS_STATE_KEY)
-    if not sessions:
-        return
-
-    scope_state[REQUEST_DB_SESSIONS_STATE_KEY] = []
-    for db in sessions:
-        if db.in_transaction():
-            db.rollback()
-        db.close()
+RepeatableReadDbSession = Annotated[Session, Depends(get_repeatable_read_db, scope="function")]
 
 
 def use_serializable(db: Session) -> None:

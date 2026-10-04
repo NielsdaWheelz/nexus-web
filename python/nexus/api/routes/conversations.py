@@ -5,11 +5,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, Request
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy.orm import Session
 
 from nexus.api.deps import require_chat_contract_revision, require_tool_projection_revision
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db, get_repeatable_read_db
+from nexus.db.session import DbSession, RepeatableReadDbSession, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.responses import Data, DataPage, ok
 from nexus.schemas.collection_page import CollectionPage, parse_manual_page_query
@@ -31,7 +30,7 @@ class CreateConversationRequest(BaseModel):
 def list_conversations(
     request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
 ) -> Data[CollectionPage[ConversationListItemOut]] | DataPage[ConversationOut, PageInfo]:
     """List conversations.
 
@@ -80,7 +79,7 @@ def list_conversations(
 @router.post("/conversations", status_code=201)
 def create_conversation(
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     body: Annotated[CreateConversationRequest | None, Body()] = None,
 ) -> dict:
     """Create an empty private conversation, with its initial context refs."""
@@ -98,7 +97,7 @@ def create_conversation(
 def get_conversation(
     conversation_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
 ) -> dict:
     return ok(
         conversations_service.get_conversation(
@@ -120,7 +119,7 @@ async def undo_tool_call(
     conversation_id: UUID,
     tool_call_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     """Revert one assistant write tool call's created refs. Idempotent."""
 
@@ -150,7 +149,7 @@ async def undo_tool_call(
 def delete_conversation(
     conversation_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     """Delete a conversation and every row it owns; return the index revision."""
 

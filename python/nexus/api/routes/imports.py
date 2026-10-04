@@ -3,10 +3,9 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_repeatable_read_db
+from nexus.db.session import RepeatableReadDbSession
 from nexus.responses import Data
 from nexus.schemas.imports import (
     HistoryPage,
@@ -29,7 +28,7 @@ router = APIRouter(tags=["imports"])
 @router.get("/imports/summary")
 def get_import_summary(
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
 ) -> Data[ImportSummary]:
     return Data(data=read_import_summary(db, viewer_id=viewer.user_id))
 
@@ -38,7 +37,7 @@ def get_import_summary(
 def list_imports(
     query: Annotated[ImportListQuery, Query()],
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
 ) -> Data[ImportPage]:
     return Data(data=read_import_page(db, viewer_id=viewer.user_id, query=query))
 
@@ -47,7 +46,7 @@ def list_imports(
 def get_import(
     ref: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
 ) -> Data[ImportDetail]:
     return Data(data=read_import_detail(db, viewer_id=viewer.user_id, ref=parse_import_ref(ref)))
 
@@ -56,7 +55,7 @@ def get_import(
 def get_import_history(
     ref: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
     cursor: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=100),
 ) -> Data[HistoryPage]:

@@ -6,10 +6,9 @@ User search endpoint for finding users by email or display name.
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import DbSession
 from nexus.responses import ok
 from nexus.services import users as users_service
 
@@ -19,7 +18,7 @@ router = APIRouter(tags=["users"])
 @router.get("/users/search")
 def search_users(
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     q: Annotated[str, Query(min_length=1, description="Search query (min 3 chars)")],
     limit: Annotated[int, Query(ge=1, le=20, description="Max results")] = 10,
 ) -> dict:

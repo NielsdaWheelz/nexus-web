@@ -8,10 +8,9 @@ return the ``ok()`` envelope. GET uses the request-scoped read boundary.
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_repeatable_read_db
+from nexus.db.session import RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok
 from nexus.schemas.consumption import (
@@ -27,7 +26,7 @@ router = APIRouter(tags=["lectern"])
 @router.get("/lectern/slate")
 def get_lectern_slate(
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
 ) -> dict:
     slate = resonance_service.build_lectern_slate(db, viewer_id=viewer.user_id)
     return ok(slate, by_alias=True)
@@ -37,7 +36,7 @@ def get_lectern_slate(
 def get_quick_reads(
     request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
 ) -> dict:
     if request.query_params:
         raise InvalidRequestError(
@@ -50,7 +49,7 @@ def get_quick_reads(
 @router.get("/lectern")
 def get_lectern(
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
 ) -> dict:
     snapshot = consumption_service.get_lectern(db, viewer.user_id)
     return ok(snapshot, by_alias=True)

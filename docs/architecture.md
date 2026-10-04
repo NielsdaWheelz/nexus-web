@@ -281,7 +281,7 @@ deviation from a rule is explicit, see [`rules/overrides.md`](rules/overrides.md
    outcomes clear cookies. The shared response finalizer owns all cookie effects
    and canonical `private, no-store` headers, including downstream failures.
 5. **FastAPI** receives the request through its middleware stack — executed in this
-   order (`python/nexus/app.py`): RequestID → StreamCORS → RequestDbSession →
+   order (`python/nexus/app.py`): RequestID → StreamCORS →
    **Auth** → route. `AuthMiddleware` (`auth/middleware.py`) verifies the JWT via
    JWKS (`auth/verifier.py`), resolves first-login **bootstrap** through its bounded
    process-local success cache (threadpool + database only on a miss), and attaches
@@ -293,9 +293,11 @@ deviation from a rule is explicit, see [`rules/overrides.md`](rules/overrides.md
    raise an `ApiError`. Handlers are plain `def`, so
    FastAPI runs the blocking ORM work in a threadpool (never blocking the loop).
 7. The **service** holds the business logic, returns plain data.
-8. On the way out, `RequestDbSessionMiddleware` **releases the pooled DB
-   connection at `http.response.start`** — before the body streams to a possibly
-   slow client — then RequestID stamps `X-Request-ID`, publishes the complete API
+8. on the way out, the function-scoped `DbSession` dependency releases its pooled
+   connection after returned-value serialization and before body transfer.
+   `RepeatableReadDbSession` shares that cleanup owner. rollback and close run in
+   a shielded worker; close still runs if rollback fails. session-free error
+   handlers may render after dependency unwind. RequestID then stamps `X-Request-ID`, publishes the complete API
    header phase as `Server-Timing: nexus_api`, preserves narrower downstream
    phases such as Openables' `nexus_openables`, and emits the access log. The BFF
    allow-lists those trusted timing values and appends `nexus_bff`, so same-origin
@@ -603,10 +605,10 @@ discipline (this is the single most important backend invariant):
   Starlette runs them in a threadpool; async code that must touch the DB wraps it
   in `run_in_threadpool`. Calling the DB inline on the loop self-induces a pool
   deadlock under contention.
-- **Early connection release** (`middleware/db_session.py` + `db/session.py`): the
-  pooled connection is returned at `http.response.start`, before the body is sent.
-  So any ORM access must complete before the response starts streaming — don't
-  lazy-load relationships while streaming.
+- **request session lifetime** (`db/session.py`): `DbSession` and
+  `RepeatableReadDbSession` use native function scope. returned-value serialization
+  finishes before worker rollback/close and body transfer; streamed bodies must
+  not borrow the session. phase-owned stream sessions retain their own lifetime.
 - **Server-side prepared statements are disabled** (`prepare_threshold=None`) for
   pooler safety.
 - **SERIALIZABLE** isolation is opt-in via `use_serializable()` for
@@ -2238,8 +2240,8 @@ proof checklists impose no obligation to rebuild the suite.
 The things most likely to bite you, distilled:
 
 1. **Never call blocking DB on the event loop** — plain `def` handlers or
-   `run_in_threadpool`. The DB connection is released at `http.response.start`, so
-   don't touch the ORM while streaming a body.
+   `run_in_threadpool`. request sessions are released by the function-scoped
+   dependency before body transfer; don't touch the borrowed session while streaming.
 2. **The browser holds no tokens.** Product data goes through `/api/*`; only SSE
    talks to FastAPI directly, with a short-lived stream token minted per connect.
 3. **Private and public asset lanes are different.** `/api/media/image` and EPUB

@@ -8,10 +8,9 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response
-from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import DbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok
 from nexus.schemas.synapse import SynapseScanOut, SynapseScanRequest, SynapseScanStatusOut
@@ -47,7 +46,7 @@ def _parse_scannable_ref(raw: str) -> ResourceRef:
 def request_scan(
     body: SynapseScanRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     """Queue a manual scan. 404 when the object is not visible."""
     ref = _parse_scannable_ref(body.ref)
@@ -63,7 +62,7 @@ def request_scan(
 @router.get("/scans")
 def read_scan_status(
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     ref: Annotated[str, Query(description="Source object ref, e.g. 'highlight:<uuid>'")],
 ) -> dict:
     """Scan state for ``ref``: idle, pending, or running."""
@@ -76,7 +75,7 @@ def read_scan_status(
 def dismiss_edge(
     edge_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Response:
     """Suppress the edge's pair forever, then delete the edge. 409 off-origin."""
     synapse_service.dismiss_synapse_edge(db, viewer_id=viewer.user_id, edge_id=edge_id)

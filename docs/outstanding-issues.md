@@ -279,7 +279,6 @@ unexpected timeouts. See
 - [open] oi-178 · dossiers · 2026-09-21 reauthoring · p2 · a recheck raising DossierInputTooLarge escapes the terminal writers and leaves a build active with no terminal: [ticket](tickets/dossier-recheck-can-raise-past-the-terminal-writer.md).
 
 - [open] 2026-09-21 chat-database repair · chat worker runs synchronous database work on its execution loop: [ticket](tickets/chat-worker-database-work-runs-on-its-execution-loop.md).
-- [open] 2026-09-21 chat-database repair · request session release runs on the api event loop: [ticket](tickets/request-db-session-release-runs-on-event-loop.md).
 - [open] 2026-09-21 cleanup audit · offline reading store retains unused construction modes: [ticket](tickets/cleanup-offline-reading-unused-construction-seams.md).
 - [deferred] 2026-09-23 firefox v1 · the signed unlisted build needs AMO credentials and the production origins: [ticket](tickets/extension-firefox-distribution-consent-is-undeclared.md).
 - [open] 2026-09-23 firefox v1 track a · remove the browser-capture conversion command after its production run: [ticket](tickets/remove-browser-capture-conversion-command.md).

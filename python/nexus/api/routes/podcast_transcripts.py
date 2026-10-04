@@ -8,10 +8,9 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, Response
-from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import DbSession
 from nexus.responses import Data
 from nexus.schemas.media import TranscriptRequestOut, TranscriptRequestRequest
 from nexus.schemas.podcast import (
@@ -29,7 +28,7 @@ router = APIRouter(tags=["media"])
 def request_podcast_transcript_batch(
     body: PodcastEpisodeQueryTranscriptRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Data[PodcastEpisodeQueryTranscriptRequestOut]:
     """Admit one fingerprinted Podcast episode-query transcript request."""
     return Data(
@@ -46,7 +45,7 @@ def request_podcast_transcript_batch(
 def forecast_podcast_transcripts(
     body: PodcastEpisodeQueryTranscriptTarget,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Data[PodcastEpisodeQueryTranscriptForecastOut]:
     """Forecast one server-resolved Podcast episode-query transcript request."""
     return Data(
@@ -61,7 +60,7 @@ def request_media_transcript(
     media_id: UUID,
     response: Response,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     body: Annotated[TranscriptRequestRequest | None, Body()] = None,
 ) -> Data[TranscriptRequestOut]:
     """Admit an explicit transcript request for supported Media; 202 iff it enqueued work."""

@@ -8,10 +8,9 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
-from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db, get_repeatable_read_db
+from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data, ok, success_response
 from nexus.schemas.contributors import MediaAuthorsPutRequest
@@ -26,14 +25,12 @@ from nexus.services import media_deletion as media_deletion_service
 router = APIRouter(tags=["media"])
 
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
-DbDep = Annotated[Session, Depends(get_db)]
-ReadDbDep = Annotated[Session, Depends(get_repeatable_read_db)]
 
 
 @router.get("/media")
 def list_media(
     viewer: ViewerDep,
-    db: DbDep,
+    db: DbSession,
     kind: str | None = Query(
         default=None,
         description="Comma-separated media kind filter (web_article, epub, pdf, video, podcast_episode)",
@@ -49,7 +46,7 @@ def list_media(
 
 
 @router.get("/media/{media_id}")
-def get_media(media_id: UUID, viewer: ViewerDep, db: ReadDbDep) -> Data[MediaOut]:
+def get_media(media_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession) -> Data[MediaOut]:
     """404 if the media does not exist or the viewer cannot read it."""
     return Data(data=media_service.get_media_for_viewer(db, viewer.user_id, media_id))
 
@@ -59,7 +56,7 @@ def enrich_media_metadata(
     media_id: UUID,
     body: MetadataEnrichmentRequest,
     viewer: ViewerDep,
-    db: DbDep,
+    db: DbSession,
     request: Request,
 ) -> Data[MetadataEnrichmentAccepted]:
     return Data(
@@ -74,7 +71,7 @@ def enrich_media_metadata(
 
 
 @router.get("/media/{media_id}/offline-download-spec")
-def get_offline_download_spec(media_id: UUID, viewer: ViewerDep, db: DbDep) -> dict:
+def get_offline_download_spec(media_id: UUID, viewer: ViewerDep, db: DbSession) -> dict:
     result = media_service.get_offline_download_spec_for_viewer(
         db, viewer_id=viewer.user_id, media_id=media_id
     )
@@ -91,7 +88,7 @@ def put_media_authors(media_id: UUID, request: MediaAuthorsPutRequest, viewer: V
 
 
 @router.delete("/media/{media_id}")
-def remove_media(media_id: UUID, request: Request, viewer: ViewerDep, db: DbDep) -> dict:
+def remove_media(media_id: UUID, request: Request, viewer: ViewerDep, db: DbSession) -> dict:
     if request.query_params:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
@@ -103,7 +100,7 @@ def remove_media(media_id: UUID, request: Request, viewer: ViewerDep, db: DbDep)
 
 @router.get("/media/{media_id}/libraries")
 def get_media_libraries(
-    media_id: UUID, viewer: ViewerDep, db: DbDep
+    media_id: UUID, viewer: ViewerDep, db: DbSession
 ) -> Data[list[LibraryPlacementOptionOut]]:
     rows = library_entries.list_item_libraries(
         db, viewer_id=viewer.user_id, target=library_entries.media_target(media_id)
@@ -112,13 +109,15 @@ def get_media_libraries(
 
 
 @router.get("/media/{media_id}/fragments")
-def get_media_fragments(media_id: UUID, viewer: ViewerDep, db: DbDep) -> Data[list[FragmentOut]]:
+def get_media_fragments(
+    media_id: UUID, viewer: ViewerDep, db: DbSession
+) -> Data[list[FragmentOut]]:
     return Data(data=media_service.list_fragments_for_viewer(db, viewer.user_id, media_id))
 
 
 @router.post("/media/{media_id}/libraries", status_code=204)
 def add_media_libraries(
-    media_id: UUID, body: MediaLibrariesRequest, viewer: ViewerDep, db: DbDep
+    media_id: UUID, body: MediaLibrariesRequest, viewer: ViewerDep, db: DbSession
 ) -> Response:
     library_entries.ensure_media_in_libraries_for_viewer(
         db, viewer.user_id, media_id, body.library_ids
@@ -127,7 +126,7 @@ def add_media_libraries(
 
 
 @router.put("/media/{media_id}/saved-in-nexus", status_code=204)
-def add_media_saved_in_nexus(media_id: UUID, viewer: ViewerDep, db: DbDep) -> Response:
+def add_media_saved_in_nexus(media_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
     library_entries.ensure_media_saved_in_nexus_for_viewer(
         db, viewer_id=viewer.user_id, media_id=media_id
     )
@@ -136,7 +135,7 @@ def add_media_saved_in_nexus(media_id: UUID, viewer: ViewerDep, db: DbDep) -> Re
 
 @router.delete("/media/{media_id}/saved-in-nexus")
 def remove_media_saved_in_nexus(
-    media_id: UUID, viewer: ViewerDep, db: DbDep
+    media_id: UUID, viewer: ViewerDep, db: DbSession
 ) -> Data[LibraryEntryRemovalOut]:
     result = library_entries.ensure_media_absent_from_saved_in_nexus_for_viewer(
         db, viewer_id=viewer.user_id, media_id=media_id
@@ -146,14 +145,16 @@ def remove_media_saved_in_nexus(
 
 @router.delete("/media/{media_id}/libraries/{library_id}")
 def remove_media_library(
-    media_id: UUID, library_id: UUID, viewer: ViewerDep, db: DbDep
+    media_id: UUID, library_id: UUID, viewer: ViewerDep, db: DbSession
 ) -> Data[LibraryEntryRemovalOut]:
     result = library_entries.remove_media_from_library(db, viewer.user_id, media_id, library_id)
     return Data(data=result)
 
 
 @router.post("/media/{media_id}/refresh", status_code=202)
-def refresh_media_source(media_id: UUID, viewer: ViewerDep, db: DbDep, request: Request) -> dict:
+def refresh_media_source(
+    media_id: UUID, viewer: ViewerDep, db: DbSession, request: Request
+) -> dict:
     result = media_source_ingest.refresh_source_for_viewer(
         db=db,
         viewer_id=viewer.user_id,

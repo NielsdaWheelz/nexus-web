@@ -4,11 +4,10 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response
-from sqlalchemy.orm import Session
 
 from nexus.api.deps import require_chat_contract_revision, require_tool_projection_revision
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db, get_repeatable_read_db
+from nexus.db.session import DbSession, RepeatableReadDbSession, get_repeatable_read_db
 from nexus.responses import Data, ok
 from nexus.schemas.conversation import (
     ConversationTreeOut,
@@ -30,7 +29,7 @@ router = APIRouter(tags=["conversation-branches"])
 async def get_conversation_tree(
     conversation_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Data[ConversationTreeOut]:
     get_repeatable_read_db(db)
     return Data(
@@ -53,7 +52,7 @@ async def set_conversation_active_path(
     conversation_id: UUID,
     body: SetActivePathRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Data[ConversationTreeOut]:
     return Data(
         data=conversation_branches_service.set_active_path(
@@ -69,7 +68,7 @@ async def set_conversation_active_path(
 def list_conversation_forks(
     conversation_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
     search: str | None = Query(default=None, description="Fork search query"),
 ) -> dict:
     return ok(
@@ -88,7 +87,7 @@ def rename_conversation_fork(
     branch_id: UUID,
     body: RenameBranchRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     return ok(
         conversation_branches_service.rename_branch(
@@ -106,7 +105,7 @@ def delete_conversation_fork(
     conversation_id: UUID,
     branch_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Response:
     conversation_branches_service.delete_branch(
         db=db,

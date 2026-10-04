@@ -15,20 +15,17 @@ Middleware Ordering (Critical):
 
 Order of registration:
 1. AuthMiddleware (innermost auth boundary)
-2. RequestDbSessionMiddleware (releases sessions before body transfer)
-3. StreamCORSMiddleware when configured (stream route CORS)
-4. RequestIDMiddleware (outermost request logging and X-Request-ID)
+2. StreamCORSMiddleware when configured (stream route CORS)
+3. RequestIDMiddleware (outermost request logging and X-Request-ID)
 
 Actual execution order per request:
 1. RequestIDMiddleware (sets request_id, starts timer)
 2. StreamCORSMiddleware when configured (stream route CORS)
-3. RequestDbSessionMiddleware (tracks response-start DB release)
-4. AuthMiddleware (verifies auth, sets viewer)
-5. Route handler
-6. AuthMiddleware (returns response)
-7. RequestDbSessionMiddleware (releases request DB sessions before body transfer)
-8. StreamCORSMiddleware when configured (stream route CORS)
-9. RequestIDMiddleware (logs, sets response header)
+3. AuthMiddleware (verifies auth, sets viewer)
+4. Route handler and function-scoped database dependencies
+5. AuthMiddleware (returns response)
+6. StreamCORSMiddleware when configured (stream route CORS)
+7. RequestIDMiddleware (logs, sets response header)
 
 Outbound client lifecycle:
 - httpx.AsyncClient is created at startup, stored in app.state, and shared by
@@ -57,7 +54,6 @@ from nexus.config import Environment, get_settings
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.middleware.db_session import RequestDbSessionMiddleware
 from nexus.middleware.request_id import RequestIDMiddleware
 from nexus.middleware.stream_cors import StreamCORSMiddleware
 from nexus.public_resource_security import (
@@ -277,12 +273,6 @@ def create_app() -> FastAPI:
         env=settings.nexus_env.value,
         internal_header_required=settings.requires_internal_header,
     )
-
-    # Release request-scoped DB sessions when the response starts, not after the
-    # response body finishes transferring. This prevents slow clients or aborted
-    # BFF requests from pinning PostgreSQL connections across every route.
-    app.add_middleware(RequestDbSessionMiddleware)
-    logger.info("request_db_session_middleware_enabled")
 
     # Add StreamCORSMiddleware for browser-callable stream routes.
     # Must be added AFTER auth middleware (runs before it in the stack)

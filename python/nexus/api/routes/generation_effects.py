@@ -5,10 +5,9 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
-from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import DbSession
 from nexus.services.generation_effects import (
     GenerationEffectRefusal,
     list_generation_effects,
@@ -30,7 +29,7 @@ def _user_error(error: GenerationEffectRefusal) -> JSONResponse:
 def undo_assistant_write(
     position_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> JSONResponse:
     try:
         changed = undo_generation_position(db, viewer_id=viewer.user_id, position_id=position_id)
@@ -45,7 +44,7 @@ def undo_assistant_write(
 @router.get("/generation-effects")
 def recent_generation_effects(
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     generation_id: Annotated[UUID | None, Query()] = None,
     before: Annotated[UUID | None, Query()] = None,
 ) -> JSONResponse:

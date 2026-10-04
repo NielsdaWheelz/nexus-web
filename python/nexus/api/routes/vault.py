@@ -4,10 +4,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import Response
-from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import DbSession
 from nexus.responses import ok
 from nexus.schemas.vault import (
     VaultConflictOut,
@@ -24,7 +23,7 @@ router = APIRouter(tags=["vault"])
 @router.get("/vault")
 def export_vault(
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     files = vault_service.export_vault_files(db, viewer.user_id)
     response = VaultSnapshotOut(
@@ -36,7 +35,7 @@ def export_vault(
 @router.get("/vault/download")
 def download_vault(
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Response:
     return Response(
         content=vault_service.export_vault_zip(db, viewer.user_id),
@@ -53,7 +52,7 @@ def download_vault(
 def sync_vault(
     request: VaultSyncRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     result = vault_service.sync_vault_files(
         db,

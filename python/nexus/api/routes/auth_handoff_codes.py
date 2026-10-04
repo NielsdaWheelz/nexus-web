@@ -4,10 +4,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import DbSession
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.responses import success_response
 from nexus.services.auth_handoff_codes import (
@@ -28,7 +27,7 @@ class MintHandoffCodeRequest(BaseModel):
 def create_auth_handoff_code_route(
     payload: MintHandoffCodeRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     code = create_auth_handoff_code(
         db=db,
@@ -48,7 +47,7 @@ class ConsumeHandoffCodeRequest(BaseModel):
 @router.post("/handoff-codes/consume")
 def consume_auth_handoff_code_route(
     payload: ConsumeHandoffCodeRequest,
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     result = consume_auth_handoff_code(db=db, code=payload.code, verifier=payload.verifier)
     if result is None:

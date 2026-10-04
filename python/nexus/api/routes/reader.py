@@ -5,10 +5,9 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Request, Response
 from fastapi.responses import JSONResponse
-from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db, get_repeatable_read_db
+from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.responses import Data, ok, success_response
 from nexus.schemas.epub_find import EpubFindRequest
@@ -35,7 +34,7 @@ def resolve_media_evidence(
     media_id: UUID,
     evidence_span_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     result = locator_resolver.resolve_evidence_span(
         db, viewer_id=viewer.user_id, evidence_span_id=evidence_span_id
@@ -51,7 +50,7 @@ def get_epub_fragment(
     media_id: UUID,
     fragment_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
 ) -> dict:
     return ok(epub_read.get_epub_fragment_for_viewer(db, viewer.user_id, media_id, fragment_id))
 
@@ -61,7 +60,7 @@ def find_in_epub(
     media_id: UUID,
     payload: EpubFindRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
 ) -> dict:
     return ok(epub_find.find_epub_for_viewer(db, viewer.user_id, media_id, payload))
 
@@ -70,7 +69,7 @@ def find_in_epub(
 def get_media_navigation(
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
 ) -> Data[MediaNavigationOut]:
     return Data(
         data=reader_navigation.get_media_navigation_for_viewer(db, viewer.user_id, media_id)
@@ -82,7 +81,7 @@ def get_reader_document_map(
     request: Request,
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
 ) -> Data[ReaderDocumentMapOut]:
     unsupported_params = sorted(request.query_params)
     if unsupported_params:
@@ -101,7 +100,7 @@ def get_reader_document_map(
 def get_reader_state(
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     return ok(consumption_service.get_reader_cursor(db, viewer.user_id, media_id))
 
@@ -119,7 +118,7 @@ def get_offline_reader_state(
     media_id: UUID,
     response: Response,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
     expected_account_id: Annotated[UUID, Header(alias="X-Nexus-Expected-Account-Id")],
 ) -> dict:
     """The cursor and the publication generation it belongs to, from one snapshot."""
@@ -160,7 +159,7 @@ def put_offline_reader_state(
 def get_media_file(
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     """A short-lived signed download URL: url and expires_at."""
     return success_response(

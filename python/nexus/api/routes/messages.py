@@ -4,10 +4,9 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import DbSession
 from nexus.responses import ok
 from nexus.services import conversations as conversations_service
 
@@ -18,7 +17,7 @@ router = APIRouter(tags=["messages"])
 def delete_message(
     message_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     """Delete a message; the conversation too when it was the last one."""
 
