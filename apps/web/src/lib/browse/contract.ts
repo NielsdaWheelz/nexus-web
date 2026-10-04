@@ -1,203 +1,33 @@
-import {
-  expectExactRecord,
-  expectIsoInstant,
-  expectRecord,
-} from "@/lib/validation";
+import { expectExactRecord, expectIsoInstant, expectRecord } from "@/lib/validation";
 import { decodePresence, type Presence } from "@/lib/api/presence";
-import { decodeContributorCredit } from "@/lib/contributors/credit";
-import type { ContributorCredit } from "@/lib/contributors/types";
-import {
-  decodePublicationDate,
-  type PublicationDate,
-} from "@/lib/dates/publicationDate";
-import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 import type { ApiError } from "@/lib/api/client";
-import { decodeMediaSummary, type MediaSummary } from "@/lib/media/mediaSummary";
-import {
-  decodeResourceActionSubject,
-  type ResourceActionSubject,
-} from "@/lib/resources/resourceActionTarget";
+import type { ApiJson, Schema } from "@/lib/api/wire";
+import { mediaSummaryFromWire } from "@/lib/media/mediaSummary";
 import {
   parseMediaImageProxySrc,
   type MediaImageProxySrc,
 } from "@/lib/media/imageProxy";
-import { BROWSE_KINDS, BROWSE_SOURCES } from "./plan";
+import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
 declare const DISCOVERY_TARGET_HANDLE: unique symbol;
 
-/** Signed Browse identity. Integrity is server-owned; the client never parses it. */
+/** Signed browse identity. Integrity is server-owned; the client never opens it. */
 export type DiscoveryTargetHandle = string & {
   readonly [DISCOVERY_TARGET_HANDLE]: true;
 };
 
-export type BrowseKind = "Pdf" | "Epub" | "WebArticle" | "Video" | "Podcast";
-export type BrowseSource =
-  "Nexus" | "ProjectGutenberg" | "Brave" | "YouTube" | "PodcastIndex";
-export type BrowseSort = "Relevance" | "Newest";
-
-export type BrowseResolution =
-  | {
-      readonly kind: "InNexusMedia";
-      readonly href: string;
-      readonly actionSubject: ResourceActionSubject;
-      readonly mediaSummary: MediaSummary;
-    }
-  | {
-      readonly kind: "InNexusPodcast";
-      readonly href: string;
-      readonly actionSubject: ResourceActionSubject;
-    }
-  | { readonly kind: "Preview"; readonly target: DiscoveryTargetHandle }
-  | { readonly kind: "ExternalOnly"; readonly sourceHref: string };
-
-interface BrowseCandidateBase<
-  Kind extends BrowseKind,
-  Source extends BrowseSource,
-  Facts,
-> {
-  readonly kind: Kind;
-  readonly source: Source;
-  readonly resolution: BrowseResolution;
-  readonly title: string;
-  readonly contributors: readonly ContributorCredit[];
-  readonly description: Presence<string>;
-  readonly publishedAt: Presence<PublicationDate>;
-  /** Already-proxied same-origin image URL. */
-  readonly image: Presence<MediaImageProxySrc>;
-  readonly kindFacts: Facts;
-}
-
-export type BrowseCandidate =
-  | {
-      readonly kind: "OwnedMedia";
-      readonly source: "Nexus";
-      readonly resolution: Extract<BrowseResolution, { kind: "InNexusMedia" }>;
-      readonly description: Presence<string>;
-      readonly image: Presence<MediaImageProxySrc>;
-    }
-  | BrowseCandidateBase<
-      "Pdf",
-      "Nexus",
-      { readonly pageCount: Presence<number> }
-    >
-  | BrowseCandidateBase<
-      "Epub",
-      "Nexus" | "ProjectGutenberg",
-      { readonly ebookRef: Presence<string> }
-    >
-  | BrowseCandidateBase<
-      "WebArticle",
-      "Nexus" | "Brave",
-      { readonly siteName: Presence<string> }
-    >
-  | BrowseCandidateBase<
-      "Video",
-      "Nexus" | "YouTube",
-      {
-        readonly videoRef: Presence<string>;
-        readonly channelTitle: Presence<string>;
-      }
-    >
-  | BrowseCandidateBase<
-      "Podcast",
-      "PodcastIndex",
-      { readonly podcastRef: string }
-    >;
-
-export interface BrowsePage {
-  readonly query: string;
-  readonly kind: BrowseKind;
-  readonly source: BrowseSource;
-  readonly sort: Presence<BrowseSort>;
-  readonly items: readonly BrowseCandidate[];
-  readonly nextCursor: Presence<string>;
-}
+export type BrowseKind = Schema<"BrowseKind">;
+export type BrowseSource = Schema<"BrowseSource">;
+export type BrowseSort = Schema<"BrowseSort">;
+export type BrowsePage = ApiJson<"/browse", "get">["data"];
+export type BrowseCandidate = BrowsePage["items"][number];
+export type BrowsePreview = ApiJson<"/browse/preview", "get">["data"];
+export type PreviewEpisodeItem = Schema<"PodcastPreviewEpisode">;
 
 export type BrowseSectionFailure =
   | { readonly kind: "Unavailable" }
-  | {
-      readonly kind: "RateLimited";
-      readonly retryAt: Presence<string>;
-    }
-  | {
-      readonly kind: "QuotaExhausted";
-      readonly resetAt: Presence<string>;
-    };
-
-export interface PreviewEpisodeFacts {
-  readonly podcastRef: string;
-  readonly episodeRef: string;
-  readonly podcastTitle: string;
-  readonly audioHref: string;
-  readonly durationSeconds: Presence<number>;
-}
-
-export interface PreviewEpisodeItem {
-  readonly target: DiscoveryTargetHandle;
-  readonly title: string;
-  readonly contributors: readonly ContributorCredit[];
-  readonly description: Presence<string>;
-  readonly publishedAt: Presence<PublicationDate>;
-  readonly image: Presence<MediaImageProxySrc>;
-  readonly kindFacts: PreviewEpisodeFacts;
-}
-
-export interface PreviewEpisodePage {
-  readonly items: readonly PreviewEpisodeItem[];
-  readonly nextCursor: Presence<string>;
-}
-
-interface BrowsePreviewBase<
-  Kind extends "Epub" | "WebArticle" | "Video" | "Podcast" | "Episode",
-  Source extends BrowseSource,
-  Facts,
-> {
-  readonly kind: Kind;
-  readonly source: Source;
-  readonly target: DiscoveryTargetHandle;
-  readonly title: string;
-  readonly contributors: readonly ContributorCredit[];
-  readonly description: Presence<string>;
-  readonly publishedAt: Presence<PublicationDate>;
-  readonly image: Presence<MediaImageProxySrc>;
-  readonly sourceHref: string;
-  readonly resolution: Exclude<BrowseResolution, { kind: "ExternalOnly" }>;
-  readonly kindFacts: Facts;
-}
-
-export type BrowsePreview =
-  | BrowsePreviewBase<
-      "Epub",
-      "ProjectGutenberg",
-      { readonly ebookRef: string; readonly importHref: string }
-    >
-  | BrowsePreviewBase<
-      "WebArticle",
-      "Brave",
-      {
-        readonly canonicalUrl: string;
-        readonly siteName: Presence<string>;
-      }
-    >
-  | BrowsePreviewBase<
-      "Video",
-      "YouTube",
-      {
-        readonly videoRef: string;
-        readonly channelTitle: Presence<string>;
-        readonly embedHref: string;
-      }
-    >
-  | (BrowsePreviewBase<
-      "Podcast",
-      "PodcastIndex",
-      {
-        readonly podcastRef: string;
-        readonly feedHref: string;
-        readonly websiteHref: Presence<string>;
-      }
-    > & { readonly episodes: PreviewEpisodePage })
-  | BrowsePreviewBase<"Episode", "PodcastIndex", PreviewEpisodeFacts>;
+  | { readonly kind: "RateLimited"; readonly retryAt: Presence<string> }
+  | { readonly kind: "QuotaExhausted"; readonly resetAt: Presence<string> };
 
 /**
  * The only player-facing shape owned by Browse Preview. It contains no Media
@@ -212,6 +42,37 @@ export interface PreviewAudioDescriptor {
   readonly audioUrl: string;
   readonly imageUrl: Presence<MediaImageProxySrc>;
   readonly durationMs: Presence<number>;
+}
+
+function string(raw: unknown, context: string): string {
+  if (typeof raw !== "string" || raw.length === 0) {
+    throw new TypeError(`${context} must be a non-empty string`);
+  }
+  return raw;
+}
+
+function nonnegativeInteger(raw: unknown, context: string): number {
+  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) {
+    throw new TypeError(`${context} must be a nonnegative integer`);
+  }
+  return raw;
+}
+
+function internalHref(raw: unknown, context: string): string {
+  const value = string(raw, context);
+  if (normalizeWorkspaceHref(value) !== value) {
+    throw new TypeError(`${context} must be a canonical internal href`);
+  }
+  return value;
+}
+
+export function proxiedImageHref(raw: unknown, context: string): MediaImageProxySrc {
+  const value = string(raw, context);
+  try {
+    return parseMediaImageProxySrc(value);
+  } catch {
+    throw new TypeError(`${context} must use the image proxy`);
+  }
 }
 
 export function decodePreviewAudioDescriptor(
@@ -262,336 +123,37 @@ export function parseDiscoveryTargetHandle(
   return value as DiscoveryTargetHandle;
 }
 
-export function browsePreviewHref(target: DiscoveryTargetHandle): string {
-  return `/browse/preview?target=${encodeURIComponent(target)}`;
+export function browsePreviewHref(target: string): string {
+  return `/browse/preview?target=${encodeURIComponent(parseDiscoveryTargetHandle(target))}`;
 }
 
-function string(raw: unknown, context: string): string {
-  if (typeof raw !== "string" || raw.length === 0) {
-    throw new TypeError(`${context} must be a non-empty string`);
-  }
-  return raw;
+function checkImage(image: Presence<string>, context: string): void {
+  if (image.kind === "Present") proxiedImageHref(image.value, context);
 }
 
-function stringValue(raw: unknown, context: string): string {
-  if (typeof raw !== "string") {
-    throw new TypeError(`${context} must be a string`);
-  }
-  return raw;
+function checkResolution(resolution: Schema<"BrowseResolution">): void {
+  if (resolution.kind === "InNexusMedia") mediaSummaryFromWire(resolution.mediaSummary);
 }
 
-function literal<T extends string>(
-  raw: unknown,
-  values: readonly T[],
-  context: string,
-): T {
-  if (typeof raw !== "string" || !values.includes(raw as T)) {
-    throw new TypeError(`${context} has an unsupported value`);
-  }
-  return raw as T;
+/** Only the semantic leaves the backend schema cannot establish are checked here. */
+export function checkBrowsePageLeaves(page: BrowsePage): void {
+  page.items.forEach((candidate, index) => {
+    checkImage(candidate.image, `BrowsePage.items[${index}].image.value`);
+    checkResolution(candidate.resolution);
+  });
 }
 
-function browseKind(raw: unknown, context: string): BrowseKind {
-  const kind = literal(raw, BROWSE_KINDS, context);
-  if (kind === "All") {
-    throw new TypeError(`${context} has an unsupported value`);
-  }
-  return kind;
-}
-
-function nonnegativeInteger(raw: unknown, context: string): number {
-  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) {
-    throw new TypeError(`${context} must be a nonnegative integer`);
-  }
-  return raw;
-}
-
-function positiveNumber(raw: unknown, context: string): number {
-  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
-    throw new TypeError(`${context} must be a positive number`);
-  }
-  return raw;
-}
-
-function externalHref(raw: unknown, context: string): string {
-  const value = string(raw, context);
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new TypeError(`${context} must be an absolute URL`);
-  }
-  if (url.protocol !== "https:" && url.protocol !== "http:") {
-    throw new TypeError(`${context} must use HTTP or HTTPS`);
-  }
-  return value;
-}
-
-function httpsHref(raw: unknown, context: string): string {
-  const value = externalHref(raw, context);
-  if (new URL(value).protocol !== "https:") {
-    throw new TypeError(`${context} must use HTTPS`);
-  }
-  return value;
-}
-
-function internalHref(raw: unknown, context: string): string {
-  const value = string(raw, context);
-  if (normalizeWorkspaceHref(value) !== value) {
-    throw new TypeError(`${context} must be a canonical internal href`);
-  }
-  return value;
-}
-
-function proxiedImageHref(raw: unknown, context: string): MediaImageProxySrc {
-  const value = string(raw, context);
-  try {
-    return parseMediaImageProxySrc(value);
-  } catch {
-    throw new TypeError(`${context} must use the image proxy`);
-  }
-}
-
-function decodeContributors(
-  raw: unknown,
-  context: string,
-): readonly ContributorCredit[] {
-  if (!Array.isArray(raw)) {
-    throw new TypeError(`${context} must be an array`);
-  }
-  return raw.map((credit, index) =>
-    decodeContributorCredit(credit, index, context),
-  );
-}
-
-function decodeResolution(raw: unknown, context: string): BrowseResolution {
-  const value = expectRecord(raw, context);
-  switch (value.kind) {
-    case "InNexusMedia": {
-      expectExactRecord(value, ["kind", "href", "actionSubjectRef", "mediaSummary"], context);
-      const href = internalHref(value.href, `${context}.href`);
-      const actionSubject = decodeResourceActionSubject(
-        { ref: value.actionSubjectRef },
-        `${context}.actionSubject`,
-      );
-      const mediaSummary = decodeMediaSummary(value.mediaSummary);
-      return {
-        kind: "InNexusMedia",
-        href,
-        actionSubject,
-        mediaSummary,
-      };
-    }
-    case "InNexusPodcast": {
-      expectExactRecord(value, ["kind", "href", "actionSubjectRef"], context);
-      return {
-        kind: "InNexusPodcast",
-        href: internalHref(value.href, `${context}.href`),
-        actionSubject: decodeResourceActionSubject(
-          { ref: value.actionSubjectRef },
-          `${context}.actionSubject`,
-        ),
-      };
-    }
-    case "Preview":
-      expectExactRecord(value, ["kind", "target"], context);
-      return {
-        kind: "Preview",
-        target: parseDiscoveryTargetHandle(
-          string(value.target, `${context}.target`),
-        ),
-      };
-    case "ExternalOnly":
-      expectExactRecord(value, ["kind", "sourceHref"], context);
-      return {
-        kind: "ExternalOnly",
-        sourceHref: externalHref(value.sourceHref, `${context}.sourceHref`),
-      };
-    default:
-      throw new TypeError(`${context}.kind has an unsupported value`);
-  }
-}
-
-function decodeCommon(value: Record<string, unknown>, context: string) {
-  return {
-    title: string(value.title, `${context}.title`),
-    contributors: decodeContributors(
-      value.contributors,
-      `${context}.contributors`,
-    ),
-    description: decodePresence(value.description, (raw) =>
-      stringValue(raw, `${context}.description.value`),
-    ),
-    publishedAt: decodePresence(value.publishedAt, (raw) =>
-      decodePublicationDate(raw, `${context}.publishedAt.value`),
-    ),
-    image: decodePresence(value.image, (raw) =>
-      proxiedImageHref(raw, `${context}.image.value`),
-    ),
-  };
-}
-
-function decodeCandidate(raw: unknown, index: number): BrowseCandidate {
-  const context = `BrowsePage.items[${index}]`;
-  const record = expectRecord(raw, context);
-  if (record.kind === "OwnedMedia") {
-    const owned = expectExactRecord(
-      raw,
-      ["kind", "source", "resolution", "description", "image"],
-      context,
+export function checkBrowsePreviewLeaves(preview: BrowsePreview): void {
+  checkImage(preview.image, "BrowsePreview.image.value");
+  checkResolution(preview.resolution);
+  if (preview.kind === "Podcast") {
+    preview.episodes.items.forEach((episode, index) =>
+      checkImage(episode.image, `PreviewEpisodePage.items[${index}].image.value`),
     );
-    if (owned.source !== "Nexus") throw new TypeError(`${context}.source is invalid`);
-    const resolution = decodeResolution(owned.resolution, `${context}.resolution`);
-    if (resolution.kind !== "InNexusMedia") throw new TypeError(`${context}.resolution must be InNexusMedia`);
-    return {
-      kind: "OwnedMedia",
-      source: "Nexus",
-      resolution,
-      description: decodePresence(owned.description, (value) => stringValue(value, `${context}.description.value`)),
-      image: decodePresence(owned.image, (value) => proxiedImageHref(value, `${context}.image.value`)),
-    };
-  }
-  const value = expectExactRecord(
-    raw,
-    [
-      "kind",
-      "source",
-      "resolution",
-      "title",
-      "contributors",
-      "description",
-      "publishedAt",
-      "image",
-      "kindFacts",
-    ],
-    context,
-  );
-  const kind = browseKind(value.kind, `${context}.kind`);
-  const source = literal(value.source, BROWSE_SOURCES, `${context}.source`);
-  const common = decodeCommon(value, context);
-  const resolution = decodeResolution(
-    value.resolution,
-    `${context}.resolution`,
-  );
-  const facts = expectRecord(value.kindFacts, `${context}.kindFacts`);
-  switch (kind) {
-    case "Pdf":
-      if (source !== "Nexus")
-        throw new TypeError(`${context}.source is invalid`);
-      expectExactRecord(facts, ["pageCount"], `${context}.kindFacts`);
-      return {
-        kind,
-        source,
-        resolution,
-        ...common,
-        kindFacts: {
-          pageCount: decodePresence(facts.pageCount, (raw) =>
-            nonnegativeInteger(raw, `${context}.kindFacts.pageCount.value`),
-          ),
-        },
-      };
-    case "Epub":
-      if (source !== "Nexus" && source !== "ProjectGutenberg") {
-        throw new TypeError(`${context}.source is invalid`);
-      }
-      expectExactRecord(facts, ["ebookRef"], `${context}.kindFacts`);
-      return {
-        kind,
-        source,
-        resolution,
-        ...common,
-        kindFacts: {
-          ebookRef: decodePresence(facts.ebookRef, (raw) =>
-            string(raw, `${context}.kindFacts.ebookRef.value`),
-          ),
-        },
-      };
-    case "WebArticle":
-      if (source !== "Nexus" && source !== "Brave") {
-        throw new TypeError(`${context}.source is invalid`);
-      }
-      expectExactRecord(facts, ["siteName"], `${context}.kindFacts`);
-      return {
-        kind,
-        source,
-        resolution,
-        ...common,
-        kindFacts: {
-          siteName: decodePresence(facts.siteName, (raw) =>
-            string(raw, `${context}.kindFacts.siteName.value`),
-          ),
-        },
-      };
-    case "Video":
-      if (source !== "Nexus" && source !== "YouTube") {
-        throw new TypeError(`${context}.source is invalid`);
-      }
-      expectExactRecord(facts, ["videoRef", "channelTitle"], `${context}.kindFacts`);
-      return {
-        kind,
-        source,
-        resolution,
-        ...common,
-        kindFacts: {
-          videoRef: decodePresence(facts.videoRef, (raw) =>
-            string(raw, `${context}.kindFacts.videoRef.value`),
-          ),
-          channelTitle: decodePresence(facts.channelTitle, (raw) =>
-            string(raw, `${context}.kindFacts.channelTitle.value`),
-          ),
-        },
-      };
-    case "Podcast":
-      if (source !== "PodcastIndex") {
-        throw new TypeError(`${context}.source is invalid`);
-      }
-      expectExactRecord(facts, ["podcastRef"], `${context}.kindFacts`);
-      return {
-        kind,
-        source,
-        resolution,
-        ...common,
-        kindFacts: {
-          podcastRef: string(
-            facts.podcastRef,
-            `${context}.kindFacts.podcastRef`,
-          ),
-        },
-      };
   }
 }
 
-export function decodeBrowsePage(raw: unknown): BrowsePage {
-  const value = expectExactRecord(
-    raw,
-    ["query", "kind", "source", "sort", "items", "nextCursor"],
-    "BrowsePage",
-  );
-  if (!Array.isArray(value.items)) {
-    throw new TypeError("BrowsePage.items must be an array");
-  }
-  return {
-    query: string(value.query, "BrowsePage.query"),
-    kind: browseKind(value.kind, "BrowsePage.kind"),
-    source: literal(value.source, BROWSE_SOURCES, "BrowsePage.source"),
-    sort: decodePresence(value.sort, (raw) =>
-      literal(raw, ["Relevance", "Newest"] as const, "BrowsePage.sort.value"),
-    ),
-    items: value.items.map(decodeCandidate),
-    nextCursor: decodePresence(value.nextCursor, (cursor) =>
-      string(cursor, "BrowsePage.nextCursor.value"),
-    ),
-  };
-}
-
-export function decodeBrowsePageEnvelope(raw: unknown): BrowsePage {
-  const envelope = expectExactRecord(raw, ["data"], "BrowsePage envelope");
-  return decodeBrowsePage(envelope.data);
-}
-
-export function decodeBrowseSectionFailure(
-  error: ApiError,
-): BrowseSectionFailure {
+export function decodeBrowseSectionFailure(error: ApiError): BrowseSectionFailure {
   const details = expectRecord(error.details, "BrowseSectionFailure");
   switch (error.code) {
     case "E_BROWSE_PROVIDER_UNAVAILABLE":
@@ -630,241 +192,4 @@ export function decodeBrowseSectionFailure(
     default:
       throw error;
   }
-}
-
-function decodePreviewEpisodeFacts(
-  raw: unknown,
-  context: string,
-): PreviewEpisodeFacts {
-  const value = expectExactRecord(
-    raw,
-    [
-      "podcastRef",
-      "episodeRef",
-      "podcastTitle",
-      "audioHref",
-      "durationSeconds",
-    ],
-    context,
-  );
-  return {
-    podcastRef: string(value.podcastRef, `${context}.podcastRef`),
-    episodeRef: string(value.episodeRef, `${context}.episodeRef`),
-    podcastTitle: string(value.podcastTitle, `${context}.podcastTitle`),
-    audioHref: httpsHref(value.audioHref, `${context}.audioHref`),
-    durationSeconds: decodePresence(value.durationSeconds, (duration) =>
-      positiveNumber(duration, `${context}.durationSeconds.value`),
-    ),
-  };
-}
-
-function decodePreviewEpisodeItem(
-  raw: unknown,
-  index: number,
-): PreviewEpisodeItem {
-  const context = `PreviewEpisodePage.items[${index}]`;
-  const value = expectExactRecord(
-    raw,
-    [
-      "target",
-      "title",
-      "contributors",
-      "description",
-      "publishedAt",
-      "image",
-      "kindFacts",
-    ],
-    context,
-  );
-  return {
-    target: parseDiscoveryTargetHandle(
-      string(value.target, `${context}.target`),
-    ),
-    ...decodeCommon(value, context),
-    kindFacts: decodePreviewEpisodeFacts(
-      value.kindFacts,
-      `${context}.kindFacts`,
-    ),
-  };
-}
-
-function decodePreviewEpisodePage(raw: unknown): PreviewEpisodePage {
-  const value = expectExactRecord(
-    raw,
-    ["items", "nextCursor"],
-    "PreviewEpisodePage",
-  );
-  if (!Array.isArray(value.items)) {
-    throw new TypeError("PreviewEpisodePage.items must be an array");
-  }
-  return {
-    items: value.items.map(decodePreviewEpisodeItem),
-    nextCursor: decodePresence(value.nextCursor, (cursor) =>
-      string(cursor, "PreviewEpisodePage.nextCursor.value"),
-    ),
-  };
-}
-
-export function decodeBrowsePreview(raw: unknown): BrowsePreview {
-  const value = expectRecord(raw, "BrowsePreview");
-  const kind = literal(
-    value.kind,
-    ["Epub", "WebArticle", "Video", "Podcast", "Episode"] as const,
-    "BrowsePreview.kind",
-  );
-  expectExactRecord(
-    value,
-    kind === "Podcast"
-      ? [
-          "kind",
-          "source",
-          "target",
-          "title",
-          "contributors",
-          "description",
-          "publishedAt",
-          "image",
-          "sourceHref",
-          "resolution",
-          "kindFacts",
-          "episodes",
-        ]
-      : [
-          "kind",
-          "source",
-          "target",
-          "title",
-          "contributors",
-          "description",
-          "publishedAt",
-          "image",
-          "sourceHref",
-          "resolution",
-          "kindFacts",
-        ],
-    "BrowsePreview",
-  );
-  const source = literal(value.source, BROWSE_SOURCES, "BrowsePreview.source");
-  const target = parseDiscoveryTargetHandle(
-    string(value.target, "BrowsePreview.target"),
-  );
-  const resolution = decodeResolution(
-    value.resolution,
-    "BrowsePreview.resolution",
-  );
-  if (resolution.kind === "ExternalOnly") {
-    throw new TypeError("BrowsePreview.resolution cannot be ExternalOnly");
-  }
-  const common = {
-    target,
-    ...decodeCommon(value, "BrowsePreview"),
-    sourceHref: externalHref(value.sourceHref, "BrowsePreview.sourceHref"),
-    resolution,
-  };
-  const facts = expectRecord(value.kindFacts, "BrowsePreview.kindFacts");
-  switch (kind) {
-    case "Epub":
-      if (source !== "ProjectGutenberg") {
-        throw new TypeError("BrowsePreview.source is invalid");
-      }
-      expectExactRecord(facts, ["ebookRef", "importHref"], "BrowsePreview.kindFacts");
-      return {
-        kind,
-        source,
-        ...common,
-        kindFacts: {
-          ebookRef: string(facts.ebookRef, "BrowsePreview.kindFacts.ebookRef"),
-          importHref: externalHref(
-            facts.importHref,
-            "BrowsePreview.kindFacts.importHref",
-          ),
-        },
-      };
-    case "WebArticle":
-      if (source !== "Brave") {
-        throw new TypeError("BrowsePreview.source is invalid");
-      }
-      expectExactRecord(facts, ["canonicalUrl", "siteName"], "BrowsePreview.kindFacts");
-      return {
-        kind,
-        source,
-        ...common,
-        kindFacts: {
-          canonicalUrl: externalHref(
-            facts.canonicalUrl,
-            "BrowsePreview.kindFacts.canonicalUrl",
-          ),
-          siteName: decodePresence(facts.siteName, (site) =>
-            string(site, "BrowsePreview.kindFacts.siteName.value"),
-          ),
-        },
-      };
-    case "Video":
-      if (source !== "YouTube") {
-        throw new TypeError("BrowsePreview.source is invalid");
-      }
-      expectExactRecord(
-        facts,
-        ["videoRef", "channelTitle", "embedHref"],
-        "BrowsePreview.kindFacts",
-      );
-      return {
-        kind,
-        source,
-        ...common,
-        kindFacts: {
-          videoRef: string(facts.videoRef, "BrowsePreview.kindFacts.videoRef"),
-          channelTitle: decodePresence(facts.channelTitle, (channel) =>
-            string(channel, "BrowsePreview.kindFacts.channelTitle.value"),
-          ),
-          embedHref: externalHref(
-            facts.embedHref,
-            "BrowsePreview.kindFacts.embedHref",
-          ),
-        },
-      };
-    case "Podcast":
-      if (source !== "PodcastIndex") {
-        throw new TypeError("BrowsePreview.source is invalid");
-      }
-      expectExactRecord(
-        facts,
-        ["podcastRef", "feedHref", "websiteHref"],
-        "BrowsePreview.kindFacts",
-      );
-      return {
-        kind,
-        source,
-        ...common,
-        kindFacts: {
-          podcastRef: string(
-            facts.podcastRef,
-            "BrowsePreview.kindFacts.podcastRef",
-          ),
-          feedHref: externalHref(
-            facts.feedHref,
-            "BrowsePreview.kindFacts.feedHref",
-          ),
-          websiteHref: decodePresence(facts.websiteHref, (website) =>
-            externalHref(website, "BrowsePreview.kindFacts.websiteHref.value"),
-          ),
-        },
-        episodes: decodePreviewEpisodePage(value.episodes),
-      };
-    case "Episode":
-      if (source !== "PodcastIndex") {
-        throw new TypeError("BrowsePreview.source is invalid");
-      }
-      return {
-        kind,
-        source,
-        ...common,
-        kindFacts: decodePreviewEpisodeFacts(facts, "BrowsePreview.kindFacts"),
-      };
-  }
-}
-
-export function decodeBrowsePreviewEnvelope(raw: unknown): BrowsePreview {
-  const envelope = expectExactRecord(raw, ["data"], "BrowsePreview envelope");
-  return decodeBrowsePreview(envelope.data);
 }
