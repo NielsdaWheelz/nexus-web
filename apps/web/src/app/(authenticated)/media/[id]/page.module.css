@@ -114,6 +114,10 @@
   border-left-color: var(--reader-accent, var(--accent));
 }
 
+.documentEmbedCard[data-document-embed-ui] {
+  user-select: none;
+}
+
 .documentEmbedCard[data-document-embed-state="pending"] {
   border-left-color: var(--warning);
 }

@@ -70,15 +70,23 @@ export function getSupabaseAuthCookieNames(
     });
 }
 
-// Expire every Supabase auth cookie on the outgoing response. The empty value
-// plus maxAge: 0 is the browser-supported way to drop a cookie; the path must
-// match the original set (the app sets these at `/`).
+export function withholdSupabaseSessionCredentials(
+  cookies: readonly CookieValue[],
+): CookieValue[] {
+  const authNames = new Set(getSupabaseAuthCookieNames(cookies));
+  return cookies.map(({ name, value }) => ({
+    name,
+    value: authNames.has(name) ? "" : value,
+  }));
+}
+
+// native deletion's past expiry survives Next's mutable-cookie merge.
 export function clearSupabaseAuthCookies(
   response: NextResponse,
   cookieNames: readonly string[],
 ): void {
   for (const name of cookieNames) {
-    response.cookies.set(name, "", { maxAge: 0, path: "/" });
+    response.cookies.delete({ name, path: "/" });
   }
 }
 
@@ -158,28 +166,11 @@ function parseSupabaseSessionPayload(value: unknown): SupabaseSessionPayload | n
   };
 }
 
-export function readSupabaseSessionCookie(
-  cookies: readonly CookieValue[],
-  nowMs: number = Date.now()
-): SessionState {
-  const cookieName = getSupabaseAuthCookieName();
-  if (!cookieName) {
-    return { state: "anonymous", reason: "bad_config", cookieNames: [] };
-  }
-
-  const cookieNames = getSupabaseAuthCookieNames(cookies);
-  const value = getSupabaseAuthCookieValue(cookies);
-
-  if (!value) {
-    return {
-      state: "anonymous",
-      reason: cookieNames.length > 0 ? "malformed" : "missing",
-      cookieNames,
-    };
-  }
-
+function decodeSupabaseSessionCookie(
+  value: string,
+): SupabaseSessionPayload | null {
   if (!value.startsWith("base64-")) {
-    return { state: "anonymous", reason: "malformed", cookieNames };
+    return null;
   }
 
   let parsed: unknown;
@@ -206,10 +197,40 @@ export function readSupabaseSessionCookie(
     }
     // justify-ignore-error: malformed browser cookie data is untrusted input and
     // becomes an unrecoverable auth cookie.
-    return { state: "anonymous", reason: "malformed", cookieNames };
+    return null;
   }
 
-  const session = parseSupabaseSessionPayload(parsed);
+  return parseSupabaseSessionPayload(parsed);
+}
+
+export function getSupabaseRefreshToken(
+  cookies: readonly CookieValue[],
+): string | null {
+  const value = getSupabaseAuthCookieValue(cookies);
+  return value ? decodeSupabaseSessionCookie(value)?.refreshToken ?? null : null;
+}
+
+export function readSupabaseSessionCookie(
+  cookies: readonly CookieValue[],
+  nowMs: number = Date.now()
+): SessionState {
+  const cookieName = getSupabaseAuthCookieName();
+  if (!cookieName) {
+    return { state: "anonymous", reason: "bad_config", cookieNames: [] };
+  }
+
+  const cookieNames = getSupabaseAuthCookieNames(cookies);
+  const value = getSupabaseAuthCookieValue(cookies);
+
+  if (!value) {
+    return {
+      state: "anonymous",
+      reason: cookieNames.length > 0 ? "malformed" : "missing",
+      cookieNames,
+    };
+  }
+
+  const session = decodeSupabaseSessionCookie(value);
   if (!session) {
     return { state: "anonymous", reason: "malformed", cookieNames };
   }

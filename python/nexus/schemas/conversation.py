@@ -599,9 +599,9 @@ MessageOut.model_rebuild()
 
 
 class PageInfo(BaseModel):
-    """Manual-paging cursor envelope for the two retained conversation modes."""
+    """Manual-paging cursor envelope for retained conversation context queries."""
 
-    next_cursor: str | None = None
+    next_cursor: str | None
 
 
 # =============================================================================

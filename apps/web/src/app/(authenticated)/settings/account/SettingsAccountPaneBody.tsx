@@ -34,7 +34,7 @@ import {
   type NoResourceParams,
 } from "@/lib/api/resource";
 import { useResource } from "@/lib/api/useResource";
-import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
+import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { changeEmailAction } from "./actions";
 import styles from "./page.module.css";
 import {

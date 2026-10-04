@@ -148,7 +148,7 @@ def _snippet_around_query(text: str, query: str) -> str | None:
     return f"{prefix}{body}{suffix}"
 
 
-def _build_source_label(source: SearchResultSourceOut) -> str:
+def build_source_label(source: SearchResultSourceOut | MediaSummaryOut) -> str:
     parts = [source.title]
     credited_names = _credited_names(source.contributors)
     if credited_names:
@@ -253,7 +253,7 @@ def _envelope(
         label = result.source_name or result.display_url or "web"
         media_id, media_kind = None, None
     else:
-        title, label = result.source.title, _build_source_label(result.source)
+        title, label = result.source.title, build_source_label(result.source)
         media_id, media_kind = result.source.media_id, result.source.media_kind
 
     return {
@@ -267,7 +267,7 @@ def _envelope(
         "resource_ref": ref.uri,
         "owner_resource_ref": owner.uri,
         "action_subject_ref": (owner if result.result_type in _PASSAGE_TYPES else ref).uri,
-        "activation": activation.model_dump(mode="python", by_alias=False),
+        "activation": activation,
         "citation_target": ref.uri if resource_citation_result_type(ref) is not None else None,
         "context_ref": _context_ref(result),
     }

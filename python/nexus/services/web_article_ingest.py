@@ -134,9 +134,7 @@ def materialize_web_article_source(
                 from nexus.services.media_source_ingest import reusable_embedded_source_media_ids
 
                 planned_existing_media_ids.update(
-                    reusable_embedded_source_media_ids(
-                        discovery, viewer_id=actor_user_id, urls=list(embed_urls)
-                    )
+                    reusable_embedded_source_media_ids(discovery, urls=list(embed_urls))
                 )
                 discovery.rollback()
             finally:

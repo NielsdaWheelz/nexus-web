@@ -301,7 +301,11 @@ pass **No additional libraries**; Podcast Subscribe, episode Add, and OPML pass
 
 The pane URL owns the requested `LibraryEntryView` (order + projection + entry
 type); the Library controller owns one committed exact collection
-`{view, entries, collectionRevision, nextCursor, exhaustion}`.
+`{view, entries, collectionRevision, nextCursor}`. the installed tail cursor is
+the snapshot's completion fact: `Absent` means no continuation remains. no
+loaded snapshot means loading, never completion. reorder and Slate also require
+`useExhaustivePagination` to report `Complete`; its draining, retry, and refresh
+states remain separate from the snapshot.
 A same-visit query replacement is in-place: pane chrome, controls, focus, live
 ShellScroll position, Slate, and Inspector stay mounted while the exact first
 page loads. The full query remains runtime/history identity.

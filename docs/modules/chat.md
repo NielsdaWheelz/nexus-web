@@ -478,8 +478,8 @@ pending (above the composer, removable) and sent (read-only, above the user
 body). Both modes use the same three-line preview and explicit in-place
 expansion. The semantic figure has zero outer margin and cannot exceed its
 containing pane. `ConversationDestinationOverlay` is the existing-chat picker
-(title search over `GET /conversations?q=`). `useChatDraft` persists text, an
-explicit `SelectionDraft`, and the exact send
+(title search over `GET /conversations?title_search=`). `useChatDraft` persists
+text, an explicit `SelectionDraft`, and the exact send
 operation — one idempotency key, immutable `ChatRunCreateRequest`, and
 originating view identity/account
 assembled once before dispatch — in `sessionStorage`, keyed by the structured
@@ -510,22 +510,37 @@ existing rich HTTP responses while sharing the same key/mismatch ledger and
 requiring a fresh exact selection. a new rerun can create new additions;
 replaying the same command retains its original admission and effects.
 
-The unmarked `GET /conversations` primary index returns the strict
-complete-collection page and drains automatically in `ConversationsPaneBody`. The destination picker always sends an explicit `q`
-(including `q=` for recent chats) and retains manual cursor paging.
-`has_context_ref` retains the resource-graph page contract. These three modes
-must not share cursor or response decoding.
+`GET /conversations` returns the typed finite collection page
+`{data:{items,nextCursor,collectionRevision}}`. the primary index requests 100
+rows and drains automatically in `ConversationsPaneBody`; the destination picker
+requests 25 rows and pages manually through the same contract. optional
+`title_search` is a trimmed, case-insensitive literal substring of the stored
+title, bounded to 200 characters after trimming. `%` and `_` are literal. empty
+or absent search selects recent chats and preserves the meaning and acceptance
+of already-issued canonical cursors. the retired `q` key is rejected.
 
-The index additionally accepts the pane's domain view as `sort=updated|title`
+the picker cache binds the normalized search and page size. a replaced first
+page discards appended rows and cancels its continuation. collection-change or
+invalid-cursor failures expose `Reload chats`, which starts page one of the
+current search; ordinary continuation failures retain rows and allow retry.
+`has_context_ref` alone retains the typed resource-graph `{data,page}` response
+and manual cursor (50 rows by default, at most 100). its decoding and cursor
+remain separate from the finite index.
+
+the index additionally accepts the pane's domain view as `sort=updated|title`
 plus `direction=asc|desc`. `Updated — newest` is canonical and omits both keys;
-the only valid non-default pairs are `updated+asc` and `title+asc|desc`. A
+the only valid non-default pairs are `updated+asc` and `title+asc|desc`. a
 partial pair, an unknown value, a duplicate key, or the explicit default pair is
-`400 E_INVALID_REQUEST`, and the view keys are not accepted in the `q` or
-`has_context_ref` modes. The title order sorts on the presented title
+`400 E_INVALID_REQUEST`. unknown or duplicate keys also fail; index view and
+search keys are not accepted with `has_context_ref`. the title order sorts on
+the presented title
 `coalesce(nullif(btrim(title), ''), 'Untitled chat')` so the server order and
 the rendered text agree, then on `updated_at DESC, id DESC` in both directions.
-Cursors are the `ConversationIndex:v2` family bound to viewer, order plan, and
-collection revision; the retired unversioned family is not decodable.
+cursors are the `ConversationIndex:v2` family bound to viewer, order plan,
+collection revision, and any nonempty normalized title search. already-issued
+canonical cursors remain accepted, and context response and cursor contracts
+are unchanged; the retired unversioned index and destination-picker families
+are not decodable.
 
 ## Citation Candidates And Final Edges
 

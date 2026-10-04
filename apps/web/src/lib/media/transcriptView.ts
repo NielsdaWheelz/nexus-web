@@ -1,4 +1,4 @@
-import type { DocumentEmbed } from "@/lib/media/documentEmbeds";
+import type { Schema } from "@/lib/api/wire";
 import { normalizeDocumentEmbeds } from "@/lib/media/documentEmbeds";
 import type { MediaPlaybackSource } from "@/lib/media/playback";
 import { expectOneOf } from "@/lib/validation";
@@ -44,31 +44,14 @@ export interface TranscriptFragment {
   speaker_label?: string | null;
 }
 
-export interface TranscriptChapter {
-  chapter_idx: number;
-  title: string;
-  t_start_ms: number;
-  t_end_ms?: number | null;
-  url?: string | null;
-  image_url?: string | null;
-}
+export type TranscriptChapter = Readonly<Schema<"PodcastEpisodeChapterOut">>;
 
-export interface Fragment {
-  id: string;
-  media_id: string;
-  idx: number;
-  html_sanitized: string;
-  canonical_text: string;
-  /** Server-owned non-whitespace-token count for this canonical fragment. */
-  word_count?: number;
-  /** Zero-based document-global word-boundary ordinal for this fragment. */
-  document_word_start?: number;
-  document_embeds: DocumentEmbed[];
-  t_start_ms?: number | null;
-  t_end_ms?: number | null;
-  speaker_label?: string | null;
-  created_at: string;
-}
+/** Native fragments share their owned wire. Offline/EPUB projections may omit word/time metadata. */
+export type Fragment = Omit<Schema<"FragmentOut">,
+  "word_count" | "document_word_start" | "t_start_ms" | "t_end_ms" | "speaker_label"
+> & Partial<Pick<Schema<"FragmentOut">,
+  "word_count" | "document_word_start" | "t_start_ms" | "t_end_ms" | "speaker_label"
+>>;
 
 interface TranscriptFragmentSelectionOptions {
   activeFragmentId?: string | null;

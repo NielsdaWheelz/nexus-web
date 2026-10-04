@@ -10,11 +10,9 @@ import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 
 type PaneLoader = () => Promise<{ default: ComponentType }>;
 
-// The ONLY module that imports pane bodies. Each is a lazy entrypoint, so a
-// pane's code (markdown, ProseMirror, the reader stack, …) ships in its own
-// chunk and loads only when that pane opens — keeping the always-loaded shell
-// free of pane code (R4/R6). Imported solely by WorkspaceHost (render) and
-// AuthenticatedShell (preload).
+// pane bodies are lazy entrypoints for rendering and explicit preloads.
+// loader callbacks defer body imports until a pane is requested.
+// rendering and preloading share each module's registry promise.
 const PANE_LOADERS: Record<PaneRouteId, PaneLoader> = {
   lectern: () => import("@/app/(authenticated)/lectern/LecternPaneBody"),
   libraries: () => import("@/app/(authenticated)/libraries/LibrariesPaneBody"),

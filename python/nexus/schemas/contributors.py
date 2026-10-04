@@ -91,11 +91,6 @@ MediaAuthorsPutRequest = Annotated[
 ]
 
 
-class ContributorRenameRequest(_CamelRequest):
-    client_mutation_id: _ClientMutationId = Field(alias="clientMutationId")
-    display_name: _Name = Field(alias="displayName")
-
-
 class MediaAuthorCreditOut(_CamelResponse):
     contributor_handle: str = Field(alias="contributorHandle")
     href: str
@@ -120,18 +115,18 @@ class ContributorSearchItemOut(_CamelResponse):
     display_name: str = Field(alias="displayName")
     work_count: int = Field(alias="workCount")
     work_examples: list[ContributorWorkExampleOut] = Field(alias="workExamples", max_length=2)
-    matched_alias: str | None = Field(default=None, alias="matchedAlias")
+    matched_alias: str | None = Field(alias="matchedAlias")
 
 
 class ContributorSearchPageOut(_CamelResponse):
     contributors: list[ContributorSearchItemOut]
-    next_cursor: str | None = Field(default=None, alias="nextCursor")
+    next_cursor: str | None = Field(alias="nextCursor")
 
 
 class ContributorRoleFactOut(_CamelResponse):
     credited_name: str = Field(alias="creditedName")
     role: ContributorRole
-    raw_role: str | None = Field(default=None, alias="rawRole")
+    raw_role: str | None = Field(alias="rawRole")
 
 
 class ResourceActionSubjectOut(_CamelResponse):
@@ -143,7 +138,6 @@ class ContributorDetailOut(_CamelResponse):
     href: str
     display_name: str = Field(alias="displayName")
     other_names: list[str] = Field(alias="otherNames")
-    can_rename: bool = Field(alias="canRename")
     action_subject: ResourceActionSubjectOut = Field(alias="actionSubject")
 
 
@@ -160,7 +154,7 @@ class PodcastContributorWorkItemOut(_CamelResponse):
     title: str
     href: str
     content_kind: str = Field(alias="contentKind")
-    date: str | None = None
+    date: str | None
     role_facts: list[ContributorRoleFactOut] = Field(alias="roleFacts")
     action_subject: ResourceActionSubjectOut = Field(alias="actionSubject")
 
@@ -170,7 +164,7 @@ class ExternalContributorWorkItemOut(_CamelResponse):
     title: str
     href: str
     content_kind: str = Field(alias="contentKind")
-    date: str | None = None
+    date: str | None
     role_facts: list[ContributorRoleFactOut] = Field(alias="roleFacts")
     action_subject: None = Field(alias="actionSubject")
 

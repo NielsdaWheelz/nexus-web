@@ -14,7 +14,7 @@ class NexusSelectionRecordRequest(BaseModel):
     client_mutation_id: str = Field(min_length=1, max_length=120)
     query: str | None = Field(default=None, max_length=500)
     target_href: str = Field(min_length=1, max_length=2000)
-    label_snapshot: str = Field(min_length=1, max_length=2000)
+    label_snapshot: str = Field(min_length=1)
     source: NexusHistorySource
 
     model_config = ConfigDict(extra="forbid")

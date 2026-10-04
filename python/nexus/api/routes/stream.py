@@ -1,9 +1,9 @@
 """SSE replay/tail routes for durable runs and media processing status.
 
-All six browser-callable streams live under ``/stream/`` (auth via stream-token
+all five browser-callable streams live under ``/stream/`` (auth via stream-token
 bearer; see ``stream_paths.is_stream_path``). Three are append-cursor durable-run
 streams (chat run, oracle reading, Dossier build) that share one generic factory;
-media processing, Podcast refresh runs, and Podcast subscription lifecycles use
+media processing and podcast subscription lifecycles use
 snapshot/diff streams.
 
 Push-driven: an AFTER trigger ``pg_notify``s the per-entity channel on each new
@@ -318,10 +318,10 @@ def _assert_media_readable(viewer_id: UUID, media_id: UUID) -> None:
         media_service.get_media_for_viewer(db, viewer_id, media_id)
 
 
-def _read_media_snapshot(viewer_id: UUID, media_id: UUID) -> tuple[dict, bool]:
+def _read_media_snapshot(viewer_id: UUID, media_id: UUID) -> tuple[dict[str, Any], bool]:
     with get_session_factory()() as db:
         snapshot = media_service.read_event_snapshot(db, viewer_id=viewer_id, media_id=media_id)
-    return snapshot.payload, snapshot.terminal
+    return snapshot.payload.model_dump(mode="json"), snapshot.terminal
 
 
 def _parse_last_event_id(value: str | None) -> int:

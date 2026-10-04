@@ -226,11 +226,6 @@ export const RESOURCE_ACTION_CATALOG = {
     icon: FilePenLine,
     group: "CreateTransform",
   },
-  "ResourceOperation.Contributor.Rename": {
-    label: "Edit name…",
-    icon: Pencil,
-    group: "CreateTransform",
-  },
   "ResourceOperation.Artifact.Regenerate": {
     label: "Regenerate",
     icon: Sparkles,

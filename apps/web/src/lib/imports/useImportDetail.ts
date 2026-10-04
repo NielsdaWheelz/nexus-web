@@ -50,25 +50,16 @@ export function useImportDetail(
   const activeRef = useRef(false);
   activeRef.current = detail !== null && detail.item.state.kind === "Active";
 
-  // The observation revision the shown detail was read for. An observation that
-  // moved the revision re-keyed the read above and is answered by that keyed
-  // read alone, so it must not read the detail a second time; every later
-  // observation is this pane's five-second tick. Only the provider's revision
-  // marks it: selecting another import re-keys the read too, and it is not an
-  // observation, so it must not cost the reader a tick.
-  const revision = observation.revision;
-  const tickedRevisionRef = useRef(revision);
-
-  const observedAt = observation.observedAt;
+  // The provider owns which successful observations need live reads;
+  // `observedAt` remains the only clock, independent of selection changes.
+  const { observedAt, reread } = observation;
   const lastObservedRef = useRef<string | null>(null);
   useEffect(() => {
     const previous = lastObservedRef.current;
     lastObservedRef.current = observedAt;
     // The provider's first observation is the read the keyed resource made.
     if (previous === null || previous === observedAt) return;
-    const ticked = tickedRevisionRef.current;
-    tickedRevisionRef.current = revision;
-    if (ticked !== revision) return;
+    if (!reread) return;
     if (cacheKey === null || ref === null || !activeRef.current) return;
     const controller = new AbortController();
     void (async () => {
@@ -83,7 +74,7 @@ export function useImportDetail(
       setLive({ key: cacheKey, detail: next });
     })();
     return () => controller.abort();
-  }, [absorbRereadFailure, cacheKey, observedAt, ref, revision]);
+  }, [absorbRereadFailure, cacheKey, observedAt, ref, reread]);
 
   return detail === null ? keyed : { status: "ready", data: detail };
 }

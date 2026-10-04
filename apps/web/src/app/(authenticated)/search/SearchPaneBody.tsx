@@ -69,13 +69,15 @@ import type {
   SearchResultRowViewModel,
 } from "@/lib/search/types";
 import {
-  definePaneVisitDataKey,
-  usePaneReturnReady,
   usePaneIsVisible,
   usePaneRouter,
   usePaneSearchParams,
-  usePaneVisitData,
 } from "@/lib/panes/paneRuntime";
+import {
+  definePaneVisitDataKey,
+  usePaneReturnReady,
+  usePaneVisitData,
+} from "@/lib/workspace/paneReturnMemento";
 import styles from "./page.module.css";
 
 const SEARCH_DEBOUNCE_MS = 200;

@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, ClassVar, Literal, NewType, cast
+from typing import Annotated, Any, ClassVar, Literal, NewType, NotRequired, TypedDict, cast
 from uuid import UUID
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     ConfigDict,
     Field,
     FiniteFloat,
     TypeAdapter,
+    WithJsonSchema,
     model_validator,
+    with_config,
 )
 
 from nexus.schemas.search_types import SEARCH_RESULT_TYPES
@@ -319,6 +322,29 @@ RetrievalResultRef = Annotated[
 ]
 
 
+@with_config(ConfigDict(extra="allow", strict=True))
+class _TextQuoteGrammar(TypedDict):
+    exact: str
+    prefix: NotRequired[str]
+    suffix: NotRequired[str]
+
+
+_TEXT_QUOTE_ADAPTER = TypeAdapter(_TextQuoteGrammar)
+
+
+def _validate_text_quote(value: dict[str, Any]) -> dict[str, Any]:
+    _TEXT_QUOTE_ADAPTER.validate_python(value, strict=True)
+    # The dictionary serializer preserves extension values, omission and key order.
+    return value
+
+
+type TextQuoteSelector = Annotated[
+    dict[str, Any],
+    AfterValidator(_validate_text_quote),
+    WithJsonSchema(_TEXT_QUOTE_ADAPTER.json_schema()),
+]
+
+
 class WebTextOffsetsLocator(BaseModel):
     type: Literal["web_text_offsets"]
     media_id: UUID | str
@@ -326,7 +352,7 @@ class WebTextOffsetsLocator(BaseModel):
     start_offset: int = Field(ge=0)
     end_offset: int = Field(ge=0)
     media_kind: str | None = None
-    text_quote_selector: dict[str, Any] | None = None
+    text_quote_selector: TextQuoteSelector | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -345,7 +371,7 @@ class EpubFragmentOffsetsLocator(BaseModel):
     start_offset: int = Field(ge=0)
     end_offset: int = Field(ge=0)
     media_kind: str | None = None
-    text_quote_selector: dict[str, Any] | None = None
+    text_quote_selector: TextQuoteSelector | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -392,7 +418,7 @@ class PdfPageGeometryLocator(BaseModel):
     exact: str
     prefix: str | None = None
     suffix: str | None = None
-    text_quote_selector: dict[str, Any] | None = None
+    text_quote_selector: TextQuoteSelector | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -402,7 +428,7 @@ class TranscriptTimeRangeLocator(BaseModel):
     media_id: UUID | str
     t_start_ms: int = Field(ge=0)
     t_end_ms: int = Field(ge=0)
-    text_quote_selector: dict[str, Any] | None = None
+    text_quote_selector: TextQuoteSelector | None = None
 
     model_config = ConfigDict(extra="forbid")
 

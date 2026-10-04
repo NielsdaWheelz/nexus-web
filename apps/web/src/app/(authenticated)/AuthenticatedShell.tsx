@@ -43,10 +43,8 @@ import {
   ResourceOverlaysProvider,
 } from "@/lib/resources/resourceOverlaysController";
 import styles from "./layout.module.css";
-import {
-  AuthenticatedAccountProvider,
-  type AuthenticatedAccount,
-} from "@/lib/account/authenticatedAccount";
+import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
+import type { AuthenticatedAccount } from "@/lib/account/contract";
 
 export default function AuthenticatedShell({
   account,

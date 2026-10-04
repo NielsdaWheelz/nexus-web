@@ -193,6 +193,14 @@ still publishes no Inspector.
 Inline highlight rendering remains separate from the Document Map. Inline
 rendering follows the current reader location and active fragment/page data.
 
+`useHighlightInteraction` owns focus, bounds-edit state and overlap cycling.
+focus changes emphasis and the bounds-edit target without moving the viewport.
+clicks use the current DOM id order; another click on the same element cycles
+that current list, while a new element starts at its supplied topmost id.
+`focusHighlight(null)` ends editing and retains the cycle; `clearFocus()` also
+resets the clicked element and cycle. non-null focus retains bounds-edit state.
+the reader owns span evidence and action anchors from the clicked topmost id.
+
 Evidence is the Media Resource Inspector's cross-document reader
 surface for highlights. It remains a Document Map body: it renders the stored `exact` quote
 when available, shows an explicit placeholder for geometry-only PDF highlights,

@@ -19,7 +19,7 @@ import {
   type SessionEffect,
 } from "@/lib/auth/session-response";
 import { getSupabaseAuthCookieNames } from "@/lib/auth/session-cookie";
-import { createRouteHandlerClient } from "@/lib/supabase/route-handler";
+import { createCurrentSessionClient } from "@/lib/supabase/route-handler";
 
 export const runtime = "nodejs";
 
@@ -138,8 +138,18 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
+  if (form.password.length < 15) {
+    return finalizeSessionResponse(
+      authFormFailure({
+        body: { kind: "PolicyRejected", reasons: ["length"] },
+        status: 400,
+      }),
+      sessionEffect,
+    );
+  }
+
   const target = parseAuthReturnTarget(form.next);
-  const auth = await createRouteHandlerClient(
+  const auth = await createCurrentSessionClient(
     sessionEffect.kind === "Rotate" ? sessionEffect.cookiesToSet : [],
   );
   let outcome: Awaited<ReturnType<typeof updatePasswordFlow>>;
@@ -148,7 +158,6 @@ export async function POST(request: Request): Promise<NextResponse> {
       supabase: auth.supabase,
       password: form.password,
     });
-    await auth.settlePendingCookieWrites();
   } catch {
     return auth.applyCookies(internalResponse(), sessionEffect);
   }

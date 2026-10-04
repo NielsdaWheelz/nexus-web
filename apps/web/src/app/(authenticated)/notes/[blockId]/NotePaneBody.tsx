@@ -19,10 +19,10 @@ import {
   requirePaneRuntime,
   usePaneHash,
   usePaneParam,
-  usePaneReturnReady,
   usePaneRuntime,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
+import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { usePassageResolution } from "@/lib/reader/passageResolution";
 import { resourceSurfaceFilterFields } from "@/components/resource-surface/resourceSurfaceFilterFields";
 import {

@@ -601,6 +601,7 @@ def _object_for_endpoint(
         return None
     label = endpoint.label or endpoint.ref
     excerpt = present(endpoint.description) if endpoint.description else absent()
+    activation = endpoint.activation
     if endpoint.scheme == "message":
         meta = ctx.message_meta.get(endpoint.id)
         if meta is None:
@@ -609,7 +610,7 @@ def _object_for_endpoint(
             ref=endpoint.ref,
             label=meta.conversation_title,
             excerpt=absent(),
-            activation=endpoint.activation,
+            activation=activation,
             conversation_id=meta.conversation_id,
             message_ref=present(endpoint.ref),
         )
@@ -618,7 +619,7 @@ def _object_for_endpoint(
             ref=endpoint.ref,
             label=label,
             excerpt=excerpt,
-            activation=endpoint.activation,
+            activation=activation,
             conversation_id=endpoint.id,
             message_ref=absent(),
         )
@@ -630,7 +631,7 @@ def _object_for_endpoint(
             ref=endpoint.ref,
             label=meta.body_text or label,
             excerpt=present(meta.body_text) if meta.body_text else excerpt,
-            activation=endpoint.activation,
+            activation=activation,
             note_block_id=endpoint.id,
             body_pm_json=meta.body_pm_json,
         )
@@ -639,7 +640,7 @@ def _object_for_endpoint(
         ref=endpoint.ref,
         label=label,
         excerpt=excerpt,
-        activation=endpoint.activation,
+        activation=activation,
     )
 
 

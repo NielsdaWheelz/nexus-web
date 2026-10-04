@@ -53,17 +53,6 @@ function shownItems(page: ImportPage): string {
   return JSON.stringify(page.items);
 }
 
-function cursorPage(page: ImportPage): CursorPage<ImportItem> {
-  return {
-    data: [...page.items],
-    page: {
-      has_more: page.nextCursor.kind === "Present",
-      next_cursor:
-        page.nextCursor.kind === "Present" ? page.nextCursor.value : null,
-    },
-  };
-}
-
 /**
  * The filtered list of imports for one view: page one keyed to the query and the
  * provider's observation revision, later pages appended by cursor, and — while
@@ -119,41 +108,32 @@ export function useImportsPage(
   if (read !== null) lastGoodRef.current = { query, page: read };
   const lastGood = lastGoodRef.current;
   const page =
-    read ?? (lastGood !== null && lastGood.query === query ? lastGood.page : null);
+    read ??
+    (lastGood !== null && lastGood.query === query ? lastGood.page : null);
 
   // The newest read of this query failed while the page above is the one read
   // before it: the reader is looking at facts, not at a failure, so the pane
   // says the refresh failed rather than replacing the list with an error.
-  const refreshFailed = keyed.status === "error" && read === null && page !== null;
+  const refreshFailed =
+    keyed.status === "error" && read === null && page !== null;
 
   // What the effect below re-reads: the page committed with the key it is
   // running for, since an effect runs against the render that scheduled it.
   const shownRef = useRef<ImportPage | null>(null);
   shownRef.current = page;
   const activeRef = useRef(0);
-  activeRef.current = summary?.activeCount ?? 0;
+  activeRef.current = summary?.active_count ?? 0;
 
-  // The observation revision the shown page was read for. An observation that
-  // moved the revision re-keyed the read above and is answered by that keyed
-  // read alone, so it must not read page one a second time; every later
-  // observation is this pane's five-second tick. Only the provider's revision
-  // marks it: a query the reader changed re-keys the read too, and it is not an
-  // observation, so it must not cost the reader a tick.
-  const revision = observation.revision;
-  const tickedRevisionRef = useRef(revision);
-
-  // The provider's observation is the only clock here: a new `observedAt` is one
-  // successful summary read, which is this pane's five-second tick.
-  const observedAt = observation.observedAt;
+  // The provider owns which successful observations need live reads;
+  // `observedAt` remains the only clock, independent of query changes.
+  const { observedAt, reread } = observation;
   const lastObservedRef = useRef<string | null>(null);
   useEffect(() => {
     const previous = lastObservedRef.current;
     lastObservedRef.current = observedAt;
     // The provider's first observation is the read the keyed resource made.
     if (previous === null || previous === observedAt) return;
-    const ticked = tickedRevisionRef.current;
-    tickedRevisionRef.current = revision;
-    if (ticked !== revision) return;
+    if (!reread) return;
     const shown = shownRef.current;
     if (shown === null || activeRef.current === 0) return;
     const controller = new AbortController();
@@ -174,41 +154,41 @@ export function useImportsPage(
       setLive({ key: cacheKey, page: next });
     })();
     return () => controller.abort();
-  }, [absorbRereadFailure, cacheKey, observedAt, query, revision]);
+  }, [absorbRereadFailure, cacheKey, observedAt, query, reread]);
 
-  // The continuation is owned by the page object, so the projection of one page
-  // must not be rebuilt while the reader is still on it: a re-keyed read hands
-  // back a fresh resource object on every render until it answers.
-  const firstData = useMemo(
-    () => (page === null ? null : cursorPage(page)),
+  const cursorPage = useMemo(
+    () =>
+      page === null
+        ? null
+        : { items: page.items, nextCursor: page.next_cursor },
     [page],
   );
   const firstPage = useMemo<AsyncResource<CursorPage<ImportItem>>>(() => {
-    if (firstData !== null) return { status: "ready", data: firstData };
+    if (cursorPage !== null) return { status: "ready", data: cursorPage };
     if (keyed.status === "error") {
       return { status: "error", error: keyed.error, retry: keyed.retry };
     }
     return { status: "loading" };
-  }, [firstData, keyed]);
+  }, [cursorPage, keyed]);
 
   const pagination = useCursorPagination<ImportItem>({
     firstPage,
     initialMoreError: null,
-    loadMorePage: async (cursor, signal) =>
-      cursorPage(
-        await fetchImportPage({
-          query: new URLSearchParams(query),
-          cursor: present(cursor),
-          signal,
-        }),
-      ),
+    loadMorePage: async (cursor, signal) => {
+      const next = await fetchImportPage({
+        query: new URLSearchParams(query),
+        cursor: present(cursor),
+        signal,
+      });
+      return { items: next.items, nextCursor: next.next_cursor };
+    },
   });
 
   return {
     items: pagination.items,
     status: pagination.status,
     error: pagination.error,
-    matchedCount: page?.matchedCount ?? 0,
+    matchedCount: page?.matched_count ?? 0,
     groups: page?.groups ?? [],
     hasMore: pagination.hasMore,
     loadingMore: pagination.loadingMore,

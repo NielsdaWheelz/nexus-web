@@ -86,11 +86,11 @@ export async function openGenerationRunStream<TEvent>(
  * from scratch; `abort()` detaches cleanly back to idle. Events are delivered
  * in stream order; reconnects resume from the last seen event id.
  */
-export function useGenerationRun<TEvent>(cfg: {
+export function useGenerationRun<TEvent, TPayload = unknown>(cfg: {
   kind: GenerationRunKind;
   /** Run/owner id to stream; null = idle (no connection). */
   id: string | null;
-  decode: (type: string, data: unknown, id: string) => TEvent;
+  decode: (type: string, data: TPayload, id: string) => TEvent;
   /** Unified terminal predicate (`type === "done"`). */
   isTerminal: (e: TEvent) => boolean;
   onEvent: (e: TEvent) => void;
@@ -126,7 +126,11 @@ export function useGenerationRun<TEvent>(cfg: {
       try {
         const { resume, reconnect } = cfgRef.current;
         await openGenerationRunStream<TEvent>(kind, id, {
-          decode: (type, data, eventId) => cfgRef.current.decode(type, data, eventId),
+          decode: (type, data, eventId) => {
+            // justify-type-assertion: a caller may opt into its declared same-deploy
+            // SSE payload model; unmodeled streams keep TPayload = unknown.
+            return cfgRef.current.decode(type, data as TPayload, eventId);
+          },
           isTerminal: (event) => cfgRef.current.isTerminal(event),
           onEvent: (event) => {
             if (controller.signal.aborted) return;

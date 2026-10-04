@@ -12,7 +12,7 @@ import PaneSurface from "@/components/ui/PaneSurface";
 import Select from "@/components/ui/Select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import Toggle from "@/components/ui/Toggle";
-import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
+import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "./page.module.css";
 
 const FOCUS_MODE_OPTIONS: ReadonlyArray<{ value: ReaderFocusMode; label: string }> = [

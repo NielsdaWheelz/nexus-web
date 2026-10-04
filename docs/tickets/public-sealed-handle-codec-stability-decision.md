@@ -14,9 +14,7 @@ response shape, so tabs open across its deploy break regardless.
 impact: ~65 lines and a frozen digest layout whose only benefit is surviving a
 deploy in an already open tab.
 
-options: (a) keep them durable; the codec stays frozen and
-[public-handle-kdf-duplicates-sealed-handles](public-handle-kdf-duplicates-sealed-handles.md)
-still applies. (b) scope them to the tab: address sections and assets by
+options: (a) keep them durable; the codec stays frozen. (b) scope them to the tab: address sections and assets by
 ordinal under the reauthorized token, or reseal with any fresh layout. (b)
 loses the fail-closed check on a content revision that changed while a tab
 was open, which would then serve the new revision's section at the same

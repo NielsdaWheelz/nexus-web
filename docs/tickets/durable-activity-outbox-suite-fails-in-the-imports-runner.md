@@ -18,5 +18,11 @@ record an activity span while offline, reload, reconnect, and inspect whether
 it remains durable and is delivered once. investigate the storage owner only
 if this reproduces outside the removed runner.
 
+evidence 2026-09-28 (size/consumption-stats): a throwaway live suite in headless
+chromium on linux captured spans while reading an uploaded pdf and epub, showed
+them Pending then Synced, drained v1 rows seeded into IndexedDB before the shell
+opened, and drained on the online event (194 passed, suite deleted). it never ran
+offline capture, reload and reconnect as one sequence, so this stays open.
+
 acceptance: manual observation establishes durable storage and delivery, or a
 reproduced product defect is repaired. record the browser and app revision.

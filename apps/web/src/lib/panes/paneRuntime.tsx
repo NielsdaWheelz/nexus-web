@@ -16,13 +16,7 @@ import {
 } from "@/lib/workspace/schema";
 import {
   PaneReturnVisitScope,
-  definePaneVisitDataKey,
-  useClearAllPaneVisitData,
-  usePaneReturnDescendantReady,
-  usePaneReturnReady,
-  usePaneVisitData,
   type PaneNavigationModality,
-  type PaneVisitDataKey,
 } from "@/lib/workspace/paneReturnMemento";
 import {
   normalizeWorkspaceHref,
@@ -696,15 +690,6 @@ export function useRecordPaneNavigationModality(): (
   }
   return record;
 }
-
-export {
-  definePaneVisitDataKey,
-  useClearAllPaneVisitData,
-  usePaneReturnDescendantReady,
-  usePaneReturnReady,
-  usePaneVisitData,
-};
-export type { PaneNavigationModality, PaneVisitDataKey };
 
 export function usePaneSearchParams(): URLSearchParams {
   const paneRuntime = usePaneRuntime();

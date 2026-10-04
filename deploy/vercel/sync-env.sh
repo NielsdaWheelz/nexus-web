@@ -323,16 +323,23 @@ reject_backend_runtime_keys() {
   done
 }
 
-remove_forbidden_vercel_keys() {
-  local key
+remove_vercel_key() {
+  local key="$1" result status
 
-  for key in $FORBIDDEN_VERCEL_ENV_KEYS; do
-    if vercel_cmd env rm "$key" "$VERCEL_ENVIRONMENT" --yes >/dev/null 2>&1; then
-      echo "removed forbidden ${key} from Vercel ${VERCEL_ENVIRONMENT}"
-    else
-      echo "confirmed forbidden ${key} is absent from Vercel ${VERCEL_ENVIRONMENT}"
+  if result="$(vercel_cmd env rm "$key" "$VERCEL_ENVIRONMENT" --yes)"; then
+    echo "removed ${key} from Vercel ${VERCEL_ENVIRONMENT}"
+  else
+    status="$?"
+    # The locked non-interactive CLI emits this one JSON outcome and exits 1
+    # only after a successful provider read found no matching variable.
+    if [ "$status" != 1 ] || ! jq -e -s '
+      length == 1 and (.[0] | type == "object"
+        and .status == "error" and .reason == "env_not_found")
+    ' <<<"$result" >/dev/null 2>&1; then
+      die "Vercel ${VERCEL_ENVIRONMENT} env removal failed: ${key}"
     fi
-  done
+    echo "confirmed ${key} is absent from Vercel ${VERCEL_ENVIRONMENT}"
+  fi
 }
 
 verify_pulled_vercel_env() {
@@ -465,7 +472,9 @@ require_vercel_project_policy "$vercel_api_config" "$project_file"
 
 cd "$VERCEL_PROJECT_DIR"
 
-remove_forbidden_vercel_keys
+for key in $FORBIDDEN_VERCEL_ENV_KEYS; do
+  remove_vercel_key "$key"
+done
 
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in
@@ -479,9 +488,8 @@ while IFS= read -r line || [ -n "$line" ]; do
     continue
   fi
 
-  vercel_cmd env rm "$key" "$VERCEL_ENVIRONMENT" --yes >/dev/null 2>&1 || true
+  remove_vercel_key "$key"
   if [ -z "$value" ]; then
-    echo "removed ${key} from Vercel ${VERCEL_ENVIRONMENT}"
     continue
   fi
 

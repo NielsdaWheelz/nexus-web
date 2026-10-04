@@ -4,87 +4,60 @@ import { useEffect, useState } from "react";
 
 import { useViewportState } from "@/lib/renderEnvironment/provider";
 import { activityRecorder } from "./activityRecorder";
-import {
-  activityRuntime,
-  useActivityRuntimeSnapshot,
-} from "./activityRuntime";
+import { activityRuntime, useActivityRuntimeSnapshot } from "./activityRuntime";
 
-function captureAllowed(kind: string): boolean {
-  return kind === "Idle" || kind === "Recording";
-}
+/** Capture runs once the account's outbox is open, the viewport hydrated, the tab visible and
+ * capture unblocked. */
+const ready = (opened: boolean, hydrated: boolean, capture: string) =>
+  opened &&
+  hydrated &&
+  document.visibilityState === "visible" &&
+  (capture === "Idle" || capture === "Recording");
 
-/** Auth-shell composition for durable capture and browser recovery triggers. */
-export default function ActivityCaptureLifecycle({
-  accountId,
-}: {
-  readonly accountId: string;
-}) {
-  const viewport = useViewportState();
-  const snapshot = useActivityRuntimeSnapshot();
-  const [openedAccount, setOpenedAccount] = useState<string | undefined>();
+export default function ActivityCaptureLifecycle({ accountId }: { readonly accountId: string }) {
+  const hydrated = useViewportState().hydrated;
+  const capture = useActivityRuntimeSnapshot().capture.kind;
+  const [openedAccount, setOpenedAccount] = useState<string>();
+  const opened = openedAccount === accountId;
 
   useEffect(() => {
     let mounted = true;
-    const recorder = activityRecorder();
-    recorder.setCaptureReady(false);
-    void activityRuntime().open(accountId).then(() => {
-      if (mounted) setOpenedAccount(accountId);
-    });
+    activityRecorder().setCaptureReady(false);
+    void activityRuntime()
+      .open(accountId)
+      .then(() => mounted && setOpenedAccount(accountId));
     return () => {
       mounted = false;
-      recorder.closeForLifecycle("ShellUnmount");
+      activityRecorder().closeForLifecycle();
     };
   }, [accountId]);
 
   useEffect(() => {
-    activityRecorder().setCaptureReady(
-      openedAccount === accountId &&
-        viewport.hydrated &&
-        document.visibilityState === "visible" &&
-        captureAllowed(snapshot.capture.kind),
-    );
-  }, [
-    accountId,
-    openedAccount,
-    snapshot.capture.kind,
-    viewport.hydrated,
-  ]);
+    activityRecorder().setCaptureReady(ready(opened, hydrated, capture));
+  }, [opened, hydrated, capture]);
 
   useEffect(() => {
-    const resume = (trigger: "Foreground" | "Focus" | "PageShow") => {
-      void activityRuntime().drain(trigger);
-      activityRecorder().setCaptureReady(
-        openedAccount === accountId &&
-          viewport.hydrated &&
-          document.visibilityState === "visible" &&
-          captureAllowed(activityRuntime().snapshot().capture.kind),
-      );
+    const drain = () => void activityRuntime().drain();
+    const resume = () => {
+      drain();
+      const capture = activityRuntime().snapshot().capture.kind;
+      activityRecorder().setCaptureReady(ready(opened, hydrated, capture));
     };
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") {
-        activityRecorder().closeForLifecycle("Hidden");
-      } else {
-        resume("Foreground");
-      }
-    };
-    const onPageHide = () =>
-      activityRecorder().closeForLifecycle("PageHide");
-    const onFocus = () => resume("Focus");
-    const onPageShow = () => resume("PageShow");
-    const onOnline = () => void activityRuntime().drain("Online");
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    window.addEventListener("pagehide", onPageHide);
-    window.addEventListener("focus", onFocus);
-    window.addEventListener("pageshow", onPageShow);
-    window.addEventListener("online", onOnline);
+    const close = () => activityRecorder().closeForLifecycle();
+    const onVisibility = () => (document.visibilityState === "hidden" ? close() : resume());
+    const events = [
+      ["pagehide", close],
+      ["focus", resume],
+      ["pageshow", resume],
+      ["online", drain],
+    ] as const;
+    document.addEventListener("visibilitychange", onVisibility);
+    for (const [event, listener] of events) window.addEventListener(event, listener);
     return () => {
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      window.removeEventListener("pagehide", onPageHide);
-      window.removeEventListener("focus", onFocus);
-      window.removeEventListener("pageshow", onPageShow);
-      window.removeEventListener("online", onOnline);
+      document.removeEventListener("visibilitychange", onVisibility);
+      for (const [event, listener] of events) window.removeEventListener(event, listener);
     };
-  }, [accountId, openedAccount, viewport.hydrated]);
+  }, [opened, hydrated]);
 
   return null;
 }

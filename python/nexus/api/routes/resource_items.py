@@ -22,11 +22,17 @@ from nexus.schemas.resource_items import (
     ResourceBodyMutationRequest,
     ResourceLocatorResolveRequest,
     ResourceLocatorResolveResponse,
+    ResourceSurfaceCommandOut,
     ResourceSurfaceCommandRequest,
+    ResourceSurfaceOut,
+    ResourceTitleMutationOut,
     ResourceTitleMutationRequest,
 )
-from nexus.schemas.resource_openables import ResourceOpenableSearchRequest
-from nexus.schemas.resource_targets import ResourceTargetSearchRequest
+from nexus.schemas.resource_openables import (
+    ResourceOpenableSearchRequest,
+    ResourceOpenableSearchResponse,
+)
+from nexus.schemas.resource_targets import ResourceTargetSearchRequest, ResourceTargetSearchResponse
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
@@ -66,64 +72,62 @@ def resolve_action_snapshots(
 @router.post("/locators/resolve")
 def resolve_resource_locators(
     request: ResourceLocatorResolveRequest, viewer: ViewerDep, db: DbDep
-) -> dict:
-    return ok(
-        ResourceLocatorResolveResponse(
+) -> Data[ResourceLocatorResolveResponse]:
+    return Data(
+        data=ResourceLocatorResolveResponse(
             resolutions=locator_service.resolve_resource_locators(
                 db, viewer_id=viewer.user_id, locators=request.locators
             )
         ),
-        by_alias=True,
     )
 
 
 @router.post("/targets/search")
 def search_resource_targets(
     request: ResourceTargetSearchRequest, viewer: ViewerDep, db: DbDep
-) -> dict:
-    return ok(targets.search_targets(db, viewer_id=viewer.user_id, request=request), by_alias=True)
+) -> Data[ResourceTargetSearchResponse]:
+    return Data(data=targets.search_targets(db, viewer_id=viewer.user_id, request=request))
 
 
 @router.post("/openables/search")
 def search_openable_resources(
     request: ResourceOpenableSearchRequest, response: Response, viewer: ViewerDep, db: DbDep
-) -> dict:
+) -> Data[ResourceOpenableSearchResponse]:
     started_at = time.monotonic()
     result = openables.search_openable_resources(db, viewer_id=viewer.user_id, request=request)
     duration_ms = (time.monotonic() - started_at) * 1000
     response.headers.append("Server-Timing", f"nexus_openables;dur={duration_ms:.2f}")
-    return ok(result, by_alias=True)
+    return Data(data=result)
 
 
 @router.get("/{resource_ref}/surface")
-def get_resource_surface(resource_ref: str, viewer: ViewerDep, db: ReadDbDep) -> dict:
-    return ok(
-        surfaces.get_surface(db, viewer_id=viewer.user_id, source=_parse_ref(resource_ref)),
-        by_alias=True,
+def get_resource_surface(
+    resource_ref: str, viewer: ViewerDep, db: ReadDbDep
+) -> Data[ResourceSurfaceOut]:
+    return Data(
+        data=surfaces.get_surface(db, viewer_id=viewer.user_id, source=_parse_ref(resource_ref)),
     )
 
 
 @router.post("/{resource_ref}/surface/commands")
 def execute_resource_surface_command(
     resource_ref: str, request: ResourceSurfaceCommandRequest, viewer: ViewerDep, db: DbDep
-) -> dict:
-    return ok(
-        surfaces.execute_surface_command(
+) -> Data[ResourceSurfaceCommandOut]:
+    return Data(
+        data=surfaces.execute_surface_command(
             db, viewer_id=viewer.user_id, source=_parse_ref(resource_ref), request=request
-        ),
-        by_alias=True,
+        )
     )
 
 
 @router.patch("/{resource_ref}/title")
 def update_resource_title(
     resource_ref: str, request: ResourceTitleMutationRequest, viewer: ViewerDep, db: DbDep
-) -> dict:
-    return ok(
-        mutations.update_title(
+) -> Data[ResourceTitleMutationOut]:
+    return Data(
+        data=mutations.update_title(
             db, viewer_id=viewer.user_id, ref=_parse_ref(resource_ref), request=request
-        ),
-        by_alias=True,
+        )
     )
 
 

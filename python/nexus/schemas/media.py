@@ -8,6 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, model_validator
 from pydantic.alias_generators import to_camel
 
 from nexus.db.models import MediaKind
+from nexus.db.models import TranscriptCoverage as MediaTranscriptCoverage
+from nexus.db.models import TranscriptState as MediaTranscriptState
 from nexus.schemas.client_mutation import ClientMutationUuidText
 from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.consumption import PlayerDescriptor
@@ -62,10 +64,10 @@ class PlaybackSourceOut(BaseModel):
     kind: Literal["external_audio", "external_video"]
     stream_url: str
     source_url: str
-    provider: str | None = None
-    provider_video_id: str | None = None
-    watch_url: str | None = None
-    embed_url: str | None = None
+    provider: str | None
+    provider_video_id: str | None
+    watch_url: str | None
+    embed_url: str | None
 
 
 class OfflineDownloadSpecOut(BaseModel):
@@ -103,6 +105,8 @@ class DocumentEmbedTextOut(BaseModel):
     value: str | None = None
     reason: Literal["not_in_source", "redacted", "not_applicable"] | None = None
 
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
 
 class DocumentEmbedUrlOut(BaseModel):
     status: Literal["present", "malformed", "absent"]
@@ -110,11 +114,15 @@ class DocumentEmbedUrlOut(BaseModel):
     error_code: str | None = None
     reason: Literal["not_in_source", "not_applicable"] | None = None
 
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
 
 class DocumentEmbedProviderRefOut(BaseModel):
     kind: Literal["present", "absent"]
     value: str | None = None
     reason: Literal["unsupported_provider", "unparseable", "not_applicable"] | None = None
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
 
 class DocumentEmbedLocatorOut(BaseModel):
@@ -124,6 +132,8 @@ class DocumentEmbedLocatorOut(BaseModel):
     canonical_end_offset: int | None = Field(default=None, ge=0)
     document_order_key: str
     placeholder_text: str
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
 
 class DocumentEmbedTargetOut(BaseModel):
@@ -145,6 +155,8 @@ class DocumentEmbedTargetOut(BaseModel):
     thumbnail_url: str | None = None
     playback: PlaybackSourceOut | None = None
 
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
 
 class DocumentEmbedDisplayActionOut(BaseModel):
     kind: Literal["open_child_media", "open_original", "retry_child", "refresh_parent"]
@@ -152,12 +164,16 @@ class DocumentEmbedDisplayActionOut(BaseModel):
     href: str | None = None
     disabled: bool = False
 
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
 
 class DocumentEmbedDisplayOut(BaseModel):
     mode: Literal["resolved", "pending", "unsupported", "failed"]
     label: str
     description: str
     actions: list[DocumentEmbedDisplayActionOut] = Field(default_factory=list)
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
 
 class DocumentEmbedOut(BaseModel):
@@ -182,10 +198,12 @@ class DocumentEmbedOut(BaseModel):
     error_code: DocumentEmbedTextOut
     display: DocumentEmbedDisplayOut
 
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
 
 class ListeningStateOut(BaseModel):
     position_ms: int = Field(ge=0)
-    duration_ms: int | None = Field(default=None, ge=0)
+    duration_ms: int | None = Field(ge=0)
     is_completed: bool = False
 
 
@@ -193,9 +211,9 @@ class PodcastEpisodeChapterOut(BaseModel):
     chapter_idx: int = Field(ge=0)
     title: str
     t_start_ms: int = Field(ge=0)
-    t_end_ms: int | None = Field(default=None, ge=0)
-    url: str | None = None
-    image_url: str | None = None
+    t_end_ms: int | None = Field(ge=0)
+    url: str | None
+    image_url: str | None
 
 
 class SourceStageProgress(_Strict):
@@ -235,8 +253,8 @@ class MediaOut(BaseModel):
     canonical_url: Presence[str]
     processing_status: MediaProcessingStatus
     source_progress: Presence[SourceProgress]
-    transcript_state: TranscriptState | None
-    transcript_coverage: TranscriptCoverage | None
+    transcript_state: MediaTranscriptState | None
+    transcript_coverage: MediaTranscriptCoverage | None
     transcript_origin: Presence[Literal["Publisher", "Imported", "Generated"]]
     retrieval_status: str | None
     retrieval_status_reason: str | None
@@ -244,7 +262,6 @@ class MediaOut(BaseModel):
     last_error_code: str | None
     playback_source: PlaybackSourceOut | None
     listening_state: ListeningStateOut | None
-    episode_state: Literal["unplayed", "in_progress", "played"] | None
     chapters: list[PodcastEpisodeChapterOut]
     capabilities: CapabilitiesOut
     document_embed_summary: DocumentEmbedSummaryOut | None
@@ -270,6 +287,21 @@ class MediaOut(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+
+class MediaProcessingSnapshotOut(BaseModel):
+    """The complete data frame for media processing state and done events."""
+
+    processing_status: MediaProcessingStatus
+    source_progress: Presence[SourceProgress]
+    last_error_code: str | None
+    failure_stage: str | None
+    retrieval_status: str | None
+    retrieval_status_reason: str | None
+    capabilities: CapabilitiesOut
+    transcript_state: MediaTranscriptState | None
+    transcript_coverage: MediaTranscriptCoverage | None
+    updated_at: str
 
 
 class MediaRemovedResult(BaseModel):
@@ -315,7 +347,9 @@ class FragmentOut(BaseModel):
     document_embeds: list[DocumentEmbedOut] = Field(default_factory=list)
     created_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True, json_schema_serialization_defaults_required=True
+    )
 
 
 class CreateUploadSessionRequest(_Strict):

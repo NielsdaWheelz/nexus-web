@@ -11,8 +11,9 @@ from nexus.api.deps import require_chat_contract_revision, require_tool_projecti
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.responses import ok, ok_page
-from nexus.schemas.collection_page import parse_manual_page_query
+from nexus.responses import Data, DataPage, ok
+from nexus.schemas.collection_page import CollectionPage, parse_manual_page_query
+from nexus.schemas.conversation import ConversationListItemOut, ConversationOut, PageInfo
 from nexus.services import conversations as conversations_service
 from nexus.services.agent_tools.writes import undo_tool_call as revert_tool_call
 from nexus.services.message_trust_trails import build_assistant_trust_trail
@@ -31,59 +32,48 @@ def list_conversations(
     request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_repeatable_read_db)],
-) -> dict:
+) -> Data[CollectionPage[ConversationListItemOut]] | DataPage[ConversationOut, PageInfo]:
     """List conversations.
 
-    An explicit ``q`` selects the retained destination picker and an explicit
-    ``has_context_ref`` the retained resource-graph mode; both keep the manual
-    ``{data, page}`` envelope. Every other request is the finite primary index.
+    An explicit ``has_context_ref`` selects the retained resource-graph mode
+    with its manual ``{data, page}`` envelope. Every other request is the finite
+    index, with optional literal ``title_search``.
 
     Errors:
         E_INVALID_REQUEST (400): a view state outside the advertised inventory,
-            a malformed has_context_ref URI, or ``q`` over its length bound.
+            a malformed has_context_ref URI, or title search over its length bound.
         E_INVALID_CURSOR (400): the cursor is malformed or unparseable.
     """
 
-    raw_keys = {key for key, _value in request.query_params.multi_items()}
-    if "q" in raw_keys or "has_context_ref" in raw_keys:
-        mode_key = "q" if "q" in raw_keys else "has_context_ref"
+    if "has_context_ref" in request.query_params:
         query = parse_manual_page_query(
             request.query_params.multi_items(),
-            domain_keys=frozenset({mode_key}),
+            domain_keys=frozenset({"has_context_ref"}),
             default_limit=conversations_service.DEFAULT_LIMIT,
             max_limit=conversations_service.MAX_LIMIT,
         )
-        if mode_key == "q":
-            conversations, page = conversations_service.list_conversations_matching_title(
-                db,
-                viewer_id=viewer.user_id,
-                limit=query.limit,
-                cursor=query.cursor,
-                q=query.parameters["q"],
-            )
-        else:
-            conversations, page = conversations_service.list_conversations_with_context_ref(
-                db,
-                viewer_id=viewer.user_id,
-                has_context_ref=query.parameters["has_context_ref"],
-                limit=query.limit,
-                cursor=query.cursor,
-            )
-        return ok_page(conversations, page)
+        conversations, page = conversations_service.list_conversations_with_context_ref(
+            db,
+            viewer_id=viewer.user_id,
+            has_context_ref=query.parameters["has_context_ref"],
+            limit=query.limit,
+            cursor=query.cursor,
+        )
+        return DataPage(data=conversations, page=page)
 
-    view, query = conversations_service.parse_conversation_index_query(
+    view, title_search, query = conversations_service.parse_conversation_index_query(
         request.query_params.multi_items()
     )
-    return ok(
-        conversations_service.list_conversation_index(
+    return Data(
+        data=conversations_service.list_conversation_index(
             db,
             viewer_id=viewer.user_id,
             limit=query.limit,
             cursor=query.cursor,
             collection_revision=query.collection_revision,
             view=view,
+            title_search=title_search,
         ),
-        by_alias=True,
     )
 
 

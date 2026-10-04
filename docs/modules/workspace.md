@@ -10,6 +10,71 @@ sheets are mounted.
 Frontend owners live under `apps/web/src/components/workspace/*` and
 `apps/web/src/lib/workspace/*`.
 
+## persisted workspace sessions
+
+durable state is one json object per authenticated user/device pair.
+[`workspace_sessions.py`](../../python/nexus/services/workspace_sessions.py)
+owns reads and last-write-wins saves; pane order lives in
+`WorkspaceState.primaryPaneOrder` inside that object. the table has no separate
+order key. saves commit the state and database timestamp together.
+
+`GET /me/workspace-session?device_id=...` returns
+`{data:{own,most_recent_elsewhere}}`. each value is null or `{state,updated_at}`;
+both are scoped to the authenticated user. elsewhere excludes the requested
+device and selects newest by `updated_at DESC`, then `id DESC`.
+api put accepts `{device_id,state}` and returns `{data:{state,updated_at}}`.
+device length, state-size validation, authentication and error envelopes belong
+to the existing [schema](../../python/nexus/schemas/workspace_session.py) and
+[routes](../../python/nexus/api/routes/me.py).
+
+browser [put](../../apps/web/src/app/api/me/workspace-session/route.ts) accepts
+exactly `{state}`, validates the persisted shape, and injects the server-owned
+httpOnly `nx_device` cookie. supplied device identity is rejected with 400
+`E_INVALID_WORKSPACE_STATE`; an absent cookie is a 500 `E_INTERNAL` defect.
+restore is a direct server api read, with no browser get route.
+[`bootstrap.server.ts`](../../apps/web/src/lib/workspace/bootstrap.server.ts)
+requires restoration on the normal 30 s server deadline: nontrivial own state
+wins, then nontrivial newest elsewhere, then the current deep-link/default state
+after a successful read confirms no nontrivial saved state. missing device
+identity, failed reads and malformed saved data reject bootstrap into its
+existing error/retry boundary;
+no fallback mounts the save hook while stored state is unknown. only speculative
+pane seeds keep the 500 ms budget. slow restoration may delay workspace content
+or show the error boundary; the shell skeleton still streams immediately.
+[`workspaceRestore.ts`](../../apps/web/src/lib/workspace/workspaceRestore.ts)
+owns validation, width adjustment and deep-link merging.
+[`useWorkspaceSession.ts`](../../apps/web/src/lib/workspace/useWorkspaceSession.ts)
+debounces edits for 1 s; only successful transport acknowledges the exact sent
+snapshot. one live writer coalesces newer requested state, reading latest at
+dispatch. failures retain dirty state. pagehide/hidden requests a dirty keepalive
+save independently of the timer; repeated events for the same live snapshot
+coalesce without creating an automatic retry.
+
+network, upstream, upstream-timeout and auth-dependency failures publish one
+persistent retry notice; retry reads latest state. 401 keeps existing login
+handling. malformed/internal/unexpected faults reach the authenticated workspace
+render boundary. lifetime cleanup cancels timers, clears unsent intent and
+withdraws the notice; withdrawal is not acknowledgement. late settlements cannot
+publish feedback or dispatch after their owner unmounts.
+
+this serializes known requests in the mounted hook, not remote intent across
+tabs or ambiguous failures. per-device/cross-tab saves remain last-write-wins.
+closing during an older live request may destroy the document before the latest
+queued keepalive dispatches; offline and close delivery remain best-effort.
+no server revision protocol, local journal or retry loop is added.
+
+live qualification: 14 cases and 24 recorded browser puts, with genuine
+bff/api readback, cover initial
+deep-link/no-op, debounce, failed save → latest retry → root restore, dirty
+pagehide, keepalive failure without an automatic loop, real pre-forward
+serialization, delayed acknowledgement, committed/lost response, the four named
+delivery failures, auth redirect and internal/non-json fault handoff. the
+persistent notice withdraws on defect; historical aria announcement text may
+remain without a retry action. receipts: `/tmp/nexus-workspace-save-{baseline,candidate}-receipt.json`.
+pagehide events were explicitly injected; actual visibility-hidden, mobile and
+document-close delivery were not observed. the hidden branch is source-qualified
+through the same flush callback. final static gate passed.
+
 ## Layout Modes
 
 `WorkspaceHost` owns the workspace layout mode. Viewport classification comes
@@ -55,10 +120,10 @@ invoke that same store command.
 Pane route identity and pane resource identity are separate. The route remains
 renderable while its resource locator settles.
 
-- `paneResourceLocator.ts` is the sole locator decoder, equality, and key owner.
+- `paneResourceLocator.ts` owns locator identity, equality, and keys.
 - `resourceLocators.ts` is the strict transport owner. A successful batch must
-  return exactly one decoded row per requested locator, in request order, and
-  each `canonicalHref` must equal the decoded resource item's route.
+  return exactly one typed row per requested locator, in request order, and
+  each `canonicalHref` must equal the returned resource item's route.
 - `usePaneResourceResolutionRegistry.ts` owns live-locator deduplication,
   pending/settled state, generation-fenced installation, pruning, retry, and
   request cleanup for `WorkspaceHost`.
@@ -157,7 +222,7 @@ A resource pane publishes only its canonical `actionSubject`
 (`ResourceActionSubject`). `PaneShell` composes its pane commands and the body's
 `menuActions` through `ContextualActionMenu`; the unchanged canonical resource
 descriptors are one ordered contiguous suffix
-(`canonical-resource-action-menu-hard-cutover.md`). Membership, current verb,
+([resource-action owner](resource-actions.md)). Membership, current verb,
 order, and danger-last come from the server action snapshot and direct menu projection,
 so the pane menu includes `Open`. Pane bodies never build resource action
 arrays.

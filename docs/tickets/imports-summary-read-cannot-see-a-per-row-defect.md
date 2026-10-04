@@ -7,10 +7,16 @@
 
 ## What is wrong
 
-Every Imports defect check is now per row, raised where a `RowMapping` becomes
+the row defect checks remain raised where a `RowMapping` becomes
 an `ImportItem`: the foreign queue operation and the duplicate exact reindex job
 in `_item`, the `failed` media content index added beside them, and
 `assume_safe_failure_code` inside `_state`.
+
+2026-10-02 read-boundary review: `ImportPage` and `ImportDetail` now own the
+former browser checks for page relationships and issue-count equality. those
+checks do not materialize rows in `read_import_summary`; this issue remains
+open. the service docstring already named `_item`/`_state` as row-defect owners
+before this slice, so moving the decoder earns no resolution credit.
 
 `read_import_summary` materializes no row. It counts `classification` over the
 same CTE and returns the badge, so a viewer whose backlog contains a state no

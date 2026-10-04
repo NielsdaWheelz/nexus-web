@@ -1,5 +1,7 @@
 "use client";
 
+import type { ApiJson } from "@/lib/api/wire";
+
 import {
   createContext,
   useCallback,
@@ -20,7 +22,7 @@ import {
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
 import { resolveActiveTranscriptFragment } from "@/lib/media/transcriptView";
-import { decodeMediaFragmentsResponse } from "@/lib/media/mediaFragment";
+import { mediaFragmentsFromResponse } from "@/lib/media/mediaFragment";
 import { createHighlight, saveHighlightNote } from "@/lib/highlights/api";
 import {
   decodeWalknoteSession,
@@ -134,13 +136,12 @@ export function WalknoteSessionProvider({ children }: { children: ReactNode }) {
           // Fetch and cache fragments for this media_id
           let fragments = fragmentsCacheRef.current.get(waypoint.media_id);
           if (!fragments) {
-            const response = await apiFetch<unknown>(
+            const response = await apiFetch<ApiJson<"/media/{media_id}/fragments", "get">>(
               `/api/media/${waypoint.media_id}/fragments`
             );
             fragments = decodeApiPayload(
               response,
-              (body) =>
-                decodeMediaFragmentsResponse(body, waypoint.media_id),
+              () => mediaFragmentsFromResponse(response, waypoint.media_id),
               "Walknote fragments",
             );
             fragmentsCacheRef.current.set(waypoint.media_id, fragments);

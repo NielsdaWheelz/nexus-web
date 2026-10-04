@@ -123,6 +123,23 @@ Nothing restarts. The next release picks up whatever the pointers name. See
 VERCEL_TOKEN=... ./deploy/hetzner/deploy.sh <source-sha>
 ```
 
+when crossing migration 0246, supply the reviewed model-history census:
+
+```bash
+VERCEL_TOKEN=... ./deploy/hetzner/deploy.sh <source-sha> \
+  --model-cutover-snapshot "/private/operator/reviewed census.json"
+```
+
+the snapshot is a readable file on the caller's machine; relative paths resolve
+from the caller's working directory. the wrapper forwards only this declared
+input. the backend controller parses the file once and validates its declared
+revision and six row-list fields before any external work. it checks the actual
+starting revision during release, then compares reviewed identities with a fresh
+census after writers and the native host stop. a matching census does not
+authorize abandoning uncertain
+work or replace the verified backup and migration gates. the option is required
+only when the database crosses 0246; ordinary releases retain the first command.
+
 `deploy.sh` proves the checkout, selects the single `READY` production-target
 Vercel deployment CI built for that exact SHA, and proves its staged
 `/version` serves the SHA and this tree's player-protocol contract with

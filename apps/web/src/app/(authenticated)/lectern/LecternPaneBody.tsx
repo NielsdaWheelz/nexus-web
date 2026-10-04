@@ -44,12 +44,12 @@ import {
   type LecternSortOptionId,
 } from "@/lib/lectern/view";
 import { descriptorFromLecternItem } from "@/lib/player/playerSession";
-import { usePlayerCommands } from "@/lib/player/globalPlayer";
+import { usePlayerCommands } from "@/lib/player/playerRuntime";
 import {
   usePaneIsActive,
-  usePaneReturnReady,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
+import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import type { PaneFilterRowsStatus } from "@/lib/panes/paneFilterRows";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";

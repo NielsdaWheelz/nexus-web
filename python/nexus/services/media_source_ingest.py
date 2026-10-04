@@ -417,9 +417,7 @@ def _refresh_reused_video_identity(media: Media, spec: UrlSourceSpec) -> None:
     media.updated_at = datetime.now(UTC)
 
 
-def reusable_embedded_source_media_ids(
-    db: Session, *, viewer_id: UUID, urls: list[str]
-) -> set[UUID]:
+def reusable_embedded_source_media_ids(db: Session, *, urls: list[str]) -> set[UUID]:
     """The pre-existing media rows an embed publication must lock."""
     media_ids: set[UUID] = set()
     for url in urls:

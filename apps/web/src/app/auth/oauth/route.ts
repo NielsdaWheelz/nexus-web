@@ -7,7 +7,10 @@ import {
   parseAuthReturnTarget,
 } from "@/lib/auth/redirects";
 import { finalizeSessionResponse } from "@/lib/auth/session-response";
-import { createRouteHandlerClient } from "@/lib/supabase/route-handler";
+import {
+  createCurrentSessionClient,
+  createSessionEstablishmentClient,
+} from "@/lib/supabase/route-handler";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -59,7 +62,10 @@ export async function GET(request: Request): Promise<NextResponse> {
       })
     : buildAuthCallbackUrl(redirectOrigin, target);
 
-  const { supabase, applyCookies } = await createRouteHandlerClient();
+  const { supabase, applyCookies } =
+    mode === "link"
+      ? await createCurrentSessionClient()
+      : await createSessionEstablishmentClient();
   // signInWithOAuth and linkIdentity share the OAuth response shape
   // ({ data: { url }, error }); the URL is the provider authorization URL.
   const { data, error } =

@@ -48,14 +48,16 @@ import {
 import type { ConversationListItem } from "@/lib/conversations/types";
 import usePaneScrollRetention from "@/lib/panes/usePaneScrollRetention";
 import {
-  definePaneVisitDataKey,
   requirePaneRuntime,
-  useClearAllPaneVisitData,
   usePaneIsActive,
-  usePaneReturnReady,
   usePaneRuntime,
-  usePaneVisitData,
 } from "@/lib/panes/paneRuntime";
+import {
+  definePaneVisitDataKey,
+  useClearAllPaneVisitData,
+  usePaneReturnReady,
+  usePaneVisitData,
+} from "@/lib/workspace/paneReturnMemento";
 import type { ConversationsPaneSeed } from "@/lib/panes/paneResourceLoaders";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
@@ -104,7 +106,6 @@ function seedFromPage(
     conversations: page.items,
     collectionRevision: page.collectionRevision,
     nextCursor: page.nextCursor,
-    exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
   };
 }
 
@@ -344,7 +345,6 @@ export default function ConversationsPaneBody() {
         conversations,
         collectionRevision: page.collectionRevision,
         nextCursor: page.nextCursor,
-        exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       };
       committedSnapshotRef.current = next;
       setController(next);

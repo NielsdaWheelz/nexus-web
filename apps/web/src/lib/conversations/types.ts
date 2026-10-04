@@ -10,6 +10,7 @@ import type { ReaderSelectionOut } from "@/lib/conversations/readerSelection";
 import type { RunSelectionOut } from "@/lib/conversations/generationCatalog";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { Presence } from "@/lib/api/presence";
+import type { Schema } from "@/lib/api/wire";
 import type { ChatRunExecution } from "@/lib/api/executionAdvisory";
 import type {
   ToolEffect,
@@ -26,12 +27,7 @@ export interface ConversationSummary {
   updated_at: string;
 }
 
-export interface ConversationListItem {
-  id: string;
-  title: string;
-  message_count: number;
-  updated_at: string;
-}
+export type ConversationListItem = Schema<"ConversationListItemOut">;
 
 export type ChatSendCapability =
   | { readonly kind: "Available" }

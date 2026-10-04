@@ -1,18 +1,26 @@
 """Search response schemas: one envelope and its typed variants.
 
-The web decoder asserts exact key sets per variant, so every field here is on
-the wire contract — including ones no component renders today.
+FastAPI generates the browser wire contract from these models. All result fields
+are sent; only the context reference serializer intentionally omits empty fields.
 """
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 
 from nexus.schemas.contributor_credit import ContributorCreditOut
 from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.presence import Presence
 from nexus.schemas.publication_dates import PublicationDate
+from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import (
     LocatorBackedResultType,
     RetrievalLocator,
@@ -27,9 +35,9 @@ class SearchResultSourceOut(BaseModel):
     media_id: UUID
     media_kind: str
     title: str
-    contributors: list[ContributorCreditOut] = Field(default_factory=list)
+    contributors: list[ContributorCreditOut]
     original_published_date: Presence[PublicationDate]
-    summary_md: str | None = None
+    summary_md: str | None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -42,31 +50,21 @@ class SearchResultContextRefOut(BaseModel):
     evidence_span_ids: list[UUID] = Field(default_factory=list)
     locator: RetrievalLocator | None = None
 
-    @model_serializer
-    def serialize(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {"type": self.type, "id": str(self.id)}
+    # Keep the model's schema: an untyped wrap return retains the typed fields
+    # and their optional keys instead of replacing them with a generic JSON map.
+    @model_serializer(mode="wrap")
+    def serialize(self, handler: SerializerFunctionWrapHandler):
+        payload = handler(self)
+        payload["id"] = str(self.id)
         if self.evidence_span_ids:
-            payload["evidence_span_ids"] = [
-                str(evidence_span_id) for evidence_span_id in self.evidence_span_ids
-            ]
+            payload["evidence_span_ids"] = [str(value) for value in self.evidence_span_ids]
+        else:
+            payload.pop("evidence_span_ids", None)
         if self.locator is not None:
             payload["locator"] = self.locator.model_dump(mode="json", exclude_none=True)
+        else:
+            payload.pop("locator", None)
         return payload
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class SearchResultActivationOut(BaseModel):
-    """Search-owned snake-case occurrence activation.
-
-    A local DTO so the response's ``by_alias=True`` dump cannot leak the
-    resource-items activation aliases onto this boundary.
-    """
-
-    resource_ref: str
-    kind: Literal["route", "external", "none"]
-    href: str | None = None
-    unresolved_reason: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -79,7 +77,7 @@ class SearchResultBaseOut(BaseModel):
     resource_ref: str
     owner_resource_ref: str
     action_subject_ref: str = Field(alias="actionSubjectRef")
-    activation: SearchResultActivationOut
+    activation: ResourceActivationOut
     citation_target: str | None
     context_ref: SearchResultContextRefOut
 
@@ -88,9 +86,9 @@ class SearchResultBaseOut(BaseModel):
 
 class SearchResultTitledOut(SearchResultBaseOut):
     title: str
-    source_label: str | None = None
-    media_id: UUID | None = None
-    media_kind: str | None = None
+    source_label: str | None
+    media_id: UUID | None
+    media_kind: str | None
 
 
 class SearchResultLocatorBackedOut[ResultTypeT: LocatorBackedResultType](SearchResultTitledOut):
@@ -118,7 +116,7 @@ class SearchResultPodcastOut(SearchResultTitledOut):
 
     type: Literal["podcast"]
     id: UUID
-    contributors: list[ContributorCreditOut] = Field(default_factory=list)
+    contributors: list[ContributorCreditOut]
 
 
 class SearchResultContentChunkOut(SearchResultLocatorBackedOut[Literal["content_chunk"]]):
@@ -126,7 +124,7 @@ class SearchResultContentChunkOut(SearchResultLocatorBackedOut[Literal["content_
 
     id: UUID
     source_kind: str
-    evidence_span_ids: list[UUID] = Field(default_factory=list)
+    evidence_span_ids: list[UUID]
     source: SearchResultSourceOut
     citation_label: str
 
@@ -136,7 +134,7 @@ class SearchResultFragmentOut(SearchResultLocatorBackedOut[Literal["fragment"]])
 
     id: UUID
     source: SearchResultSourceOut
-    citation_label: str | None = None
+    citation_label: str | None
 
 
 class SearchResultContributorIdentityOut(BaseModel):
@@ -162,7 +160,7 @@ class SearchResultNoteBlockOut(SearchResultLocatorBackedOut[Literal["note_block"
 
     id: UUID
     body_text: str
-    highlight_excerpt: str | None = None
+    highlight_excerpt: str | None
     note_origin: Literal["note", "highlight_note"]
 
 
@@ -173,7 +171,7 @@ class SearchResultHighlightOut(SearchResultLocatorBackedOut[Literal["highlight"]
     color: str
     exact: str
     source: SearchResultSourceOut
-    citation_label: str | None = None
+    citation_label: str | None
 
 
 class SearchResultPageOut(SearchResultTitledOut):
@@ -235,13 +233,13 @@ class SearchResultWebOut(SearchResultLocatorBackedOut[Literal["web_result"]]):
     source_id: str
     result_ref: str
     url: str
-    display_url: str | None = None
-    extra_snippets: list[str] = Field(default_factory=list)
-    published_at: str | None = None
-    source_name: str | None = None
-    rank: int | None = None
-    provider: str | None = None
-    provider_request_id: str | None = None
+    display_url: str | None
+    extra_snippets: list[str]
+    published_at: str | None
+    source_name: str | None
+    rank: int | None
+    provider: str | None
+    provider_request_id: str | None
     selected: bool
 
 
@@ -268,7 +266,7 @@ class SearchPageInfo(BaseModel):
     """Offset pagination, encoded as a base64url JSON cursor."""
 
     has_more: bool = False
-    next_cursor: str | None = None
+    next_cursor: str | None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -276,7 +274,7 @@ class SearchPageInfo(BaseModel):
 class SearchResponse(BaseModel):
     """A mixed, ordered page of typed search results."""
 
-    results: list[SearchResultOut] = Field(default_factory=list)
-    page: SearchPageInfo = Field(default_factory=SearchPageInfo)
+    results: list[SearchResultOut]
+    page: SearchPageInfo
 
     model_config = ConfigDict(extra="forbid")

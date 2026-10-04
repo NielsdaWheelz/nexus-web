@@ -7,7 +7,7 @@ import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal, cast
+from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy import select, text
@@ -19,7 +19,7 @@ from nexus.auth.permissions import (
     non_system_media_ref_exists_sql,
     visible_media_ids_cte_sql,
 )
-from nexus.db.models import Media, MediaKind
+from nexus.db.models import Media, MediaKind, TranscriptCoverage, TranscriptState
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
@@ -27,12 +27,11 @@ from nexus.schemas.media import (
     FragmentOut,
     ListeningStateOut,
     MediaOut,
+    MediaProcessingSnapshotOut,
     MediaReadState,
     OfflineDownloadSpecOut,
     PodcastEpisodeChapterOut,
     SourceProgress,
-    TranscriptCoverage,
-    TranscriptState,
 )
 from nexus.schemas.media_summary import MediaDurationOut, MediaProcessingStatus, MediaSummaryOut
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView, MetadataRetry
@@ -736,11 +735,15 @@ def _hydrate_media_out(
                     "MediaProcessingStatus", _status_to_str(row["processing_status"])
                 ),
                 source_progress=_source_progress(progress_by_media.get(media_id)),
-                transcript_state=cast(
-                    TranscriptState | None, _nullable_str(row["transcript_state"])
+                transcript_state=(
+                    None
+                    if row["transcript_state"] is None
+                    else TranscriptState(row["transcript_state"])
                 ),
-                transcript_coverage=cast(
-                    TranscriptCoverage | None, _nullable_str(row["transcript_coverage"])
+                transcript_coverage=(
+                    None
+                    if row["transcript_coverage"] is None
+                    else TranscriptCoverage(row["transcript_coverage"])
                 ),
                 transcript_origin=presence_from_nullable(row["transcript_origin"]),
                 retrieval_status=retrieval_status,
@@ -755,7 +758,6 @@ def _hydrate_media_out(
                     provider_id=row["provider_id"],
                 ),
                 listening_state=_listening_state(row),
-                episode_state=None,
                 chapters=chapters_by_media.get(media_id, []),
                 capabilities=derive_capabilities(
                     kind=kind_value,
@@ -1022,7 +1024,7 @@ def list_fragments_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> l
 
 @dataclass(frozen=True)
 class MediaEventSnapshot:
-    payload: dict[str, Any]
+    payload: MediaProcessingSnapshotOut
     terminal: bool
 
 
@@ -1034,17 +1036,17 @@ def read_event_snapshot(db: Session, *, viewer_id: UUID, media_id: UUID) -> Medi
     """
     media = get_media_for_viewer(db, viewer_id, media_id)
     return MediaEventSnapshot(
-        payload={
-            "processing_status": media.processing_status,
-            "source_progress": media.source_progress.model_dump(mode="json"),
-            "last_error_code": media.last_error_code,
-            "failure_stage": media.failure_stage,
-            "retrieval_status": media.retrieval_status,
-            "retrieval_status_reason": media.retrieval_status_reason,
-            "capabilities": media.capabilities.model_dump(mode="json"),
-            "transcript_state": media.transcript_state,
-            "transcript_coverage": media.transcript_coverage,
-            "updated_at": media.updated_at.isoformat(),
-        },
+        payload=MediaProcessingSnapshotOut(
+            processing_status=media.processing_status,
+            source_progress=media.source_progress,
+            last_error_code=media.last_error_code,
+            failure_stage=media.failure_stage,
+            retrieval_status=media.retrieval_status,
+            retrieval_status_reason=media.retrieval_status_reason,
+            capabilities=media.capabilities,
+            transcript_state=media.transcript_state,
+            transcript_coverage=media.transcript_coverage,
+            updated_at=media.updated_at.isoformat(),
+        ),
         terminal=media.processing_status in _TERMINAL_PROCESSING_STATUSES,
     )

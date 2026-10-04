@@ -5,9 +5,12 @@ import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import MobileSheet from "@/components/ui/MobileSheet";
-import { apiFetch, type ApiPath } from "@/lib/api/client";
+import type { CollectionCursor, CollectionPage } from "@/lib/api/collectionPage";
+import { conversationsInitialResource } from "@/lib/api/resource";
 import { useResource } from "@/lib/api/useResource";
-import { useCursorPagination, type CursorPage } from "@/lib/api/useCursorPagination";
+import { useCursorPagination } from "@/lib/api/useCursorPagination";
+import { CANONICAL_UPDATED_TITLE_INDEX_VIEW } from "@/lib/collections/updatedTitleIndexView";
+import { fetchConversationIndex } from "@/lib/conversations/indexApi";
 import { formatDisplayNumber } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -103,15 +106,6 @@ export default function ConversationDestinationOverlay({
   );
 }
 
-function buildListHref(query: string, cursor: string | null): ApiPath {
-  const params = new URLSearchParams({
-    limit: String(PAGE_SIZE),
-    q: query,
-  });
-  if (cursor) params.set("cursor", cursor);
-  return `/api/conversations?${params.toString()}` as ApiPath;
-}
-
 /**
  * The self-contained search + results body. Mounted only while the overlay is open
  * (both hosts unmount their children on close), so it starts fresh each time.
@@ -128,6 +122,7 @@ function DestinationPicker({ onSelect }: { onSelect: (conversationId: string) =>
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [refreshVersion, setRefreshVersion] = useState(0);
 
   // Debounce the trimmed query. The initial empty query is already committed, so
   // the recent-conversations page loads immediately; only edits wait out the delay.
@@ -138,20 +133,33 @@ function DestinationPicker({ onSelect }: { onSelect: (conversationId: string) =>
     return () => clearTimeout(timer);
   }, [query, debouncedQuery]);
 
-  const firstPage = useResource<CursorPage<ConversationListItem>>({
-    cacheKey: `conversation-destination:${debouncedQuery}`,
-    path: () => buildListHref(debouncedQuery, null),
+  const queryParams = {
+    view: CANONICAL_UPDATED_TITLE_INDEX_VIEW,
+    titleSearch: debouncedQuery,
+    limit: PAGE_SIZE,
+  };
+  const firstPage = useResource<CollectionPage<ConversationListItem>>({
+    cacheKey: `conversation-destination:${conversationsInitialResource.cacheKey(queryParams)}:${refreshVersion}`,
+    load: (signal) => fetchConversationIndex({ ...queryParams, signal }),
   });
   const { items, status, error, hasMore, loadingMore, loadMore, retry } =
-    useCursorPagination<ConversationListItem>({
+    useCursorPagination<ConversationListItem, CollectionCursor>({
       firstPage,
       initialMoreError: null,
-      loadMorePage: (cursor, signal) =>
-        apiFetch<CursorPage<ConversationListItem>>(
-          buildListHref(debouncedQuery, cursor),
-          { signal },
-        ),
+      loadMorePage: (cursor, signal) => {
+        if (firstPage.status !== "ready") {
+          throw new Error("Chat destination continuation lost its first page");
+        }
+        return fetchConversationIndex({
+          ...queryParams,
+          cursor,
+          collectionRevision: firstPage.data.collectionRevision,
+          signal,
+        });
+      },
     });
+  const reloadRequired =
+    error?.code === "E_COLLECTION_CHANGED" || error?.code === "E_INVALID_CURSOR";
 
   // Effective active row derived during render (never via an effect) so an in-flight
   // Arrow move is never clobbered: an explicit `activeId` wins while it still points
@@ -291,13 +299,15 @@ function DestinationPicker({ onSelect }: { onSelect: (conversationId: string) =>
       </div>
 
       {status === "ready" && error ? (
-        <div className={styles.footerError}>Couldn&rsquo;t load more chats.</div>
+        <div className={styles.footerError}>
+          {reloadRequired ? "This chat page expired. Reload to continue." : "Couldn’t load more chats."}
+        </div>
       ) : null}
       <LoadMoreFooter
         hasMore={hasMore}
         loading={loadingMore}
-        onLoadMore={loadMore}
-        label="Load more chats"
+        onLoadMore={reloadRequired ? () => setRefreshVersion((version) => version + 1) : loadMore}
+        label={reloadRequired ? "Reload chats" : "Load more chats"}
       />
     </div>
   );

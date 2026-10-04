@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, get_args
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import text
@@ -21,7 +21,6 @@ from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.consumption import (
     AfterPlacement,
-    ConsumptionMediaKind,
     FirstPlacement,
     LastPlacement,
     Placement,
@@ -38,10 +37,6 @@ _SOURCE_TO_STORED: dict[LecternSource, str] = {
     "Assistant": "assistant",
     "AutoSubscription": "auto_subscription",
 }
-
-# Runtime validation is derived from the wire/domain Literal so the backend has
-# one owner for the exact five-kind contract.
-SUPPORTED_MEDIA_KINDS: frozenset[str] = frozenset(get_args(ConsumptionMediaKind))
 
 
 @dataclass(frozen=True)

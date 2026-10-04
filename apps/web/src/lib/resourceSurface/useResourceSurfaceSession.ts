@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import type { NoteBodyEdit, NoteBodyEditorDocument, NoteBodySelection } from "@/components/notes/NoteBodyEditor";
 import { isApiError } from "@/lib/api/client";
+import type { ApiJson } from "@/lib/api/wire";
 import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHandoff";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -16,7 +17,7 @@ import {
   type DailyDraft,
   type DailyDraftHandoff,
 } from "@/lib/notes/dailyDraftStore";
-import { decodeDailyCaptureResult } from "@/lib/notes/api";
+import { acceptDailyCaptureResult } from "@/lib/notes/api";
 import { noteBodyHasContent } from "@/lib/notes/prosemirror/bodyContent";
 import {
   createNoteBodyDoc,
@@ -28,6 +29,7 @@ import {
   WritingStorageError,
   WritingUnknownOutcomeError,
   type FrozenRequest,
+  type OperationCallbacks,
   type RecoveryCandidate,
   type WritingStatus,
 } from "@/lib/notes/writingSession";
@@ -37,8 +39,7 @@ import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { copyText } from "@/lib/ui/copyText";
 import type { ResourceSurface, ResourceSurfaceNode } from "@/lib/resources/resourceItems";
 import {
-  decodeResourceSurfaceCommand,
-  decodeResourceSurfaceTitle,
+  acceptResourceSurfaceCommand,
   fetchResourceSurface,
   prepareResourceSurfaceCommand,
   prepareResourceSurfaceTitle,
@@ -533,45 +534,62 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
     return prepareResourceSurfaceCommand({ sourceRef: operation.sourceRef, clientMutationId: intent.clientMutationId, baseVersions: [...versions.values()], command, context: intent.context, bodyEdits: intent.bodyEdits });
   }
 
-  function onOperationAck(id: string, raw: unknown, data: unknown): void {
-    const operation = asOperation(raw);
+  function currentOperation(id: string): SurfaceOperation {
+    const pending = session.pendingOperations(ownerKey).find((entry) => entry.id === id);
+    if (!pending) throw new Error("submitted surface operation disappeared");
+    return asOperation(pending.intent);
+  }
+
+  function beginAcknowledgement(id: string): SurfaceOperation {
+    const operation = currentOperation(id);
     if (owner.failure !== "storage_failed") owner.failure = null;
     if (owner.failure !== "storage_failed" &&
         !session.pendingOperations(ownerKey).some((entry) => entry.id !== id)) {
       owner.retained = true;
     }
-    if (operation.kind === "capture") {
-      const result = decodeDailyCaptureResult(data);
-      if (result.localDate !== operation.localDate || result.clientMutationId !== operation.clientMutationId) throw new TypeError("daily capture acknowledgement identity mismatch");
-      acceptSurface(result.surface, "page:" + result.pageId);
-      const captured = surfaceBody(result.surface, draftNoteRef(operation.noteId));
-      if (!captured) throw new TypeError("daily capture omitted its note body");
-      session.acknowledgeExternalBody(draftNoteRef(operation.noteId), captured);
-      if (daily && !clearDailyDraft(daily.accountId, daily.localDate)) {
-        owner.retained = false;
-        owner.failure = "storage_failed";
-      }
-      dailyDraftRef.current = null;
-      publishOwner();
-      return;
+    return operation;
+  }
+
+  function acknowledgeCapture(id: string, data: ApiJson<"/notes/daily/{local_date}/captures", "post">["data"]): void {
+    const operation = beginAcknowledgement(id);
+    if (operation.kind !== "capture") throw new Error("submitted operation is not a capture");
+    const result = acceptDailyCaptureResult(data);
+    if (result.localDate !== operation.localDate || result.clientMutationId !== operation.clientMutationId) throw new TypeError("daily capture acknowledgement identity mismatch");
+    acceptSurface(result.surface, "page:" + result.pageId);
+    const captured = surfaceBody(result.surface, draftNoteRef(operation.noteId));
+    if (!captured) throw new TypeError("daily capture omitted its note body");
+    session.acknowledgeExternalBody(draftNoteRef(operation.noteId), captured);
+    if (daily && !clearDailyDraft(daily.accountId, daily.localDate)) {
+      owner.retained = false;
+      owner.failure = "storage_failed";
     }
+    dailyDraftRef.current = null;
+    publishOwner();
+  }
+
+  function acknowledgeTitle(id: string, data: ApiJson<"/resource-items/{resource_ref}/title", "patch">["data"]): void {
+    const operation = beginAcknowledgement(id);
+    if (operation.kind !== "title") throw new Error("submitted operation is not a title edit");
     const previous = acknowledgedRef.current;
     if (!previous) throw new Error("surface owner disappeared during acknowledgement");
-    if (operation.kind === "title") {
-      const item = decodeResourceSurfaceTitle(data);
-      acceptSurface({
-        ...previous,
-        source: {
-          ...previous.source,
-          item,
-          content: previous.source.content.kind === "page_title"
-            ? { kind: "page_title", title: operation.title }
-            : previous.source.content,
-        },
-      }, sourceRefRef.current);
-      return;
-    }
-    const receipt = decodeResourceSurfaceCommand(data);
+    acceptSurface({
+      ...previous,
+      source: {
+        ...previous.source,
+        item: data.item,
+        content: previous.source.content.kind === "page_title"
+          ? { kind: "page_title", title: operation.title }
+          : previous.source.content,
+      },
+    }, sourceRefRef.current);
+  }
+
+  function acknowledgeGraph(id: string, data: ApiJson<"/resource-items/{resource_ref}/surface/commands", "post">["data"]): void {
+    const operation = beginAcknowledgement(id);
+    if (operation.kind !== "graph") throw new Error("submitted operation is not a graph edit");
+    const previous = acknowledgedRef.current;
+    if (!previous) throw new Error("surface owner disappeared during acknowledgement");
+    const receipt = acceptResourceSurfaceCommand(data);
     if (receipt.clientMutationId !== operation.intent.clientMutationId) throw new TypeError("Surface receipt mutation identity mismatch");
     const local = projectSurfaceGraph(new Map(operation.intent.baseSurfaces.map((surface) => [surface.source.item.ref, surface])), [operation.intent]);
     const mapping = new Map<string, string>();
@@ -630,6 +648,28 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
     publishOwner();
   }
 
+  function surfaceDelivery(onCommitted?: () => void): OperationCallbacks["deliver"] {
+    return async (id, request, complete) => {
+      switch (currentOperation(id).kind) {
+        case "capture":
+          return complete<ApiJson<"/notes/daily/{local_date}/captures", "post">>(request, (reply) => {
+            acknowledgeCapture(id, reply.data);
+            onCommitted?.();
+          });
+        case "title":
+          return complete<ApiJson<"/resource-items/{resource_ref}/title", "patch">>(request, (reply) => {
+            acknowledgeTitle(id, reply.data);
+            onCommitted?.();
+          });
+        case "graph":
+          return complete<ApiJson<"/resource-items/{resource_ref}/surface/commands", "post">>(request, (reply) => {
+            acknowledgeGraph(id, reply.data);
+            onCommitted?.();
+          });
+      }
+    };
+  }
+
   function onOperationError(error: unknown): void {
     if (error instanceof WritingStorageError) {
       owner.failure = "storage_failed";
@@ -661,12 +701,7 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
         if (asOperation(raw).kind === "title") lease = inputRef.current.onTitleMutationStarted?.() ?? null;
         return request;
       },
-      onAck: (data) => {
-        const submitted = session.pendingOperations(ownerKey).find((entry) => entry.id === result.id);
-        if (!submitted) throw new Error("submitted surface operation disappeared");
-        onOperationAck(result.id, submitted.intent, data);
-        void lease?.committed();
-      },
+      deliver: surfaceDelivery(() => { void lease?.committed(); }),
       onError: (error) => {
         if (isApiError(error) && error.status >= 400 && error.status < 500 && error.code !== "E_NETWORK") {
           lease?.failed();
@@ -1095,11 +1130,7 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
       if (!session.pendingOperations(ownerKey).some((entry) => entry.id === id)) continue;
       session.attachOperation(id, {
         prepare: prepareOperation,
-        onAck: (data) => {
-          const operation = session.pendingOperations(ownerKey).find((entry) => entry.id === id);
-          if (!operation) throw new Error("Recovered surface operation disappeared");
-          onOperationAck(id, operation.intent, data);
-        },
+        deliver: surfaceDelivery(),
         onError: onOperationError,
       });
     }

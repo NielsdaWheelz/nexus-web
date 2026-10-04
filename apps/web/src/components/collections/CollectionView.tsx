@@ -20,7 +20,7 @@ import {
   startSameDocumentViewTransition,
   useClientViewTransitionsReady,
 } from "@/lib/ui/viewTransitions";
-import { usePaneReturnDescendantReady } from "@/lib/panes/paneRuntime";
+import { usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
 import CollectionRow from "./CollectionRow";
 
 export interface CollectionViewRowRenderProps {

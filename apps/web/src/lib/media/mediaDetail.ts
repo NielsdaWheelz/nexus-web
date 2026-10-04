@@ -1,18 +1,29 @@
 import { present, type Presence } from "@/lib/api/presence";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
-import { parseMediaId, type MediaId, type PlayerDescriptor } from "@/lib/lectern/contract";
+import {
+  parseMediaId,
+  type MediaId,
+  type PlayerDescriptor,
+} from "@/lib/lectern/contract";
 import type { MediaDuration } from "@/lib/media/mediaSummary";
+import type { TranscriptChapter } from "@/lib/media/transcriptView";
 
 /** Generated API facts with the reader's existing branded identities and units. */
 export type MediaDetail = Omit<
   Schema<"MediaOut">,
-  "id" | "original_published_date" | "edition_published_date" | "duration" | "playerDescriptor"
+  | "id"
+  | "original_published_date"
+  | "edition_published_date"
+  | "duration"
+  | "chapters"
+  | "playerDescriptor"
 > & {
   id: MediaId;
   original_published_date: Presence<PublicationDate>;
   edition_published_date: Presence<PublicationDate>;
   duration: Presence<MediaDuration>;
+  chapters: readonly TranscriptChapter[];
   playerDescriptor: Presence<PlayerDescriptor>;
 };
 
@@ -43,6 +54,14 @@ export function mediaDetailFromResponse(
         remainingMinutes: mapPresence(duration.estimate.remainingMinutes, (value) => ({ value })),
       },
     })),
+    chapters: media.chapters
+      .map((chapter) => ({ ...chapter, title: chapter.title.trim() }))
+      .filter((chapter) => chapter.title.length > 0)
+      .sort(
+        (left, right) =>
+          left.t_start_ms - right.t_start_ms ||
+          left.chapter_idx - right.chapter_idx,
+      ),
     playerDescriptor: mapPresence(media.playerDescriptor, (descriptor) => ({
       ...descriptor,
       mediaId: parseMediaId(descriptor.mediaId),

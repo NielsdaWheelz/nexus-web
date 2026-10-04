@@ -12,7 +12,7 @@ import {
   usePlayerCommands,
   usePlayerSettings,
   usePlayerTimeline,
-} from "@/lib/player/globalPlayer";
+} from "@/lib/player/playerRuntime";
 import {
   adjustedRemainingMs,
   formatPlaybackRate,

@@ -1,9 +1,8 @@
-import { apiFetch, decodeApiPayload } from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
 import { requestEpubFragment, type EpubFragmentContent } from "@/lib/media/epubFragment";
-import {
-  decodeMediaNavigationResponse,
-  type MediaNavigation,
-} from "@/lib/media/readerNavigation";
+import type { MediaNavigation } from "@/lib/media/readerNavigation";
+import type { ApiJson } from "@/lib/api/wire";
+import { mediaFragmentsFromResponse } from "@/lib/media/mediaFragment";
 import {
   normalizeFragments,
   type Fragment,
@@ -50,9 +49,7 @@ interface ReaderDescriptorResponse {
   readonly data: ReaderMedia;
 }
 
-interface ReaderFragmentsResponse {
-  readonly data: readonly Fragment[];
-}
+
 
 interface PdfFileAccessResponse {
   readonly data: {
@@ -82,21 +79,19 @@ class HostedReaderSource implements ReaderDocumentSource {
     mediaId: string,
     signal: AbortSignal,
   ): Promise<ReaderTextDocument> {
-    const response = await apiFetch<ReaderFragmentsResponse>(
+    const response = await apiFetch<ApiJson<"/media/{media_id}/fragments", "get">>(
       `/api/media/${mediaId}/fragments`,
       { signal },
     );
-    return { fragments: normalizeFragments(response.data) };
+    return { fragments: normalizeFragments(mediaFragmentsFromResponse(response, mediaId)) };
   }
 
   async loadNavigation(
     mediaId: string,
     signal: AbortSignal,
   ): Promise<ReaderNavigation> {
-    const response = decodeApiPayload(
-      await apiFetch<unknown>(`/api/media/${mediaId}/navigation`, { signal }),
-      decodeMediaNavigationResponse,
-      "GET /api/media/{id}/navigation",
+    const response = await apiFetch<ApiJson<"/media/{media_id}/navigation", "get">>(
+      `/api/media/${mediaId}/navigation`, { signal },
     );
     return response.data;
   }

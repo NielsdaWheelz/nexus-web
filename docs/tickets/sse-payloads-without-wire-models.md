@@ -1,23 +1,23 @@
-# two SSE payload families have no wire model
+# chat tool sse public frames lack wire models
 
-status: open · origin: 2026-09-28 typed-wire foundation (size/typed-wire, claude session) · area: chat SSE / media SSE / typed wire
+status: open · origin: 2026-09-28 typed-wire foundation (size/typed-wire, claude session) · area: chat sse / typed wire
 
-`python/nexus/wire_schema.py` adds every SSE payload model to the generated web
-types. two families are missing because no model is their wire:
+`python/nexus/wire_schema.py` registers as-is sse payload models, but chat
+`tool_call_start`, `tool_call_done`, and `tool_result` still lack public frame
+models. their stored `ChatRunToolCall*EventPayload` and
+`ChatRunToolResultEventPayload` contain audit fields such as
+`binding_policy_revision`, `canonical_input_sha256`,
+`tool_contract_revision`, and `error_code` that
+`chat_run_public_event_payload` strips before streaming.
 
-- chat `tool_call_start`, `tool_call_done`, `tool_result`: the stored payload
-  models (`ChatRunToolCall*EventPayload`, `ChatRunToolResultEventPayload`)
-  carry `binding_policy_revision`, `canonical_input_sha256`,
-  `tool_contract_revision` and `error_code`, which
-  `chat_run_public_event_payload` strips on the read path.
-- media processing `state`/`done` (`/stream/media/{id}/events`): a hand-built
-  dict in `services/media.py::read_event_snapshot`.
+impact: `apps/web/src/lib/api/sse/events.ts` still decodes these public chat
+frames by hand; generated types cannot catch drift between that decoder and
+the projected output.
 
-impact: the web keeps hand decoders for these frames
-(`apps/web/src/lib/api/sse/events.ts`); tsc cannot see their drift.
+fix: model the exact projected public frames, emit them as-is, register them
+in `wire_schema.py`, and delete their web field decoders. the media
+`state`/`done` snapshot is now modeled separately as
+`MediaProcessingSnapshotOut` and uses its generated web type.
 
-fix: in the chat and media-core rewrites, give each frame a public Out model,
-emit it as-is, and list it in `wire_schema.py`.
-
-resolved when: both families appear in `wire.gen.ts` and their web decoders
-are gone.
+resolved when: all three public chat tool frames appear as their actual wire
+shapes in `wire.gen.ts` and their web field decoders are gone.

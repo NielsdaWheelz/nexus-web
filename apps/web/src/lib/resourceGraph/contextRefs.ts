@@ -9,7 +9,7 @@
 
 import { apiFetch } from "@/lib/api/client";
 import {
-  decodeSnakeCaseResourceActivation,
+  decodeResourceActivation,
   type ResourceActivation,
 } from "@/lib/resources/activation";
 import {
@@ -54,7 +54,7 @@ export function decodeContextRef(
   );
   const resourceRef = expectString(value.resource_ref, `${name}.resource_ref`);
   const missing = expectBoolean(value.missing, `${name}.missing`);
-  const activation = decodeSnakeCaseResourceActivation(
+  const activation = decodeResourceActivation(
     value.activation,
     `${name}.activation`,
   );
@@ -62,7 +62,7 @@ export function decodeContextRef(
     { ref: resourceRef },
     `${name}.actionSubject`,
   );
-  if (activation.resourceRef !== actionSubject.ref) {
+  if (activation.resource_ref !== actionSubject.ref) {
     // justify-defect: occurrence navigation and canonical action identity are
     // separate facts, but a context ref must publish both for one resource.
     throw new TypeError(

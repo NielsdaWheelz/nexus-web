@@ -97,11 +97,12 @@ scaffolding.
                            │  + pgvector  │   claims background_jobs    │
                            └──────┬───────┘          ┌───────────────────────┐
                                   │                  │ Workers (two lanes)   │
-                                  │ object refs      │ interactive: ingest,  │
-                                  ▼                  │ chat, oracle          │
-                           ┌──────────────┐          │ background: index,    │
-                           │ R2 / MinIO   │◀─────────│ repair, teardown      │
-                           │ object store │          └───────────────────────┘
+                                  │ object refs      │ interactive: chat,    │
+                                  ▼                  │ dossier, metadata,    │
+                           ┌──────────────┐          │ podcast sync, oracle  │
+                           │ R2 / MinIO   │◀─────────│ background: ingest,   │
+                           │ object store │          │ index, repair, delete │
+                           │              │          └───────────────────────┘
                            └──────────────┘
 
    Identity: Supabase Auth (JWT/JWKS) only — no Supabase DB or Storage.
@@ -787,6 +788,31 @@ Identities projects only Google and GitHub; an OAuth identity can be unlinked
 only while another supported OAuth identity remains, so unlink safety never
 depends on inferred password presence.
 
+web auth clients expose the credential capability their operation needs.
+`createSessionEstablishmentClient` retains incoming cookie names for chunk
+removal and the pkce verifier, while withholding old session values;
+`createCurrentSessionClient` supplies the effective current session for password
+update and identity linking. each command awaits its own sdk completion before
+the response adapter publishes ordered cookies and headers; no timer poll or
+extra session pre-read establishes readiness. explicit refresh receives the
+decoded refresh credential and requests one grant. the read-only verifier has
+empty storage and verifies its explicit access token; writable server actions
+retain their distinct cookie-store capability. response finalization preserves
+clear precedence and private, no-store headers. sdk retry/backoff can outlast
+the fetch budget; these capabilities do not add a full-operation deadline.
+
+native handoff delivery owns local session failure cleanup. a successful token
+consume is followed by a checked session installation; any failed attempted
+installation clears local auth cookies, including an old session. failed mint
+after native google or oauth handoff establishment also clears them. validation
+and consume failures before installation preserve the prior jar. the response
+adapter owns complete old/new base and chunk deletion; the callback owns its
+execution and response publication. canonical clear and sdk removal writes use
+native cookie deletion so expiry survives next's mutable-cookie merge, including
+obsolete chunks and verifier removal on successful delivery. this is local
+cleanup, without restoring an old session, revoking provider credentials or
+recovering a consumed code.
+
 Other identity surfaces:
 
 - **Stream tokens** (`services/stream_tokens.py`, route `api/routes/stream_tokens.py`):
@@ -817,11 +843,10 @@ object parsed at the
 edge; the user-facing taxonomy is **six kinds** (Documents, Notes, Highlights,
 Conversations, People, Web) folding the internal result types, with
 operator-backed filter chips (`format:`/`author:`/`role:`/`in:`) — not the raw
-result-type grid. The package owns one concern per module (`kinds`, `query`, `scope`,
-`embedding`, `ranking`, `projection`, `cursor`, `batch`, `retrievers/*`, `resolver`,
-`service`). `service` owns query execution and page orchestration; `resolver` owns
-validated durable-reference dispatch and the single public projection of the
-resolved internal result. Neither module re-exports the other.
+result-type grid. `services/search/service.py` owns query execution, scope and
+page orchestration. `query.py` and `scope.py` parse its inputs; `retrievers.py`
+and `chunks.py` read candidates; `results.py` owns internal ranked records and
+cross-type ranking; `projection.py` constructs the typed public result union.
 Ranking/retrieval is extracted below that public projection into one internal
 pre-projection candidate seam (`search/candidates.py`); **resource target
 search** (`services/resource_items/targets.py`, `POST
@@ -855,53 +880,15 @@ plus only note blocks classified by a visible `resource_edges.origin =
 "highlight_note"` edge before ranking and limiting. Clients never infer owner
 identity or highlight-note origin from result type or URL.
 
-`schemas/search_types.py` is the sole authority for public search-result
-discriminants. The public response union, retrieval contexts, and durable
-retrieval-result references must cover every discriminant. `search/resolver.py`
-validates persisted raw discriminants against that authority, narrows them to the
-exhaustive typed dispatcher, decodes the durable UUID once, delegates semantic
-visibility and reconstruction to the owning retriever, and projects once. The
-conversations retriever owns both candidate retrieval and durable rematerialization for
-Conversation, Message, and Conversation Dossier (`artifact`) results under one
-visibility contract. It excludes pending Messages; Dossier rematerialization is
-owner-only, masks foreign subjects as not found, and returns the current revision
-while keeping the Conversation subject as result identity. The notes retriever
-likewise owns candidate retrieval and durable rematerialization for Page and Note
-Block results: Pages are owner-only, and Note Blocks must be owner-visible,
-nonempty, and backed by a ready content index; highlight-note origin is derived
-from the same visible `highlight_note` edge contract in both paths. The media
-retriever owns candidate retrieval and durable rematerialization for Media,
-Episode, Video, and Podcast results. Rematerialization reuses canonical media or
-Podcast visibility, requires the requested discriminant to match the stored media
-kind exactly, and projects contributor credits through the shared credit decoder.
-Document-occurrence search is split by semantic owner: the content-chunk,
-fragment, and evidence-span retrievers each own candidate retrieval and durable
-rematerialization for their result type. Durable content chunks require visible
-media, a ready index, their primary canonical evidence span, and an exact match
-when the caller supplies evidence-span ids. Fragments reuse the same visibility
-and index-readiness contract and emit only canonical source locators. Evidence
-spans admit visible media or viewer-owned note blocks, require a ready owner
-index, and preserve that media or note block as the canonical owner identity.
-The Highlights retriever owns candidate retrieval and durable rematerialization
-under one visible, ready-indexed typed-anchor row contract. Fragment-offset and
-PDF-geometry hits share one strict locator decoder; stale, cross-media, missing,
-or schema-invalid anchors are omitted from search and masked as not found when a
-durable reference is reopened.
-The Reader Apparatus retriever likewise owns candidate retrieval and durable
-rematerialization under one visible publication-row contract: only `ready` or
-`partial` apparatus states with a non-missing locator participate. Both paths
-decode persisted locator JSON through the canonical retrieval schema, omitting
-or masking malformed rows instead of leaking a projection failure.
-The Web retriever owns persisted public-Web candidate retrieval and durable
-rematerialization through one visible Conversation-ledger row and the canonical
-`WebRetrievalResultRef` decoder. Nexus external-snapshot identity remains
-distinct from provider result identity; foreign snapshots and malformed or
-incomplete ledger refs are omitted or masked as not found.
-The Contributor retriever owns candidate retrieval and durable
-rematerialization. Discovery admits only identities with visible credited
-targets; durable reopening intentionally widens to the canonical Contributor
-visibility contract so a viewer-linked identity with zero current visible
-credits remains resolvable, while unrelated identities stay masked.
+`schemas/search_types.py` owns the result discriminants; `schemas/search.py`
+owns the response union. `projection.py` maps each ranked record to its exact
+occurrence ref, owner ref, action subject and activation, validates required
+locators, and emits the corresponding response model. A result without usable
+activation is a defect. The browser projects that generated wire union once into
+its row contract; [the search result boundary](modules/search.md) specifies
+variants, representation, consumers and verification. Durable resource reopening
+and visibility belong to `services/resource_graph/resolve.py`, independently of
+this browser projection.
 
 - **Indexing** (`services/content_indexing.py`, `semantic_chunks.py`): text-bearing
   media flows `fragment → content_blocks → chunks → embeddings`; note bodies
@@ -913,8 +900,8 @@ credits remains resolvable, while unrelated identities stay masked.
 - **Retrieval** is hybrid — and hybrid is an _invariant_, not a per-request toggle:
   a vector ANN arm (cosine over pgvector, joined on the _active_ embedding config)
   **UNION** a lexical FTS arm, reranked by a weighted score (lexical hit + semantic
-  similarity + recency), filtered by a similarity floor, then resolved through the
-  locator resolver. There is no `semantic` flag; the query embedding is built once
+  similarity + recency), filtered by a similarity floor, and projected with typed
+  retrieval locators. There is no `semantic` flag; the query embedding is built once
   for any semantic-capable kind regardless of structured filters. For chat, candidates are
   selected under a context-char budget; candidate/rerank/selection is a transient in-memory
   pass and `message_retrievals` is the sole durable per-result record. Selected rows become
@@ -1019,8 +1006,14 @@ The backend separates three owners:
 Callers look a subject scheme up once; there is no second mutable policy map or
 package-initializer registration side effect.
 
-Revision responses use the binding's stored manifest directly, including the
-Idea subject id for its owning user; Idea subject routes remain unavailable.
+Revision responses expose the binding's stored `input_manifest` as the sole
+coverage source, including the Idea subject id for its owning user. The browser
+derives its coverage label from this typed manifest; the head carries no second
+coverage projection. The eight manifest variants and their counts, included
+inputs, and omissions retain their stored shape. Revision content, citations,
+freshness, authorization, and build outcomes retain their contracts; a head
+without a revision has no manifest or coverage label. Head reads never generate
+or mutate a dossier. Idea subject routes remain unavailable.
 Failure facts contain a code and optional diagnostic detail. Build identifiers
 are UUIDs, with authorization checked separately on the owning Artifact.
 
@@ -1152,7 +1145,7 @@ and offered recovery cannot disagree. A published upload keeps its
 History. its compact collection row keeps the committed query and applied
 constraints visible; a failed later page retains loaded rows, marks the loaded
 count as failed, and offers one retry of that cursor. See
-`docs/cutovers/imports-workspace-hard-cutover.md`.
+[the imports read owner](modules/imports.md).
 
 **Recovery/deletion:** `reconcile_stale_ingest_media` requeues/fails stale
 `extracting` rows and repairs content/semantic indexes. Upload-session expiry is
@@ -1687,18 +1680,19 @@ The **Lectern** is the one ordered, mixed-media list of outstanding intentions
 Playing** is one device-local audio session, not a second durable list.
 `services/consumption/` is the sole backend consumption owner, split by table:
 `_lectern_store.py` (`consumption_queue_items` membership/order + the
-canonical `LecternSnapshot`), `state.py` (`consumption_overrides` explicit
-`Unread`/`Finished` plus the natural-end override revision, and
+canonical `LecternSnapshot`), `service.py` (the command facades and the DML of
+`consumption_overrides` explicit `Unread`/`Finished` plus the natural-end
+override revision, `consumption_completion_facts`, and
 `reader_engagement_states` current-state reader recency — `last_engaged_at`
 plus, for non-PDF locators, a monotonic `max_total_progression`),
 `_listening_store.py` (`podcast_listening_states`
 position/duration/nullable established episode rate + heartbeat fencing tokens
 `write_revision`/`reset_epoch`), `reader_cursor.py`
 (`reader_media_state` revisioned
-`Empty`/`Positioned` cursor CAS), `activity_store.py`
-(`consumption_activity_spans` and `consumption_completion_facts` DML),
-`activity_stats.py` (read-time aggregation/sessionization), `stats_read.py`
-(the Stats and Sessions wire payloads), and `projection.py` (the combined
+`Empty`/`Positioned` cursor CAS), `activity.py`
+(`consumption_activity_spans` ingest and exclusion writes), `stats.py`
+(read-time aggregation, sessionization and the Stats and Sessions payloads),
+and `projection.py` (the combined
 explicit-override + reader-engagement read model, plus batched
 `PlayerDescriptor`s reusing `derive_playback_source`). Consumption exposes
 policy-neutral engagement and complete queue-membership reads to Resonance; it
@@ -1786,12 +1780,18 @@ only correction lifecycle. Accepted writes publish the
 process-local Consumption revision; focus, activation, visibility, pageshow,
 and online transitions revalidate cross-process state without polling. The
 committed Stats response owns its session-continuation state: the pane delegates
-manual cursor lifecycle to `lib/api/useCursorPagination.ts`, builds continuation
-requests from the committed decoded view, aborts stale generations on a new
-first page, preserves rows across retryable continuation failure, and never
-uses an empty-string cursor as a second absence encoding; wire absence stays
-`Presence<string>` until the pagination adapter unwraps it. The
-full contract is [`modules/consumption-activity.md`](modules/consumption-activity.md).
+manual cursor lifecycle to `lib/api/useCursorPagination.ts` and builds
+continuation requests from the committed decoded view. the shared manual owner
+accepts one `CursorPage<T, Cursor extends string>` contract:
+`{items: readonly T[], nextCursor: Presence<Cursor>}`. first-page object identity
+owns appended rows and continuation; a replacement first page aborts the old
+request and immediately projects its own rows and tail. one continuation runs at
+a time, supplied rows append in order including duplicates, and retryable
+failures retain rows and tail. cursor absence stays explicit until the network
+command unwraps a present cursor; no empty-string or nullable cursor alias is
+introduced. imports, browse, stats, and the conversation picker consume this
+same contract. stats' full contract is
+[`modules/consumption-activity.md`](modules/consumption-activity.md).
 
 ### 8.10 Search, Browse, desktop Nexus, and mobile Nexus
 
@@ -1911,9 +1911,12 @@ pane URL
 ```
 
 The URL is requested state. Each pane controller commits
-`{view, rows, collectionRevision, nextCursor, exhaustion}` atomically, retains
+`{view, rows, collectionRevision, nextCursor}` atomically, retains
 the previously committed rows until the exact first page of the new view
 arrives, and disables continuation while requested and committed disagree.
+the loaded tail cursor determines whether the snapshot has another page;
+`useExhaustivePagination` owns the separate draining, complete, retry, and refresh
+states. seeds and visit-return snapshots carry the tail cursor directly.
 `python/nexus/services/collection_keyset.py` is the single owner of the
 plan → `ORDER BY` → keyset predicate → cursor-value mechanics, so those four can
 never disagree; each collection owner keeps its own plan construction because
@@ -2044,12 +2047,14 @@ they open over Resume and never become panes.
   **required** read on the normal 30 s server-request deadline, since it seeds
   `ReaderProvider` and workspace width restoration, so a failed or malformed read
   rejects the whole bootstrap rather than fabricating a default — alongside the
-  best-effort saved session and, only for Navigate, the explicit pane's
-  speculative resource seed, then (2) the remaining restored visible panes —
-  returning `{ readerProfile, initialState, resources }` (a hydration cache keyed
-  exactly as each pane's `useResource` reads it). Resume never seeds root. Session
-  and pane seeds stay best-effort under a deadline; a timed-out seed degrades to
-  the normal client fetch.
+  required saved session on that same normal deadline and, only for Navigate,
+  the explicit pane's speculative resource seed, then (2) the remaining restored visible panes —
+  returning `{ account, readerProfile, initialState, persistInitialState, resources }`.
+  `resources` is a hydration cache keyed exactly as each pane's `useResource`
+  reads it. Resume never seeds root. Session
+  restoration failure cannot fabricate a fallback or mount its save hook. only
+  pane seeds stay best-effort under the 500 ms deadline; a timed-out seed degrades
+  to the normal client fetch.
   A rejected bootstrap surfaces as the error boundary's accessible Retry UI, which
   re-issues the Server Component request (`router.refresh()`) before resetting the
   boundary.

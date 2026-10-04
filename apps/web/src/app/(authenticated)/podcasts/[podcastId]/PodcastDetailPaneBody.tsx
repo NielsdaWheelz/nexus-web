@@ -24,16 +24,18 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import { useResource } from "@/lib/api/useResource";
 import {
-  definePaneVisitDataKey,
-  useClearAllPaneVisitData,
   usePaneIsActive,
   usePaneParam,
-  usePaneReturnReady,
   usePaneRuntime,
   requirePaneRuntime,
-  usePaneVisitData,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
+import {
+  definePaneVisitDataKey,
+  useClearAllPaneVisitData,
+  usePaneReturnReady,
+  usePaneVisitData,
+} from "@/lib/workspace/paneReturnMemento";
 import {
   CANONICAL_PODCAST_EPISODE_VIEW,
   EPISODE_SORTS,
@@ -93,7 +95,10 @@ import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import { isAbortError } from "@/lib/errors";
 import { useRevalidationSettlement } from "@/lib/panes/useRevalidationSettlement";
-import { runPodcastRefresh } from "@/lib/podcasts/refresh";
+import {
+  podcastRefreshRequestAnnouncement,
+  requestPodcastRefresh,
+} from "@/lib/podcasts/refresh";
 import {
   isPodcastSubscriptionLifecycleProtocolError,
   isPodcastSubscriptionLifecycleTerminal,
@@ -212,7 +217,6 @@ interface PodcastDetailSnapshot {
   readonly queryIdentity: string;
   readonly collectionRevision: CollectionRevision;
   readonly nextCursor: Presence<CollectionCursor>;
-  readonly exhaustion: "Partial" | "Complete";
   readonly podcastLibraries: readonly LibraryPlacementOption[];
 }
 
@@ -558,8 +562,6 @@ export default function PodcastDetailPaneBody() {
         queryIdentity: episodeQueryIdentity,
         collectionRevision: result.episodes.collectionRevision,
         nextCursor: result.episodes.nextCursor,
-        exhaustion:
-          result.episodes.nextCursor.kind === "Absent" ? "Complete" : "Partial",
         podcastLibraries: result.podcastLibraries,
       };
       controllerRef.current = snapshot;
@@ -895,7 +897,6 @@ export default function PodcastDetailPaneBody() {
         ...current,
         episodes: nextEpisodes,
         nextCursor: page.nextCursor,
-        exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       };
       controllerRef.current = next;
       setController(next);
@@ -1224,7 +1225,7 @@ export default function PodcastDetailPaneBody() {
   ]);
 
   const executeRefresh = useCallback<PaneRefreshExecute>(
-    async ({ signal, reportProgress }) => {
+    async ({ signal }) => {
       if (!podcastId) {
         return {
           kind: "Failed",
@@ -1232,22 +1233,14 @@ export default function PodcastDetailPaneBody() {
         };
       }
       try {
-        const result = await runPodcastRefresh(
+        const requestedCount = await requestPodcastRefresh(
           { kind: "Podcast", podcastId },
-          {
-            signal,
-            onProgress: ({ finishedCount, requestedCount }) =>
-              reportProgress({
-                kind: "Determinate",
-                finishedCount,
-                requestedCount,
-              }),
-          },
+          signal,
         );
         await revalidatePodcastDetail(signal);
         return {
-          kind: result.kind,
-          announcement: result.announcement,
+          kind: "Complete",
+          announcement: podcastRefreshRequestAnnouncement(requestedCount),
         };
       } catch (refreshError: unknown) {
         if (isAbortError(refreshError)) throw refreshError;
@@ -1290,11 +1283,11 @@ export default function PodcastDetailPaneBody() {
       void (async () => {
         let refreshCommitted = false;
         try {
-          await runPodcastRefresh(
+          await requestPodcastRefresh(
             { kind: "Podcast", podcastId },
-            { signal: new AbortController().signal, onProgress: () => {} },
+            new AbortController().signal,
           );
-          // The refresh run has reached its terminal/observation boundary.
+          // The subscription refresh request is durably admitted.
           // Settle the global invocation before projecting the mounted pane so
           // a local revalidation failure cannot turn a committed refresh into
           // an aborted action.

@@ -12,6 +12,7 @@ import {
   mediaResource,
   notePagesResource,
   settingsAccountResource,
+  type ConversationIndexResourceParams,
 } from "@/lib/api/resource";
 import { decodeSlateEnvelope } from "@/lib/resonance/contract";
 import type { ResourceFetcher } from "@/lib/api/resourceTransport";
@@ -22,10 +23,13 @@ import {
   mediaDetailFromResponse,
   type MediaDetail,
 } from "@/lib/media/mediaDetail";
-import { decodeMediaFragmentsResponse } from "@/lib/media/mediaFragment";
+import { mediaFragmentsFromResponse } from "@/lib/media/mediaFragment";
 import type { Fragment } from "@/lib/media/transcriptView";
 import { isAbortError } from "@/lib/errors";
-import { decodeContributorDetail } from "@/lib/contributors/detail";
+import {
+  contributorDetailFromWire,
+  contributorWorksPageFromWire,
+} from "@/lib/contributors/api";
 import {
   decodeCollectionPage,
   type CollectionCursor,
@@ -41,12 +45,11 @@ import {
   decodeLibraryEntryListItem,
   type LibraryEntryListItem,
 } from "@/lib/libraries/entryListItem";
-import { decodeContributorWorkItem } from "@/lib/contributors/workItem";
 import type {
   ContributorDetail,
   ContributorWorkItem,
 } from "@/lib/contributors/types";
-import { decodeConversationIndexItem } from "@/lib/conversations/indexApi";
+import { conversationIndexPage } from "@/lib/conversations/indexApi";
 import type { ConversationListItem } from "@/lib/conversations/types";
 
 // The author pane's composed first-paint seed: the lightweight contributor
@@ -58,14 +61,12 @@ export interface AuthorPaneSeed {
   works: readonly ContributorWorkItem[];
   collectionRevision: CollectionRevision;
   nextCursor: Presence<CollectionCursor>;
-  exhaustion: "Partial" | "Complete";
 }
 
 export interface ConversationsPaneSeed {
   conversations: readonly ConversationListItem[];
   collectionRevision: CollectionRevision;
   nextCursor: Presence<CollectionCursor>;
-  exhaustion: "Partial" | "Complete";
 }
 
 export interface LibraryPaneSeed {
@@ -73,16 +74,15 @@ export interface LibraryPaneSeed {
   entries: readonly LibraryEntryListItem[];
   collectionRevision: CollectionRevision;
   nextCursor: Presence<CollectionCursor>;
-  exhaustion: "Partial" | "Complete";
 }
 
 // One transport-agnostic loader per prefetchable pane — the single definition of
 // "fetch and compose this pane's first-paint data." The server bootstrap seed, the
 // client `useResource` mount, and prefetch-on-intent all call it; only the transport
 // (serverResourceFetcher vs clientResourceFetcher) is injected as `request`, so
-// server-seed ≡ client-load ≡ prefetch holds by construction. This module imports NO
-// transport (the HTTP helpers) and no client-only or server-only code — pure
-// composition over ResourceDescriptor + pure normalizers.
+// server-seed ≡ client-load ≡ prefetch holds by construction. Loaders call only the
+// request port and shared projections; author projections share their api module
+// with HTTP helpers.
 export interface PaneResourceLoader {
   cacheKey: (params: RouteParams) => string;
   load: (request: ResourceFetcher, params: RouteParams) => Promise<unknown>;
@@ -118,7 +118,10 @@ export async function loadMediaPane(
   params: { id: string },
 ): Promise<MediaPaneSeed> {
   const media = mediaDetailFromResponse(
-    await request<{ id: string }, ApiJson<"/media/{media_id}", "get">>(mediaResource, params),
+    await request<{ id: string }, ApiJson<"/media/{media_id}", "get">>(
+      mediaResource,
+      params,
+    ),
     params.id,
   );
   let fragments: PaneMediaFragmentsSeed<Fragment> = {
@@ -126,14 +129,12 @@ export async function loadMediaPane(
     data: [],
   };
   if (shouldLoadInitialMediaFragments(media)) {
-    let rawFragmentsResponse: unknown = null;
-    let fragmentsFetchSucceeded = false;
+    let fragmentsResponse: ApiJson<"/media/{media_id}/fragments", "get"> | undefined;
     try {
-      rawFragmentsResponse = await request<{ id: string }, unknown>(
+      fragmentsResponse = await request<{ id: string }, ApiJson<"/media/{media_id}/fragments", "get">>(
         mediaFragmentsResource,
         params,
       );
-      fragmentsFetchSucceeded = true;
     } catch (error) {
       if (isAbortError(error)) throw error;
       fragments = {
@@ -141,10 +142,10 @@ export async function loadMediaPane(
         error: paneSubresourceFailure(error),
       };
     }
-    if (fragmentsFetchSucceeded) {
+    if (fragmentsResponse !== undefined) {
       fragments = {
         status: "ready",
-        data: decodeMediaFragmentsResponse(rawFragmentsResponse, media.id),
+        data: mediaFragmentsFromResponse(fragmentsResponse, media.id),
       };
     }
   }
@@ -202,7 +203,6 @@ export const paneResourceLoaders: Partial<
         entries: page.items,
         collectionRevision: page.collectionRevision,
         nextCursor: page.nextCursor,
-        exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       };
     },
   },
@@ -216,21 +216,24 @@ export const paneResourceLoaders: Partial<
     cacheKey: (p) => contributorResource.cacheKey({ handle: p.handle }),
     load: async (request, p): Promise<AuthorPaneSeed> => {
       const [detailEnv, worksEnv] = await Promise.all([
-        request<{ handle: string }, { data: unknown }>(contributorResource, {
-          handle: p.handle,
-        }),
-        request<{ handle: string; limit: number }, unknown>(
+        request<
+          { handle: string },
+          ApiJson<"/contributors/{contributor_handle}", "get">
+        >(contributorResource, { handle: p.handle }),
+        request<
+          { handle: string; limit: number },
+          ApiJson<"/contributors/{contributor_handle}/works", "get">
+        >(
           contributorWorksResource,
           { handle: p.handle, limit: AUTHOR_WORKS_LIMIT },
         ),
       ]);
-      const page = decodeCollectionPage(worksEnv, decodeContributorWorkItem);
+      const page = contributorWorksPageFromWire(worksEnv.data);
       return {
-        detail: decodeContributorDetail(detailEnv.data),
+        detail: contributorDetailFromWire(detailEnv.data),
         works: page.items,
         collectionRevision: page.collectionRevision,
         nextCursor: page.nextCursor,
-        exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       };
     },
   },
@@ -243,15 +246,16 @@ export const paneResourceLoaders: Partial<
   conversations: {
     cacheKey: () => conversationsInitialResource.cacheKey({}),
     load: async (request): Promise<ConversationsPaneSeed> => {
-      const page = decodeCollectionPage(
-        await request(conversationsInitialResource, {}),
-        decodeConversationIndexItem,
+      const page = conversationIndexPage(
+        await request<ConversationIndexResourceParams, ApiJson<"/conversations", "get">>(
+          conversationsInitialResource,
+          {},
+        ),
       );
       return {
         conversations: page.items,
         collectionRevision: page.collectionRevision,
         nextCursor: page.nextCursor,
-        exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       };
     },
   },

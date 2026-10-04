@@ -22,7 +22,7 @@ no database is stamped or aliased into the reallocated graph.
 
 ## what is true
 
-- production web and backend both serve `7dc68929b` (#377), reconfirmed by the 2026-10-03 read-only census at `0241`.
+- the last public web/backend version observation was `7dc68929b` (#377) on 2026-09-28. reviewed aggregate SQL on 2026-10-03 independently confirms production remains at `0241`; this did not re-probe public versions.
 - merging to main deploys nothing. `deploy/hetzner/deploy.sh <sha>` converges the backend (`release.py`: backup, migrate, start), then promotes and aliases the vercel build of the same sha. web and backend therefore release together.
 - the final release target carries migrations through `0257`. most older migrations are irreversible: their `downgrade()` raises. after release, the verified pre-migration backup is the only copy of dropped data. rollback restores the aligned application and that backup together, losing every write made since release.
 
@@ -45,16 +45,42 @@ no database is stamped or aliased into the reallocated graph.
 | 0256 | metadata hard cutover; unresolved journals block | no | [metadata plan](../metadata-enrichment-plan.md#9-hard-cutover-and-verification) |
 | 0257 | independent completed-write receipts and archival audit | no | [metadata verification](../metadata-enrichment-verification.md#release-preparation) |
 
+the earlier activation-owner preflight records the `0253` receipt-key and oracle nullable-key
+migration, with paired snake API/web output. production has 24 exact camel
+activation paths in 22 targeted receipts at `0241`. only chat
+`citation_index`/`context_ref_added` and oracle `passage` populations were counted
+and empty; plate/bind were not queried. source base `e92d6c6d9`, query sha256
+`65de77483069113f23ce5e66db644cd03c18e8c01fdf0c1cca4d6af7203800ca`,
+safe receipt `/tmp/nexus-resource-activation-production-preflight.receipt.json`.
+migration shape guards still run with writers stopped. merging/checks/preview publication do not establish a
+matched live application; release the same API/web sha only after migration and
+backend health, through the existing controller. no promotion is requested by
+this cleanup slice.
+
+the separate plate/bind read-only census at `0241`, 2026-10-03 11:11:24–27 utc,
+found zero rows for each type (`/tmp/nexus-oracle-nullable-production-preflight.receipt.json`,
+query sha256 `0054460ae3ea9f39fe8ef40377caa21c34b59114a3d1afb7010fa2ed1fcdc691`).
+the required-nullable year/gloss source cut deliberately rejects raw stored
+omissions previously defaulted to null. bounded initial/current and previously
+observed deployed writer history includes both members; no omission-producing
+writer was found. this is not proof about unavailable historical backups.
+no migration or new revision is added for that contract change.
+
+the atlas cut adds `0254`: old atlas query/writer code requires the removed
+column. stop writers, verify the existing backup, migrate and restart the same
+application sha through the existing paired release controller. unused timestamps
+are deliberately lost; migration downgrade refuses. this is locally qualified,
+not an applied production migration.
+
 ## what to do
 
 1. run every linked preflight read-only against production, and resolve each one before releasing.
 2. follow [the finite reset sequence](../../deployment.md#reviewed-model-history-reset): fresh drained census, source/revision-bound R2 backup and actual restore/qualification of those exact bytes; reviewed original IDs and migration losses.
 3. after separate authorization, run `deploy/hetzner/deploy.sh <target sha> --model-cutover-snapshot <reviewed-json>` from a clean checkout. no clone fixture or preliminary live archive qualifies that input.
-4. after the release, run the three processing repairs and then land #387 ([processing-repairs-await-release-then-387](processing-repairs-await-release-then-387.md)), and finish [billing-0252-release-steps](billing-0252-release-steps.md). three web compatibility
-   arms ([web-rate-limit-copy-outlives-limiter](web-rate-limit-copy-outlives-limiter.md),
-   [web-make-current-arm-outlives-revision-history](web-make-current-arm-outlives-revision-history.md),
-   [web-failed-quota-transcript-state-outlives-0252](web-failed-quota-transcript-state-outlives-0252.md))
-   need no release: they can go at any time, because web and backend release together.
+4. after the release, run the three processing repairs and then land #387 ([processing-repairs-await-release-then-387](processing-repairs-await-release-then-387.md)), and finish [billing-0252-release-steps](billing-0252-release-steps.md). the remaining
+   [web rate-limit copy cleanup](web-rate-limit-copy-outlives-limiter.md) can land
+   before release because web and backend release together; the make-current and
+   failed-quota source arms are already removed.
 5. open tabs still running the old web may fail dossier and chat reads and transcript requests until reloaded. there is nothing to do beyond reloading.
 
 ## done when

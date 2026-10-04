@@ -17,7 +17,7 @@ import {
   getDestination,
   type DestinationId,
 } from "@/lib/navigation/destinations";
-import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
+import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 
 interface BindableAction {
   id: string;

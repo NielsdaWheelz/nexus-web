@@ -21,7 +21,7 @@ export interface UseResourceTargetSearchArgs {
   purpose: ResourceTargetSearchPurpose;
   query: string;
   schemes?: readonly ResourceScheme[];
-  /** An existing durable Link source, for already-linked dedupe (`purpose=link` only). */
+  /** Source self-exclusion and existing-link identity. */
   sourceRef?: string;
   excludeRefs?: readonly string[];
   limit?: number;
@@ -35,10 +35,9 @@ export interface ResourceTargetSearchState {
 
 /**
  * Shared target-search controller for Connections, the reader Link dialog,
- * and notes `@`/Mod-K/`[[` autocomplete. Built on `useDebouncedFetch` — no
- * hand-rolled stale-response race guard (that hook already discards a
- * response whose key has since changed). Positioning, keyboard nav, and
- * insertion stay with callers; this hook owns only the fetch.
+ * and notes `@`/Mod-K/`[[` autocomplete. `useDebouncedFetch` owns cancellation
+ * and retained results; this hook projects them by the current request key.
+ * Positioning, keyboard navigation, and insertion stay with callers.
  */
 export function useResourceTargetSearch(
   args: UseResourceTargetSearchArgs,
@@ -51,7 +50,7 @@ export function useResourceTargetSearch(
       : JSON.stringify([
           purpose,
           trimmed,
-          schemes ?? [],
+          schemes ?? null,
           sourceRef ?? null,
           excludeRefs ?? [],
           limit ?? null,
@@ -60,7 +59,7 @@ export function useResourceTargetSearch(
   // Every request-shaping input belongs in the key. In particular, reopening a
   // populated Link dialog with a durable source must re-run the same query so
   // the backend can annotate already-linked targets for that source.
-  const { data, loading, error } = useDebouncedFetch(
+  const { data, dataIdentity, loading, error, errorIdentity } = useDebouncedFetch(
     key,
     (signal) =>
       searchResourceTargets(
@@ -70,5 +69,11 @@ export function useResourceTargetSearch(
     { debounceMs: DEBOUNCE_MS[purpose] },
   );
 
-  return { targets: data?.targets ?? [], loading, error };
+  const dataIsCurrent = key !== null && dataIdentity === key;
+  const errorIsCurrent = key !== null && errorIdentity === key;
+  return {
+    targets: dataIsCurrent ? data?.targets ?? [] : [],
+    loading: key !== null && (loading || (!dataIsCurrent && !errorIsCurrent)),
+    error: errorIsCurrent ? error : null,
+  };
 }

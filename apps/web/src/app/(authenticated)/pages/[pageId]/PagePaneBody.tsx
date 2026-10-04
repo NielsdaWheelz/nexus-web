@@ -26,11 +26,11 @@ import {
   requirePaneRuntime,
   usePaneEntryDelivery,
   usePaneParam,
-  usePaneReturnReady,
   usePaneRuntime,
   useSetPaneAliases,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
+import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import { usePaneTransientFilterRows } from "@/lib/panes/usePaneFilterRows";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";

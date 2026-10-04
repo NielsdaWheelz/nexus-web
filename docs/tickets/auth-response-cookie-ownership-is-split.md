@@ -9,11 +9,22 @@ implements another effective jar and pending writes. both feed the same
 with refresh output (`app/auth/password/update/route.ts:64-144`). paths here
 are under `apps/web/src/` at main `bed71343cc`.
 
+resolved native obligation, 2026-10-02: failed google/oauth mint and failed
+attempted handoff installation now clear all old/new local auth names. native
+deletion keeps expiry through the real Next mutable merge, including successful
+obsolete chunk/verifier removal. `/tmp/nexus-native-handoff.gshAfz/after.receipt.json`
+and `/tmp/nexus-native-handoff-independent-final-review.json` passed 25 actual
+route cases, 35 synthetic HTTP calls and 12 checks with zero unhandled errors.
+hosted auth, physical-device/browser flush and a real backend handoff transaction
+were not exercised. the route and coalesced refresh collectors remain separate;
+this record stays open for that ownership assessment.
+
 fix: give response-owning auth operations one cookie adapter; keep server
 actions' writable store and server components' read-only contract explicit.
 do not merge distinct capabilities just to reduce file count. preserve sdk
 headers, chunk removals, write order, clear precedence and native handoff.
 
-acceptance: actual sdk operations publish identical cookies/headers through
-callback, sign-in, confirmation, refresh and password update; a failed native
-handoff clears all established session names. pass `./scripts/test`.
+acceptance: any selected collector change preserves the current sdk
+cookie/header outputs through callback, sign-in, confirmation, refresh and
+password update, including resolved failure cleanup and true deletion. retain
+distinct writable/read-only capabilities. pass `./scripts/test`.

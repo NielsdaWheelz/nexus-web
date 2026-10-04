@@ -151,10 +151,10 @@ export function provisionalDailyOccurrence(input: {
         summary: "",
         route: `/notes/${noteId}`,
         activation: {
-          resourceRef: input.noteRef,
+          resource_ref: input.noteRef,
           kind: "route",
           href: `/notes/${noteId}`,
-          unresolvedReason: null,
+          unresolved_reason: null,
         },
         missing: false,
         capabilities: {

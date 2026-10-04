@@ -2,10 +2,8 @@
 
 import {
   createContext,
-  useCallback,
   useContext,
   useEffect,
-  useRef,
   type ReactNode,
 } from "react";
 import { isUnauthenticatedApiError } from "@/lib/api/client";
@@ -42,22 +40,9 @@ export default function UnauthenticatedApiBoundary({
 }: {
   children: ReactNode;
 }) {
-  const redirectedRef = useRef(false);
-  const handle = useCallback((error: unknown) => {
-    if (redirectedRef.current) {
-      return false;
-    }
-
-    if (handleUnauthenticatedApiError(error)) {
-      redirectedRef.current = true;
-      return true;
-    }
-    return false;
-  }, []);
-
   useEffect(() => {
     const onUnhandledRejection = (event: PromiseRejectionEvent) => {
-      if (handle(event.reason)) {
+      if (handleUnauthenticatedApiError(event.reason)) {
         event.preventDefault();
       }
     };
@@ -65,10 +50,10 @@ export default function UnauthenticatedApiBoundary({
     return () => {
       window.removeEventListener("unhandledrejection", onUnhandledRejection);
     };
-  }, [handle]);
+  }, []);
 
   return (
-    <UnauthenticatedApiContext.Provider value={handle}>
+    <UnauthenticatedApiContext.Provider value={handleUnauthenticatedApiError}>
       {children}
     </UnauthenticatedApiContext.Provider>
   );
