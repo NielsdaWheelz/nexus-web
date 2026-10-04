@@ -122,7 +122,7 @@ async function forward({
   }
 }
 
-type SessionLane = "Structured" | "MediaAsset" | "OfflineReaderProgress";
+type SessionLane = "Structured" | "MediaAsset";
 
 async function proxySession(
   request: Request,
@@ -196,20 +196,11 @@ async function proxySession(
       throw new Error("unreachable session reason");
   }
 
-  const headers = pickHeaders(
-    request.headers,
-    lane === "OfflineReaderProgress"
-      ? [...REQUEST_HEADERS, "x-nexus-expected-account-id"] : REQUEST_HEADERS,
-    true,
-  );
+  const headers = pickHeaders(request.headers, REQUEST_HEADERS, true);
   headers.set("authorization", `Bearer ${accessToken}`);
   if (lane === "MediaAsset") headers.set("accept-encoding", "identity");
-  let responseHeaderNames = RESPONSE_HEADERS;
-  if (lane === "MediaAsset") {
-    responseHeaderNames = [...RESPONSE_HEADERS, "content-length"];
-  } else if (lane === "OfflineReaderProgress") {
-    responseHeaderNames = [...RESPONSE_HEADERS, "nexus-account-id", "nexus-reader-generation"];
-  }
+  const responseHeaderNames = lane === "MediaAsset"
+    ? [...RESPONSE_HEADERS, "content-length"] : RESPONSE_HEADERS;
   const response = await forward({ request, path, id, headers, responseHeaderNames });
   if (response.status === 401) {
     return endSession([...new Set([
@@ -234,12 +225,6 @@ export async function proxyMediaAssetToFastAPI(
   request: Request, path: string,
 ): Promise<Response> {
   return proxySession(request, path, "MediaAsset");
-}
-
-export async function proxyOfflineReaderProgressToFastAPI(
-  request: Request, path: string,
-): Promise<Response> {
-  return proxySession(request, path, "OfflineReaderProgress");
 }
 
 export async function proxyPublicToFastAPI(

@@ -13,8 +13,6 @@ val debugBaseUrl = (providers.gradleProperty("nexusAndroidDebugBaseUrl").orNull
     ?: "http://10.0.2.2:3000").trim()
 val debugOwnedHost = (providers.gradleProperty("nexusAndroidDebugOwnedHost").orNull
     ?: "10.0.2.2").trim()
-val debugApiOrigin = (providers.gradleProperty("nexusAndroidDebugApiOrigin").orNull
-    ?: "http://10.0.2.2:8000").trim()
 val requestedReleaseBuild = gradle.startParameter.taskNames.any {
     it.contains("Release", ignoreCase = true)
 }
@@ -23,8 +21,6 @@ val releaseBaseUrlProperty = providers.gradleProperty("nexusAndroidReleaseBaseUr
     ?: System.getenv("NEXUS_ANDROID_RELEASE_BASE_URL")?.trim()
 val releaseOwnedHostProperty = providers.gradleProperty("nexusAndroidReleaseOwnedHost").orNull?.trim()
     ?: System.getenv("NEXUS_ANDROID_RELEASE_OWNED_HOST")?.trim()
-val releaseApiOriginProperty = providers.gradleProperty("nexusAndroidReleaseApiOrigin").orNull?.trim()
-    ?: System.getenv("NEXUS_ANDROID_RELEASE_API_ORIGIN")?.trim()
 val releaseStoreFileProperty = providers.gradleProperty("nexusAndroidReleaseStoreFile").orNull?.trim()
     ?: System.getenv("NEXUS_ANDROID_RELEASE_STORE_FILE")?.trim()
 val releaseStorePasswordProperty = providers.gradleProperty("nexusAndroidReleaseStorePassword").orNull
@@ -43,11 +39,8 @@ val nexusGoogleWebClientId = (providers.gradleProperty("nexusGoogleWebClientId")
     ?: System.getenv("NEXUS_GOOGLE_WEB_CLIENT_ID"))?.trim()
 val releaseBaseUrl = releaseBaseUrlProperty ?: "https://release-host-required.invalid"
 val releaseOwnedHost = releaseOwnedHostProperty ?: "release-host-required.invalid"
-val releaseApiOrigin = releaseApiOriginProperty ?: "https://release-api-origin-required.invalid"
 val debugUri = URI(debugBaseUrl)
 val releaseUri = URI(releaseBaseUrl)
-val debugApiUri = URI(debugApiOrigin)
-val releaseApiUri = URI(releaseApiOrigin)
 val assetLinksText = rootProject.file("../web/public/.well-known/assetlinks.json").readText()
 val assetLinksTextForFingerprintMatch = assetLinksText.replace(":", "").uppercase()
 val playerProtocolContract = JsonSlurper().parse(
@@ -69,15 +62,6 @@ require(debugUri.scheme == "http" || debugUri.scheme == "https") {
     "nexusAndroidDebugBaseUrl must use http or https."
 }
 require(
-    (debugApiUri.scheme == "http" || debugApiUri.scheme == "https") &&
-        debugApiUri.rawUserInfo == null &&
-        (debugApiUri.rawPath.isNullOrEmpty() || debugApiUri.rawPath == "/") &&
-        debugApiUri.rawQuery == null &&
-        debugApiUri.rawFragment == null
-) {
-    "nexusAndroidDebugApiOrigin must be an http(s) origin without path, query, fragment, or credentials."
-}
-require(
     debugUri.rawUserInfo == null &&
         (debugUri.rawPath.isNullOrEmpty() || debugUri.rawPath == "/") &&
         debugUri.rawQuery == null &&
@@ -94,18 +78,6 @@ if (requestedReleaseBuild) {
     }
     require(!releaseOwnedHostProperty.isNullOrBlank()) {
         "Set nexusAndroidReleaseOwnedHost before building release."
-    }
-    require(!releaseApiOriginProperty.isNullOrBlank()) {
-        "Set nexusAndroidReleaseApiOrigin or NEXUS_ANDROID_RELEASE_API_ORIGIN before building release."
-    }
-    require(
-        releaseApiUri.scheme == "https" &&
-            releaseApiUri.rawUserInfo == null &&
-            (releaseApiUri.rawPath.isNullOrEmpty() || releaseApiUri.rawPath == "/") &&
-            releaseApiUri.rawQuery == null &&
-            releaseApiUri.rawFragment == null
-    ) {
-        "nexusAndroidReleaseApiOrigin must be an HTTPS origin without path, query, fragment, or credentials."
     }
     require(releaseUri.scheme == "https") {
         "nexusAndroidReleaseBaseUrl must use https."
@@ -184,8 +156,8 @@ android {
         buildConfig = true
     }
 
-    // This root contains only the generated offline shelf. Register its
-    // producer below so every asset consumer, including lint, depends on it.
+    // This root contains only the generated shelf. Register its producer
+    // below so every asset consumer, including lint, depends on it.
     sourceSets.named("main") {
         assets.setSrcDirs(emptyList<String>())
     }
@@ -205,7 +177,6 @@ android {
             versionNameSuffix = "-debug"
             buildConfigField("String", "NEXUS_BASE_URL", "\"$debugBaseUrl\"")
             buildConfigField("String", "NEXUS_OWNED_HOST", "\"$debugOwnedHost\"")
-            buildConfigField("String", "NEXUS_API_ORIGIN", "\"$debugApiOrigin\"")
             buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$nexusGoogleWebClientId\"")
             manifestPlaceholders["appLinkHost"] = debugOwnedHost
             manifestPlaceholders["appLinksAutoVerify"] = "false"
@@ -217,7 +188,6 @@ android {
             signingConfig = signingConfigs.getByName("release")
             buildConfigField("String", "NEXUS_BASE_URL", "\"$releaseBaseUrl\"")
             buildConfigField("String", "NEXUS_OWNED_HOST", "\"$releaseOwnedHost\"")
-            buildConfigField("String", "NEXUS_API_ORIGIN", "\"$releaseApiOrigin\"")
             buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$nexusGoogleWebClientId\"")
             manifestPlaceholders["appLinkHost"] = releaseOwnedHost
             manifestPlaceholders["appLinksAutoVerify"] = "true"
@@ -232,34 +202,32 @@ android {
 
 }
 
-// The offline reader shelf is a build output, not source: gradle regenerates it
-// from apps/web before any asset consumer runs, so a clean checkout builds. The
-// pdf.js copy is pinned by `apps/web/package.json` + `bun.lock` (asserted at run
-// time by copy-pdfjs.mjs), so node_modules is not declared as an input.
+// The shelf (the Downloads screen and offline reader) is a build output, not
+// source: gradle regenerates it from apps/web into src/main/assets/shelf before
+// any asset consumer runs, so a clean checkout builds. The pdf.js copy is pinned
+// by `apps/web/package.json` + `bun.lock` (asserted at run time by
+// copy-pdfjs.mjs), so node_modules is not declared as an input.
 val webDir = rootProject.projectDir.resolve("../web")
-abstract class BuildOfflineReadingAssets : Exec() {
+abstract class BuildShelf : Exec() {
     @get:OutputDirectory
     abstract val outputDirectory: DirectoryProperty
 }
 
-val buildOfflineReadingAssets = tasks.register<BuildOfflineReadingAssets>("buildOfflineReadingAssets") {
+val buildShelf = tasks.register<BuildShelf>("buildShelf") {
     group = "build"
-    description = "Builds the zero-network offline reader shelf from apps/web."
+    description = "Builds the zero-network shelf from apps/web."
     workingDir = webDir
-    commandLine("bun", "run", "build:offline-reading")
+    commandLine("bun", "run", "build:shelf")
     inputs.dir(webDir.resolve("src"))
     inputs.dir(webDir.resolve("scripts"))
-    inputs.file(webDir.resolve("vite.offline-reading.config.ts"))
+    inputs.file(webDir.resolve("vite.shelf.config.ts"))
     inputs.file(webDir.resolve("package.json"))
     inputs.file(webDir.resolve("bun.lock"))
     outputDirectory.set(layout.projectDirectory.dir("src/main/assets"))
 }
 
 androidComponents.onVariants { variant ->
-    variant.sources.assets?.addGeneratedSourceDirectory(
-        buildOfflineReadingAssets,
-        BuildOfflineReadingAssets::outputDirectory,
-    )
+    variant.sources.assets?.addGeneratedSourceDirectory(buildShelf, BuildShelf::outputDirectory)
 }
 
 kotlin {
@@ -276,7 +244,6 @@ dependencies {
     implementation("androidx.credentials:credentials:1.6.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.6.0")
     implementation("androidx.media3:media3-common:1.10.1")
-    implementation("androidx.media3:media3-database:1.10.1")
     implementation("androidx.media3:media3-datasource:1.10.1")
     implementation("androidx.media3:media3-datasource-okhttp:1.10.1")
     implementation("androidx.media3:media3-exoplayer:1.10.1")
@@ -285,6 +252,5 @@ dependencies {
     implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
     implementation("com.squareup.moshi:moshi:1.15.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("org.jsoup:jsoup:1.21.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 }

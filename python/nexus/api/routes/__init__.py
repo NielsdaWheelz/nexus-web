@@ -32,7 +32,6 @@ from nexus.api.routes.media_assets import router as media_assets_router
 from nexus.api.routes.media_ingest import router as media_ingest_router
 from nexus.api.routes.messages import router as messages_router
 from nexus.api.routes.notes import router as notes_router
-from nexus.api.routes.offline_reading import router as offline_reading_router
 from nexus.api.routes.operational import router as operational_router
 from nexus.api.routes.oracle import router as oracle_router
 from nexus.api.routes.passage_anchors import router as passage_anchors_router
@@ -75,7 +74,6 @@ def create_api_router(*, podcasts: bool, email_ingest: bool) -> APIRouter:
     api_router.include_router(imports_router)
     api_router.include_router(public_resource_shares_router)
     api_router.include_router(reader_router)
-    api_router.include_router(offline_reading_router)
     api_router.include_router(media_router)
     api_router.include_router(notes_router)
     api_router.include_router(passage_anchors_router)

@@ -54,7 +54,6 @@ export function presentSearchResult(vm: SearchResultRowViewModel): CollectionRow
     context,
     activity: absent(),
     exceptionalStatus: absent(),
-    localAvailability: absent(),
     actionSubject: vm.actionSubject,
     selected: false,
   };

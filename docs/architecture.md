@@ -122,11 +122,10 @@ cookie-free lane: `/api/oracle/plates/[id]` strips browser credentials and sends
 only the internal secret to FastAPI `/oracle/plates/{id}`. The **only** direct
 browser-to-FastAPI exception is Server-Sent Events: the browser streams from
 FastAPI `/stream/*` using a short-lived stream token minted through
-the BFF. The Android native offline-reading transfer is the other deliberately
-narrow direct lane: native mints a media/generation/schema-bound, short-lived
-token through the authenticated BFF, then presents it only at the configured
-FastAPI `/offline-reading/packages/{media_id}` origin. It is not browser product
-data and grants no general fetch authority. See [`rules/layers.md`](rules/layers.md) and
+the BFF. Android's offline reading-copy download uses the same lane: native
+mints the same stream token through the authenticated BFF and fetches
+`/stream/media/{media_id}/reading-copy` from the `stream_base_url` it returns
+([offline](modules/offline.md)). See [`rules/layers.md`](rules/layers.md) and
 [`rules/modules/transport.md`](rules/modules/transport.md).
 
 ---
@@ -404,12 +403,12 @@ session and source attempt at recording time, which is why pre-cut coverage is
 EPUB, or web article one document-only generation. `reader_publication.py` is
 the publication and capture owner: immutable object writes precede the
 transactional canonical pointer swap, a replacement increments the generation
-once, and package capture restarts once rather than mixing database and object
-generations. Every write that changes what a reader sees is a publication,
+once, and an object that vanished under a reading-copy build answers
+`E_READER_CONTENT_CHANGED`. Every write that changes what a reader sees is a publication,
 including metadata enrichment's title write. `nexus.ops.reader_publication_preflight`
 is the idempotent operator entrypoint that publishes any eligible ready document
 still missing a row at generation `1`; run it before exposing a reading-capable
-APK ([`deployment.md`](../deployment.md)). Offline packages and device
+APK ([`deployment.md`](../deployment.md)). Offline copies and device
 availability are not server rows.
 
 **Retrieval index** — `content_blocks`, `evidence_spans`, `content_chunks`,
@@ -1160,17 +1159,16 @@ active-unit and preferred-locator selection, and canonical locator projection;
 format composition and `useReaderProgress` retain visible navigation/Find state
 and cursor ordering/writes. Hosted composition supplies current API inputs,
 decorations, activity, and the canonical online cursor port. The Android shelf
-supplies a lease-scoped local source and a native progress port; the core does
-not import workspace, auth, or Next route owners. Leaf text/PDF renderers
+supplies a source over a downloaded copy and a device progress port; the core
+does not import workspace, auth, or Next route owners. Leaf text/PDF renderers
 consume resolved content rather than fetching media or progress themselves.
 
-For offline-capable documents, `reader_publication.py` captures one coherent
-generation and `offline_reading_packages.py` emits deterministic V1 ZIPs from
-that projection. The direct route verifies a 300s package token signed with the
-stream-token key. The package contains canonical reader inputs only: PDF bytes,
-sanitized undecorated article text, or preprocessed EPUB navigation/sections and
-declared local assets. It contains no credentials, highlights, notes, AI state,
-or remote article subresources.
+An offline reading copy (`services/reading_copy.py`) is the hosted reader's
+own payloads (`navigation`, `fragments` or EPUB fragments, serialized as their
+routes serialize them) read in one repeatable-read snapshot, zipped with the
+PDF bytes or EPUB assets, and stamped with its publication generation. Web
+article images become text placeholders. It contains no credentials,
+highlights, notes or AI state. See [offline](modules/offline.md).
 
 The core idea is two coordinate systems, both **codepoint-based**:
 
@@ -2100,34 +2098,24 @@ they open over Resume and never become panes.
 **Android shell** (`apps/android`): a Kotlin app with `MainActivity` for the
 hardened WebView and `ShareActivity` for system-share capture. The WebView has
 no `addJavascriptInterface`, file/content access, third-party cookies, or
-off-origin in-WebView navigation. Three strict AndroidX WebKit listeners are
-confined to their exact owned main-frame origins: `nexusOfflineMedia` retains
-audio download commands/snapshots, `nexusPlayer` retains service-player
-commands/snapshots, and `nexusOfflineReading` carries the separate reading
-snapshot/command protocol for the hosted origin and packaged shelf.
+off-origin in-WebView navigation. Two AndroidX WebKit listeners are confined to
+their owned main-frame origins: `nexusPlayer` carries service-player
+commands/snapshots, and `nexusOffline` carries the offline commands/snapshots
+for the hosted origin and the packaged shelf.
 
-`OfflineMediaStore` remains the sole device owner of Media3 downloads, index,
-non-evicting app-private cache, account purge, recovery, and native playback
-source resolution. `OfflineReadingStore` separately owns reading SQLite rows,
-app-private package files, Keystore binding seal, transfers, leases, removals,
-and pending reader position. They share only the persisted network-policy value
-and presentation grouping; neither store becomes a generic offline store.
-For eligible ready documents, the server-owned resource-action snapshot gives
-the hosted renderer the exact media ID, canonical document kind, and bounded
-`requestedTitle` for enqueue. That title is presentation metadata only; it
-does not authorize work or select package identity.
-
-When validated connectivity is absent, `MainActivity` can load the packaged
-APK shelf at `appassets.androidplatform.net` without hosted bootstrap. The
-request router serves only packaged static assets and in-memory lease paths;
-PDF byte ranges are handled natively, and every other reserved-host request is
-a local 404 rather than a network fallback. Reading transfer I/O is owned by a
-persisted user-initiated JobScheduler lane and uses only its supplied network.
-`OfflineReadingOriginClient` calls fixed account-binding/token/progress BFF
-paths plus the exact configured direct package origin. No renderer supplies an
-account, URL, header, cookie, or filesystem path. Native state-changing BFF
-requests explicitly carry the exact pinned hosted `Origin`; OkHttp does not
-synthesize browser CSRF headers.
+Offline ([module](modules/offline.md)) is one store (`OfflineStore`: one json
+state file and one directory tree), one user-initiated transfer job for episode
+audio and reading copies, one sync job for reading positions, and the packaged
+shelf at `appassets.androidplatform.net`, which is the Downloads screen online
+and offline. While the shelf is the main document, `ShelfRouter` serves only
+packaged assets and copy files (PDF byte ranges natively) and answers every
+other subresource with a local 404. `NexusOriginClient` is the one native
+product client: fixed BFF paths for listening state, Consumption activity,
+`me`, stream tokens and reader state, with WebView cookies and the exact pinned
+hosted `Origin`; OkHttp does not synthesize browser CSRF headers. No renderer
+supplies a URL, header, cookie or filesystem path; the hosted renderer names
+its account in `hello`, and native checks it against `GET /api/me` before any
+authenticated remote work.
 
 Native Google sign-in
 (Credential Manager) and Custom-Tab OAuth both converge on a server-minted,

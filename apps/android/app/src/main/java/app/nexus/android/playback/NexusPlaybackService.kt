@@ -18,6 +18,8 @@ import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.ExoPlayer
@@ -34,9 +36,9 @@ import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionCommands
 import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
+import app.nexus.android.NexusOriginClient
 import app.nexus.android.R
-import app.nexus.android.offline.OfflineMediaStore
-import app.nexus.android.offline.OfflinePlaybackSource
+import app.nexus.android.offline.OfflineStore
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
@@ -48,6 +50,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
 import java.util.UUID
 import kotlin.math.max
 import kotlin.time.Duration.Companion.milliseconds
@@ -206,8 +209,8 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     private lateinit var savedTime: SavedTimeAccounting
     private lateinit var consumptionRecorder: NativeConsumptionRecorder
     private lateinit var activityOutbox: NativeActivityOutbox
-    private lateinit var offlineMediaStore: OfflineMediaStore
-    private lateinit var remoteMediaSourceFactory: DefaultMediaSourceFactory
+    private lateinit var offlineStore: OfflineStore
+    private lateinit var mediaSourceFactory: DefaultMediaSourceFactory
     private val loadErrorHandlingPolicy = DefaultLoadErrorHandlingPolicy()
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var timelineJob: Job? = null
@@ -221,7 +224,8 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     private var naturalEndCapturePending = false
     private var persistenceDrained = false
     private var installedPlayerCommandBarrier: PlayerCommandBarrier? = null
-    private var activePlaybackSource: OfflinePlaybackSource? = null
+    // the downloaded episode this player holds open, released with the item
+    private var leasedMediaId: UUID? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -244,15 +248,19 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                 enableAudioTrackPlaybackParams: Boolean,
             ): AudioSink = audioSink
         }
-        offlineMediaStore = OfflineMediaStore.get(this)
-        remoteMediaSourceFactory =
-            DefaultMediaSourceFactory(offlineMediaStore.remotePlaybackDataSourceFactory)
-                .setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
+        offlineStore = OfflineStore.get(this)
+        // file:// for a downloaded episode, http(s) for a stream
+        mediaSourceFactory = DefaultMediaSourceFactory(
+            DefaultDataSource.Factory(
+                this,
+                OkHttpDataSource.Factory(OkHttpClient()).setUserAgent("NexusAndroid/1"),
+            ),
+        ).setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
         val audioAttributes = AudioAttributes.Builder()
             .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
             .setUsage(C.USAGE_MEDIA)
             .build()
-        player = ExoPlayer.Builder(this, renderersFactory, remoteMediaSourceFactory)
+        player = ExoPlayer.Builder(this, renderersFactory, mediaSourceFactory)
             .setAudioAttributes(audioAttributes, true)
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_LOCAL)
@@ -633,7 +641,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
                 PlayerRejectionCode.InvalidRequest,
             )
         }
-        val connectedAccount = accountId ?: return PlayerWire.rejected(
+        accountId ?: return PlayerWire.rejected(
             command.requestId,
             PlayerRejectionCode.AccountMismatch,
         )
@@ -647,37 +655,21 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             command.rateState,
         )
         failure = Presence.Absent
-        val source = offlineMediaStore.resolvePlaybackSource(
-            accountId = connectedAccount,
-            mediaId = descriptor.mediaId,
-            remoteUri = Uri.parse(descriptor.streamUrl),
-        ).getOrElse {
-            player.stop()
-            player.clearMediaItems()
-            consumptionRecorder.dismiss()
-            failure = Presence.Present(
-                PlayerFailure(
-                    code = "OfflineSourceUnavailable",
-                    message = getString(R.string.player_source_failure),
-                )
-            )
-            publishSnapshot()
-            return PlayerWire.accepted(command.requestId)
-        }
-        activePlaybackSource = source
+        val localAudio = offlineStore.audioFile(descriptor.mediaId)
+            ?.takeIf { offlineStore.open(descriptor.mediaId) }
+        if (localAudio != null) leasedMediaId = descriptor.mediaId
         consumptionRecorder.install(
             command.sessionKey,
             descriptor,
             command.rateState.episodeRate,
         )
-        val itemBuilder = MediaItem.Builder()
-            .setUri(source.uri)
-            .setMediaId(command.session.descriptor.mediaId.toString())
-            .setMediaMetadata(canonicalMetadata(command.session.descriptor))
-        source.customCacheKey?.let(itemBuilder::setCustomCacheKey)
-        val mediaSource = DefaultMediaSourceFactory(source.dataSourceFactory)
-            .setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
-            .createMediaSource(itemBuilder.build())
+        val mediaSource = mediaSourceFactory.createMediaSource(
+            MediaItem.Builder()
+                .setUri(localAudio?.let(Uri::fromFile) ?: Uri.parse(descriptor.streamUrl))
+                .setMediaId(command.session.descriptor.mediaId.toString())
+                .setMediaMetadata(canonicalMetadata(command.session.descriptor))
+                .build()
+        )
         player.setMediaSource(mediaSource, command.session.descriptor.positionMs)
         player.playbackParameters = PlaybackParameters(command.rateState.base.toFloat())
         if (!applyPauseShortening()) {
@@ -705,7 +697,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         }
         player.playbackParameters = PlaybackParameters(1f)
         player.setMediaSource(
-            remoteMediaSourceFactory.createMediaSource(
+            mediaSourceFactory.createMediaSource(
                 MediaItem.Builder()
                 .setUri(command.descriptor.audioUrl)
                 .setMediaId(command.descriptor.target)
@@ -1058,8 +1050,8 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     }
 
     private fun releasePlaybackSource() {
-        activePlaybackSource?.close()
-        activePlaybackSource = null
+        leasedMediaId?.let(offlineStore::close)
+        leasedMediaId = null
     }
 
     private fun recorderPlaybackSample(): RecorderPlaybackSample {

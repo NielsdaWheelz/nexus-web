@@ -29,7 +29,6 @@ from nexus.schemas.media import (
     MediaOut,
     MediaProcessingSnapshotOut,
     MediaReadState,
-    OfflineDownloadSpecOut,
     PodcastEpisodeChapterOut,
     SourceProgress,
 )
@@ -64,11 +63,6 @@ from nexus.services.media_source_ingest import (
     source_repairable_sql,
 )
 from nexus.services.metadata_operations import metadata_enrichment_views
-from nexus.services.offline_download_source import (
-    derive_offline_download_source,
-    derive_offline_download_title,
-    offline_download_eligible,
-)
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
 from nexus.services.reading_time import load_reading_time_estimates
@@ -308,7 +302,8 @@ class CollectionMedia:
     id: UUID
     summary: MediaSummaryOut
     canonical_source_url: str | None
-    offline_download_eligible: bool
+    audio_url: str | None
+    """A podcast episode's https enclosure: what Android downloads for offline listening."""
     transcript_state: str | None
     transcript_coverage: str | None
     listening_state: ListeningStateOut | None
@@ -559,6 +554,11 @@ def list_collection_media_for_viewer_by_ids(
             if kind_value == MediaKind.podcast_episode.value
             else None
         )
+        enclosure = (
+            str(row["external_playback_url"] or "")
+            if kind_value == MediaKind.podcast_episode.value
+            else ""
+        )
         collection.append(
             CollectionMedia(
                 id=media_id,
@@ -574,11 +574,7 @@ def list_collection_media_for_viewer_by_ids(
                     duration=_summary_duration(row, kind_value, reading_times),
                 ),
                 canonical_source_url=cast(str | None, row["canonical_source_url"]),
-                offline_download_eligible=offline_download_eligible(
-                    kind=kind_value,
-                    title=str(row["title"]),
-                    external_playback_url=cast(str | None, row["external_playback_url"]),
-                ),
+                audio_url=enclosure if enclosure.startswith("https://") else None,
                 transcript_state=transcript_state,
                 transcript_coverage=transcript_coverage,
                 listening_state=_listening_state(row),
@@ -919,36 +915,6 @@ def list_visible_media(
         else None
     )
     return media_list, next_cursor
-
-
-def get_offline_download_spec_for_viewer(
-    db: Session, *, viewer_id: UUID, media_id: UUID
-) -> OfflineDownloadSpecOut:
-    """The bounded title plus progressive-audio source URL of a visible media."""
-    row = (
-        db.execute(
-            text(f"""
-                WITH visible_media AS ({visible_media_ids_cte_sql()})
-                SELECT m.kind, m.title, m.external_playback_url
-                FROM media m
-                JOIN visible_media vm ON vm.media_id = m.id
-                WHERE m.id = :media_id
-            """),
-            {"viewer_id": viewer_id, "media_id": media_id},
-        )
-        .mappings()
-        .one_or_none()
-    )
-    if row is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    return OfflineDownloadSpecOut(
-        media_id=media_id,
-        title=derive_offline_download_title(title=str(row["title"])),
-        source_url=derive_offline_download_source(
-            kind=_status_to_str(row["kind"]),
-            external_playback_url=cast(str | None, row["external_playback_url"]),
-        ),
-    )
 
 
 def list_fragments_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> list[FragmentOut]:

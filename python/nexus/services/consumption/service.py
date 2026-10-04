@@ -69,6 +69,7 @@ from nexus.services.consumption import (
 )
 from nexus.services.consumption._lectern_store import LecternRow, _dedupe
 from nexus.services.consumption.handles import COMPLETION, seal, unseal
+from nexus.services.reader_publication import lock_publication_generation
 
 LECTERN_SCOPE = "Lectern.Commands"
 CONSUMPTION_SCOPE = "Consumption.Commands"
@@ -151,6 +152,10 @@ def put_reader_cursor_in_txn(
 ) -> ReaderCursorSnapshot:
     lock_viewer(db, viewer_id)
     kind = _reader_kind(db, viewer_id, media_id)
+    if write.expected_reader_generation is not None and (
+        lock_publication_generation(db, media_id=media_id) != write.expected_reader_generation
+    ):
+        raise ConflictError(ApiErrorCode.E_READER_CONTENT_CHANGED, "Reader publication changed")
     was_finished = _is_finished(db, viewer_id, media_id)
     snapshot = reader_cursor.put_in_txn(
         db, viewer_id=viewer_id, media_id=media_id, media_kind=kind, write=write

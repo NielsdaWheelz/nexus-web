@@ -264,7 +264,6 @@ export function FindResults({ find }: { readonly find: FindController }) {
       publicationDate: absent(),
       activity: absent(),
       exceptionalStatus: absent(),
-      localAvailability: absent(),
       actionSubject: null,
       selected: current,
     };

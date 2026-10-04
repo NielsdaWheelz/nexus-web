@@ -53,11 +53,11 @@ the initial fragment. explicit fragment reads and pdf access refreshes always
 call the source; the session keeps no second consumable copy of initial content.
 
 Hosted media composition installs the current BFF/API source and canonical
-online cursor port. The Android APK shelf installs a lease-scoped local source
-and native latest-value progress port. `TextDocumentReader` and `PdfReader`
+online cursor port. The Android shelf installs a source over a downloaded
+copy's `reader.json` and a device progress port. `TextDocumentReader` and `PdfReader`
 render resolved inputs and do not fetch media, signed URLs, highlights, or
 progress. Hosted decorations remain a layer over canonical content; offline
-packages contain undecorated canonical inputs.
+copies contain undecorated canonical inputs.
 
 `MediaPaneBody` remains the cohesive hosted composition owner. one
 publication-bound evidence index serves lookup, marker and stance projections
@@ -80,8 +80,7 @@ owned `Data` models. generated web types feed pane loading and
 shared snake-case activation wire directly;
 its facts, markers, source content and associations remain server-owned.
 intrinsic target/ref and marker relations belong to the small output models;
-publication and section owners establish native navigation relations. only
-persisted offline navigation retains strict unknown-data decoding. embed
+publication and section owners establish native navigation relations. embed
 rendering accepts the generated model directly, preserving canonical source,
 widget fields and actions; internal embeds now include previously discarded
 server fields. quote grammar validation returns the original dictionary, keeping
@@ -780,20 +779,18 @@ pure black/white to reduce halation under long sessions.
   exact-path FastAPI middleware and the matching header on the Next reader-state
   BFF route.
 - Offline reading does not alter this canonical cursor shape or create another
-  server cursor row. `GET|PUT /api/media/{id}/offline-reader-state` is a narrow
-  authenticated envelope around the same Consumption owner. It requires
-  `X-Nexus-Expected-Account-Id`, returns account and publication-generation
-  attestation, and on PUT checks account and locks/compares
-  `reader_publications.generation` before invoking the existing cursor CAS.
-  Wrong account, changed generation, and ordinary revision conflict mutate
-  nothing.
-- Native stores one baseline plus one latest pending locator per installed
-  publication. An offline save is acknowledged only after that pending locator
-  is durable. Foreground sync uses the generation fence and canonical revision;
-  it never picks a value by timestamp or furthest position. A same-generation
-  conflict preserves Canonical and Device choices. A changed or deleted source
-  keeps the installed copy and its pending locator local until confirmed
-  removal.
+  server cursor row. Android writes through the same `PUT reader-state`, adding
+  an optional `expected_reader_generation`: when present, the locked
+  `reader_publications.generation` must equal it before the cursor CAS, else
+  409 `E_READER_CONTENT_CHANGED`. Changed generation and ordinary revision
+  conflict mutate nothing; native checks the account with `GET /api/me` first.
+- Native stores one baseline plus one latest pending locator per downloaded
+  copy. An offline save is acknowledged only after that pending locator is
+  durable. Sync uses the generation fence and canonical revision; it never
+  picks a value by timestamp or furthest position. A same-generation conflict
+  preserves Canonical and Device choices. A changed or deleted source keeps the
+  copy and its pending locator local until confirmed removal. See
+  [offline](offline.md).
 - `ReaderResumeState` (the `locator` payload) is a discriminated union:
   - `pdf`: `page`, `page_progression`, `zoom`, `position`
   - `web`: `target.fragment_id`, `locations`, `text`
@@ -977,41 +974,24 @@ of its location-target writes uses.
 - media metadata owns workspace labels; fragment loading and semantic section
   context do not rename the pane.
 
-### Android offline publication and package boundary
+### Android reading copies
 
 `reader_publications` is the sole generation owner for ready PDF, EPUB, and web
-article reader inputs. Eligible publication paths call
-`replace_reader_publication`; package capture reads one repeatable-read database
-projection plus its immutable object references, assembles outside the
-transaction, and verifies the generation afterward. One race restarts the
-capture; a second is `E_READER_PUBLICATION_BUSY`.
+article reader inputs. A reading copy (`services/reading_copy.py`, served at
+`GET /stream/media/{id}/reading-copy` with a stream token) reads the hosted
+navigation, web fragments or EPUB fragments in one repeatable-read snapshot,
+serializes each exactly as its hosted route does, releases the snapshot, and
+zips them as `reader.json` with `document.pdf` or every `assets/{asset_key}`.
+It records the generation it read (`Nexus-Reader-Generation`); an object that
+vanished meanwhile is `E_READER_CONTENT_CHANGED`. Web article images become
+text placeholders; EPUB html is untouched, and the shelf rewrites its
+`/api/media/{id}/assets/` prefix to the copy's own files.
 
-The canonical resource-action snapshot advertises `OfflineReading` only for a
-ready PDF, EPUB, or web article. It supplies the exact media ID, canonical media
-kind, and server-owned `requestedTitle` used by the Android enqueue command.
-The title is bounded presentation metadata, not authorization or package
-identity; the verified package manifest replaces it after installation.
-
-`offline_reading_packages.py` creates deterministic package-schema and
-archive1/reader4 zips. unique fragment bodies and the full hosted navigation
-contract are serialized once; adapters never invent source metadata. native verifies the response digest, ZIP grammar, manifest and entry
-integrity, supported versions, media/account/generation binding, and baseline
-before publishing one package row and sealed directory.
-
-Archive and expanded totals remain bounded at 512 MiB. The JSON reader member
-has an exact 64-MiB limit matching the canonical EPUB/API-container bound; SVG
-members have an exact 8-MiB limit because their safety check parses XML; other
-members retain the 512-MiB ceiling. Production objects are staged and hashed in
-chunks, then ZIP-streamed with cooperative deadline checks per chunk rather
-than accumulated as one in-memory package.
-
-The Android shelf serves the packaged Vite bundle and package entries only on
-the reserved appassets host. That bundle is a build output, not a committed
-tree: gradle runs `bun run build:offline-reading` in `apps/web` before merging
-assets, and `./scripts/test` runs the same build. Lease capabilities are memory-only. Remote
-article subresources, arbitrary native fetch, WebView `file:`/`content:` access,
-and reserved-host network fallback are absent by contract. Audio remains owned
-by `OfflineMediaStore`; reading remains owned by `OfflineReadingStore`.
+The shelf (`apps/web/src/shelf/`) feeds `reader.json` to the hosted parsers
+through `ReaderDocumentSource` and renders with the shared core. It is a build
+output, not a committed tree: gradle runs `bun run build:shelf` in `apps/web`
+before merging assets, and `./scripts/test` runs the same build. Its CSP and
+the native router keep it off the network. See [offline](offline.md).
 
 ### reader theme quick-switch
 
@@ -1071,13 +1051,9 @@ when reader behavior changes, manually check the affected behavior from this lis
 - reader-to-chat quote flow sends `reader_selection` (highlight key + revision)
   from a typed launch intent and captures an immutable per-message snapshot that
   survives reload, branch, and rerun; a geometry-only Highlight is non-sendable
-- one coherent publication capture across PostgreSQL and MinIO, including the
-  bounded restart/busy result
-- wrong-account and wrong-generation offline cursor writes leaving the
-  canonical cursor unchanged
-- package/reader compatibility and host verification before publication
-- the APK shelf's local-only request/range routing and explicit downloaded-copy
-  and text-only-article disclosures
+- wrong-generation offline cursor writes leaving the canonical cursor unchanged
+- the shelf's local-only request/range routing and explicit text-only-article
+  disclosure
 
 ## static verification
 

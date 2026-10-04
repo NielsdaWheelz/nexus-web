@@ -17,8 +17,10 @@
 	}
 
 	route {
-		@offline_reading_package path_regexp ^/offline-reading/packages/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
-		handle @offline_reading_package {
+		# An offline reading copy builds before its first byte: long header
+		# timeout, and no encode (the zip is already compressed).
+		@reading_copy path_regexp ^/stream/media/[0-9a-f-]{36}/reading-copy$
+		handle @reading_copy {
 			reverse_proxy api:8000 {
 				transport http {
 					dial_timeout 20s

@@ -20,10 +20,6 @@ from nexus.schemas.presence import Presence, Present
 from nexus.schemas.publication_dates import PublicationDate
 from nexus.schemas.source_issues import SourceIssue
 from nexus.schemas.upload_failures import UploadTransportFailure, UploadVerificationFailureCode
-from nexus.services.offline_download_source import (
-    OFFLINE_DOWNLOAD_SOURCE_URL_MAX_LENGTH,
-    OFFLINE_DOWNLOAD_TITLE_MAX_LENGTH,
-)
 from nexus.services.sealed_handles import UploadSessionHandle
 
 
@@ -68,15 +64,6 @@ class PlaybackSourceOut(BaseModel):
     provider_video_id: str | None
     watch_url: str | None
     embed_url: str | None
-
-
-class OfflineDownloadSpecOut(BaseModel):
-    kind: Literal["ProgressiveAudio"] = "ProgressiveAudio"
-    media_id: UUID
-    title: str = Field(min_length=1, max_length=OFFLINE_DOWNLOAD_TITLE_MAX_LENGTH)
-    source_url: str = Field(min_length=1, max_length=OFFLINE_DOWNLOAD_SOURCE_URL_MAX_LENGTH)
-
-    model_config = _CAMEL_CONFIG
 
 
 DocumentEmbedAggregateStatus = Literal[

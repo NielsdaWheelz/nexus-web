@@ -70,14 +70,6 @@ def enrich_media_metadata(
     )
 
 
-@router.get("/media/{media_id}/offline-download-spec")
-def get_offline_download_spec(media_id: UUID, viewer: ViewerDep, db: DbSession) -> dict:
-    result = media_service.get_offline_download_spec_for_viewer(
-        db, viewer_id=viewer.user_id, media_id=media_id
-    )
-    return ok(result, by_alias=True)
-
-
 @router.put("/media/{media_id}/authors")
 def put_media_authors(media_id: UUID, request: MediaAuthorsPutRequest, viewer: ViewerDep) -> dict:
     """The contributors facade owns its own session, re-check, replay and mutation."""

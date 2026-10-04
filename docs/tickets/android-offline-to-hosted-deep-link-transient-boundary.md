@@ -1,7 +1,0 @@
-# android offline-to-hosted deep link briefly failed
-
-status: open; origin: 2026-09-26 reader navigation final-apk acceptance; area: android workspace / offline shelf
-
-on task emulator-5560, the first deep link from the offline shelf to freshly uploaded article `01a0e111-1fb8-7b46-9dbb-097bfa891a00` showed a workspace load boundary and `Offline reading is unavailable / could not reach offline reading`; the next route load after home navigation succeeded and downloaded the article. this recurred on the rebased debug apk after a normal shelf-to-hosted transition. the webview logged `CSS length did not resolve to nonnegative pixels: var(--viewport-safe-bottom)` from `apps/web/src/lib/mobileViewport/MobileViewportProvider.tsx:88` and then `Unexpected offline reading reply <requestId>` from `apps/web/src/lib/offlineReading/runtime.ts:302`. authenticated `/api/offline-reading/account-binding` returned 200 for the task account, adb reverse was present, and a cold app restart restored the hosted media ui. this points toward client bootstrap or bridge timing, but the failing request and ordering remain unproven.
-
-prerequisite: rebuild the identified debug source with the task endpoints, restore adb reverse and repeat the recorded network state. acceptance: reproduce the first shelf → hosted transition and repair the mobile viewport/bridge initialization at its owning boundary; the route must load without a manual home detour under a valid connection, and late bridge replies must not poison the next request.

@@ -6,11 +6,9 @@ import Nexus from "@/components/nexus/Nexus";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
 import LecternMutationNotice from "@/components/LecternMutationNotice";
-import DownloadsSurface from "@/components/offlineMedia/DownloadsSurface";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
-import { OfflineMediaProvider } from "@/lib/offlineMedia/OfflineMediaProvider";
-import { OfflineReadingProvider } from "@/lib/offlineReading/OfflineReadingProvider";
+import { connectOffline } from "@/lib/offline/bridge";
 import { ImportsProvider } from "@/lib/imports/ImportsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { CompletionUndoFeedbackOwner } from "@/lib/lectern/useCompletionUndo";
@@ -93,6 +91,11 @@ function AuthenticatedWorkspace({
 }) {
   const { workspacePrimaryMetrics, probe } = useWorkspacePrimaryMetrics();
 
+  // Binds Android's offline store to this account (a different account wipes it first).
+  useEffect(() => {
+    connectOffline(accountId);
+  }, [accountId]);
+
   // Interactivity fact for the workspace root: absent in server HTML, stamped
   // by the first client commit. Input dispatched before hydration lands on
   // dead SSR markup (React re-renders over it), so anything driving the UI
@@ -140,46 +143,36 @@ function AuthenticatedWorkspace({
                 <CompletionUndoFeedbackOwner />
                 <LibraryPlacementControllerProvider>
                   <ShareControllerProvider>
-                    <OfflineReadingProvider accountId={accountId}>
-                    <OfflineMediaProvider accountId={accountId}>
-                      {/* One Downloads surface above both offline
-                          capabilities: it renders whenever audio or reading is
-                          Ready, so a device that only connected one of them
-                          still has somewhere to see, retry and remove its
-                          downloads. */}
-                      <DownloadsSurface />
-                      {/* The resource-action runtime reads Lectern, offline
-                          media, share, library-placement, resource overlays,
-                          workspace, and feedback from these ancestors and owns
-                          the shared snapshot cache / busy state / dispatch for
-                          every resource dropdown in the workspace subtree
-                          below. ResourceOverlaysProvider is an ancestor so the
-                          runtime can call its openers; ResourceActionOverlays
-                          renders the single overlay copy deep inside the player
-                          runtime and a synthetic pane-visit scope. */}
-                      <ResourceOverlaysProvider>
-                        <GlobalPlayerProvider accountId={accountId}>
-                          <ResourceActionRuntimeProvider>
-                            <ImportsProvider>
-                              <Nexus />
-                              <ResourceActionOverlays />
-                              <div
-                                className={styles.layout}
-                                data-hydrated={hydrated || undefined}
-                              >
-                                <AppNav />
-                                <main className={styles.main}>
-                                  <WorkspaceHost />
-                                  <LecternMutationNotice />
-                                  <GlobalPlayerSurfaces />
-                                </main>
-                              </div>
-                            </ImportsProvider>
-                          </ResourceActionRuntimeProvider>
-                        </GlobalPlayerProvider>
-                      </ResourceOverlaysProvider>
-                    </OfflineMediaProvider>
-                    </OfflineReadingProvider>
+                    {/* The resource-action runtime reads Lectern, offline
+                        state, share, library-placement, resource overlays,
+                        workspace, and feedback from these ancestors and owns
+                        the shared snapshot cache / busy state / dispatch for
+                        every resource dropdown in the workspace subtree
+                        below. ResourceOverlaysProvider is an ancestor so the
+                        runtime can call its openers; ResourceActionOverlays
+                        renders the single overlay copy deep inside the player
+                        runtime and a synthetic pane-visit scope. */}
+                    <ResourceOverlaysProvider>
+                      <GlobalPlayerProvider accountId={accountId}>
+                        <ResourceActionRuntimeProvider>
+                          <ImportsProvider>
+                            <Nexus />
+                            <ResourceActionOverlays />
+                            <div
+                              className={styles.layout}
+                              data-hydrated={hydrated || undefined}
+                            >
+                              <AppNav />
+                              <main className={styles.main}>
+                                <WorkspaceHost />
+                                <LecternMutationNotice />
+                                <GlobalPlayerSurfaces />
+                              </main>
+                            </div>
+                          </ImportsProvider>
+                        </ResourceActionRuntimeProvider>
+                      </GlobalPlayerProvider>
+                    </ResourceOverlaysProvider>
                   </ShareControllerProvider>
                 </LibraryPlacementControllerProvider>
               </LecternProvider>

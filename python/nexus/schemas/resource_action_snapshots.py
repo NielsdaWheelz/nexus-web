@@ -22,7 +22,6 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    field_validator,
     model_validator,
 )
 from pydantic.alias_generators import to_camel
@@ -116,7 +115,6 @@ SimpleResourceActionCapabilityKind = Literal[
     "RegenerateArtifact",
     "RemoveMedia",
     "LibraryPlacement",
-    "OfflineAudio",
 ]
 
 
@@ -165,20 +163,16 @@ class RecoveryResourceActionCapabilityOut(BaseModel):
     model_config = _OUT_CONFIG
 
 
-class OfflineReadingResourceActionCapabilityOut(BaseModel):
-    kind: Literal["OfflineReading"] = "OfflineReading"
+class DownloadResourceActionCapabilityOut(BaseModel):
+    """What Android needs to keep this media offline: an episode's audio or a reading copy."""
+
+    kind: Literal["Download"] = "Download"
     availability: ServerActionAvailabilityOut
-    media_kind: Literal["web_article", "epub", "pdf"]
-    requested_title: str = Field(min_length=1, max_length=512)
+    media_kind: Literal["podcast_episode", "pdf", "epub", "web_article"]
+    title: str
+    audio_url: str | None
 
     model_config = _OUT_CONFIG
-
-    @field_validator("requested_title")
-    @classmethod
-    def validate_requested_title(cls, value: str) -> str:
-        if value.isspace():
-            raise ValueError("requestedTitle must contain visible text")
-        return value
 
 
 class OpenSourceResourceActionCapabilityOut(BaseModel):
@@ -285,7 +279,7 @@ ResourceActionCapabilityOut = Annotated[
     SimpleResourceActionCapabilityOut
     | RetryMetadataResourceActionCapabilityOut
     | RecoveryResourceActionCapabilityOut
-    | OfflineReadingResourceActionCapabilityOut
+    | DownloadResourceActionCapabilityOut
     | OpenSourceResourceActionCapabilityOut
     | PlaybackResourceActionCapabilityOut
     | ConsumptionResourceActionCapabilityOut

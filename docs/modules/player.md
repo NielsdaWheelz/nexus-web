@@ -24,10 +24,8 @@ Observed activity and Stats are a separate Consumption capability; see
 [consumption-activity.md](consumption-activity.md).
 The final pane-body presentation contract is
 [Lectern editorial surface](../cutovers/lectern-editorial-surface-hard-cutover.md).
-Android offline reading is adjacent but is not player state; see
-[reader implementation](reader-implementation.md#android-offline-publication-and-package-boundary)
-and the
-[offline-reading cutover](../cutovers/android-offline-reading-hard-cutover.md).
+Android offline downloads are adjacent but are not player state; see
+[offline](offline.md).
 
 ## Backend Owners
 
@@ -303,17 +301,16 @@ Lectern pane is the sole full-list editor).
   a live player session, installs the canonical result, and acknowledges only
   the exact recorded outcome. Session match gates presentation and successor
   start, not settlement.
-- On canonical `LoadCanonical`, `NexusPlaybackService` resolves the source once
-  through `OfflineMediaStore`. Ready uses the store's one Media3 cache directly;
-  every other state captures the canonical remote source. Missing or corrupt
-  Ready bytes fail without network fallback, and later download-state changes
-  never switch the active source.
-- Android reading downloads do not enter `PlayerSession`, Media3,
-  `OfflineMediaStore`, listening heartbeats, Media Session, or natural-end
-  settlement. `OfflineReadingStore` owns their SQLite/files/leases/progress;
-  the two stores share only the existing persisted network-policy value and a
-  presentation-only Downloads grouping. Account switch/logout coordinates two
-  owner-local purges and exposes no new binding until both acknowledge.
+- On canonical `LoadCanonical`, `NexusPlaybackService` resolves the source once:
+  a Ready download is leased (`OfflineStore.open`) and played from its
+  `file://`, released when the source is; every other state streams the
+  canonical remote source through the same `DefaultDataSource`. A file
+  corrupted on disk shows as a player error, and later download-state changes
+  never switch the active source. Removing a leased episode marks it Removing
+  until playback releases it.
+- Reading copies and offline positions never enter `PlayerSession`, Media3,
+  listening heartbeats, Media Session, or natural-end settlement; see
+  [offline](offline.md).
 - `apps/web/src/components/player/` — the Listening Shelf, MiniPlayer, full-
   screen Now Playing, and shared cadence-scoped controls. The surfaces share
   one provider-lifetime live region. They do not

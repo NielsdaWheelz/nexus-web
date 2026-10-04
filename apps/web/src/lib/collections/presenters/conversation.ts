@@ -28,7 +28,6 @@ export function presentConversation(
     context: present({ kind: "Text", text: presentation.metadata }),
     activity: absent(),
     exceptionalStatus: absent(),
-    localAvailability: absent(),
     actionSubject: {
       ref: canonicalResourceRef({ scheme: "conversation", id: item.id }),
     },

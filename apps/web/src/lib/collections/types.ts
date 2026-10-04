@@ -4,7 +4,6 @@
  */
 
 import type { ResourceRowPrimary } from "@/components/ui/ResourceActivation";
-import type { LocalAvailability } from "@/lib/offlineMedia/contract";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import type { Presence } from "@/lib/api/presence";
 import type { ContributorCredit } from "@/lib/contributors/types";
@@ -66,7 +65,6 @@ export interface CollectionRowView {
   readonly context: Presence<CollectionContext>;
   readonly activity: Presence<CollectionActivity>;
   readonly exceptionalStatus: Presence<ExceptionalStatus>;
-  readonly localAvailability: Presence<LocalAvailability>;
   /**
    * The canonical resource suffix for this row's one contextual More menu.
    * `null` means a non-resource row, which may contribute only `flatActions`.

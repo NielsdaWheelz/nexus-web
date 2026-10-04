@@ -37,9 +37,7 @@ import {
 } from "@/lib/lectern/contract";
 import type { LecternCapability } from "@/lib/lectern/LecternProvider";
 import type { CompletionUndoInput } from "@/lib/lectern/useCompletionUndo";
-import type { OfflineMediaCapability } from "@/lib/offlineMedia/OfflineMediaProvider";
-import type { useOfflineReadingCapability } from "@/lib/offlineReading/OfflineReadingProvider";
-import { OFFLINE_READING_COPY } from "@/lib/offlineReading/presentation";
+import { offlineCall } from "@/lib/offline/bridge";
 import type { useShareController } from "@/lib/sharing/controller";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { useLibraryPlacementController } from "@/lib/libraries/placementController";
@@ -125,10 +123,6 @@ export interface ResourceActionPorts {
   readonly lectern: LecternCapability;
   readonly playerCommands: ReturnType<typeof usePlayerCommands>;
   readonly playerSession: ReturnType<typeof usePlayerSession>;
-  readonly offlineCapability: OfflineMediaCapability;
-  readonly offlineReadingCapability: ReturnType<
-    typeof useOfflineReadingCapability
-  >;
   readonly feedback: FeedbackContextValue;
   readonly offerCompletionUndo: (input: CompletionUndoInput) => void;
 }
@@ -374,129 +368,90 @@ export function resourceActionDescriptors({
     };
   };
 
-  const offline = (
-    capability:
-      | Extract<ResourceActionCapability, { kind: "OfflineReading" }>
-      | (ResourceActionCapability & { kind: "OfflineAudio" }),
+  const download = (
+    capability: Extract<ResourceActionCapability, { kind: "Download" }>,
   ): ActionDescriptor => {
-    const reading = capability.kind === "OfflineReading";
-    const state = reading ? environment.offlineReading : environment.offline;
     const actionId = "ResourceOperation.Media.Offline";
     const states = RESOURCE_ACTION_CATALOG[actionId].states;
-    const controller = (ports: ResourceActionPorts) => {
-      const owner = reading
-        ? ports.offlineReadingCapability
-        : ports.offlineCapability;
-      if (owner.kind !== "Ready")
-        throw new Error("Offline controller is unavailable");
-      return owner.controller;
-    };
-    const download = async (ports: ResourceActionPorts) => {
-      if (capability.kind === "OfflineReading") {
-        if (ports.offlineReadingCapability.kind !== "Ready")
-          throw new Error("Offline reading controller is unavailable");
-        const mediaKind = {
-          web_article: "WebArticle",
-          epub: "Epub",
-          pdf: "Pdf",
-        } as const;
-        await ports.offlineReadingCapability.controller.enqueue(
-          id(),
-          capability.requestedTitle,
-          mediaKind[capability.mediaKind],
-        );
-      } else {
-        if (ports.offlineCapability.kind !== "Ready")
-          throw new Error("Offline media controller is unavailable");
-        await ports.offlineCapability.controller.enqueue(id());
-      }
-    };
-    if (environment.platform === "Web" || state.kind === "Unavailable") {
-      return make(capability, actionId, download, {
+    // Android answers on the bridge; a refusal is a hud, never a workspace defect.
+    const call =
+      (op: string, args: Record<string, unknown> = {}) =>
+      async (ports: ResourceActionPorts) => {
+        try {
+          await offlineCall(op, { mediaId: id(), ...args });
+        } catch (error) {
+          const code = error instanceof Error ? error.message : "";
+          ports.feedback.publish({
+            kind: "Hud",
+            content: {
+              tone: "Danger",
+              title:
+                code === "Storage"
+                  ? "Not enough device storage for this download."
+                  : code === "Unsupported"
+                    ? "This episode’s audio can’t be downloaded."
+                    : "The download couldn’t be changed. Try again.",
+            },
+          });
+        }
+      };
+    const enqueue = call("enqueue", {
+      kind: capability.mediaKind,
+      title: capability.title,
+      url: capability.audioUrl,
+    });
+    const state = environment.offline;
+    if (state.kind !== "Ready")
+      return make(capability, actionId, enqueue, {
         checked: false,
-        blocked: "UnsupportedOnDevice",
+        blocked: state.kind === "Loading" ? "Loading" : "UnsupportedOnDevice",
       });
-    }
-    if (state.kind === "Loading")
-      return make(capability, actionId, download, {
-        checked: false,
-        blocked: "Loading",
-      });
-    const local = state.byRef.get(ref);
-    if (!local) {
-      return make(capability, actionId, download, {
-        checked: false,
-        blocked:
-          environment.connectivity === "Offline" ? "RequiresOnline" : undefined,
-        confirmation:
-          capability.kind === "OfflineReading" &&
-          capability.mediaKind === "web_article"
-            ? {
-                title: "Download text-only copy?",
-                body: "Downloaded web articles include readable text but not images.",
-              }
-            : undefined,
-      });
-    }
-    switch (local.kind) {
-      case "Resolving":
+    const requiresOnline =
+      environment.connectivity === "Offline" ? "RequiresOnline" : undefined;
+    const item = state.byRef.get(ref);
+    switch (item?.state) {
+      case undefined:
+        return make(capability, actionId, enqueue, {
+          checked: false,
+          blocked: requiresOnline,
+          confirmation:
+            capability.mediaKind === "web_article"
+              ? {
+                  title: "Download text-only copy?",
+                  body: "Downloaded web articles include readable text but not images.",
+                }
+              : undefined,
+        });
       case "Queued":
       case "Downloading":
-      case "Restarting":
-        return make(
-          capability,
-          actionId,
-          async (ports) => {
-            await controller(ports).cancel(id());
-          },
-          { ...states.Downloading, checked: false },
-        );
+        return make(capability, actionId, call("cancel"), {
+          ...states.Downloading,
+          checked: false,
+        });
       case "Ready":
-        return make(
-          capability,
-          actionId,
-          async (ports) => {
-            await controller(ports).remove(id());
-          },
-          {
-            ...states.Ready,
-            checked: true,
-            confirmation:
-              reading && "hasDevicePosition" in local && local.hasDevicePosition
-                ? {
-                    title: OFFLINE_READING_COPY.removeConfirmationTitle,
-                    body: OFFLINE_READING_COPY.pendingRemoveConfirmation,
-                  }
-                : undefined,
-          },
-        );
+        return make(capability, actionId, call("remove"), {
+          ...states.Ready,
+          checked: true,
+          confirmation:
+            item.progress !== null && item.progress.kind !== "Canonical"
+              ? {
+                  title: "Remove downloaded copy?",
+                  body: "Remove this copy and its position saved on this device. That position has not reached Nexus.",
+                }
+              : undefined,
+        });
       case "Failed":
-        return make(
-          capability,
-          actionId,
-          async (ports) => {
-            await controller(ports).retry(id());
-          },
-          {
-            ...states.Failed,
-            checked: false,
-            blocked:
-              environment.connectivity === "Offline"
-                ? "RequiresOnline"
-                : undefined,
-          },
-        );
+        return make(capability, actionId, call("retry"), {
+          ...states.Failed,
+          checked: false,
+          blocked: requiresOnline,
+        });
       case "Removing":
-        return make(
-          capability,
-          actionId,
-          async (ports) => {
-            await controller(ports).remove(id());
-          },
-          { ...states.Ready, checked: true, blocked: "Busy" },
-        );
-      default:
-        return assertNever(local, "offline availability");
+        return make(capability, actionId, call("remove"), {
+          ...states.Ready,
+          checked: true,
+          blocked: "Busy",
+        });
     }
   };
 
@@ -680,16 +635,8 @@ export function resourceActionDescriptors({
           },
         );
       }
-      case "OfflineAudio":
-        return offline({
-          kind: "OfflineAudio",
-          availability: capability.availability,
-        });
-      case "OfflineReading":
-        return environment.platform === "Android" &&
-          environment.offlineReading.kind === "Ready"
-          ? offline(capability)
-          : null;
+      case "Download":
+        return download(capability);
       case "LibraryPlacement":
         return make(
           capability,

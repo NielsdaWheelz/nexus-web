@@ -232,3 +232,5 @@ class CursorWrite(BaseModel):
     model_config = ConfigDict(extra="forbid")
     locator: ReaderResumeState
     base_revision: int = Field(ge=0)
+    expected_reader_generation: int | None = Field(default=None, ge=1)
+    """Android's offline position names the generation it was read in (I9)."""

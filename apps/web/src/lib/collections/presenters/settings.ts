@@ -33,7 +33,6 @@ export function presentSettingsRow(item: SettingsPresenterItem): CollectionRowVi
         : absent(),
     activity: absent(),
     exceptionalStatus: absent(),
-    localAvailability: absent(),
     // Settings rows are not resources: they carry an explicit, non-resource flat
     // menu (no snapshot, no canonical resource dropdown).
     actionSubject: null,
