@@ -314,8 +314,12 @@ pass **No additional libraries**; Podcast Subscribe, episode Add, and OPML pass
 
 ## Frontend entry-view lifecycle
 
-The pane URL owns the requested `LibraryEntryView` (order + projection + entry
-type); the Library controller owns one committed exact collection
+the pane URL owns the requested `LibraryEntryView` (order + projection + entry
+type). `lib/libraries/useLibraryEntries.ts` owns one committed library and entry
+snapshot, bootstrap/restoration, replacement, continuation, reorder and refresh
+settlement. the pane retains presentation, focus, local filtering, member
+governance, inspector and chrome; commands expose operations rather than
+snapshot setters. the committed collection is
 `{view, entries, collectionRevision, nextCursor}`. the installed tail cursor is
 the snapshot's completion fact: `Absent` means no continuation remains. no
 loaded snapshot means loading, never completion. reorder and Slate also require
@@ -331,15 +335,14 @@ types plus Web articles, EPUBs, PDFs, Videos, Podcast episodes, and Podcast
 shows. Omitted `entry_type` means All types; Podcast shows compose only with All
 items / show finished.
 
-- A keyed `useResource` request is latest-wins; only a result associated with
-  the current requested view commits.
-- Every first-page and continuation request captures the current placement and
-  consumption revisions (`lib/libraries/placementRevision.ts`,
-  `lib/consumption/projectionRevision.ts`); a result whose requested view or
-  captured revision is stale never commits — the pane instead requests the
-  current requested view, coalescing repeated advances. Every definitive
-  same-process placement/consumption writer publishes its seam exactly once
-  after each acknowledged write.
+- one replacement path admits only the current library and requested view.
+  new-view replacement rejects stale captured placement, consumption and
+  metadata facts. same-view reconciliation installs its captured baseline and
+  coalesces relevant advances into a follow-up. continuation uses the committed
+  view and collection revision; replacement invalidates its chain.
+- definitive placement/consumption writers publish their existing process seams.
+  confirmed reorder publishes the captured library before its local ui generation
+  fence, including late success; local installation and rollback remain fenced.
 - A mounted All pane reacts to every placement revision; a named/system pane
   reacts when its id is affected or the scope is `Unknown`. the existing
   consumption store also owns `rowRevision`, advanced by accepted commands,
@@ -357,14 +360,24 @@ items / show finished.
   exhaustion offers **Retry**; an invalid cursor or changed revision offers
   **Refresh list**, which requests the first page of the same view without
   clearing committed rows.
-- Pane return captures only a ready snapshot whose committed view equals the
-  URL view, and restores Library plus page as one coherent value.
+- pane return captures only a ready snapshot whose committed view equals the
+  URL view, and restores library plus page as one coherent value. refresh
+  completion follows layout publication of that committed return snapshot;
+  obsolete, aborted and unmounted requests cannot claim completion.
 - A matching commit atomically swaps view, rows, and cursor, resets the
   collection region, and lets `CollectionView` own the single row transition;
   reduced motion performs the same commit without animation.
-- The route bootstrap seeds only `Canonical + All items (all)` at revision
-  zero; the client claims that seed only while both process revisions remain
-  zero.
+- the route bootstrap seeds only `Canonical + All items (all)` at zero process
+  placement, consumption and metadata revisions.
+- the existing podcast settings publisher retains a private per-viewer confirmed
+  library-entry revision before notifying listeners. native external-store
+  subscription observes that floor; bootstrap, restored and page admission cannot
+  overwrite it. a delayed acknowledgement below the current snapshot or floor
+  cannot regress newer settings. matching present subscriptions install nested
+  settings and derived sync status; absent subscriptions remain absent.
+- modeled recovery notices remain; unexpected request rejection reaches the
+  existing defect boundary. rejected reorder transport retains ordering
+  uncertainty: a failed acknowledgement does not prove server rollback.
 
 pane-local text filtering is a visit-local view over the committed rows. it matches
 presented entry title and contributor display/credited names after the
