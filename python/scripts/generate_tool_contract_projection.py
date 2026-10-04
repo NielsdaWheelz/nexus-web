@@ -8,6 +8,7 @@ in ``nexus.services.tool_runtime.declarations``. Run from ``python/`` with:
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 from llm_tools import canonical_json_bytes
@@ -46,8 +47,21 @@ export type ToolRecordKind =
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--check", action="store_true", help="check committed bytes without writing"
+    )
+    args = parser.parse_args()
     content = render_projection()
     path = Path(__file__).resolve().parents[2] / PROJECTION_RELATIVE_PATH
+    if args.check:
+        if path.read_bytes() != content.encode("utf-8"):
+            raise SystemExit(
+                f"error: {PROJECTION_RELATIVE_PATH} is stale; run: "
+                "cd python && uv run python scripts/generate_tool_contract_projection.py"
+            )
+        print(f"{PROJECTION_RELATIVE_PATH} is current")
+        return
     path.write_text(content, encoding="utf-8")
     print(f"wrote {PROJECTION_RELATIVE_PATH} ({len(content)} chars)")
 

@@ -1,7 +1,7 @@
 """Conversation, message, chat-run and trust-trail wire contracts.
 
-Every model here is decoded key-exactly by ``apps/web/src/lib/conversations``
-and ``apps/web/src/lib/api/sse``; fields and closed literal sets are frozen.
+Stored models validate durable events; generated public shapes own the SSE
+wire. Replay keeps raw optional keys and private audit facts separate.
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import RetrievalContextRef, RetrievalLocator, RetrievalResultRef
 from nexus.schemas.search_types import SEARCH_RESULT_TYPES
 from nexus.services.generation_spec import GenerationSelectionSpec
+from nexus.services.tool_runtime.declarations import BROWSER_TOOL_PROJECTION_CONTRACT
 
 MESSAGE_TOOL_STATUSES = Literal["pending", "running", "complete", "error", "cancelled"]
 # ``historical_execution`` has no writer; the value stays because the database
@@ -268,7 +269,11 @@ class ToolProjectionOut(BaseModel):
     effect: ToolEffect | None
     result_kind: TOOL_RESULT_KINDS
     activity_label: str = Field(min_length=1, max_length=150)
-    error_type: str | None = Field(min_length=1, max_length=64)
+    error_type: str | None = Field(
+        min_length=1,
+        max_length=64,
+        json_schema_extra={"enum": [*BROWSER_TOOL_PROJECTION_CONTRACT["error_types"], None]},
+    )
 
     model_config = ConfigDict(extra="forbid")
 
@@ -286,6 +291,17 @@ class ToolProjectionOut(BaseModel):
                 raise ValueError("tool projection populated a forbidden tagged field")
         elif self.canonical_tool_id is None or self.effect is None:
             raise ValueError("tool projection is missing a required tagged field")
+        elif self.record_kind == "historical_execution" and (
+            self.provider_wire_name is not None or self.error_type is not None
+        ):
+            raise ValueError("tool projection populated a forbidden tagged field")
+        if (self.record_kind == "attached_context") != (self.result_kind == "attached_context"):
+            raise ValueError("tool projection result kind disagrees with record kind")
+        if (
+            self.error_type is not None
+            and self.error_type not in BROWSER_TOOL_PROJECTION_CONTRACT["error_types"]
+        ):
+            raise ValueError("unknown tool projection error type")
         return self
 
 
@@ -327,7 +343,7 @@ def tool_projection_from_persisted_record(record: Any) -> ToolProjectionOut:
     )
 
 
-class ChatRunToolCallStartEventPayload(StoredToolProjection):
+class _ToolCallStartFields(BaseModel):
     tool_call_id: UUID | None = None
     assistant_message_id: UUID
     tool_call_index: int = Field(ge=0)
@@ -335,22 +351,28 @@ class ChatRunToolCallStartEventPayload(StoredToolProjection):
     provider_event_seq_start: int = Field(ge=0)
     provider_event_seq_end: int = Field(ge=0)
 
-    model_config = ConfigDict(extra="forbid")
+
+class ChatRunToolCallStartEventOut(_ToolCallStartFields, ToolProjectionOut):
+    pass
 
 
-class ChatRunToolCallDoneEventPayload(StoredToolProjection):
-    tool_call_id: UUID | None = None
-    assistant_message_id: UUID
-    tool_call_index: int = Field(ge=0)
-    provider_tool_call_id: str | None = Field(default=None, min_length=1)
+class ChatRunToolCallStartEventPayload(_ToolCallStartFields, StoredToolProjection):
+    pass
+
+
+class _ToolCallDoneFields(_ToolCallStartFields):
     input: dict[str, Any]
-    provider_event_seq_start: int = Field(ge=0)
-    provider_event_seq_end: int = Field(ge=0)
-
-    model_config = ConfigDict(extra="forbid")
 
 
-class ChatRunToolResultEventPayload(StoredToolProjection):
+class ChatRunToolCallDoneEventOut(_ToolCallDoneFields, ToolProjectionOut):
+    pass
+
+
+class ChatRunToolCallDoneEventPayload(_ToolCallDoneFields, StoredToolProjection):
+    pass
+
+
+class _ToolResultFields(BaseModel):
     tool_call_id: UUID | None = None
     assistant_message_id: UUID
     tool_call_index: int = Field(ge=0)
@@ -358,14 +380,20 @@ class ChatRunToolResultEventPayload(StoredToolProjection):
     scope: str = Field(min_length=1)
     types: list[str]
     filters: dict[str, Any]
-    error_code: str | None = None
     result_count: int | None = Field(default=None, ge=0)
     selected_count: int | None = Field(default=None, ge=0)
     latency_ms: int | None = Field(default=None, ge=0)
     provider_request_ids: list[str] = Field(default_factory=list)
-    results: list[RetrievalResultRef] = Field(default_factory=list)
+    results: list[RetrievalResultRef]
 
-    model_config = ConfigDict(extra="forbid")
+
+class ChatRunToolResultEventOut(_ToolResultFields, ToolProjectionOut):
+    pass
+
+
+class ChatRunToolResultEventPayload(_ToolResultFields, StoredToolProjection):
+    error_code: str | None = None
+    results: list[RetrievalResultRef] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_terminal_audit_identity(self) -> ChatRunToolResultEventPayload:
@@ -452,16 +480,11 @@ _EVENT_PAYLOAD_MODELS: dict[str, type[BaseModel]] = {
     "done": ChatRunDoneEventPayload,
 }
 
-# Replay/audit identity persisted on tool events; never crosses the SSE wire.
-_PRIVATE_EVENT_FIELDS = frozenset(
-    {
-        "binding_policy_revision",
-        "canonical_input_sha256",
-        "error_code",
-        "tool_contract_revision",
-    }
-)
-_TOOL_EVENT_TYPES = frozenset({"tool_call_start", "tool_call_done", "tool_result"})
+_PUBLIC_TOOL_EVENT_MODELS: dict[str, type[BaseModel]] = {
+    "tool_call_start": ChatRunToolCallStartEventOut,
+    "tool_call_done": ChatRunToolCallDoneEventOut,
+    "tool_result": ChatRunToolResultEventOut,
+}
 
 
 def chat_run_event_payload_json(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -474,11 +497,15 @@ def chat_run_event_payload_json(event_type: str, payload: dict[str, Any]) -> dic
 
 
 def chat_run_public_event_payload(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """Strip the replay/audit facts from one stored payload on the read path."""
+    """Publish declared tool fields without changing raw replay values or key order."""
 
-    if event_type not in _TOOL_EVENT_TYPES:
+    model = _PUBLIC_TOOL_EVENT_MODELS.get(event_type)
+    if model is None:
         return payload
-    return {key: value for key, value in payload.items() if key not in _PRIVATE_EVENT_FIELDS}
+    ToolProjectionOut.model_validate(
+        {key: value for key, value in payload.items() if key in ToolProjectionOut.model_fields}
+    )
+    return {key: value for key, value in payload.items() if key in model.model_fields}
 
 
 # =============================================================================

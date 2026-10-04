@@ -35,3 +35,10 @@ decision first.
 
 The value is absent from the server vocabulary, the CHECK, and the browser
 decoder, and replaying an old chat run still renders.
+
+2026-10-04 source recheck (`bbfd1df4`): current Python event vocabulary and payload
+registry already omit this name (`schemas/conversation.py:59–69,443–452`). the
+browser path and baseline-schema CHECK remain. no production row count was run;
+this does not establish historical absence; removal and saved-run verification
+still need the stated preflight. retain
+the existing path and this open item until the stated data-owner preflight.
