@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
@@ -228,9 +228,9 @@ class OracleReadingImageOut(BaseModel):
     """Plate displayed atop a reading."""
 
     url: str
-    attribution_text: str
-    artist: str
-    work_title: str
+    attribution_text: str = Field(min_length=1)
+    artist: str = Field(min_length=1)
+    work_title: str = Field(min_length=1)
     year: str | None
     width: int = Field(gt=0)
     height: int = Field(gt=0)
@@ -259,8 +259,11 @@ class OracleTextEventPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+_OracleOmenLine = Annotated[str, Field(min_length=1)]
+
+
 class OracleOmensEventPayload(BaseModel):
-    lines: tuple[str, str, str]
+    lines: tuple[_OracleOmenLine, _OracleOmenLine, _OracleOmenLine]
 
     model_config = ConfigDict(extra="forbid")
 

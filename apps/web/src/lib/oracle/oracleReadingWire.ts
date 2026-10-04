@@ -2,9 +2,9 @@
  * The sole browser ingress for Oracle reading REST and SSE data.
  *
  * Oracle events are persisted and replayed, so accepting an unknown type or a
- * malformed payload would permanently advance the client cursor past data it
- * did not understand. This decoder therefore accepts exactly the backend-owned
- * grammar and returns a closed discriminated union.
+ * malformed event control would permanently advance the client cursor past data
+ * it did not understand. public payload models own wire shapes; this ingress
+ * retains event control and image/citation domain conversions.
  */
 
 import type { Schema } from "@/lib/api/wire";
@@ -19,7 +19,6 @@ import {
   expectExactRecord,
   expectInteger,
   expectIsoInstant,
-  expectNonemptyString,
   expectNullableString,
   expectOneOf,
   expectString,
@@ -102,7 +101,7 @@ export type OraclePassagePayload = Schema<"OracleReadingPassageOut">;
 interface OracleMetaEvent {
   seq: number;
   event_type: "meta";
-  payload: { question: string; folio_number: number };
+  payload: Schema<"OracleMetaEventPayload">;
 }
 
 interface OracleBindEvent {
@@ -114,7 +113,7 @@ interface OracleBindEvent {
 interface OracleArgumentEvent {
   seq: number;
   event_type: "argument";
-  payload: { text: string };
+  payload: Schema<"OracleTextEventPayload">;
 }
 
 interface OraclePlateEvent {
@@ -132,21 +131,21 @@ interface OraclePassageEvent {
 interface OracleDeltaEvent {
   seq: number;
   event_type: "delta";
-  payload: { text: string };
+  payload: Schema<"OracleTextEventPayload">;
 }
 
 interface OracleOmensEvent {
   seq: number;
   event_type: "omens";
-  payload: { lines: readonly [string, string, string] };
+  payload: Schema<"OracleOmensEventPayload">;
 }
 
 interface OracleDoneEvent {
   seq: number;
   event_type: "done";
   payload:
-    | { status: "complete"; error_code: null }
-    | { status: "failed"; error_code: OracleReadingFailureCode };
+    | Schema<"OracleCompleteDoneEventPayload">
+    | Schema<"OracleFailedDoneEventPayload">;
 }
 
 export type OracleReadingEvent =
@@ -233,82 +232,20 @@ export function decodeOracleReadingFailureCode(
   );
 }
 
-function decodeImage(value: unknown, name: string): OracleImagePayload {
-  const image = expectExactRecord(
-    value,
-    [
-      "url",
-      "attribution_text",
-      "artist",
-      "work_title",
-      "year",
-      "width",
-      "height",
-    ],
-    name,
-  );
-  return {
-    url: requireOraclePlateImageSrc(
-      expectNonemptyString(image.url, `${name}.url`),
-    ),
-    attribution_text: expectNonemptyString(
-      image.attribution_text,
-      `${name}.attribution_text`,
-    ),
-    artist: expectNonemptyString(image.artist, `${name}.artist`),
-    work_title: expectNonemptyString(image.work_title, `${name}.work_title`),
-    year: expectNullableString(image.year, `${name}.year`),
-    width: positiveInteger(image.width, `${name}.width`),
-    height: positiveInteger(image.height, `${name}.height`),
-  };
+function decodeImage(image: Schema<"OracleReadingImageOut">): OracleImagePayload {
+  return { ...image, url: requireOraclePlateImageSrc(image.url) };
 }
 
-function decodePassage(value: unknown, name: string): OraclePassagePayload {
-  const passage = expectExactRecord(
-    value,
-    [
-      "phase",
-      "source_kind",
-      "exact_snippet",
-      "locator_label",
-      "attribution_text",
-      "marginalia_text",
-      "deep_link",
-      "citation",
-    ],
-    name,
-  );
+function decodePassage(
+  passage: Schema<"OracleReadingPassageOut">,
+  name: string,
+): OraclePassagePayload {
   let citation: CitationOut | null = null;
   if (passage.citation !== null) {
     citation = decodeCitationOut(passage.citation);
     if (citation === null) fail(`${name}.citation is invalid`);
   }
-  return {
-    phase: expectOneOf(passage.phase, ORACLE_PHASES, `${name}.phase`),
-    source_kind: expectOneOf(
-      passage.source_kind,
-      ["user_media", "public_domain"] as const,
-      `${name}.source_kind`,
-    ),
-    exact_snippet: expectNonemptyString(
-      passage.exact_snippet,
-      `${name}.exact_snippet`,
-    ),
-    locator_label: expectNonemptyString(
-      passage.locator_label,
-      `${name}.locator_label`,
-    ),
-    attribution_text: expectNonemptyString(
-      passage.attribution_text,
-      `${name}.attribution_text`,
-    ),
-    marginalia_text: expectNonemptyString(
-      passage.marginalia_text,
-      `${name}.marginalia_text`,
-    ),
-    deep_link: expectNullableString(passage.deep_link, `${name}.deep_link`),
-    citation,
-  };
+  return { ...passage, citation };
 }
 
 function decodeEventPayload(
@@ -317,115 +254,61 @@ function decodeEventPayload(
   seq: number,
 ): OracleReadingEvent {
   switch (eventType) {
-    case "meta": {
-      const payload = expectExactRecord(
-        raw,
-        ["question", "folio_number"],
-        "Oracle meta event",
-      );
+    case "meta":
       return {
         seq,
         event_type: eventType,
-        payload: {
-          question: boundedString(payload.question, "Oracle question", 1, 280),
-          folio_number: positiveInteger(
-            payload.folio_number,
-            "Oracle folio number",
-          ),
-        },
+        // justify-type-assertion: untyped transport; OracleReadingEventOut validates this named payload before delivery.
+        payload: raw as Schema<"OracleMetaEventPayload">,
       };
-    }
-    case "bind": {
-      const payload = expectExactRecord(
-        raw,
-        ["folio_motto", "folio_motto_gloss", "folio_theme"],
-        "Oracle bind event",
-      );
+    case "bind":
       return {
         seq,
         event_type: eventType,
-        payload: {
-          folio_motto: boundedString(
-            payload.folio_motto,
-            "Oracle folio motto",
-            1,
-            80,
-          ),
-          folio_motto_gloss: nullableBoundedString(
-            payload.folio_motto_gloss,
-            "Oracle folio motto gloss",
-            1,
-            120,
-          ),
-          folio_theme: expectOneOf(
-            payload.folio_theme,
-            ORACLE_FOLIO_THEMES,
-            "Oracle folio theme",
-          ),
-        },
+        // justify-type-assertion: untyped transport; OracleReadingEventOut validates this named payload before delivery.
+        payload: raw as Schema<"OracleBindEventPayload">,
       };
-    }
     case "argument":
-    case "delta": {
-      const payload = expectExactRecord(raw, ["text"], `Oracle ${eventType} event`);
+    case "delta":
       return {
         seq,
         event_type: eventType,
-        payload: { text: expectNonemptyString(payload.text, `Oracle ${eventType} text`) },
+        // justify-type-assertion: untyped transport; OracleReadingEventOut validates this named payload before delivery.
+        payload: raw as Schema<"OracleTextEventPayload">,
       };
-    }
     case "plate":
       return {
         seq,
         event_type: eventType,
-        payload: decodeImage(raw, "Oracle plate event"),
+        // justify-type-assertion: untyped transport; OracleReadingEventOut validates this named payload before delivery.
+        payload: decodeImage(raw as Schema<"OracleReadingImageOut">),
       };
     case "passage":
       return {
         seq,
         event_type: eventType,
-        payload: decodePassage(raw, "Oracle passage event"),
+        payload: decodePassage(
+          // justify-type-assertion: untyped transport; OracleReadingEventOut validates this named payload before delivery.
+          raw as Schema<"OracleReadingPassageOut">,
+          "Oracle passage event",
+        ),
       };
-    case "omens": {
-      const payload = expectExactRecord(raw, ["lines"], "Oracle omens event");
-      const lines = expectArray(
-        payload.lines,
-        (line, index) => expectNonemptyString(line, `Oracle omen ${index}`),
-        "Oracle omens",
-      );
-      if (lines.length !== 3) fail("Oracle omens must contain exactly three lines");
+    case "omens":
       return {
         seq,
         event_type: eventType,
-        payload: { lines: [lines[0]!, lines[1]!, lines[2]!] },
+        // justify-type-assertion: untyped transport; OracleReadingEventOut validates this named payload before delivery.
+        payload: raw as Schema<"OracleOmensEventPayload">,
       };
-    }
-    case "done": {
-      const payload = expectExactRecord(
-        raw,
-        ["status", "error_code"],
-        "Oracle done event",
-      );
-      if (payload.status === "complete") {
-        if (payload.error_code !== null) {
-          fail("complete Oracle done event carries an error code");
-        }
-        return {
-          seq,
-          event_type: eventType,
-          payload: { status: "complete", error_code: null },
-        };
-      }
-      if (payload.status !== "failed") fail("Oracle done status is unknown");
+    case "done":
       return {
         seq,
         event_type: eventType,
-        payload: {
-          status: "failed",
-          error_code: decodeOracleReadingFailureCode(payload.error_code),
-        },
+        // justify-type-assertion: untyped transport; OracleReadingEventOut validates this named payload before delivery.
+        payload: raw as
+          | Schema<"OracleCompleteDoneEventPayload">
+          | Schema<"OracleFailedDoneEventPayload">,
       };
-    }
   }
 }
 
@@ -509,7 +392,12 @@ export function decodeOracleReadingDetail(value: unknown): OracleReadingDetail {
   const failedAt = nullableInstant(detail.failed_at, "Oracle reading failed_at");
   const passages = expectArray(
     detail.passages,
-    (passage, index) => decodePassage(passage, `Oracle passage ${index}`),
+    (passage, index) =>
+      decodePassage(
+        // justify-type-assertion: untyped REST parent; OracleReadingDetailOut validates each passage before delivery.
+        passage as Schema<"OracleReadingPassageOut">,
+        `Oracle passage ${index}`,
+      ),
     "Oracle reading passages",
   );
   const phases = passages.map((passage) => passage.phase);
@@ -554,10 +442,11 @@ export function decodeOracleReadingDetail(value: unknown): OracleReadingDetail {
       280,
     ),
     status,
+    // justify-type-assertion: untyped REST parent; OracleReadingDetailOut validates its image before delivery.
     image:
       detail.image === null
         ? null
-        : decodeImage(detail.image, "Oracle reading image"),
+        : decodeImage(detail.image as Schema<"OracleReadingImageOut">),
     passages,
     events,
     created_at: expectIsoInstant(detail.created_at, "Oracle reading created_at"),
