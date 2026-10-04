@@ -59,6 +59,15 @@ render resolved inputs and do not fetch media, signed URLs, highlights, or
 progress. Hosted decorations remain a layer over canonical content; offline
 packages contain undecorated canonical inputs.
 
+`MediaPaneBody` remains the cohesive hosted composition owner. one
+publication-bound evidence index serves lookup, marker and stance projections
+without merging target, occurrence or source-reference identities. text geometry
+reuses admitted navigation structure while transcript and retained rendered
+bytes keep their own authority. shared text-point, source-anchor and canonical
+restore operations lower movement through the existing format/navigation
+primitives; pdf patches and hosted mutation leases retain distinct completion
+rules. partial pdf page highlights are not an authoritative document map.
+
 The parameterized Chromium component proof covers hosted PDF, EPUB, and article
 load/restore/save through this session. It is format-coordinator evidence, not
 evidence for native persistence, package integrity, or signed APK wiring.
@@ -165,11 +174,13 @@ Custom Highlight aggregate (`nexus-find-all`/`nexus-find-active`) with explicit
 active-over-passive priority and owner-scoped clearing. Conversation Find
 consumes that lower-level registry directly.
 
-The Web and EPUB adapters expose `rebuildPresentation()`. `MediaPaneBody` owns
-one ordered post-commit `useLayoutEffect`: after each committed
-`renderedHtml`/fragment change it rebuilds the cursor, republishes the active
-format's rendered-state ref from one local validity read, and invokes the
-selected canonical (Web or EPUB) rebind before paint. Exact marks therefore
+the web and epub adapters expose `rebuildPresentation()`. `MediaPaneBody`
+retains ordered post-commit layout phases: source cancellation, canonical dom
+binding/publication, source-note binding, transcript references, find repaint
+and epub membership invalidation. each keeps its own dependencies and cleanup.
+changed decorated markup rebuilds the cursor even within the same fragment;
+find query changes repaint without rebuilding it. the selected canonical
+adapter rebinds after the cursor is published and before paint. exact marks therefore
 survive same-fragment HTML replacement (delayed persisted-highlight load),
 cross-fragment/section preview, and reflow; stale ranges are never retained, and
 Find never converts into a persisted Highlight. `page.module.css` styles the
