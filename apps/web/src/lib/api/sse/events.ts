@@ -141,6 +141,7 @@ function parseToolCallStartData(data: unknown): LegacyToolCallData {
   ) {
     throw new Error("Invalid SSE payload for tool_call_start");
   }
+  // justify-type-assertion: the guards validate this legacy shape; a record spread cannot retain its type.
   return { ...data, ...projection } as LegacyToolCallData;
 }
 
@@ -167,7 +168,7 @@ function parseToolCallDeltaData(data: unknown): SSEToolCallDeltaEvent["data"] {
   const { input_delta, input_preview, ...base } = data;
   return {
     ...parseToolCallStartData(base),
-    input_delta: input_delta as string,
+    input_delta: input_delta,
     input_preview,
   };
 }
@@ -190,22 +191,27 @@ export function toChatSSEEvent(
   }
   switch (eventType) {
     case "meta":
+      // justify-type-assertion: chat_run_event_payload_json validates this shape; generic sse json remains unknown.
       return { seq, type: "meta", data: data as SSEMetaEvent["data"] };
     case "assistant_activity":
+      // justify-type-assertion: chat_run_event_payload_json validates this shape; generic sse json remains unknown.
       return {
         seq,
         type: "assistant_activity",
         data: data as SSEAssistantActivityEvent["data"],
       };
     case "assistant_text_delta":
+      // justify-type-assertion: chat_run_event_payload_json validates this shape; generic sse json remains unknown.
       return {
         seq,
         type: "assistant_text_delta",
         data: data as SSEAssistantTextDeltaEvent["data"],
       };
     case "done":
+      // justify-type-assertion: chat_run_event_payload_json validates this shape; generic sse json remains unknown.
       return { seq, type: "done", data: data as SSEDoneEvent["data"] };
     case "tool_call_start":
+      // justify-type-assertion: validated storage and public tool projection own this shape; generic sse json remains unknown.
       return {
         seq,
         type: "tool_call_start",
@@ -218,16 +224,20 @@ export function toChatSSEEvent(
         data: parseToolCallDeltaData(data),
       };
     case "tool_call_done":
+      // justify-type-assertion: validated storage and public tool projection own this shape; generic sse json remains unknown.
       return { seq, type: "tool_call_done", data: data as SSEToolCallDoneEvent["data"] };
     case "tool_result":
+      // justify-type-assertion: validated storage and public tool projection own this shape; generic sse json remains unknown.
       return { seq, type: "tool_result", data: data as SSEToolResultEvent["data"] };
     case "citation_index":
+      // justify-type-assertion: chat_run_event_payload_json validates this shape; generic sse json remains unknown.
       return {
         seq,
         type: "citation_index",
         data: data as SSECitationIndexEvent["data"],
       };
     case "context_ref_added": {
+      // justify-type-assertion: validated storage owns this shape; generic sse json remains unknown; ref correlation is checked below.
       const contextRef = data as Schema<"ChatRunContextRefAddedEventPayload">;
       const actionSubject = {
         ref: assumeCanonicalResourceRef(contextRef.resource_ref),
