@@ -43,10 +43,12 @@ export type ImportsLoadState =
  * a reader can see may have changed, so pages and detail re-key then and never
  * on an unchanged poll; `observedAt` moves on every successful read, so the
  * query hooks ride this one schedule instead of installing a second poller.
+ * `reread` says whether that observation needs a live read beside keyed reads.
  */
 export interface ImportsObservationState {
   readonly revision: number;
   readonly observedAt: string | null;
+  readonly reread: boolean;
 }
 
 export type ImportsUploadCommand =
@@ -88,6 +90,7 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
   const [observation, setObservation] = useState<ImportsObservationState>({
     revision: 0,
     observedAt: null,
+    reread: false,
   });
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
   // A second click in the same tick must see the first one's key, which React
@@ -102,7 +105,8 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
   const mountedRef = useRef(true);
   const inFlightRef = useRef<Promise<void> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const dirtyReadRef = useRef(false);
+  // null: no trailing read; false: ordinary wake; true: re-keyed wake.
+  const dirtyReadRef = useRef<boolean | null>(null);
   const wakeRequestedRef = useRef(false);
   const wakeGenerationRef = useRef(0);
   const summaryRef = useRef<ImportSummary | null>(null);
@@ -110,9 +114,11 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
   const windowFocusedRef = useRef(true);
 
   const read = useCallback(
-    (automatic: boolean): Promise<void> => {
+    ({ automatic, rekey }: { automatic: boolean; rekey: boolean }): Promise<void> => {
       if (inFlightRef.current !== null) {
-        if (!automatic) dirtyReadRef.current = true;
+        if (!automatic) {
+          dirtyReadRef.current = rekey || dirtyReadRef.current === true;
+        }
         return inFlightRef.current;
       }
       // The observation window belongs to the wake that opened it, not to a
@@ -123,26 +129,32 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
       // that trailing read may close what the reader just opened.
       const askedInWakeGeneration = wakeGenerationRef.current;
       const request = (async () => {
-        let again = true;
-        while (again && mountedRef.current) {
-          dirtyReadRef.current = false;
+        let nextRekey: boolean | null = rekey;
+        while (nextRekey !== null && mountedRef.current) {
+          const attemptRekey = nextRekey;
+          const attemptWakeGeneration = wakeGenerationRef.current;
+          dirtyReadRef.current = null;
           const controller = new AbortController();
           abortRef.current = controller;
           try {
             const next = await fetchImportSummary(controller.signal);
             if (!mountedRef.current || controller.signal.aborted) break;
             const previous = summaryRef.current;
+            const countsChanged =
+              previous !== null &&
+              (previous.needs_attention_count !== next.needs_attention_count ||
+                previous.active_count !== next.active_count);
+            const reread =
+              !countsChanged &&
+              !attemptRekey &&
+              wakeGenerationRef.current === attemptWakeGeneration;
             summaryRef.current = next;
             setSummary(next);
             setLoadState({ kind: "Ready" });
             setObservation((current) => ({
-              revision:
-                previous !== null &&
-                (previous.needs_attention_count !== next.needs_attention_count ||
-                  previous.active_count !== next.active_count)
-                  ? current.revision + 1
-                  : current.revision,
+              revision: countsChanged ? current.revision + 1 : current.revision,
               observedAt: next.observed_at,
+              reread,
             }));
           } catch (error: unknown) {
             if (controller.signal.aborted || isAbortError(error)) break;
@@ -163,7 +175,7 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
           } finally {
             if (abortRef.current === controller) abortRef.current = null;
           }
-          again = dirtyReadRef.current;
+          nextRekey = dirtyReadRef.current;
         }
       })().finally(() => {
         if (inFlightRef.current === request) inFlightRef.current = null;
@@ -192,7 +204,7 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
           revision: current.revision + 1,
         }));
       }
-      return read(false);
+      return read({ automatic: false, rekey });
     },
     [read],
   );
@@ -257,7 +269,7 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
       mountedRef.current = false;
-      dirtyReadRef.current = false;
+      dirtyReadRef.current = null;
       wakeRequestedRef.current = false;
       abortRef.current?.abort();
     };
@@ -340,7 +352,7 @@ export function ImportsProvider({ children }: { children: ReactNode }) {
   useIntervalPoll({
     enabled: pollIntervalMs > 0 && !automaticReadsEnded,
     pollIntervalMs,
-    onPoll: () => read(true),
+    onPoll: () => read({ automatic: true, rekey: false }),
   });
 
   if (defect !== null) throw defect.error;
