@@ -30,16 +30,14 @@ from nexus.jobs.process_executor import (
     ChildDefect,
     ChildInterrupted,
     ChildModeledFailure,
-    ChildReschedule,
     ChildResourceFailure,
     ChildShutdownInterrupted,
-    ChildSucceeded,
-    ChildTerminalFailure,
 )
 from nexus.jobs.queue import (
     HEAVY_CAPACITY_OCCUPIED_SQL,
     ClaimedJob,
     JobExecutionContext,
+    JobResult,
     JobRow,
     RescheduleRequested,
     RescheduleSchedule,
@@ -218,7 +216,7 @@ class JobWorker:
             heartbeat.join(timeout=_HEARTBEAT_DRAIN_TIMEOUT_SECONDS)
 
         try:
-            handler_result: Mapping[str, Any] | RescheduleRequested | TerminalJobFailure | None
+            handler_result: JobResult
             if self.process_executor is None:
                 # Interactive and maintenance lanes keep their in-process boundary.
                 handler = resolve_job_handler(definition.handler_path)
@@ -234,16 +232,8 @@ class JobWorker:
                     claim_lost=claim_lost,
                 )
                 match child:
-                    case ChildSucceeded(payload=payload):
-                        handler_result = payload
-                    case ChildReschedule(schedule=schedule, payload=payload):
-                        handler_result = RescheduleRequested(schedule=schedule, payload=payload)
-                    case ChildTerminalFailure(
-                        result_payload=payload, error_code=code, error_message=message
-                    ):
-                        handler_result = TerminalJobFailure(
-                            result_payload=payload, error_code=code, error_message=message
-                        )
+                    case Mapping() | RescheduleRequested() | TerminalJobFailure() | None:
+                        handler_result = child
                     case ChildClaimLost():
                         # The claim is already someone else's; settling it here
                         # would overwrite the current owner's attempt.

@@ -29,8 +29,8 @@ from uuid import UUID
 from nexus.errors import ApiError, ApiErrorCode, ResourceFailureDimension, ResourceLimitError
 from nexus.jobs.queue import (
     JobExecutionContext,
+    JobResult,
     RescheduleRequested,
-    RescheduleSchedule,
     ScheduleAfter,
     ScheduleAt,
     TerminalJobFailure,
@@ -116,24 +116,6 @@ class ValidatedCgroup:
 
 
 @dataclass(frozen=True, slots=True)
-class ChildSucceeded:
-    payload: dict[str, Any]
-
-
-@dataclass(frozen=True, slots=True)
-class ChildReschedule:
-    schedule: RescheduleSchedule
-    payload: Mapping[str, Any] | None
-
-
-@dataclass(frozen=True, slots=True)
-class ChildTerminalFailure:
-    result_payload: dict[str, Any]
-    error_code: str
-    error_message: str
-
-
-@dataclass(frozen=True, slots=True)
 class ChildModeledFailure:
     error_code: str
     message: str
@@ -174,9 +156,7 @@ class ChildClaimLost:
 
 
 type ChildExecutionResult = (
-    ChildSucceeded
-    | ChildReschedule
-    | ChildTerminalFailure
+    JobResult
     | ChildModeledFailure
     | ChildDefect
     | ChildResourceFailure
@@ -338,7 +318,7 @@ class BackgroundProcessExecutor:
             shutdown=shutdown,
             claim_lost=threading.Event(),
         )
-        if not isinstance(result, ChildSucceeded):
+        if not isinstance(result, Mapping):
             logger.warning(
                 "parser_temp_startup_prune_incomplete",
                 worker_id=worker_id,
@@ -382,26 +362,25 @@ def _await_child_exit(
 
 
 def _decode_result(encoded: bytes) -> ChildExecutionResult:
-    """Decode the child's tagged result; unreadable bytes are a child defect."""
+    """Decode canonical handler outcomes or genuine child-only failures."""
     try:
         value = json.loads(encoded.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        # justify-defect: unreadable bytes violate the owned child result channel.
         raise BackgroundProcessProtocolDefect("background child result is malformed JSON") from exc
+
     match value.get("kind"):
         case "Succeeded":
-            return ChildSucceeded(payload=dict(value["payload"]))
+            return dict(value["payload"])
         case "Reschedule":
             schedule = value["schedule"]
-            return ChildReschedule(
-                schedule=(
-                    ScheduleAt(datetime.fromisoformat(schedule["instant"]))
-                    if schedule["kind"] == "At"
-                    else ScheduleAfter(int(schedule["seconds"]))
-                ),
-                payload=value["payload"],
-            )
+            if schedule["kind"] == "At":
+                target = ScheduleAt(datetime.fromisoformat(schedule["instant"]))
+            else:
+                target = ScheduleAfter(int(schedule["seconds"]))
+            return RescheduleRequested(schedule=target, payload=value["payload"])
         case "TerminalFailure":
-            return ChildTerminalFailure(
+            return TerminalJobFailure(
                 result_payload=dict(value["result_payload"]),
                 error_code=str(value["error_code"]),
                 error_message=str(value["error_message"]),
@@ -414,12 +393,11 @@ def _decode_result(encoded: bytes) -> ChildExecutionResult:
             )
         case "Defect":
             return ChildDefect(error_type=str(value["error_type"]), message=str(value["message"]))
+    # justify-defect: the owned child must return one of the five encoded result kinds.
     raise BackgroundProcessProtocolDefect("background child returned an unknown result kind")
 
 
-def _encode_handler_result(
-    result: Mapping[str, Any] | RescheduleRequested | TerminalJobFailure | None,
-) -> dict[str, Any]:
+def _encode_handler_result(result: JobResult) -> dict[str, Any]:
     """Encode one handler return value for the result channel."""
     if isinstance(result, TerminalJobFailure):
         return {
