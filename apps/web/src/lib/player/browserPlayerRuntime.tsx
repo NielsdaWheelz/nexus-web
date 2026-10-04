@@ -964,7 +964,7 @@ export function BrowserPlayerRuntimeProvider({
         writeRevision: initial.writeRevision,
         resetEpoch: initial.resetEpoch,
       });
-      heartbeatRef.current = createListeningHeartbeat({
+      const engine: ListeningHeartbeat = createListeningHeartbeat({
         mediaId: descriptor.mediaId,
         initial: {
           writeRevision: initial.writeRevision,
@@ -1006,7 +1006,12 @@ export function BrowserPlayerRuntimeProvider({
             resetEpoch: entry.resetEpoch,
           };
         },
+        onDefect: (error) => {
+          if (heartbeatRef.current !== engine) return;
+          setAsyncDefect((current) => current ?? { error });
+        },
       });
+      heartbeatRef.current = engine;
       setPersistence({ kind: "Ready" });
     },
     [
