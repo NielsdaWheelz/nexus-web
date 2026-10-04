@@ -179,7 +179,8 @@ effort segments with one thinking select; no other picker redesign.
 quiesce admissions/clients/consumers; drain known work, disable old jobs and
 revoke old tool grants. stop and await every owned native process group;
 resolve in-flight domain effects through their existing owners. verify a final
-consistent backup/export, marking unresolved paid calls abandoned/uncertain:
+consistent backup/export and actual restored-copy proof; record explicit archival
+abandonment without changing original unresolved paid-call outcomes:
 remote computation may still bill. never invent cancellation/success or
 redispatch. align libraries, host, workers, api and browser in one release;
 retain exact prior artifacts for explicit rollback.
@@ -192,6 +193,11 @@ graph/search/provenance dependents; owned continuation files/private roots.
 inspect foreign keys first. preserve domain identities, contents, relationships,
 tool effects, idempotency and undo evidence; detach references where necessary.
 no blanket truncate/cascade. domain jobs follow their owner and updated policy.
+the reviewed input and finite drain/backup/restore/disposition/release sequence
+live in [deployment.md](../deployment.md#reviewed-model-history-reset). completed
+write receipts become independent of deleted ledger/chat history before reset;
+existing 0255 data uses the forward 0256 storage migration. preserve original
+unknowns, explicit orphan acknowledgement and the metadata uncertainty barrier.
 preflight persisted workspace sessions against the expected pane/history shape;
 the migration names any invalid session id and aborts transactionally for repair.
 

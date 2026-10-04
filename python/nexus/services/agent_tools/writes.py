@@ -22,20 +22,17 @@ There are no standalone model-write HTTP endpoints. Undo has one route
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid5
 
-from llm_tools import ToolEffect
-from sqlalchemy import select, text, update
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import AssistantWriteAuthorship, Conversation, MessageToolCall
+from nexus.db.models import Conversation, MessageToolCall
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.notes import DailyCaptureRequest
 from nexus.schemas.resource_items import AbsentExpectedBody
 from nexus.services import highlights, library_entries, note_bodies, notes, text_quote, users
-from nexus.services.chat_run_tools import decode_persisted_tool_record
 from nexus.services.consumption import _lectern_store
 from nexus.services.consumption import service as consumption_service
 from nexus.services.passage_anchors import normalize_quote_text
@@ -433,29 +430,18 @@ def undo_tool_call(
     )
     if row is None:
         raise ApiError(ApiErrorCode.E_NOT_FOUND, "Write tool call not found")
-    record = decode_persisted_tool_record(row)
-    from nexus.services.tool_runtime.declarations import CHAT_TOOL_DECLARATIONS_BY_ID
-
-    declaration = CHAT_TOOL_DECLARATIONS_BY_ID.get(record.canonical_tool_id or "")
-    if declaration is None or declaration.spec.effect is not ToolEffect.Write:
+    if row.tool_position_id is None:
         raise ApiError(ApiErrorCode.E_NOT_FOUND, "Write tool call not found")
-
     assistant_message_id = row.assistant_message_id
-    if row.reverted_at is not None:
-        return assistant_message_id
+    from nexus.services.generation_effects import GenerationEffectRefusal, undo_generation_position
 
-    revert_created_refs_in_current_transaction(db, viewer_id=viewer_id, refs=row.result_refs or [])
-
-    reverted_at = datetime.now(UTC)
-    row.reverted_at = reverted_at
-    row.updated_at = reverted_at
-    if row.tool_position_id is not None:
-        db.execute(
-            update(AssistantWriteAuthorship)
-            .where(AssistantWriteAuthorship.tool_position_id == row.tool_position_id)
-            .values(reverted_at=reverted_at)
-        )
-    db.commit()
+    try:
+        undo_generation_position(db, viewer_id=viewer_id, position_id=row.tool_position_id)
+    except GenerationEffectRefusal as error:
+        raise ApiError(
+            ApiErrorCode.E_NOT_FOUND if error.status == 404 else ApiErrorCode.E_RESOURCE_CONFLICT,
+            error.code.replace("_", " "),
+        ) from error
     return assistant_message_id
 
 

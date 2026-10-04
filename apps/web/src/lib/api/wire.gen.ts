@@ -772,8 +772,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Undo Background Generation Write */
-        post: operations["undo_background_generation_write_generation_effects__position_id__undo_post"];
+        /** Undo Assistant Write */
+        post: operations["undo_assistant_write_generation_effects__position_id__undo_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10952,7 +10952,7 @@ export interface operations {
             };
         };
     };
-    undo_background_generation_write_generation_effects__position_id__undo_post: {
+    undo_assistant_write_generation_effects__position_id__undo_post: {
         parameters: {
             query?: never;
             header?: never;

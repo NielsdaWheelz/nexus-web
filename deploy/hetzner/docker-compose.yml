@@ -252,7 +252,7 @@ services:
         ipv4_address: 172.30.0.3
     init: true
     # Covers native process-group TERM/KILL and an exit margin.
-    stop_grace_period: 15s
+    stop_grace_period: 45s
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=16m
     ulimits:

@@ -1,4 +1,4 @@
-"""Account-owned generation effect history and undo."""
+"""Account-owned completed assistant-write history and undo."""
 
 from typing import Annotated
 from uuid import UUID
@@ -27,7 +27,7 @@ def _user_error(error: GenerationEffectRefusal) -> JSONResponse:
 
 
 @router.post("/generation-effects/{position_id}/undo")
-def undo_background_generation_write(
+def undo_assistant_write(
     position_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],

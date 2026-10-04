@@ -53,10 +53,10 @@ interface GenerationEffect {
   position_id: string;
   generation_id: string;
   canonical_id: string;
-  replay_status: "Prepared" | "Uncertain" | "Completed";
+  replay_status: "Completed";
   created_at: string;
-  created_refs: Array<Record<string, unknown>> | null;
-  result: { type: "Success" | "Failure" } | null;
+  created_refs: Array<Record<string, unknown>>;
+  result: { type: "Success" } | { type: "Failure"; error: { type: string } };
   reverted_at: string | null;
   undo_allowed: boolean;
   undo_url: string | null;
@@ -75,11 +75,9 @@ function effectErrorMessage(error: unknown): string {
 }
 
 function effectStatus(effect: GenerationEffect, undone: boolean): string {
-  if (effect.reverted_at || undone) return "Undone";
-  if (effect.replay_status === "Uncertain") return "Outcome uncertain; inspect before retrying";
-  if (effect.replay_status === "Prepared") return "In progress";
-  if (effect.result?.type !== "Success") return "No write completed";
-  return effect.created_refs?.length ? "Assistant-created" : "Completed; no new item created";
+  if (effect.result.type === "Failure") return effect.result.error.type === "Cancelled" ? "Cancelled" : "Write failed";
+  if (effect.created_refs.length === 0) return "No new item created";
+  return effect.reverted_at || undone ? "Undone" : "Assistant-created";
 }
 
 function GenerationEffects() {
@@ -175,13 +173,13 @@ function GenerationEffects() {
 
   return (
     <PaneSection
-      title="Background writes"
-      description="Recent writes by background generations. Shell activity is outside this history."
+      title="Assistant writes"
+      description="Finished assistant write attempts. Undo removes the items created by a successful write."
       actions={<Button variant="ghost" size="sm" onClick={() => void refresh()} disabled={loading || loadingMore || busyId !== null}>Refresh</Button>}
     >
       {error ? <p className={styles.effectsError} role="alert">{error}</p> : null}
       {loading && page === null ? <p className={styles.current}>Loading writes…</p> : null}
-      {!loading && page?.items.length === 0 ? <p className={styles.current}>No background writes yet.</p> : null}
+      {!loading && page?.items.length === 0 ? <p className={styles.current}>No assistant writes yet.</p> : null}
       {page?.items.length ? (
         <ol className={styles.effectsList}>
           {page.items.map((effect) => (

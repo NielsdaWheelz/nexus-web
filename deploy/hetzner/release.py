@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Converge the Hetzner backend onto one immutable CI candidate, in one pass.
 
-    PYTHONPATH=python python3 deploy/hetzner/release.py <source-sha>
-    PYTHONPATH=python python3 deploy/hetzner/release.py <source-sha> \
+    PYTHONPATH=python uv run --project python --frozen --no-sync python deploy/hetzner/release.py <source-sha>
+    PYTHONPATH=python uv run --project python --frozen --no-sync python deploy/hetzner/release.py <source-sha> \
       --model-cutover-snapshot <reviewed-json>  # crossing 0246
-    PYTHONPATH=python python3 deploy/hetzner/release.py --check [<source-sha>]
+    PYTHONPATH=python uv run --project python --frozen --no-sync python deploy/hetzner/release.py --check [<source-sha>]
 
 The flow is linear and idempotent; after any failure, fix the cause and rerun:
 
@@ -29,7 +29,9 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from nexus.model_cutover_archive import ModelCutoverSnapshot, ReviewedModelCutover
 from nexus.release_artifact import CandidateManifest, load_candidate_manifest
+from nexus.release_backup import BackupEvidence
 
 REPOSITORY = "NielsdaWheelz/nexus-web"
 WORKFLOW = ".github/workflows/backend-images.yml"
@@ -161,6 +163,7 @@ def compose(
     *,
     profile: str = "",
     environment: str = "",
+    stdin: bytes | None = None,
     timeout: int = 180,
 ) -> str:
     """Run one mutating `docker compose` command against the release project."""
@@ -170,6 +173,7 @@ def compose(
         f" NEXUS_CONFIG_FILE={CONFIG_FILE} {environment}"
         f" docker compose --project-name nexus --env-file {CONFIG_FILE} --file {COMPOSE_FILE}"
         f"{' --profile ' + profile if profile else ''} {arguments}",
+        stdin=stdin,
         timeout=timeout,
     )
 
@@ -379,9 +383,9 @@ def prove_ancestry(candidate: CandidateManifest, current: str) -> None:
 
 
 def prove_model_cutover_snapshot(
-    candidate: CandidateManifest, starting_revision: str, reviewed: dict[str, Any]
+    candidate: CandidateManifest, reviewed: ReviewedModelCutover
 ) -> None:
-    actual = json.loads(
+    actual = ModelCutoverSnapshot.model_validate_json(
         compose(
             candidate,
             "run --rm --no-deps --no-TTY api"
@@ -389,14 +393,16 @@ def prove_model_cutover_snapshot(
             timeout=180,
         )
     )
-    if not isinstance(actual, dict) or actual.get("schema_revision") != starting_revision:
-        raise Failure("0246 database revision changed after release preflight")
-    if reviewed != actual:
-        raise Failure("0246 database identities changed since the reviewed census")
-    note("0246 database identities match the reviewed census")
+    if (
+        actual.database_identity != reviewed.source_database_identity
+        or actual.starting_revision != reviewed.starting_revision
+        or actual.census != reviewed.census
+    ):
+        raise Failure("0246 database, revision or complete census changed since review")
+    note("0246 complete database census matches the reviewed archive input")
 
 
-def backup(candidate: CandidateManifest, starting_revision: str) -> None:
+def backup(candidate: CandidateManifest, starting_revision: str) -> BackupEvidence:
     note("backing up the database to private R2")
     identity = psql(
         "SELECT current_database() || ':' || system_identifier FROM pg_control_system()"
@@ -410,9 +416,17 @@ def backup(candidate: CandidateManifest, starting_revision: str) -> None:
     # `create` refuses a receipt whose recorded inputs differ from its own.
     receipt = host(f"sudo cat {state}/receipt.json 2>/dev/null || true").strip()
     if receipt:
-        starting_revision = json.loads(receipt)["evidence"]["starting_revision"]
-        if REVISION.fullmatch(starting_revision) is None:
+        recorded_revision = json.loads(receipt)["evidence"]["starting_revision"]
+        if REVISION.fullmatch(recorded_revision) is None:
             raise Failure(f"the backup receipt records a malformed revision: {receipt[:200]}")
+        if (
+            starting_revision in PRE_MODEL_HISTORY_CUTOVER_REVISIONS
+            and recorded_revision != starting_revision
+        ):
+            raise Failure(
+                "0246 backup receipt differs from the actual starting revision; take a fresh exact backup"
+            )
+        starting_revision = recorded_revision
         note(f"replaying the backup receipt taken at revision {starting_revision}")
     # `create` streams pg_dump straight into a multipart upload, reads the
     # remote bytes back through pg_restore, and publishes a recovery manifest
@@ -440,11 +454,27 @@ def backup(candidate: CandidateManifest, starting_revision: str) -> None:
     ):
         raise Failure(f"the verified backup evidence differs from this release: {evidence}")
     note(f"backup {evidence['bucket']}/{evidence['key']}, {evidence['byte_count']} bytes verified")
+    return BackupEvidence.model_validate(evidence)
 
 
-def migrate(candidate: CandidateManifest) -> None:
+def migrate(candidate: CandidateManifest, reviewed: ReviewedModelCutover | None) -> None:
     note(f"migrating to {candidate.expected_database_revision}")
-    compose(candidate, "run --rm --no-deps --no-TTY migration", profile="release", timeout=1800)
+    if reviewed is None:
+        compose(
+            candidate,
+            "run --rm --no-deps --no-TTY migration",
+            profile="release",
+            timeout=1800,
+        )
+    else:
+        compose(
+            candidate,
+            "run --rm --no-deps --no-TTY --interactive migration"
+            " /app/.venv/bin/python -m nexus.model_cutover_archive",
+            profile="release",
+            stdin=reviewed.model_dump_json().encode(),
+            timeout=1800,
+        )
     reached = database_revision()
     if reached != candidate.expected_database_revision:
         raise Failure(f"the database is at {reached}, not {candidate.expected_database_revision}")
@@ -602,6 +632,13 @@ def assert_isolation() -> None:
 
 
 def release(source_sha: str, workspace: Path, model_cutover_snapshot: Path | None) -> None:
+    reviewed = (
+        None
+        if model_cutover_snapshot is None
+        else ReviewedModelCutover.model_validate_json(model_cutover_snapshot.read_bytes())
+    )
+    if reviewed is not None and reviewed.target_source_sha != source_sha:
+        raise Failure("reviewed model cutover names a different target source SHA")
     candidate = preflight(source_sha, workspace, deploying=True)
     install_host_inputs()
     pull_image(candidate, candidate.images.api)
@@ -614,40 +651,42 @@ def release(source_sha: str, workspace: Path, model_cutover_snapshot: Path | Non
         starting_revision in PRE_MODEL_HISTORY_CUTOVER_REVISIONS
         and candidate.expected_database_revision not in PRE_MODEL_HISTORY_CUTOVER_REVISIONS
     )
-    reviewed_cutover_snapshot: dict[str, Any] | None = None
     if crossing_model_cutover:
-        if model_cutover_snapshot is None:
-            raise Failure("0246 requires --model-cutover-snapshot with a reviewed database census")
-        try:
-            parsed_snapshot = json.loads(model_cutover_snapshot.read_text())
-        except (OSError, ValueError) as error:
-            raise Failure(f"cannot read the reviewed 0246 database census: {error}") from error
+        if reviewed is None:
+            raise Failure(
+                "0246 requires --model-cutover-snapshot with reviewed disposition and actual restore evidence"
+            )
         if (
-            not isinstance(parsed_snapshot, dict)
-            or parsed_snapshot.get("schema_revision") != starting_revision
+            reviewed.starting_revision != starting_revision
+            or reviewed.restore.target_revision != candidate.expected_database_revision
+            or reviewed.deployed_source_sha != host(f"sudo cat {CURRENT_POINTER}").strip()
         ):
-            raise Failure("reviewed 0246 database census has the wrong starting revision")
-        reviewed_cutover_snapshot = parsed_snapshot
+            raise Failure("reviewed model cutover differs from the actual source or revision")
+        prove_model_cutover_snapshot(candidate, reviewed)
+    elif reviewed is not None:
+        raise Failure("--model-cutover-snapshot applies only when crossing 0246")
     note(
         f"stopping the writers at revision {starting_revision or '(none)'};"
         " the API is down from here until `up` succeeds"
     )
     compose(candidate, f"stop --timeout 30 {' '.join(WRITERS)}", timeout=300)
-    compose(candidate, f"stop --timeout 15 {CODEX_AGENT_HOST}", timeout=120)
-    host_container = host(
-        "docker ps --all --quiet"
-        " --filter label=com.docker.compose.project=nexus"
-        f" --filter label=com.docker.compose.service={CODEX_AGENT_HOST}"
-        " --filter label=com.docker.compose.oneoff=False"
-    ).strip()
-    if host_container:
-        if CONTAINER_ID.fullmatch(host_container) is None:
-            raise Failure("Codex native host has ambiguous containers")
-        host_state = inspect(host_container)["State"]
-        if host_state["Status"] != "exited" or host_state["ExitCode"] != 0:
+    compose(candidate, f"stop --timeout 45 {CODEX_AGENT_HOST}", timeout=120)
+    for service in (*WRITERS, CODEX_AGENT_HOST):
+        stopped_container = host(
+            "docker ps --all --quiet"
+            " --filter label=com.docker.compose.project=nexus"
+            f" --filter label=com.docker.compose.service={service}"
+            " --filter label=com.docker.compose.oneoff=False"
+        ).strip()
+        if not stopped_container:
+            continue
+        if CONTAINER_ID.fullmatch(stopped_container) is None:
+            raise Failure(f"{service} has ambiguous containers")
+        stopped_state = inspect(stopped_container)["State"]
+        if stopped_state["Status"] != "exited" or stopped_state["ExitCode"] != 0:
             raise Failure(
-                "Codex native host did not stop cleanly: "
-                f"status={host_state['Status']} exit_code={host_state['ExitCode']}"
+                f"{service} did not stop cleanly: "
+                f"status={stopped_state['Status']} exit_code={stopped_state['ExitCode']}"
             )
     if starting_revision in {"0241", "0242", "0243", "0244"}:
         missing = psql("""
@@ -664,9 +703,27 @@ def release(source_sha: str, workspace: Path, model_cutover_snapshot: Path | Non
                 " repair their publication or stale apparatus before releasing"
             )
         note("0245 publication preflight: zero apparatus media without a reader publication")
-    if reviewed_cutover_snapshot is not None:
-        prove_model_cutover_snapshot(candidate, starting_revision, reviewed_cutover_snapshot)
-    if starting_revision:
+    if reviewed is not None:
+        prove_model_cutover_snapshot(candidate, reviewed)
+        # The operator already restored this exact fresh archive and qualified
+        # the target against it. Verification must never replace it with a dump.
+        evidence = BackupEvidence.model_validate_json(
+            compose(
+                candidate,
+                "run --rm --no-deps --no-TTY backup python -m nexus.release_backup verify"
+                f" --source-sha {candidate.source_sha}"
+                f" --database-identity {shlex.quote(reviewed.source_database_identity)}"
+                f" --starting-revision {reviewed.starting_revision}"
+                f" --sha256 {reviewed.backup.sha256} --byte-count {reviewed.backup.byte_count}",
+                profile="backup",
+                environment=f"NEXUS_BACKUP_CONFIG_FILE={BACKUP_CONFIG_FILE}",
+                timeout=2000,
+            )
+        )
+        if evidence != reviewed.backup:
+            raise Failure("verified archive differs from the reviewed actual restore")
+        prove_model_cutover_snapshot(candidate, reviewed)
+    elif starting_revision:
         backup(candidate, starting_revision)
     elif psql("SELECT count(*) FROM pg_tables WHERE schemaname = 'public'") != "0":
         raise Failure(
@@ -674,7 +731,7 @@ def release(source_sha: str, workspace: Path, model_cutover_snapshot: Path | Non
         )
     else:
         note("the database is empty; there is nothing to back up")
-    migrate(candidate)
+    migrate(candidate, reviewed)
     convert_browser_captures(candidate)
 
     start(candidate)
@@ -722,7 +779,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--model-cutover-snapshot",
         type=Path,
-        help="reviewed read-only census required when the release crosses migration 0246",
+        help="reviewed reset input with exact backup and actual restore evidence for migration 0246",
     )
     arguments = parser.parse_args(argv)
     source_sha: str | None = arguments.source_sha
