@@ -3,10 +3,9 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import DbSession
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.responses import Data
 from nexus.schemas.browse import (
@@ -33,7 +32,7 @@ router = APIRouter(tags=["browse"])
 async def browse_content(
     request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Data[BrowsePage]:
     query = parse_browse_query(request.query_params.multi_items())
     try:
@@ -52,7 +51,7 @@ async def browse_content(
 def browse_preview(
     request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Data[BrowsePreview]:
     query = parse_browse_preview_query(request.query_params.multi_items())
     try:

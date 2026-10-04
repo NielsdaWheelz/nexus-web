@@ -1,13 +1,10 @@
 """FastAPI dependency for scoped browser extension capture tokens."""
 
-from typing import Annotated
-
-from fastapi import Depends, Request
-from sqlalchemy.orm import Session
+from fastapi import Request
 
 from nexus.auth.bearer import parse_bearer_token
 from nexus.auth.middleware import Viewer
-from nexus.db.session import get_db
+from nexus.db.session import DbSession
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.extension_sessions import resolve_extension_session_user
@@ -15,7 +12,7 @@ from nexus.services.extension_sessions import resolve_extension_session_user
 
 def get_extension_viewer(
     request: Request,
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Viewer:
     token = parse_bearer_token(request.headers.get("authorization"))
     if token is None:

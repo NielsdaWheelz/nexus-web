@@ -4,10 +4,9 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Request, Response
-from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db, get_session_factory
+from nexus.db.session import DbSession, get_session_factory
 from nexus.responses import ok
 from nexus.schemas.oracle import OracleReadingCreateRequest, OracleReadingCreateResponse
 from nexus.services import oracle as oracle_service
@@ -20,7 +19,7 @@ router = APIRouter(tags=["oracle"])
 def create_oracle_reading(
     body: OracleReadingCreateRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     idempotency_key: Annotated[
         str | None, Header(alias="Idempotency-Key", min_length=1, max_length=256)
     ] = None,
@@ -47,7 +46,7 @@ def create_oracle_reading(
 @router.get("/oracle/readings")
 def list_oracle_readings(
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     rows = oracle_service.list_all_readings(db, viewer_id=viewer.user_id)
     return ok(rows)
@@ -57,7 +56,7 @@ def list_oracle_readings(
 def get_oracle_reading_concordance(
     reading_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     entries = oracle_service.compute_concordance(
         db, viewer_id=viewer.user_id, reading_id=reading_id
@@ -69,7 +68,7 @@ def get_oracle_reading_concordance(
 def get_oracle_reading(
     reading_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     detail = oracle_service.get_reading_detail(db, viewer_id=viewer.user_id, reading_id=reading_id)
     return ok(detail)

@@ -3,10 +3,9 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import DbSession
 from nexus.schemas.search import SearchResponse
 from nexus.services.search.query import DEFAULT_LIMIT, MAX_LIMIT, build_search_query
 from nexus.services.search.scope import scope_from_uri
@@ -18,7 +17,7 @@ router = APIRouter(tags=["search"])
 @router.get("/search", response_model=SearchResponse, response_model_by_alias=True)
 def search(
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     q: str = Query(default="", min_length=0, description="Search query string"),
     scope: str = Query(
         default="all", description="Search scope (all, media:<id>, library:<id>, conversation:<id>)"

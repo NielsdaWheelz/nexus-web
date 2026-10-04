@@ -23,11 +23,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
-from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.auth.permissions import visible_media_ids_cte_sql
-from nexus.db.session import get_db
+from nexus.db.session import DbSession
 from nexus.responses import Data
 from nexus.schemas.atlas import (
     AtlasEdgeOut,
@@ -48,7 +47,7 @@ _PERSONAL_MEDIA_SQL = library_media_ids_cte_sql()
 @router.get("", response_model=Data[AtlasOut], responses={304: {"description": "not modified"}})
 def read_atlas(
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     if_none_match: Annotated[str | None, Header(alias="If-None-Match")] = None,
 ) -> Response:
     """return the scoped atlas; its tag identifies the exact rendered representation."""

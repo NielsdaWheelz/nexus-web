@@ -6,11 +6,10 @@ Returns information about the authenticated viewer including profile fields.
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.config import Settings, get_settings
-from nexus.db.session import get_db
+from nexus.db.session import DbSession
 from nexus.responses import Data, ok, success_response
 from nexus.schemas.nexus_history import (
     NexusHistoryOut,
@@ -41,7 +40,7 @@ def _workspace_session_payload(session: WorkspaceSessionOut | None) -> dict | No
 @router.get("/me")
 def get_me(
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> dict:
     """Get current user information.
@@ -68,7 +67,7 @@ def get_me(
 def patch_me(
     body: UpdateProfileRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     """Update supplied user profile fields."""
     users_service.update_user_profile(db, viewer.user_id, body)
@@ -81,7 +80,7 @@ def patch_me(
 @router.get("/me/reader-profile")
 def get_reader_profile(
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     """Get reader profile (per-user defaults). Returns defaults when none exists."""
     result = reader_profile_service.get_reader_profile(db, viewer.user_id)
@@ -92,7 +91,7 @@ def get_reader_profile(
 def patch_reader_profile(
     body: ReaderProfilePatch,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     """Update reader profile (partial)."""
     result = reader_profile_service.patch_reader_profile(db, viewer.user_id, body)
@@ -102,7 +101,7 @@ def patch_reader_profile(
 @router.get("/me/nexus-history")
 def get_nexus_history(
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     query: Annotated[str | None, Query(max_length=500)] = None,
 ) -> Data[NexusHistoryOut]:
     """Get Nexus usage history for the current viewer."""
@@ -113,7 +112,7 @@ def get_nexus_history(
 def post_nexus_selection(
     body: NexusSelectionRecordRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Data[NexusSelectionRecordOut]:
     """Record one accepted internal Nexus selection for the current viewer."""
     return Data(
@@ -131,7 +130,7 @@ def get_workspace_session(
         ),
     ],
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     """Get this device's own workspace session and the most recent one elsewhere."""
     own = workspace_sessions_service.get_workspace_session(db, viewer.user_id, device_id)
@@ -150,7 +149,7 @@ def get_workspace_session(
 def put_workspace_session(
     body: WorkspaceSessionPutRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     """Upsert this device's workspace session (last-write-wins)."""
     result = workspace_sessions_service.upsert_workspace_session(

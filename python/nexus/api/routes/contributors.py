@@ -4,10 +4,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import AfterValidator
-from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db, get_repeatable_read_db
+from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.responses import Data
 from nexus.schemas.collection_page import CollectionPage
@@ -39,7 +38,7 @@ def _parse_handle(contributor_handle: str) -> ContributorHandle:
 @router.get("")
 def search_contributors(
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     q: Annotated[str, Query(min_length=1, max_length=200), AfterValidator(_require_nonblank)],
     cursor: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=50),
@@ -54,7 +53,7 @@ def search_contributors(
 def get_contributor(
     contributor_handle: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Data[ContributorDetailOut]:
     detail = contributors_service.get_contributor_detail(
         db, viewer_id=viewer.user_id, contributor_handle=_parse_handle(contributor_handle)
@@ -67,7 +66,7 @@ def list_contributor_works(
     request: Request,
     contributor_handle: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
 ) -> Data[CollectionPage[ContributorWorkItemOut]]:
     plan, query = contributors_service.parse_contributor_works_query(
         request.query_params.multi_items()

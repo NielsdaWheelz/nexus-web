@@ -10,10 +10,9 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Response
-from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import DbSession
 from nexus.responses import ok
 from nexus.schemas.consumption import ListeningHeartbeatIn, PreviewPositionIn
 from nexus.services.consumption import service as consumption_service
@@ -25,7 +24,7 @@ router = APIRouter(tags=["media"])
 def get_listening_state(
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     """Get per-media listening state for the authenticated viewer."""
     result = consumption_service.get_listening_state(db, viewer.user_id, media_id)

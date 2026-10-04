@@ -4,10 +4,9 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Request
-from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db, get_repeatable_read_db
+from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data, ok
 from nexus.schemas.collection_page import parse_collection_query
@@ -43,7 +42,7 @@ def _require_option(value: str, allowed: set[str], message: str) -> str:
 def subscribe_to_podcast(
     body: PodcastSubscribeRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     idempotency_key: IdempotencyKey,
 ) -> Data[PodcastSubscribeOut]:
     """Subscribe the viewer and enqueue the first sync and history backfill."""
@@ -58,7 +57,7 @@ def subscribe_to_podcast(
 def acquire_podcast_episode(
     body: PodcastEpisodeFromDiscoveryRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     idempotency_key: IdempotencyKey,
 ) -> dict:
     """Acquire one discovered episode without subscribing to its show."""
@@ -74,7 +73,7 @@ def acquire_podcast_episode(
 def list_subscriptions(
     request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
 ) -> dict:
     """List the viewer's followed shows."""
     parsed = parse_collection_query(
@@ -115,7 +114,7 @@ def list_subscriptions(
 def get_subscription_status(
     podcast_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Data[PodcastSubscriptionStatusOut]:
     """Read viewer-visible sync status for one podcast subscription."""
     return Data(
@@ -127,7 +126,7 @@ def get_subscription_status(
 def retry_subscription_backfill(
     podcast_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     idempotency_key: IdempotencyKey,
 ) -> dict:
     """Restart only a persistently failed historical backfill."""
@@ -144,7 +143,7 @@ def patch_subscription_settings(
     podcast_id: UUID,
     body: PodcastSubscriptionSettingsPatchRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Data[PodcastSubscriptionSettingsOut]:
     """Patch per-subscription playback settings for the authenticated viewer."""
     return Data(
@@ -158,7 +157,7 @@ def patch_subscription_settings(
 def refresh_podcasts(
     body: PodcastRefreshManualScope,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Data[PodcastRefreshAcceptedOut]:
     """Enqueue one sync per in-scope subscription; the panes observe the rows."""
     requested_count = podcast_refresh_service.enqueue_manual_refresh(
@@ -171,7 +170,7 @@ def refresh_podcasts(
 def unsubscribe_from_podcast(
     podcast_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     idempotency_key: IdempotencyKey,
 ) -> dict:
     """Unsubscribe the viewer and remove the placements they own."""
@@ -187,7 +186,7 @@ def unsubscribe_from_podcast(
 def get_podcast_detail(
     podcast_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     """Get podcast detail, even if the viewer is not actively subscribed."""
     return ok(
@@ -202,7 +201,7 @@ def list_podcast_episodes(
     podcast_id: UUID,
     request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
 ) -> dict:
     """List viewer-visible episodes for one podcast."""
     parsed = parse_collection_query(
@@ -236,7 +235,7 @@ def mark_podcast_episode_selection_played(
     podcast_id: UUID,
     body: PodcastEpisodeSelection,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     """Mark every episode in the named state finished."""
     return ok(

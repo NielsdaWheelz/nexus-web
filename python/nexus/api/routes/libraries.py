@@ -8,10 +8,9 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
-from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db, get_repeatable_read_db
+from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.responses import Data, DataPage
 from nexus.schemas.collection_page import CollectionPage
@@ -66,7 +65,7 @@ def _user_id(user_handle: str) -> UUID:
 @router.get("/libraries/invites")
 def list_viewer_invites(
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     status: Annotated[LibraryInvitationStatusValue, _STATUS_QUERY] = "pending",
     limit: Annotated[int, _LIMIT_QUERY] = 100,
 ) -> Data[list[ViewerLibraryInvitationOut]]:
@@ -79,7 +78,7 @@ def list_viewer_invites(
 def accept_library_invite(
     invitation_handle: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Data[AcceptLibraryInviteResponse]:
     """Accept a library invitation. Invitee-only; idempotent when already accepted."""
     result = library_sharing.accept_library_invite(db, viewer.user_id, invitation_handle)
@@ -90,7 +89,7 @@ def accept_library_invite(
 def decline_library_invite(
     invitation_handle: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Data[DeclineLibraryInviteResponse]:
     """Decline a library invitation. Invitee-only; idempotent when already declined."""
     result = library_sharing.decline_library_invite(db, viewer.user_id, invitation_handle)
@@ -101,7 +100,7 @@ def decline_library_invite(
 def revoke_library_invite(
     invitation_handle: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Response:
     """Revoke a pending invitation. Admin-only; idempotent when already revoked."""
     library_sharing.revoke_library_invite(db, viewer.user_id, invitation_handle)
@@ -112,7 +111,7 @@ def revoke_library_invite(
 def list_libraries(
     request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
 ) -> Data[CollectionPage[LibraryOut]]:
     """List the viewer's libraries in the requested view."""
     view, query = library_governance.parse_libraries_index_query(request.query_params.multi_items())
@@ -130,7 +129,7 @@ def list_libraries(
 @router.get("/libraries/writable-destinations")
 def list_writable_library_destinations(
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     q: str | None = Query(default=None, max_length=100, description="Name search query"),
     cursor: Annotated[str | None, _CURSOR_QUERY] = None,
     limit: int = Query(default=25, ge=1, le=50, description="Maximum results"),
@@ -148,7 +147,7 @@ def list_writable_library_destinations(
 def get_podcast_libraries(
     podcast_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Data[list[LibraryPlacementOptionOut]]:
     """Read the canonical library placement inventory for one podcast."""
     rows = library_entries.list_item_libraries(
@@ -161,7 +160,7 @@ def get_podcast_libraries(
 def create_library(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     body: CreateLibraryRequest,
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Data[LibraryOut]:
     """Create a non-default library owned and admin'd by the caller."""
     return Data(data=library_governance.create_library(db, viewer.user_id, body))
@@ -171,7 +170,7 @@ def create_library(
 def get_library(
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Data[LibraryOut]:
     """Read one library. Non-members get a masked 404."""
     return Data(data=library_governance.get_library(db, viewer.user_id, library_id))
@@ -182,7 +181,7 @@ def rename_library(
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     body: UpdateLibraryRequest,
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Data[LibraryRenameOut]:
     """Rename a library. Admin-only; not the default or a system library."""
     result = library_governance.rename_library(db, viewer.user_id, library_id, body.name)
@@ -193,7 +192,7 @@ def rename_library(
 def delete_library(
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Data[LibraryDeleteOut]:
     """Delete a library. Owner-only; a non-owner admin gets E_OWNER_REQUIRED."""
     return Data(data=library_governance.delete_library(db, viewer.user_id, library_id))
@@ -204,7 +203,7 @@ def create_library_invite(
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     body: CreateLibraryInviteRequest,
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Data[LibraryInvitationOut]:
     """Invite an existing user to a library. Admin-only."""
     result = library_sharing.create_library_invite(
@@ -217,7 +216,7 @@ def create_library_invite(
 def list_library_invites(
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     status: Annotated[LibraryInvitationStatusValue, _STATUS_QUERY] = "pending",
     cursor: Annotated[str | None, _CURSOR_QUERY] = None,
     limit: Annotated[int, _LIMIT_QUERY] = 100,
@@ -233,7 +232,7 @@ def list_library_invites(
 def list_library_members(
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     cursor: Annotated[str | None, _CURSOR_QUERY] = None,
     limit: Annotated[int, _LIMIT_QUERY] = 100,
 ) -> DataPage[LibraryMemberOut, LibraryGovernancePageInfo]:
@@ -250,7 +249,7 @@ def update_library_member_role(
     user_handle: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     body: UpdateLibraryMemberRequest,
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Data[LibraryMemberOut]:
     """Set a member's role. Admin-only; the owner's role is fixed."""
     result = library_sharing.update_library_member_role(
@@ -264,7 +263,7 @@ def remove_library_member(
     library_id: UUID,
     user_handle: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Response:
     """Remove a member. Admin-only; idempotent for an absent target."""
     library_sharing.remove_library_member(db, viewer.user_id, library_id, _user_id(user_handle))
@@ -276,7 +275,7 @@ def transfer_library_ownership(
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     body: TransferLibraryOwnershipRequest,
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Data[LibraryOut]:
     """Transfer ownership to another member. Owner-only."""
     result = library_sharing.transfer_library_ownership(
@@ -290,7 +289,7 @@ def list_library_entries(
     request: Request,
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
 ) -> Data[CollectionPage[LibraryEntryListItemOut]]:
     """List a library's entries under a view lens (see `parse_entries_query`)."""
     view, query = library_entry_listing.parse_entries_query(request.query_params.multi_items())
@@ -311,7 +310,7 @@ def get_library_slate(
     request: Request,
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
 ) -> Data[SlateOut]:
     """Read the library's Reading Slate."""
     if request.query_params:
@@ -329,7 +328,7 @@ def patch_library_entry_order(
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     body: LibraryEntryOrderRequest,
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Response:
     """Replace the full entry ordering for a library."""
     library_entries.reorder_entries(db, viewer.user_id, library_id, body)
@@ -341,7 +340,7 @@ def remove_podcast_from_library(
     library_id: UUID,
     podcast_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Data[PodcastPlacementRemovalOut]:
     """Remove a podcast reference from one non-default library."""
     result = library_entries.remove_podcast_from_library(db, viewer.user_id, library_id, podcast_id)
@@ -353,7 +352,7 @@ def add_subscribed_podcast_to_library(
     library_id: UUID,
     podcast_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Data[PodcastPlacementAdditionOut]:
     """Place an existing active podcast subscription in one named library."""
     result = library_entries.place_subscribed_podcast_in_named_library(

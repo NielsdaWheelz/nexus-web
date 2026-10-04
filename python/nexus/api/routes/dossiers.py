@@ -10,7 +10,7 @@ from llm_tools import Available, ToolId
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db, get_repeatable_read_db
+from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data
 from nexus.schemas.artifact import (
@@ -212,7 +212,7 @@ def get_dossier(
     subject_scheme: str,
     subject_handle: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
 ) -> Data[DossierHeadOut]:
     head = engine.read_head(
         db,
@@ -228,7 +228,7 @@ def create_dossier_build(
     subject_scheme: str,
     subject_handle: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
     body: Annotated[DossierGenerateRequest, Body()],
 ) -> Data[DossierBuildCreatedOut]:
@@ -253,7 +253,7 @@ def create_dossier_build(
 def learn_dossier(
     request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
     body: Annotated[LearnDossierRequest, Body()],
 ) -> Data[LearnDossierOut]:
@@ -279,7 +279,7 @@ def learn_dossier(
 def get_dossier_by_ref(
     artifact_ref: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
 ) -> Data[DossierHeadOut]:
     head = engine.read_artifact_head(
         db,
@@ -294,7 +294,7 @@ def regenerate_dossier(
     request: Request,
     artifact_ref: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
     body: Annotated[DossierGenerateRequest, Body()],
 ) -> Data[DossierBuildCreatedOut]:
@@ -324,7 +324,7 @@ def regenerate_dossier(
 def cancel_dossier_build(
     artifact_build_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Response:
     engine.cancel_build(db, build_id=artifact_build_id, actor_user_id=viewer.user_id)
     return Response(status_code=204)

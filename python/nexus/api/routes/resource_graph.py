@@ -4,10 +4,9 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response
-from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import DbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok
 from nexus.schemas.resource_graph import (
@@ -28,7 +27,6 @@ from nexus.services.resource_graph.refs import (
 from nexus.services.resource_graph.schemas import ConnectionFilters, ConnectionQuery
 
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
-DbDep = Annotated[Session, Depends(get_db)]
 
 router = APIRouter(prefix="/resource-graph", tags=["resource-graph"])
 
@@ -44,7 +42,7 @@ def _parse_ref(raw: str) -> ResourceRef:
 
 
 @router.post("/connections/query")
-def query_connections(body: ConnectionQueryRequest, viewer: ViewerDep, db: DbDep) -> dict:
+def query_connections(body: ConnectionQueryRequest, viewer: ViewerDep, db: DbSession) -> dict:
     filters = body.filters
     page = connections_service.query_connections(
         db=db,
@@ -75,18 +73,20 @@ def query_connections(body: ConnectionQueryRequest, viewer: ViewerDep, db: DbDep
 
 
 @router.post("/links", status_code=201)
-def create_link(body: CreateLinkRequest, viewer: ViewerDep, db: DbDep) -> dict:
+def create_link(body: CreateLinkRequest, viewer: ViewerDep, db: DbSession) -> dict:
     return ok(user_relations_service.create_link(db, viewer_id=viewer.user_id, request=body))
 
 
 @router.delete("/links/{link_id}", status_code=204)
-def delete_link(link_id: UUID, viewer: ViewerDep, db: DbDep) -> Response:
+def delete_link(link_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
     user_relations_service.delete_link(db, viewer_id=viewer.user_id, link_id=link_id)
     return Response(status_code=204)
 
 
 @router.put("/links/{link_id}/note")
-def put_link_note(link_id: UUID, body: PutLinkNoteRequest, viewer: ViewerDep, db: DbDep) -> dict:
+def put_link_note(
+    link_id: UUID, body: PutLinkNoteRequest, viewer: ViewerDep, db: DbSession
+) -> dict:
     return ok(
         user_relations_service.put_link_note(
             db, viewer_id=viewer.user_id, link_id=link_id, request=body
@@ -98,7 +98,7 @@ def put_link_note(link_id: UUID, body: PutLinkNoteRequest, viewer: ViewerDep, db
 def delete_link_note(
     link_id: UUID,
     viewer: ViewerDep,
-    db: DbDep,
+    db: DbSession,
     note_block_id: Annotated[UUID, Query()],
     client_mutation_id: Annotated[str, Query(min_length=1, max_length=120)],
 ) -> Response:
@@ -113,11 +113,11 @@ def delete_link_note(
 
 
 @router.put("/stances")
-def put_stance(body: PutStanceRequest, viewer: ViewerDep, db: DbDep) -> dict:
+def put_stance(body: PutStanceRequest, viewer: ViewerDep, db: DbSession) -> dict:
     return ok(user_relations_service.put_stance(db, viewer_id=viewer.user_id, request=body))
 
 
 @router.delete("/stances/{stance_id}", status_code=204)
-def delete_stance(stance_id: UUID, viewer: ViewerDep, db: DbDep) -> Response:
+def delete_stance(stance_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
     user_relations_service.delete_stance(db, viewer_id=viewer.user_id, stance_id=stance_id)
     return Response(status_code=204)

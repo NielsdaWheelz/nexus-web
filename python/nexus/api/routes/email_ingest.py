@@ -13,11 +13,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import JSONResponse
-from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from nexus.config import Settings, get_settings
-from nexus.db.session import get_db
+from nexus.db.session import DbSession
 from nexus.responses import success_response
 from nexus.services.email_ingest_service import accept_email_message, verify_email_signature
 
@@ -27,7 +26,7 @@ router = APIRouter(tags=["ingest"])
 @router.post("/ingest/email")
 async def post_email_ingest(
     request: Request,
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     settings: Annotated[Settings, Depends(get_settings)],
     x_nexus_email_signature: Annotated[str | None, Header(alias="x-nexus-email-signature")] = None,
     x_nexus_email_recipient: Annotated[str | None, Header(alias="x-nexus-email-recipient")] = None,

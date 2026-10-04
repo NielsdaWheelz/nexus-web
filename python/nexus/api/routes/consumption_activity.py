@@ -5,10 +5,9 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response
-from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_repeatable_read_db
+from nexus.db.session import RepeatableReadDbSession
 from nexus.errors import InvalidRequestError
 from nexus.responses import Data
 from nexus.schemas.consumption_activity import (
@@ -36,7 +35,7 @@ def _media_id(raw: str) -> UUID:
 
 def _scope(
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
     end: Annotated[ConsumptionDate, Query()],
     time_zone: Annotated[str, Query(alias="timeZone", min_length=1, max_length=100)],
     current_device_id: Annotated[str, Query(alias="currentDeviceId", min_length=1, max_length=200)],
@@ -89,7 +88,7 @@ def post_activity_exclusion(
 
 @router.get("/consumption/sessions")
 def get_sessions(
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
     scope: Annotated[stats.Scope, Depends(_scope)],
     cursor: Annotated[str | None, Query(max_length=4000)] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
@@ -99,7 +98,7 @@ def get_sessions(
 
 @router.get("/consumption/stats")
 def get_stats(
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: RepeatableReadDbSession,
     scope: Annotated[stats.Scope, Depends(_scope)],
     bucket: Annotated[stats.Bucket, Query()],
 ) -> Data[ConsumptionStatsOut]:

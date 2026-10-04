@@ -7,11 +7,10 @@ service refuses any other session as not found.
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, Response
-from sqlalchemy.orm import Session
 
 from nexus.auth.extension import get_extension_viewer
 from nexus.auth.middleware import Viewer
-from nexus.db.session import get_db
+from nexus.db.session import DbSession
 from nexus.responses import ok, ok_page
 from nexus.schemas.extension_capture import BrowserCapture, BrowserCaptureIntent
 from nexus.schemas.library import LibraryPageInfo
@@ -32,7 +31,7 @@ def _request_id(request: Request) -> str | None:
 @router.get("/library-destinations")
 def list_library_destinations(
     viewer: Annotated[Viewer, Depends(get_extension_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     q: str | None = Query(default=None, max_length=100),
     cursor: str | None = Query(default=None),
     limit: int = Query(default=25, ge=1, le=50),
@@ -50,7 +49,7 @@ def list_library_destinations(
 def create_capture(
     request_body: BrowserCaptureIntent,
     viewer: Annotated[Viewer, Depends(get_extension_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     request: Request,
 ) -> dict:
     return ok(
@@ -71,7 +70,7 @@ def create_capture(
 def read_capture(
     session_handle: str,
     viewer: Annotated[Viewer, Depends(get_extension_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     return ok(
         media_upload_sessions.read_upload_session(
@@ -89,7 +88,7 @@ def confirm_capture(
     session_handle: str,
     request_body: ConfirmUploadSessionRequest,
     viewer: Annotated[Viewer, Depends(get_extension_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
     request: Request,
 ) -> dict:
     return ok(
@@ -110,7 +109,7 @@ def retry_capture(
     session_handle: str,
     request_body: RetryUploadSessionRequest,
     viewer: Annotated[Viewer, Depends(get_extension_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> dict:
     return ok(
         media_upload_sessions.retry_upload_session(
@@ -129,7 +128,7 @@ def record_capture_transport_failure(
     session_handle: str,
     request_body: UploadTransportFailureRequest,
     viewer: Annotated[Viewer, Depends(get_extension_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Response:
     media_upload_sessions.record_transport_failure(
         db=db,
@@ -145,7 +144,7 @@ def record_capture_transport_failure(
 def delete_capture(
     session_handle: str,
     viewer: Annotated[Viewer, Depends(get_extension_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: DbSession,
 ) -> Response:
     media_upload_sessions.delete_upload_session(
         db=db,

@@ -8,10 +8,9 @@ import time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response
-from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db, get_repeatable_read_db
+from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data, ok
 from nexus.schemas.resource_action_snapshots import (
@@ -42,8 +41,6 @@ from nexus.services.resource_items import action_snapshots, mutations, openables
 from nexus.services.resource_items import locators as locator_service
 
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
-DbDep = Annotated[Session, Depends(get_db)]
-ReadDbDep = Annotated[Session, Depends(get_repeatable_read_db)]
 
 router = APIRouter(prefix="/resource-items", tags=["resource-items"])
 
@@ -60,7 +57,7 @@ def _parse_ref(raw: str) -> ResourceRef:
 
 @router.post("/action-snapshots/resolve")
 def resolve_action_snapshots(
-    request: ResourceActionSnapshotResolveRequest, viewer: ViewerDep, db: ReadDbDep
+    request: ResourceActionSnapshotResolveRequest, viewer: ViewerDep, db: RepeatableReadDbSession
 ) -> Data[ResourceActionSnapshotResolveResponse]:
     return Data(
         data=action_snapshots.resolve_action_snapshots(
@@ -71,7 +68,7 @@ def resolve_action_snapshots(
 
 @router.post("/locators/resolve")
 def resolve_resource_locators(
-    request: ResourceLocatorResolveRequest, viewer: ViewerDep, db: DbDep
+    request: ResourceLocatorResolveRequest, viewer: ViewerDep, db: DbSession
 ) -> Data[ResourceLocatorResolveResponse]:
     return Data(
         data=ResourceLocatorResolveResponse(
@@ -84,14 +81,14 @@ def resolve_resource_locators(
 
 @router.post("/targets/search")
 def search_resource_targets(
-    request: ResourceTargetSearchRequest, viewer: ViewerDep, db: DbDep
+    request: ResourceTargetSearchRequest, viewer: ViewerDep, db: DbSession
 ) -> Data[ResourceTargetSearchResponse]:
     return Data(data=targets.search_targets(db, viewer_id=viewer.user_id, request=request))
 
 
 @router.post("/openables/search")
 def search_openable_resources(
-    request: ResourceOpenableSearchRequest, response: Response, viewer: ViewerDep, db: DbDep
+    request: ResourceOpenableSearchRequest, response: Response, viewer: ViewerDep, db: DbSession
 ) -> Data[ResourceOpenableSearchResponse]:
     started_at = time.monotonic()
     result = openables.search_openable_resources(db, viewer_id=viewer.user_id, request=request)
@@ -102,7 +99,7 @@ def search_openable_resources(
 
 @router.get("/{resource_ref}/surface")
 def get_resource_surface(
-    resource_ref: str, viewer: ViewerDep, db: ReadDbDep
+    resource_ref: str, viewer: ViewerDep, db: RepeatableReadDbSession
 ) -> Data[ResourceSurfaceOut]:
     return Data(
         data=surfaces.get_surface(db, viewer_id=viewer.user_id, source=_parse_ref(resource_ref)),
@@ -111,7 +108,7 @@ def get_resource_surface(
 
 @router.post("/{resource_ref}/surface/commands")
 def execute_resource_surface_command(
-    resource_ref: str, request: ResourceSurfaceCommandRequest, viewer: ViewerDep, db: DbDep
+    resource_ref: str, request: ResourceSurfaceCommandRequest, viewer: ViewerDep, db: DbSession
 ) -> Data[ResourceSurfaceCommandOut]:
     return Data(
         data=surfaces.execute_surface_command(
@@ -122,7 +119,7 @@ def execute_resource_surface_command(
 
 @router.patch("/{resource_ref}/title")
 def update_resource_title(
-    resource_ref: str, request: ResourceTitleMutationRequest, viewer: ViewerDep, db: DbDep
+    resource_ref: str, request: ResourceTitleMutationRequest, viewer: ViewerDep, db: DbSession
 ) -> Data[ResourceTitleMutationOut]:
     return Data(
         data=mutations.update_title(
@@ -133,7 +130,7 @@ def update_resource_title(
 
 @router.patch("/{resource_ref}/body")
 def update_resource_body(
-    resource_ref: str, request: ResourceBodyMutationRequest, viewer: ViewerDep, db: DbDep
+    resource_ref: str, request: ResourceBodyMutationRequest, viewer: ViewerDep, db: DbSession
 ) -> dict:
     return ok(
         mutations.update_body(
