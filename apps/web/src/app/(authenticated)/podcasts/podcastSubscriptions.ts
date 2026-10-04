@@ -1,407 +1,66 @@
-import { apiFetch } from "@/lib/api/client";
-import { decodeContributorCredit } from "@/lib/contributors/credit";
-import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
-import type { ContributorCredit } from "@/lib/contributors/types";
+import { apiFetch, decodeApiPayload } from "@/lib/api/client";
+import {
+  decodeCollectionCursor,
+  decodeCollectionRevision,
+  type CollectionPage,
+} from "@/lib/api/collectionPage";
+import type { ApiJson, Schema } from "@/lib/api/wire";
 import { decodePresence, type Presence } from "@/lib/api/presence";
 import type { PositiveCount } from "@/lib/consumption/activityFacts";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
 import { decodeOptionalPublicationDate } from "@/lib/dates/publicationDate";
-import { parsePlaybackRate } from "@/lib/player/playbackRate";
-import {
-  parsePauseShorteningMode,
-  type PauseShorteningMode,
-} from "@/lib/player/pauseShortening";
+import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
 import { decodePodcastUnplayedCount } from "@/lib/podcasts/activityFacts";
 import {
   publishPodcastSubscriptionUnsubscribed,
   runPodcastSubscriptionSettingsMutation,
 } from "@/lib/podcasts/subscriptionSettings";
-import {
-  decodePodcastBackfillState,
-  decodePodcastSyncStatus,
-  type PodcastBackfillState,
-  type PodcastSyncStatus,
-} from "@/lib/podcasts/types";
-import {
-  expectArray,
-  expectBoolean,
-  expectExactRecord,
-  expectNullableString,
-  expectNonnegativeInteger,
-  expectString,
-} from "@/lib/validation";
+import type { PodcastSyncStatus } from "@/lib/podcasts/types";
 
-export type PodcastBackfillRecord = {
-  id: string;
-  state: PodcastBackfillState;
-  processed_count: number;
-  added_count: number;
-};
+export type PodcastBackfillRecord = Schema<"PodcastBackfillOut">;
+export type PodcastDetailResponse = Schema<"PodcastDetailOut">;
 
-export type PodcastBackfill = {
-  id: string;
-  state: PodcastBackfillState;
-  processedCount: number;
-  addedCount: number;
-};
-
-type PodcastSummary = {
-  id: string;
-  provider: string;
-  provider_podcast_id: string;
-  title: string;
-  contributors: ContributorCredit[];
-  feed_url: string;
-  website_url: string | null;
-  image_url: string | null;
-  description: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type PodcastSubscriptionRecord = {
-  podcast_id: string;
-  default_playback_speed: Presence<number>;
-  pause_shortening_mode: Presence<PauseShorteningMode>;
-  auto_queue: boolean;
-  sync_status: PodcastSyncStatus;
-  sync_error_code: string | null;
-  sync_error_message: string | null;
-  sync_attempts: number;
-  sync_started_at: string | null;
-  sync_completed_at: string | null;
-  last_checked_at: string | null;
-  updated_at: string;
-  backfill: PodcastBackfillRecord;
-};
-
-type PodcastSubscriptionDetail = PodcastSubscriptionRecord & {
-  user_id: string;
-};
-
-export type PodcastDetailResponse = {
-  podcast: PodcastSummary;
-  subscription: PodcastSubscriptionDetail | null;
-};
-
-function decodePodcastBackfillRecord(
-  raw: unknown,
-  context: string,
-): PodcastBackfillRecord {
-  const value = expectExactRecord(
-    raw,
-    ["id", "state", "processed_count", "added_count"],
-    context,
-  );
-  return {
-    id: expectString(value.id, `${context}.id`),
-    state: decodePodcastBackfillState(value.state, `${context}.state`),
-    processed_count: expectNonnegativeInteger(
-      value.processed_count,
-      `${context}.processed_count`,
-    ),
-    added_count: expectNonnegativeInteger(
-      value.added_count,
-      `${context}.added_count`,
-    ),
-  };
-}
-
-export function decodePodcastDetailResponse(
-  raw: unknown,
-): PodcastDetailResponse {
-  const data = expectExactRecord(
-    expectExactRecord(raw, ["data"], "PodcastDetailResponse").data,
-    ["podcast", "subscription"],
-    "PodcastDetailResponse.data",
-  );
-  const podcast = expectExactRecord(
-    data.podcast,
-    [
-      "id",
-      "provider",
-      "provider_podcast_id",
-      "title",
-      "contributors",
-      "feed_url",
-      "website_url",
-      "image_url",
-      "description",
-      "created_at",
-      "updated_at",
-    ],
-    "PodcastDetailResponse.podcast",
-  );
-  const subscription =
-    data.subscription === null
-      ? null
-      : expectExactRecord(
-          data.subscription,
-          [
-            "user_id",
-            "podcast_id",
-            "default_playback_speed",
-            "pause_shortening_mode",
-            "auto_queue",
-            "sync_status",
-            "sync_error_code",
-            "sync_error_message",
-            "sync_attempts",
-            "sync_started_at",
-            "sync_completed_at",
-            "last_checked_at",
-            "updated_at",
-            "backfill",
-          ],
-          "PodcastDetailResponse.subscription",
-        );
-  return {
-    podcast: {
-      id: expectString(podcast.id, "podcast.id"),
-      provider: expectString(podcast.provider, "podcast.provider"),
-      provider_podcast_id: expectString(
-        podcast.provider_podcast_id,
-        "podcast.provider_podcast_id",
-      ),
-      title: expectString(podcast.title, "podcast.title"),
-      contributors: expectArray(
-        podcast.contributors,
-        (credit, index) =>
-          decodeContributorCredit(credit, index, "Podcast detail contributors"),
-        "podcast.contributors",
-      ),
-      feed_url: expectString(podcast.feed_url, "podcast.feed_url"),
-      website_url: expectNullableString(
-        podcast.website_url,
-        "podcast.website_url",
-      ),
-      image_url: expectNullableString(podcast.image_url, "podcast.image_url"),
-      description: expectNullableString(
-        podcast.description,
-        "podcast.description",
-      ),
-      created_at: expectString(podcast.created_at, "podcast.created_at"),
-      updated_at: expectString(podcast.updated_at, "podcast.updated_at"),
-    },
-    subscription:
-      subscription === null
-        ? null
-        : {
-            user_id: expectString(subscription.user_id, "subscription.user_id"),
-            podcast_id: expectString(
-              subscription.podcast_id,
-              "subscription.podcast_id",
-            ),
-            default_playback_speed: decodePresence(
-              subscription.default_playback_speed,
-              (value) =>
-                parsePlaybackRate(
-                  value,
-                  "subscription.default_playback_speed.value",
-                ),
-            ),
-            pause_shortening_mode: decodePresence(
-              subscription.pause_shortening_mode,
-              (value) =>
-                parsePauseShorteningMode(
-                  value,
-                  "subscription.pause_shortening_mode.value",
-                ),
-            ),
-            auto_queue: expectBoolean(
-              subscription.auto_queue,
-              "subscription.auto_queue",
-            ),
-            sync_status: decodePodcastSyncStatus(
-              subscription.sync_status,
-              "subscription.sync_status",
-            ),
-            sync_error_code: expectNullableString(
-              subscription.sync_error_code,
-              "subscription.sync_error_code",
-            ),
-            sync_error_message: expectNullableString(
-              subscription.sync_error_message,
-              "subscription.sync_error_message",
-            ),
-            sync_attempts: expectNonnegativeInteger(
-              subscription.sync_attempts,
-              "subscription.sync_attempts",
-            ),
-            sync_started_at: expectNullableString(
-              subscription.sync_started_at,
-              "subscription.sync_started_at",
-            ),
-            sync_completed_at: expectNullableString(
-              subscription.sync_completed_at,
-              "subscription.sync_completed_at",
-            ),
-            last_checked_at: expectNullableString(
-              subscription.last_checked_at,
-              "subscription.last_checked_at",
-            ),
-            updated_at: expectString(
-              subscription.updated_at,
-              "subscription.updated_at",
-            ),
-            backfill: decodePodcastBackfillRecord(
-              subscription.backfill,
-              "subscription.backfill",
-            ),
-          },
-  };
-}
-
-type PodcastSubscriptionListItemWire = {
-  podcast_id: string;
-  title: string;
-  contributors: ContributorCredit[];
-  unplayed_count: number;
-  latest_episode_published_at: Presence<string>;
-  default_playback_speed: Presence<number>;
-  pause_shortening_mode: Presence<PauseShorteningMode>;
-  auto_queue: boolean;
-  sync_status: PodcastSyncStatus;
-};
-
-export type PodcastSubscriptionListItem = PodcastSubscriptionListItemWire & {
+export type PodcastSubscriptionListItem = Schema<"PodcastSubscriptionListItemOut"> & {
   unplayedCount: Presence<PositiveCount>;
   publicationDate: Presence<PublicationDate>;
   syncStatus: Presence<PodcastSyncStatus>;
 };
 
-export function decodePodcastSubscriptionListItem(
-  raw: unknown,
-): PodcastSubscriptionListItem {
-  const item = expectExactRecord(
-    raw,
-    [
-      "podcast_id",
-      "title",
-      "contributors",
-      "unplayed_count",
-      "latest_episode_published_at",
-      "default_playback_speed",
-      "pause_shortening_mode",
-      "auto_queue",
-      "sync_status",
-    ],
-    "PodcastSubscriptionListItem",
+export function podcastSubscriptionPageFromWire(
+  page: ApiJson<"/podcasts/subscriptions", "get">["data"],
+): CollectionPage<PodcastSubscriptionListItem> {
+  return decodeApiPayload(
+    page,
+    (body) => ({
+      items: body.items.map<PodcastSubscriptionListItem>((item) => ({
+        ...item,
+        unplayedCount: decodePodcastUnplayedCount(item.unplayed_count),
+        publicationDate:
+          item.latest_episode_published_at.kind === "Present"
+            ? decodeOptionalPublicationDate(
+                item.latest_episode_published_at.value,
+                "podcast latest_episode_published_at",
+              )
+            : { kind: "Absent" },
+        syncStatus: { kind: "Present", value: item.sync_status },
+      })),
+      collectionRevision: decodeCollectionRevision(body.collectionRevision),
+      nextCursor: decodePresence(body.nextCursor, decodeCollectionCursor),
+    }),
+    "Podcast subscriptions",
   );
-  const latestEpisodePublishedAt = decodePresence(
-    item.latest_episode_published_at,
-    (value) => expectString(value, "latest_episode_published_at.value"),
-  );
-  const defaultPlaybackSpeed = decodePresence(
-    item.default_playback_speed,
-    (value) => parsePlaybackRate(value, "default_playback_speed.value"),
-  );
-  const pauseShorteningMode = decodePresence(
-    item.pause_shortening_mode,
-    (value) =>
-      parsePauseShorteningMode(value, "pause_shortening_mode.value"),
-  );
-  const syncStatus = decodePodcastSyncStatus(
-    item.sync_status,
-    "podcast sync_status",
-  );
-  const wire: PodcastSubscriptionListItemWire = {
-    podcast_id: expectString(item.podcast_id, "podcast_id"),
-    title: expectString(item.title, "title"),
-    contributors: expectArray(
-      item.contributors,
-      (credit, index) =>
-        decodeContributorCredit(
-          credit,
-          index,
-          "Podcast subscription contributors",
-        ),
-      "contributors",
-    ),
-    unplayed_count: expectNonnegativeInteger(
-      item.unplayed_count,
-      "unplayed_count",
-    ),
-    latest_episode_published_at: latestEpisodePublishedAt,
-    default_playback_speed: defaultPlaybackSpeed,
-    pause_shortening_mode: pauseShorteningMode,
-    auto_queue: expectBoolean(item.auto_queue, "auto_queue"),
-    sync_status: syncStatus,
-  };
-  return {
-    ...wire,
-    unplayedCount: decodePodcastUnplayedCount(wire.unplayed_count),
-    publicationDate:
-      latestEpisodePublishedAt.kind === "Present"
-        ? decodeOptionalPublicationDate(
-            latestEpisodePublishedAt.value,
-            "podcast latest_episode_published_at",
-          )
-        : { kind: "Absent" },
-    syncStatus: {
-      kind: "Present",
-      value: syncStatus,
-    },
-  };
-}
-
-type PodcastBackfillRetryResult = {
-  podcastId: string;
-  outcome: "Retried" | "NotEligible";
-  backfill: PodcastBackfill;
-};
-
-function decodePodcastBackfill(raw: unknown, context: string): PodcastBackfill {
-  const value = expectExactRecord(
-    raw,
-    ["id", "state", "processedCount", "addedCount"],
-    context,
-  );
-  return {
-    id: expectString(value.id, `${context}.id`),
-    state: decodePodcastBackfillState(value.state, `${context}.state`),
-    processedCount: expectNonnegativeInteger(
-      value.processedCount,
-      `${context}.processedCount`,
-    ),
-    addedCount: expectNonnegativeInteger(
-      value.addedCount,
-      `${context}.addedCount`,
-    ),
-  };
-}
-
-function decodePodcastBackfillRetryResult(
-  raw: unknown,
-): PodcastBackfillRetryResult {
-  const data = expectExactRecord(
-    expectExactRecord(raw, ["data"], "PodcastBackfillRetryResult").data,
-    ["podcastId", "outcome", "backfill"],
-    "PodcastBackfillRetryResult.data",
-  );
-  const outcome = expectString(data.outcome, "outcome");
-  if (outcome !== "Retried" && outcome !== "NotEligible") {
-    throw new TypeError("Podcast backfill Retry outcome is invalid");
-  }
-  return {
-    podcastId: expectString(data.podcastId, "podcastId"),
-    outcome,
-    backfill: decodePodcastBackfill(data.backfill, "backfill"),
-  };
 }
 
 export async function retryPodcastSubscriptionBackfill(
   podcastId: string,
-): Promise<PodcastBackfillRetryResult> {
-  return decodePodcastBackfillRetryResult(
-    await apiFetch<unknown>(
-      `/api/podcasts/subscriptions/${podcastId}/backfill/retry`,
-      {
-        method: "POST",
-        headers: { "Idempotency-Key": crypto.randomUUID() },
-      },
-    ),
-  );
+): Promise<ApiJson<"/podcasts/subscriptions/{podcast_id}/backfill/retry", "post">["data"]> {
+  const response = await apiFetch<
+    ApiJson<"/podcasts/subscriptions/{podcast_id}/backfill/retry", "post">
+  >(`/api/podcasts/subscriptions/${podcastId}/backfill/retry`, {
+    method: "POST",
+    headers: { "Idempotency-Key": crypto.randomUUID() },
+  });
+  return response.data;
 }
 
 export async function unsubscribeFromPodcast(podcastId: string): Promise<void> {

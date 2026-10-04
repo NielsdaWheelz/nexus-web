@@ -201,6 +201,8 @@ class PodcastListItemOut(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
 
 class PodcastDetailOut(BaseModel):
     podcast: PodcastListItemOut
@@ -220,7 +222,7 @@ class PodcastSubscriptionListItemOut(BaseModel):
     auto_queue: bool
     sync_status: PodcastSyncStatus
 
-    model_config = _SNAKE
+    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
 
 class PodcastEpisodeListCapabilitiesOut(BaseModel):

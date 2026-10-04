@@ -13,11 +13,11 @@ import Link from "next/link";
 import { Compass } from "lucide-react";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import {
-  decodeCollectionPage,
   type CollectionCursor,
   type CollectionPage,
   type CollectionRevision,
 } from "@/lib/api/collectionPage";
+import type { ApiJson } from "@/lib/api/wire";
 import type { Presence } from "@/lib/api/presence";
 import { useExhaustivePagination } from "@/lib/api/useExhaustivePagination";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
@@ -38,7 +38,7 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import {
-  decodePodcastSubscriptionListItem,
+  podcastSubscriptionPageFromWire,
   type PodcastSubscriptionListItem,
 } from "./podcastSubscriptions";
 import { subscribePodcastSubscriptionSettingsInstalls } from "@/lib/podcasts/subscriptionSettings";
@@ -388,11 +388,11 @@ export default function PodcastsPaneBody() {
       }
       const params = podcastSubscriptionViewQuery(view);
       params.set("limit", String(PAGE_SIZE));
-      const response = await apiFetch<unknown>(
+      const response = await apiFetch<ApiJson<"/podcasts/subscriptions", "get">>(
         `/api/podcasts/subscriptions?${params.toString()}`,
         { signal },
       );
-      return decodeCollectionPage(response, decodePodcastSubscriptionListItem);
+      return podcastSubscriptionPageFromWire(response.data);
     },
   });
 
@@ -489,11 +489,11 @@ export default function PodcastsPaneBody() {
       params.set("limit", String(PAGE_SIZE));
       params.set("cursor", cursor);
       params.set("collection_revision", String(revision));
-      const response = await apiFetch<unknown>(
+      const response = await apiFetch<ApiJson<"/podcasts/subscriptions", "get">>(
         `/api/podcasts/subscriptions?${params.toString()}`,
         { signal },
       );
-      return decodeCollectionPage(response, decodePodcastSubscriptionListItem);
+      return podcastSubscriptionPageFromWire(response.data);
     },
     [view],
   );

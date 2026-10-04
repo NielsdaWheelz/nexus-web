@@ -9,14 +9,17 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data, ok
-from nexus.schemas.collection_page import parse_collection_query
+from nexus.schemas.collection_page import CollectionPage, parse_collection_query
 from nexus.schemas.podcast import (
+    PodcastBackfillRetryOut,
+    PodcastDetailOut,
     PodcastEpisodeFromDiscoveryRequest,
     PodcastEpisodeSelection,
     PodcastRefreshAcceptedOut,
     PodcastRefreshManualScope,
     PodcastSubscribeOut,
     PodcastSubscribeRequest,
+    PodcastSubscriptionListItemOut,
     PodcastSubscriptionSettingsOut,
     PodcastSubscriptionSettingsPatchRequest,
     PodcastSubscriptionStatusOut,
@@ -74,7 +77,7 @@ def list_subscriptions(
     request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: RepeatableReadDbSession,
-) -> dict:
+) -> Data[CollectionPage[PodcastSubscriptionListItemOut]]:
     """List the viewer's followed shows."""
     parsed = parse_collection_query(
         request.query_params.multi_items(),
@@ -107,7 +110,7 @@ def list_subscriptions(
         filter=filter_value,  # type: ignore[arg-type]
         library_id=library_id,
     )
-    return ok(page, by_alias=True)
+    return Data(data=page)
 
 
 @router.get("/podcasts/subscriptions/{podcast_id}")
@@ -128,13 +131,12 @@ def retry_subscription_backfill(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
     idempotency_key: IdempotencyKey,
-) -> dict:
+) -> Data[PodcastBackfillRetryOut]:
     """Restart only a persistently failed historical backfill."""
-    return ok(
-        podcast_subscription_service.retry_subscription_backfill(
+    return Data(
+        data=podcast_subscription_service.retry_subscription_backfill(
             db, viewer.user_id, podcast_id, idempotency_key=idempotency_key
-        ),
-        by_alias=True,
+        )
     )
 
 
@@ -187,10 +189,10 @@ def get_podcast_detail(
     podcast_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
-) -> dict:
+) -> Data[PodcastDetailOut]:
     """Get podcast detail, even if the viewer is not actively subscribed."""
-    return ok(
-        podcast_subscriptions_query_service.get_podcast_detail_for_viewer(
+    return Data(
+        data=podcast_subscriptions_query_service.get_podcast_detail_for_viewer(
             db, viewer.user_id, podcast_id
         )
     )

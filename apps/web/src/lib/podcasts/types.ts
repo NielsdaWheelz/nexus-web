@@ -1,41 +1,10 @@
 import type { Schema } from "@/lib/api/wire";
-import { expectOneOf } from "@/lib/validation";
 
-const PODCAST_SYNC_STATUSES = [
-  "Pending",
-  "Running",
-  "Complete",
-  "SourceLimited",
-  "Failed",
-] as const;
+export type PodcastSyncStatus = Schema<"PodcastSubscriptionStatusOut">["sync_status"];
 
-const PODCAST_BACKFILL_STATES = [
-  "Pending",
-  "Running",
-  "Complete",
-  "SourceLimited",
-  "Failed",
-] as const;
-
-export type PodcastSyncStatus = (typeof PODCAST_SYNC_STATUSES)[number];
-
-export type PodcastBackfillState = (typeof PODCAST_BACKFILL_STATES)[number];
+export type PodcastBackfillState = Schema<"PodcastBackfillOut">["state"];
 
 export type PodcastRefreshScope =
   | Schema<"PodcastRefreshPodcastScope">
   | Schema<"PodcastRefreshPodcastsScope">
   | Schema<"PodcastRefreshLibraryScope">;
-
-export function decodePodcastSyncStatus(
-  raw: unknown,
-  name: string,
-): PodcastSyncStatus {
-  return expectOneOf(raw, PODCAST_SYNC_STATUSES, name);
-}
-
-export function decodePodcastBackfillState(
-  raw: unknown,
-  name: string,
-): PodcastBackfillState {
-  return expectOneOf(raw, PODCAST_BACKFILL_STATES, name);
-}

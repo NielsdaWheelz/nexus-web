@@ -29,6 +29,8 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
+- [open] media upload retry · 2026-10-04 source audit · the fresh and memo retry paths repeat the same capability generation/expiry in a private result: [ticket](tickets/upload-retry-repeats-capability-result.md).
+- [open] ui field controls · 2026-10-04 source audit · input, textarea and select repeat appearance rules; qualify one shared class against caller overrides and focus behavior: [ticket](tickets/ui-field-controls-repeat-appearance-rules.md).
 - [open] epub / navigation · 2026-10-04 source review · a publisher href-based section id may retire when its point becomes note content; qualify the unobserved saved-location case before the rearnote alias release: [ticket](tickets/epub-publisher-href-loc-retirement-on-note-promotion.md).
 
 
@@ -340,3 +342,5 @@ unexpected timeouts. See
 - [open] native llm tool storage · 2026-10-04 source audit · nullable replay pointer has no current application reader or writer; qualify retained data before dropping it: [ticket](tickets/llm-tool-position-unused-replay-pointer.md).
 - [deferred] resource activation / native output · 2026-10-04 chat read review · shared output validates href relation but not canonical resource_ref; retain browser leaf validation until the native owner does: [ticket](tickets/resource-activation-output-canonical-ref-contract.md).
 - [deferred] chat trust tool / native output · 2026-10-04 chat read review · counts and machine-authorship identity correlations remain in the browser decoder, not the native output model: [ticket](tickets/trust-tool-output-correlation-contract.md).
+- [open] lectern / player title · 2026-10-04 source audit · python code-point truncation can exceed the browser's utf-16 length bound for astral titles; no runtime failure observed: [ticket](tickets/lectern-player-title-length-units-disagree.md).
+- [deferred] consumption / result projection · 2026-10-04 source audit · a qualifying next item is projected once alone and again in the full lectern snapshot: [ticket](tickets/consumption-result-builds-next-item-twice.md).

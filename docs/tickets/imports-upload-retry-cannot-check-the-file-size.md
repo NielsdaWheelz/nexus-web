@@ -18,7 +18,10 @@ the size. A same-named, same-kind file of a different size now reaches the
 server, which refuses it with `E_UPLOAD_INTENT_MISMATCH`
 (`uploadSessionOutcome("Retry", …) -> FileMismatch`) and the reader is told
 "That file doesn't match this import. Choose the same file, or start a new
-import." — one round trip later than before, with the bytes uploaded first.
+import." the current client awaits `/retry` before `putAndConfirm`
+(`ingestionClient.ts:572-605`), and the server checks the expected size before
+advancing or signing (`media_upload_sessions.py:471`). the cost is one rejected
+admission request; no upload bytes are sent for that mismatch.
 
 ## Prerequisites
 
