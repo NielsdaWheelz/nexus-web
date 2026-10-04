@@ -94,18 +94,6 @@ type CommandOutcome =
   | { kind: "Rejected" | "Unacknowledged"; feedback: FeedbackContent }
   | { kind: "Defect"; error: unknown };
 
-function clearCanceledPageLoads(snapshot: ReadySnapshot): ReadySnapshot {
-  return {
-    ...snapshot,
-    members: snapshot.members.pageLoad.kind === "Loading"
-      ? { ...snapshot.members, pageLoad: { kind: "Idle" } }
-      : snapshot.members,
-    pendingInvites: snapshot.pendingInvites.pageLoad.kind === "Loading"
-      ? { ...snapshot.pendingInvites, pageLoad: { kind: "Idle" } }
-      : snapshot.pendingInvites,
-  };
-}
-
 export function libraryGovernanceErrorMessage(
   error: unknown,
   title: string,
@@ -225,17 +213,16 @@ export function useLibraryMembers({
   const wasEligibleRef = useRef(false);
   const authorityLossAnnouncedRef = useRef(false);
   const previousCapabilityRef = useRef(library?.canManageMembers ?? null);
-  stateRef.current = state;
-
   const commit = useCallback((reduce: (current: LibraryGovernanceState) => LibraryGovernanceState) => {
     if (!mountedRef.current) return;
-    setState((current) => {
-      if (!mountedRef.current) return current;
-      const next = reduce(current);
-      stateRef.current = next;
-      return next;
-    });
+    const next = reduce(stateRef.current);
+    stateRef.current = next;
+    setState(next);
   }, []);
+
+  const clearGovernance = useCallback(() => {
+    commit((current) => ({ ...initialLibraryGovernanceState(), command: current.command }));
+  }, [commit]);
 
   const cancelReads = useCallback(() => {
     readAbortRef.current?.abort();
@@ -268,8 +255,8 @@ export function useLibraryMembers({
         "Member-management access changed. Members is no longer available.",
       );
     }
-    commit(() => initialLibraryGovernanceState());
-  }, [announceObservedAuthorityLoss, cancelReads, commit, library]);
+    clearGovernance();
+  }, [announceObservedAuthorityLoss, cancelReads, clearGovernance, library]);
 
   useEffect(() => {
     if (library?.canManageMembers) authorityLossAnnouncedRef.current = false;
@@ -387,88 +374,105 @@ export function useLibraryMembers({
     }
   }, [adoptLibrary, isCurrentRead, libraryId, loadGovernance]);
 
-  const publishObservation = useCallback((
-    observation: GovernanceObservation,
-    afterReady?: (current: LibraryGovernanceState) => LibraryGovernanceState,
-  ): GovernanceObservation["kind"] => {
-    if (!mountedRef.current || observation.kind === "Stale") return "Stale";
-    if (observation.kind === "NotFound") {
-      announceObservedAuthorityLoss("Library access changed. This Library is no longer available.");
-      adoptLibrary(null);
-      commit(() => initialLibraryGovernanceState());
-      return "NotFound";
-    }
-    if (observation.kind === "AuthorityLost") {
-      announceObservedAuthorityLoss("Member-management access changed. Members is no longer available.");
-      commit(() => initialLibraryGovernanceState());
-      return "AuthorityLost";
-    }
-    commit((current) => {
-      const next: LibraryGovernanceState = {
-        ...current,
-        snapshot: {
-          kind: "Ready",
-          members: observation.pages.members,
-          pendingInvites: observation.pages.pendingInvites,
-          refreshFeedback: null,
-          reconciliation: { kind: "Confirmed" },
-        },
-        command: { kind: "Idle" },
-      };
-      return afterReady ? afterReady(next) : next;
-    });
-    return "Ready";
-  }, [adoptLibrary, announceObservedAuthorityLoss, commit]);
-
-  const ensureFresh = useCallback(async () => {
-    if (!mountedRef.current) return;
-    const captured = stateRef.current.snapshot;
+  const ensureFresh = useCallback(async (outcome?: CommandOutcome) => {
+    const current = stateRef.current;
+    if (!mountedRef.current || (!outcome && (
+      current.command.kind === "Running" ||
+      current.snapshot.kind === "Loading" ||
+      (current.snapshot.kind === "Ready" && current.snapshot.reconciliation.kind === "Reconciling")
+    ))) return;
+    const captured = current.snapshot;
     cancelReads();
-    const before = captured.kind === "Ready"
-      ? clearCanceledPageLoads(captured)
+    const before: LibraryGovernanceSnapshot = captured.kind === "Ready"
+      ? {
+          ...captured,
+          members: captured.members.pageLoad.kind === "Loading"
+            ? { ...captured.members, pageLoad: { kind: "Idle" } }
+            : captured.members,
+          pendingInvites: captured.pendingInvites.pageLoad.kind === "Loading"
+            ? { ...captured.pendingInvites, pageLoad: { kind: "Idle" } }
+            : captured.pendingInvites,
+        }
       : captured;
     const controller = new AbortController();
     readAbortRef.current = controller;
-    commit((current) => ({
-      ...current,
+    commit((latest) => ({
+      ...latest,
       snapshot: before.kind === "Ready"
         ? { ...before, refreshFeedback: null, reconciliation: { kind: "Reconciling" } }
         : { kind: "Loading" },
     }));
+    const unresolved: FeedbackContent = {
+      tone: "Warning",
+      title: outcome?.kind === "Rejected"
+        ? "Library authority could not be revalidated."
+        : "The outcome is not yet confirmed.",
+      message: "Member changes stay disabled until Nexus reconciles authoritative Library state.",
+    };
+    const publishFailure = (feedback: FeedbackContent) => {
+      commit((latest) => ({
+        ...latest,
+        snapshot: outcome
+          ? latest.snapshot.kind === "Ready"
+            ? { ...latest.snapshot, refreshFeedback: feedback, reconciliation: { kind: "Unconfirmed" } }
+            : { kind: "Failed", feedback }
+          : before.kind === "Ready"
+            ? { ...before, refreshFeedback: feedback }
+            : { kind: "Failed", feedback },
+      }));
+    };
+    let observedNoAuthority = false;
     try {
       const observation = await observe(
         controller,
         before.kind === "Ready" ? before.members.rows.length : 0,
         before.kind === "Ready" ? before.pendingInvites.rows.length : 0,
       );
-      if (!isCurrentRead(controller)) return;
-      publishObservation(observation, (next) =>
-        before.kind === "Ready" && before.reconciliation.kind === "Unconfirmed"
-          ? {
-              ...next,
-              draft: { ...next.draft, selectedUser: null, confirmation: null },
-            }
-          : next,
-      );
+      if (!isCurrentRead(controller) || observation.kind === "Stale") return;
+      if (observation.kind === "NotFound") {
+        announceObservedAuthorityLoss("Library access changed. This Library is no longer available.");
+        adoptLibrary(null);
+        clearGovernance();
+        observedNoAuthority = true;
+      } else if (observation.kind === "AuthorityLost") {
+        announceObservedAuthorityLoss("Member-management access changed. Members is no longer available.");
+        clearGovernance();
+        observedNoAuthority = true;
+      } else {
+        commit((latest) => ({
+          ...latest,
+          snapshot: {
+            kind: "Ready",
+            members: observation.pages.members,
+            pendingInvites: observation.pages.pendingInvites,
+            refreshFeedback: null,
+            reconciliation: { kind: "Confirmed" },
+          },
+          draft: !outcome && before.kind === "Ready" && before.reconciliation.kind === "Unconfirmed"
+            ? { ...latest.draft, selectedUser: null, confirmation: null }
+            : latest.draft,
+        }));
+      }
     } catch (error) {
       if (!isCurrentRead(controller) || handleUnauthenticatedApiError(error)) return;
       if (isLibraryContractDefect(error)) {
         setDefectState({ error });
         return;
       }
-      const failure = classifyGovernanceFailure(error, "Library members could not be loaded.");
+      const failure = classifyGovernanceFailure(error, outcome
+        ? "Library governance could not be reconciled."
+        : "Library members could not be loaded.");
       if (failure.kind === "Defect") {
         setDefectState({ error: failure.error });
         return;
       }
-      commit((current) => ({
-        ...current,
-        snapshot: before.kind === "Ready"
-          ? { ...before, refreshFeedback: failure.feedback }
-          : { kind: "Failed", feedback: failure.feedback },
-      }));
+      publishFailure(outcome ? unresolved : failure.feedback);
+    } finally {
+      if (outcome && mountedRef.current && !observedNoAuthority && !isCurrentRead(controller)) {
+        publishFailure(unresolved);
+      }
     }
-  }, [cancelReads, commit, isCurrentRead, observe, publishObservation]);
+  }, [adoptLibrary, announceObservedAuthorityLoss, cancelReads, clearGovernance, commit, isCurrentRead, observe]);
 
   useEffect(() => {
     const eligible = membersActive && library?.canManageMembers === true;
@@ -538,81 +542,61 @@ export function useLibraryMembers({
     successMessage: string,
     subjectHandle?: string,
   ) => {
-    const current = stateRef.current;
-    if (!mountedRef.current || !libraryGovernanceMutationsEnabled(current)) return;
-    const before = current.snapshot;
-    if (before.kind !== "Ready") return;
+    if (!mountedRef.current || !libraryGovernanceMutationsEnabled(stateRef.current)) return;
     commit((latest) => ({ ...latest, command: { kind: "Running", operation: { kind } } }));
-
-    let outcome: CommandOutcome = { kind: "Acknowledged" };
     try {
-      await execute();
-    } catch (error) {
+      let outcome: CommandOutcome = { kind: "Acknowledged" };
+      try {
+        await execute();
+      } catch (error) {
+        if (!mountedRef.current || handleUnauthenticatedApiError(error)) return;
+        if (isLibraryContractDefect(error)) {
+          outcome = { kind: "Defect", error };
+        } else {
+          const failure = classifyGovernanceFailure(error, failureTitle);
+          if (failure.kind === "Defect") {
+            outcome = { kind: "Defect", error: failure.error };
+          } else if (isDefinitiveCommandRejection(error)) {
+            outcome = { kind: "Rejected", feedback: failure.feedback };
+          } else {
+            outcome = {
+              kind: "Unacknowledged",
+              feedback: {
+                ...failure.feedback,
+                tone: "Warning",
+                title: "The request was not acknowledged.",
+              },
+            };
+          }
+        }
+      }
       if (!mountedRef.current) return;
-      if (handleUnauthenticatedApiError(error)) {
-        commit((latest) => ({ ...latest, command: { kind: "Idle" } }));
+      await ensureFresh(outcome);
+      if (!mountedRef.current) return;
+      if (outcome.kind === "Defect") {
+        setDefectState({ error: outcome.error });
         return;
       }
-      if (isLibraryContractDefect(error)) {
-        outcome = { kind: "Defect", error };
+      const snapshot = stateRef.current.snapshot;
+      if (snapshot.kind !== "Ready" || snapshot.reconciliation.kind !== "Confirmed") return;
+      if (outcome.kind === "Acknowledged") {
+        commit((latest) => ({
+          ...latest,
+          draft: {
+            ...latest.draft,
+            query: kind === "Invite" ? "" : latest.draft.query,
+            selectedUser: kind === "Invite" ? null : latest.draft.selectedUser,
+            confirmation: null,
+          },
+        }));
+        setAnnouncement("");
+        requestAnimationFrame(() => {
+          if (mountedRef.current) setAnnouncement(successMessage);
+        });
       } else {
-        const failure = classifyGovernanceFailure(error, failureTitle);
-        if (failure.kind === "Defect") {
-          outcome = { kind: "Defect", error: failure.error };
-        } else if (isDefinitiveCommandRejection(error)) {
-          outcome = { kind: "Rejected", feedback: failure.feedback };
-        } else {
-          outcome = {
-            kind: "Unacknowledged",
-            feedback: {
-              ...failure.feedback,
-              tone: "Warning",
-              title: "The request was not acknowledged.",
-            },
-          };
-        }
-      }
-    }
-    if (!mountedRef.current) return;
-    cancelReads();
-    const controller = new AbortController();
-    readAbortRef.current = controller;
-    commit((latest) =>
-      latest.snapshot.kind === "Ready"
-        ? {
-            ...latest,
-            snapshot: {
-              ...clearCanceledPageLoads(latest.snapshot),
-              refreshFeedback: null,
-              reconciliation: { kind: "Reconciling" },
-            },
-          }
-        : latest,
-    );
-    try {
-      const observation = await observe(
-        controller, before.members.rows.length, before.pendingInvites.rows.length,
-      );
-      if (!isCurrentRead(controller)) return;
-      const published = publishObservation(observation, (next) => {
-        if (next.snapshot.kind !== "Ready") return next;
-        if (outcome.kind === "Acknowledged") {
-          return {
-            ...next,
-            draft: {
-              ...next.draft,
-              query: kind === "Invite" ? "" : next.draft.query,
-              selectedUser: kind === "Invite" ? null : next.draft.selectedUser,
-              confirmation: null,
-            },
-          };
-        }
-        if (outcome.kind === "Defect") return next;
         let feedback = outcome.feedback;
         if (kind === "Role" && outcome.kind === "Unacknowledged") {
-          const observed = next.snapshot.members.rows.find((member) =>
-            member.userHandle === subjectHandle,
-          );
+          const observed = snapshot.members.rows.find((member) => member.userHandle === subjectHandle);
           feedback = {
             ...feedback,
             title: "The role change was not acknowledged.",
@@ -621,53 +605,14 @@ export function useLibraryMembers({
               : "Check the current Library roster before trying again.",
           };
         }
-        return { ...next, snapshot: { ...next.snapshot, refreshFeedback: feedback } };
-      });
-      if (published !== "Ready") {
-        if (outcome.kind === "Defect") setDefectState({ error: outcome.error });
-        return;
+        commit((latest) => latest.snapshot.kind === "Ready"
+          ? { ...latest, snapshot: { ...latest.snapshot, refreshFeedback: feedback } }
+          : latest);
       }
-      if (outcome.kind === "Defect") {
-        setDefectState({ error: outcome.error });
-      } else if (outcome.kind === "Acknowledged") {
-        setAnnouncement("");
-        requestAnimationFrame(() => {
-          if (mountedRef.current) setAnnouncement(successMessage);
-        });
-      }
-    } catch (error) {
-      if (!isCurrentRead(controller) || handleUnauthenticatedApiError(error)) return;
-      if (isLibraryContractDefect(error)) {
-        setDefectState({ error });
-        return;
-      }
-      const failure = classifyGovernanceFailure(error, "Library governance could not be reconciled.");
-      if (failure.kind === "Defect") {
-        setDefectState({ error: failure.error });
-        return;
-      }
-      commit((latest) =>
-        latest.snapshot.kind === "Ready"
-          ? {
-              ...latest,
-              command: { kind: "Idle" },
-              snapshot: {
-                ...latest.snapshot,
-                refreshFeedback: {
-                  tone: "Warning",
-                  title: outcome.kind === "Rejected"
-                    ? "Library authority could not be revalidated."
-                    : "The outcome is not yet confirmed.",
-                  message: "Member changes stay disabled until Nexus reconciles authoritative Library state.",
-                },
-                reconciliation: { kind: "Unconfirmed" },
-              },
-            }
-          : latest,
-      );
-      if (outcome.kind === "Defect") setDefectState({ error: outcome.error });
+    } finally {
+      commit((latest) => ({ ...latest, command: { kind: "Idle" } }));
     }
-  }, [cancelReads, commit, isCurrentRead, observe, publishObservation]);
+  }, [commit, ensureFresh]);
 
   const loadMorePage = useCallback(async <T,>({
     kind,
@@ -687,7 +632,8 @@ export function useLibraryMembers({
     errorTitle: string;
   }) => {
     const current = stateRef.current;
-    if (!mountedRef.current || current.snapshot.kind !== "Ready") return;
+    if (!mountedRef.current || current.snapshot.kind !== "Ready" ||
+      current.snapshot.reconciliation.kind !== "Confirmed") return;
     const page = pageOf(current.snapshot);
     if (page.nextCursor.kind !== "Present" || page.pageLoad.kind === "Loading") return;
     const requestedCursor = page.nextCursor;
@@ -832,7 +778,7 @@ export function useLibraryMembers({
     draft: state.draft,
     announcement,
     mutationsDisabled: !libraryGovernanceMutationsEnabled(state),
-    ensureFresh,
+    ensureFresh: () => ensureFresh(),
     setQuery,
     selectUser,
     setInviteRole,
@@ -865,6 +811,6 @@ export function useLibraryMembers({
     ),
     loadMoreMembers,
     loadMoreInvites,
-    retryReconciliation: ensureFresh,
+    retryReconciliation: () => ensureFresh(),
   };
 }

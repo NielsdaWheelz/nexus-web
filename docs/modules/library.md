@@ -85,6 +85,10 @@ backed by `LibraryEntryEditor`; it never appears inside Share. Library entries
 are organization references rather than access-grant provenance. See
 [resource-sharing.md](resource-sharing.md).
 
+the members controller owns one command slot through authoritative settlement;
+refreshes cannot reopen admission while a sent command remains pending. see
+[library command settlement](library-command-settlement.md).
+
 The admin member and pending-invitation reads return exact
 `{data, page: {nextCursor: Presence<string>}}` envelopes. Members traverse
 immutable `user_id ASC`; invitations traverse the indexed

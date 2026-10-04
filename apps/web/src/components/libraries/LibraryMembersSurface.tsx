@@ -366,18 +366,19 @@ export default function LibraryMembersSurface({
             <FeedbackNotice
               content={pageFeedback(members.pageLoad)!}
               announcement="Assertive"
-              actions={[
+              actions={reconciliation.kind === "Confirmed" ? [
                 {
                   label: "Retry",
                   onClick: () => void controller.loadMoreMembers(),
                 },
-              ]}
+              ] : undefined}
             />
           </div>
         ) : (
           <LoadMoreFooter
             hasMore={members.nextCursor.kind === "Present"}
             loading={members.pageLoad.kind === "Loading"}
+            disabled={reconciliation.kind !== "Confirmed"}
             onLoadMore={() => void controller.loadMoreMembers()}
             label="Load more members"
           />
@@ -456,18 +457,19 @@ export default function LibraryMembersSurface({
             <FeedbackNotice
               content={pageFeedback(pendingInvites.pageLoad)!}
               announcement="Assertive"
-              actions={[
+              actions={reconciliation.kind === "Confirmed" ? [
                 {
                   label: "Retry",
                   onClick: () => void controller.loadMoreInvites(),
                 },
-              ]}
+              ] : undefined}
             />
           </div>
         ) : (
           <LoadMoreFooter
             hasMore={pendingInvites.nextCursor.kind === "Present"}
             loading={pendingInvites.pageLoad.kind === "Loading"}
+            disabled={reconciliation.kind !== "Confirmed"}
             onLoadMore={() => void controller.loadMoreInvites()}
             label="Load more invitations"
           />
