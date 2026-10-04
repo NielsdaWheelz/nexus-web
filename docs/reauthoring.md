@@ -6,6 +6,8 @@ status: active · owner decision 2026-09-21 · this file is the plan of record; 
 
 the app should be on the order of 100k lines, not 400k. main `a4cb9cf510` (2026-09-21) was 544.6k text lines counted as `git ls-files | xargs wc -l` over python, apps, migrations, deploy, docs, scripts and configs, excluding binaries. two slop sweeps (2026-09-17..21, PRs #275–#337, −345k) removed what was dead or duplicated; what remains is live code at roughly a quarter of the density it needs, plus three chunks that are not product code at all.
 
+current baseline (2026-10-04, immutable main `bbfd1df4`): 429,763 physical lines of tracked text, including generated source, docs, migrations, deploy and tooling. the authored product subset is 353,881 physical lines (323,196 nonblank): web, python, android and node ingest, excluding five explicit generated source files, vendor, tests, locks, binary assets, docs, migrations, deploy and tooling. the current owner target is one fifth of this authored baseline, about 70,776 physical lines; one fifth of all tracked text would be about 85,953, a separate measure. preserve working features while simplifying their implementation. historical starts, targets and feature decisions below remain historical until a row is remeasured; they are not current totals.
+
 ## method
 
 three phases, in this order, because each makes the next cheaper:
