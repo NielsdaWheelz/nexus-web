@@ -1,9 +1,75 @@
 # metadata enrichment verification
 
-status: local metadata implementation, native integration and genuine research GREEN.
-disposable proofs deleted; post-deletion static gate PASS. historical production
-release/repair BLOCKED. observed 2026-10-03 utc. no fresh production census,
-deployment or saved-production correction is claimed.
+status: local metadata implementation, native integration and genuine research GREEN
+at `bcdaf51de`; reset/release preparation GREEN at `617baf70e` under its original
+graph. current-main composition, new-chain qualification and cleanup/static gate
+pending. historical production release/repair NOT_RUN.
+observed 2026-10-03/04 utc. no deployment or saved-production correction is claimed.
+
+## release preparation
+
+2026-10-04 integration update: current main `8c9b7d332` occupies resource `0253`
+and atlas `0254`. agreed final chain:
+`0252→resource 0253→atlas 0254→native 0255→metadata 0256→effects 0257`.
+native owner composes current main and its migration; metadata root owns its
+two renames and a fresh complete restored-copy proof. old receipts below retain
+their actual revisions. temporary resources remain held for that qualification;
+no original uncertain database will be stamped or migrated under reallocated IDs.
+
+metadata root now owns application reset/release preparation. fresh read-only
+production census, 2026-10-03 22:56:47 UTC: source `7dc68929b`, revision `0241`,
+52 uncertain media generations and two uncertain chat generations; 56 retained
+dead metadata jobs. original records and hashes are preserved privately in
+`/private/tmp/nexus-metadata-release-uy48cjy2/`. the exported-snapshot archive and
+actual local restore are preliminary live evidence, not a quiesced release backup.
+canonical disposition selects 69 jobs and one orphan parent. the broader census
+includes an unrelated succeeded synapse job with empty coordination/no admission;
+it is excluded and retained unchanged. the controlled owner fixture selects
+70 jobs; its authenticated stale-job loop also checks the unrelated original,
+71 original job IDs in total. these are distinct scopes, not additive counts.
+the executable archival disposition, independent effect receipts and complete
+starting-revision migration/undo/stale-replay qualification pass on restored
+copies at `617baf70e`, original head `0256`. its used-`0255` proof is historical;
+the final reallocated chain must be qualified afresh.
+
+| preparation slice | observation |
+|---|---|
+| live backup/restore | GREEN: actual read-only exported-snapshot archive, 1,459,971,923 bytes, sha256 `74eb092890dcfa6c809bea4e4ff187eb0a34381eb0681345d377aa9b594f149b`; exact original rows/hashes after actual restore |
+| original owner effects | GREEN: installed original `7dc68929b` owner creates/reverts real note writes without model calls; original `0246` refuses and rolls back rather than qualifying preservation |
+| full reset | GREEN: actual owner-populated `0241` backup/restore, complete transaction through `0256`, two original completed-write receipts/authorships/results/principals/stamps preserved |
+| refusal/rollback | GREEN: seven actual transaction refusals, including unresolved write and later `0249` rejection; entire starting schema/rows/audit/receipts restored |
+| api/undo/replay | GREEN: authenticated account inspection and real undo once/repeat; retired jobs, metadata publication, canonical callback and authentic old-browser request fenced before catalog/model execution |
+| runtime writes | GREEN: ten postgres/tool-owner cases, including failure/empty success, principal isolation, projection rollback and actual SIGKILL after note reversal before stamps/commit |
+| existing `0255` | GREEN: actual original uncertain database backup restored separately; `0256` preserves every original row and invents no receipt, terminal or seal |
+| aligned release | GREEN: eleven actual shell forwarding cases and ten actual controller cases with controlled remote/backup leaves; stale receipt, incomplete authority, drift and unclean shutdown refuse |
+| installed artifacts | GREEN: frozen noneditable `617baf70e`; all 467 nexus / 46 provider / 17 kernel / 18 tools py/json files match committed sources and exact pins |
+
+private receipts: `metadata-restored-cutover.receipt.json`,
+`metadata-effect-owner-undo-green.json`, `metadata-effect-forward-green.json`,
+`metadata-release-archive-green.json`,
+`metadata-snapshot-forwarding-root-final-green.json`, and
+`installed-source-617baf.receipt.json`. the complete controlled fixture adds one
+owner, parent and job to the actual production restore; its counts are not a
+new production census. no production or model call accompanied qualification.
+
+limits: the controlled backup location is local, not R2. the original fixture
+claim had expired before archival; no live-lease revocation is inferred. no
+authentic old process-local token survives, so exact token replay is NOT_RUN;
+retired routes and current canonical missing-owner refusal are separately proved.
+the note undo interruption proof does not qualify every resource or background
+workflow. unrelated migration losses were inventoried, not authorized or repaired.
+production still needs the fresh drained R2 backup, actual restore of its exact
+bytes, reviewed exact-id disposition and separately authorized aligned release.
+
+local embedding configuration is repaired: only root `.env`'s `OPENAI_API_KEY`
+changed, using the qualified existing backend source. ordinary `Settings` reads
+that credential; the existing embedding primitive returns a finite 256-dimensional
+vector. unrelated required auth/database bindings came from the existing deploy
+env files for settings validation; no auth/database connection was made.
+receipt `local-embedding-configuration.receipt.json`, sha256
+`8ebed54ac38c16332ca3a7f7af3c41685bd68df8a5e6756f76dc6446cbd8f219`.
+the previous value is retained privately for rollback. both original uncertain
+attempts and databases remain blocked and untouched; no generation was submitted.
 
 ## installed artifacts
 
@@ -125,8 +191,8 @@ the agreed contract prefers reliable primary or bibliographic sources; it impose
 no primary-only trace, citation list or per-field evidence protocol.
 
 actual embeddings were qualified using the existing private deployment source.
-the different local root `.env` key remains rejected and unchanged, tracked in the
-[credential ticket](tickets/metadata-live-research-embedding-credential-rejected.md).
+the different local root `.env` key was rejected during that cohort; it has since
+been repaired and verified as recorded above.
 prior missing-key job `086c70f7-24f4-43c0-b0b4-85454ba3f5a7` and rejected-key job
 `d8ffbb88-63ee-4ae4-b794-e35ed26114e9` remain unpublished/`Uncertain` at their
 recorded checkpoints, without a seal or redispatch. positive jobs are distinct.
@@ -135,16 +201,17 @@ separate generic capability proof, not these eight-field domain observations.
 
 ## release and cleanup
 
-historical production `0241→0246` remains BLOCKED: fresh exact census, owned
-uncertainty disposition, verified restore/effect/undo/stale-replay proof, aligned
-snapshot forwarding and separately authorized deployment are unexecuted.
+historical production `0241→0256` remains NOT_RUN. fresh preliminary census,
+executable disposition, actual restored-copy effect/undo/stale-replay proof and
+aligned snapshot forwarding are qualified above. the final drained backup,
+actual restore, exact reviewed input and separately authorized deployment remain.
 targeted saved lewis enrichment and production epub repair remain behind that
 [plan section 9](metadata-enrichment-plan.md#9-hard-cutover-and-verification) gate.
 the `0252` fixture qualifies none of it; the whole plan is not complete.
 
-host-use-finished acknowledgement delivered; owned stacks stopped. disposable
-proofs and synthetic fixture databases are deleted; no test dependencies or
-product seams survive. the two original real-uncertain databases remain untouched
+original metadata cohort host-use-finished acknowledgement delivered; its owned
+stacks stopped. its disposable proofs and synthetic fixture databases are deleted;
+no test dependencies or product seams survive. the two original real-uncertain databases remain untouched
 in the stopped owned postgres container, with private backups and stock traces.
 those backups are recovery records, not a production restore qualification.
 `metadata-proof-cleanup.receipt.json` records cleanup;

@@ -433,7 +433,32 @@ reset/ledger owner owns the finite archival disposition and `0246` integration;
 the release owner owns drain, verified backup and separately authorized aligned
 deployment. metadata/media owns publication and retained metadata-job disposition.
 the kernel's `docs/issues/historical-uncertainty-release.md` records requirements,
-not executed receipts. no current reset/release owner handoff is identified.
+not executed receipts. metadata root owns application reset/ledger and release
+preparation in `feature/metadata-enrichment`; kernel's 2026-10-03 ownership
+handoff is `686b7ce4c43637e6f503db6f437c30450e4b4006`. no kernel/native writer
+overlaps these paths. production disposition and aligned deployment remain
+separate final actions after the concrete owner proofs and review.
+
+release preparation uses one strict `ReviewedModelCutover` input and the
+existing aligned deployment controller; see
+[the finite operator sequence](../deployment.md#reviewed-model-history-reset).
+the original `0252` → `0254` → `0255` receipts remain historical. current main
+already owns resource `0253` and atlas `0254`; the final canonical chain is
+`0252→resource 0253→atlas 0254→native 0255→metadata 0256→effects 0257`.
+kernel owns native renumbering/current-main composition; metadata owns its two
+renumbered migrations and the complete restored-copy qualification. `0257` adds
+independent completed-write receipts and archival audit storage. the unreleased
+`0246` reset preserves receipts before deleting execution history. all runtime
+inspection and undo use that single receipt contract, including chat writes.
+unfinished writes or missing original principals block migration. a reviewed
+orphan parent acknowledgement grants no recovery, completion or write authority.
+
+trade-offs: receipt storage duplicates the completed facts needed after reset;
+it adds no second execution lifecycle. the restore attestation is an explicit
+reviewer statement, not proof inferred from its hash. a preliminary live archive
+proves the local repair; production still requires a fresh drained backup and
+actual restore of those exact bytes. release now uses the existing locked
+backend environment rather than a second schema validator in system python.
 
 1. inventory current metadata jobs/memos, unresolved generations, legacy metadata
    errors and manual-author pins. freeze metadata admission and quiesce writers
@@ -448,8 +473,9 @@ not executed receipts. no current reset/release owner handoff is identified.
    references before deleting rows; preserve media facts and generation evidence.
    the metadata cutover does not delete generation history. if the actual starting
    revision crosses `0246`, preserve its discarded originals in the verified
-   pre-disposition archive and repair the
-   [effect/undo evidence gap](tickets/model-reset-deletes-background-undo-evidence.md).
+   pre-disposition archive. preserve completed-write identity, original principal,
+   result, created refs and reverted state in independent effect receipts before
+   deleting execution history.
    copied authorship and the `0252` → `0254` → `0255` fixture do not prove
    `0241` → `0246` undo. actually restore the backup, then prove disposition,
    the entire chain from the actual starting revision, real effect/undo and
@@ -463,14 +489,14 @@ not executed receipts. no current reset/release owner handoff is identified.
    fallback or parallel metadata path. apply guarded saved-epub repair; inspect
    skipped items. rollback incompatible durable schemas using the verified
    release backup, not an older binary against new memos.
-   the existing aligned entrypoint must
-   [forward the reviewed snapshot](tickets/deploy-model-cutover-snapshot-not-forwarded.md)
+   the existing aligned entrypoint must forward the exact reviewed snapshot
    to its controller. release remains blocked until the application disposition,
    restore/effect/undo proofs and separate release authorization exist.
-   after qualified adapter integration, compose `0252` → native `0254` → metadata
-   `0255`: rename/reparent the undeployed standalone metadata `0253`, retaining
-   its behavior. rebuild disposable `0253` databases; never stamp or alias them
-   into this chain. preserve historical receipts under their actual revision.
+   compose the canonical chain above after qualified adapter integration.
+   rename/reparent undeployed native/metadata/effect migrations, retaining their
+   behavior. rebuild disposable databases under the actual final graph; never
+   stamp or alias old revision numbers into this chain. preserve historical
+   receipts and original uncertain databases under their actual revisions.
    prove historical effect/principal preservation and whole-chain rollback when
    native's guard passes but metadata's later guard rejects unresolved work.
    verify installed adapter/pins and provider-sealed local recovery. its

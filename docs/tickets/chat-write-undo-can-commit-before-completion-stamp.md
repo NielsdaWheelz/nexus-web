@@ -1,6 +1,17 @@
 # chat write undo can commit before its completion stamp
 
-status: open, transaction fix staged; interruption proof pending · origin: 2026-09-25 latest-model migration review · area: chat and generation write undo
+status: open; broader interruption proof pending · origin: 2026-09-25 latest-model migration review · area: chat and generation write undo
+
+2026-10-03: `617baf70e` commits the single completed-write receipt/undo contract
+used by chat and account effects. ten actual postgres/tool-owner cases pass,
+including SIGKILL after note reversal before stamps/commit, fresh-session rollback,
+retry, repeat and already-absent-target handling. the restored `0241→0256` proof
+also inspects and undoes original writes through the authenticated account api.
+receipts: `metadata-effect-owner-undo-green.json` and
+`metadata-restored-cutover.receipt.json` in
+`/private/tmp/nexus-metadata-release-uy48cjy2/`. these do not prove each resource
+reversal or background workflow interruption; this ticket stays open for that
+remaining scope.
 
 ## problem and evidence
 
