@@ -1,49 +1,26 @@
 /**
- * Pure Lectern + consumption wire contract (spec
- * `docs/cutovers/lectern-player-lifecycle-hard-cutover.md` §4/§5).
- *
- * This is the ONE isomorphic owner of Lectern wire types and strict decoders.
- * It imports no HTTP transport, browser-only module, or server-only module, so
- * server seeding and client fetches decode the same contract without crossing
- * runtime boundaries. A shape violation is a code/schema-mismatch defect, not
- * a modelable branch.
- *
- * Decoder policy: every object shape is *exact-key* — a missing or an
- * unknown key throws. Discriminator `kind` values are the exact PascalCase
- * literals; alternate casing throws. Owned absence is `Presence<T>`
- * (`decodePresence`); `null`/omission/alternate casing throw. Bounded ranges
- * from the contract are enforced at decode (snapshot ≤ 2000 items,
- * chapters ≤ 100, chapter title 1..300, progress a finite
- * fraction in 0..1, `*Ms`/revision/epoch integers).
+ * lectern domain commands and strict decoders for versioned player and
+ * listening inputs. generated wire owns http shapes; client.ts projects leaves.
  */
 
 import { decodePresence, type Presence } from "@/lib/api/presence";
-import {
-  decodeCollectionRevision,
-  type CollectionRevision,
-} from "@/lib/api/collectionPage";
+import type { Schema } from "@/lib/api/wire";
+import type { CollectionRevision } from "@/lib/api/collectionPage";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
-import { canonicalResourceRef } from "@/lib/sharing/targets";
-import {
-  parseReaderCursorSnapshot,
-  type ReaderCursorSnapshot,
-} from "@/lib/reader/readerProgress";
+import type { ReaderCursorSnapshot } from "@/lib/reader/readerProgress";
+import { canonicalCpLength } from "@/lib/reader/textOffsets";
 import { parsePlaybackRate } from "@/lib/player/playbackRate";
-import {
-  parsePauseShorteningMode,
-  type PauseShorteningMode,
-} from "@/lib/player/pauseShortening";
+import { parsePauseShorteningMode } from "@/lib/player/pauseShortening";
 import {
   expectBoolean,
   expectExactRecord,
   expectFiniteNumber,
-  expectIsoInstant,
   expectOneOf,
   expectRecord,
   expectString,
   isCanonicalUuid,
 } from "@/lib/validation";
-import { decodeMediaSummary, type MediaSummary } from "@/lib/media/mediaSummary";
+import type { MediaSummary } from "@/lib/media/mediaSummary";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
 // --- Branded identities ------------------------------------------------------
@@ -107,39 +84,11 @@ export function assumeAppHref(value: string): AppHref {
 
 // --- Decoded domain types ----------------------------------------------------
 
-export type ConsumptionState = "Unread" | "InProgress" | "Finished";
-
-export interface ConsumptionInfo {
-  state: ConsumptionState;
-  progress: Presence<number>;
-  progressResettable: boolean;
-}
-
-export interface ChapterOut {
-  title: string;
-  startMs: number;
-  endMs: Presence<number>;
-}
-
-export interface FooterAudioActivation {
-  kind: "FooterAudio";
-  streamUrl: string;
-  sourceUrl: string;
-  positionMs: number;
-  writeRevision: number;
-  resetEpoch: number;
-  playbackRate: PlaybackRateResolution;
-  pauseShorteningMode: Presence<PauseShorteningMode>;
-  consumptionOverrideRevision: Presence<number>;
-  durationMs: Presence<number>;
-  artworkUrl: Presence<string>;
-  chapters: ChapterOut[];
-}
-
-export type Activation =
-  | FooterAudioActivation
-  | { kind: "Readable" }
-  | { kind: "OpenPane" };
+export type ConsumptionState = Schema<"ConsumptionOut">["state"];
+export type ConsumptionInfo = Schema<"ConsumptionOut">;
+export type ChapterOut = Schema<"ChapterOut">;
+export type FooterAudioActivation = Schema<"FooterAudioActivation">;
+export type Activation = Schema<"LecternItemOut">["activation"];
 
 export interface LecternItem {
   itemId: LecternItemId;
@@ -165,22 +114,8 @@ export interface PlayerDescriptor {
   activation: FooterAudioActivation;
 }
 
-export interface PlaybackRateResolution {
-  value: number;
-  source: "Episode" | "Podcast" | "Product";
-  podcastPreference: Presence<{
-    podcastId: string;
-    value: Presence<number>;
-  }>;
-}
-
-export interface ListeningStateOut {
-  positionMs: number;
-  durationMs: Presence<number>;
-  episodePlaybackRate: Presence<number>;
-  writeRevision: number;
-  resetEpoch: number;
-}
+export type PlaybackRateResolution = Schema<"PlaybackRateResolution">;
+export type ListeningStateOut = Schema<"nexus__schemas__consumption__ListeningStateOut">;
 
 /** Canonical current-progress snapshot returned only by `ResetProgress`. */
 export interface MediaProgressState {
@@ -321,18 +256,6 @@ function decodeMediaId(raw: unknown): MediaId {
   return parseMediaId(expectString(raw, "MediaId"));
 }
 
-function decodeLecternItemId(raw: unknown): LecternItemId {
-  return parseLecternItemId(expectString(raw, "LecternItemId"));
-}
-
-function decodeCompletionHandle(raw: unknown): CompletionHandle {
-  return parseCompletionHandle(expectString(raw, "CompletionHandle"));
-}
-
-function decodeAppHref(raw: unknown): AppHref {
-  return assumeAppHref(expectString(raw, "AppHref"));
-}
-
 function decodeUuidString(raw: unknown, context: string): string {
   const value = expectString(raw, context);
   if (!isCanonicalUuid(value)) {
@@ -410,9 +333,10 @@ export function decodeChapter(raw: unknown): ChapterOut {
     "ChapterOut",
   );
   const title = expectString(rec.title, "ChapterOut.title");
-  if (title.length < 1 || title.length > MAX_CHAPTER_TITLE) {
+  const length = canonicalCpLength(title);
+  if (length < 1 || length > MAX_CHAPTER_TITLE) {
     throw new Error(
-      `Invalid ChapterOut.title: length must be 1..${MAX_CHAPTER_TITLE}, got ${title.length}`,
+      `Invalid ChapterOut.title: length must be 1..${MAX_CHAPTER_TITLE}, got ${length}`,
     );
   }
   return {
@@ -519,49 +443,6 @@ export function decodeActivation(raw: unknown): Activation {
   }
 }
 
-export function decodeLecternItem(raw: unknown): LecternItem {
-  const rec = expectExactRecord(
-    raw,
-    [
-      "itemId",
-      "mediaSummary",
-      "playerDisplay",
-      "href",
-      "addedAt",
-      "consumption",
-      "activation",
-    ],
-    "LecternItemOut",
-  );
-  const mediaSummary = decodeMediaSummary(rec.mediaSummary);
-  const href = decodeAppHref(rec.href);
-  const activation = decodeActivation(rec.activation);
-  const playerDisplay = decodePresence(rec.playerDisplay, (value) => {
-    const display = expectExactRecord(value, ["title", "subtitle"], "LecternItemOut.playerDisplay");
-    const title = expectString(display.title, "LecternItemOut.playerDisplay.title");
-    if (title.length > 300) throw new TypeError("LecternItemOut.playerDisplay.title exceeds 300 characters");
-    return {
-      title,
-      subtitle: decodePresence(display.subtitle, (v) => expectString(v, "LecternItemOut.playerDisplay.subtitle")),
-    };
-  });
-  if ((activation.kind === "FooterAudio") !== (playerDisplay.kind === "Present")) {
-    throw new TypeError("LecternItemOut.playerDisplay must match FooterAudio activation");
-  }
-  return {
-    itemId: decodeLecternItemId(rec.itemId),
-    mediaSummary,
-    playerDisplay,
-    href,
-    addedAt: expectIsoInstant(rec.addedAt, "LecternItemOut.addedAt"),
-    consumption: decodeConsumption(rec.consumption),
-    activation,
-    actionSubject: {
-      ref: canonicalResourceRef({ scheme: "media", id: mediaSummary.mediaId }),
-    },
-  };
-}
-
 /**
  * Decode a `PlayerDescriptor` (spec §4). This is the exact shape the backend
  * adds under the fixed camelCase key `playerDescriptor` on podcast-episode list
@@ -586,17 +467,6 @@ export function decodePlayerDescriptor(raw: unknown): PlayerDescriptor {
     subtitle: decodePresence(rec.subtitle, (v) => expectString(v, "PlayerDescriptor.subtitle")),
     activation,
   };
-}
-
-export function decodeLecternSnapshot(raw: unknown): LecternSnapshot {
-  const rec = expectExactRecord(raw, ["items"], "LecternSnapshot");
-  const items = asArray(rec.items, "LecternSnapshot.items");
-  if (items.length > LECTERN_MAX_ITEMS) {
-    throw new Error(
-      `Invalid LecternSnapshot.items: at most ${LECTERN_MAX_ITEMS}, got ${items.length}`,
-    );
-  }
-  return { items: items.map(decodeLecternItem) };
 }
 
 export function decodeListeningState(raw: unknown): ListeningStateOut {
@@ -625,115 +495,4 @@ export function decodeListeningState(raw: unknown): ListeningStateOut {
     ),
     resetEpoch: asNonNegativeInt32(rec.resetEpoch, "ListeningStateOut.resetEpoch"),
   };
-}
-
-function decodeMediaProgressState(raw: unknown): MediaProgressState {
-  const rec = expectExactRecord(
-    raw,
-    ["mediaId", "readerCursor", "listeningState"],
-    "MediaProgressState",
-  );
-  return {
-    mediaId: decodeMediaId(rec.mediaId),
-    readerCursor: parseReaderCursorSnapshot(rec.readerCursor),
-    listeningState: decodePresence(rec.listeningState, decodeListeningState),
-  };
-}
-
-function decodeLecternOutcome(raw: unknown): LecternOutcome {
-  const rec = expectRecord(raw, "LecternOutcome");
-  const kind = expectOneOf(rec.kind, ["Placed", "Removed", "Ordered"] as const, "LecternOutcome.kind");
-  switch (kind) {
-    case "Placed": {
-      expectExactRecord(rec, ["kind", "itemIds"], "LecternOutcome.Placed");
-      return { kind: "Placed", itemIds: asArray(rec.itemIds, "LecternOutcome.itemIds").map(decodeLecternItemId) };
-    }
-    case "Removed": {
-      expectExactRecord(rec, ["kind", "itemId"], "LecternOutcome.Removed");
-      return { kind: "Removed", itemId: decodeLecternItemId(rec.itemId) };
-    }
-    case "Ordered": {
-      expectExactRecord(rec, ["kind"], "LecternOutcome.Ordered");
-      return { kind: "Ordered" };
-    }
-  }
-}
-
-export function decodeLecternResult(raw: unknown): LecternResult {
-  const rec = expectExactRecord(raw, ["outcome", "lectern"], "LecternResult");
-  return {
-    outcome: decodeLecternOutcome(rec.outcome),
-    lectern: decodeLecternSnapshot(rec.lectern),
-  };
-}
-
-function decodeConsumptionOutcome(raw: unknown): ConsumptionOutcome {
-  const rec = expectRecord(raw, "ConsumptionOutcome");
-  const kind = expectOneOf(
-    rec.kind,
-    [
-      "StateOnly",
-      "Removed",
-      "Completed",
-      "CompletedWithoutAdvance",
-      "Superseded",
-      "TargetGone",
-    ] as const,
-    "ConsumptionOutcome.kind",
-  );
-  switch (kind) {
-    case "StateOnly": {
-      expectExactRecord(rec, ["kind"], "ConsumptionOutcome.StateOnly");
-      return { kind: "StateOnly" };
-    }
-    case "Removed": {
-      expectExactRecord(rec, ["kind", "itemId", "nextItemId"], "ConsumptionOutcome.Removed");
-      return {
-        kind: "Removed",
-        itemId: decodeLecternItemId(rec.itemId),
-        nextItemId: decodePresence(rec.nextItemId, decodeLecternItemId),
-      };
-    }
-    case "Completed":
-    case "CompletedWithoutAdvance":
-    case "Superseded":
-    case "TargetGone": {
-      expectExactRecord(rec, ["kind"], `ConsumptionOutcome.${kind}`);
-      return { kind };
-    }
-  }
-}
-
-export function decodeConsumptionResult(raw: unknown): ConsumptionResult {
-  const rec = expectExactRecord(
-    raw,
-    [
-      "outcome",
-      "lectern",
-      "nextItem",
-      "progressState",
-      "completionHandle",
-      "libraryEntriesCollectionRevision",
-    ],
-    "ConsumptionResult",
-  );
-  return {
-    outcome: decodeConsumptionOutcome(rec.outcome),
-    lectern: decodeLecternSnapshot(rec.lectern),
-    nextItem: decodePresence(rec.nextItem, decodeLecternItem),
-    progressState: decodePresence(rec.progressState, decodeMediaProgressState),
-    completionHandle: decodePresence(rec.completionHandle, decodeCompletionHandle),
-    libraryEntriesCollectionRevision: decodeCollectionRevision(
-      rec.libraryEntriesCollectionRevision,
-    ),
-  };
-}
-
-export function decodeDataEnvelope<T>(
-  raw: unknown,
-  decodeInner: (value: unknown) => T,
-  ctx: string,
-): T {
-  const rec = expectExactRecord(raw, ["data"], ctx);
-  return decodeInner(rec.data);
 }

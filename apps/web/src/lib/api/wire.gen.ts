@@ -4597,6 +4597,20 @@ export interface components {
              */
             state: "Unread" | "InProgress" | "Finished";
         };
+        /** ConsumptionRemovedOutcome */
+        ConsumptionRemovedOutcome: {
+            /**
+             * Itemid
+             * Format: uuid
+             */
+            itemId: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Removed";
+            nextItemId: components["schemas"]["Presence_UUID_"];
+        };
         /** ConsumptionResourceActionCapabilityOut */
         ConsumptionResourceActionCapabilityOut: {
             /** Availability */
@@ -4611,6 +4625,25 @@ export interface components {
              * @enum {string}
              */
             state: "Unread" | "InProgress" | "Finished";
+        };
+        /** ConsumptionResult */
+        ConsumptionResult: {
+            completionHandle: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata___PydanticGeneralMetadata_pattern___ncc1_____A-Za-z0-9_-__22______A-Za-z0-9_-__22________"];
+            lectern: components["schemas"]["LecternSnapshot"];
+            /** Libraryentriescollectionrevision */
+            libraryEntriesCollectionRevision: number;
+            nextItem: components["schemas"]["Presence_LecternItemOut_"];
+            /** Outcome */
+            outcome: components["schemas"]["ConsumptionStateOutcome"] | components["schemas"]["ConsumptionRemovedOutcome"];
+            progressState: components["schemas"]["Presence_MediaProgressState_"];
+        };
+        /** ConsumptionStateOutcome */
+        ConsumptionStateOutcome: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Completed" | "CompletedWithoutAdvance" | "StateOnly" | "Superseded" | "TargetGone";
         };
         /** ConsumptionStatsOut */
         ConsumptionStatsOut: {
@@ -5173,7 +5206,7 @@ export interface components {
             /** Base Revision */
             base_revision: number;
             /** Locator */
-            locator: components["schemas"]["PdfReaderResumeState"] | components["schemas"]["WebReaderResumeState"] | components["schemas"]["TranscriptReaderResumeState"] | components["schemas"]["EpubReaderResumeState"];
+            locator: components["schemas"]["PdfReaderResumeState"] | components["schemas"]["WebReaderResumeState"] | components["schemas"]["TranscriptReaderResumeState"] | components["schemas"]["EpubReaderResumeState-Input"];
         };
         /** DailyCaptureRequest */
         DailyCaptureRequest: {
@@ -5295,6 +5328,10 @@ export interface components {
         Data_CollectionPage_PodcastSubscriptionListItemOut__: {
             data: components["schemas"]["CollectionPage_PodcastSubscriptionListItemOut_"];
         };
+        /** Data[ConsumptionResult] */
+        Data_ConsumptionResult_: {
+            data: components["schemas"]["ConsumptionResult"];
+        };
         /** Data[ConsumptionStatsOut] */
         Data_ConsumptionStatsOut_: {
             data: components["schemas"]["ConsumptionStatsOut"];
@@ -5350,6 +5387,14 @@ export interface components {
         /** Data[ImportSummary] */
         Data_ImportSummary_: {
             data: components["schemas"]["ImportSummary"];
+        };
+        /** Data[LecternResult] */
+        Data_LecternResult_: {
+            data: components["schemas"]["LecternResult"];
+        };
+        /** Data[LecternSnapshot] */
+        Data_LecternSnapshot_: {
+            data: components["schemas"]["LecternSnapshot"];
         };
         /** Data[LibraryDeleteOut] */
         Data_LibraryDeleteOut_: {
@@ -6135,14 +6180,25 @@ export interface components {
             importHref: string;
         };
         /** EpubReaderResumeState */
-        EpubReaderResumeState: {
+        "EpubReaderResumeState-Input": {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             kind: "epub";
             locations: components["schemas"]["ReaderTextLocations"];
-            target: components["schemas"]["ReaderEpubTarget"];
+            target: components["schemas"]["ReaderEpubTarget-Input"];
+            text: components["schemas"]["ReaderQuoteContext"];
+        };
+        /** EpubReaderResumeState */
+        "EpubReaderResumeState-Output": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "epub";
+            locations: components["schemas"]["ReaderTextLocations"];
+            target: components["schemas"]["ReaderEpubTarget-Output"];
             text: components["schemas"]["ReaderQuoteContext"];
         };
         /** EpubTextOffsetsTargetOut */
@@ -6364,9 +6420,8 @@ export interface components {
             consumptionOverrideRevision: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____"];
             durationMs: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____"];
             /**
-             * Kind
-             * @default FooterAudio
-             * @constant
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
              */
             kind: "FooterAudio";
             pauseShorteningMode: components["schemas"]["Presence_Literal__Off____Natural___"];
@@ -7266,6 +7321,26 @@ export interface components {
             /** Highlight Ref */
             highlight_ref: string;
         };
+        /** LecternItemOut */
+        LecternItemOut: {
+            /** Activation */
+            activation: components["schemas"]["FooterAudioActivation"] | components["schemas"]["ReadableActivation"] | components["schemas"]["OpenPaneActivation"];
+            /**
+             * Addedat
+             * Format: date-time
+             */
+            addedAt: string;
+            consumption: components["schemas"]["ConsumptionOut"];
+            /** Href */
+            href: string;
+            /**
+             * Itemid
+             * Format: uuid
+             */
+            itemId: string;
+            mediaSummary: components["schemas"]["MediaSummaryOut"];
+            playerDisplay: components["schemas"]["Presence_PlayerDisplay_"];
+        };
         /** LecternMembershipAbsentOut */
         LecternMembershipAbsentOut: {
             /** Availability */
@@ -7316,6 +7391,17 @@ export interface components {
              * @enum {string}
              */
             kind: "Lectern";
+        };
+        /** LecternResult */
+        LecternResult: {
+            lectern: components["schemas"]["LecternSnapshot"];
+            /** Outcome */
+            outcome: components["schemas"]["PlacedOutcome"] | components["schemas"]["RemovedOutcome"] | components["schemas"]["OrderedOutcome"];
+        };
+        /** LecternSnapshot */
+        LecternSnapshot: {
+            /** Items */
+            items: components["schemas"]["LecternItemOut"][];
         };
         /** LibraryDeleteOut */
         LibraryDeleteOut: {
@@ -7798,18 +7884,6 @@ export interface components {
             heartbeatSequence: number;
             /** Positionms */
             positionMs: number;
-        };
-        /** ListeningStateOut */
-        ListeningStateOut: {
-            /** Duration Ms */
-            duration_ms: number | null;
-            /**
-             * Is Completed
-             * @default false
-             */
-            is_completed: boolean;
-            /** Position Ms */
-            position_ms: number;
         };
         /** LocalDayOut */
         LocalDayOut: {
@@ -8295,7 +8369,7 @@ export interface components {
             last_engaged_at: string | null;
             /** Last Error Code */
             last_error_code: string | null;
-            listening_state: components["schemas"]["ListeningStateOut"] | null;
+            listening_state: components["schemas"]["nexus__schemas__media__ListeningStateOut"] | null;
             /** Metadata Enriched At */
             metadata_enriched_at: string | null;
             metadata_enrichment: components["schemas"]["MetadataEnrichmentView"];
@@ -8358,6 +8432,17 @@ export interface components {
             transcript_state: components["schemas"]["TranscriptState"] | null;
             /** Updated At */
             updated_at: string;
+        };
+        /** MediaProgressState */
+        MediaProgressState: {
+            listeningState: components["schemas"]["Presence_ListeningStateOut_"];
+            /**
+             * Mediaid
+             * Format: uuid
+             */
+            mediaId: string;
+            /** Readercursor */
+            readerCursor: components["schemas"]["ReaderCursorEmpty"] | components["schemas"]["ReaderCursorPositioned"];
         };
         /** MediaRetrievalResultRef */
         MediaRetrievalResultRef: {
@@ -9170,7 +9255,7 @@ export interface components {
             /** Expectedreadergeneration */
             expectedReaderGeneration: number;
             /** Locator */
-            locator: components["schemas"]["PdfReaderResumeState"] | components["schemas"]["WebReaderResumeState"] | components["schemas"]["TranscriptReaderResumeState"] | components["schemas"]["EpubReaderResumeState"];
+            locator: components["schemas"]["PdfReaderResumeState"] | components["schemas"]["WebReaderResumeState"] | components["schemas"]["TranscriptReaderResumeState"] | components["schemas"]["EpubReaderResumeState-Input"];
         };
         /** OfflineReadingResourceActionCapabilityOut */
         OfflineReadingResourceActionCapabilityOut: {
@@ -9188,6 +9273,14 @@ export interface components {
             mediaKind: "web_article" | "epub" | "pdf";
             /** Requestedtitle */
             requestedTitle: string;
+        };
+        /** OpenPaneActivation */
+        OpenPaneActivation: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "OpenPane";
         };
         /** OpenSourceResourceActionCapabilityOut */
         OpenSourceResourceActionCapabilityOut: {
@@ -9350,6 +9443,14 @@ export interface components {
         OracleTextEventPayload: {
             /** Text */
             text: string;
+        };
+        /** OrderedOutcome */
+        OrderedOutcome: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Ordered";
         };
         /** OutlineNote */
         OutlineNote: {
@@ -9607,6 +9708,16 @@ export interface components {
             /** Placement */
             placement: components["schemas"]["FirstPlacement"] | components["schemas"]["AfterPlacement"] | components["schemas"]["LastPlacement"];
         };
+        /** PlacedOutcome */
+        PlacedOutcome: {
+            /** Itemids */
+            itemIds: string[];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Placed";
+        };
         /** PlaybackRateResolution */
         PlaybackRateResolution: {
             podcastPreference: components["schemas"]["Presence_PodcastPlaybackPreference_"];
@@ -9671,6 +9782,12 @@ export interface components {
              * Format: uuid
              */
             mediaId: string;
+            subtitle: components["schemas"]["Presence_str_"];
+            /** Title */
+            title: string;
+        };
+        /** PlayerDisplay */
+        PlayerDisplay: {
             subtitle: components["schemas"]["Presence_str_"];
             /** Title */
             title: string;
@@ -10302,6 +10419,7 @@ export interface components {
         Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____"];
         Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__"];
         Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____"];
+        "Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata___PydanticGeneralMetadata_pattern___ncc1_____A-Za-z0-9_-__22______A-Za-z0-9_-__22________": components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata___PydanticGeneralMetadata_pattern___ncc1_____A-Za-z0-9_-__22______A-Za-z0-9_-__22________"];
         Presence_Annotated_str__StringConstraints__AfterValidator__: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__StringConstraints__AfterValidator__"];
         Presence_AwareDatetime_: components["schemas"]["Absent"] | components["schemas"]["Present_AwareDatetime_"];
         Presence_BrowseSort_: components["schemas"]["Absent"] | components["schemas"]["Present_BrowseSort_"];
@@ -10317,8 +10435,10 @@ export interface components {
         Presence_FailedEventPayload_: components["schemas"]["Absent"] | components["schemas"]["Present_FailedEventPayload_"];
         Presence_HistoryEntry_: components["schemas"]["Absent"] | components["schemas"]["Present_HistoryEntry_"];
         Presence_ImportSourceIssues_: components["schemas"]["Absent"] | components["schemas"]["Present_ImportSourceIssues_"];
+        Presence_LecternItemOut_: components["schemas"]["Absent"] | components["schemas"]["Present_LecternItemOut_"];
         Presence_LibraryEntryPlacementOut_: components["schemas"]["Absent"] | components["schemas"]["Present_LibraryEntryPlacementOut_"];
         Presence_LibraryEntryPodcastSubscriptionOut_: components["schemas"]["Absent"] | components["schemas"]["Present_LibraryEntryPodcastSubscriptionOut_"];
+        Presence_ListeningStateOut_: components["schemas"]["Absent"] | components["schemas"]["Present_ListeningStateOut_"];
         Presence_Literal__Current____Stale___: components["schemas"]["Absent"] | components["schemas"]["Present_Literal__Current____Stale___"];
         Presence_Literal__NotOwner____SameSourceTerminal____SourceNotReacquirable____UploadRejected___: components["schemas"]["Absent"] | components["schemas"]["Present_Literal__NotOwner____SameSourceTerminal____SourceNotReacquirable____UploadRejected___"];
         Presence_Literal__Off____Natural___: components["schemas"]["Absent"] | components["schemas"]["Present_Literal__Off____Natural___"];
@@ -10327,11 +10447,13 @@ export interface components {
         Presence_Literal__Upload____Validate____Extract____Finalize____Index____SourceProcessing___: components["schemas"]["Absent"] | components["schemas"]["Present_Literal__Upload____Validate____Extract____Finalize____Index____SourceProcessing___"];
         Presence_MediaDurationOut_: components["schemas"]["Absent"] | components["schemas"]["Present_MediaDurationOut_"];
         Presence_MediaNavigationOut_: components["schemas"]["Absent"] | components["schemas"]["Present_MediaNavigationOut_"];
+        Presence_MediaProgressState_: components["schemas"]["Absent"] | components["schemas"]["Present_MediaProgressState_"];
         Presence_MetadataOperationOut_: components["schemas"]["Absent"] | components["schemas"]["Present_MetadataOperationOut_"];
         Presence_MetadataSelection_: components["schemas"]["Absent"] | components["schemas"]["Present_MetadataSelection_"];
         Presence_NavigationTextPointOut_: components["schemas"]["Absent"] | components["schemas"]["Present_NavigationTextPointOut_"];
         Presence_NavigationTextRangeOut_: components["schemas"]["Absent"] | components["schemas"]["Present_NavigationTextRangeOut_"];
         Presence_PlayerDescriptor_: components["schemas"]["Absent"] | components["schemas"]["Present_PlayerDescriptor_"];
+        Presence_PlayerDisplay_: components["schemas"]["Absent"] | components["schemas"]["Present_PlayerDisplay_"];
         Presence_PodcastPlaybackPreference_: components["schemas"]["Absent"] | components["schemas"]["Present_PodcastPlaybackPreference_"];
         Presence_PodcastReplacementConfirmation_: components["schemas"]["Absent"] | components["schemas"]["Present_PodcastReplacementConfirmation_"];
         Presence_PublicHighlightOut_: components["schemas"]["Absent"] | components["schemas"]["Present_PublicHighlightOut_"];
@@ -10555,6 +10677,16 @@ export interface components {
             /** Value */
             value: string;
         };
+        /** Present[Annotated[str, FieldInfo(annotation=NoneType, required=True, metadata=[_PydanticGeneralMetadata(pattern='^ncc1\\.[A-Za-z0-9_-]{22}\\.[A-Za-z0-9_-]{22}$')])]] */
+        "Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata___PydanticGeneralMetadata_pattern___ncc1_____A-Za-z0-9_-__22______A-Za-z0-9_-__22________": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /** Value */
+            value: string;
+        };
         /** Present[Annotated[str, StringConstraints, AfterValidator]] */
         Present_Annotated_str__StringConstraints__AfterValidator__: {
             /**
@@ -10695,6 +10827,15 @@ export interface components {
             kind: "Present";
             value: components["schemas"]["ImportSourceIssues"];
         };
+        /** Present[LecternItemOut] */
+        Present_LecternItemOut_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["LecternItemOut"];
+        };
         /** Present[LibraryEntryPlacementOut] */
         Present_LibraryEntryPlacementOut_: {
             /**
@@ -10712,6 +10853,15 @@ export interface components {
              */
             kind: "Present";
             value: components["schemas"]["LibraryEntryPodcastSubscriptionOut"];
+        };
+        /** Present[ListeningStateOut] */
+        Present_ListeningStateOut_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["nexus__schemas__consumption__ListeningStateOut"];
         };
         /** Present[Literal['Current', 'Stale']] */
         Present_Literal__Current____Stale___: {
@@ -10809,6 +10959,15 @@ export interface components {
             kind: "Present";
             value: components["schemas"]["MediaNavigationOut"];
         };
+        /** Present[MediaProgressState] */
+        Present_MediaProgressState_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["MediaProgressState"];
+        };
         /** Present[MetadataOperationOut] */
         Present_MetadataOperationOut_: {
             /**
@@ -10853,6 +11012,15 @@ export interface components {
              */
             kind: "Present";
             value: components["schemas"]["PlayerDescriptor"];
+        };
+        /** Present[PlayerDisplay] */
+        Present_PlayerDisplay_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["PlayerDisplay"];
         };
         /** Present[PodcastPlaybackPreference] */
         Present_PodcastPlaybackPreference_: {
@@ -11199,6 +11367,14 @@ export interface components {
             /** Target Ref */
             target_ref: string;
         };
+        /** ReadableActivation */
+        ReadableActivation: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Readable";
+        };
         /** ReaderApparatusItemRetrievalResultRef */
         ReaderApparatusItemRetrievalResultRef: {
             /** Apparatus Kind */
@@ -11241,6 +11417,36 @@ export interface components {
              * @enum {string}
              */
             type: "reader_apparatus_item";
+        };
+        /**
+         * ReaderCursorEmpty
+         * @description No positioned cursor: an absent row is revision 0, a tombstone is >= 1.
+         */
+        ReaderCursorEmpty: {
+            /**
+             * Revision
+             * @default 0
+             */
+            revision: number;
+            /**
+             * State
+             * @default Empty
+             * @constant
+             */
+            state: "Empty";
+        };
+        /** ReaderCursorPositioned */
+        ReaderCursorPositioned: {
+            /** Locator */
+            locator: components["schemas"]["PdfReaderResumeState"] | components["schemas"]["WebReaderResumeState"] | components["schemas"]["TranscriptReaderResumeState"] | components["schemas"]["EpubReaderResumeState-Output"];
+            /** Revision */
+            revision: number;
+            /**
+             * State
+             * @default Positioned
+             * @constant
+             */
+            state: "Positioned";
         };
         /** ReaderDocumentMapDiagnosticsOut */
         ReaderDocumentMapDiagnosticsOut: {
@@ -11298,7 +11504,18 @@ export interface components {
             title: string;
         };
         /** ReaderEpubTarget */
-        ReaderEpubTarget: {
+        "ReaderEpubTarget-Input": {
+            anchor_id: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__"];
+            /**
+             * Fragment Id
+             * Format: uuid
+             */
+            fragment_id: string;
+            /** Href Path */
+            href_path: string;
+        };
+        /** ReaderEpubTarget */
+        "ReaderEpubTarget-Output": {
             anchor_id: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__"];
             /**
              * Fragment Id
@@ -11989,6 +12206,19 @@ export interface components {
              * @enum {string}
              */
             type: "remove_occurrence";
+        };
+        /** RemovedOutcome */
+        RemovedOutcome: {
+            /**
+             * Itemid
+             * Format: uuid
+             */
+            itemId: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Removed";
         };
         /** RenameBranchRequest */
         RenameBranchRequest: {
@@ -15009,6 +15239,29 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** ListeningStateOut */
+        nexus__schemas__consumption__ListeningStateOut: {
+            durationMs: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____"];
+            episodePlaybackRate: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____"];
+            /** Positionms */
+            positionMs: number;
+            /** Resetepoch */
+            resetEpoch: number;
+            /** Writerevision */
+            writeRevision: number;
+        };
+        /** ListeningStateOut */
+        nexus__schemas__media__ListeningStateOut: {
+            /** Duration Ms */
+            duration_ms: number | null;
+            /**
+             * Is Completed
+             * @default false
+             */
+            is_completed: boolean;
+            /** Position Ms */
+            position_ms: number;
+        };
     };
     responses: never;
     parameters: never;
@@ -15691,9 +15944,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ConsumptionResult_"];
                 };
             };
             /** @description Validation Error */
@@ -17101,9 +17352,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_LecternSnapshot_"];
                 };
             };
         };
@@ -17127,9 +17376,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_LecternResult_"];
                 };
             };
             /** @description Validation Error */

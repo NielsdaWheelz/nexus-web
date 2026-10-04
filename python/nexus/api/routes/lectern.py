@@ -12,10 +12,13 @@ from fastapi import APIRouter, Depends, Request
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.responses import ok
+from nexus.responses import Data, ok
 from nexus.schemas.consumption import (
     ConsumptionCommand,
+    ConsumptionResult,
     LecternCommand,
+    LecternResult,
+    LecternSnapshot,
 )
 from nexus.services.consumption import service as consumption_service
 from nexus.services.resonance import service as resonance_service
@@ -50,24 +53,24 @@ def get_quick_reads(
 def get_lectern(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: RepeatableReadDbSession,
-) -> dict:
+) -> Data[LecternSnapshot]:
     snapshot = consumption_service.get_lectern(db, viewer.user_id)
-    return ok(snapshot, by_alias=True)
+    return Data(data=snapshot)
 
 
 @router.post("/lectern/commands")
 def post_lectern_command(
     command: LecternCommand,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-) -> dict:
+) -> Data[LecternResult]:
     result = consumption_service.run_lectern_command(viewer.user_id, command)
-    return ok(result, by_alias=True)
+    return Data(data=result)
 
 
 @router.post("/consumption/commands")
 def post_consumption_command(
     command: ConsumptionCommand,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-) -> dict:
+) -> Data[ConsumptionResult]:
     result = consumption_service.run_consumption_command(viewer.user_id, command)
-    return ok(result, by_alias=True)
+    return Data(data=result)
