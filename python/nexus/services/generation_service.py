@@ -16,7 +16,7 @@ from nexus.services.generation_admission import (
 from nexus.services.generation_catalog import (
     GenerationCatalogService,
     ResolvedCatalogPair,
-    workflow_transport_capability,
+    required_transport_capability,
 )
 from nexus.services.generation_policy import (
     EffectMode,
@@ -103,11 +103,7 @@ class GenerationService:
             effect_mode=policy.effect_mode,
             scope=scope,
         )
-        if "TextWithTools" not in pair.capabilities:
-            raise GenerationOperationUnavailable(
-                "chat", "text with frozen model tools is unavailable"
-            )
-        return _freeze_spec(
+        spec = _freeze_spec(
             operation="chat",
             selection_source="ChatRun",
             pair=pair,
@@ -121,6 +117,8 @@ class GenerationService:
             host_evidence_revision=None,
             model_tools=model_tools,
         )
+        _require_transport_capability(spec, pair)
+        return spec
 
     async def freeze_background(
         self,
@@ -146,13 +144,6 @@ class GenerationService:
             raise GenerationConfigurationDefect(
                 f"background operation {operation!r} must use Codex Personal"
             )
-        if (
-            workflow_transport_capability(entry.workflow, codex_native=True)
-            not in pair.capabilities
-        ):
-            raise GenerationOperationUnavailable(
-                operation, "required model output mode is unavailable"
-            )
         _validate_host_policy(entry.workflow, host_plan, host_evidence_revision)
         model_tools = None
         policy = entry.workflow.model_tool_policy
@@ -173,7 +164,7 @@ class GenerationService:
                 effect_mode=policy.effect_mode,
                 scope=model_tool_scope,
             )
-        return _freeze_spec(
+        spec = _freeze_spec(
             operation=operation,
             selection_source="BackgroundPolicy",
             pair=pair,
@@ -187,6 +178,8 @@ class GenerationService:
             host_evidence_revision=host_evidence_revision,
             model_tools=model_tools,
         )
+        _require_transport_capability(spec, pair)
+        return spec
 
     async def require_dispatch_ready(self, spec: GenerationSpec) -> None:
         """Recheck the exact frozen target and volatile readiness before dispatch."""
@@ -219,21 +212,7 @@ class GenerationService:
             )
         if not isinstance(pair.readiness, Ready):
             raise GenerationOperationUnavailable(spec.operation, pair.readiness)
-        authority = spec.authority
-        has_tools = isinstance(authority.model_tool_plan_snapshot, Present)
-        required_mode = (
-            "StructuredWithTools"
-            if isinstance(spec.output_contract, StrictJsonOutputSnapshot) and has_tools
-            else "StrictStructured"
-            if isinstance(spec.output_contract, StrictJsonOutputSnapshot)
-            else "TextWithTools"
-            if has_tools
-            else "Text"
-        )
-        if required_mode not in pair.capabilities:
-            raise GenerationOperationUnavailable(
-                spec.operation, "required model output mode is unavailable"
-            )
+        _require_transport_capability(spec, pair)
         operation = self.model_tool_operation(spec)
         if operation is not None:
             _require_available_bindings(operation, owner=spec.operation)
@@ -262,6 +241,18 @@ class GenerationService:
             raise GenerationConfigurationDefect(str(error)) from error
         _require_available_bindings(operation, owner=owner)
         return operation
+
+
+def _require_transport_capability(spec: GenerationSpec, pair: ResolvedCatalogPair) -> None:
+    """Admission and dispatch judge the same frozen facts against the same row."""
+
+    required = required_transport_capability(
+        spec.output_contract.kind,
+        model_tools=isinstance(spec.authority.model_tool_plan_snapshot, Present),
+        codex_native=isinstance(spec.authority, CodexCallbacks),
+    )
+    if required not in pair.capabilities:
+        raise GenerationOperationUnavailable(spec.operation, f"{required} is unavailable")
 
 
 def _require_available_bindings(operation: FrozenToolOperation, *, owner: str) -> None:
