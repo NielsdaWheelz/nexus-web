@@ -21,17 +21,12 @@ import { ApiError, apiFetch, apiKeepaliveJson, isApiError, type ApiPath } from "
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { publishConsumptionProjectionChange } from "@/lib/consumption/projectionRevision";
 import type { Presence } from "@/lib/api/presence";
+import type { ApiJson } from "@/lib/api/wire";
 import {
-  decodeListeningState,
   type ListeningStateOut,
   type MediaId,
 } from "@/lib/lectern/contract";
 import type { OverlayEntry } from "@/lib/player/playerSession";
-import {
-  expectExactRecord,
-  expectInteger,
-  expectString,
-} from "@/lib/validation";
 
 /** Per-request browser deadline; a slow PUT/GET is aborted and treated as an
  * ambiguous outcome (spec §5.4 "named 20-second browser deadline"). */
@@ -89,35 +84,7 @@ interface ListeningHeartbeatIn {
   heartbeatSequence: number;
 }
 
-interface HeartbeatResult {
-  listeningState: ListeningStateOut;
-  heartbeatGeneration: string;
-  heartbeatSequence: number;
-}
-
-// --- Strict decoders (same-system: any shape violation is a defect) ---------
-
-function unwrapDataEnvelope(raw: unknown, ctx: string): unknown {
-  const rec = expectExactRecord(raw, ["data"], ctx);
-  return rec.data;
-}
-
-function decodeListeningStateEnvelope(raw: unknown): ListeningStateOut {
-  return decodeListeningState(unwrapDataEnvelope(raw, "GET /api/media/{mediaId}/listening-state"));
-}
-
-function decodeHeartbeatResult(raw: unknown): HeartbeatResult {
-  const data = expectExactRecord(
-    unwrapDataEnvelope(raw, "PUT /api/media/{mediaId}/listening-state"),
-    ["listeningState", "heartbeatGeneration", "heartbeatSequence"],
-    "ListeningHeartbeatResult",
-  );
-  return {
-    listeningState: decodeListeningState(data.listeningState),
-    heartbeatGeneration: expectString(data.heartbeatGeneration, "ListeningHeartbeatResult.heartbeatGeneration"),
-    heartbeatSequence: expectInteger(data.heartbeatSequence, "ListeningHeartbeatResult.heartbeatSequence"),
-  };
-}
+type HeartbeatResult = ApiJson<"/media/{media_id}/listening-state", "put">["data"];
 
 function toApiError(error: unknown): ApiError {
   // Classify unauthenticated failures to the login-redirect owner. A 401 PUT
@@ -262,13 +229,16 @@ export function createListeningHeartbeat(config: ListeningHeartbeatConfig): List
       controller.abort(new DOMException("Heartbeat deadline exceeded", "TimeoutError"));
     }, HEARTBEAT_DEADLINE_MS);
     try {
-      const raw = await apiFetch<unknown>(listeningPath, {
-        method: "PUT",
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
+      const raw = await apiFetch<ApiJson<"/media/{media_id}/listening-state", "put">>(
+        listeningPath,
+        {
+          method: "PUT",
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        },
+      );
       clearTimeout(timer);
-      handleResponse(record, decodeHeartbeatResult(raw));
+      handleResponse(record, raw.data);
     } catch (error) {
       clearTimeout(timer);
       handleFailure(record, error);
@@ -283,8 +253,11 @@ export function createListeningHeartbeat(config: ListeningHeartbeatConfig): List
     let state: ListeningStateOut | undefined;
     let failure: unknown;
     try {
-      const raw = await apiFetch<unknown>(listeningPath, { method: "GET", signal: controller.signal });
-      state = decodeListeningStateEnvelope(raw);
+      const raw = await apiFetch<ApiJson<"/media/{media_id}/listening-state", "get">>(
+        listeningPath,
+        { method: "GET", signal: controller.signal },
+      );
+      state = raw.data;
     } catch (error) {
       failure = error;
     } finally {

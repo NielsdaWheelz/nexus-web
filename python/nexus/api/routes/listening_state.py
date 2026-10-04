@@ -13,8 +13,13 @@ from fastapi import APIRouter, Depends, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession
-from nexus.responses import ok
-from nexus.schemas.consumption import ListeningHeartbeatIn, PreviewPositionIn
+from nexus.responses import Data
+from nexus.schemas.consumption import (
+    ListeningHeartbeatIn,
+    ListeningHeartbeatResult,
+    ListeningStateOut,
+    PreviewPositionIn,
+)
 from nexus.services.consumption import service as consumption_service
 
 router = APIRouter(tags=["media"])
@@ -25,10 +30,10 @@ def get_listening_state(
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
-) -> dict:
+) -> Data[ListeningStateOut]:
     """Get per-media listening state for the authenticated viewer."""
     result = consumption_service.get_listening_state(db, viewer.user_id, media_id)
-    return ok(result, by_alias=True)
+    return Data(data=result)
 
 
 @router.put("/media/{media_id}/listening-state")
@@ -36,10 +41,10 @@ def put_listening_state(
     media_id: UUID,
     body: ListeningHeartbeatIn,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-) -> dict:
+) -> Data[ListeningHeartbeatResult]:
     """Record one revision-fenced listening heartbeat (position)."""
     result = consumption_service.record_listening_heartbeat(viewer.user_id, media_id, body)
-    return ok(result, by_alias=True)
+    return Data(data=result)
 
 
 @router.post("/media/{media_id}/preview-position", status_code=204)

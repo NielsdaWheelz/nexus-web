@@ -211,13 +211,13 @@ ReaderResumeState = Annotated[
 class ReaderCursorEmpty(BaseModel):
     """No positioned cursor: an absent row is revision 0, a tombstone is >= 1."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
     state: Literal["Empty"] = "Empty"
     revision: int = Field(default=0, ge=0)
 
 
 class ReaderCursorPositioned(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
     state: Literal["Positioned"] = "Positioned"
     revision: int = Field(ge=1)
     locator: ReaderResumeState

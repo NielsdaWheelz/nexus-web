@@ -4,10 +4,14 @@ import {
   type PreviewAudioDescriptor,
 } from "@/lib/browse/contract";
 import {
-  decodePlayerDescriptor,
   parseLecternItemId,
   parseMediaId,
+  type Activation,
+  type ChapterOut,
+  type MediaId,
   type NaturalEndSettlement,
+  type PlaybackRateResolution,
+  type PlayerDescriptor,
 } from "@/lib/lectern/contract";
 import {
   parsePauseShorteningMode,
@@ -16,6 +20,7 @@ import {
 } from "@/lib/player/pauseShortening";
 import { parsePlaybackRate } from "@/lib/player/playbackRate";
 import type { AudioSession, PlayerError } from "@/lib/player/playerSession";
+import { canonicalCpLength } from "@/lib/reader/textOffsets";
 import {
   expectCanonicalRfcUuid as canonicalUuid,
   expectExactRecord,
@@ -26,7 +31,226 @@ import {
   expectPositiveInteger,
   expectRecord,
   expectString,
+  isCanonicalUuid,
 } from "@/lib/validation";
+
+// the released descriptor grammar belongs to this version-drift ingress.
+const MAX_CHAPTERS = 100;
+const MAX_CHAPTER_TITLE = 300;
+const INT32_MAX = 2_147_483_647;
+
+function asNonNegativeInt32(raw: unknown, ctx: string): number {
+  const value = expectFiniteNumber(raw, ctx);
+  if (!Number.isInteger(value) || value < 0 || value > INT32_MAX) {
+    throw new Error(
+      `Invalid ${ctx}: expected a non-negative signed 32-bit integer, got ${value}`,
+    );
+  }
+  return value;
+}
+
+function asArray(raw: unknown, ctx: string): unknown[] {
+  if (!Array.isArray(raw)) {
+    throw new Error(`Invalid ${ctx}: expected an array, got ${typeof raw}`);
+  }
+  return raw;
+}
+
+function decodeMediaId(raw: unknown): MediaId {
+  return parseMediaId(expectString(raw, "MediaId"));
+}
+
+function decodeUuidString(raw: unknown, context: string): string {
+  const value = expectString(raw, context);
+  if (!isCanonicalUuid(value)) {
+    throw new Error(`Invalid ${context}: expected a canonical UUID.`);
+  }
+  return value;
+}
+
+function decodePlaybackRateResolution(raw: unknown): PlaybackRateResolution {
+  const rec = expectExactRecord(
+    raw,
+    ["value", "source", "podcastPreference"],
+    "PlaybackRateResolution",
+  );
+  const source = expectOneOf(
+    rec.source,
+    ["Episode", "Podcast", "Product"] as const,
+    "PlaybackRateResolution.source",
+  );
+  const podcastPreference = decodePresence(rec.podcastPreference, (rawValue) => {
+    const preference = expectExactRecord(
+      rawValue,
+      ["podcastId", "value"],
+      "PlaybackRateResolution.podcastPreference",
+    );
+    return {
+      podcastId: decodeUuidString(
+        preference.podcastId,
+        "PlaybackRateResolution.podcastPreference.podcastId",
+      ),
+      value: decodePresence(preference.value, (value) =>
+        parsePlaybackRate(
+          value,
+          "PlaybackRateResolution.podcastPreference.value",
+        ),
+      ),
+    };
+  });
+  const value = parsePlaybackRate(rec.value, "PlaybackRateResolution.value");
+  if (source === "Podcast") {
+    if (
+      podcastPreference.kind !== "Present" ||
+      podcastPreference.value.value.kind !== "Present" ||
+      podcastPreference.value.value.value !== value
+    ) {
+      throw new Error(
+        "Invalid PlaybackRateResolution: Podcast source must equal the present podcast preference.",
+      );
+    }
+  }
+  if (source === "Product") {
+    if (value !== 1) {
+      throw new Error(
+        "Invalid PlaybackRateResolution: Product source must resolve to 1.",
+      );
+    }
+    if (
+      podcastPreference.kind === "Present" &&
+      podcastPreference.value.value.kind === "Present"
+    ) {
+      throw new Error(
+        "Invalid PlaybackRateResolution: a present podcast preference must resolve from Podcast.",
+      );
+    }
+  }
+  return { value, source, podcastPreference };
+}
+
+function decodeChapter(raw: unknown): ChapterOut {
+  const rec = expectExactRecord(
+    raw,
+    ["title", "startMs", "endMs"],
+    "ChapterOut",
+  );
+  const title = expectString(rec.title, "ChapterOut.title");
+  const length = canonicalCpLength(title);
+  if (length < 1 || length > MAX_CHAPTER_TITLE) {
+    throw new Error(
+      `Invalid ChapterOut.title: length must be 1..${MAX_CHAPTER_TITLE}, got ${length}`,
+    );
+  }
+  return {
+    title,
+    startMs: asNonNegativeInt32(rec.startMs, "ChapterOut.startMs"),
+    endMs: decodePresence(rec.endMs, (v) =>
+      asNonNegativeInt32(v, "ChapterOut.endMs"),
+    ),
+  };
+}
+
+function decodeActivation(raw: unknown): Activation {
+  const rec = expectRecord(raw, "activation");
+  const kind = expectOneOf(rec.kind, ["FooterAudio", "Readable", "OpenPane"] as const, "activation.kind");
+  switch (kind) {
+    case "FooterAudio": {
+      expectExactRecord(
+        rec,
+        [
+          "kind",
+          "streamUrl",
+          "sourceUrl",
+          "positionMs",
+          "writeRevision",
+          "resetEpoch",
+          "playbackRate",
+          "pauseShorteningMode",
+          "consumptionOverrideRevision",
+          "durationMs",
+          "artworkUrl",
+          "chapters",
+        ],
+        "FooterAudioActivation",
+      );
+      const chapters = asArray(rec.chapters, "FooterAudioActivation.chapters");
+      if (chapters.length > MAX_CHAPTERS) {
+        throw new Error(
+          `Invalid FooterAudioActivation.chapters: at most ${MAX_CHAPTERS}, got ${chapters.length}`,
+        );
+      }
+      return {
+        kind: "FooterAudio",
+        streamUrl: expectString(rec.streamUrl, "FooterAudioActivation.streamUrl"),
+        sourceUrl: expectString(rec.sourceUrl, "FooterAudioActivation.sourceUrl"),
+        positionMs: asNonNegativeInt32(
+          rec.positionMs,
+          "FooterAudioActivation.positionMs",
+        ),
+        writeRevision: asNonNegativeInt32(
+          rec.writeRevision,
+          "FooterAudioActivation.writeRevision",
+        ),
+        resetEpoch: asNonNegativeInt32(
+          rec.resetEpoch,
+          "FooterAudioActivation.resetEpoch",
+        ),
+        playbackRate: decodePlaybackRateResolution(rec.playbackRate),
+        pauseShorteningMode: decodePresence(
+          rec.pauseShorteningMode,
+          (value) =>
+            parsePauseShorteningMode(
+              value,
+              "FooterAudioActivation.pauseShorteningMode.value",
+            ),
+        ),
+        consumptionOverrideRevision: decodePresence(
+          rec.consumptionOverrideRevision,
+          (value) =>
+            asNonNegativeInt32(
+              value,
+              "FooterAudioActivation.consumptionOverrideRevision.value",
+            ),
+        ),
+        durationMs: decodePresence(rec.durationMs, (v) =>
+          asNonNegativeInt32(v, "FooterAudioActivation.durationMs"),
+        ),
+        artworkUrl: decodePresence(rec.artworkUrl, (v) =>
+          expectString(v, "FooterAudioActivation.artworkUrl"),
+        ),
+        chapters: chapters.map(decodeChapter),
+      };
+    }
+    case "Readable": {
+      expectExactRecord(rec, ["kind"], "ReadableActivation");
+      return { kind: "Readable" };
+    }
+    case "OpenPane": {
+      expectExactRecord(rec, ["kind"], "OpenPaneActivation");
+      return { kind: "OpenPane" };
+    }
+  }
+}
+
+function decodePlayerDescriptor(raw: unknown): PlayerDescriptor {
+  const rec = expectExactRecord(
+    raw,
+    ["mediaId", "title", "subtitle", "activation"],
+    "PlayerDescriptor",
+  );
+  const activation = decodeActivation(rec.activation);
+  if (activation.kind !== "FooterAudio") {
+    throw new Error(
+      `Invalid PlayerDescriptor.activation: expected FooterAudio, got ${activation.kind}`,
+    );
+  }
+  return {
+    mediaId: decodeMediaId(rec.mediaId),
+    title: expectString(rec.title, "PlayerDescriptor.title"),
+    subtitle: decodePresence(rec.subtitle, (v) => expectString(v, "PlayerDescriptor.subtitle")),
+    activation,
+  };
+}
 
 export const ANDROID_PLAYER_PROTOCOL_VERSION = 2;
 export const NATIVE_PLAYER_COMMAND_DEADLINE_MS = 5_000;

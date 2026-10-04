@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, Field, model_validator
+from pydantic import AwareDatetime, ConfigDict, Field, model_validator
 
 from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.consumption_activity import CamelIn, CamelOut, CommandIn, CompletionHandle
@@ -58,6 +58,8 @@ class PlaybackRateResolution(CamelOut):
 
 
 class FooterAudioActivation(CamelOut):
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
     kind: Literal["FooterAudio"] = "FooterAudio"
     stream_url: str
     source_url: str
@@ -73,10 +75,14 @@ class FooterAudioActivation(CamelOut):
 
 
 class ReadableActivation(CamelOut):
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
     kind: Literal["Readable"] = "Readable"
 
 
 class OpenPaneActivation(CamelOut):
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
     kind: Literal["OpenPane"] = "OpenPane"
 
 
@@ -161,16 +167,22 @@ LecternCommand = Annotated[
 
 
 class PlacedOutcome(CamelOut):
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
     kind: Literal["Placed"] = "Placed"
     item_ids: list[UUID]
 
 
 class RemovedOutcome(CamelOut):
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
     kind: Literal["Removed"] = "Removed"
     item_id: UUID
 
 
 class OrderedOutcome(CamelOut):
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
     kind: Literal["Ordered"] = "Ordered"
 
 
@@ -269,6 +281,8 @@ class ConsumptionStateOutcome(CamelOut):
 
 
 class ConsumptionRemovedOutcome(CamelOut):
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
     kind: Literal["Removed"] = "Removed"
     item_id: UUID
     next_item_id: Presence[UUID]
