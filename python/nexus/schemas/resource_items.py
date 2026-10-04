@@ -62,6 +62,13 @@ class VersionExpectedBody(BaseModel):
 ExpectedNoteBody = Annotated[AbsentExpectedBody | VersionExpectedBody, Field(discriminator="kind")]
 
 
+class NoteBodyVersionsOut(BaseModel):
+    body: int = Field(ge=1)
+    links: int = Field(ge=0)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class CamelModel(BaseModel):
     """Accepts snake_case or camelCase; emits camelCase under ``by_alias=True``.
 

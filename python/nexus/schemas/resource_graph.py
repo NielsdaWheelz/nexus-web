@@ -2,8 +2,7 @@
 
 Refs travel as ``<scheme>:<uuid>`` strings; routes parse them at the boundary.
 ``ConnectionOut`` carries live endpoint display so a connections list renders without a
-second round trip. The client decodes these key-exact: adding or removing a field here
-is a breaking change.
+second round trip. These native output models own the generated web transport contract.
 """
 
 from datetime import datetime
@@ -12,7 +11,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from nexus.schemas.highlights import HIGHLIGHT_COLORS, PdfQuadIn
+from nexus.schemas.highlights import HIGHLIGHT_COLORS, LinkedNoteBlockRef, PdfQuadIn
 from nexus.schemas.resource_items import (
     ExpectedNoteBody,
     ResourceActivationOut,
@@ -59,6 +58,14 @@ class ConnectionEndpointOut(ResourceGraphModel):
     href: str | None
     missing: bool
 
+    @model_validator(mode="after")
+    def validate_resource_identity(self) -> "ConnectionEndpointOut":
+        if self.ref != f"{self.scheme}:{self.id}":
+            raise ValueError("endpoint ref must identify scheme and id")
+        if self.activation.resource_ref != self.ref or self.activation.href != self.href:
+            raise ValueError("endpoint activation must identify the same resource and href")
+        return self
+
 
 class ConnectionReaderTargetOut(ResourceGraphModel):
     media_id: UUID | None
@@ -100,8 +107,16 @@ class ConnectionOut(ResourceGraphModel):
     target: ConnectionEndpointOut
     other: ConnectionEndpointOut
     citation: ConnectionCitationOut | None
-    link_note: ConnectionLinkNoteOut | None = None
+    link_note: ConnectionLinkNoteOut | None
     created_at: datetime
+
+    @model_validator(mode="after")
+    def validate_endpoint_identity(self) -> "ConnectionOut":
+        if self.source_ref != self.source.ref or self.target_ref != self.target.ref:
+            raise ValueError("connection refs must identify their endpoints")
+        if self.other.ref not in (self.source_ref, self.target_ref):
+            raise ValueError("connection other must identify one endpoint")
+        return self
 
 
 class ConnectionPageOut(ResourceGraphModel):
@@ -177,7 +192,7 @@ class CreateLinkRequest(ResourceGraphModel):
 
 class CreateLinkOut(ResourceGraphModel):
     created: bool
-    created_source_ref: str | None = None
+    created_source_ref: str | None
     connection: ConnectionOut
 
 
@@ -196,12 +211,10 @@ class PutLinkNoteRequest(ResourceGraphModel):
         return validated
 
 
-class LinkNoteOut(ResourceGraphModel):
-    note_block_id: UUID
-    body_pm_json: dict[str, Any]
-    body_text: str
-    version_by_lane: dict[str, int]
+class LinkNoteOut(LinkedNoteBlockRef):
     connection: ConnectionOut
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class PutStanceRequest(ResourceGraphModel):

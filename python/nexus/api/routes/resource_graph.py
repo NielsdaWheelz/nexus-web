@@ -8,13 +8,16 @@ from fastapi import APIRouter, Depends, Query, Response
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.responses import ok
+from nexus.responses import Data
 from nexus.schemas.resource_graph import (
     ConnectionPageOut,
     ConnectionQueryRequest,
+    CreateLinkOut,
     CreateLinkRequest,
+    LinkNoteOut,
     PutLinkNoteRequest,
     PutStanceRequest,
+    StanceOut,
     connection_out,
 )
 from nexus.services.resource_graph import connections as connections_service
@@ -42,7 +45,9 @@ def _parse_ref(raw: str) -> ResourceRef:
 
 
 @router.post("/connections/query")
-def query_connections(body: ConnectionQueryRequest, viewer: ViewerDep, db: DbSession) -> dict:
+def query_connections(
+    body: ConnectionQueryRequest, viewer: ViewerDep, db: DbSession
+) -> Data[ConnectionPageOut]:
     filters = body.filters
     page = connections_service.query_connections(
         db=db,
@@ -65,16 +70,16 @@ def query_connections(body: ConnectionQueryRequest, viewer: ViewerDep, db: DbSes
             cursor=body.cursor,
         ),
     )
-    return ok(
-        ConnectionPageOut(
+    return Data(
+        data=ConnectionPageOut(
             items=[connection_out(item) for item in page.items], next_cursor=page.next_cursor
         )
     )
 
 
 @router.post("/links", status_code=201)
-def create_link(body: CreateLinkRequest, viewer: ViewerDep, db: DbSession) -> dict:
-    return ok(user_relations_service.create_link(db, viewer_id=viewer.user_id, request=body))
+def create_link(body: CreateLinkRequest, viewer: ViewerDep, db: DbSession) -> Data[CreateLinkOut]:
+    return Data(data=user_relations_service.create_link(db, viewer_id=viewer.user_id, request=body))
 
 
 @router.delete("/links/{link_id}", status_code=204)
@@ -86,9 +91,9 @@ def delete_link(link_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
 @router.put("/links/{link_id}/note")
 def put_link_note(
     link_id: UUID, body: PutLinkNoteRequest, viewer: ViewerDep, db: DbSession
-) -> dict:
-    return ok(
-        user_relations_service.put_link_note(
+) -> Data[LinkNoteOut]:
+    return Data(
+        data=user_relations_service.put_link_note(
             db, viewer_id=viewer.user_id, link_id=link_id, request=body
         )
     )
@@ -113,8 +118,8 @@ def delete_link_note(
 
 
 @router.put("/stances")
-def put_stance(body: PutStanceRequest, viewer: ViewerDep, db: DbSession) -> dict:
-    return ok(user_relations_service.put_stance(db, viewer_id=viewer.user_id, request=body))
+def put_stance(body: PutStanceRequest, viewer: ViewerDep, db: DbSession) -> Data[StanceOut]:
+    return Data(data=user_relations_service.put_stance(db, viewer_id=viewer.user_id, request=body))
 
 
 @router.delete("/stances/{stance_id}", status_code=204)
