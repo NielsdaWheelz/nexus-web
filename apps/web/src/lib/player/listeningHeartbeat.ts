@@ -1,42 +1,26 @@
 /**
- * Listening heartbeat engine (spec
- * `docs/cutovers/lectern-player-lifecycle-hard-cutover.md` §5.4 + §6).
- *
- * A framework-free position heartbeat for ONE media. It runs at most one
- * in-flight PUT, coalesces later samples to the newest, keys installs by an
- * injected generation + a per-send sequence, and fences every write on the
- * server's `writeRevision`/`resetEpoch`. Timeout, network failure, and a stale
- * `E_STALE_LISTENING_REVISION` (409) never block playback: the engine retains
- * the newest dirty semantic sample, retires the generation, and re-syncs its
- * fences via GET. A failed GET suspends persistence (playback continues) until
- * a GET-only retry succeeds, then immediately resends the dirty sample.
- *
- * Cadence is caller-driven: the provider calls {@link ListeningHeartbeat.tick}
- * on the {@link SYNC_INTERVAL_MS} interval (and on pause / before a track
- * switch), so tests and the provider fully control timing. The engine owns only
- * the per-request {@link HEARTBEAT_DEADLINE_MS} deadline.
+ * One media's caller-driven listening persistence. PUTs single-flight and
+ * coalesce to the newest dirty sample. Modeled failures refresh the native
+ * revision/reset fences through GET; defects stop this engine and reach its
+ * observer. Playback cadence and physical playback belong to the caller.
  */
-
-import { ApiError, apiFetch, apiKeepaliveJson, isApiError, type ApiPath } from "@/lib/api/client";
+import {
+  ApiError,
+  apiFetch,
+  apiKeepaliveJson,
+  isApiError,
+  type ApiPath,
+} from "@/lib/api/client";
+import type { Presence } from "@/lib/api/presence";
+import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { publishConsumptionProjectionChange } from "@/lib/consumption/projectionRevision";
-import type { Presence } from "@/lib/api/presence";
-import type { ApiJson } from "@/lib/api/wire";
-import {
-  type ListeningStateOut,
-  type MediaId,
-} from "@/lib/lectern/contract";
+import type { ListeningStateOut, MediaId } from "@/lib/lectern/contract";
 import type { OverlayEntry } from "@/lib/player/playerSession";
 
-/** Per-request browser deadline; a slow PUT/GET is aborted and treated as an
- * ambiguous outcome (spec §5.4 "named 20-second browser deadline"). */
 export const HEARTBEAT_DEADLINE_MS = 20_000;
-
-/** Caller-driven cadence: the provider ticks the engine at this interval while
- * playing (spec §5.4). The engine does NOT own a timer for it. */
 export const SYNC_INTERVAL_MS = 15_000;
 
-/** The live playback reading the provider exposes to the engine at send time. */
 export interface HeartbeatSample {
   positionMs: number;
   durationMs: Presence<number>;
@@ -46,316 +30,278 @@ export interface HeartbeatSample {
 export interface ListeningHeartbeatConfig {
   mediaId: MediaId;
   initial: { writeRevision: number; resetEpoch: number; positionMs: number };
-  /** Read the newest live sample. Must return integer millisecond positions. */
   readSample: () => HeartbeatSample;
-  /** Mint a fresh generation UUID per engine start or recovery. */
   mintGeneration: () => string;
-  /** Adopt a full canonical state; `seek` requests moving playback to it. */
   onStateAdopted: (state: ListeningStateOut, options: { seek: boolean }) => void;
-  /** GET re-sync failed: persistence is suspended until `retryGet` succeeds. */
   onPersistenceSuspended: (error: ApiError, retryGet: () => void) => void;
-  /** A suspended engine's GET-only retry succeeded. */
   onPersistenceResumed: () => void;
-  /** Update the provider-lifetime resume overlay for this media. */
   onOverlayUpdate: (entry: OverlayEntry) => void;
+  /** Nonthrowing observer of one terminal defect, including partial effects. */
+  onDefect: (error: unknown) => void;
 }
 
 export interface ListeningHeartbeat {
-  /** Attempt a send now (cadence tick / pause / switch). Coalesces to the newest
-   * sample when a PUT is already in flight or a recovery is running. */
   tick: () => void;
-  /** Await the in-flight PUT up to `deadlineMs`, then stop (pre-reset drain). */
+  /** Wait for the captured PUT only, up to the caller's deadline, then stop. */
   drainAndStop: (deadlineMs: number) => Promise<void>;
-  /** Best-effort fire-and-forget keepalive PUT for `beforeunload` (no install). */
+  /** Best-effort write with no installation, publication, or recovery. */
   flushKeepalive: () => void;
-  /** Terminal teardown: abort any in-flight request and send no more. */
+  /** Abort PUT; an outstanding GET finishes with its result ignored. */
   stop: () => void;
 }
 
-// --- Wire shapes -------------------------------------------------------------
-
-interface ListeningHeartbeatIn {
-  positionMs: number;
-  durationMs: Presence<number>;
-  episodePlaybackRate: Presence<number>;
-  expectedWriteRevision: number;
-  expectedResetEpoch: number;
-  heartbeatGeneration: string;
-  heartbeatSequence: number;
-}
-
+type HeartbeatBody = Schema<"ListeningHeartbeatIn">;
 type HeartbeatResult = ApiJson<"/media/{media_id}/listening-state", "put">["data"];
-
-function toApiError(error: unknown): ApiError {
-  // Classify unauthenticated failures to the login-redirect owner. A 401 PUT
-  // recovers via GET, which also 401s and funnels here before suspension.
-  handleUnauthenticatedApiError(error);
-  if (isApiError(error)) return error;
-  return new ApiError(
-    0,
-    "E_HEARTBEAT_GET_FAILED",
-    error instanceof Error ? error.message : "Heartbeat GET failed",
-  );
-}
-
-// --- Engine ------------------------------------------------------------------
-
-type EngineStatus = "Active" | "Recovering" | "Suspended" | "Stopped";
-
-interface InFlight {
+type Status = "Active" | "Recovering" | "Suspended" | "Stopped";
+type DirtySample = { version: number; sample: HeartbeatSample };
+type PendingPut = {
   generation: string;
   sequence: number;
   dirtyVersion: number;
   controller: AbortController;
   settled: Promise<void>;
+};
+
+function isModeledFailure(error: unknown): error is ApiError {
+  if (!isApiError(error)) return false;
+  switch (error.code) {
+    case "E_NETWORK":
+      return error.status === 0;
+    case "E_STALE_LISTENING_REVISION":
+      return error.status === 409;
+    case "E_MEDIA_NOT_FOUND":
+      return error.status === 404;
+    case "E_UNAUTHENTICATED":
+      return error.status === 401;
+    case "E_UPSTREAM":
+      return error.status === 502;
+    case "E_UPSTREAM_TIMEOUT":
+      return error.status === 504;
+    case "E_AUTH_UNAVAILABLE":
+      return error.status === 503;
+    default:
+      return false;
+  }
 }
 
-interface DirtySample {
-  version: number;
-  sample: HeartbeatSample;
-}
-
-export function createListeningHeartbeat(config: ListeningHeartbeatConfig): ListeningHeartbeat {
-  const {
-    readSample,
-    mintGeneration,
-    onStateAdopted,
-    onPersistenceSuspended,
-    onPersistenceResumed,
-    onOverlayUpdate,
-  } = config;
-  const listeningPath: ApiPath = `/api/media/${config.mediaId}/listening-state`;
-
-  let status: EngineStatus = "Active";
-  let expectedWriteRevision = config.initial.writeRevision;
-  let expectedResetEpoch = config.initial.resetEpoch;
-  let lastKnownPositionMs = config.initial.positionMs;
-  let generation = mintGeneration();
+export function createListeningHeartbeat(
+  config: ListeningHeartbeatConfig,
+): ListeningHeartbeat {
+  const path: ApiPath = `/api/media/${config.mediaId}/listening-state`;
+  let status: Status = "Active";
+  let writeRevision = config.initial.writeRevision;
+  let resetEpoch = config.initial.resetEpoch;
+  let generation = config.mintGeneration();
   let sequence = 0;
-  let inFlight: InFlight | undefined;
-  let dirtyVersion = 0;
+  let version = 0;
   let dirty: DirtySample | undefined;
+  let pending: PendingPut | undefined;
 
-  function buildBody(sample: HeartbeatSample, seq: number): ListeningHeartbeatIn {
+  function body(sample: HeartbeatSample, seq: number): HeartbeatBody {
     return {
       positionMs: sample.positionMs,
       durationMs: sample.durationMs,
       episodePlaybackRate: sample.episodePlaybackRate,
-      expectedWriteRevision,
-      expectedResetEpoch,
+      expectedWriteRevision: writeRevision,
+      expectedResetEpoch: resetEpoch,
       heartbeatGeneration: generation,
       heartbeatSequence: seq,
     };
   }
 
-  function installState(state: ListeningStateOut): void {
-    expectedWriteRevision = state.writeRevision;
-    expectedResetEpoch = state.resetEpoch;
-    lastKnownPositionMs = state.positionMs;
-    onOverlayUpdate({
-      positionMs: state.positionMs,
-      writeRevision: state.writeRevision,
-      resetEpoch: state.resetEpoch,
-    });
-  }
-
-  function maybeResend(): void {
-    if (status !== "Active" || inFlight !== undefined || dirty === undefined) {
-      return;
-    }
-    performSend();
-  }
-
-  function handleResponse(record: InFlight, result: HeartbeatResult): void {
-    if (inFlight === record) inFlight = undefined;
-    if (status === "Stopped") return;
-    if (record.generation !== generation) {
-      // The generation was retired (adopt / recovery) while this PUT was in
-      // flight: ignore its install, but honor a coalesced resend under the
-      // current generation (spec §5.4 "install ... only when generation +
-      // sequence still match").
-      maybeResend();
-      return;
-    }
-    if (
-      result.heartbeatGeneration !== record.generation ||
-      result.heartbeatSequence !== record.sequence
-    ) {
-      // justify-defect: a same-system server MUST echo the exact generation +
-      // sequence it was sent; a mismatch is a backend/schema defect.
-      throw new Error("Heartbeat response generation/sequence echo mismatch (defect).");
-    }
-    installState(result.listeningState);
-    // An accepted heartbeat install can advance read_state/InProgress.
-    publishConsumptionProjectionChange();
-    if (dirty?.version === record.dirtyVersion) dirty = undefined;
-    maybeResend();
-  }
-
-  function handleFailure(record: InFlight, _error: unknown): void {
-    if (inFlight === record) inFlight = undefined;
-    if (status === "Stopped") return;
-    if (record.generation !== generation) {
-      maybeResend();
-      return;
-    }
-    // Timeout, network failure, and stale-revision (409) all re-sync via GET.
-    // The ambiguous sample stays dirty and is resent with refreshed fences.
-    status = "Recovering";
-    void recover({ fromSuspended: false });
-  }
-
-  function performSend(): void {
-    if (dirty === undefined) return;
-    const requested = dirty;
-    lastKnownPositionMs = requested.sample.positionMs;
-    const seq = sequence;
-    sequence += 1;
-    const body = buildBody(requested.sample, seq);
-    const controller = new AbortController();
-    const record: InFlight = {
-      generation,
-      sequence: seq,
-      dirtyVersion: requested.version,
-      controller,
-      settled: Promise.resolve(),
-    };
-    inFlight = record;
-    record.settled = runSend(record, body, controller);
-  }
-
-  async function runSend(record: InFlight, body: ListeningHeartbeatIn, controller: AbortController): Promise<void> {
+  async function request<T>(
+    method: "GET" | "PUT",
+    controller: AbortController,
+    payload?: HeartbeatBody,
+  ): Promise<T> {
+    const deadline = new DOMException(
+      method === "GET" ? "Heartbeat GET deadline exceeded" : "Heartbeat deadline exceeded",
+      "TimeoutError",
+    );
     const timer = setTimeout(() => {
-      controller.abort(new DOMException("Heartbeat deadline exceeded", "TimeoutError"));
+      controller.abort(deadline);
     }, HEARTBEAT_DEADLINE_MS);
     try {
-      const raw = await apiFetch<ApiJson<"/media/{media_id}/listening-state", "put">>(
-        listeningPath,
-        {
-          method: "PUT",
-          body: JSON.stringify(body),
-          signal: controller.signal,
-        },
-      );
-      clearTimeout(timer);
-      handleResponse(record, raw.data);
+      return await apiFetch<T>(path, {
+        method,
+        signal: controller.signal,
+        ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
+      });
     } catch (error) {
-      clearTimeout(timer);
-      handleFailure(record, error);
-    }
-  }
-
-  async function recover(options: { fromSuspended: boolean }): Promise<void> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      controller.abort(new DOMException("Heartbeat GET deadline exceeded", "TimeoutError"));
-    }, HEARTBEAT_DEADLINE_MS);
-    let state: ListeningStateOut | undefined;
-    let failure: unknown;
-    try {
-      const raw = await apiFetch<ApiJson<"/media/{media_id}/listening-state", "get">>(
-        listeningPath,
-        { method: "GET", signal: controller.signal },
-      );
-      state = raw.data;
-    } catch (error) {
-      failure = error;
+      // This owner knows its deadline even when an aborted response-body read
+      // reaches the API parser as an AbortError or invalid JSON response.
+      if (controller.signal.aborted && controller.signal.reason === deadline) {
+        throw new ApiError(0, "E_NETWORK", "Network request failed");
+      }
+      throw error;
     } finally {
       clearTimeout(timer);
     }
-    if (status === "Stopped") return;
-    if (state === undefined) {
-      status = "Suspended";
-      onPersistenceSuspended(toApiError(failure), retryGet);
-      return;
-    }
-    if (state.resetEpoch !== expectedResetEpoch) {
-      // Reset epoch advanced: retire every pre-reset dirty sample and adopt the
-      // full canonical reset state.
-      dirty = undefined;
-      onStateAdopted(state, { seek: true });
-      lastKnownPositionMs = state.positionMs;
-      onOverlayUpdate({
-        positionMs: state.positionMs,
-        writeRevision: state.writeRevision,
-        resetEpoch: state.resetEpoch,
-      });
-    } else {
-      // Same epoch: retain the newest local position; only refresh the fence.
-      onOverlayUpdate({
-        positionMs: lastKnownPositionMs,
-        writeRevision: state.writeRevision,
-        resetEpoch: state.resetEpoch,
-      });
-    }
-    expectedWriteRevision = state.writeRevision;
-    expectedResetEpoch = state.resetEpoch;
-    generation = mintGeneration();
-    sequence = 0;
-    status = "Active";
-    maybeResend();
-    if (options.fromSuspended) onPersistenceResumed();
-  }
-
-  function retryGet(): void {
-    if (status !== "Suspended") return;
-    status = "Recovering";
-    void recover({ fromSuspended: true });
-  }
-
-  function tick(): void {
-    if (status === "Stopped") return;
-    const sample = readSample();
-    if (sample.episodePlaybackRate.kind === "Absent") return;
-    dirtyVersion += 1;
-    dirty = { version: dirtyVersion, sample };
-    lastKnownPositionMs = sample.positionMs;
-    maybeResend();
   }
 
   function stop(): void {
     status = "Stopped";
     dirty = undefined;
-    const current = inFlight;
-    inFlight = undefined;
-    if (current !== undefined) {
-      current.controller.abort(new DOMException("Heartbeat engine stopped", "AbortError"));
+    const current = pending;
+    pending = undefined;
+    current?.controller.abort(new DOMException("Heartbeat engine stopped", "AbortError"));
+  }
+
+  function reportDefect(error: unknown): void {
+    if (status === "Stopped") return;
+    // justify-defect: unexpected request failures and installation/callback
+    // failures cannot establish persistence. Observe them without pretending
+    // earlier callback effects can be undone or the write did not commit.
+    stop();
+    config.onDefect(error);
+  }
+
+  function sendDirty(): void {
+    if (status !== "Active" || pending !== undefined || dirty === undefined) {
+      return;
     }
+    const record: PendingPut = {
+      generation,
+      sequence: sequence++,
+      dirtyVersion: dirty.version,
+      controller: new AbortController(),
+      settled: Promise.resolve(),
+    };
+    const payload = body(dirty.sample, record.sequence);
+    pending = record;
+    record.settled = send(record, payload).catch(reportDefect);
+  }
+
+  async function send(record: PendingPut, payload: HeartbeatBody): Promise<void> {
+    let result: HeartbeatResult;
+    try {
+      result = (await request<ApiJson<"/media/{media_id}/listening-state", "put">>(
+        "PUT",
+        record.controller,
+        payload,
+      )).data;
+    } catch (error) {
+      if (pending === record) pending = undefined;
+      if (status === "Stopped") return;
+      if (record.generation !== generation) {
+        sendDirty();
+        return;
+      }
+      if (!isModeledFailure(error)) throw error;
+      status = "Recovering";
+      // Recovery is deliberately outside this PUT's settlement/drain promise.
+      void recover(false).catch(reportDefect);
+      return;
+    }
+    if (pending === record) pending = undefined;
+    if (status === "Stopped") return;
+    if (record.generation !== generation) {
+      sendDirty();
+      return;
+    }
+    // justify-defect: the native service must echo this exact write identity.
+    if (
+      result.heartbeatGeneration !== record.generation ||
+      result.heartbeatSequence !== record.sequence
+    ) {
+      throw new Error("Heartbeat response generation/sequence echo mismatch (defect).");
+    }
+    writeRevision = result.listeningState.writeRevision;
+    resetEpoch = result.listeningState.resetEpoch;
+    config.onOverlayUpdate({
+      positionMs: result.listeningState.positionMs,
+      writeRevision,
+      resetEpoch,
+    });
+    publishConsumptionProjectionChange();
+    if (dirty?.version === record.dirtyVersion) dirty = undefined;
+    sendDirty();
+  }
+
+  async function recover(fromSuspended: boolean): Promise<void> {
+    let state: ListeningStateOut;
+    try {
+      state = (await request<ApiJson<"/media/{media_id}/listening-state", "get">>(
+        "GET",
+        new AbortController(),
+      )).data;
+    } catch (error) {
+      if (status === "Stopped") return;
+      if (!isModeledFailure(error)) throw error;
+      status = "Suspended";
+      // Preserve PUT401 -> GET401 -> the existing redirect owner -> suspension.
+      handleUnauthenticatedApiError(error);
+      config.onPersistenceSuspended(error, retryGet);
+      return;
+    }
+    if (status === "Stopped") return;
+    if (state.resetEpoch !== resetEpoch) {
+      dirty = undefined;
+      config.onStateAdopted(state, { seek: true });
+      config.onOverlayUpdate({
+        positionMs: state.positionMs,
+        writeRevision: state.writeRevision,
+        resetEpoch: state.resetEpoch,
+      });
+    } else {
+      // justify-service-invariant-check: only a failed PUT starts recovery;
+      // its sample remains dirty through GET failures and same-epoch retries.
+      if (dirty === undefined) {
+        throw new Error("Heartbeat recovery lost its dirty sample (defect).");
+      }
+      config.onOverlayUpdate({
+        positionMs: dirty.sample.positionMs,
+        writeRevision: state.writeRevision,
+        resetEpoch: state.resetEpoch,
+      });
+    }
+    writeRevision = state.writeRevision;
+    resetEpoch = state.resetEpoch;
+    generation = config.mintGeneration();
+    sequence = 0;
+    status = "Active";
+    sendDirty();
+    if (fromSuspended) config.onPersistenceResumed();
+  }
+
+  function retryGet(): void {
+    if (status !== "Suspended") return;
+    status = "Recovering";
+    void recover(true).catch(reportDefect);
+  }
+
+  function tick(): void {
+    if (status === "Stopped") return;
+    const sample = config.readSample();
+    if (sample.episodePlaybackRate.kind === "Absent") return;
+    dirty = { version: ++version, sample };
+    sendDirty();
   }
 
   async function drainAndStop(deadlineMs: number): Promise<void> {
-    const current = inFlight;
-    if (current !== undefined) {
-      await raceWithTimeout(current.settled, deadlineMs);
+    const captured = pending;
+    if (captured !== undefined) {
+      await new Promise<void>((resolve) => {
+        const finish = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        const timer = setTimeout(finish, deadlineMs);
+        void captured.settled.then(finish, finish);
+      });
     }
     stop();
   }
 
   function flushKeepalive(): void {
     if (status === "Stopped") return;
-    const sample = readSample();
+    const sample = config.readSample();
     if (sample.episodePlaybackRate.kind === "Absent") return;
-    const body = buildBody(sample, sequence);
-    sequence += 1;
-    void apiKeepaliveJson(listeningPath, body).catch(() => {
-      // justify-ignore-error: the beforeunload keepalive is best-effort; the page
-      // is unloading and there is no install or retry path for its outcome.
+    void apiKeepaliveJson(path, body(sample, sequence++)).catch(() => {
+      // justify-ignore-error: this best-effort retirement/unload write has no
+      // installation or retry path; its response cannot change local truth.
     });
   }
 
   return { tick, drainAndStop, flushKeepalive, stop };
-}
-
-function raceWithTimeout(promise: Promise<void>, ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    let done = false;
-    const finish = (): void => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      resolve();
-    };
-    const timer = setTimeout(finish, ms);
-    promise.then(finish, finish);
-  });
 }

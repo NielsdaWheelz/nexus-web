@@ -199,12 +199,21 @@ function isErrorResponse(body: unknown): body is ErrorResponse {
   );
 }
 
+async function readApiResponseText(response: Response): Promise<string> {
+  try {
+    return await response.text();
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    throw new ApiError(0, "E_NETWORK", "Network request failed");
+  }
+}
+
 /** Decode the common API error envelope without flattening its closed code. */
 export async function apiErrorFromResponse(
   response: Response,
 ): Promise<ApiError> {
   try {
-    const body: unknown = await response.json();
+    const body: unknown = JSON.parse(await readApiResponseText(response));
     if (isErrorResponse(body)) {
       return new ApiError(
         response.status,
@@ -216,6 +225,7 @@ export async function apiErrorFromResponse(
     }
   } catch (error) {
     if (isAbortError(error)) throw error;
+    if (isApiError(error)) return error;
   }
   return new ApiError(
     response.status,
@@ -270,9 +280,8 @@ function isPlainGetRequest(options: RequestInit): boolean {
 }
 
 /**
- * Own the browser transport boundary: only a rejected fetch is a network
- * failure. Parsing and contract decoders run outside this boundary so defects
- * cannot be relabeled as connectivity problems or enter the retry schedule.
+ * Own the browser fetch boundary. Body acquisition has the same transport
+ * policy; JSON parsing and contract decoders remain outside those boundaries.
  */
 async function fetchApiResponse(
   path: ApiPath,
@@ -287,9 +296,10 @@ async function fetchApiResponse(
 }
 
 async function parseApiResponse<T>(response: Response): Promise<T> {
+  const text = await readApiResponseText(response);
   let body: unknown;
   try {
-    body = await response.json();
+    body = JSON.parse(text);
   } catch (err) {
     if (isAbortError(err)) throw err;
     if (!response.ok) {
