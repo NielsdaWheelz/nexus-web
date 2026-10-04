@@ -2,23 +2,37 @@
 
 status: open · origin: 2026-09-28 cleanup campaign · area: release / production
 
-2026-10-03: metadata root owns release preparation in
-`feature/metadata-enrichment`. the reset/receipt repair is committed at
-`617baf70e`; target head is `0256`. the fresh live `0241` archive was actually
-restored, and the complete owner-populated starting-revision migration passed
-its retained-data checks and seven refusal/rollback cases. authenticated account
-inspection, real undo and stale-authority refusal also pass. no production drain,
-disposition or deployment occurred.
-the final drained backup and actual restore of those exact bytes remain required;
-the preliminary live archive is not final release authority. see
-[metadata verification](../metadata-enrichment-verification.md) and
-[the operator sequence](../../deployment.md#reviewed-model-history-reset).
+metadata root owns release preparation in `feature/metadata-enrichment`.
+the frozen integrated source is `bcb86e0204ef2ea347a8836a9e5d48f031d09134`;
+the sole head is `0257`: `0252` → resource `0253` → atlas `0254` → native
+`0255` → metadata `0256` → effects `0257`. preparation is green. the earlier
+`617baf70e/0256` and old migration-graph receipts remain historical; no database
+was stamped or aliased into the new graph.
 
-2026-10-04 composition: current main `8c9b7d332` already owns resource `0253`
-and atlas `0254`. final suffix is native `0255` → metadata `0256` → effects
-`0257`. mechanical metadata/effect renumbering is `9ac32aa7b`; exact merged-source
-qualification is pending. the prior `617baf70e/0256` receipt stays historical;
-no database is stamped or aliased into the reallocated graph.
+private artifacts: `/private/tmp/nexus-metadata-release-uy48cjy2/`.
+the table names exact files and sha256 prefixes; full hashes remain in the
+private artifacts. see [verification](../metadata-enrichment-verification.md)
+for scope and limits.
+
+| preparation proof | artifact | sha256 prefix |
+|---|---|---|
+| frozen noneditable installed bytes: nexus/provider/kernel/tools `466/46/17/18` | `installed-source-bcb86e.receipt.json` | `d7b71504ec34` |
+| actual controlled owner-populated `0241→0257`, retained rows, original write receipts, authenticated inspection/undo and stale-authority refusal | `0257-metadata-restored-cutover.receipt.json` | `b0b50e9f192f` |
+| eight whole-transaction refusal/rollback cases, including late `0249` and `0253` guards | `0257-fullchain-negative-transactions.receipt.json` | `25cd59b71508` |
+| native `0255` passed, metadata `0256` refused inactive uncertainty; all 114 public tables/full schema returned to `0252` | `0257-late-native-metadata-guard.receipt.json` | `13d02c88c9c4` |
+| six controlled consumer jobs and generated web projections; short summary of original controlled `b3cb3cd8` | `0257-consumer-composition-summary.receipt.json`, `0257-consumer-web.receipt.json` | `059c14144992`, `61100d6c7785` |
+| 11 forwarding cases; controlled remote leaves | `0257-metadata-snapshot-forwarding.receipt.json` | `cd4ad1db11ab` |
+| 10 release-controller cases; controlled remote/backup leaves | `0257-metadata-release-archive-green.json` | `b354e146de4c` |
+| `./scripts/test`, before disposable proof cleanup | `metadata-integrated-bcb86-precleanup-static.receipt.json` | `5fb539901b89` |
+| exact owned disposable fixture/resource cleanup; real evidence retained | `0257-owned-fixture-cleanup.receipt.json` | `2fb2685c2651` |
+| post-deletion `./scripts/test` exit 0; native main ancestor, unchanged qualified tree, sole head `0257` | `metadata-final-current-postcleanup-static.receipt.json` | `108ca2156da0` |
+
+the unmodified preliminary live `0241` archive was separately restored. the
+owner-populated proof backup is a controlled local fixture, not production/R2
+authority. no production drain, disposition, deployment or saved-item repair
+occurred. a fresh drained exact backup, actual restore/source review of those
+bytes, and explicit migration-loss approval remain required. follow
+[the operator sequence](../../deployment.md#reviewed-model-history-reset).
 
 ## what is true
 
@@ -39,7 +53,7 @@ no database is stamped or aliased into the reallocated graph.
 | 0250 | dossiers keep only the current revision (#411) | no | [dossier-latest-revision-0250-production-preflight](dossier-latest-revision-0250-production-preflight.md) |
 | 0251 | drops one table and 39 columns (#413); restored loss inventory recorded | no | [schema-0251-production-loss-preflight](schema-0251-production-loss-preflight.md) |
 | 0252 | deletes billing, stripe state and the transcription minute ledger (#404) | no | [billing-0252-release-steps](billing-0252-release-steps.md) |
-| 0253 | activation receipt keys; explicit Oracle passage nulls | yes | exact restored-copy rewrites/refusal in composed proof |
+| 0253 | activation receipt keys; explicit oracle passage nulls | yes | one copied original nested receipt rewrites in a separate rollback-only transaction; late malformed receipt refuses atomically |
 | 0254 | drops atlas computation timestamps | no | [atlas-0254-production-timestamp-loss](atlas-0254-production-timestamp-loss.md) |
 | 0255 | qualified native adapter; original principal/history preservation, shell credentials removed | no | [metadata verification](../metadata-enrichment-verification.md) |
 | 0256 | metadata hard cutover; unresolved journals block | no | [metadata plan](../metadata-enrichment-plan.md#9-hard-cutover-and-verification) |
@@ -56,6 +70,12 @@ migration shape guards still run with writers stopped. merging/checks/preview pu
 matched live application; release the same API/web sha only after migration and
 backend health, through the existing controller. no promotion is requested by
 this cleanup slice.
+
+the current full-chain proof observes that `0244` deletes all 54 original scoped
+mutation memos before `0253`; no original activation receipts survive to that
+revision. oracle passage population is zero. the positive rewrite therefore
+uses one copied original nested receipt with two admitted paths in a separate
+rollback-only transaction; it does not claim production normalization coverage.
 
 the separate plate/bind read-only census at `0241`, 2026-10-03 11:11:24–27 utc,
 found zero rows for each type (`/tmp/nexus-oracle-nullable-production-preflight.receipt.json`,

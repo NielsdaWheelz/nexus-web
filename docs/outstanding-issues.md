@@ -34,7 +34,7 @@ area · opened YYYY-MM-DD by <who> · P2
 
 - [open] operator credentials · 2026-10-02 cleanup workflow · skid's three peer bearer fields were printed into a tool transcript; coordinate rotation with active sessions: [ticket](tickets/local-qualification-credential-transcript-exposure.md).
 - [open] processing recovery / release · 2026-09-28 pr #387 investigation · the keats normalizations and gutenberg correction never ran in production (commands are unreleased); run them after the release, then land #387: [ticket](tickets/processing-repairs-await-release-then-387.md).
-- [open] release / production · 2026-09-28 cleanup campaign · production remains 7dc68929b/0241; metadata target 617baf70e/0256 is locally qualified, pending final drained backup/restore, reviewed losses and aligned release: [ticket](tickets/production-release-pending-since-7dc68929b.md).
+- [open] release / production · 2026-09-28 cleanup campaign · production remains 7dc68929b/0241; frozen bcb86e/0257 preparation is green, pending fresh drained backup/actual restore/source review, loss approval and aligned release; saved-item repair remains reserved: [ticket](tickets/production-release-pending-since-7dc68929b.md).
 - [open] resource sharing / production migration · 2026-09-28 resource-sharing reauthoring · run 0249's malformed/duplicate `resource_grants` count read-only against production before deploy: [ticket](tickets/resource-grants-0249-production-preflight.md).
 - [deferred] resource sharing / sealed handles · 2026-09-28 resource-sharing reauthoring · owner call: keep `nxps1_`/`nxpa1_` byte-stable across deploys, or scope them to the open tab: [ticket](tickets/public-sealed-handle-codec-stability-decision.md).
 - [deferred] resource sharing / public reader · 2026-09-28 resource-sharing reauthoring · owner call: public PDF bytes keep streaming through the api, or move to signed storage urls: [ticket](tickets/public-pdf-signed-url-decision.md).
@@ -213,8 +213,6 @@ unexpected timeouts. See
 - [open] oi-087 · ci actions · 2026-09-12 reader publication · the pinned buildx action targets a deprecated node runtime: [ticket](tickets/ci-buildx-action-deprecated-node-runtime.md).
 - [open] client telemetry malformed json · 2026-09-17 telemetry cleanup · malformed beacons return an unstructured 500 before authentication or backend validation: [ticket](tickets/client-defect-telemetry-malformed-json-returns-500.md).
 
-- [open] oi-106 · generation policy · 2026-09-14 spec review · p2 · background context-token budget is recorded without enforcement: [ticket](tickets/background-generation-context-budget-is-not-enforced.md).
-- [open] metadata verification · 2026-09-14 implementation · live research judgments and external query contents still need smoke inspection: [ticket](tickets/metadata-live-research-smoke-unverified.md).
 - [open] resource actions · 2026-09-14 highlight popup verification · manual follow-up must distinguish a mobile navigation defect from the removed journey's readiness race: [ticket](tickets/resource-action-parity-mobile-pane-readiness.md).
 - [open] agent tools · 2026-09-14 pr #246 memory review · resource reads load full bodies before enforcing their output limit: [ticket](tickets/resource-reader-loads-full-body-before-limit.md).
 - [open] oi-109 · local s3 development · 2026-09-15 pr #255 qualification · p2 · the pinned minio image pull failed on the devbox; establish supported access and prove a fresh pull: [ticket](tickets/local-minio-image-pull-fails-on-devbox.md).
@@ -234,7 +232,7 @@ unexpected timeouts. See
 - [open] chat release · 2026-09-28 pr #412 · new exact chat decoder requires a matching backend before web promotion; production pairing unverified: [ticket](tickets/chat-contract-release-pairing.md).
 - [open] chat recovery copy · 2026-09-28 pr #412 · copy changed; merged-tree terminal-defect browser journey remains unverified: [ticket](tickets/chat-operator-defect-copy-invites-new-command.md).
 - [open] chat incident · 2026-09-25 report, reviewed 2026-09-27 · original pane crash has no initiating exception: [ticket](tickets/production-chat-pane-crash-unattributed.md).
-- [open] model history cutover · 2026-09-27 combined-release plan · finite disposition/restore/undo proof is qualified at 617baf70e; production exact-id execution remains unapproved: [ticket](tickets/model-history-cutover-blocked-by-uncertain-work.md).
+- [open] model history cutover · 2026-09-27 combined-release plan · frozen bcb86e actual0241→0257 restore/undo and atomic refusal proofs are green; production 54 null parents/69 jobs/one orphan still await reviewed exact-id disposition: [ticket](tickets/model-history-cutover-blocked-by-uncertain-work.md).
 - [open] model history cutover / media enrichment · 2026-09-27 production census · fresh census has 52 uncertain media parents and 56 dead metadata jobs; reviewed production disposition and new enrichment remain: [ticket](tickets/model-cutover-dead-media-generations.md).
 - [open] codex host diagnostics · 2026-09-28 pr #412 · bounded first-cause log passed a local probe; merged-tree native-to-caller journey remains unverified: [ticket](tickets/codex-host-original-failure-not-retained.md).
 - [open] write undo · 2026-09-25 model cutover review · shared receipt transaction and note SIGKILL/retry proof pass; broader resource/background interruption coverage remains: [ticket](tickets/chat-write-undo-can-commit-before-completion-stamp.md).
@@ -326,5 +324,5 @@ unexpected timeouts. See
 
 - [open] metadata bibliography · 2026-10-01 council · local book/collection/essay dates are qualified; targeted saved-production correction remains behind the historical release gate: [ticket](tickets/metadata-book-date-counts-serialization.md).
 - [open] metadata production admission · 2026-10-01 investigation · catalog cause and three reviewed retry dispositions await runtime repair: [ticket](tickets/metadata-production-catalog-refresh-fails.md).
-- [open] atlas / production migration · 2026-10-04 current-main composition · 0254 drops 502 non-null timestamps; reviewed loss and final backup/restore remain: [ticket](tickets/atlas-0254-production-timestamp-loss.md).
+- [open] atlas / production migration · 2026-10-04 current-main composition · bcb86e actual0241→0257 retains all atlas identities/non-timestamp fields; 502 timestamp losses still need approval and final backup/restore: [ticket](tickets/atlas-0254-production-timestamp-loss.md).
 - [open] reader / pane search · 2026-10-02 metadata browser acceptance · same-document find preview query replacement collapses the toolbar: [ticket](tickets/reader-find-preview-collapses-toolbar-on-query-replace.md).

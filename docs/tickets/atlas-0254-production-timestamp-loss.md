@@ -10,6 +10,14 @@ area: atlas / migration 0254
 `/private/tmp/nexus-metadata-release-uy48cjy2/`; the preliminary original archive
 retains those values. this is declared unused data, not an inferred empty column.
 
+current frozen `bcb86e0204ef2ea347a8836a9e5d48f031d09134` is locally qualified:
+the actual controlled owner-populated `0241→0257` proof removes only
+`computed_at` and retains every atlas row identity and all remaining fields by
+exact row digest. receipt `0257-metadata-restored-cutover.receipt.json`, sha256
+prefix `b0b50e9f192f`; timestamp loss inventory
+`0257-actual-0241-loss-inventory.json` is in the same private directory.
+this does not approve the production loss or qualify the final release backup.
+
 prerequisites: review the intended loss, take the fresh drained source-bound
 backup and actually restore/qualify those exact bytes. the composed migration
 must retain every atlas row and remaining field. no provider or production write

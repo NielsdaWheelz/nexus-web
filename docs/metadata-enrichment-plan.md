@@ -1,8 +1,10 @@
 # metadata enrichment: implementation contract
 
-status: local metadata implementation, native integration and genuine research GREEN.
-disposable proofs deleted; final `./scripts/test` PASS. historical production
-release and saved-item repair remain BLOCKED; section 9 is not complete.
+status: local metadata, current native/main composition, genuine three-item
+research and restored-copy release preparation GREEN at `bcb86e020`.
+disposable proofs/fixtures deleted; final `./scripts/test` PASS at unchanged-tree
+native-main merge `6f036a29a`. production release and
+saved-item repair remain separately reserved; section 9 is not complete.
 owner decisions: 2026-10-01–02. [verification receipt](metadata-enrichment-verification.md).
 scope: nexus metadata only. the separate kernel agent owns model execution.
 no unanswered product questions block this plan. paths below are repository-relative.
@@ -551,7 +553,8 @@ module docs, delete only resolved tickets, and stop.
 - 1,000 opening words and bounded context are a starting allocation; later local
   reads handle missing front matter. oversized fixed context fails visibly.
 - xhigh costs latency on the serial worker; the finite live cohort took about
-  67/64/42 model-turn seconds. this does not establish a universal latency bound;
+  69/83/71 model-turn seconds on the final current-source cohort. this does not
+  establish a universal latency bound;
   there is no new concurrency system.
 - the native route retains 64,000/8,000 admission/reservation budgets without
   hard token ceilings. the user accepted that limit; no local limiter is added.
