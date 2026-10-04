@@ -14,7 +14,6 @@ import {
 } from "react";
 import { RefreshCw } from "lucide-react";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useFeedback } from "@/components/feedback/Feedback";
 import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
