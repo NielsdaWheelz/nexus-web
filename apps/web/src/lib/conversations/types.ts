@@ -36,59 +36,7 @@ export type ChatSendCapability =
   | { readonly kind: "AssistantRunning" }
   | { readonly kind: "ReplyTargetUnavailable" };
 
-// =============================================================================
-// ExpectedChatFailure — mirrors python/nexus/schemas/llm.py EXACTLY.
-//
-// Closed, discriminated union (discriminator `code`) exposed by ChatRunOut,
-// message hydration, terminal SSE, reconnect folding, and the trust trail.
-// Its fields are deliberately only `code` and `can_rerun`; the browser does
-// not carry backend diagnostics or retry-attempt bookkeeping.
-// =============================================================================
-
-interface ExpectedChatFailureBase {
-  can_rerun: boolean;
-}
-
-/** Run status `cancelled` alone drives this variant. */
-export interface CancelledChatFailure extends ExpectedChatFailureBase {
-  code: "cancelled";
-  can_rerun: boolean;
-}
-
-export interface ContextTooLargeChatFailure extends ExpectedChatFailureBase {
-  code: "context_too_large";
-  can_rerun: false;
-}
-
-export interface InvalidOutputChatFailure extends ExpectedChatFailureBase {
-  code: "invalid_output";
-  can_rerun: false;
-}
-
-/** A completion that ended early, or local truncation folded to the same
- * closed code. */
-export interface IncompleteChatFailure extends ExpectedChatFailureBase {
-  code: "incomplete";
-  can_rerun: boolean;
-}
-
-export interface AssistantUnavailableChatFailure extends ExpectedChatFailureBase {
-  code: "assistant_unavailable";
-  can_rerun: boolean;
-}
-
-export interface OperatorDefectChatFailure extends ExpectedChatFailureBase {
-  code: "operator_defect";
-  can_rerun: false;
-}
-
-export type ExpectedChatFailure =
-  | CancelledChatFailure
-  | ContextTooLargeChatFailure
-  | InvalidOutputChatFailure
-  | IncompleteChatFailure
-  | AssistantUnavailableChatFailure
-  | OperatorDefectChatFailure;
+export type ExpectedChatFailure = NonNullable<Schema<"ChatRunOut">["failure"]>;
 
 export interface ChatPublicationWarning {
   code: "CitationsUnavailable";

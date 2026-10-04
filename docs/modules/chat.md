@@ -289,9 +289,8 @@ three (`extra="forbid"`).
   `chatFailureMessage(failure)` helper
   (`lib/llm/failure.ts`), a `switch` over `failure.code` with a compile-time
   `never` exhaustiveness guard; shows an optional `Support ID`; shows a
-  **Run again** action iff `canRerun && onRerun`. `failure === null` (a defect
-  with no stored closed code, or a still-healthy fold) renders the generic
-  non-leaking copy.
+  **Rerun** action iff `canRerun && onRerun`. `failure === null` renders
+  generic, non-leaking copy.
 - `{ mode: "reconnect"; recovery; onReconnect }` — client-only same-run
   connection recovery; never calls `/rerun`.
 - `{ mode: "suspended"; stopRequested; onCheckStatus?; checking }` —
@@ -300,11 +299,33 @@ three (`extra="forbid"`).
   tails the same run. the composer retains the canonical run's stop control
   until intent is recorded.
 
-At most one action ever renders. `ExpectedChatFailure` is the closed,
-discriminated union (`code` as the tag) mirroring
-`python/nexus/schemas/llm.py`; see [modules/llms.md](llms.md) for the six
+at most one action renders. `ExpectedChatFailure` names the generated native
+contract, `NonNullable<Schema<"ChatRunOut">["failure"]>`;
+`python/nexus/schemas/llm.py` owns its closed tagged union.
+see [modules/llms.md](llms.md) for the six
 variants, their valid origins, and the `chat_failure_projection`/
 `rerun_eligibility` policy that produces them.
+
+`AssistantMessage` passes the message's `can_rerun` to the card. this action
+gate is distinct from `failure.can_rerun` and is checked again on the server.
+
+2026-10-04 original qualification at base `2a0b31369132fefbd913f317dffe659ebc8cb98d`,
+source `97b1dc98e4547b9929376947f486a05a0f97366d6721518c13200dc22cfa17e7`:
+39 compiler assertions preserve all six tags, required fields, rerun literals
+and nullable projections; emitted javascript and its three value exports are
+byte-identical. the unregistered decoder and parallel types are removed,
+516→410 authored lines (−106), with no native/generated change. two persisted
+native terminals (`timeout` and `invalid_output`) retain exact run/history
+replies, real-auth card copy/actions and hard-reload presentation. provider
+execution, admission and rerun submission were not run; cancelled/null and
+connection recovery remain source-qualified. `./scripts/test` passes.
+
+delivery integrates main `78b398f0caf1828c99cf3234baea1135eda7c3a2`;
+the native, generated, type and card owners match the original qualified source;
+the conversation history owner and shared api response reader changed. source
+`c44ef9eb35f1e161e08087b65d81a891ada197228a410efe1439b34912fbf369`
+passes two fresh real-auth terminal run/history/card/hard-reload journeys
+through those owners, without page errors or generation requests. `./scripts/test` passes.
 
 `POST /messages/{assistant_message_id}/rerun` recovers an eligible failed or
 cancelled turn; `POST /messages/{assistant_message_id}/regenerate` produces a
@@ -331,7 +352,7 @@ replaying the same key returns the existing generated run, while the same key
 with another source or operation is `E_IDEMPOTENCY_KEY_REPLAY_MISMATCH`. There is
 no separate retry/resend pair or key mode.
 
-**Run again** (failed turn), **Regenerate** (completed answer), **Reconnect**
+**Rerun** (failed turn), **Regenerate** (completed answer), **Reconnect**
 (dropped stream), suspended (operator recovery), and **Fork** (branch) stay
 distinct. `AssistantMessage` renders **Regenerate this answer** only for a
 completed assistant message, and the menu entry follows the resource-action

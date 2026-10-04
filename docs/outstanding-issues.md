@@ -346,14 +346,14 @@ unexpected timeouts. See
 - [deferred] consumption / result projection · 2026-10-04 source audit · a qualifying next item is projected once alone and again in the full lectern snapshot: [ticket](tickets/consumption-result-builds-next-item-twice.md).
 - [open] library members / confirmation focus · 2026-10-04 mounted controls · canceling a revoke confirmation focuses an adjacent row while the target row still exists; qualify keyboard behavior: [ticket](tickets/library-confirmation-cancel-focuses-adjacent-row.md).
 - [open] web / unused output contracts · 2026-10-04 simplification audit · unused media capability alias remains for a later scoped deletion: [ticket](tickets/unused-client-output-contracts.md).
-- [open] chat / failure contract · 2026-10-04 simplification audit · browser repeats the native failure union and retains an unused decoder: [ticket](tickets/chat-failure-contract-has-parallel-browser-owner.md).
 - [open] jobs / registry · 2026-10-04 simplification audit · six adapters forward unchanged arguments to concrete handlers: [ticket](tickets/jobs-registry-has-pure-forwarding-adapters.md).
 - [open] oracle / reading reconstruction · 2026-10-04 source audit · browser passage replay replaces current citation locators with historical values: [ticket](tickets/oracle-replay-overwrites-current-citation-locators.md).
 
 - [open] web / library focus · 2026-10-04 presentation audit · row-removal traversal is promised by a comment but absent from the current implementation: [ticket](tickets/library-row-removal-focus-contract-unimplemented.md).
 - [open] web / library write uncertainty · 2026-10-04 snapshot-owner audit · reorder transport rejection restores rows without proving authoritative order: [ticket](tickets/library-reorder-acknowledgement-loss-leaves-uncertain-order.md).
 - [open] reader / typed wire · 2026-10-04 original reader proof · media file-access success has no native output contract: [ticket](tickets/media-file-access-success-untyped.md).
-- [open] chat / private source · 2026-10-04 read-only reachability audit · unreachable failure decoder survives native output ownership: [ticket](tickets/unused-chat-failure-wire-decoder.md).
 - [open] native player / chapters · 2026-10-04 source audit · android rejects equal-end chapters accepted by native storage/model/web: [ticket](tickets/android-rejects-zero-length-chapters.md).
 - [open] web / lectern mutations · 2026-10-04 source audit · unexpected defects become ordinary retryable mutation or reconciliation recovery: [ticket](tickets/lectern-mutation-masks-unexpected-defects.md).
 - [open] player / completion · 2026-10-04 source audit · unexpected completion and installation failures become ordinary paused-at-end state: [ticket](tickets/player-completion-masks-unexpected-defects.md).
+- [open] oracle / reading detail · 2026-10-04 source audit · composite detail can mix atomic publication states under read committed: [ticket](tickets/oracle-detail-read-can-mix-publication-states.md).
+- [open] oracle / job recovery · 2026-10-04 source audit · dead jobs can leave pending readings while pruning deletes their publication replay checkpoint: [ticket](tickets/oracle-dead-jobs-can-lose-publication-replay.md).
