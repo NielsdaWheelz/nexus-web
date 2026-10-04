@@ -296,9 +296,6 @@ export default function Conversation() {
     [branch],
   );
 
-  // Stable across streaming renders (deps: branch) so `React.memo(MessageRow)`
-  // keeps unchanged rows mounted while a sibling streams; also the forks panel's
-  // switch handler.
   const handleSelectFork = useCallback(
     (fork: ForkOption) => {
       void branch.switchToFork(fork);

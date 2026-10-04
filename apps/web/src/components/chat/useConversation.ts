@@ -1,29 +1,26 @@
 "use client";
 
 /**
- * useConversation — the single live-chat engine.
+ * useConversation — one accepted view of a conversation.
  *
- * Consolidates the message lifecycle for the conversation pane and the new-chat
- * route: history load, resolve/create-on-send, optimistic seeding, retry,
- * branch state, and context-ref fan-out. History is one load:
- * GET /conversations/{id}/tree — the entire selected path plus fork data, with
- * no pagination.
+ * Owns the mounted pane's transcript, active leaf, inactive paths, fork data,
+ * title and history state. A transition publishes to the read-through ref before
+ * React renders, so run frames and branch commands see the same accepted view.
+ * History is one tree read plus visible active runs.
  *
  * Scroll lives entirely in the view (ChatSurface/useChatScroll); the engine
  * only holds the `scrollRef` it hands to the view and calls `captureAnchor`
- * before path-changing setMessages so the scroll owner can restore the eye-line.
+ * before changing the accepted path so the scroll owner can restore the eye-line.
  */
 
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
-  useReducer,
   useRef,
   useState,
 } from "react";
-import type { MutableRefObject, RefObject } from "react";
+import type { MutableRefObject, RefObject, SetStateAction } from "react";
 import {
   apiFetch,
   decodeApiPayload,
@@ -33,7 +30,7 @@ import {
   type ApiError,
   type ApiPath,
 } from "@/lib/api/client";
-import { useResource } from "@/lib/api/useResource";
+import { requestWithRetry } from "@/lib/api/retryPolicy";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
@@ -89,12 +86,50 @@ type CandidateCommand = Readonly<{
   idempotencyKey: string;
   request: ChatRunCandidateRequest;
 }>;
-type ConversationHistorySnapshot = {
-  adoptionVersion: number;
-  conversationId: string;
-  tree: ConversationTreeResponse;
-  activeRuns: ChatRunData[];
+
+type AcceptedView = {
+  conversationId: string | null;
+  title: string | null;
+  messages: ConversationMessage[];
+  historyState: "Loading" | "Unavailable" | "Ready";
+  forkOptionsByParentId: Record<string, ForkOption[]>;
+  inactivePathsByLeafId: Record<string, ConversationMessage[]>;
+  branchGraph: BranchGraph;
+  activeLeafMessageId: string | null;
+  branchDraft: BranchDraft | null;
 };
+
+function selectedIds(
+  view: Pick<AcceptedView, "messages" | "activeLeafMessageId">,
+): Set<string> {
+  const ids = selectedPathMessageIds(view.messages);
+  if (view.activeLeafMessageId) ids.add(view.activeLeafMessageId);
+  return ids;
+}
+
+function viewFromTree(
+  previous: AcceptedView,
+  tree: ConversationTreeResponse,
+): AcceptedView {
+  const inactivePathsByLeafId = { ...tree.path_cache_by_leaf_id };
+  if (tree.active_leaf_message_id) {
+    delete inactivePathsByLeafId[tree.active_leaf_message_id];
+  }
+  return {
+    ...previous,
+    conversationId: tree.conversation.id,
+    title: tree.conversation.title,
+    messages: messageUpdateReducer(previous.messages, {
+      type: "set_all",
+      messages: tree.selected_path,
+    }),
+    historyState: "Ready",
+    forkOptionsByParentId: tree.fork_options_by_parent_id,
+    inactivePathsByLeafId,
+    branchGraph: tree.branch_graph,
+    activeLeafMessageId: tree.active_leaf_message_id,
+  };
+}
 
 function conversationOperationErrorMessage(
   error: ApiError,
@@ -274,25 +309,71 @@ export function useConversation(
   const { conversationId: initialConversationId, onContextRefAdded } = options;
 
   const scrollRef = useRef<ChatScrollHandle | null>(null);
-
-  const [conversationId, setConversationId] = useState<string | null>(
-    initialConversationId,
+  const [view, setView] = useState<AcceptedView>(() => ({
+    conversationId: initialConversationId,
+    title: initialConversationId ? null : "New chat",
+    messages: [],
+    historyState: initialConversationId ? "Loading" : "Ready",
+    forkOptionsByParentId: {},
+    inactivePathsByLeafId: {},
+    branchGraph: EMPTY_BRANCH_GRAPH,
+    activeLeafMessageId: null,
+    branchDraft: null,
+  }));
+  // Callbacks and stream frames read the same accepted value scheduled for render.
+  const viewRef = useRef(view);
+  const updateView = useCallback(
+    (transition: (current: AcceptedView) => AcceptedView) => {
+      const candidate = transition(viewRef.current);
+      const draft = candidate.branchDraft;
+      const next = draft &&
+          !candidate.messages.some(
+            (message) => message.id === draft.parentMessageId,
+          )
+        ? { ...candidate, branchDraft: null }
+        : candidate;
+      viewRef.current = next;
+      setView(next);
+    },
+    [],
   );
-  // An existing conversation has no known title until the server sends one; the
-  // canonical pane title must stay unresolved rather than claim "New chat".
-  const [title, setTitle] = useState<string | null>(
-    initialConversationId ? null : "New chat",
+  const dispatchMessages = useCallback(
+    (action: Parameters<typeof messageUpdateReducer>[1]) => {
+      updateView((current) => ({
+        ...current,
+        messages: messageUpdateReducer(current.messages, action),
+      }));
+    },
+    [updateView],
   );
-  // The reducer is the single owner of every transcript transition; the engine
-  // holds the state and dispatches actions (it is the only `setMessages`-class
-  // consumer — there is no raw setter).
-  const [messages, dispatchMessages] = useReducer(
-    messageUpdateReducer,
-    [] as ConversationMessage[],
+  const setForkOptionsByParentId = useCallback(
+    (next: SetStateAction<Record<string, ForkOption[]>>) => {
+      updateView((current) => ({
+        ...current,
+        forkOptionsByParentId: typeof next === "function"
+          ? next(current.forkOptionsByParentId)
+          : next,
+      }));
+    },
+    [updateView],
   );
-  const [historyState, setHistoryState] = useState<"Loading" | "Unavailable" | "Ready">(
-    initialConversationId ? "Loading" : "Ready",
+  const setBranchDraft = useCallback(
+    (branchDraft: BranchDraft | null) => {
+      updateView((current) => ({ ...current, branchDraft }));
+    },
+    [updateView],
   );
+  const {
+    conversationId,
+    title,
+    messages,
+    historyState,
+    forkOptionsByParentId,
+    inactivePathsByLeafId,
+    branchGraph,
+    activeLeafMessageId,
+    branchDraft,
+  } = view;
   const loading = historyState === "Loading";
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [projectionReloadRequestId, setProjectionReloadRequestId] = useState<
@@ -329,28 +410,7 @@ export function useConversation(
     },
     [reportAsyncDefect, reportProjectionReload],
   );
-  const conversationIdRef = useRef(conversationId);
-  conversationIdRef.current = conversationId;
-  // A history request begun before receipt adoption cannot replace its newer tree.
-  const adoptionVersionRef = useRef(0);
-  const historyRequestRef = useRef<{
-    signal: AbortSignal;
-    controller: AbortController;
-  } | null>(null);
-
-  // Branch state.
-  const [forkOptionsByParentId, setForkOptionsByParentId] = useState<
-    Record<string, ForkOption[]>
-  >({});
-  const [pathCacheByLeafId, setPathCacheByLeafId] = useState<
-    Record<string, ConversationMessage[]>
-  >({});
-  const [branchGraph, setBranchGraph] =
-    useState<BranchGraph>(EMPTY_BRANCH_GRAPH);
-  const [activeLeafMessageId, setActiveLeafMessageId] = useState<string | null>(
-    null,
-  );
-  const [branchDraft, setBranchDraft] = useState<BranchDraft | null>(null);
+  const initialReadAbortRef = useRef<AbortController | null>(null);
 
   const rerunningAssistantMessageIds = useStringIdSet();
   const regeneratingAssistantMessageIds = useStringIdSet();
@@ -361,31 +421,7 @@ export function useConversation(
   const rerunKeysRef = useRef<Map<string, CandidateCommand>>(new Map());
   const regenerateKeysRef = useRef<Map<string, CandidateCommand>>(new Map());
 
-  const selectedPathIdsRef = useRef<Set<string>>(new Set());
   const activePathSwitchSeqRef = useRef(0);
-  const revealMessageRequestsRef = useRef<Map<string, Promise<boolean>>>(
-    new Map(),
-  );
-  // Single-flight guard for the active-runs fetch so the initial load and the two
-  // branch-switch calls share one in-flight GET instead of issuing duplicates.
-  const activeRunsRequestRef = useRef<Promise<ChatRunListResponse> | null>(
-    null,
-  );
-  const treeRequestRef = useRef<{
-    conversationId: string;
-    promise: Promise<ApiJson<"/conversations/{conversation_id}/tree", "get">>;
-  } | null>(null);
-  const routeConversationIdRef = useRef(initialConversationId);
-
-  const messageIdsForPath = useCallback(
-    (path: readonly { id: string }[], leafMessageId: string | null = null) => {
-      const ids = selectedPathMessageIds(path);
-      if (leafMessageId) ids.add(leafMessageId);
-      return ids;
-    },
-    [],
-  );
-
   const shouldApplyRunToSelectedPath = useCallback(
     ({
       userMessageId,
@@ -393,15 +429,16 @@ export function useConversation(
     }: {
       userMessageId: string;
       assistantMessageId: string;
-    }) =>
-      selectedPathIdsRef.current.has(userMessageId) ||
-      selectedPathIdsRef.current.has(assistantMessageId),
+    }) => {
+      const ids = selectedIds(viewRef.current);
+      return ids.has(userMessageId) || ids.has(assistantMessageId);
+    },
     [],
   );
 
   const shouldStartRunForCurrentConversation = useCallback(
     ({ conversationId: runConversationId }: { conversationId: string }) => {
-      const currentConversationId = conversationIdRef.current;
+      const currentConversationId = viewRef.current.conversationId;
       return (
         currentConversationId === null ||
         currentConversationId === runConversationId
@@ -412,7 +449,6 @@ export function useConversation(
 
   const {
     tailChatRun,
-    abortAll,
     cancelRun,
     connectionRecoveries,
     reconnectRun,
@@ -425,11 +461,6 @@ export function useConversation(
     shouldStartRun: shouldStartRunForCurrentConversation,
     shouldApplyRun: shouldApplyRunToSelectedPath,
   });
-  const tailChatRunRef = useRef(tailChatRun);
-
-  useEffect(() => {
-    tailChatRunRef.current = tailChatRun;
-  }, [tailChatRun]);
 
   // --------------------------------------------------------------------------
   // Branching: active-runs resumption + tree application
@@ -446,28 +477,15 @@ export function useConversation(
         conversation_id: id,
         status: "active",
       })}` as ApiPath;
-      let activeRuns: ChatRunListResponse;
-      if (signal) {
-        const raw = await apiFetch<ApiJson<"/chat-runs", "get">>(path, { signal });
-        activeRuns = decodeApiPayload(
-          raw,
-          chatRunListFromWire,
-          "Active chat runs",
-        );
-      } else {
-        activeRuns = await (activeRunsRequestRef.current ??
-          (activeRunsRequestRef.current = apiFetch<ApiJson<"/chat-runs", "get">>(path)
-            .then((response) =>
-              decodeApiPayload(
-                response,
-                chatRunListFromWire,
-                "Active chat runs",
-              ),
-            )
-            .finally(() => {
-              activeRunsRequestRef.current = null;
-            })));
-      }
+      const raw = await apiFetch<ApiJson<"/chat-runs", "get">>(
+        path,
+        signal ? { signal } : {},
+      );
+      const activeRuns: ChatRunListResponse = decodeApiPayload(
+        raw,
+        chatRunListFromWire,
+        "Active chat runs",
+      );
       return activeRuns.data
         .filter(
           (runData) =>
@@ -481,13 +499,13 @@ export function useConversation(
 
   const tailVisibleActiveRuns = useCallback(
     async (visibleMessageIds: Set<string>) => {
-      const id = conversationId;
+      const id = viewRef.current.conversationId;
       if (!id || visibleMessageIds.size === 0) return;
       try {
         const activeRuns = await loadVisibleActiveRuns(id, visibleMessageIds);
-        if (conversationIdRef.current !== id) return;
+        if (viewRef.current.conversationId !== id) return;
         for (const runData of activeRuns) {
-          void tailChatRunRef.current(runData);
+          void tailChatRun(runData);
         }
       } catch (err) {
         if (reportProjectionReload(err)) return;
@@ -499,61 +517,23 @@ export function useConversation(
         console.error("Failed to load active chat runs:", err);
       }
     },
-    [
-      conversationId,
-      loadVisibleActiveRuns,
-      reportAsyncDefect,
-      reportProjectionReload,
-    ],
+    [loadVisibleActiveRuns, reportAsyncDefect, reportProjectionReload, tailChatRun],
   );
 
   const applyConversationTree = useCallback(
     (tree: ConversationTreeResponse) => {
-      setHistoryState("Ready");
-      setTitle(tree.conversation.title);
-      dispatchMessages({ type: "set_all", messages: tree.selected_path });
-      selectedPathIdsRef.current = messageIdsForPath(
-        tree.selected_path,
-        tree.active_leaf_message_id,
-      );
-      setForkOptionsByParentId(tree.fork_options_by_parent_id);
-      setPathCacheByLeafId(tree.path_cache_by_leaf_id);
-      setBranchGraph(tree.branch_graph);
-      setActiveLeafMessageId(tree.active_leaf_message_id);
+      updateView((current) => viewFromTree(current, tree));
     },
-    [messageIdsForPath],
-  );
-
-  const loadConversationTree = useCallback(
-    (id: string, signal?: AbortSignal) => {
-      if (signal) {
-        return apiFetch<ApiJson<"/conversations/{conversation_id}/tree", "get">>(
-          `/api/conversations/${id}/tree`,
-          { signal },
-        );
-      }
-      if (treeRequestRef.current?.conversationId === id) {
-        return treeRequestRef.current.promise;
-      }
-      const request = apiFetch<ApiJson<"/conversations/{conversation_id}/tree", "get">>(
-        `/api/conversations/${id}/tree`,
-      );
-      const promise = request.finally(() => {
-        if (treeRequestRef.current?.promise === promise) {
-          treeRequestRef.current = null;
-        }
-      });
-      treeRequestRef.current = { conversationId: id, promise };
-      return promise;
-    },
-    [],
+    [updateView],
   );
 
   const refreshTreeForConversation = useCallback(
     async (id: string, reportError: boolean): Promise<boolean> => {
       try {
-        const response = await loadConversationTree(id);
-        if (conversationIdRef.current !== id) return false;
+        const response = await apiFetch<
+          ApiJson<"/conversations/{conversation_id}/tree", "get">
+        >(`/api/conversations/${id}/tree`);
+        if (viewRef.current.conversationId !== id) return false;
         applyConversationTree(conversationTreeFromWire(response.data));
         setError(null);
         return true;
@@ -574,175 +554,80 @@ export function useConversation(
     },
     [
       applyConversationTree,
-      loadConversationTree,
       reportAsyncDefect,
       reportOperationError,
       reportProjectionReload,
     ],
   );
 
-  const loadConversationHistory = useCallback(
-    async (
-      id: string,
-      signal: AbortSignal,
-    ): Promise<ConversationHistorySnapshot> => {
-      const adoptionVersion = adoptionVersionRef.current;
-      const response = await loadConversationTree(id, signal);
-      const visibleMessageIds = messageIdsForPath(
-        response.data.selected_path,
-        response.data.active_leaf_message_id,
-      );
-      let activeRuns: ChatRunData[] = [];
+  // A changed route remounts this owner. An admitted new chat changes its local
+  // id without starting another initial load; its acknowledged tree is authoritative.
+  useEffect(() => {
+    if (!initialConversationId) return;
+    const id = initialConversationId;
+    const controller = new AbortController();
+    initialReadAbortRef.current = controller;
+    void (async () => {
       try {
-        activeRuns = await loadVisibleActiveRuns(id, visibleMessageIds, signal);
+        const { tree, activeRuns } = await requestWithRetry(async (signal) => {
+          signal.throwIfAborted();
+          const response = await apiFetch<
+            ApiJson<"/conversations/{conversation_id}/tree", "get">
+          >(`/api/conversations/${id}/tree`, { signal });
+          const tree = conversationTreeFromWire(response.data);
+          const visibleIds = selectedIds({
+            messages: tree.selected_path,
+            activeLeafMessageId: tree.active_leaf_message_id,
+          });
+          let activeRuns: ChatRunData[] = [];
+          try {
+            activeRuns = await loadVisibleActiveRuns(id, visibleIds, signal);
+          } catch (err) {
+            if (isAbortError(err) || signal.aborted) throw err;
+            if (isChatReloadRequired(err)) throw err;
+            if (handleUnauthenticatedApiError(err)) throw err;
+            if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
+            console.error("Failed to load active chat runs:", err);
+          }
+          signal.throwIfAborted();
+          return { tree, activeRuns };
+        }, controller.signal);
+        if (controller.signal.aborted || viewRef.current.conversationId !== id) {
+          return;
+        }
+        applyConversationTree(tree);
+        for (const runData of activeRuns) {
+          void tailChatRun(runData);
+        }
+        setError(null);
       } catch (err) {
-        if (isAbortError(err) || signal.aborted) throw err;
-        if (isChatReloadRequired(err)) throw err;
-        if (handleUnauthenticatedApiError(err)) throw err;
-        if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
-        console.error("Failed to load active chat runs:", err);
+        if (controller.signal.aborted || isAbortError(err)) return;
+        if (reportProjectionReload(err)) return;
+        if (handleUnauthenticatedApiError(err)) return;
+        if (!isApiError(err) || isSameSystemApiDefect(err)) {
+          reportAsyncDefect(err);
+          return;
+        }
+        reportOperationError(err, "Load");
+        updateView((current) => ({ ...current, historyState: "Unavailable" }));
       }
-      return {
-        adoptionVersion,
-        conversationId: id,
-        tree: conversationTreeFromWire(response.data),
-        activeRuns,
-      };
-    },
-    [loadConversationTree, loadVisibleActiveRuns, messageIdsForPath],
-  );
-
-  const historyResource = useResource<ConversationHistorySnapshot>({
-    cacheKey:
-      conversationId !== null ? `conversation-tree:${conversationId}` : null,
-    load: async (signal) => {
-      if (!conversationId) {
-        throw new Error("Cannot load conversation history without an id");
+    })();
+    return () => {
+      controller.abort();
+      if (initialReadAbortRef.current === controller) {
+        initialReadAbortRef.current = null;
       }
-      if (historyRequestRef.current?.signal !== signal)
-        historyRequestRef.current = {
-          signal,
-          controller: new AbortController(),
-        };
-      // Bind every retry of this resource request to the same cancellation owner.
-      const historySignal = AbortSignal.any([
-        signal,
-        historyRequestRef.current.controller.signal,
-      ]);
-      try {
-        historySignal.throwIfAborted();
-        const history = await loadConversationHistory(
-          conversationId,
-          historySignal,
-        );
-        historySignal.throwIfAborted();
-        return history;
-      } catch (error) {
-        // A transport may settle after abort. Preserve cancellation so the
-        // resource owner cannot publish its late modeled error or pane defect.
-        historySignal.throwIfAborted();
-        throw error;
-      }
-    },
-  });
-
-  // --------------------------------------------------------------------------
-  // History load
-  // --------------------------------------------------------------------------
-
-  useLayoutEffect(() => {
-    if (routeConversationIdRef.current === initialConversationId) return;
-    routeConversationIdRef.current = initialConversationId;
-    conversationIdRef.current = initialConversationId;
-    activePathSwitchSeqRef.current += 1;
-    revealMessageRequestsRef.current.clear();
-    activeRunsRequestRef.current = null;
-    treeRequestRef.current = null;
-
-    abortAll();
-    setConversationId(initialConversationId);
-    setTitle("New chat");
-    dispatchMessages({ type: "set_all", messages: [] });
-    setHistoryState(initialConversationId ? "Loading" : "Ready");
-    setError(null);
-    setForkOptionsByParentId({});
-    setPathCacheByLeafId({});
-    setBranchGraph(EMPTY_BRANCH_GRAPH);
-    setActiveLeafMessageId(null);
-    setBranchDraft(null);
-    selectedPathIdsRef.current = new Set();
-    rerunningAssistantMessageIds.clear();
-    regeneratingAssistantMessageIds.clear();
-    rerunKeysRef.current.clear();
-    regenerateKeysRef.current.clear();
-  }, [
-    abortAll,
-    conversationId,
-    initialConversationId,
-    regeneratingAssistantMessageIds,
-    rerunningAssistantMessageIds,
-  ]);
-
-  // Drop any in-flight active-runs promise scoped to a previous conversation.
-  useEffect(() => {
-    activeRunsRequestRef.current = null;
-    treeRequestRef.current = null;
-  }, [conversationId]);
-
-  useEffect(() => {
-    const id = conversationId;
-    if (!id) {
-      setHistoryState("Ready");
-      return;
-    }
-    if (historyResource.status === "loading") {
-      setHistoryState("Loading");
-      setError(null);
-      return;
-    }
-    if (historyResource.status === "error") {
-      reportOperationError(historyResource.error, "Load");
-      setHistoryState("Unavailable");
-      return;
-    }
-    if (
-      historyResource.status !== "ready" ||
-      historyResource.data.conversationId !== id ||
-      historyResource.data.adoptionVersion !== adoptionVersionRef.current ||
-      conversationIdRef.current !== id
-    ) {
-      return;
-    }
-
-    applyConversationTree(historyResource.data.tree);
-    for (const runData of historyResource.data.activeRuns) {
-      void tailChatRunRef.current(runData);
-    }
-    setError(null);
+    };
   }, [
     applyConversationTree,
-    conversationId,
-    historyResource,
+    initialConversationId,
+    loadVisibleActiveRuns,
+    reportAsyncDefect,
     reportOperationError,
+    reportProjectionReload,
+    tailChatRun,
+    updateView,
   ]);
-
-  useEffect(() => abortAll, [abortAll]);
-
-  // Keep the path-id ref in sync with the rendered transcript so streaming
-  // runs are filtered to the visible path.
-  selectedPathIdsRef.current = useMemo(
-    () => messageIdsForPath(messages, activeLeafMessageId),
-    [activeLeafMessageId, messageIdsForPath, messages],
-  );
-
-  // Cache the active path so a fork switch can restore it without a refetch.
-  useEffect(() => {
-    if (!activeLeafMessageId || messages.length === 0) return;
-    setPathCacheByLeafId((prev) => {
-      if (prev[activeLeafMessageId] === messages) return prev;
-      return { ...prev, [activeLeafMessageId]: messages };
-    });
-  }, [activeLeafMessageId, messages]);
 
   // --------------------------------------------------------------------------
   // Run created (optimistic seed + tail)
@@ -750,35 +635,43 @@ export function useConversation(
 
   const onChatRunCreated = useCallback(
     (runData: ChatRunData) => {
-      const currentConversationId = conversationIdRef.current;
+      const currentConversationId = viewRef.current.conversationId;
       if (
         currentConversationId !== null &&
         currentConversationId !== runData.conversation.id
       ) {
         return;
       }
-      conversationIdRef.current = runData.conversation.id;
-      setConversationId(runData.conversation.id);
-      setTitle(runData.conversation.title);
-      setActiveLeafMessageId(runData.assistant_message.id);
-      selectedPathIdsRef.current = new Set([
-        ...selectedPathIdsRef.current,
-        runData.user_message.id,
-        runData.assistant_message.id,
-      ]);
-      // Seed the optimistic pair for a brand-new turn (no branch parent). For a
-      // branch reply, useChatRunTail merges it into the existing path.
-      if (!runData.user_message.parent_message_id) {
-        dispatchMessages({
-          type: "seed_optimistic",
-          user: runData.user_message,
-          assistant: runData.assistant_message,
-        });
-      }
+      updateView((current) => {
+        const nextLeaf = runData.assistant_message.id;
+        const inactivePathsByLeafId = { ...current.inactivePathsByLeafId };
+        if (
+          current.activeLeafMessageId &&
+          current.activeLeafMessageId !== nextLeaf
+        ) {
+          inactivePathsByLeafId[current.activeLeafMessageId] = current.messages;
+        }
+        delete inactivePathsByLeafId[nextLeaf];
+        return {
+          ...current,
+          conversationId: runData.conversation.id,
+          title: runData.conversation.title,
+          activeLeafMessageId: nextLeaf,
+          inactivePathsByLeafId,
+          // A new conversation seeds its pair. A branch reply is merged by its tail.
+          messages: runData.user_message.parent_message_id
+            ? current.messages
+            : messageUpdateReducer(current.messages, {
+                type: "seed_optimistic",
+                user: runData.user_message,
+                assistant: runData.assistant_message,
+              }),
+        };
+      });
       // Concurrent branch runs are intentional; a new run never aborts them.
       void tailChatRun(runData);
     },
-    [tailChatRun],
+    [tailChatRun, updateView],
   );
   const adoptAdmittedRun = useCallback(
     async (
@@ -834,10 +727,10 @@ export function useConversation(
         )
           throw new Error("Acknowledged chat target identity mismatch");
       }
-      const visibleIds = messageIdsForPath(
-        tree.selected_path,
-        tree.active_leaf_message_id,
-      );
+      const visibleIds = selectedIds({
+        messages: tree.selected_path,
+        activeLeafMessageId: tree.active_leaf_message_id,
+      });
       const activeRuns = await loadVisibleActiveRuns(
         id,
         visibleIds,
@@ -854,10 +747,8 @@ export function useConversation(
         !activeRuns.some((run) => run.run.id === data.run.id)
       )
         activeRuns.push(data);
-      adoptionVersionRef.current += 1;
-      historyRequestRef.current?.controller.abort();
-      conversationIdRef.current = id;
-      setConversationId(id);
+      initialReadAbortRef.current?.abort();
+      initialReadAbortRef.current = null;
       applyConversationTree(tree);
       setError(null);
       // Terminal receipt runs are already projected by the current tree. Replaying
@@ -868,7 +759,6 @@ export function useConversation(
     [
       applyConversationTree,
       loadVisibleActiveRuns,
-      messageIdsForPath,
       tailChatRun,
     ],
   );
@@ -913,7 +803,7 @@ export function useConversation(
         if (command === undefined) {
           let selected = explicitSelection;
           if (selected === undefined) {
-            const source = messages.find(
+            const source = viewRef.current.messages.find(
               (message) => message.id === assistantMessageId,
             );
             const sourceSelection = source?.trust_trail?.run?.run_selection;
@@ -989,7 +879,7 @@ export function useConversation(
         busy.remove(assistantMessageId);
       }
     },
-    [messages, onChatRunCreated, reportAsyncDefect, reportOperationError],
+    [onChatRunCreated, reportAsyncDefect, reportOperationError],
   );
 
   const rerunAssistantResponse = useCallback(
@@ -1057,7 +947,7 @@ export function useConversation(
       settleConversation: Parameters<DeleteMessageMutation>[2],
     ): Promise<void> => {
       try {
-        const currentConversationId = conversationIdRef.current;
+        const currentConversationId = viewRef.current.conversationId;
         if (currentConversationId === null) {
           throw new Error(
             "Mounted Message deletion has no Conversation identity",
@@ -1072,26 +962,28 @@ export function useConversation(
           async (receipt) => {
             let localProjectionError: unknown;
             try {
-              const remainingMessages = messageUpdateReducer(messages, {
-                type: "remove_subtree",
-                rootMessageId: messageId,
-              });
-              dispatchMessages({
-                type: "remove_subtree",
-                rootMessageId: messageId,
-              });
+              const remainingMessages = messageUpdateReducer(
+                viewRef.current.messages,
+                { type: "remove_subtree", rootMessageId: messageId },
+              );
+              updateView((current) => ({
+                ...current,
+                messages: remainingMessages,
+                ...(remainingMessages.length === 0
+                  ? {
+                      forkOptionsByParentId: {},
+                      inactivePathsByLeafId: {},
+                      branchGraph: EMPTY_BRANCH_GRAPH,
+                      activeLeafMessageId: null,
+                    }
+                  : {}),
+              }));
               rerunningAssistantMessageIds.remove(messageId);
               regeneratingAssistantMessageIds.remove(messageId);
               rerunKeysRef.current.delete(messageId);
               regenerateKeysRef.current.delete(messageId);
 
-              if (remainingMessages.length === 0) {
-                setForkOptionsByParentId({});
-                setPathCacheByLeafId({});
-                setBranchGraph(EMPTY_BRANCH_GRAPH);
-                setActiveLeafMessageId(null);
-                selectedPathIdsRef.current = new Set();
-              } else {
+              if (remainingMessages.length > 0) {
                 await refreshTreeForConversation(currentConversationId, false);
               }
             } catch (error) {
@@ -1129,12 +1021,12 @@ export function useConversation(
       }
     },
     [
-      messages,
       refreshTreeForConversation,
       regeneratingAssistantMessageIds,
       reportAsyncDefect,
       reportOperationError,
       rerunningAssistantMessageIds,
+      updateView,
     ],
   );
 
@@ -1150,16 +1042,19 @@ export function useConversation(
   // --------------------------------------------------------------------------
 
   const reloadTree = useCallback(async () => {
-    const id = conversationId;
+    const id = viewRef.current.conversationId;
     if (!id) return false;
     return refreshTreeForConversation(id, true);
-  }, [conversationId, refreshTreeForConversation]);
+  }, [refreshTreeForConversation]);
 
   const switchToLeaf = useCallback(
     async (nextLeafId: string, anchorMessageId: string | null) => {
-      const id = conversationId;
+      const previous = viewRef.current;
+      const id = previous.conversationId;
       if (!id) return false;
-      const nextPath = pathCacheByLeafId[nextLeafId];
+      const nextPath = nextLeafId === previous.activeLeafMessageId
+        ? previous.messages
+        : previous.inactivePathsByLeafId[nextLeafId];
       if (!nextPath) {
         setError({
           tone: "Danger",
@@ -1171,33 +1066,36 @@ export function useConversation(
       const switchSeq = activePathSwitchSeqRef.current + 1;
       activePathSwitchSeqRef.current = switchSeq;
 
-      const previous = {
-        messages,
-        activeLeafMessageId,
-        forkOptionsByParentId,
-        branchGraph,
-        branchDraft,
-      };
-
       // Snapshot the eye-line before swapping messages; the scroll owner
-      // restores it on the next messages-driven layout.
+      // restores it on the next messages-driven layout. Keep the current path
+      // only when departing it; stream frames do not copy the cache.
       scrollRef.current?.captureAnchor(anchorMessageId);
-
-      dispatchMessages({ type: "set_all", messages: nextPath });
-      selectedPathIdsRef.current = messageIdsForPath(nextPath, nextLeafId);
-      setActiveLeafMessageId(nextLeafId);
-      if (
-        branchDraft &&
-        !nextPath.some((message) => message.id === branchDraft.parentMessageId)
-      ) {
-        setBranchDraft(null);
-      }
-      setForkOptionsByParentId((prev) =>
-        activeForkOptionsForPath(prev, nextPath),
-      );
-      setBranchGraph((prev) => activeBranchGraphForPath(prev, nextPath));
+      updateView((current) => {
+        const inactivePathsByLeafId = { ...current.inactivePathsByLeafId };
+        if (
+          current.activeLeafMessageId &&
+          current.activeLeafMessageId !== nextLeafId
+        ) {
+          inactivePathsByLeafId[current.activeLeafMessageId] = current.messages;
+        }
+        delete inactivePathsByLeafId[nextLeafId];
+        return {
+          ...current,
+          messages: messageUpdateReducer(current.messages, {
+            type: "set_all",
+            messages: nextPath,
+          }),
+          activeLeafMessageId: nextLeafId,
+          inactivePathsByLeafId,
+          forkOptionsByParentId: activeForkOptionsForPath(
+            current.forkOptionsByParentId,
+            nextPath,
+          ),
+          branchGraph: activeBranchGraphForPath(current.branchGraph, nextPath),
+        };
+      });
       setError(null);
-      void tailVisibleActiveRuns(selectedPathIdsRef.current);
+      void tailVisibleActiveRuns(selectedIds(viewRef.current));
 
       try {
         const response = await apiFetch<
@@ -1212,12 +1110,7 @@ export function useConversation(
         if (activePathSwitchSeqRef.current !== switchSeq) return false;
         scrollRef.current?.captureAnchor(anchorMessageId);
         applyConversationTree(conversationTreeFromWire(response.data));
-        void tailVisibleActiveRuns(
-          messageIdsForPath(
-            response.data.selected_path,
-            response.data.active_leaf_message_id,
-          ),
-        );
+        void tailVisibleActiveRuns(selectedIds(viewRef.current));
         return true;
       } catch (err) {
         if (activePathSwitchSeqRef.current !== switchSeq) return false;
@@ -1228,31 +1121,40 @@ export function useConversation(
         }
         reportOperationError(err, "SwitchFork");
         scrollRef.current?.captureAnchor(anchorMessageId);
-        dispatchMessages({ type: "set_all", messages: previous.messages });
-        selectedPathIdsRef.current = messageIdsForPath(
-          previous.messages,
-          previous.activeLeafMessageId,
-        );
-        setActiveLeafMessageId(previous.activeLeafMessageId);
-        setBranchDraft(previous.branchDraft);
-        setForkOptionsByParentId(previous.forkOptionsByParentId);
-        setBranchGraph(previous.branchGraph);
+        updateView((current) => {
+          const inactivePathsByLeafId = { ...current.inactivePathsByLeafId };
+          if (
+            current.activeLeafMessageId &&
+            current.activeLeafMessageId !== previous.activeLeafMessageId
+          ) {
+            inactivePathsByLeafId[current.activeLeafMessageId] =
+              current.messages;
+          }
+          if (previous.activeLeafMessageId) {
+            delete inactivePathsByLeafId[previous.activeLeafMessageId];
+          }
+          return {
+            ...current,
+            messages: messageUpdateReducer(current.messages, {
+              type: "set_all",
+              messages: previous.messages,
+            }),
+            activeLeafMessageId: previous.activeLeafMessageId,
+            inactivePathsByLeafId,
+            branchDraft: previous.branchDraft,
+            forkOptionsByParentId: previous.forkOptionsByParentId,
+            branchGraph: previous.branchGraph,
+          };
+        });
         return false;
       }
     },
     [
-      activeLeafMessageId,
       applyConversationTree,
-      branchDraft,
-      branchGraph,
-      conversationId,
-      forkOptionsByParentId,
-      messageIdsForPath,
-      messages,
-      pathCacheByLeafId,
       reportAsyncDefect,
       reportOperationError,
       tailVisibleActiveRuns,
+      updateView,
     ],
   );
 
@@ -1264,115 +1166,82 @@ export function useConversation(
   );
 
   const revealMessage = useCallback(
-    (messageId: string): Promise<boolean> => {
-      const requestKey = `${conversationId ?? "new"}:${messageId}`;
-      const existingRequest = revealMessageRequestsRef.current.get(requestKey);
-      if (existingRequest) return existingRequest;
+    async (messageId: string): Promise<boolean> => {
+      const current = viewRef.current;
+      if (current.messages.some((message) => message.id === messageId)) {
+        return true;
+      }
 
-      const request = (async () => {
-        if (messages.some((message) => message.id === messageId)) return true;
-
-        const candidate = Object.entries(pathCacheByLeafId)
-          .filter(([, path]) =>
-            path.some((message) => message.id === messageId),
-          )
-          .sort(
-            ([leftLeafId, leftPath], [rightLeafId, rightPath]) =>
-              leftPath.length - rightPath.length ||
-              leftLeafId.localeCompare(rightLeafId),
-          )[0];
-        if (!candidate) {
-          setError({
-            tone: "Danger",
-            title: "This message is not available in this conversation.",
-          });
-          return false;
-        }
-        return switchToLeaf(candidate[0], null);
-      })();
-
-      revealMessageRequestsRef.current.set(requestKey, request);
-      void request.then(
-        () => {
-          if (revealMessageRequestsRef.current.get(requestKey) === request) {
-            revealMessageRequestsRef.current.delete(requestKey);
-          }
-        },
-        () => {
-          if (revealMessageRequestsRef.current.get(requestKey) === request) {
-            revealMessageRequestsRef.current.delete(requestKey);
-          }
-        },
-      );
-      return request;
+      const candidate = Object.entries(current.inactivePathsByLeafId)
+        .filter(([, path]) => path.some((message) => message.id === messageId))
+        .sort(
+          ([leftLeafId, leftPath], [rightLeafId, rightPath]) =>
+            leftPath.length - rightPath.length ||
+            leftLeafId.localeCompare(rightLeafId),
+        )[0];
+      if (!candidate) {
+        setError({
+          tone: "Danger",
+          title: "This message is not available in this conversation.",
+        });
+        return false;
+      }
+      return switchToLeaf(candidate[0], null);
     },
-    [conversationId, messages, pathCacheByLeafId, switchToLeaf],
+    [switchToLeaf],
   );
 
-  const switchableLeafIds = useMemo(
-    () => new Set(Object.keys(pathCacheByLeafId)),
-    [pathCacheByLeafId],
-  );
-
-  const branch = useMemo<UseConversationBranch>(
-    () => ({
-      forkOptionsByParentId,
-      branchGraph,
-      switchableLeafIds,
-      activeLeafMessageId,
-      selectedPathMessageIds: selectedPathIdsRef.current,
-      branchDraft,
-      setBranchDraft,
-      switchToLeaf,
-      switchToFork,
-      revealMessage,
-      reload: reloadTree,
-    }),
-    [
-      activeLeafMessageId,
-      branchDraft,
-      branchGraph,
-      forkOptionsByParentId,
-      reloadTree,
-      revealMessage,
-      switchToFork,
-      switchToLeaf,
-      switchableLeafIds,
-    ],
-  );
+  // The pane keys its route-target effect on this public branch object.
+  const branch = useMemo<UseConversationBranch>(() => ({
+    forkOptionsByParentId,
+    branchGraph,
+    switchableLeafIds: new Set([
+      ...Object.keys(inactivePathsByLeafId),
+      ...(activeLeafMessageId ? [activeLeafMessageId] : []),
+    ]),
+    activeLeafMessageId,
+    selectedPathMessageIds: selectedIds({ messages, activeLeafMessageId }),
+    branchDraft,
+    setBranchDraft,
+    switchToLeaf,
+    switchToFork,
+    revealMessage,
+    reload: reloadTree,
+  }), [
+    activeLeafMessageId,
+    branchDraft,
+    branchGraph,
+    forkOptionsByParentId,
+    inactivePathsByLeafId,
+    messages,
+    reloadTree,
+    revealMessage,
+    setBranchDraft,
+    switchToFork,
+    switchToLeaf,
+  ]);
 
   // The default continuation reply parent: only the complete assistant leaf of
   // the rendered transcript. Older complete assistants are not safe continuation
   // parents while a newer turn is pending, failed, or user-only.
-  const replyParentMessageId = useMemo(() => {
-    const leaf = messages[messages.length - 1];
-    if (leaf?.role === "assistant" && leaf.status === "complete")
-      return leaf.id;
-    return null;
-  }, [messages]);
+  const leaf = messages[messages.length - 1];
+  const replyParentMessageId =
+    leaf?.role === "assistant" && leaf.status === "complete" ? leaf.id : null;
 
-  const inheritedRunSelection = useMemo(() => {
-    const assistant = branchDraft
-      ? messages.find((message) => message.id === branchDraft.parentMessageId)
-      : messages[messages.length - 1];
-    if (!assistant || assistant.role !== "assistant") {
-      if (branchDraft) {
-        // justify-defect: BranchDraft is created only from a rendered assistant
-        // and is cleared when that assistant leaves the active path.
-        throw new Error("Branch draft parent must be an assistant message");
-      }
-      return null;
-    }
-
-    const run = assistant.trust_trail?.run;
-    if (!run) return null;
-    return run.run_selection;
-  }, [branchDraft, messages]);
+  const selectionParent = branchDraft
+    ? messages.find((message) => message.id === branchDraft.parentMessageId)
+    : leaf;
+  if (branchDraft && selectionParent?.role !== "assistant") {
+    // justify-defect: accepted view clears drafts whose parent leaves the path.
+    throw new Error("Branch draft parent must be an assistant message");
+  }
+  const inheritedRunSelection = selectionParent?.role === "assistant"
+    ? selectionParent.trust_trail?.run?.run_selection ?? null
+    : null;
 
   const selectedPendingRuns = messages.filter(
     (message) => message.role === "assistant" &&
-      message.status === "pending" &&
-      selectedPathIdsRef.current.has(message.id),
+      message.status === "pending",
   );
   if (selectedPendingRuns.length > 1) {
     throw new Error("Selected reply path has more than one pending run");
@@ -1385,29 +1254,31 @@ export function useConversation(
     if (activeRunId !== null) await cancelRun(activeRunId);
   }, [activeRunId, cancelRun]);
 
-  const sendCapability = useMemo<ChatSendCapability>(() => {
-    if (selectedPendingRuns.length > 0) {
-      return { kind: "AssistantRunning" };
-    }
-    if (!conversationId) return { kind: "Available" };
-    if (loading) return { kind: "HistoryLoading" };
-    if (historyState === "Unavailable") return { kind: "HistoryUnavailable" };
-    if (messages.length === 0) return { kind: "Available" };
-    if (branchDraft) {
-      return messages.some(
-        (message) =>
-          message.id === branchDraft.parentMessageId &&
-          message.role === "assistant" &&
-          message.status === "complete",
-      )
-        ? { kind: "Available" }
-        : { kind: "ReplyTargetUnavailable" };
-    }
-    if (!replyParentMessageId) {
-      return { kind: "ReplyTargetUnavailable" };
-    }
-    return { kind: "Available" };
-  }, [branchDraft, conversationId, historyState, loading, messages, replyParentMessageId, selectedPendingRuns.length]);
+  let sendCapability: ChatSendCapability;
+  if (selectedPendingRuns.length > 0) {
+    sendCapability = { kind: "AssistantRunning" };
+  } else if (!conversationId) {
+    sendCapability = { kind: "Available" };
+  } else if (loading) {
+    sendCapability = { kind: "HistoryLoading" };
+  } else if (historyState === "Unavailable") {
+    sendCapability = { kind: "HistoryUnavailable" };
+  } else if (messages.length === 0) {
+    sendCapability = { kind: "Available" };
+  } else if (branchDraft) {
+    sendCapability = messages.some(
+      (message) =>
+        message.id === branchDraft.parentMessageId &&
+        message.role === "assistant" &&
+        message.status === "complete",
+    )
+      ? { kind: "Available" }
+      : { kind: "ReplyTargetUnavailable" };
+  } else {
+    sendCapability = replyParentMessageId
+      ? { kind: "Available" }
+      : { kind: "ReplyTargetUnavailable" };
+  }
 
   if (asyncDefect !== null) throw asyncDefect.error;
 

@@ -204,6 +204,13 @@ async function readApiResponseText(response: Response): Promise<string> {
     return await response.text();
   } catch (error) {
     if (isAbortError(error)) throw error;
+    if (!response.ok) {
+      throw new ApiError(
+        response.status,
+        "E_UNKNOWN",
+        `Request failed with status ${response.status}`,
+      );
+    }
     throw new ApiError(0, "E_NETWORK", "Network request failed");
   }
 }

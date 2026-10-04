@@ -29,6 +29,7 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
+- [open] workspace / chat · 2026-10-04 mounted old proof · after a new chat is admitted the active persisted visit names its conversation while the address bar returns to `/conversations/new`; qualify the url projection owner and stable target: [ticket](tickets/workspace-url-reverts-after-new-chat-adoption.md).
 - [open] media upload retry · 2026-10-04 source audit · the fresh and memo retry paths repeat the same capability generation/expiry in a private result: [ticket](tickets/upload-retry-repeats-capability-result.md).
 - [open] ui field controls · 2026-10-04 source audit · input, textarea and select repeat appearance rules; qualify one shared class against caller overrides and focus behavior: [ticket](tickets/ui-field-controls-repeat-appearance-rules.md).
 - [open] epub / navigation · 2026-10-04 source review · a publisher href-based section id may retire when its point becomes note content; qualify the unobserved saved-location case before the rearnote alias release: [ticket](tickets/epub-publisher-href-loc-retirement-on-note-promotion.md).
@@ -47,7 +48,10 @@ area · opened YYYY-MM-DD by <who> · P2
 - [deferred] oracle rest · 2026-10-04 pr #499 follow-up · outer readers rebuild existing named outputs; all-source gain is unmeasured: [ticket](tickets/oracle-rest-readers-repeat-owned-outputs.md).
 - [open] jobs / documentation · 2026-10-04 backend owner audit · the jobs module still describes retired chat result kinds and a media-unit failed-result declaration absent from the registry: [ticket](tickets/jobs-handler-outcome-docs-stale.md).
 - [deferred] pdf reader / web · 2026-10-04 source audit · completed document teardown also destroys its loading task a second time: [ticket](tickets/pdf-reader-destroys-completed-loading-task-twice.md).
+- [deferred] pdf reader / web · 2026-10-04 source audit · a superseded signed-url open can attach after delayed viewer import: [ticket](tickets/pdf-reader-superseded-url-can-attach-old-viewer.md).
+- [deferred] notes / web · 2026-10-04 source audit · a delayed accepted attachment can resume against its destroyed editor view: [ticket](tickets/note-attachment-can-resume-into-destroyed-editor.md).
 - [deferred] chat / web · 2026-10-04 source audit · failed fork-switch rollback may restore stale partial live text after an off-path stream update: [ticket](tickets/chat-failed-fork-switch-can-restore-stale-live-text.md).
+- [deferred] resource actions / web · 2026-10-04 source audit · a caught action-snapshot 401 shows generic retry without the existing auth handoff: [ticket](tickets/resource-action-snapshot-unauthorized-skips-auth-handoff.md).
 - [open] wikisource / article apparatus · 2026-10-04 native baseline · `On Liberty/Chapter 2` retains note links but yields zero bound note items; the exact loss point needs qualification: [ticket](tickets/wikisource-note-links-unbound-after-extraction.md).
 - [open] epub / apparatus extraction · 2026-10-04 native baseline · official gutenberg 34901's plain inline footnote anchors yield zero reader apparatus items: [ticket](tickets/gutenberg-inline-footnotes-not-classified.md).
 - [open] epub / apparatus extraction · 2026-10-04 native baseline · official idpf wasteland's declared `rearnote` bodies yield zero reader apparatus items: [ticket](tickets/epub-rearnote-bodies-not-classified.md).
