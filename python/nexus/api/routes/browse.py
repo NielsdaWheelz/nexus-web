@@ -8,8 +8,10 @@ from sqlalchemy.orm import Session
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.responses import ok
+from nexus.responses import Data
 from nexus.schemas.browse import (
+    BrowsePage,
+    BrowsePreview,
     QuotaExhaustedFailure,
     RateLimitedFailure,
     UnavailableFailure,
@@ -32,7 +34,7 @@ async def browse_content(
     request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> Data[BrowsePage]:
     query = parse_browse_query(request.query_params.multi_items())
     try:
         page = await search_browse(
@@ -43,7 +45,7 @@ async def browse_content(
         )
     except BrowseProviderFailure as exc:
         raise _provider_error(exc) from exc
-    return ok(page, by_alias=True)
+    return Data(data=page)
 
 
 @router.get("/browse/preview")
@@ -51,7 +53,7 @@ def browse_preview(
     request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> Data[BrowsePreview]:
     query = parse_browse_preview_query(request.query_params.multi_items())
     try:
         preview = preview_browse(
@@ -63,7 +65,7 @@ def browse_preview(
         raise ApiError(ApiErrorCode.E_NOT_FOUND, "No longer available") from exc
     except BrowseProviderFailure as exc:
         raise _provider_error(exc) from exc
-    return ok(preview, by_alias=True)
+    return Data(data=preview)
 
 
 def _provider_error(exc: BrowseProviderFailure) -> ApiError:

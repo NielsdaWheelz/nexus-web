@@ -3614,6 +3614,35 @@ export interface components {
             /** Content Type */
             content_type: string;
         };
+        BrowseCandidate: components["schemas"]["OwnedMediaCandidate"] | components["schemas"]["EpubCandidate"] | components["schemas"]["WebArticleCandidate"] | components["schemas"]["VideoCandidate"] | components["schemas"]["PodcastCandidate"];
+        /**
+         * BrowseKind
+         * @enum {string}
+         */
+        BrowseKind: "Pdf" | "Epub" | "WebArticle" | "Video" | "Podcast";
+        /** BrowsePage */
+        BrowsePage: {
+            /** Items */
+            items: components["schemas"]["BrowseCandidate"][];
+            kind: components["schemas"]["BrowseKind"];
+            nextCursor: components["schemas"]["Presence_str_"];
+            /** Query */
+            query: string;
+            sort: components["schemas"]["Presence_BrowseSort_"];
+            source: components["schemas"]["BrowseSource"];
+        };
+        BrowsePreview: components["schemas"]["EpubPreview"] | components["schemas"]["WebArticlePreview"] | components["schemas"]["VideoPreview"] | components["schemas"]["PodcastPreview"] | components["schemas"]["EpisodePreview"];
+        BrowseResolution: components["schemas"]["InNexusMediaResolution"] | components["schemas"]["InNexusPodcastResolution"] | components["schemas"]["PreviewResolution"];
+        /**
+         * BrowseSort
+         * @enum {string}
+         */
+        BrowseSort: "Relevance" | "Newest";
+        /**
+         * BrowseSource
+         * @enum {string}
+         */
+        BrowseSource: "Nexus" | "ProjectGutenberg" | "Brave" | "YouTube" | "PodcastIndex";
         /** BrowserCaptureIntent */
         BrowserCaptureIntent: {
             /**
@@ -4616,6 +4645,14 @@ export interface components {
         Data_AtlasOut_: {
             data: components["schemas"]["AtlasOut"];
         };
+        /** Data[BrowsePage] */
+        Data_BrowsePage_: {
+            data: components["schemas"]["BrowsePage"];
+        };
+        /** Data[BrowsePreview] */
+        Data_BrowsePreview_: {
+            data: components["schemas"]["BrowsePreview"];
+        };
         /** Data[CollectionPage[Annotated[Union[LibraryMediaListItemOut, LibraryPodcastListItemOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]]] */
         Data_CollectionPage_Annotated_Union_LibraryMediaListItemOut__LibraryPodcastListItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind_____: {
             data: components["schemas"]["CollectionPage_Annotated_Union_LibraryMediaListItemOut__LibraryPodcastListItemOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
@@ -5244,6 +5281,72 @@ export interface components {
              */
             state: "Unplayed" | "Played";
         };
+        /** EpisodePreview */
+        EpisodePreview: {
+            /** Contributors */
+            contributors: components["schemas"]["ContributorCreditOut"][];
+            description: components["schemas"]["Presence_str_"];
+            image: components["schemas"]["Presence_str_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Episode";
+            kindFacts: components["schemas"]["EpisodePreviewFacts"];
+            publishedAt: components["schemas"]["Presence_datetime_"];
+            resolution: components["schemas"]["BrowseResolution"];
+            /**
+             * Source
+             * @default PodcastIndex
+             * @constant
+             */
+            source: "PodcastIndex";
+            /** Sourcehref */
+            sourceHref: string;
+            /** Target */
+            target: string;
+            /** Title */
+            title: string;
+        };
+        /** EpisodePreviewFacts */
+        EpisodePreviewFacts: {
+            /** Audiohref */
+            audioHref: string;
+            durationSeconds: components["schemas"]["Presence_int_"];
+            /** Episoderef */
+            episodeRef: string;
+            /** Podcastref */
+            podcastRef: string;
+            /** Podcasttitle */
+            podcastTitle: string;
+        };
+        /** EpubCandidate */
+        EpubCandidate: {
+            /** Contributors */
+            contributors: components["schemas"]["ContributorCreditOut"][];
+            description: components["schemas"]["Presence_str_"];
+            image: components["schemas"]["Presence_str_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Epub";
+            kindFacts: components["schemas"]["EpubFacts"];
+            publishedAt: components["schemas"]["Presence_datetime_"];
+            resolution: components["schemas"]["BrowseResolution"];
+            /**
+             * Source
+             * @default ProjectGutenberg
+             * @constant
+             */
+            source: "ProjectGutenberg";
+            /** Title */
+            title: string;
+        };
+        /** EpubFacts */
+        EpubFacts: {
+            ebookRef: components["schemas"]["Presence_str_"];
+        };
         /** EpubFindEntireResourceScopeIn */
         EpubFindEntireResourceScopeIn: {
             /**
@@ -5300,6 +5403,40 @@ export interface components {
              * @enum {string}
              */
             type: "epub_fragment_offsets";
+        };
+        /** EpubPreview */
+        EpubPreview: {
+            /** Contributors */
+            contributors: components["schemas"]["ContributorCreditOut"][];
+            description: components["schemas"]["Presence_str_"];
+            image: components["schemas"]["Presence_str_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Epub";
+            kindFacts: components["schemas"]["EpubPreviewFacts"];
+            publishedAt: components["schemas"]["Presence_datetime_"];
+            resolution: components["schemas"]["BrowseResolution"];
+            /**
+             * Source
+             * @default ProjectGutenberg
+             * @constant
+             */
+            source: "ProjectGutenberg";
+            /** Sourcehref */
+            sourceHref: string;
+            /** Target */
+            target: string;
+            /** Title */
+            title: string;
+        };
+        /** EpubPreviewFacts */
+        EpubPreviewFacts: {
+            /** Ebookref */
+            ebookRef: string;
+            /** Importhref */
+            importHref: string;
         };
         /** EpubReaderResumeState */
         EpubReaderResumeState: {
@@ -5850,6 +5987,31 @@ export interface components {
              * @enum {string}
              */
             kind: "InFlight";
+        };
+        /** InNexusMediaResolution */
+        InNexusMediaResolution: {
+            /** Actionsubjectref */
+            actionSubjectRef: string;
+            /** Href */
+            href: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "InNexusMedia";
+            mediaSummary: components["schemas"]["MediaSummaryOut"];
+        };
+        /** InNexusPodcastResolution */
+        InNexusPodcastResolution: {
+            /** Actionsubjectref */
+            actionSubjectRef: string;
+            /** Href */
+            href: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "InNexusPodcast";
         };
         /** IndexAccepted */
         IndexAccepted: {
@@ -7933,6 +8095,23 @@ export interface components {
             /** Parent Index */
             parent_index?: number | null;
         };
+        /** OwnedMediaCandidate */
+        OwnedMediaCandidate: {
+            description: components["schemas"]["Presence_str_"];
+            image: components["schemas"]["Presence_str_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "OwnedMedia";
+            resolution: components["schemas"]["InNexusMediaResolution"];
+            /**
+             * Source
+             * @default Nexus
+             * @constant
+             */
+            source: "Nexus";
+        };
         /**
          * PageInfo
          * @description Manual-paging cursor envelope for retained conversation context queries.
@@ -8185,6 +8364,29 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** PodcastCandidate */
+        PodcastCandidate: {
+            /** Contributors */
+            contributors: components["schemas"]["ContributorCreditOut"][];
+            description: components["schemas"]["Presence_str_"];
+            image: components["schemas"]["Presence_str_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Podcast";
+            kindFacts: components["schemas"]["PodcastFacts"];
+            publishedAt: components["schemas"]["Presence_datetime_"];
+            resolution: components["schemas"]["BrowseResolution"];
+            /**
+             * Source
+             * @default PodcastIndex
+             * @constant
+             */
+            source: "PodcastIndex";
+            /** Title */
+            title: string;
+        };
         /** PodcastCanonicalCommitTarget */
         PodcastCanonicalCommitTarget: {
             /**
@@ -8301,6 +8503,11 @@ export interface components {
              */
             state: "all" | "unplayed" | "in_progress" | "played";
         };
+        /** PodcastFacts */
+        PodcastFacts: {
+            /** Podcastref */
+            podcastRef: string;
+        };
         /** PodcastInputManifestV1 */
         PodcastInputManifestV1: {
             /** Episodes */
@@ -8347,6 +8554,61 @@ export interface components {
              */
             podcastId: string;
             value: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____"];
+        };
+        /** PodcastPreview */
+        PodcastPreview: {
+            /** Contributors */
+            contributors: components["schemas"]["ContributorCreditOut"][];
+            description: components["schemas"]["Presence_str_"];
+            episodes: components["schemas"]["PodcastPreviewEpisodePage"];
+            image: components["schemas"]["Presence_str_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Podcast";
+            kindFacts: components["schemas"]["PodcastPreviewFacts"];
+            publishedAt: components["schemas"]["Presence_datetime_"];
+            resolution: components["schemas"]["BrowseResolution"];
+            /**
+             * Source
+             * @default PodcastIndex
+             * @constant
+             */
+            source: "PodcastIndex";
+            /** Sourcehref */
+            sourceHref: string;
+            /** Target */
+            target: string;
+            /** Title */
+            title: string;
+        };
+        /** PodcastPreviewEpisode */
+        PodcastPreviewEpisode: {
+            /** Contributors */
+            contributors: components["schemas"]["ContributorCreditOut"][];
+            description: components["schemas"]["Presence_str_"];
+            image: components["schemas"]["Presence_str_"];
+            kindFacts: components["schemas"]["EpisodePreviewFacts"];
+            publishedAt: components["schemas"]["Presence_datetime_"];
+            /** Target */
+            target: string;
+            /** Title */
+            title: string;
+        };
+        /** PodcastPreviewEpisodePage */
+        PodcastPreviewEpisodePage: {
+            /** Items */
+            items: components["schemas"]["PodcastPreviewEpisode"][];
+            nextCursor: components["schemas"]["Presence_str_"];
+        };
+        /** PodcastPreviewFacts */
+        PodcastPreviewFacts: {
+            /** Feedhref */
+            feedHref: string;
+            /** Podcastref */
+            podcastRef: string;
+            websiteHref: components["schemas"]["Presence_str_"];
         };
         /** PodcastRefreshAcceptedOut */
         PodcastRefreshAcceptedOut: {
@@ -8496,6 +8758,7 @@ export interface components {
         Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____"];
         Presence_Annotated_str__StringConstraints__AfterValidator__: components["schemas"]["Absent"] | components["schemas"]["Present_Annotated_str__StringConstraints__AfterValidator__"];
         Presence_AwareDatetime_: components["schemas"]["Absent"] | components["schemas"]["Present_AwareDatetime_"];
+        Presence_BrowseSort_: components["schemas"]["Absent"] | components["schemas"]["Present_BrowseSort_"];
         Presence_CancelledEventPayload_: components["schemas"]["Absent"] | components["schemas"]["Present_CancelledEventPayload_"];
         Presence_ChatPublicationWarning_: components["schemas"]["Absent"] | components["schemas"]["Present_ChatPublicationWarning_"];
         Presence_ConsumptionOut_: components["schemas"]["Absent"] | components["schemas"]["Present_ConsumptionOut_"];
@@ -8766,6 +9029,15 @@ export interface components {
              * Format: date-time
              */
             value: string;
+        };
+        /** Present[BrowseSort] */
+        Present_BrowseSort_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["BrowseSort"];
         };
         /** Present[CancelledEventPayload] */
         Present_CancelledEventPayload_: {
@@ -9158,6 +9430,16 @@ export interface components {
             durationMs: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____"];
             /** Positionms */
             positionMs: number;
+        };
+        /** PreviewResolution */
+        PreviewResolution: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Preview";
+            /** Target */
+            target: string;
         };
         /** PrivacyDisclosure */
         PrivacyDisclosure: {
@@ -12433,6 +12715,69 @@ export interface components {
             /** Version */
             version: number;
         };
+        /** VideoCandidate */
+        VideoCandidate: {
+            /** Contributors */
+            contributors: components["schemas"]["ContributorCreditOut"][];
+            description: components["schemas"]["Presence_str_"];
+            image: components["schemas"]["Presence_str_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Video";
+            kindFacts: components["schemas"]["VideoFacts"];
+            publishedAt: components["schemas"]["Presence_datetime_"];
+            resolution: components["schemas"]["BrowseResolution"];
+            /**
+             * Source
+             * @default YouTube
+             * @constant
+             */
+            source: "YouTube";
+            /** Title */
+            title: string;
+        };
+        /** VideoFacts */
+        VideoFacts: {
+            channelTitle: components["schemas"]["Presence_str_"];
+            videoRef: components["schemas"]["Presence_str_"];
+        };
+        /** VideoPreview */
+        VideoPreview: {
+            /** Contributors */
+            contributors: components["schemas"]["ContributorCreditOut"][];
+            description: components["schemas"]["Presence_str_"];
+            image: components["schemas"]["Presence_str_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Video";
+            kindFacts: components["schemas"]["VideoPreviewFacts"];
+            publishedAt: components["schemas"]["Presence_datetime_"];
+            resolution: components["schemas"]["BrowseResolution"];
+            /**
+             * Source
+             * @default YouTube
+             * @constant
+             */
+            source: "YouTube";
+            /** Sourcehref */
+            sourceHref: string;
+            /** Target */
+            target: string;
+            /** Title */
+            title: string;
+        };
+        /** VideoPreviewFacts */
+        VideoPreviewFacts: {
+            channelTitle: components["schemas"]["Presence_str_"];
+            /** Embedhref */
+            embedHref: string;
+            /** Videoref */
+            videoRef: string;
+        };
         /** ViewerLibraryInvitationOut */
         ViewerLibraryInvitationOut: {
             /**
@@ -12498,6 +12843,66 @@ export interface components {
             duration_ms: number | null;
             /** Transcript */
             transcript: string;
+        };
+        /** WebArticleCandidate */
+        WebArticleCandidate: {
+            /** Contributors */
+            contributors: components["schemas"]["ContributorCreditOut"][];
+            description: components["schemas"]["Presence_str_"];
+            image: components["schemas"]["Presence_str_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "WebArticle";
+            kindFacts: components["schemas"]["WebArticleFacts"];
+            publishedAt: components["schemas"]["Presence_datetime_"];
+            resolution: components["schemas"]["BrowseResolution"];
+            /**
+             * Source
+             * @default Brave
+             * @constant
+             */
+            source: "Brave";
+            /** Title */
+            title: string;
+        };
+        /** WebArticleFacts */
+        WebArticleFacts: {
+            siteName: components["schemas"]["Presence_str_"];
+        };
+        /** WebArticlePreview */
+        WebArticlePreview: {
+            /** Contributors */
+            contributors: components["schemas"]["ContributorCreditOut"][];
+            description: components["schemas"]["Presence_str_"];
+            image: components["schemas"]["Presence_str_"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "WebArticle";
+            kindFacts: components["schemas"]["WebArticlePreviewFacts"];
+            publishedAt: components["schemas"]["Presence_datetime_"];
+            resolution: components["schemas"]["BrowseResolution"];
+            /**
+             * Source
+             * @default Brave
+             * @constant
+             */
+            source: "Brave";
+            /** Sourcehref */
+            sourceHref: string;
+            /** Target */
+            target: string;
+            /** Title */
+            title: string;
+        };
+        /** WebArticlePreviewFacts */
+        WebArticlePreviewFacts: {
+            /** Canonicalurl */
+            canonicalUrl: string;
+            siteName: components["schemas"]["Presence_str_"];
         };
         /** WebReaderResumeState */
         WebReaderResumeState: {
@@ -12954,9 +13359,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_BrowsePage_"];
                 };
             };
         };
@@ -12976,9 +13379,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_BrowsePreview_"];
                 };
             };
         };

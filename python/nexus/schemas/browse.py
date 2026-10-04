@@ -23,7 +23,12 @@ from nexus.services.browse.models import (
 )
 from nexus.services.sealed_handles import DiscoveryTargetHandle
 
-_OUT = ConfigDict(extra="forbid", populate_by_name=True, strict=True)
+_OUT = ConfigDict(
+    extra="forbid",
+    populate_by_name=True,
+    strict=True,
+    json_schema_serialization_defaults_required=True,
+)
 _LIMIT = re.compile(r"[1-9][0-9]*\Z", re.ASCII)
 _CURSOR = re.compile(r"[A-Za-z0-9_-]+\Z", re.ASCII)
 _TARGET_ADAPTER = TypeAdapter(DiscoveryTargetHandle)
@@ -160,27 +165,10 @@ class PreviewResolution(BaseModel):
     model_config = _OUT
 
 
-class ExternalOnlyResolution(BaseModel):
-    kind: Literal["ExternalOnly"] = "ExternalOnly"
-    source_href: str = Field(serialization_alias="sourceHref")
-
-    model_config = _OUT
-
-
 type BrowseResolution = Annotated[
-    InNexusMediaResolution | InNexusPodcastResolution | PreviewResolution | ExternalOnlyResolution,
-    Field(discriminator="kind"),
-]
-type PreviewPageResolution = Annotated[
     InNexusMediaResolution | InNexusPodcastResolution | PreviewResolution,
     Field(discriminator="kind"),
 ]
-
-
-class PdfFacts(BaseModel):
-    page_count: Presence[int] = Field(serialization_alias="pageCount")
-
-    model_config = _OUT
 
 
 class EpubFacts(BaseModel):
@@ -208,8 +196,8 @@ class PodcastFacts(BaseModel):
     model_config = _OUT
 
 
-class _Candidate(BaseModel):
-    source: BrowseSource
+class _Candidate[Source: BrowseSource](BaseModel):
+    source: Source
     resolution: BrowseResolution
     title: str
     contributors: list[ContributorCreditOut]
@@ -220,27 +208,26 @@ class _Candidate(BaseModel):
     model_config = _OUT
 
 
-class PdfCandidate(_Candidate):
-    kind: Literal[BrowseKind.Pdf] = BrowseKind.Pdf
-    kind_facts: PdfFacts = Field(serialization_alias="kindFacts")
-
-
-class EpubCandidate(_Candidate):
+class EpubCandidate(_Candidate[Literal[BrowseSource.ProjectGutenberg]]):
+    source: Literal[BrowseSource.ProjectGutenberg] = BrowseSource.ProjectGutenberg
     kind: Literal[BrowseKind.Epub] = BrowseKind.Epub
     kind_facts: EpubFacts = Field(serialization_alias="kindFacts")
 
 
-class WebArticleCandidate(_Candidate):
+class WebArticleCandidate(_Candidate[Literal[BrowseSource.Brave]]):
+    source: Literal[BrowseSource.Brave] = BrowseSource.Brave
     kind: Literal[BrowseKind.WebArticle] = BrowseKind.WebArticle
     kind_facts: WebArticleFacts = Field(serialization_alias="kindFacts")
 
 
-class VideoCandidate(_Candidate):
+class VideoCandidate(_Candidate[Literal[BrowseSource.YouTube]]):
+    source: Literal[BrowseSource.YouTube] = BrowseSource.YouTube
     kind: Literal[BrowseKind.Video] = BrowseKind.Video
     kind_facts: VideoFacts = Field(serialization_alias="kindFacts")
 
 
-class PodcastCandidate(_Candidate):
+class PodcastCandidate(_Candidate[Literal[BrowseSource.PodcastIndex]]):
+    source: Literal[BrowseSource.PodcastIndex] = BrowseSource.PodcastIndex
     kind: Literal[BrowseKind.Podcast] = BrowseKind.Podcast
     kind_facts: PodcastFacts = Field(serialization_alias="kindFacts")
 
@@ -256,12 +243,7 @@ class OwnedMediaCandidate(BaseModel):
 
 
 type BrowseCandidate = Annotated[
-    OwnedMediaCandidate
-    | PdfCandidate
-    | EpubCandidate
-    | WebArticleCandidate
-    | VideoCandidate
-    | PodcastCandidate,
+    OwnedMediaCandidate | EpubCandidate | WebArticleCandidate | VideoCandidate | PodcastCandidate,
     Field(discriminator="kind"),
 ]
 
@@ -344,7 +326,7 @@ class _Preview(BaseModel):
     published_at: Presence[datetime] = Field(serialization_alias="publishedAt")
     image: Presence[str]
     source_href: str = Field(serialization_alias="sourceHref")
-    resolution: PreviewPageResolution
+    resolution: BrowseResolution
 
     model_config = _OUT
 
