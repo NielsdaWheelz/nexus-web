@@ -328,7 +328,7 @@ def _run_chat_run(*, payload: Payload, context: Context) -> JobResult:
 
 
 def _run_dossier_build(*, payload: Payload, context: Context) -> JobResult:
-    from nexus.tasks.artifacts import dossier_build
+    from nexus.tasks.dossier_build import dossier_build
 
     return dossier_build(payload=payload, context=context)
 

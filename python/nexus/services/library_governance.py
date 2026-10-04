@@ -395,8 +395,7 @@ def rename_library(db: Session, viewer_id: UUID, library_id: UUID, name: str) ->
 def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryDeleteOut:
     """Delete a mutable library and everything sourced by it. Owner-only."""
     from nexus.services import library_entries, media_deletion, media_upload_sessions
-    from nexus.services.artifacts import engine as artifact_engine
-    from nexus.services.artifacts.dossier_types import AudienceUser
+    from nexus.services.dossier import engine as dossier_engine
     from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
     from nexus.services.resource_graph.refs import ResourceRef
 
@@ -434,15 +433,15 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryDel
             bump_library_index(db, affected_user_ids, conversations=True)
             # Prelock the whole possible Dossier head union once, in the owner's
             # canonical order, before any nested cleanup can take a head lock.
-            artifact_engine.lock_cleanup_heads_in_order(
+            dossier_engine.lock_heads(
                 db,
-                subject_refs=[
+                subjects=[
                     ResourceRef(scheme="library", id=library_id),
                     *(ResourceRef(scheme="media", id=media_id) for media_id in media_ids),
                 ],
-                audiences=[AudienceUser(user_id=user_id) for user_id in affected_user_ids],
+                user_ids=affected_user_ids,
             )
-            artifact_engine.on_subject_deleted(db, ResourceRef(scheme="library", id=library_id))
+            dossier_engine.on_subject_deleted(db, ResourceRef(scheme="library", id=library_id))
             delete_edges_for_deleted_resource(db, ref=ResourceRef(scheme="library", id=library_id))
             media_upload_sessions.delete_library_destination_support_in_current_transaction(
                 db, library_id=library_id
@@ -458,9 +457,7 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryDel
                 if paths:
                     storage_paths.extend(paths)
             for user_id in affected_user_ids:
-                artifact_engine.on_audience_visibility_changed(
-                    db, audience=AudienceUser(user_id=user_id)
-                )
+                dossier_engine.on_visibility_lost(db, user_id=user_id)
             return storage_paths, read_collection_revision(
                 db, viewer_id=viewer_id, family=CollectionFamily.LibrariesIndex
             )

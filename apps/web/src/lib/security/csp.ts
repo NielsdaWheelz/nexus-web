@@ -8,6 +8,10 @@
  *
  * Runtime-agnostic: no Node-only APIs (Web Crypto + btoa only), so it runs in both the
  * edge and node runtimes.
+ *
+ * Dossier articles render in the app document (a shadow root), so their script safety
+ * rests on this policy plus two grammar walks: never add `'unsafe-inline'` without a
+ * nonce, or `'unsafe-hashes'`, to `script-src`.
  */
 
 import { YOUTUBE_EMBED_ORIGINS } from "./youtube";

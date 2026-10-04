@@ -407,7 +407,7 @@ def _dossier(
 def _load_artifact(
     db: Session, items: list[ResourceRef], viewer_id: UUID
 ) -> list[ResolvedResource]:
-    from nexus.services.artifacts.subjects import visible_persisted_subject_sql
+    from nexus.services.dossier.subjects import head_visible_sql
 
     def build(ref: ResourceRef, row: Any) -> ResolvedResource:
         subject = str(row[3] or "Dossier")
@@ -415,9 +415,9 @@ def _load_artifact(
             ref,
             label=f"Dossier — {subject}",
             subject=subject,
-            content=str(row[5]) if row[5] is not None else None,
-            library_id=UUID(str(row[2])) if str(row[1]) == "library" else None,
-            revision_id=UUID(str(row[4])) if row[4] is not None else None,
+            content=row[5],
+            library_id=row[2] if row[1] == "library" else None,
+            revision_id=row[4],
         )
 
     return _load(
@@ -425,13 +425,12 @@ def _load_artifact(
         items,
         f"""
         SELECT a.id, a.subject_scheme, a.subject_id, {_SUBJECT_TITLE_SQL},
-               r.id AS revision_id, r.content_text
+               a.revision_id, a.content_text
         FROM artifacts a
-        LEFT JOIN artifact_revisions r ON r.id = a.current_revision_id
         {_SUBJECT_JOINS_SQL}
-        WHERE a.id = ANY(:ids) AND {visible_persisted_subject_sql("a")}
+        WHERE a.id = ANY(:ids) AND {head_visible_sql("a")}
         """,
-        {"viewer_id": viewer_id, "viewer_id_text": str(viewer_id)},
+        {"viewer_id": viewer_id},
         build,
     )
 
@@ -439,7 +438,7 @@ def _load_artifact(
 def _load_artifact_revision(
     db: Session, items: list[ResourceRef], viewer_id: UUID
 ) -> list[ResolvedResource]:
-    from nexus.services.artifacts.subjects import visible_persisted_subject_sql
+    from nexus.services.dossier.subjects import head_visible_sql
 
     def build(ref: ResourceRef, row: Any) -> ResolvedResource:
         subject = str(row[4] or "Dossier")
@@ -447,24 +446,22 @@ def _load_artifact_revision(
             ref,
             label=f"Dossier revision — {subject}",
             subject=subject,
-            content=str(row[5] or ""),
-            library_id=UUID(str(row[3])) if str(row[2]) == "library" else None,
-            revision_id=UUID(str(row[0])),
+            content=row[5],
+            library_id=row[3] if row[2] == "library" else None,
+            revision_id=row[0],
         )
 
     return _load(
         db,
         items,
         f"""
-        SELECT r.id, a.id AS artifact_id, a.subject_scheme, a.subject_id, {_SUBJECT_TITLE_SQL},
-               r.content_text
-        FROM artifact_revisions r
-        JOIN artifact_builds b ON b.id = r.build_id
-        JOIN artifacts a ON a.id = b.artifact_id
+        SELECT a.revision_id, a.id, a.subject_scheme, a.subject_id, {_SUBJECT_TITLE_SQL},
+               a.content_text
+        FROM artifacts a
         {_SUBJECT_JOINS_SQL}
-        WHERE r.id = ANY(:ids) AND {visible_persisted_subject_sql("a")}
+        WHERE a.revision_id = ANY(:ids) AND {head_visible_sql("a")}
         """,
-        {"viewer_id": viewer_id, "viewer_id_text": str(viewer_id)},
+        {"viewer_id": viewer_id},
         build,
     )
 

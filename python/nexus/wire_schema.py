@@ -21,13 +21,6 @@ from fastapi.routing import APIRoute
 from pydantic.fields import FieldInfo
 
 from nexus.api.routes import create_api_router
-from nexus.schemas.artifact import (
-    CancelledEventPayload,
-    FailedEventPayload,
-    ProgressEventPayload,
-    StartedEventPayload,
-    SucceededEventPayload,
-)
 from nexus.schemas.conversation import (
     ChatRunAssistantActivityEventPayload,
     ChatRunAssistantTextDeltaEventPayload,
@@ -39,7 +32,8 @@ from nexus.schemas.conversation import (
     ChatRunToolCallStartEventOut,
     ChatRunToolResultEventOut,
 )
-from nexus.schemas.execution import ChatRunExecutionOut, DurableExecutionOut
+from nexus.schemas.dossier import DossierBuildOut
+from nexus.schemas.execution import ChatRunExecutionOut
 from nexus.schemas.media import MediaProcessingSnapshotOut
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
 from nexus.schemas.oracle import (
@@ -70,7 +64,6 @@ SSE_PAYLOADS_BY_NAME = (
     ChatRunCitationIndexEventPayload,
     ChatRunContextRefAddedEventPayload,
     ChatRunExecutionOut,
-    DurableExecutionOut,
     OracleMetaEventPayload,
     OracleBindEventPayload,
     OracleTextEventPayload,
@@ -79,11 +72,7 @@ SSE_PAYLOADS_BY_NAME = (
     OracleOmensEventPayload,
     OracleCompleteDoneEventPayload,
     OracleFailedDoneEventPayload,
-    StartedEventPayload,
-    ProgressEventPayload,
-    SucceededEventPayload,
-    FailedEventPayload,
-    CancelledEventPayload,
+    DossierBuildOut,
 )
 SSE_PAYLOADS_BY_ALIAS = (PodcastSubscriptionLifecycleSnapshotOut,)
 

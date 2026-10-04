@@ -276,7 +276,7 @@ any other `OperationalError` immediately. `op` must reload its working rows and
 commit on each call. There is no explicit row locking on top of SERIALIZABLE
 (per [concurrency.md](../rules/concurrency.md)). It is adopted at every
 SERIALIZABLE site, including the worker's scheduler loop, bootstrap, identity
-writes, notes, and Dossier head/build/revision mutations.
+writes, notes, and Dossier head/build mutations.
 
 ## The Codex generation harness inside the worker
 
@@ -307,35 +307,26 @@ instructions do not narrow the current account-wide codex shell grant. see
 source-only maintenance.
 
 `dossier_build` is one generic kind for Media, Conversation, Library, Podcast,
-Contributor, Page, Note, and internal Idea subjects. Its immutable registration
-selects one binding-table entry for collection, prompt, operation, freshness,
-identity, and authorization. The Idea binding receives one frozen HostTable
-operation whose sole grant is `web.search`; it never inherits Chat's model-tool
-catalog. Research tools remain domain-owned journal steps and never become
-Codex built-ins; synthesis uses the fixed `Synthesis` capability. Stored
-binding metadata owns its `BilledOnce` replay policy, so an uncertain
-public-Web search is never automatically redispatched. Synthesis remains
-suspended after an unresolved dispatch; a sealed provider successor
-continuation permits safe resumption. A document that fails HTML acceptance or
-citation grounding is a modeled build failure the user regenerates from. Direct
-Nexus-search and page accept/readiness/read observations are `ReDispatchable`,
-and pages awaiting ingest yield the worker. The artifact head is the database
-serialization point; the build is the replay identity. Build success, modeled
-failure, and cancellation are terminal children, while exhausted or unresolved
-execution remains a visible suspended build requiring incident repair. Dead
-`dossier_build` rows are never pruned.
+Contributor, Page, Note, and internal Idea subjects; its payload is the build id.
+One attempt (`services/dossier/run.py`) reads the active build, fails it
+`InputsChanged` if the requester can no longer see the subject, then replays a
+Completed `synthesis` step or runs: ensure media intelligence (Media and the
+aggregates reschedule every 5 s while a projection is pending), collect inputs
+(the Idea gathers research and reschedules while a page ingests, at most 10
+minutes per page), synthesize, publish or fail. A build that is no longer
+active makes the attempt a no-op. A document that fails HTML acceptance or
+citation grounding is a modeled build failure the user regenerates from.
 
-`services/durable_step_journal.py` owns the shared strict replay-state codec,
-stable step identity, lease-fenced queue-payload checkpoint, and durable
-execution-phase projection. `services/artifacts/generation.py` owns the
-Dossier-specific generation request fingerprint, the strict accepted/failed
-result envelope, and exact `Prepared | Uncertain | Completed` application for
-the one `synthesis` step. `services/artifacts/coordination.py` owns the Dossier
-runtime capability and bounded research-yield behavior. The generation lands
-one fully compiled `PublishableDossier`, so `run_build` publishes it instead of
-duplicating compilation branches. `services/artifacts/subjects.py` is the sole
-eight-scheme composition owner: one literal binding table, with no mutable
-policy mirror, package re-export, or lazy fallback lookup.
+The `synthesis` step is the shared generation journal
+(`services/durable_step_journal.py` codec, `llm_execution` admission and
+execution); its Completed memo is the dossier's `Published | Failed | Stopped`
+outcome. Stopped fails the build `RuntimeUnavailable` unless a cancel or purge
+settled it first, so no active build outlives its job. An Uncertain step without the native host's recovery evidence is never
+dispatched again: the attempt raises, the job dead-letters, and the build reads
+Suspended until cancelled or purged. Idea research journals only `research/web`
+(Uncertain, three searches, Completed with the picks), the one billed call;
+Uncertain on entry is never searched again. Nexus search reruns per attempt and
+page acceptance is idempotent by key. Dead `dossier_build` rows are never pruned.
 
 `chat_run` uses that kernel for preparation, every generation and API tool turn,
 and final publication. Dead chat jobs are retained because their payload is the in-flight

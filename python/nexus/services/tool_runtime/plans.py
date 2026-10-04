@@ -206,26 +206,11 @@ NO_MODEL_TOOLS_DEFINITION: Final[ToolPlanDefinition] = _definition(
     _NATIVE_RUN_LIMITS,
     exposure="Native",
 )
-IDEA_DOSSIER_RESEARCH_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
-    "idea_dossier_research",
-    "idea_dossier_research",
-    (WEB_SEARCH_SPEC.id,),
-    RunLimits(
-        max_calls=3,
-        max_external_attempts=6,
-        max_input_bytes=12_288,
-        max_output_bytes=98_304,
-        max_in_flight=1,
-        max_elapsed_seconds=60.0,
-    ),
-    exposure="HostTable",
-)
 
 TOOL_PLAN_DEFINITIONS: Final[tuple[ToolPlanDefinition, ...]] = (
     METADATA_RESEARCH_TOOL_DEFINITION,
     NO_MODEL_TOOLS_DEFINITION,
     CHAT_READ_ADDITIVE_WRITE_TOOL_DEFINITION,
-    IDEA_DOSSIER_RESEARCH_TOOL_DEFINITION,
 )
 _computed_authority_revisions = {
     definition.plan_id: definition.authority_revision for definition in TOOL_PLAN_DEFINITIONS
@@ -247,7 +232,6 @@ __all__ = [
     "METADATA_RESEARCH_TOOL_DEFINITION",
     "NO_MODEL_TOOLS_DEFINITION",
     "CHAT_READ_ADDITIVE_WRITE_TOOL_DEFINITION",
-    "IDEA_DOSSIER_RESEARCH_TOOL_DEFINITION",
     "TOOL_PLAN_DEFINITIONS",
     "TOOL_PLAN_DEFINITIONS_BY_ID",
     "ToolPlanDefinition",

@@ -166,12 +166,11 @@ def _remove_media_for_viewer_attempt(
     grants they created, and their own highlights and anchors. Zero-reference
     document media enters physical teardown; a still-readable media is hidden.
     """
-    from nexus.services.artifacts import engine as artifact_engine
-    from nexus.services.artifacts.dossier_types import AudienceUser
     from nexus.services.document_embeds import (
         reconcile_document_embed_edges_for_viewer,
         reconcile_document_embed_parent_edges_for_viewer,
     )
+    from nexus.services.dossier import engine as dossier_engine
 
     removed_from_library_ids: list[UUID] = []
     with transaction(db):
@@ -262,7 +261,7 @@ def _remove_media_for_viewer_attempt(
             db, viewer_id=viewer_id, target_media_id=media_id
         )
         reconcile_document_embed_edges_for_viewer(db, viewer_id=viewer_id, media_id=media_id)
-        artifact_engine.on_audience_visibility_changed(db, audience=AudienceUser(user_id=viewer_id))
+        dossier_engine.on_visibility_lost(db, user_id=viewer_id)
 
         families = [CollectionFamily.AuthorWorks, CollectionFamily.LibraryEntries]
         if media_kind == MediaKind.podcast_episode.value:
@@ -390,7 +389,7 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
     nothing — when the media is missing, non-document, or still referenced.
     """
     from nexus.services import media_upload_sessions
-    from nexus.services.artifacts import engine as artifact_engine
+    from nexus.services.dossier import engine as dossier_engine
     from nexus.services.reader_publication import delete_reader_publication
 
     media = db.execute(
@@ -402,7 +401,7 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         return None
 
     storage_paths = enumerate_media_storage_paths(db, media_id)
-    artifact_engine.on_subject_deleted(db, ResourceRef(scheme="media", id=media_id))
+    dossier_engine.on_subject_deleted(db, ResourceRef(scheme="media", id=media_id))
     resource_grants.delete_media_and_child_highlight_subjects(db, media_id)
     _delete_by_media_id(db, media_id, "document_embeds", "document_embed_artifact_states")
     _fail_embeds_targeting(db, media_id)

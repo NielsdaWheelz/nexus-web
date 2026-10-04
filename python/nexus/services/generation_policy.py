@@ -206,10 +206,6 @@ def _workflow(
     )
 
 
-_IDEA_HOST_PLAN = ExactHostToolPlan(
-    "idea_dossier_research", _tool_authority_revision("idea_dossier_research")
-)
-
 # operation, model, reasoning, turn timeout s, input KiB, context tokens,
 # output tokens, host-tool plan. every background operation
 # is strict JSON over Codex Personal.
@@ -227,7 +223,7 @@ _BACKGROUND_ROWS: tuple[
     ("dossier_library", "sol", "high", 300, 1024, 400_000, 32_000, _NO_HOST),
     ("dossier_podcast", "sol", "high", 300, 1024, 400_000, 32_000, _NO_HOST),
     ("dossier_contributor", "sol", "high", 300, 1024, 400_000, 32_000, _NO_HOST),
-    ("dossier_idea", "sol", "high", 300, 1024, 400_000, 32_000, _IDEA_HOST_PLAN),
+    ("dossier_idea", "sol", "high", 300, 1024, 400_000, 32_000, _NO_HOST),
 )
 _BACKGROUND_OPERATIONS: dict[BackgroundOperationKey, BackgroundOperationPolicy] = {
     operation: BackgroundOperationPolicy(

@@ -12,7 +12,6 @@ import {
 import { fetchStreamToken } from "./streamToken";
 
 export type GenerationRunKind =
-  | "artifact-builds"
   | "chat-runs"
   | "oracle-readings"
   | "media";
@@ -26,12 +25,11 @@ export type GenerationRunPhase =
 
 /**
  * Stream path prefix per run kind, joined as `${prefix}/${id}/events` under
- * the stream base URL. All four browser-callable generation-run SSE
+ * the stream base URL. All three browser-callable generation-run SSE
  * endpoints live under `/stream/` (one prefix predicate guards the
  * bearer-auth boundary).
  */
 export const GENERATION_RUN_STREAM_PATHS: Record<GenerationRunKind, string> = {
-  "artifact-builds": "/stream/artifact-builds",
   "chat-runs": "/stream/chat-runs",
   "oracle-readings": "/stream/oracle-readings",
   media: "/stream/media",

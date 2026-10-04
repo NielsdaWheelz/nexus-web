@@ -62,8 +62,8 @@ from nexus.schemas.resource_action_snapshots import (
 )
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services import conversations, highlights, library_governance, reader_apparatus
-from nexus.services.artifacts import engine as artifact_engine
 from nexus.services.consumption import _lectern_store, projection
+from nexus.services.dossier import engine as dossier_engine
 from nexus.services.media import (
     CollectionMedia,
     MediaRecoveryOffer,
@@ -277,13 +277,11 @@ class _ResolvedFacts:
                 media_ids=media_ids,
             )
         }
-        artifact_candidates, artifact_revision_subjects = (
-            artifact_engine.artifact_action_candidates(
-                db,
-                viewer_id=viewer_id,
-                artifact_ids=ids("artifact"),
-                revision_ids=ids("artifact_revision"),
-            )
+        artifact_candidates, artifact_revision_subjects = dossier_engine.action_candidates(
+            db,
+            viewer_id=viewer_id,
+            artifact_ids=ids("artifact"),
+            revision_ids=ids("artifact_revision"),
         )
         artifact_subject_refs = {
             subject_ref.uri: subject_ref

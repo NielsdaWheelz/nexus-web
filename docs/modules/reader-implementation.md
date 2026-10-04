@@ -245,11 +245,11 @@ not the generic secondary-pane disclosure contract.
 
 The Dossier tab uses the universal Dossier surface. Above its revisioned content
 it renders one compact, read-only **Abstract** from the current Media
-Intelligence projection. Building, Ready, Stale, Failed, and Not Available are
-typed states; the Abstract has no Generate control or history. The Media
-Dossier binding consumes that same projection and fingerprints it in the input
-manifest, so the screen and generation engine never perform independent
-interpretations of the same Media content version.
+Intelligence projection: Building, Ready, Stale or Failed (a dead build reads
+Failed), absent when there is none; the Abstract has no Generate control or
+history. The Media Dossier offers that same unit's claims, so the screen and
+generation engine never interpret the same Media content version
+independently; a Generate while the unit is still building waits for it.
 
 Text and PDF selections expose one **Learn** action. The reader first
 creates/reuses the durable Highlight, lets selection chrome dismiss normally,

@@ -360,9 +360,10 @@ disclosure command and explicit surface requests open or close the group. The
 pane runtime value changes identity only when the pane's runtime facts change,
 so republishing an unchanged publication cannot re-render its publisher.
 
-Standalone Artifact panes publish no search and no secondary group: the
-dossier renders in a sandboxed frame, so Cmd/Ctrl+F falls through to the
-browser's own find (docs/tickets/dossier-frame-runtime-blocked-by-inherited-csp.md).
+Standalone Artifact panes publish pane find and no secondary group. The dossier
+article renders into an open shadow root of the app document, so find is the
+plain DOM case over that article (citation buttons excluded), keyed on the
+revision ref.
 
 An expanded secondary region uses
 `paneSecondaryRegionId(primaryPaneId, groupId)`. Disclosure actions expose that

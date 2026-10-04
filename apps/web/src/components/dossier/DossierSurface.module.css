@@ -1,129 +1,71 @@
 .surface {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-3);
   padding: var(--space-4);
-  min-height: 0;
+  min-width: 0;
 }
 
-.statusRegion {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
+.note {
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
 }
 
 .banner {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
   padding: var(--space-3);
   border: var(--stroke-hairline) solid var(--edge-subtle);
   border-radius: var(--radius-md);
   font-size: var(--text-sm);
 }
 
-.bannerAlert {
+.alert {
   border-color: color-mix(in srgb, var(--danger) 55%, transparent);
   background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
-.controls {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
+.action {
+  align-self: flex-start;
 }
 
-.generationForm {
+.form {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   gap: var(--space-2);
-  flex-wrap: wrap;
 }
 
-.instructionField {
-  display: flex;
-  flex: 1 1 16rem;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 0;
-  color: var(--ink-muted);
-  font-size: var(--text-xs);
-}
-
-.content {
-  min-height: 0;
-}
-
-.revision {
-  min-width: 0;
-}
-
-.freshness {
-  color: var(--ink-muted);
-  font-size: var(--text-xs);
-}
-
-.revisionMeta {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  margin-top: var(--space-3);
-  color: var(--ink-muted);
-  font-size: var(--text-xs);
-}
-
+.field,
+.fact,
 .abstract {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  min-width: 0;
+}
+
+.field {
+  flex: 1 1 16rem;
+}
+
+.field,
+.fact,
+.label {
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+}
+
+.fact {
+  margin-top: var(--space-3);
+}
+
+.label {
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.abstract {
   padding: var(--space-3);
   border-radius: var(--radius-md);
   background: var(--surface-2);
-  font-size: var(--text-sm);
-}
-
-.abstractLabel {
-  font-size: var(--text-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--ink-muted);
-}
-
-.abstractStale {
-  color: var(--ink-muted);
-}
-
-.abstractAction {
-  align-self: flex-start;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--accent);
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.abstractAction:hover {
-  text-decoration: underline;
-}
-
-.abstractAction:focus-visible {
-  outline: var(--focus-ring-width) solid var(--ring);
-  outline-offset: var(--focus-ring-offset);
-}
-
-.empty {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  color: var(--ink-muted);
   font-size: var(--text-sm);
 }

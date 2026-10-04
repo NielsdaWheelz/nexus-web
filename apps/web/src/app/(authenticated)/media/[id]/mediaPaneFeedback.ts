@@ -29,7 +29,7 @@ function mediaPaneOperationTitle(operation: MediaPaneOperation): string {
     case "Chat":
       return "Conversation couldn’t be started";
     case "Learn":
-      return "Lesson couldn’t be created";
+      return "Dossier couldn’t be created";
   }
 }
 

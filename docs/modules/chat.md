@@ -21,8 +21,7 @@ lifecycle + numbered Provider API tool-output rendering), and the
 append owner (typed streaming methods commit inline for SSE visibility; batch
 tool-result/citation/context events defer to the executor's transaction). The
 cross-surface run-tail query + terminal check are `run_kit.get_run_events` /
-`run_kit.is_run_terminal` (kind-dispatched for chat, Oracle, and Dossier
-builds); viewer scoping stays in each `/stream/*` route's `assert_viewer`,
+`run_kit.is_run_terminal` (kind-dispatched for chat and Oracle); viewer scoping stays in each `/stream/*` route's `assert_viewer`,
 never in the query.
 
 Frontend owners live under `apps/web/src/components/chat/*` and
@@ -130,14 +129,14 @@ surface/controller.
 The Conversation Dossier binding collects every complete message on every
 branch, deduplicates shared prefixes, includes branch topology and attached
 Context, and derives a User audience from the conversation owner. Generation is
-manual. The generic Dossier head/build API and
-`artifact_build_events` stream own Generate, Regenerate, cancellation, retry,
-provenance, and citations; chat owns no feature-specific synthesis
+manual. The generic Dossier head/build API and build snapshot stream own
+Generate, Regenerate, cancellation, retry, provenance, and citations; chat owns
+no feature-specific synthesis
 route, job, schema, deep link, or inline output.
 
 Artifact and Artifact Revision resources use the existing generated-output
-resource-context chat path. Chat reads only the revision's derived
-`content_text`; it never receives stored HTML and never mutates or incrementally
+resource-context chat path. Chat reads only the head's `content_text`; it
+never receives stored HTML and never mutates or incrementally
 edits the Dossier.
 
 ## Scrollport Contract

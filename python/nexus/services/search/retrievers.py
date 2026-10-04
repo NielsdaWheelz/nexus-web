@@ -517,18 +517,18 @@ def _conversation_row(
 def _artifact_sql(ident: str, filters: str, scope: str) -> str:
     """Conversation Dossiers stay private to the owning user: a shared reader may
     search the conversation itself, never its generated claims."""
-    body = "COALESCE(r.content_text, '')"
+    body = "COALESCE(a.content_text, '')"
     match, score, snippet = _fts(body, body, opts="'MaxWords=40, MinWords=8, MaxFragments=1'")
     return f"""
-        SELECT a.subject_id AS conversation_id, r.id AS revision_id,
+        SELECT a.subject_id AS conversation_id, a.revision_id AS revision_id,
                {score} AS score, {snippet} AS snippet
         FROM artifacts a
-        JOIN artifact_revisions r ON r.id = a.current_revision_id
         JOIN conversations c ON c.id = a.subject_id
         WHERE a.subject_scheme = 'conversation'
           AND a.audience_scheme = 'user'
-          AND a.audience_id = c.owner_user_id::text
+          AND a.audience_id = c.owner_user_id
           AND c.owner_user_id = :viewer_id
+          AND a.revision_id IS NOT NULL
           AND {match} {scope.replace("c.id", "a.subject_id")}
     """
 

@@ -1,38 +1,14 @@
 "use client";
 
-// `useResourceInspector` — the SOLE resource-pane composition boundary (A14).
-// A single mounted primary pane calls it; it:
-//  - reads the subject's typed `inspectorPolicy` from `resourceCapabilities`;
-//  - accepts ONLY the route-owned domain bodies the capability requires;
-//  - creates ONE subject-keyed external `DossierControllerStore` (lazy
-//    useState + useRef, effect-cleanup disposal — NEVER useMemo-created, never
-//    disposed during render, never module-global);
-//  - publishes ONE memoized `PaneSecondaryPublication` whose Dossier body is
-//    reference-stable per subject (stream tokens mutate the store, not the
-//    publication — the primary pane never re-renders per token);
-//  - returns the ONE shared inspector disclosure action;
-//  - opens on the remembered tab while it is published, else the
-//    publication's default; it never rewrites the remembered tab (the host
-//    shows the default while that tab is unpublished, so a later publication
-//    brings it back).
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createElement, type ReactNode } from "react";
-import { usePaneRuntime } from "@/lib/panes/paneRuntime";
-import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
 import {
-  normalizePaneSecondaryPublication,
-  secondaryPublicationIncludesSurface,
-  type PaneSecondaryPublication,
-} from "@/lib/panes/panePublications";
-import { paneSecondaryRegionId } from "@/lib/panes/paneSecondaryModel";
-import { RESOURCE_CAPABILITIES } from "@/lib/resources/resourceCapabilities";
-import type { ResourceScheme } from "@/lib/resourceGraph/resourceRef";
-import type { PaneCompanionAction } from "@/lib/panes/panePublications";
+  createElement,
+  useCallback,
+  useMemo,
+  useRef,
+  type ReactNode,
+} from "react";
 import {
-  createDossierControllerStore,
-  type DossierControllerStore,
-} from "@/lib/dossiers/dossierControllerStore";
-import DossierSurface, {
+  SubjectDossier,
   type DossierCitationActivate,
 } from "@/components/dossier/DossierSurface";
 import { companionAction } from "@/components/resource-inspector/companionAction";
@@ -40,38 +16,45 @@ import {
   planInspectorSurfaces,
   type InspectorDomainBodies,
 } from "@/components/resource-inspector/inspectorSurfaces";
+import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
 import { dispatchReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
-import { activateResource } from "@/lib/resources/activation";
 import { hasSamePaneResource } from "@/lib/panes/paneIdentity";
+import {
+  normalizePaneSecondaryPublication,
+  secondaryPublicationIncludesSurface,
+  type PaneCompanionAction,
+} from "@/lib/panes/panePublications";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { paneSecondaryRegionId } from "@/lib/panes/paneSecondaryModel";
+import type { ResourceScheme } from "@/lib/resourceGraph/resourceRef";
+import { activateResource } from "@/lib/resources/activation";
+import { RESOURCE_CAPABILITIES } from "@/lib/resources/resourceCapabilities";
 
 export interface UseResourceInspectorParams {
-  /** The subject's capability scheme (RESOURCE_CAPABILITIES key) — also the A9
-   * subject_scheme. */
+  /** The subject's capability scheme, which is also its dossier scheme. */
   scheme: ResourceScheme;
-  /** The A9 subject handle, or null when no subject exists yet (e.g.
-   * /conversations/new): the Inspector is then unpublished. */
+  /** The dossier subject handle, or null while no subject exists (a new chat). */
   handle: string | null;
-  /** Route-owned domain bodies the capability requires (only these). */
+  /** The route-owned bodies the subject's policy requires, and only those. */
   bodies: InspectorDomainBodies;
-  /** Optional pane-owned Find results body (`FindResults`). It remains
-   * transient and is never a durable Inspector tab or default. */
+  /** The pane's transient find results; never a durable tab or the default. */
   searchResults?: ReactNode;
-  /** Citation activation routed through the pane (kept reference-stable here so
-   * it never destabilizes the Dossier body identity). */
+  /** The pane's own citation routing; by default citations open as panes. */
   onCitationActivate?: DossierCitationActivate;
 }
 
 export interface ResourceInspectorComposition {
-  /** The sole action eligible for direct promotion in primary pane chrome, or
-   * null when the subject has no Inspector. */
+  /** The one action eligible for primary chrome, or null without an inspector. */
   companionAction: PaneCompanionAction | null;
 }
 
-interface StoreBox {
-  key: string;
-  store: DossierControllerStore;
-}
-
+/**
+ * The one resource-pane inspector composition: the pane's bodies plus the
+ * subject's Dossier tab, published once per change, and the companion action
+ * that opens the remembered tab while it is published, else the default. The
+ * Dossier body is one element per subject: its commands read the latest pane
+ * through a ref, so pane re-renders never remount it.
+ */
 export function useResourceInspector({
   scheme,
   handle,
@@ -80,132 +63,8 @@ export function useResourceInspector({
   onCitationActivate,
 }: UseResourceInspectorParams): ResourceInspectorComposition {
   const paneRuntime = usePaneRuntime();
-  const paneId = paneRuntime?.paneId ?? null;
-  const secondaryPane = paneRuntime?.secondaryPane ?? null;
-
   const policy = RESOURCE_CAPABILITIES[scheme].inspectorPolicy;
-  const eligible = policy !== null && handle !== null;
-  const subjectKey = eligible ? `${scheme}:${handle}` : null;
-
-  // --- Subject-keyed store: lazy create, dispose the PRIOR in an effect ------
-  const [storeBox, setStoreBox] = useState<StoreBox | null>(() =>
-    subjectKey !== null
-      ? {
-          key: subjectKey,
-          store: createDossierControllerStore({
-            scheme,
-            handle: handle as string,
-          }),
-        }
-      : null,
-  );
-  if ((storeBox?.key ?? null) !== subjectKey) {
-    // Adjust state during render on subject change (creation is allowed here;
-    // disposal of the prior happens in the effect below — never during render).
-    setStoreBox(
-      subjectKey !== null
-        ? {
-            key: subjectKey,
-            store: createDossierControllerStore({
-              scheme,
-              handle: handle as string,
-            }),
-          }
-        : null,
-    );
-  }
-  const store = storeBox?.store ?? null;
-  // Dispose exactly the prior store on subject change and the current store on
-  // true owner unmount. The epoch defers disposal by one microtask so React
-  // StrictMode's simulated cleanup/setup pair can reclaim the same store
-  // without disposing it; a changed store is always disposed regardless.
-  const currentStoreRef = useRef<DossierControllerStore | null>(store);
-  currentStoreRef.current = store;
-  const lifecycleEpochRef = useRef(0);
-  useEffect(() => {
-    if (!store) return;
-    const ownedStore = store;
-    const epoch = lifecycleEpochRef.current + 1;
-    lifecycleEpochRef.current = epoch;
-    return () => {
-      queueMicrotask(() => {
-        if (
-          currentStoreRef.current !== ownedStore ||
-          lifecycleEpochRef.current === epoch
-        ) {
-          ownedStore.dispose();
-        }
-      });
-    };
-  }, [store]);
-
-  // --- Stable citation-activation (protects the Dossier body identity) -------
-  const citationCommandsRef = useRef({
-    onCitationActivate,
-    paneRuntime,
-  });
-  citationCommandsRef.current = {
-    onCitationActivate,
-    paneRuntime,
-  };
-  const stableCitationActivate = useCallback<DossierCitationActivate>(
-    (activation, target, disposition) => {
-      const commands = citationCommandsRef.current;
-      if (commands.onCitationActivate) {
-        commands.onCitationActivate(activation, target, disposition);
-        return;
-      }
-      if (target) {
-        dispatchReaderSourceActivation(target);
-      }
-      const runtime = commands.paneRuntime;
-      if (!runtime) return;
-      if (disposition.kind === "Fork") {
-        activateResource(activation, {
-          labelHint: target?.label,
-          activateTarget: runtime.activateTarget,
-          disposition,
-        });
-        return;
-      }
-      if (
-        runtime.resourceRef === activation.resource_ref ||
-        (activation.href && hasSamePaneResource(runtime.href, activation.href))
-      ) {
-        return;
-      }
-      activateResource(activation, {
-        labelHint: target?.label,
-        activateTarget: runtime.activateTarget,
-        disposition,
-      });
-    },
-    [],
-  );
-  const viewMediaEvidence = useCallback(() => {
-    citationCommandsRef.current.paneRuntime?.requestSecondarySurface(
-      "resource-evidence",
-    );
-  }, []);
-
-  // --- Reference-stable Dossier body (stream tokens do NOT recreate it) ------
-  const dossierBody = useMemo<ReactNode>(
-    () =>
-      store
-        ? createElement(DossierSurface, {
-            store,
-            onViewMediaEvidence: viewMediaEvidence,
-            onCitationActivate: stableCitationActivate,
-          })
-        : null,
-    [store, stableCitationActivate, viewMediaEvidence],
-  );
-
-  // --- One memoized publication (stable when the pane's bodies are stable) ---
-  const contents = bodies.contents;
-  const members = bodies.members;
-  const linkedItems = bodies.linkedItems;
-  const forks = bodies.forks;
+  const { contents, members, linkedItems, forks } = bodies;
   if (
     members != null &&
     RESOURCE_CAPABILITIES[scheme].sharing !== "LibraryMembership"
@@ -214,8 +73,51 @@ export function useResourceInspector({
       `Resource Inspector Members requires LibraryMembership sharing: ${scheme}`,
     );
   }
-  const publication = useMemo<PaneSecondaryPublication | null>(() => {
-    if (!policy || !store || dossierBody == null) return null;
+
+  const latest = useRef({ onCitationActivate, paneRuntime });
+  latest.current = { onCitationActivate, paneRuntime };
+  const activateCitation = useCallback<DossierCitationActivate>(
+    (activation, target, disposition) => {
+      const { onCitationActivate, paneRuntime: runtime } = latest.current;
+      if (onCitationActivate)
+        return onCitationActivate(activation, target, disposition);
+      if (target) dispatchReaderSourceActivation(target);
+      if (!runtime) return;
+      // Following into the pane's own resource only reveals the target there.
+      const here =
+        runtime.resourceRef === activation.resource_ref ||
+        (activation.href !== null &&
+          hasSamePaneResource(runtime.href, activation.href));
+      if (disposition.kind === "Follow" && here) return;
+      activateResource(activation, {
+        labelHint: target?.label,
+        activateTarget: runtime.activateTarget,
+        disposition,
+      });
+    },
+    [],
+  );
+  const viewMediaEvidence = useCallback(
+    () =>
+      latest.current.paneRuntime?.requestSecondarySurface("resource-evidence"),
+    [],
+  );
+
+  const dossierBody = useMemo(
+    () =>
+      policy && handle !== null
+        ? createElement(SubjectDossier, {
+            key: `${scheme}:${handle}`,
+            scheme,
+            handle,
+            onCitationActivate: activateCitation,
+            onViewMediaEvidence: viewMediaEvidence,
+          })
+        : null,
+    [activateCitation, handle, policy, scheme, viewMediaEvidence],
+  );
+  const publication = useMemo(() => {
+    if (!policy || !dossierBody) return null;
     const plan = planInspectorSurfaces({
       policy,
       bodies: { contents, members, linkedItems, forks },
@@ -231,70 +133,57 @@ export function useResourceInspector({
         : {}),
     });
   }, [
-    policy,
-    store,
-    dossierBody,
     contents,
-    members,
-    linkedItems,
+    dossierBody,
     forks,
+    linkedItems,
+    members,
+    policy,
     searchResults,
   ]);
-  const requestPublishedSecondarySurface = usePaneSecondary(publication);
+  const requestSurface = usePaneSecondary(publication);
 
-  // --- Companion action ------------------------------------------------------
-  const regionId =
-    paneId !== null ? paneSecondaryRegionId(paneId, "resource-inspector") : "";
-  const inspectorVisible =
-    secondaryPane?.groupId === "resource-inspector" &&
-    secondaryPane?.visibility === "visible" &&
-    paneRuntime?.transientSecondarySurface === null;
-
-  // Restore a still-valid workspace tab, else the first published default.
-  const storedActive = secondaryPane?.activeSurfaceId ?? null;
+  // Never rewrite the remembered tab: the host shows the default while it is
+  // unpublished, so a later publication brings it back.
+  const secondaryPane = paneRuntime?.secondaryPane ?? null;
+  const remembered = secondaryPane?.activeSurfaceId ?? null;
   const openTarget =
     publication &&
-    storedActive &&
-    secondaryPublicationIncludesSurface(publication, storedActive)
-      ? storedActive
+    remembered &&
+    secondaryPublicationIncludesSurface(publication, remembered)
+      ? remembered
       : (publication?.defaultSurfaceId ?? null);
   const openTargetRef = useRef(openTarget);
   openTargetRef.current = openTarget;
-
-  const closeSecondaryPane = paneRuntime?.closeSecondaryPane;
   const onOpen = useCallback(
     (trigger: HTMLButtonElement | null) => {
-      const target = openTargetRef.current;
-      if (target) {
-        requestPublishedSecondarySurface(target, { returnFocusTo: trigger });
-      }
+      if (openTargetRef.current)
+        requestSurface(openTargetRef.current, { returnFocusTo: trigger });
     },
-    [requestPublishedSecondarySurface],
+    [requestSurface],
   );
-  const onClose = useCallback(() => {
-    closeSecondaryPane?.();
-  }, [closeSecondaryPane]);
+  const closeSecondaryPane = paneRuntime?.closeSecondaryPane;
+  const onClose = useCallback(
+    () => closeSecondaryPane?.(),
+    [closeSecondaryPane],
+  );
 
-  const companion = useMemo<PaneCompanionAction | null>(
+  const paneId = paneRuntime?.paneId ?? null;
+  const expanded =
+    secondaryPane?.groupId === "resource-inspector" &&
+    secondaryPane.visibility === "visible" &&
+    paneRuntime?.transientSecondarySurface === null;
+  const companion = useMemo(
     () =>
-      eligible && publication !== null && paneId !== null
+      publication !== null && paneId !== null
         ? companionAction({
-            expanded: Boolean(inspectorVisible),
-            regionId,
+            expanded,
+            regionId: paneSecondaryRegionId(paneId, "resource-inspector"),
             onOpen,
             onClose,
           })
         : null,
-    [
-      eligible,
-      publication,
-      paneId,
-      inspectorVisible,
-      regionId,
-      onOpen,
-      onClose,
-    ],
+    [expanded, onClose, onOpen, paneId, publication],
   );
-
   return { companionAction: companion };
 }

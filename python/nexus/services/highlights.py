@@ -195,6 +195,8 @@ def highlight_action_facts(
     db: Session, *, viewer_id: UUID, highlight_ids: list[UUID]
 ) -> dict[UUID, HighlightActionFacts]:
     """Action facts for readable highlights; note presence is viewer-scoped."""
+    from nexus.services.dossier.research import learn_applicable
+
     ordered = list(dict.fromkeys(highlight_ids))
     if not ordered:
         return {}
@@ -208,7 +210,7 @@ def highlight_action_facts(
         highlight_id: HighlightActionFacts(
             is_owner=user_id == viewer_id,
             edit_bounds_applicable=anchor_kind == "fragment_offsets",
-            learn_applicable=bool((exact or "").strip()),
+            learn_applicable=learn_applicable(exact or ""),
             note_block_id=notes[highlight_id][0].id if notes.get(highlight_id) else None,
         )
         for highlight_id, user_id, anchor_kind, exact in rows
@@ -755,11 +757,9 @@ def delete_highlight_rows(db: Session, highlight: Highlight) -> None:
         return
 
     from nexus.services import resource_grants
-    from nexus.services.artifacts.idea import delete_highlight_idea_rows
     from nexus.services.media_deletion import claim_document_teardown_if_unreferenced_locked
 
     ref = ResourceRef(scheme="highlight", id=locked.id)
-    delete_highlight_idea_rows(db, highlight_id=locked.id)
     resource_grants.delete_exact_subject(db, ref)
     delete_edges_for_deleted_resource(db, ref=ref)
     delete_resource_protocol_state(db, viewer_id=locked.user_id, ref=ref)

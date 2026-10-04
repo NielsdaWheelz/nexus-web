@@ -105,13 +105,12 @@ def count_for_media(db: Session, media_id: UUID) -> int:
 
 
 def _notify(db: Session, user_ids: set[UUID]) -> None:
-    from nexus.services.artifacts.dossier_types import AudienceUser
-    from nexus.services.artifacts.engine import on_audience_visibility_changed
+    from nexus.services.dossier.engine import on_visibility_lost
 
     families = (CollectionFamily.AuthorWorks, CollectionFamily.PodcastEpisodes)
     bump_collection_families(db, viewer_ids=user_ids, families=families)
     for user_id in sorted(user_ids):
-        on_audience_visibility_changed(db, audience=AudienceUser(user_id=user_id))
+        on_visibility_lost(db, user_id=user_id)
 
 
 def _delete(db: Session, *where: ColumnElement[bool], also: frozenset[UUID] = frozenset()) -> int:

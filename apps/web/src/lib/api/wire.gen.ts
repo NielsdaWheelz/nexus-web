@@ -2998,7 +2998,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Stream Artifact Build Events */
+        /**
+         * Stream Artifact Build Events
+         * @description The build's ``DossierBuildOut`` on each change; ``done`` once it is not Active.
+         */
         get: operations["stream_artifact_build_events_stream_artifact_builds__artifact_build_id__events_get"];
         put?: never;
         post?: never;
@@ -3341,7 +3344,7 @@ export interface components {
         ActivitySessionPageOut: {
             /** Items */
             items: components["schemas"]["ActivitySessionOut"][];
-            nextCursor: components["schemas"]["Presence_str_"];
+            nextCursor: components["schemas"]["Presence_str_-Output"];
         };
         /** ActivityStatsSectionOut */
         ActivityStatsSectionOut: {
@@ -3733,7 +3736,7 @@ export interface components {
             /** Items */
             items: components["schemas"]["BrowseCandidate"][];
             kind: components["schemas"]["BrowseKind"];
-            nextCursor: components["schemas"]["Presence_str_"];
+            nextCursor: components["schemas"]["Presence_str_-Output"];
             /** Query */
             query: string;
             sort: components["schemas"]["Presence_BrowseSort_"];
@@ -3783,15 +3786,6 @@ export interface components {
              * @enum {string}
              */
             code: "cancelled";
-        };
-        /** CancelledEventPayload */
-        CancelledEventPayload: {
-            actor: components["schemas"]["Presence_UUID_-Output"];
-            /**
-             * At
-             * Format: date-time
-             */
-            at: string;
         };
         /** Capabilities */
         Capabilities: {
@@ -3981,7 +3975,7 @@ export interface components {
         ChatRunDoneEventPayload: {
             /** Cancelled */
             cancelled: boolean;
-            error_code: components["schemas"]["Presence_str_"];
+            error_code: components["schemas"]["Presence_str_-Output"];
             /** Final Chars */
             final_chars: number | null;
             /** Last Provider Event Seq */
@@ -3992,7 +3986,7 @@ export interface components {
              * @enum {string}
              */
             status: "complete" | "error" | "cancelled";
-            support_id: components["schemas"]["Presence_str_"];
+            support_id: components["schemas"]["Presence_str_-Output"];
             /** Usage */
             usage: {
                 [key: string]: unknown;
@@ -4081,7 +4075,7 @@ export interface components {
              * @enum {string}
              */
             status: "queued" | "running" | "complete" | "error" | "cancelled";
-            support_id: components["schemas"]["Presence_str_"];
+            support_id: components["schemas"]["Presence_str_-Output"];
             /**
              * Updated At
              * Format: date-time
@@ -4886,24 +4880,6 @@ export interface components {
              */
             kind: "contributor_handle";
         };
-        /** ContributorInputManifestV1 */
-        ContributorInputManifestV1: {
-            /** Contributor Handle */
-            contributor_handle: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "contributor";
-            /**
-             * Version
-             * @default v1
-             * @constant
-             */
-            version: "v1";
-            /** Works */
-            works: components["schemas"]["MediaManifestEntry"][];
-        };
         /** ContributorRetrievalResultRef */
         ContributorRetrievalResultRef: {
             /** Citation Target */
@@ -5033,37 +5009,6 @@ export interface components {
              * @enum {string}
              */
             type: "artifact";
-        };
-        /** ConversationComplete */
-        ConversationComplete: {
-            /**
-             * Kind
-             * @default Complete
-             * @constant
-             */
-            kind: "Complete";
-        };
-        /** ConversationInputManifestV1 */
-        ConversationInputManifestV1: {
-            completeness: components["schemas"]["ConversationComplete"];
-            /** Context Refs */
-            context_refs: string[];
-            /** Conversation Ref */
-            conversation_ref: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "conversation";
-            /** Message Refs */
-            message_refs: string[];
-            topology_fingerprint: components["schemas"]["Presence_str_"];
-            /**
-             * Version
-             * @default v1
-             * @constant
-             */
-            version: "v1";
         };
         /** ConversationListItemOut */
         ConversationListItemOut: {
@@ -5922,23 +5867,6 @@ export interface components {
             /** Value */
             value: string | null;
         };
-        /**
-         * DossierBuildAdmittedGenerationOut
-         * @description Read-only facts of the build's latest admitted generation.
-         *
-         *     The frozen selection and its dispatch-time disclosure come from the ledger,
-         *     never from mutable policy. No control, credential, price, or current
-         *     catalog state crosses here.
-         */
-        DossierBuildAdmittedGenerationOut: {
-            display_at_dispatch: components["schemas"]["SelectionPresentation"];
-            /** Selection */
-            selection: components["schemas"]["CodexPersonalSelection"] | components["schemas"]["ProviderApiSelection"];
-            /** Tool Plan */
-            tool_plan: components["schemas"]["DossierBuildNoModelToolsOut"] | components["schemas"]["DossierBuildExactModelToolsOut"];
-            /** Tool Positions */
-            tool_positions: number;
-        };
         /** DossierBuildCreatedOut */
         DossierBuildCreatedOut: {
             /** Artifact Ref */
@@ -5948,124 +5876,78 @@ export interface components {
             /** Created */
             created: boolean;
         };
-        /** DossierBuildExactModelToolsOut */
-        DossierBuildExactModelToolsOut: {
-            /**
-             * Effect Mode
-             * @enum {string}
-             */
-            effect_mode: "ReadOnly" | "AdditiveWrites";
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "ExactModelTools";
-            /** Plan Id */
-            plan_id: string;
-            /** Plan Revision */
-            plan_revision: string;
-        };
         /**
-         * DossierBuildExecution
-         * @description Advisory-only queue liveness; never a persisted event, never a failure.
+         * DossierBuildOut
+         * @description One build; also the SSE snapshot. ``phase`` is Present only while Active.
          */
-        DossierBuildExecution: {
-            phase: components["schemas"]["DurableExecutionPhase"];
-        };
-        /**
-         * DossierBuildFailureCode
-         * @description The only codes that become an ``artifact_build_failures`` row.
-         * @enum {string}
-         */
-        DossierBuildFailureCode: "NoSourceMaterial" | "InputsChanged" | "DependencyProjectionFailed" | "ContextTooLarge" | "Auth" | "Quota" | "Timeout" | "OutputLimit" | "InvalidOutput" | "PolicyViolation" | "RuntimeUnavailable" | "CapacityUnavailable" | "DocumentValidationFailed" | "CitationValidationFailed";
-        /** DossierBuildNoModelToolsOut */
-        DossierBuildNoModelToolsOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "NoModelTools";
-        };
-        /**
-         * DossierBuildSummary
-         * @description One attempt's identity and its execution or terminal facts.
-         *
-         *     Serves both ``DossierHeadOut.active_build`` (only ``execution`` Present) and
-         *     ``.latest_unsuccessful_build`` (exactly one of ``failure``/``cancellation``).
-         *     ``requester_user_id`` is Absent once user teardown nulls the attribution.
-         */
-        DossierBuildSummary: {
-            admitted_generation: components["schemas"]["Presence_DossierBuildAdmittedGenerationOut_"];
-            cancellation: components["schemas"]["Presence_CancelledEventPayload_"];
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            execution: components["schemas"]["Presence_DossierBuildExecution_"];
-            failure: components["schemas"]["Presence_FailedEventPayload_"];
+        DossierBuildOut: {
+            failure_code: components["schemas"]["Presence_DossierFailureCode_"];
             /** Handle */
             handle: string;
-            instruction: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____-Output"];
-            requester_user_id: components["schemas"]["Presence_UUID_-Output"];
+            instruction: components["schemas"]["Presence_str_-Output"];
+            phase: components["schemas"]["Presence_DurableExecutionPhase_"];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "Active" | "Succeeded" | "Failed" | "Cancelled";
         };
+        /** DossierCoverageOut */
+        DossierCoverageOut: {
+            /** Included */
+            included: number;
+            /** Omitted */
+            omitted: number;
+            /**
+             * Unit
+             * @enum {string}
+             */
+            unit: "claim" | "media" | "episode" | "work" | "source";
+        };
+        /**
+         * DossierFailureCode
+         * @enum {string}
+         */
+        DossierFailureCode: "NoSourceMaterial" | "InputsChanged" | "DependencyProjectionFailed" | "ContextTooLarge" | "Auth" | "Quota" | "Timeout" | "OutputLimit" | "InvalidOutput" | "PolicyViolation" | "RuntimeUnavailable" | "CapacityUnavailable" | "DocumentValidationFailed" | "CitationValidationFailed";
         /** DossierGenerateRequest */
         DossierGenerateRequest: {
-            instruction: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____-Input"];
+            instruction: components["schemas"]["Presence_str_-Input"];
         };
         /**
          * DossierHeadOut
-         * @description The dossier surface for one subject.
-         *
-         *     ``artifact_id`` Absent is the never-generated state: the head read never
-         *     inserts a head row. ``media_abstract`` is Present only for the Media subject.
+         * @description ``artifact_ref`` Absent: never generated (a head read never inserts a head).
          */
         DossierHeadOut: {
-            active_build: components["schemas"]["Presence_DossierBuildSummary_"];
-            artifact_id: components["schemas"]["Presence_UUID_-Output"];
-            artifact_ref: components["schemas"]["Presence_str_"];
-            current_revision: components["schemas"]["Presence_DossierRevisionOut_"];
-            freshness: components["schemas"]["Presence_Literal__Current____Stale___"];
-            identity: components["schemas"]["Presence_Annotated_Union_ResourceDossierIdentityOut__IdeaDossierIdentityOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
-            latest_unsuccessful_build: components["schemas"]["Presence_DossierBuildSummary_"];
-            media_abstract: components["schemas"]["Presence_Annotated_Union_MediaAbstractBuildingOut__MediaAbstractReadyOut__MediaAbstractStaleOut__MediaAbstractFailedOut__MediaAbstractNotAvailableOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+            active_build: components["schemas"]["Presence_DossierBuildOut_"];
+            artifact_ref: components["schemas"]["Presence_str_-Output"];
+            last_failure: components["schemas"]["Presence_DossierBuildOut_"];
+            media_abstract: components["schemas"]["Presence_MediaAbstractOut_"];
+            revision: components["schemas"]["Presence_DossierRevisionOut_"];
+            subject_activation: components["schemas"]["Presence_ResourceActivationOut_"];
+            /** Title */
+            title: string;
         };
-        /**
-         * DossierRevisionOut
-         * @description The head's one immutable, citation-bearing revision.
-         *
-         *     ``input_manifest`` is the typed, binding-owned coverage source. The browser
-         *     derives its coverage label from that manifest. ``instruction`` is hoisted
-         *     from the originating build for display.
-         */
+        /** DossierRevisionOut */
         DossierRevisionOut: {
+            /** By Viewer */
+            by_viewer: boolean;
             /** Citations */
             citations: components["schemas"]["CitationOut"][];
             /** Content Html */
             content_html: string;
-            /** Content Text */
-            content_text: string;
+            coverage: components["schemas"]["DossierCoverageOut"];
             /**
-             * Created At
+             * Generated At
              * Format: date-time
              */
-            created_at: string;
-            creator_user_id: components["schemas"]["Presence_UUID_-Output"];
-            /** Input Manifest */
-            input_manifest: components["schemas"]["MediaInputManifestV1"] | components["schemas"]["ConversationInputManifestV1"] | components["schemas"]["LibraryInputManifestV1"] | components["schemas"]["PodcastInputManifestV1"] | components["schemas"]["ContributorInputManifestV1"] | components["schemas"]["PageInputManifestV1"] | components["schemas"]["NoteInputManifestV1"] | components["schemas"]["IdeaInputManifestV1"];
-            instruction: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____-Output"];
-            model_name: components["schemas"]["Presence_str_"];
-            model_provider: components["schemas"]["Presence_str_"];
+            generated_at: string;
+            instruction: components["schemas"]["Presence_str_-Output"];
+            model: components["schemas"]["Presence_str_-Output"];
             /** Revision Ref */
             revision_ref: string;
+            /** Stale */
+            stale: boolean;
             total_tokens: components["schemas"]["Presence_int_"];
-        };
-        /**
-         * DurableExecutionOut
-         * @description Advisory queue/coordination state; never a persisted run status.
-         */
-        DurableExecutionOut: {
-            phase: components["schemas"]["DurableExecutionPhase"];
         };
         /**
          * DurableExecutionPhase
@@ -6125,8 +6007,8 @@ export interface components {
         EpisodePreview: {
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][];
-            description: components["schemas"]["Presence_str_"];
-            image: components["schemas"]["Presence_str_"];
+            description: components["schemas"]["Presence_str_-Output"];
+            image: components["schemas"]["Presence_str_-Output"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -6205,8 +6087,8 @@ export interface components {
         EpubCandidate: {
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][];
-            description: components["schemas"]["Presence_str_"];
-            image: components["schemas"]["Presence_str_"];
+            description: components["schemas"]["Presence_str_-Output"];
+            image: components["schemas"]["Presence_str_-Output"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -6226,7 +6108,7 @@ export interface components {
         };
         /** EpubFacts */
         EpubFacts: {
-            ebookRef: components["schemas"]["Presence_str_"];
+            ebookRef: components["schemas"]["Presence_str_-Output"];
         };
         /** EpubFragmentOffsetsLocator */
         EpubFragmentOffsetsLocator: {
@@ -6253,8 +6135,8 @@ export interface components {
         EpubPreview: {
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][];
-            description: components["schemas"]["Presence_str_"];
-            image: components["schemas"]["Presence_str_"];
+            description: components["schemas"]["Presence_str_-Output"];
+            image: components["schemas"]["Presence_str_-Output"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -6321,11 +6203,6 @@ export interface components {
             kind: "EpubTextOffsets";
             /** Start Offset */
             start_offset: number;
-        };
-        /** EvidenceOmission */
-        EvidenceOmission: {
-            /** Evidence Ref */
-            evidence_ref: string;
         };
         /** EvidenceSpanRetrievalResultRef */
         EvidenceSpanRetrievalResultRef: {
@@ -6465,11 +6342,6 @@ export interface components {
             /** Url */
             url: string;
         };
-        /** FailedEventPayload */
-        FailedEventPayload: {
-            detail: components["schemas"]["Presence_str_"];
-            failure_code: components["schemas"]["DossierBuildFailureCode"];
-        };
         /** FailedSourceBaselineOutcome */
         FailedSourceBaselineOutcome: {
             /** Failure Code */
@@ -6518,7 +6390,7 @@ export interface components {
         };
         /** FooterAudioActivation */
         FooterAudioActivation: {
-            artworkUrl: components["schemas"]["Presence_str_"];
+            artworkUrl: components["schemas"]["Presence_str_-Output"];
             /** Chapters */
             chapters: components["schemas"]["ChapterOut"][];
             consumptionOverrideRevision: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____-Output"];
@@ -6754,7 +6626,7 @@ export interface components {
             /** Reasoning */
             reasoning: components["schemas"]["GenerationReasoningRow"][];
             source_context_window: components["schemas"]["Presence_int_"];
-            source_default_reasoning: components["schemas"]["Presence_str_"];
+            source_default_reasoning: components["schemas"]["Presence_str_-Output"];
             source_max_output_tokens: components["schemas"]["Presence_int_"];
         };
         /** GenerationReasoningRow */
@@ -6901,62 +6773,7 @@ export interface components {
         HistoryPage: {
             /** Entries */
             entries: components["schemas"]["HistoryEntry"][];
-            next_cursor: components["schemas"]["Presence_str_"];
-        };
-        /** IdeaDossierIdentityOut */
-        IdeaDossierIdentityOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Idea";
-            /** Title */
-            title: string;
-        };
-        /** IdeaIncludedSource */
-        IdeaIncludedSource: {
-            /** Content Fingerprint */
-            content_fingerprint: string;
-            /** Ref */
-            ref: string;
-            /**
-             * Role
-             * @enum {string}
-             */
-            role: "seed" | "nexus" | "web";
-        };
-        /** IdeaInputManifestV1 */
-        IdeaInputManifestV1: {
-            /** Idea Subject Id */
-            idea_subject_id: string;
-            /** Included Seed Refs */
-            included_seed_refs: string[];
-            /** Included Sources */
-            included_sources: components["schemas"]["IdeaIncludedSource"][];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "idea";
-            /** Nexus Query Fingerprints */
-            nexus_query_fingerprints: string[];
-            /** Omitted Sources */
-            omitted_sources: components["schemas"]["IdeaOmittedSource"][];
-            /**
-             * Version
-             * @default v1
-             * @constant
-             */
-            version: "v1";
-            /** Web Query Fingerprints */
-            web_query_fingerprints: string[];
-        };
-        /** IdeaOmittedSource */
-        IdeaOmittedSource: {
-            /** Locator */
-            locator: string;
-            /** Reason */
-            reason: string;
+            next_cursor: components["schemas"]["Presence_str_-Output"];
         };
         /** ImportDetail */
         ImportDetail: {
@@ -7000,7 +6817,7 @@ export interface components {
             items: components["schemas"]["ImportItem"][];
             /** Matched Count */
             matched_count: number;
-            next_cursor: components["schemas"]["Presence_str_"];
+            next_cursor: components["schemas"]["Presence_str_-Output"];
             /**
              * Observed At
              * Format: date-time
@@ -7647,24 +7464,6 @@ export interface components {
             /** Name */
             name: string;
         };
-        /** LibraryInputManifestV1 */
-        LibraryInputManifestV1: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "library";
-            /** Library Ref */
-            library_ref: string;
-            /** Media */
-            media: components["schemas"]["MediaManifestEntry"][];
-            /**
-             * Version
-             * @default v1
-             * @constant
-             */
-            version: "v1";
-        };
         /** LibraryInvitationOut */
         LibraryInvitationOut: {
             /**
@@ -7674,8 +7473,8 @@ export interface components {
             createdAt: string;
             /** Invitationhandle */
             invitationHandle: string;
-            inviteeDisplayName: components["schemas"]["Presence_str_"];
-            inviteeEmail: components["schemas"]["Presence_str_"];
+            inviteeDisplayName: components["schemas"]["Presence_str_-Output"];
+            inviteeEmail: components["schemas"]["Presence_str_-Output"];
             /** Inviteeuserhandle */
             inviteeUserHandle: string;
             /** Inviteruserhandle */
@@ -7729,8 +7528,8 @@ export interface components {
              * Format: date-time
              */
             createdAt: string;
-            displayName: components["schemas"]["Presence_str_"];
-            email: components["schemas"]["Presence_str_"];
+            displayName: components["schemas"]["Presence_str_-Output"];
+            email: components["schemas"]["Presence_str_-Output"];
             /** Isowner */
             isOwner: boolean;
             /**
@@ -8120,52 +7919,14 @@ export interface components {
             page: components["schemas"]["NotePageOut"];
             surface: components["schemas"]["ResourceSurfaceOut"];
         };
-        /** MediaAbstractBuildingOut */
-        MediaAbstractBuildingOut: {
+        /** MediaAbstractOut */
+        MediaAbstractOut: {
             /**
-             * @description discriminator enum property added by openapi-typescript
+             * Status
              * @enum {string}
              */
-            kind: "Building";
-        };
-        /** MediaAbstractFailedOut */
-        MediaAbstractFailedOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Failed";
-        };
-        /** MediaAbstractNotAvailableOut */
-        MediaAbstractNotAvailableOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "NotAvailable";
-        };
-        /** MediaAbstractReadyOut */
-        MediaAbstractReadyOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Ready";
-            /** Summary Md */
-            summary_md: string;
-        };
-        /**
-         * MediaAbstractStaleOut
-         * @description A summary exists, but not for the media's current content fingerprint.
-         */
-        MediaAbstractStaleOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Stale";
-            /** Summary Md */
-            summary_md: string;
+            status: "Building" | "Ready" | "Stale" | "Failed";
+            summary_md: components["schemas"]["Presence_str_-Output"];
         };
         /** MediaActivityBreakdownOut */
         MediaActivityBreakdownOut: {
@@ -8210,11 +7971,6 @@ export interface components {
             /** Rolefacts */
             roleFacts: components["schemas"]["ContributorRoleFactOut"][];
         };
-        /**
-         * MediaDisposition
-         * @enum {string}
-         */
-        MediaDisposition: "Included" | "OmittedNoReadyUnit" | "OmittedBudget" | "OmittedNotAudienceVisible" | "OmittedProjectionFailed";
         /** MediaDurationOut */
         MediaDurationOut: {
             estimate: components["schemas"]["ReadingTimeEstimateOut"];
@@ -8394,28 +8150,6 @@ export interface components {
             start_offset: number;
             text_quote: components["schemas"]["MediaEvidenceTextQuoteOut"];
         };
-        /** MediaInputManifestV1 */
-        MediaInputManifestV1: {
-            /** Content Fingerprint */
-            content_fingerprint: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "media";
-            /** Media Ref */
-            media_ref: string;
-            /** Offered Claim Count */
-            offered_claim_count: number;
-            /** Omitted Evidence */
-            omitted_evidence: components["schemas"]["EvidenceOmission"][];
-            /**
-             * Version
-             * @default v1
-             * @constant
-             */
-            version: "v1";
-        };
         /**
          * MediaKind
          * @description Types of media that can be ingested.
@@ -8426,14 +8160,6 @@ export interface components {
         MediaLibrariesRequest: {
             /** Library Ids */
             library_ids?: string[];
-        };
-        /** MediaManifestEntry */
-        MediaManifestEntry: {
-            /** Content Fingerprint */
-            content_fingerprint: string;
-            disposition: components["schemas"]["MediaDisposition"];
-            /** Media Ref */
-            media_ref: string;
         };
         /** MediaNavigationOut */
         MediaNavigationOut: {
@@ -8480,7 +8206,7 @@ export interface components {
             author_mode: "automatic" | "manual";
             /** Canonical Source Url */
             canonical_source_url: string | null;
-            canonical_url: components["schemas"]["Presence_str_"];
+            canonical_url: components["schemas"]["Presence_str_-Output"];
             capabilities: components["schemas"]["CapabilitiesOut"];
             /** Chapters */
             chapters: components["schemas"]["PodcastEpisodeChapterOut"][];
@@ -8499,7 +8225,7 @@ export interface components {
             description_text: string | null;
             document_embed_summary: components["schemas"]["DocumentEmbedSummaryOut"] | null;
             duration: components["schemas"]["Presence_MediaDurationOut_"];
-            edition_isbn: components["schemas"]["Presence_str_"];
+            edition_isbn: components["schemas"]["Presence_str_-Output"];
             edition_published_date: components["schemas"]["Presence_Annotated_str__StringConstraints__AfterValidator__"];
             /** Failure Stage */
             failure_stage: string | null;
@@ -8531,13 +8257,13 @@ export interface components {
             progress_fraction: number | null;
             /** Progress Resettable */
             progress_resettable: boolean;
-            provider: components["schemas"]["Presence_str_"];
-            provider_id: components["schemas"]["Presence_str_"];
+            provider: components["schemas"]["Presence_str_-Output"];
+            provider_id: components["schemas"]["Presence_str_-Output"];
             /** Publisher */
             publisher: string | null;
             /** Read State */
             read_state: ("unread" | "in_progress" | "finished") | null;
-            requested_url: components["schemas"]["Presence_str_"];
+            requested_url: components["schemas"]["Presence_str_-Output"];
             /** Retrieval Status */
             retrieval_status: string | null;
             /** Retrieval Status Reason */
@@ -8635,7 +8361,7 @@ export interface components {
         MediaSlateTargetOut: {
             /** Href */
             href: string;
-            imageUrl: components["schemas"]["Presence_str_"];
+            imageUrl: components["schemas"]["Presence_str_-Output"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -9344,27 +9070,6 @@ export interface components {
             /** Links */
             links: number;
         };
-        /** NoteInputManifestV1 */
-        NoteInputManifestV1: {
-            body_fingerprint: components["schemas"]["Presence_str_"];
-            /** Connection Refs */
-            connection_refs: string[];
-            /** Input Fingerprint */
-            input_fingerprint: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "note";
-            /** Note Ref */
-            note_ref: string;
-            /**
-             * Version
-             * @default v1
-             * @constant
-             */
-            version: "v1";
-        };
         /** NotePageOut */
         NotePageOut: {
             dailyPage: components["schemas"]["Presence_DailyPageSummaryOut_"];
@@ -9621,8 +9326,8 @@ export interface components {
         };
         /** OwnedMediaCandidate */
         OwnedMediaCandidate: {
-            description: components["schemas"]["Presence_str_"];
-            image: components["schemas"]["Presence_str_"];
+            description: components["schemas"]["Presence_str_-Output"];
+            image: components["schemas"]["Presence_str_-Output"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -9643,28 +9348,6 @@ export interface components {
         PageInfo: {
             /** Next Cursor */
             next_cursor: string | null;
-        };
-        /** PageInputManifestV1 */
-        PageInputManifestV1: {
-            /** Block Refs */
-            block_refs: string[];
-            /** Connection Refs */
-            connection_refs: string[];
-            /** Input Fingerprint */
-            input_fingerprint: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "page";
-            /** Page Ref */
-            page_ref: string;
-            /**
-             * Version
-             * @default v1
-             * @constant
-             */
-            version: "v1";
         };
         /** PageRetrievalResultRef */
         PageRetrievalResultRef: {
@@ -9935,13 +9618,13 @@ export interface components {
              * Format: uuid
              */
             mediaId: string;
-            subtitle: components["schemas"]["Presence_str_"];
+            subtitle: components["schemas"]["Presence_str_-Output"];
             /** Title */
             title: string;
         };
         /** PlayerDisplay */
         PlayerDisplay: {
-            subtitle: components["schemas"]["Presence_str_"];
+            subtitle: components["schemas"]["Presence_str_-Output"];
             /** Title */
             title: string;
         };
@@ -9980,8 +9663,8 @@ export interface components {
         PodcastCandidate: {
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][];
-            description: components["schemas"]["Presence_str_"];
-            image: components["schemas"]["Presence_str_"];
+            description: components["schemas"]["Presence_str_-Output"];
+            image: components["schemas"]["Presence_str_-Output"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -10125,24 +9808,6 @@ export interface components {
             /** Podcastref */
             podcastRef: string;
         };
-        /** PodcastInputManifestV1 */
-        PodcastInputManifestV1: {
-            /** Episodes */
-            episodes: components["schemas"]["MediaManifestEntry"][];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "podcast";
-            /** Podcast Ref */
-            podcast_ref: string;
-            /**
-             * Version
-             * @default v1
-             * @constant
-             */
-            version: "v1";
-        };
         /** PodcastListItemOut */
         PodcastListItemOut: {
             /** Contributors */
@@ -10210,9 +9875,9 @@ export interface components {
         PodcastPreview: {
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][];
-            description: components["schemas"]["Presence_str_"];
+            description: components["schemas"]["Presence_str_-Output"];
             episodes: components["schemas"]["PodcastPreviewEpisodePage"];
-            image: components["schemas"]["Presence_str_"];
+            image: components["schemas"]["Presence_str_-Output"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -10238,8 +9903,8 @@ export interface components {
         PodcastPreviewEpisode: {
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][];
-            description: components["schemas"]["Presence_str_"];
-            image: components["schemas"]["Presence_str_"];
+            description: components["schemas"]["Presence_str_-Output"];
+            image: components["schemas"]["Presence_str_-Output"];
             kindFacts: components["schemas"]["EpisodePreviewFacts"];
             publishedAt: components["schemas"]["Presence_datetime_"];
             /** Target */
@@ -10251,7 +9916,7 @@ export interface components {
         PodcastPreviewEpisodePage: {
             /** Items */
             items: components["schemas"]["PodcastPreviewEpisode"][];
-            nextCursor: components["schemas"]["Presence_str_"];
+            nextCursor: components["schemas"]["Presence_str_-Output"];
         };
         /** PodcastPreviewFacts */
         PodcastPreviewFacts: {
@@ -10259,7 +9924,7 @@ export interface components {
             feedHref: string;
             /** Podcastref */
             podcastRef: string;
-            websiteHref: components["schemas"]["Presence_str_"];
+            websiteHref: components["schemas"]["Presence_str_-Output"];
         };
         /** PodcastRefreshAcceptedOut */
         PodcastRefreshAcceptedOut: {
@@ -10354,7 +10019,7 @@ export interface components {
         PodcastSlateTargetOut: {
             /** Href */
             href: string;
-            imageUrl: components["schemas"]["Presence_str_"];
+            imageUrl: components["schemas"]["Presence_str_-Output"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -10362,7 +10027,7 @@ export interface components {
             kind: "Podcast";
             /** Ref */
             ref: string;
-            subtitle: components["schemas"]["Presence_str_"];
+            subtitle: components["schemas"]["Presence_str_-Output"];
             /** Title */
             title: string;
         };
@@ -10552,8 +10217,6 @@ export interface components {
         /** @enum {string} */
         PodcastSyncStatus: "Pending" | "Running" | "Complete" | "SourceLimited" | "Failed";
         Presence_ActivitySessionOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ActivitySessionOut_"];
-        Presence_Annotated_Union_MediaAbstractBuildingOut__MediaAbstractReadyOut__MediaAbstractStaleOut__MediaAbstractFailedOut__MediaAbstractNotAvailableOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_Union_MediaAbstractBuildingOut__MediaAbstractReadyOut__MediaAbstractStaleOut__MediaAbstractFailedOut__MediaAbstractNotAvailableOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
-        Presence_Annotated_Union_ResourceDossierIdentityOut__IdeaDossierIdentityOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_Union_ResourceDossierIdentityOut__IdeaDossierIdentityOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
         Presence_Annotated_Union_RetryUploadOffer__RetrySourceOffer__RepairSourceOffer__RepairSearchOffer___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_Union_RetryUploadOffer__RetrySourceOffer__RepairSourceOffer__RepairSearchOffer___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
         Presence_Annotated_Union_SourceStageProgress__SourceCountedProgress___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_Union_SourceStageProgress__SourceCountedProgress___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
         Presence_Annotated_Union_UploadTransportNetworkFailure__UploadTransportTimeoutFailure__UploadTransportHttpRejectedFailure__UploadTransportAbortedFailure___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_Union_UploadTransportNetworkFailure__UploadTransportTimeoutFailure__UploadTransportHttpRejectedFailure__UploadTransportAbortedFailure___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
@@ -10569,8 +10232,6 @@ export interface components {
         Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___Ge_ge_1_____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___Ge_ge_1_____"];
         Presence_Annotated_list_Literal__media____library____evidence_span____content_chunk____highlight____page____note_block____fragment____conversation____message____oracle_reading____oracle_passage_anchor____artifact____artifact_revision____external_snapshot____contributor____podcast____reader_apparatus_item____passage_anchor_____FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____: components["schemas"]["Absent-Input"] | components["schemas"]["Present_Annotated_list_Literal__media____library____evidence_span____content_chunk____highlight____page____note_block____fragment____conversation____message____oracle_reading____oracle_passage_anchor____artifact____artifact_revision____external_snapshot____contributor____podcast____reader_apparatus_item____passage_anchor_____FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____"];
         Presence_Annotated_str__AfterValidator__: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_str__AfterValidator__"];
-        "Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____-Input": components["schemas"]["Absent-Input"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____-Input"];
-        "Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____-Output": components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____-Output"];
         Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1___MaxLen_max_length_128_____: components["schemas"]["Absent-Input"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1___MaxLen_max_length_128_____"];
         Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1___MaxLen_max_length_200_____: components["schemas"]["Absent-Input"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1___MaxLen_max_length_200_____"];
         Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____"];
@@ -10581,29 +10242,27 @@ export interface components {
         Presence_Annotated_str__StringConstraints__AfterValidator__: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_str__StringConstraints__AfterValidator__"];
         Presence_AwareDatetime_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_AwareDatetime_"];
         Presence_BrowseSort_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_BrowseSort_"];
-        Presence_CancelledEventPayload_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_CancelledEventPayload_"];
         Presence_ChatPublicationWarning_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ChatPublicationWarning_"];
         Presence_ChatRunExecutionOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ChatRunExecutionOut_"];
         Presence_ConsumptionOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ConsumptionOut_"];
         Presence_DailyPageSummaryOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_DailyPageSummaryOut_"];
-        Presence_DossierBuildAdmittedGenerationOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_DossierBuildAdmittedGenerationOut_"];
-        Presence_DossierBuildExecution_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_DossierBuildExecution_"];
-        Presence_DossierBuildSummary_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_DossierBuildSummary_"];
+        Presence_DossierBuildOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_DossierBuildOut_"];
+        Presence_DossierFailureCode_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_DossierFailureCode_"];
         Presence_DossierRevisionOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_DossierRevisionOut_"];
-        Presence_FailedEventPayload_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_FailedEventPayload_"];
+        Presence_DurableExecutionPhase_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_DurableExecutionPhase_"];
         Presence_HistoryEntry_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_HistoryEntry_"];
         Presence_ImportSourceIssues_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ImportSourceIssues_"];
         Presence_LecternItemOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_LecternItemOut_"];
         Presence_LibraryEntryPlacementOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_LibraryEntryPlacementOut_"];
         Presence_LibraryEntryPodcastSubscriptionOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_LibraryEntryPodcastSubscriptionOut_"];
         Presence_ListeningStateOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ListeningStateOut_"];
-        Presence_Literal__Current____Stale___: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Literal__Current____Stale___"];
         Presence_Literal__NotOwner____SameSourceTerminal____SourceNotReacquirable____UploadRejected___: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Literal__NotOwner____SameSourceTerminal____SourceNotReacquirable____UploadRejected___"];
         "Presence_Literal__Off____Natural___-Input": components["schemas"]["Absent-Input"] | components["schemas"]["Present_Literal__Off____Natural___-Input"];
         "Presence_Literal__Off____Natural___-Output": components["schemas"]["Absent-Output"] | components["schemas"]["Present_Literal__Off____Natural___-Output"];
         Presence_Literal__Publisher____Imported____Generated___: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Literal__Publisher____Imported____Generated___"];
         Presence_Literal__Queue____Capacity____RetryBackoff___: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Literal__Queue____Capacity____RetryBackoff___"];
         Presence_Literal__Upload____Validate____Extract____Finalize____Index____SourceProcessing___: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Literal__Upload____Validate____Extract____Finalize____Index____SourceProcessing___"];
+        Presence_MediaAbstractOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MediaAbstractOut_"];
         Presence_MediaDurationOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MediaDurationOut_"];
         Presence_MediaNavigationOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MediaNavigationOut_"];
         Presence_MediaProgressState_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_MediaProgressState_"];
@@ -10620,6 +10279,7 @@ export interface components {
         Presence_ReaderSelectionOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ReaderSelectionOut_"];
         Presence_ReaderTimeRange_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ReaderTimeRange_"];
         Presence_ReadingTimeEstimateOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ReadingTimeEstimateOut_"];
+        Presence_ResourceActivationOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ResourceActivationOut_"];
         Presence_ShareMembersOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ShareMembersOut_"];
         Presence_SourceFailureProgress_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_SourceFailureProgress_"];
         "Presence_UUID_-Input": components["schemas"]["Absent-Input"] | components["schemas"]["Present_UUID_-Input"];
@@ -10627,7 +10287,8 @@ export interface components {
         Presence_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_BILLING_REQUIRED____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_LLM_BAD_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_PODCAST_QUOTA_EXCEEDED____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_NOT_READABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_BILLING_REQUIRED____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_LLM_BAD_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_PODCAST_QUOTA_EXCEEDED____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_NOT_READABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____"];
         Presence_datetime_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_datetime_"];
         Presence_int_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_int_"];
-        Presence_str_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_str_"];
+        "Presence_str_-Input": components["schemas"]["Absent-Input"] | components["schemas"]["Present_str_-Input"];
+        "Presence_str_-Output": components["schemas"]["Absent-Output"] | components["schemas"]["Present_str_-Output"];
         /** Present[ActivitySessionOut] */
         Present_ActivitySessionOut_: {
             /**
@@ -10636,26 +10297,6 @@ export interface components {
              */
             kind: "Present";
             value: components["schemas"]["ActivitySessionOut"];
-        };
-        /** Present[Annotated[Union[MediaAbstractBuildingOut, MediaAbstractReadyOut, MediaAbstractStaleOut, MediaAbstractFailedOut, MediaAbstractNotAvailableOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
-        Present_Annotated_Union_MediaAbstractBuildingOut__MediaAbstractReadyOut__MediaAbstractStaleOut__MediaAbstractFailedOut__MediaAbstractNotAvailableOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Present";
-            /** Value */
-            value: components["schemas"]["MediaAbstractBuildingOut"] | components["schemas"]["MediaAbstractReadyOut"] | components["schemas"]["MediaAbstractStaleOut"] | components["schemas"]["MediaAbstractFailedOut"] | components["schemas"]["MediaAbstractNotAvailableOut"];
-        };
-        /** Present[Annotated[Union[ResourceDossierIdentityOut, IdeaDossierIdentityOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
-        Present_Annotated_Union_ResourceDossierIdentityOut__IdeaDossierIdentityOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Present";
-            /** Value */
-            value: components["schemas"]["ResourceDossierIdentityOut"] | components["schemas"]["IdeaDossierIdentityOut"];
         };
         /** Present[Annotated[Union[RetryUploadOffer, RetrySourceOffer, RepairSourceOffer, RepairSearchOffer], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
         Present_Annotated_Union_RetryUploadOffer__RetrySourceOffer__RepairSourceOffer__RepairSearchOffer___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
@@ -10807,26 +10448,6 @@ export interface components {
             /** Value */
             value: string;
         };
-        /** Present[Annotated[str, FieldInfo(annotation=NoneType, required=True, metadata=[MaxLen(max_length=4000)])]] */
-        "Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____-Input": {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Present";
-            /** Value */
-            value: string;
-        };
-        /** Present[Annotated[str, FieldInfo(annotation=NoneType, required=True, metadata=[MaxLen(max_length=4000)])]] */
-        "Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MaxLen_max_length_4000_____-Output": {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Present";
-            /** Value */
-            value: string;
-        };
         /** Present[Annotated[str, FieldInfo(annotation=NoneType, required=True, metadata=[MinLen(min_length=1), MaxLen(max_length=128)])]] */
         Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1___MaxLen_max_length_128_____: {
             /**
@@ -10929,15 +10550,6 @@ export interface components {
             kind: "Present";
             value: components["schemas"]["BrowseSort"];
         };
-        /** Present[CancelledEventPayload] */
-        Present_CancelledEventPayload_: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Present";
-            value: components["schemas"]["CancelledEventPayload"];
-        };
         /** Present[ChatPublicationWarning] */
         Present_ChatPublicationWarning_: {
             /**
@@ -10974,32 +10586,23 @@ export interface components {
             kind: "Present";
             value: components["schemas"]["DailyPageSummaryOut"];
         };
-        /** Present[DossierBuildAdmittedGenerationOut] */
-        Present_DossierBuildAdmittedGenerationOut_: {
+        /** Present[DossierBuildOut] */
+        Present_DossierBuildOut_: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             kind: "Present";
-            value: components["schemas"]["DossierBuildAdmittedGenerationOut"];
+            value: components["schemas"]["DossierBuildOut"];
         };
-        /** Present[DossierBuildExecution] */
-        Present_DossierBuildExecution_: {
+        /** Present[DossierFailureCode] */
+        Present_DossierFailureCode_: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             kind: "Present";
-            value: components["schemas"]["DossierBuildExecution"];
-        };
-        /** Present[DossierBuildSummary] */
-        Present_DossierBuildSummary_: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Present";
-            value: components["schemas"]["DossierBuildSummary"];
+            value: components["schemas"]["DossierFailureCode"];
         };
         /** Present[DossierRevisionOut] */
         Present_DossierRevisionOut_: {
@@ -11010,14 +10613,14 @@ export interface components {
             kind: "Present";
             value: components["schemas"]["DossierRevisionOut"];
         };
-        /** Present[FailedEventPayload] */
-        Present_FailedEventPayload_: {
+        /** Present[DurableExecutionPhase] */
+        Present_DurableExecutionPhase_: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             kind: "Present";
-            value: components["schemas"]["FailedEventPayload"];
+            value: components["schemas"]["DurableExecutionPhase"];
         };
         /** Present[HistoryEntry] */
         Present_HistoryEntry_: {
@@ -11072,19 +10675,6 @@ export interface components {
              */
             kind: "Present";
             value: components["schemas"]["nexus__schemas__consumption__ListeningStateOut"];
-        };
-        /** Present[Literal['Current', 'Stale']] */
-        Present_Literal__Current____Stale___: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Present";
-            /**
-             * Value
-             * @enum {string}
-             */
-            value: "Current" | "Stale";
         };
         /** Present[Literal['NotOwner', 'SameSourceTerminal', 'SourceNotReacquirable', 'UploadRejected']] */
         Present_Literal__NotOwner____SameSourceTerminal____SourceNotReacquirable____UploadRejected___: {
@@ -11163,6 +10753,15 @@ export interface components {
              * @enum {string}
              */
             value: "Upload" | "Validate" | "Extract" | "Finalize" | "Index" | "SourceProcessing";
+        };
+        /** Present[MediaAbstractOut] */
+        Present_MediaAbstractOut_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["MediaAbstractOut"];
         };
         /** Present[MediaDurationOut] */
         Present_MediaDurationOut_: {
@@ -11308,6 +10907,15 @@ export interface components {
             kind: "Present";
             value: components["schemas"]["ReadingTimeEstimateOut"];
         };
+        /** Present[ResourceActivationOut] */
+        Present_ResourceActivationOut_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["ResourceActivationOut"];
+        };
         /** Present[ShareMembersOut] */
         Present_ShareMembersOut_: {
             /**
@@ -11386,7 +10994,17 @@ export interface components {
             value: number;
         };
         /** Present[str] */
-        Present_str_: {
+        "Present_str_-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            /** Value */
+            value: string;
+        };
+        /** Present[str] */
+        "Present_str_-Output": {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -11424,13 +11042,6 @@ export interface components {
         ProcessorChain: {
             /** Processors */
             processors: string[];
-        };
-        /** ProgressEventPayload */
-        ProgressEventPayload: {
-            /** Message */
-            message: string;
-            /** Phase */
-            phase: string;
         };
         /** ProviderApiRoute */
         ProviderApiRoute: {
@@ -11491,7 +11102,7 @@ export interface components {
              * @enum {string}
              */
             color: "yellow" | "green" | "blue" | "pink" | "purple";
-            quote: components["schemas"]["Presence_str_"];
+            quote: components["schemas"]["Presence_str_-Output"];
         };
         /** PublicPdfAnchorOut */
         PublicPdfAnchorOut: {
@@ -11537,7 +11148,7 @@ export interface components {
             canonical_text: string;
             /** Ordinal */
             ordinal: number;
-            speaker: components["schemas"]["Presence_str_"];
+            speaker: components["schemas"]["Presence_str_-Output"];
             start_ms: components["schemas"]["Presence_int_"];
         };
         /** PublicShareOut */
@@ -11547,7 +11158,7 @@ export interface components {
             highlight: components["schemas"]["Presence_PublicHighlightOut_"];
             /** Reader */
             reader: components["schemas"]["PublicArticleReaderOut"] | components["schemas"]["PublicTranscriptReaderOut"] | components["schemas"]["PublicEpubReaderOut"] | components["schemas"]["PublicPdfReaderOut"];
-            source_url: components["schemas"]["Presence_str_"];
+            source_url: components["schemas"]["Presence_str_-Output"];
             /** Title */
             title: string;
         };
@@ -11712,7 +11323,7 @@ export interface components {
             label: string;
             /** Position */
             position: number;
-            preview: components["schemas"]["Presence_str_"];
+            preview: components["schemas"]["Presence_str_-Output"];
             /**
              * Tone
              * @enum {string}
@@ -11802,7 +11413,7 @@ export interface components {
              * Format: uuid
              */
             conversation_id: string;
-            excerpt: components["schemas"]["Presence_str_"];
+            excerpt: components["schemas"]["Presence_str_-Output"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -11810,7 +11421,7 @@ export interface components {
             kind: "Chat";
             /** Label */
             label: string;
-            message_ref: components["schemas"]["Presence_str_"];
+            message_ref: components["schemas"]["Presence_str_-Output"];
             /** Ref */
             ref: string;
         };
@@ -11868,7 +11479,7 @@ export interface components {
              * Format: uuid
              */
             edge_id: string;
-            excerpt: components["schemas"]["Presence_str_"];
+            excerpt: components["schemas"]["Presence_str_-Output"];
             /** Id */
             id: string;
             /**
@@ -11903,7 +11514,7 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
-            excerpt: components["schemas"]["Presence_str_"];
+            excerpt: components["schemas"]["Presence_str_-Output"];
             /**
              * Highlight Id
              * Format: uuid
@@ -11941,7 +11552,7 @@ export interface components {
              * Format: uuid
              */
             edge_id: string;
-            excerpt: components["schemas"]["Presence_str_"];
+            excerpt: components["schemas"]["Presence_str_-Output"];
             /** Id */
             id: string;
             /**
@@ -11972,7 +11583,7 @@ export interface components {
             body_pm_json: {
                 [key: string]: unknown;
             };
-            excerpt: components["schemas"]["Presence_str_"];
+            excerpt: components["schemas"]["Presence_str_-Output"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -12008,7 +11619,7 @@ export interface components {
             locus_ref: string;
             /** Resolution */
             resolution: components["schemas"]["ReaderEvidenceResolvedOut"] | components["schemas"]["ReaderEvidenceUnavailableOut"];
-            target_excerpt: components["schemas"]["Presence_str_"];
+            target_excerpt: components["schemas"]["Presence_str_-Output"];
         };
         /**
          * ReaderEvidencePlainObjectOut
@@ -12016,7 +11627,7 @@ export interface components {
          */
         ReaderEvidencePlainObjectOut: {
             activation: components["schemas"]["ResourceActivationOut"];
-            excerpt: components["schemas"]["Presence_str_"];
+            excerpt: components["schemas"]["Presence_str_-Output"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -12052,7 +11663,7 @@ export interface components {
              * @enum {string}
              */
             confidence: "exact" | "strong" | "probable";
-            excerpt: components["schemas"]["Presence_str_"];
+            excerpt: components["schemas"]["Presence_str_-Output"];
             /** Id */
             id: string;
             /**
@@ -12062,7 +11673,7 @@ export interface components {
             kind: "SourceReference";
             /** Label */
             label: string;
-            marker_anchor_id: components["schemas"]["Presence_str_"];
+            marker_anchor_id: components["schemas"]["Presence_str_-Output"];
             /** Stable Key */
             stable_key: string;
             /** Target Refs */
@@ -12078,7 +11689,7 @@ export interface components {
             apparatus_kind: "footnote_ref" | "endnote_ref" | "bibliography_ref" | "sidenote_ref" | "margin_note_ref" | "footnote" | "endnote" | "bibliography_entry" | "sidenote" | "margin_note" | "reference_section";
             /** Content */
             content: components["schemas"]["ReaderSourceHtmlOut"] | components["schemas"]["ReaderSourceTextOut"] | components["schemas"]["ReaderSourceUnavailableOut"];
-            label: components["schemas"]["Presence_str_"];
+            label: components["schemas"]["Presence_str_-Output"];
             /** Ref */
             ref: string;
             /** Resolution */
@@ -12095,7 +11706,7 @@ export interface components {
              * Format: uuid
              */
             edge_id: string;
-            excerpt: components["schemas"]["Presence_str_"];
+            excerpt: components["schemas"]["Presence_str_-Output"];
             /** Id */
             id: string;
             /**
@@ -12161,11 +11772,11 @@ export interface components {
         };
         /** ReaderNavigationSectionOut */
         ReaderNavigationSectionOut: {
-            anchor_id: components["schemas"]["Presence_str_"];
+            anchor_id: components["schemas"]["Presence_str_-Output"];
             extent: components["schemas"]["Presence_NavigationTextRangeOut_"];
             /** Label */
             label: string;
-            parent_section_id: components["schemas"]["Presence_str_"];
+            parent_section_id: components["schemas"]["Presence_str_-Output"];
             /** Section Id */
             section_id: string;
             /**
@@ -12186,7 +11797,7 @@ export interface components {
             id: string;
             /** Label */
             label: string;
-            section_id: components["schemas"]["Presence_str_"];
+            section_id: components["schemas"]["Presence_str_-Output"];
             target: components["schemas"]["Presence_NavigationTextPointOut_"];
         };
         /** ReaderPdfPageLocatorOut */
@@ -12676,17 +12287,6 @@ export interface components {
             };
             /** Client Mutation Id */
             client_mutation_id: string;
-        };
-        /** ResourceDossierIdentityOut */
-        ResourceDossierIdentityOut: {
-            activation: components["schemas"]["ResourceActivationOut"];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Resource";
-            /** Title */
-            title: string;
         };
         /** ResourceItemCapabilitiesOut */
         ResourceItemCapabilitiesOut: {
@@ -13995,8 +13595,8 @@ export interface components {
         };
         /** ShareUserOut */
         ShareUserOut: {
-            displayName: components["schemas"]["Presence_str_"];
-            email: components["schemas"]["Presence_str_"];
+            displayName: components["schemas"]["Presence_str_-Output"];
+            email: components["schemas"]["Presence_str_-Output"];
             /** Userhandle */
             userHandle: string;
         };
@@ -14109,7 +13709,7 @@ export interface components {
             /** Completed */
             completed: number;
             total: components["schemas"]["Presence_int_"];
-            unit: components["schemas"]["Presence_str_"];
+            unit: components["schemas"]["Presence_str_-Output"];
         };
         /** SourceHistoryBaseline */
         SourceHistoryBaseline: {
@@ -14329,13 +13929,6 @@ export interface components {
             /** Y */
             y: number | null;
         };
-        /** StartedEventPayload */
-        StartedEventPayload: {
-            /** Artifact Ref */
-            artifact_ref: string;
-            /** Build Handle */
-            build_handle: string;
-        };
         /** SubscriptionBilling */
         SubscriptionBilling: {
             /**
@@ -14349,11 +13942,6 @@ export interface components {
              * @constant
              */
             label: "Codex subscription";
-        };
-        /** SucceededEventPayload */
-        SucceededEventPayload: {
-            /** Artifact Revision Ref */
-            artifact_revision_ref: string;
         };
         /** SucceededSourceBaselineOutcome */
         SucceededSourceBaselineOutcome: {
@@ -14763,7 +14351,7 @@ export interface components {
              * @enum {string}
              */
             status: "pending" | "running" | "complete" | "error" | "cancelled";
-            support_id: components["schemas"]["Presence_str_"];
+            support_id: components["schemas"]["Presence_str_-Output"];
             /** Usage */
             usage: {
                 [key: string]: unknown;
@@ -15141,8 +14729,8 @@ export interface components {
         VideoCandidate: {
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][];
-            description: components["schemas"]["Presence_str_"];
-            image: components["schemas"]["Presence_str_"];
+            description: components["schemas"]["Presence_str_-Output"];
+            image: components["schemas"]["Presence_str_-Output"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -15162,15 +14750,15 @@ export interface components {
         };
         /** VideoFacts */
         VideoFacts: {
-            channelTitle: components["schemas"]["Presence_str_"];
-            videoRef: components["schemas"]["Presence_str_"];
+            channelTitle: components["schemas"]["Presence_str_-Output"];
+            videoRef: components["schemas"]["Presence_str_-Output"];
         };
         /** VideoPreview */
         VideoPreview: {
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][];
-            description: components["schemas"]["Presence_str_"];
-            image: components["schemas"]["Presence_str_"];
+            description: components["schemas"]["Presence_str_-Output"];
+            image: components["schemas"]["Presence_str_-Output"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -15194,7 +14782,7 @@ export interface components {
         };
         /** VideoPreviewFacts */
         VideoPreviewFacts: {
-            channelTitle: components["schemas"]["Presence_str_"];
+            channelTitle: components["schemas"]["Presence_str_-Output"];
             /** Embedhref */
             embedHref: string;
             /** Videoref */
@@ -15250,8 +14838,8 @@ export interface components {
             createdAt: string;
             /** Invitationhandle */
             invitationHandle: string;
-            inviteeDisplayName: components["schemas"]["Presence_str_"];
-            inviteeEmail: components["schemas"]["Presence_str_"];
+            inviteeDisplayName: components["schemas"]["Presence_str_-Output"];
+            inviteeEmail: components["schemas"]["Presence_str_-Output"];
             /** Inviteeuserhandle */
             inviteeUserHandle: string;
             /** Inviteruserhandle */
@@ -15304,8 +14892,8 @@ export interface components {
         WebArticleCandidate: {
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][];
-            description: components["schemas"]["Presence_str_"];
-            image: components["schemas"]["Presence_str_"];
+            description: components["schemas"]["Presence_str_-Output"];
+            image: components["schemas"]["Presence_str_-Output"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -15325,14 +14913,14 @@ export interface components {
         };
         /** WebArticleFacts */
         WebArticleFacts: {
-            siteName: components["schemas"]["Presence_str_"];
+            siteName: components["schemas"]["Presence_str_-Output"];
         };
         /** WebArticlePreview */
         WebArticlePreview: {
             /** Contributors */
             contributors: components["schemas"]["ContributorCreditOut"][];
-            description: components["schemas"]["Presence_str_"];
-            image: components["schemas"]["Presence_str_"];
+            description: components["schemas"]["Presence_str_-Output"];
+            image: components["schemas"]["Presence_str_-Output"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -15358,7 +14946,7 @@ export interface components {
         WebArticlePreviewFacts: {
             /** Canonicalurl */
             canonicalUrl: string;
-            siteName: components["schemas"]["Presence_str_"];
+            siteName: components["schemas"]["Presence_str_-Output"];
         };
         /** WebReaderResumeState */
         WebReaderResumeState: {
@@ -21741,12 +21329,8 @@ export interface operations {
     };
     stream_artifact_build_events_stream_artifact_builds__artifact_build_id__events_get: {
         parameters: {
-            query?: {
-                after?: number | null;
-            };
-            header?: {
-                "Last-Event-ID"?: string | null;
-            };
+            query?: never;
+            header?: never;
             path: {
                 artifact_build_id: string;
             };

@@ -7,14 +7,6 @@ from pydantic import BaseModel, ConfigDict
 from nexus.services.durable_step_journal import DurableExecutionPhase
 
 
-class DurableExecutionOut(BaseModel):
-    """Advisory queue/coordination state; never a persisted run status."""
-
-    phase: DurableExecutionPhase
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-
 class ChatRunExecutionOut(BaseModel):
     """The queue phase and the run's durable stop intent in one observation."""
 
