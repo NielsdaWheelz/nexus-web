@@ -213,6 +213,10 @@ stock/journal audits. exact installed `bcb86e020`, stock 0.160, personal
 declarations match all three original attempts, seals, final json and usage.
 all 37 original callback arguments/digests/revisions/replies agree with stock.
 the book/collection are never redispatched when later fixture assertions fail.
+the native owner's independent offline review also passes all three original
+attempts and 37 callback pairs: `metadata-0257-cohort-offline-review.receipt.json`
+(`3900b09aaa19`) under `/private/tmp/native-metadata-cutover-gu65429d/`.
+it adds no provider call or broader ingestion/browser/production qualification.
 
 | item / operation | first publication | encountered edition | model-turn seconds |
 |---|---|---|---|
@@ -323,7 +327,16 @@ removal and retention; root independently verified both.
 post-deletion `./scripts/test` exits 0 at `6f036a29a`, with sole head `0257` and
 no tracked runtime change. `metadata-final-current-postcleanup-static.receipt.json`
 (`108ca2156da0`) and its log retain the observed command/result.
-the native owner received explicit finite-host-use-finished acknowledgement;
-its host teardown remains separately owned, not an additional domain acceptance.
+after explicit finite-host-use-finished acknowledgement, the native owner
+gracefully retired supervisor `74205`/host `74219` and removed only its owned
+account/socket/cwds/driver. all seven original stock rollouts retain their
+pre-stop/post-exit hashes. `host-release.receipt.json` (`2af2b2ef19fe`) under
+`/private/tmp/nexus-main-native-live-1_m1scr0/` records that retirement.
+the separate native qualification worktree/ref and proof-postgres cleanup
+receipts (`fb81aa79146a`, `ed744d0d7050`) are under
+`/private/tmp/native-metadata-cutover-gu65429d/`; 15 private database archives
+remain retained. root rehashed those receipts and all seven retained rollouts.
+this native-owned cleanup touched neither metadata stores nor production;
+root's port-55443 cleanup above remains separately attributed.
 finite samples cannot prove general historical accuracy. deleting proofs loses
 continuing regression coverage; static checks and receipts do not replace it.
