@@ -92,7 +92,7 @@ class ConsumptionOut(CamelOut):
 
 
 class PlayerDisplay(CamelOut):
-    title: str
+    title: str = Field(max_length=300)
     subtitle: Presence[str]
 
 
@@ -105,6 +105,12 @@ class LecternItemOut(CamelOut):
     activation: LecternActivation
     player_display: Presence[PlayerDisplay]
 
+    @model_validator(mode="after")
+    def _paired_audio_display(self) -> LecternItemOut:
+        if (self.activation.kind == "FooterAudio") != (self.player_display.kind == "Present"):
+            raise ValueError("player_display must match FooterAudio activation")
+        return self
+
 
 class LecternSnapshot(CamelOut):
     items: list[LecternItemOut] = Field(max_length=2000)
@@ -112,7 +118,7 @@ class LecternSnapshot(CamelOut):
 
 class PlayerDescriptor(CamelOut):
     media_id: UUID
-    title: str
+    title: str = Field(max_length=300)
     subtitle: Presence[str]
     activation: FooterAudioActivation
 
