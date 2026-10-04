@@ -229,7 +229,7 @@ def episode_page(
 def _client():
     settings = get_settings()
     if not settings.podcast_index_api_key or not settings.podcast_index_api_secret:
-        raise RuntimeError("Podcast Index Browse provider is not configured")
+        raise BrowseProviderFailure(BrowseSectionFailureKind.Unavailable)
     return get_podcast_index_client()
 
 
