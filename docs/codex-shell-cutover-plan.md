@@ -1,6 +1,9 @@
 # codex subscription reading helpers
 
-status: implementation staged; live release qualification incomplete
+status: historical; superseded by the native callback cutover.
+current authority and topology: [llms](modules/llms.md) and
+[the native host](runbooks/codex-personal-agent-host.md).
+this document records the prior shell decision; none of its retired paths may execute.
 origin: 2026-09-26 owner approval; runtime, api/content and adversarial review
 
 ## outcome and decisions

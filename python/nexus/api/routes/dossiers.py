@@ -15,7 +15,6 @@ from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import Data
 from nexus.schemas.artifact import (
     DossierBuildAdmittedGenerationOut,
-    DossierBuildCodexShellOut,
     DossierBuildCreatedOut,
     DossierBuildExactModelToolsOut,
     DossierBuildExecution,
@@ -99,9 +98,10 @@ def _admitted_generation_out(
     api_plan = view.spec.api_plan_snapshot
     tool_plan: DossierBuildToolPlanOut = DossierBuildNoModelToolsOut()
     if isinstance(api_plan, Present):
-        tool_plan = DossierBuildCodexShellOut(
+        tool_plan = DossierBuildExactModelToolsOut(
             plan_id=api_plan.value.plan_id,
             plan_revision=api_plan.value.plan_revision,
+            effect_mode="AdditiveWrites",
         )
     elif isinstance(plan, Present) and isinstance(effect_mode, Present):
         tool_plan = DossierBuildExactModelToolsOut(
@@ -129,7 +129,6 @@ def _active_build_out(view: engine.ActiveBuildView) -> DossierBuildSummary:
         failure=absent(),
         cancellation=absent(),
         admitted_generation=_admitted_generation_out(view.admitted_generation),
-        capacity_pause=presence_from_nullable(view.capacity_pause),
     )
 
 
@@ -160,7 +159,6 @@ def _unsuccessful_build_out(view: engine.UnsuccessfulBuildView) -> DossierBuildS
         failure=failure,
         cancellation=cancellation,
         admitted_generation=_admitted_generation_out(view.admitted_generation),
-        capacity_pause=absent(),
     )
 
 

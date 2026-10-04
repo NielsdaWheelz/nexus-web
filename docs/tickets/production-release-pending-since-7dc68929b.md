@@ -6,7 +6,7 @@ status: open · origin: 2026-09-28 cleanup campaign · area: release / productio
 
 - the last public web/backend version observation was `7dc68929b` (#377) on 2026-09-28. reviewed aggregate SQL on 2026-10-03 independently confirms production remains at `0241`; this did not re-probe public versions.
 - merging to main deploys nothing. `deploy/hetzner/deploy.sh <sha>` converges the backend (`release.py`: backup, migrate, start), then promotes and aliases the vercel build of the same sha. web and backend therefore release together.
-- main carries migrations `0242`–`0254`. most are irreversible: their `downgrade()` raises. after the release, the verified pre-migration backup is the only copy of the dropped data. rollback means restoring the application and that backup together, losing every write made since the release.
+- this release tree carries migrations `0242`–`0255`. most are irreversible: their `downgrade()` raises. after the release, the verified pre-migration backup is the only copy of the dropped data. rollback means restoring the application and that backup together, losing every write made since the release.
 
 | revision | what | reversible | preflight |
 |---|---|---|---|
@@ -23,6 +23,7 @@ status: open · origin: 2026-09-28 cleanup campaign · area: release / productio
 | 0252 | deletes billing, stripe state and the transcription minute ledger (#404) | no | [billing-0252-release-steps](billing-0252-release-steps.md) |
 | 0253 | canonical activation receipt keys and explicit oracle passage nullable keys | yes; added null keys remain | precise stored receipt/passage shape guards |
 | 0254 | drops the unused atlas position recomputation timestamp | no | none; no product or scheduler reads the age |
+| 0255 | native submission/terminal evidence and transport-neutral effect ownership; removes shell credentials | no | stopped admissions; unresolved shell and original-principal guards |
 
 the activation cut adds the `0253` receipt-key and oracle nullable-key
 migration, with paired snake API/web output. production has 24 exact camel
@@ -54,7 +55,7 @@ not an applied production migration.
 ## what to do
 
 1. run every linked preflight read-only against production, and resolve each one before releasing.
-2. confirm the release backup verifies. it is the only copy of what 0242–0252 and 0254 delete.
+2. confirm the release backup verifies. it is the only copy of what 0242–0252, 0254 and 0255 delete.
 3. run `deploy/hetzner/deploy.sh <main sha>` from a clean checkout.
 4. after the release, run the three processing repairs and then land #387 ([processing-repairs-await-release-then-387](processing-repairs-await-release-then-387.md)), and finish [billing-0252-release-steps](billing-0252-release-steps.md). the remaining
    [web rate-limit copy cleanup](web-rate-limit-copy-outlives-limiter.md) can land

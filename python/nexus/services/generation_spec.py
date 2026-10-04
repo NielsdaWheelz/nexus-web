@@ -300,15 +300,7 @@ def tool_scope_digest(scope: FrozenToolScope) -> str:
     return _digest(scope.model_dump(mode="json"))
 
 
-class CodexShell(_FrozenModel):
-    kind: Literal["CodexShell"] = "CodexShell"
-    api_contract_revision: BoundedText
-    api_plan: FrozenToolPlanSnapshot
-    execution_policy_revision: BoundedText
-
-
-class ProviderFunctions(_FrozenModel):
-    kind: Literal["ProviderFunctions"] = "ProviderFunctions"
+class _ModelTools(_FrozenModel):
     model_tool_plan_snapshot: Presence[FrozenToolPlanSnapshot]
     tool_effect_mode: Presence[Literal["ReadOnly", "AdditiveWrites"]]
     admitted_tool_scope: Presence[FrozenToolScope]
@@ -338,11 +330,19 @@ class ProviderFunctions(_FrozenModel):
         return self
 
 
-GenerationAuthority = Annotated[CodexShell | ProviderFunctions, Field(discriminator="kind")]
+class CodexCallbacks(_ModelTools):
+    kind: Literal["CodexCallbacks"] = "CodexCallbacks"
+
+
+class ProviderFunctions(_ModelTools):
+    kind: Literal["ProviderFunctions"] = "ProviderFunctions"
+
+
+GenerationAuthority = Annotated[CodexCallbacks | ProviderFunctions, Field(discriminator="kind")]
 
 
 class GenerationSpecFacts(_FrozenModel):
-    schema_version: Literal["nexus-generation-spec.v2"] = "nexus-generation-spec.v2"
+    schema_version: Literal["nexus-generation-spec.v3"] = "nexus-generation-spec.v3"
     operation: GenerationOperation
     selection: GenerationSelectionSpec
     selection_source: Literal["ChatRun", "BackgroundPolicy"]
@@ -378,8 +378,8 @@ class GenerationSpecFacts(_FrozenModel):
         agent_revision = self.agent_definition_revision
         registry_revision = self.provider_registry_revision
         if isinstance(self.selection, CodexPersonalSelection):
-            if not isinstance(self.authority, CodexShell):
-                raise ValueError("Codex selection requires shell authority")
+            if not isinstance(self.authority, CodexCallbacks):
+                raise ValueError("Codex selection requires callback authority")
             if not isinstance(target, CodexDispatchTargetSnapshot):
                 raise ValueError("Codex selection lacks a Codex dispatch target")
             if self.selection.model != target.model_key:
@@ -489,43 +489,37 @@ class GenerationHistory(BaseModel):
 def read_generation_history(value: GenerationSpec | Mapping[str, object]) -> GenerationHistory:
     """Project stable presentation facts from one validated frozen spec."""
 
-    spec = decode_generation_spec_document(
-        value if isinstance(value, GenerationSpec) else dict(value)
+    document = (
+        value.model_dump(mode="json", by_alias=True)
+        if isinstance(value, GenerationSpec)
+        else dict(value)
     )
-    authority = spec.authority
-    plan = (
-        authority.model_tool_plan_snapshot if isinstance(authority, ProviderFunctions) else Absent()
+    authority = document["authority"]
+    if not isinstance(authority, dict):
+        raise ValueError("generation history lacks authority facts")
+    shell_history = authority.get("kind") == "CodexShell"
+    plan = authority.get("model_tool_plan_snapshot")
+    api_plan = authority.get("api_plan") if shell_history else None
+    # Audit reads retain old facts; this projection cannot admit or execute work.
+    result = {
+        key: document[key]
+        for key in (
+            "operation",
+            "selection_source",
+            "selection",
+            "resolved_dispatch_target",
+            "catalog_definition_revision",
+            "source_catalog_definition_revision",
+            "display_at_dispatch",
+        )
+    }
+    result["tool_effect_mode"] = (
+        {"kind": "Present", "value": "AdditiveWrites"}
+        if shell_history
+        else authority["tool_effect_mode"]
     )
-    api_plan = authority.api_plan if isinstance(authority, CodexShell) else None
-    return GenerationHistory(
-        operation=spec.operation,
-        selection_source=spec.selection_source,
-        selection=spec.selection,
-        resolved_dispatch_target=spec.resolved_dispatch_target,
-        catalog_definition_revision=spec.catalog_definition_revision,
-        source_catalog_definition_revision=spec.source_catalog_definition_revision,
-        display_at_dispatch=spec.display_at_dispatch,
-        tool_effect_mode=(
-            Present[Literal["ReadOnly", "AdditiveWrites"]](value="AdditiveWrites")
-            if isinstance(authority, CodexShell)
-            else authority.tool_effect_mode
-        ),
-        model_tool_plan_snapshot=(
-            Present(
-                value=ToolPlanIdentity(
-                    plan_id=plan.value.plan_id, plan_revision=plan.value.plan_revision
-                )
-            )
-            if isinstance(plan, Present)
-            else Absent()
-        ),
-        api_plan_snapshot=(
-            Present(
-                value=ToolPlanIdentity(
-                    plan_id=api_plan.plan_id, plan_revision=api_plan.plan_revision
-                )
-            )
-            if api_plan is not None
-            else Absent()
-        ),
+    result["model_tool_plan_snapshot"] = plan if plan is not None else {"kind": "Absent"}
+    result["api_plan_snapshot"] = (
+        {"kind": "Present", "value": api_plan} if api_plan is not None else {"kind": "Absent"}
     )
+    return GenerationHistory.model_validate_json(_canonical_json(result))

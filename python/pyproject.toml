@@ -11,7 +11,7 @@ dependencies = [
     "sqlalchemy[asyncio,postgresql-psycopg]>=2.0.36",
     "alembic>=1.14.0",
     "pydantic-settings>=2.6.0",
-    "PyJWT[crypto]>=2.13.0",
+    "PyJWT[crypto]>=2.15.1",
     "httpx>=0.28.0",
     "structlog>=24.1.0",
     "lxml>=5.0.0",
@@ -32,7 +32,7 @@ dependencies = [
 
 [project.optional-dependencies]
 codex-agent = [
-    "openai-codex-cli-bin==0.157.1",
+    "openai-codex-cli-bin==0.160.0",
 ]
 dev = [
     "cryptography>=45.0.0",
@@ -51,9 +51,9 @@ build-backend = "hatchling.build"
 packages = ["nexus"]
 
 [tool.uv.sources]
-provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling.git", rev = "6a7093f799c88c205c8d797bbb8b14c2a9980db1" }
-llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "937434b051d99c3dd10402db23e16d8baf129ebd" }
-llm-tools = { git = "https://github.com/NielsdaWheelz/llm-tools.git", rev = "d305da8fb5f5eda89049779c4c4dfa4f1916618c" }
+provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling.git", rev = "e1498d8382f192ae664ae9790b682a8e8a8b0d38" }
+llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "9d57e8945be5b26397c5a3942612f81a190f8db4" }
+llm-tools = { git = "https://github.com/NielsdaWheelz/llm-tools.git", rev = "2adb9790fc7a54de5342effaca9391c2f3d24ff9" }
 
 [tool.ruff]
 target-version = "py312"

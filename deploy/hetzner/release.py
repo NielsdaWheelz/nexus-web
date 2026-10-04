@@ -47,11 +47,11 @@ CONFIG_FILE = "/etc/nexus/current.env"
 BACKUP_CONFIG_FILE = "/etc/nexus/backup.env"
 CADDYFILE = "/etc/nexus/Caddyfile"
 CURRENT_POINTER = "/var/lib/nexus/releases/current"
-APPARMOR_PROFILE = "/etc/apparmor.d/nexus-codex-agent-host"
 BOOT_GUARD_SERVICE = "nexus-codex-state-boot-guard.service"
 CODEX_STATE = "/srv/nexus/codex-state"
 CODEX_STATE_DEVICE = "/dev/mapper/nexus-codex-state"
 CODEX_CREDENTIAL = f"{CODEX_STATE}/codex/codex-personal/auth.json"
+CODEX_ACCOUNT_ROOT = f"{CODEX_STATE}/codex/codex-personal"
 CODEX_AGENT_HOST = "nexus-codex-agent-host"
 CODEX_PRIVATE_NETWORK = "nexus_codex_private"
 CODEX_PRIVATE_BRIDGE_IP = "172.30.0.1"
@@ -62,7 +62,6 @@ PRE_MODEL_HISTORY_CUTOVER_REVISIONS = frozenset(f"{number:04d}" for number in ra
 # release installs them before it converges anything.
 HOST_INPUTS = (
     ("docker-compose.yml", COMPOSE_FILE, "0444"),
-    ("nexus-codex-agent-host.apparmor", APPARMOR_PROFILE, "0644"),
     ("codex-state-boot-guard.sh", "/usr/local/sbin/nexus-codex-state-boot-guard", "0755"),
     ("nexus-codex-state-boot-guard.service", f"/etc/systemd/system/{BOOT_GUARD_SERVICE}", "0644"),
     (
@@ -346,7 +345,6 @@ def install_host_inputs() -> None:
     for name, destination, mode in HOST_INPUTS:
         host(f"sudo install -D -o root -g root -m {mode} {staged}/{name} {destination}")
     host(f"rm -r -- {staged}")
-    host(f"sudo apparmor_parser --replace --skip-cache {APPARMOR_PROFILE}")
     host(f"sudo systemctl daemon-reload && sudo systemctl enable {BOOT_GUARD_SERVICE}")
 
 
@@ -536,7 +534,7 @@ def health(candidate: CandidateManifest) -> None:
 
 # ---------------------------------------------------------------------------
 # Guarantee: the Codex agent host stays isolated. Every property below is
-# DECLARED in docker-compose.yml, the AppArmor profile or the boot-guard unit;
+# DECLARED in docker-compose.yml or the boot-guard unit;
 # this asserts that the kernel and Docker actually applied the declaration,
 # and that the sandbox cannot reach the data plane.
 # ---------------------------------------------------------------------------
@@ -568,17 +566,12 @@ def assert_isolation() -> None:
     if members != {
         f"nexus-{CODEX_AGENT_HOST}-1",
         "nexus-codex-egress-policy-1",
-        "nexus-api-1",
     }:
         raise Failure(f"the Codex private network has unexpected members: {sorted(members)}")
-    api_networks = inspect(container("api"))["NetworkSettings"]["Networks"]
-    if api_networks[CODEX_PRIVATE_NETWORK]["IPAddress"] != "172.30.0.4":
-        raise Failure("the generation API private address differs from its runtime contract")
-
     inspected = inspect(container(CODEX_AGENT_HOST))
     configuration = inspected["HostConfig"]
     if (
-        inspected["AppArmorProfile"] != CODEX_AGENT_HOST
+        inspected["AppArmorProfile"] != "docker-default"
         or configuration["ReadonlyRootfs"] is not True
         or configuration["CapDrop"] != ["ALL"]
         or configuration["CapAdd"]
@@ -587,19 +580,20 @@ def assert_isolation() -> None:
         or list(inspected["NetworkSettings"]["Networks"]) != [CODEX_PRIVATE_NETWORK]
     ):
         raise Failure("the Codex agent host runtime differs from its declared confinement")
-    host_paths = [mount["Source"] for mount in inspected["Mounts"] if mount["Type"] != "volume"]
-    if host_paths != [CODEX_CREDENTIAL]:
+    host_paths = [mount["Source"] for mount in inspected["Mounts"] if mount["Type"] == "bind"]
+    if host_paths != [CODEX_ACCOUNT_ROOT]:
         raise Failure(f"the Codex agent host has unexpected host mounts: {host_paths}")
 
     denied = (
         f"{CODEX_PRIVATE_BRIDGE_IP}:80 {CODEX_PRIVATE_BRIDGE_IP}:443"
         f" {service_address('postgres')}:5432 {service_address('caddy')}:443"
+        f" {service_address('api')}:8000"
         " 169.254.169.254:80"
     )
     inside(
         CODEX_AGENT_HOST,
         "python -m apps.codex_agent.network_health"
-        f" --allowed-target 172.30.0.4:8000 --denied-targets {denied}",
+        f" --allowed-target 172.30.0.2:443 --denied-targets {denied}",
     )
     note(f"agent host confined; {denied} unreachable from it")
 
@@ -634,7 +628,7 @@ def release(
         " the API is down from here until `up` succeeds"
     )
     compose(candidate, f"stop --timeout 30 {' '.join(WRITERS)}", timeout=300)
-    compose(candidate, f"stop --timeout 45 {CODEX_AGENT_HOST}", timeout=120)
+    compose(candidate, f"stop --timeout 15 {CODEX_AGENT_HOST}", timeout=120)
     host_container = host(
         "docker ps --all --quiet"
         " --filter label=com.docker.compose.project=nexus"

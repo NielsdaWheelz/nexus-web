@@ -6,7 +6,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from nexus.jobs.queue import JobExecutionContext, RescheduleRequested
+from nexus.jobs.queue import JobExecutionContext
 from nexus.logging import get_logger
 from nexus.services.llm_execution import ExecutionRuntime
 from nexus.services.oracle import execute_reading
@@ -21,10 +21,10 @@ def oracle_reading_generate(
     reading_id: UUID,
     *,
     context: JobExecutionContext,
-) -> dict | RescheduleRequested:
+) -> dict:
     logger.info("oracle_reading_started", reading_id=str(reading_id))
 
-    async def _handler(db: Session, runtime: ExecutionRuntime) -> dict | RescheduleRequested:
+    async def _handler(db: Session, runtime: ExecutionRuntime) -> dict:
         return await execute_reading(
             db,
             reading_id=reading_id,

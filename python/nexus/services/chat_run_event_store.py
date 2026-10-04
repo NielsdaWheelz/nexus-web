@@ -30,6 +30,21 @@ TERMINAL_RUN_STATUSES = run_kit.terminal_statuses(run_kit.RunStreamKind.ChatRun)
 type TerminalStatus = Literal["complete", "error", "cancelled"]
 
 
+def bounded_text_prefix(text: str, *, max_chars: int, max_bytes: int) -> str:
+    """Return a whole-code-point prefix inside the chat event limits."""
+    if max_chars < 1 or max_bytes < 1:
+        return ""
+    byte_count = 0
+    end = 0
+    for character in text[:max_chars]:
+        encoded_bytes = len(character.encode("utf-8"))
+        if byte_count + encoded_bytes > max_bytes:
+            break
+        byte_count += encoded_bytes
+        end += 1
+    return text[:end]
+
+
 def lock_chat_run_for_update(db: Session, run_id: UUID) -> ChatRun | None:
     """Lock and refresh the authoritative run even in non-expiring sessions."""
 

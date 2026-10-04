@@ -6,7 +6,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from nexus.jobs.queue import JobExecutionContext, RescheduleRequested
+from nexus.jobs.queue import JobExecutionContext
 from nexus.services.llm_execution import ExecutionRuntime
 from nexus.services.resource_graph.refs import assert_resource_ref
 from nexus.services.synapse import run_synapse_scan
@@ -21,11 +21,11 @@ def synapse_scan(
     reason: str,
     *,
     context: JobExecutionContext,
-) -> dict | RescheduleRequested:
+) -> dict:
     user_uuid = UUID(user_id)
     parsed_ref = assert_resource_ref(ref)
 
-    async def _handler(db: Session, runtime: ExecutionRuntime) -> dict | RescheduleRequested:
+    async def _handler(db: Session, runtime: ExecutionRuntime) -> dict:
         result = await run_synapse_scan(
             db,
             user_id=user_uuid,
@@ -33,8 +33,6 @@ def synapse_scan(
             context=context,
             runtime=runtime,
         )
-        if isinstance(result, RescheduleRequested):
-            return result
         # "trigger", not "reason": the worker failure protocol reads
         # result["reason"] as the error message for a failed status.
         return {

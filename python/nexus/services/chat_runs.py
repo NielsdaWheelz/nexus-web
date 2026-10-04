@@ -1012,9 +1012,12 @@ def cancel_chat_run(
 ) -> ChatRunResponse:
     """Record stop intent and fold only proven local dead-job states."""
 
-    from nexus.services.agent_api import close_generation_api_admission_for_owner
     from nexus.services.chat_run_worker import settle_cancelled_dead_chat_run
-    from nexus.services.llm_ledger import LlmCallOwner, lock_generation_owner_in_current_transaction
+    from nexus.services.llm_ledger import (
+        LlmCallOwner,
+        fence_native_attempts_for_owner,
+        lock_generation_owner_in_current_transaction,
+    )
 
     owned = get_run_for_owner(db, viewer_id, run_id)
     lock_chat_generation_admission_in_current_transaction(db)
@@ -1030,7 +1033,7 @@ def cancel_chat_run(
     if first_request:
         run.cancel_requested_at = datetime.now(UTC)
         run.updated_at = datetime.now(UTC)
-    close_generation_api_admission_for_owner(db, owner=owner)
+    fence_native_attempts_for_owner(db, owner=owner)
     dead_job = current_dead_job_for_payload(
         db,
         kind="chat_run",

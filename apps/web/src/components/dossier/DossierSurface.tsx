@@ -26,8 +26,6 @@ import {
   useDossierSelector,
   type DossierControllerStore,
 } from "@/lib/dossiers/dossierControllerStore";
-import { formatDisplayDate } from "@/lib/display/format";
-import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import MediaAbstract from "@/components/dossier/MediaAbstract";
 import {
   deriveDossierViewModel,
@@ -259,8 +257,6 @@ function ActivityBanner({ activity }: { activity: DossierActivityView }) {
           <span>Generation stopped; it needs attention.</span>
         </div>
       );
-    case "CapacityPaused":
-      return <CapacityPausedBanner pause={activity.pause} />;
     case "Cancelled":
       return (
         <div className={styles.banner}>
@@ -274,32 +270,6 @@ function ActivityBanner({ activity }: { activity: DossierActivityView }) {
   }
 }
 
-/** Spec 3.4: a quota-parked admission waits durably (no spend, no model switch);
- * the Cancel control in the controls row stays available. */
-function CapacityPausedBanner({ pause }: { pause: Schema<"CapacityPaused"> }) {
-  const environment = useRenderEnvironment();
-  const formatInstant = (instant: string): string => {
-    const formatted = formatDisplayDate(instant, environment, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
-    if (formatted === null) {
-      throw new Error(`Capacity pause instant is not a valid instant: ${instant}`);
-    }
-    return formatted;
-  };
-  return (
-    <div className={styles.banner}>
-      <span>Waiting for Codex capacity</span>
-      <span>
-        {pause.reset_at.kind === "Present"
-          ? `Codex reports capacity returning at ${formatInstant(pause.reset_at.value)}.`
-          : `Nexus checks again at ${formatInstant(pause.next_check_at)}.`}
-      </span>
-    </div>
-  );
-}
-
 function toolPlanFact(
   plan: Schema<"DossierBuildAdmittedGenerationOut">["tool_plan"],
   toolPositions: number,
@@ -307,10 +277,6 @@ function toolPlanFact(
   switch (plan.kind) {
     case "NoModelTools":
       return "No model tools";
-    case "CodexShell": {
-      const calls = `${toolPositions} api ${toolPositions === 1 ? "call" : "calls"}`;
-      return `Account-wide reading and additive writes · ${calls}`;
-    }
     case "ExactModelTools": {
       const mode = plan.effect_mode === "ReadOnly" ? "read-only" : "additive writes";
       const calls = `${toolPositions} tool ${toolPositions === 1 ? "call" : "calls"}`;

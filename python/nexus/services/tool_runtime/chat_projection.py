@@ -190,7 +190,7 @@ class ChatToolExecutionProjection:
         result: ToolResult,
         audit: ToolAuditProjection,
     ) -> None:
-        run = self._run(db, authority=authority)
+        run = self._run(db, authority=authority, execution=False)
         declaration = CHAT_TOOL_DECLARATIONS_BY_ID[position.canonical_tool_id]
         provider_wire_name = _provider_wire_name(db, run=run, tool_call_index=position.position)
         if position.canonical_tool_id == "web.search":
@@ -291,7 +291,7 @@ class ChatToolExecutionProjection:
         position: ToolPositionRecord,
         result: ToolResult,
     ) -> str:
-        run = self._run(db, authority=authority)
+        run = self._run(db, authority=authority, execution=False)
         tool_call_id = db.execute(
             text(
                 """
@@ -323,15 +323,15 @@ class ChatToolExecutionProjection:
             canonical_tool_ids=write_tool_ids(),
         )
 
-    def _run(self, db: Session, *, authority: ToolAuthority) -> ChatRun:
+    def _run(self, db: Session, *, authority: ToolAuthority, execution: bool = True) -> ChatRun:
         run = lock_chat_run_for_update(db, self.run_id)
         if (
             run is None
             or authority.owner.kind != "chat_run"
             or authority.owner.id != run.id
             or authority.user_id != run.owner_user_id
-            or run.status != "running"
-            or run.cancel_requested_at is not None
+            or execution
+            and (run.status != "running" or run.cancel_requested_at is not None)
         ):
             raise ToolAuthorityRefused("Chat projection owner is not live")
         return run

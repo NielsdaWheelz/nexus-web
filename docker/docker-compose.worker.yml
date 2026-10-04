@@ -26,6 +26,7 @@ services:
       - NEXUS_RUNTIME_IDENTITY_FILE=/app/local-runtime-identity.json
       - WORKER_LANE=interactive
       - DATABASE_STATEMENT_TIMEOUT_MS=300000
+      - NEXUS_CODEX_NATIVE_SOCKET=/tmp/codex-daemon-10001/app-server.sock
     depends_on:
       postgres:
         condition: service_healthy
@@ -35,6 +36,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ${NEXUS_LOCAL_RUNTIME_IDENTITY_FILE:?generate a local runtime identity}:/app/local-runtime-identity.json:ro
+      - nexus_codex_run:/tmp/codex-daemon-10001
     # Optional resource bounds for worker stability
     deploy:
       resources:
@@ -70,6 +72,7 @@ services:
       - NEXUS_RUNTIME_IDENTITY_FILE=/app/local-runtime-identity.json
       - WORKER_LANE=background
       - DATABASE_STATEMENT_TIMEOUT_MS=300000
+      - NEXUS_CODEX_NATIVE_SOCKET=/tmp/codex-daemon-10001/app-server.sock
     depends_on:
       postgres:
         condition: service_healthy
@@ -79,6 +82,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ${NEXUS_LOCAL_RUNTIME_IDENTITY_FILE:?generate a local runtime identity}:/app/local-runtime-identity.json:ro
+      - nexus_codex_run:/tmp/codex-daemon-10001
     deploy:
       resources:
         limits:
@@ -91,3 +95,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+volumes:
+  nexus_codex_run:

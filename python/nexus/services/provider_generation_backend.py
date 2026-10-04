@@ -156,7 +156,8 @@ class ProviderGenerationBackend:
                 message="provider successor requires one ordered result for every proposed call",
             )
         result_bytes = sum(len(result.output.encode("utf-8")) for result in tool_results)
-        if result_bytes > model_tools.snapshot.run_limits.max_output_bytes:
+        maximum = model_tools.snapshot.run_limits.max_output_bytes
+        if maximum is not None and result_bytes > maximum:
             raise ProviderGenerationDefect(
                 origin="plan",
                 message="provider successor tool results exceed the frozen run output bound",

@@ -19,12 +19,12 @@ class FrozenToolLimitsSnapshot(_FrozenSnapshot):
 
 
 class FrozenRunLimitsSnapshot(_FrozenSnapshot):
-    max_calls: int
-    max_elapsed_seconds: float
-    max_external_attempts: int
+    max_calls: int | None
+    max_elapsed_seconds: float | None
+    max_external_attempts: int | None
     max_in_flight: int
-    max_input_bytes: int
-    max_output_bytes: int
+    max_input_bytes: int | None
+    max_output_bytes: int | None
 
 
 class FrozenToolGrantSnapshot(_FrozenSnapshot):
@@ -37,7 +37,7 @@ class FrozenToolGrantSnapshot(_FrozenSnapshot):
 
 
 class FrozenToolExposureSnapshot(_FrozenSnapshot):
-    type: Literal["HostTable", "Native", "HttpApi"]
+    type: Literal["HostTable", "Native"]
 
 
 class FrozenToolPlanSnapshot(_FrozenSnapshot):

@@ -1751,6 +1751,11 @@ class LLMCall(Base):
         JSONB(none_as_null=True), nullable=False
     )
     generation_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    tool_principal_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=True,
+    )
     outcome: Mapped[str | None] = mapped_column(Text, nullable=True)
     failure_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     terminal: Mapped[dict[str, object] | None] = mapped_column(
@@ -1762,23 +1767,6 @@ class LLMCall(Base):
         nullable=False,
     )
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-
-
-class GenerationApiCredential(Base):
-    """One account-bound bearer admission for a native generation attempt."""
-
-    __tablename__ = "generation_api_credentials"
-
-    generation_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("llm_calls.id"), primary_key=True
-    )
-    token_sha256: Mapped[str] = mapped_column(Text, nullable=False)
-    job_execution_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
-    )
-    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-    closed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
 
 class LLMModelTurn(Base):
@@ -1812,6 +1800,19 @@ class LLMModelTurn(Base):
     )
     accepted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    fenced_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    native_binding: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True),
+        nullable=True,
+    )
+    submission_evidence: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True),
+        nullable=True,
+    )
+    local_outcome: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True),
+        nullable=True,
+    )
 
 
 class LLMModelTurnContinuation(Base):
@@ -1866,6 +1867,16 @@ class LLMToolPosition(Base):
     tool_contract_revision: Mapped[str] = mapped_column(Text, nullable=False)
     plan_revision: Mapped[str] = mapped_column(Text, nullable=False)
     binding_revision: Mapped[str] = mapped_column(Text, nullable=False)
+    arguments: Mapped[object | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    callback_reply: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True),
+        nullable=True,
+    )
+    replay_of_position_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("llm_tool_positions.id"),
+        nullable=True,
+    )
     reservation: Mapped[dict[str, object] | None] = mapped_column(
         JSONB(none_as_null=True), nullable=True
     )

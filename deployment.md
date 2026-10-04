@@ -95,7 +95,7 @@ label and runtime identity of each pulled digest on the host. The manifest, the
 digest and the image content are therefore bound to one another and to one CI
 run that was never re-run.
 
-Compose, the Caddyfile, the AppArmor profile and the boot-guard unit come from
+Compose, the Caddyfile and the boot-guard unit come from
 the checkout, which preflight has already pinned to `origin/main == source-sha`.
 
 ## Explicit config publication
@@ -150,9 +150,8 @@ it binds, and re-proves the public `/version`.
 1. **preflight** — ssh reachable; clean checkout at `origin/main`; candidate
    manifest resolved from the first CI run; Docker Engine, memory, swap and
    disk within the envelope; config pointers readable; Codex state mounted.
-2. **inputs** — install `docker-compose.yml`, the AppArmor profile, the
-   boot-guard script, its systemd unit and the `docker.service` drop-in; reload
-   AppArmor and enable the boot guard.
+2. **inputs** — install `docker-compose.yml`, the boot-guard script, its
+   systemd unit and the `docker.service` drop-in; enable the boot guard.
 3. **images** — pull both digests; prove the OCI revision label and the baked
    runtime identity against the manifest.
 4. **backup** — read the current Alembic revision, prove it descends from the
@@ -184,21 +183,23 @@ The isolation is **declared**, not re-derived:
 | Property | Declared in |
 |---|---|
 | non-root, read-only rootfs, `cap_drop: ALL`, `no-new-privileges`, private pid/ipc, no ports | `deploy/hetzner/docker-compose.yml` |
-| `apparmor=nexus-codex-agent-host`, `seccomp=unconfined`, `systempaths=unconfined` | same, plus `deploy/hetzner/nexus-codex-agent-host.apparmor` |
+| default docker apparmor/seccomp confinement | same |
 | internal, gateway-less private bridge; DNS to the egress proxy only | same, `networks.codex_private` |
-| tmpfs layout, ulimits, cgroup limits, 45 s stop grace, `restart: "no"` | same |
-| exactly one host mount: the credential file inside the LUKS volume | same |
+| tmpfs layout, ulimits, cgroup limits, 15 s stop grace, `restart: "no"` | same |
+| exactly one host bind: the private account directory inside the LUKS volume | same |
+| uid/gid 10001; shared native socket volume `0700`, resolved socket `0660`; workers receive no account state | same; `apps/codex_agent/native_server.py` |
 | the credential underlay is closed before Docker starts | `codex-state-boot-guard.sh`, `nexus-codex-state-boot-guard.service`, `docker-codex-state-guard.conf` |
 | `kernel.apparmor_restrict_unprivileged_userns=1` | `deploy/hetzner/cloud-init.yml` |
 
 After start the release asserts that the declaration took effect: the boot guard
 is enabled; `/srv/nexus/codex-state` is a mountpoint with `rw,nosuid,nodev,noexec`;
 `nexus_codex_private` is internal, gateway-less and has exactly the agent host
-and the egress proxy on it; the container reports the AppArmor profile, a
+and the egress proxy on it; the container reports default docker apparmor, a
 read-only rootfs, `CapDrop == [ALL]`, no added capabilities, not privileged, and
-only that one network; its only non-volume mount is the credential file; and
-`apps.codex_agent.network_health` proves the sandbox cannot reach the private
-bridge, Postgres or Caddy.
+only that one network; its only host bind is the account directory; and
+`apps.codex_agent.network_health` proves the native host cannot reach the private
+bridge, application api, Postgres, Caddy or metadata. native portable callbacks
+run in the worker; the host has no application-service authority.
 
 Compose recreates a service whose declaration changed, so a limit or option
 edited in `docker-compose.yml` is applied by the next release. Nothing reapplies
@@ -364,7 +365,6 @@ and can be deleted by hand at any time:
 | Release entrypoint and frontend binding | `deploy/hetzner/deploy.sh` |
 | Production topology and isolation | `deploy/hetzner/docker-compose.yml` |
 | Codex credential-state boot guard | `deploy/hetzner/codex-state-boot-guard.sh`, `nexus-codex-state-boot-guard.service`, `docker-codex-state-guard.conf` |
-| Codex AppArmor profile | `deploy/hetzner/nexus-codex-agent-host.apparmor` |
 | API TLS and routing | `deploy/hetzner/Caddyfile` |
 | Host provisioning | `deploy/hetzner/provision.sh`, `deploy/hetzner/cloud-init.yml` |
 | VPS config publication | `deploy/hetzner/sync-env.sh` |

@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Literal, Never, cast
 from uuid import UUID
 
-from sqlalchemy import delete, func, select, text, tuple_
+from sqlalchemy import delete, func, select, text, tuple_, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
@@ -25,7 +25,12 @@ from nexus.services.generation_continuations import (
     GenerationContinuationContext,
     SealedGenerationContinuation,
 )
-from nexus.services.generation_spec import GenerationSpec, decode_generation_spec_document
+from nexus.services.generation_spec import (
+    GenerationHistory,
+    GenerationSpec,
+    decode_generation_spec_document,
+    read_generation_history,
+)
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 type LlmCallOwnerKind = Literal[
@@ -84,13 +89,13 @@ class GenerationStart:
 
 
 @dataclass(frozen=True, slots=True)
-class GenerationRecord:
+class GenerationRecord[S]:
     """Detached typed parent projection."""
 
     id: UUID
     owner: LlmCallOwner
     generation_seq: int
-    spec: GenerationSpec
+    spec: S
     outcome: GenerationOutcome | None
     failure_code: str | None
     terminal: dict[str, JsonValue] | None
@@ -164,6 +169,25 @@ def lock_generation_owner_in_current_transaction(db: Session, owner: LlmCallOwne
     )
 
 
+def fence_native_attempts_for_owner(db: Session, *, owner: LlmCallOwner) -> None:
+    """Stop callback authority without changing submission or terminal truth."""
+    lock_generation_owner_in_current_transaction(db, owner)
+    db.execute(
+        update(LLMModelTurn)
+        .where(
+            LLMModelTurn.generation_id.in_(
+                select(LLMCall.id).where(
+                    LLMCall.owner_kind == owner.kind,
+                    LLMCall.owner_id == owner.id,
+                )
+            ),
+            LLMModelTurn.native_binding.is_not(None),
+            LLMModelTurn.fenced_at.is_(None),
+        )
+        .values(fenced_at=func.clock_timestamp())
+    )
+
+
 def start_generation_in_current_transaction(db: Session, start: GenerationStart) -> UUID:
     """Stage exactly one parent generation without reading mutable policy."""
 
@@ -207,9 +231,6 @@ def complete_generation_in_current_transaction(
         raise ValueError("a failed generation terminal requires exactly one failure_code")
 
     call = _lock_owned_generation(db, owner=owner, generation_id=generation_id)
-    from nexus.services.agent_api import close_generation_api_admission
-
-    close_generation_api_admission(db, generation_id=generation_id)
     unfinished_tool = db.scalar(
         select(LLMToolPosition.id)
         .where(
@@ -233,8 +254,17 @@ def complete_generation_in_current_transaction(
         .order_by(LLMModelTurn.turn_seq.desc())
         .limit(1)
     )
-    if latest_turn is None or latest_turn.terminal is None:
-        _ledger_defect(call, "parent terminal precedes a terminal model child")
+    if latest_turn is None or (
+        latest_turn.terminal is None
+        and (
+            latest_turn.local_outcome is None
+            or latest_turn.local_outcome.get("kind") != "NotSubmitted"
+        )
+    ):
+        _ledger_defect(
+            call,
+            "parent terminal precedes authoritative native completion or proven non-submission",
+        )
     pending = db.scalar(
         select(LLMModelTurnContinuation.id)
         .where(LLMModelTurnContinuation.generation_id == generation_id)
@@ -326,7 +356,6 @@ def complete_model_turn_in_current_transaction(
     """Atomically commit child terminal facts and its sealed successor."""
 
     call = _lock_generation_by_id(db, generation_id)
-    _assert_parent_open(call)
     turn = _lock_model_turn(db, generation_id=generation_id, model_turn_id=model_turn_id)
     terminal = dict(completion.terminal)
     usage = _nullable(completion.usage)
@@ -347,6 +376,7 @@ def complete_model_turn_in_current_transaction(
         _assert_successor_identity(db, turn=turn, successor=completion.successor)
         return
 
+    _assert_parent_open(call)
     turn.terminal = terminal
     turn.usage = usage
     turn.billability = billability
@@ -524,7 +554,7 @@ def read_model_turns_for_generations(
 
 def read_latest_generations_for_owners(
     db: Session, *, owners: Collection[LlmCallOwner], outcome: GenerationOutcome | None = None
-) -> dict[LlmCallOwner, GenerationRecord]:
+) -> dict[LlmCallOwner, GenerationRecord[GenerationHistory]]:
     distinct_owners = tuple(dict.fromkeys(owners))
     if not distinct_owners:
         return {}
@@ -545,25 +575,31 @@ def read_latest_generations_for_owners(
             & (LLMCall.generation_seq == latest_rows.c.generation_seq),
         )
     ).all()
-    records = [_generation_record(call) for call in calls]
+    records = [
+        _generation_record(call, read_generation_history(call.generation_spec)) for call in calls
+    ]
     return {record.owner: record for record in records}
 
 
 def read_latest_generation_for_owner(
     db: Session, *, owner: LlmCallOwner
-) -> GenerationRecord | None:
+) -> GenerationRecord[GenerationHistory] | None:
     call = db.scalar(
         select(LLMCall)
         .where(LLMCall.owner_kind == owner.kind, LLMCall.owner_id == owner.id)
         .order_by(LLMCall.generation_seq.desc())
         .limit(1)
     )
-    return None if call is None else _generation_record(call)
+    return (
+        None
+        if call is None
+        else _generation_record(call, read_generation_history(call.generation_spec))
+    )
 
 
 def lock_generation_for_authority_in_current_transaction(
     db: Session, *, owner: LlmCallOwner, generation_id: UUID
-) -> GenerationRecord | None:
+) -> GenerationRecord[GenerationSpec] | None:
     lock_generation_owner_in_current_transaction(db, owner)
     call = db.scalar(
         select(LLMCall)
@@ -574,12 +610,16 @@ def lock_generation_for_authority_in_current_transaction(
         )
         .with_for_update()
     )
-    return None if call is None else _generation_record(call)
+    return (
+        None
+        if call is None
+        else _generation_record(call, decode_generation_spec_document(call.generation_spec))
+    )
 
 
 def lock_active_generation_for_authority_in_current_transaction(
     db: Session, *, owner: LlmCallOwner, generation_id: UUID
-) -> GenerationRecord | None:
+) -> GenerationRecord[GenerationSpec] | None:
     record = lock_generation_for_authority_in_current_transaction(
         db, owner=owner, generation_id=generation_id
     )
@@ -766,12 +806,12 @@ def _lock_model_turn(db: Session, *, generation_id: UUID, model_turn_id: UUID) -
     return turn
 
 
-def _generation_record(call: LLMCall) -> GenerationRecord:
+def _generation_record[S](call: LLMCall, spec: S) -> GenerationRecord[S]:
     return GenerationRecord(
         id=call.id,
         owner=LlmCallOwner(kind=cast(LlmCallOwnerKind, call.owner_kind), id=call.owner_id),
         generation_seq=call.generation_seq,
-        spec=decode_generation_spec_document(call.generation_spec),
+        spec=spec,
         outcome=cast(GenerationOutcome | None, call.outcome),
         failure_code=call.failure_code,
         terminal=cast(dict[str, JsonValue] | None, call.terminal),
