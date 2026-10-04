@@ -46,7 +46,11 @@ from nexus.services.epub_ingest import EpubExtractionPlan
 from nexus.services.epub_lifecycle import prepare_epub_source, publish_epub_source
 from nexus.services.file_ingest_validation import validate_file_ingest_request
 from nexus.services.fragment_blocks import insert_fragment_blocks
-from nexus.services.html_apparatus import attach_fragment_locators, derive_fragment_note_groups
+from nexus.services.html_apparatus import (
+    accepted_apparatus_spans,
+    attach_fragment_locators,
+    derive_fragment_note_groups,
+)
 from nexus.services.media_author_observation_seam import attach_author_observation
 from nexus.services.media_deletion import delete_document_storage_objects
 from nexus.services.media_fact_revisions import bump_all_media_fact_collections
@@ -758,6 +762,7 @@ def _replace_stored_html_projection(
                 actor_user_id=owner_user_id,
                 request_id=request_id,
             )
+    accepted_spans = accepted_apparatus_spans(prepared.structure, prepared.canonical_text)
     replace_media_apparatus(
         db,
         media_id=media_id,
@@ -767,6 +772,7 @@ def _replace_stored_html_projection(
             media_kind="web_article",
             canonical_text=prepared.canonical_text,
             items=prepared.apparatus_items,
+            accepted_spans=accepted_spans,
             html_sanitized=prepared.html_sanitized,
         ),
         edges=prepared.apparatus_edges,
@@ -774,6 +780,8 @@ def _replace_stored_html_projection(
             prepared.html_sanitized,
             prepared.canonical_text,
             fragment.id,
+            structure=prepared.structure,
+            accepted_spans=accepted_spans,
             source_html=source_html,
         ),
     )

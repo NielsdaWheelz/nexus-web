@@ -22,7 +22,7 @@ from nexus.schemas.source_issues import (
     UnresolvedNavigationTarget,
     source_issues_payload,
 )
-from nexus.services.canonicalize import generate_canonical_text
+from nexus.services.canonicalize import canonicalize_structure, generate_canonical_text
 from nexus.services.content_indexing import request_media_content_reindex
 from nexus.services.epub_ingest import (
     EpubNavigationRepairPlan,
@@ -30,6 +30,7 @@ from nexus.services.epub_ingest import (
     prepare_epub_navigation_repair,
 )
 from nexus.services.html_apparatus import (
+    accepted_apparatus_spans,
     attach_fragment_locators,
     derive_fragment_note_groups,
     extract_html_apparatus,
@@ -423,8 +424,12 @@ def _prepare(snapshot: _Snapshot, storage_client: StorageClient) -> _Prepared:
             source_kind=f"web:{fragment.idx}",
             source_ref={"format": "html", "fragment_idx": fragment.idx},
         )
-        if generate_canonical_text(marked) != fragment.canonical_text:
+        marked_structure = canonicalize_structure(marked)
+        if marked_structure.text != fragment.canonical_text:
             raise ValueError("Stored article HTML disagrees with canonical text")
+        marked_spans = accepted_apparatus_spans(marked_structure, fragment.canonical_text)
+        stored_structure = canonicalize_structure(fragment.html_sanitized)
+        stored_spans = accepted_apparatus_spans(stored_structure, fragment.canonical_text)
         prepare_apparatus_bodies(
             extracted_items,
             sanitize=lambda body: sanitize_html(body, "", document_url=""),
@@ -437,13 +442,18 @@ def _prepare(snapshot: _Snapshot, storage_client: StorageClient) -> _Prepared:
                 media_kind="web_article",
                 canonical_text=fragment.canonical_text,
                 items=extracted_items,
+                accepted_spans=marked_spans,
                 html_sanitized=marked,
             )
         )
         edges.extend(extracted_edges)
         groups.extend(
             derive_fragment_note_groups(
-                fragment.html_sanitized, fragment.canonical_text, fragment.id
+                fragment.html_sanitized,
+                fragment.canonical_text,
+                fragment.id,
+                structure=stored_structure,
+                accepted_spans=stored_spans,
             )
         )
     aligned_items, aligned_edges = _align_apparatus_keys(snapshot.installed["items"], items, edges)

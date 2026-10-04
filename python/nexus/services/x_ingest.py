@@ -490,6 +490,7 @@ def _replace_thread_projection(
                 media_kind="web_article",
                 canonical_text=prepared.fragment.canonical_text,
                 items=prepared.apparatus_items,
+                accepted_spans={},
             )
         ],
         edges=[edge for prepared in prepared_fragments for edge in prepared.apparatus_edges],
@@ -535,6 +536,7 @@ def _replace_post_projection(
             media_kind="web_article",
             canonical_text=prepared.fragment.canonical_text,
             items=prepared.apparatus_items,
+            accepted_spans={},
         ),
         edges=prepared.apparatus_edges,
         note_groups=[],

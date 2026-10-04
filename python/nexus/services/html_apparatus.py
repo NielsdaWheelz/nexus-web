@@ -28,6 +28,7 @@ from nexus.schemas.reader_apparatus import NotesGroup
 from nexus.services.canonicalize import (
     HEADING_TAGS,
     STRUCTURAL_TAGS,
+    CanonicalStructure,
     canonicalize_structure,
     generate_canonical_text,
 )
@@ -877,6 +878,7 @@ def attach_fragment_locators(
     media_kind: str,
     canonical_text: str,
     items: list[dict[str, object]],
+    accepted_spans: Mapping[str, tuple[int, int, str]],
     html_sanitized: str | None = None,
 ) -> list[dict[str, object]]:
     """Give each item an exact canonical-text offset span, or no locator at all.
@@ -885,7 +887,6 @@ def attach_fragment_locators(
     stored text exactly, or when the item's text occurs exactly once in it.
     """
     locator_text_by_key = _apparatus_locator_texts(html_sanitized)
-    locator_span_by_key = _apparatus_locator_spans(html_sanitized, canonical_text)
     result: list[dict[str, object]] = []
     for item in items:
         item = dict(item)
@@ -893,7 +894,7 @@ def attach_fragment_locators(
         locator_text = locator_text_by_key.get(stable_key) or str(
             item.pop("_locator_text", "") or ""
         )
-        span_with_text = locator_span_by_key.get(stable_key)
+        span_with_text = accepted_spans.get(stable_key)
         if span_with_text is not None:
             start, end, locator_text = span_with_text
             span = (start, end)
@@ -933,10 +934,11 @@ def derive_fragment_note_groups(
     canonical_text: str,
     fragment_id: UUID,
     *,
+    structure: CanonicalStructure,
+    accepted_spans: Mapping[str, tuple[int, int, str]],
     source_html: str | None = None,
 ) -> list[NotesGroup]:
     """Bound a governed collection only when repeated note bodies corroborate it."""
-    structure = canonicalize_structure(html_sanitized)
     if structure.text != canonical_text:
         raise ValueError("note group source must equal stored canonical text")
     headings = [element for element in structure.elements if element.tag in HEADING_TAGS]
@@ -1039,9 +1041,7 @@ def derive_fragment_note_groups(
         return declared
     note_spans = [
         (start, end)
-        for key, (start, end, _text) in _apparatus_locator_spans(
-            html_sanitized, canonical_text
-        ).items()
+        for key, (start, end, _text) in accepted_spans.items()
         if ":target:" in key or ":html-margin-note:" in key
     ]
     groups: list[NotesGroup] = list(declared)
@@ -1589,15 +1589,11 @@ def _target_kind_for_context(context: str) -> str:
     return "footnote"
 
 
-def _apparatus_locator_spans(
-    html_sanitized: str | None, canonical_text: str
+def accepted_apparatus_spans(
+    structure: CanonicalStructure, canonical_text: str
 ) -> dict[str, tuple[int, int, str]]:
     """Use the canonicalizer's exact element boundaries without modifying source text."""
-    if not html_sanitized or not html_sanitized.strip() or not canonical_text:
-        return {}
-    try:
-        structure = canonicalize_structure(html_sanitized)
-    except ParserError:
+    if not canonical_text:
         return {}
     if structure.text != canonical_text:
         return {}
