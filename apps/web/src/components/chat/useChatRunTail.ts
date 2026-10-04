@@ -27,6 +27,7 @@ import type { SseBackoffConfig } from "@/lib/api/sse-client";
 import { openGenerationRunStream } from "@/lib/api/useGenerationRun";
 import type {
   ChatRunResponse,
+  ChatRunStreamState,
   ForkOption,
   MessageToolCall,
 } from "@/lib/conversations/types";
@@ -39,7 +40,8 @@ import { useChatMessageUpdates } from "@/components/chat/useChatMessageUpdates";
 import { PerRunStreamContext } from "@/components/chat/perRunStreamContext";
 import { upsertForkOptionForRun } from "@/lib/conversations/branching";
 import type { ChatConnectionRecovery } from "@/lib/conversations/chatConnectionRecovery";
-import { decodeChatRunResponse } from "@/lib/conversations/messageWire";
+import { chatRunFromWire } from "@/lib/conversations/messageWire";
+import type { ApiJson } from "@/lib/api/wire";
 
 type ChatRunData = ChatRunResponse["data"];
 type TerminalRunStatus = "complete" | "error" | "cancelled";
@@ -102,7 +104,7 @@ function isChatStreamContractDefect(error: unknown): boolean {
 
 function mergeStreamToolCalls(
   existing: MessageToolCall[],
-  live: MessageToolCall[],
+  live: ChatRunStreamState["tool_calls"],
 ): MessageToolCall[] {
   const merged = existing.map((call) => {
     const preview = live.find(
@@ -262,12 +264,13 @@ export function useChatRunTail({
   const cancelRun = useCallback(
     async (runId: string) => {
       try {
-        const raw = await apiFetch<unknown>(`/api/chat-runs/${runId}/cancel`, {
-          method: "POST",
-        });
+        const raw = await apiFetch<ApiJson<"/chat-runs/{run_id}/cancel", "post">>(
+          `/api/chat-runs/${runId}/cancel`,
+          { method: "POST" },
+        );
         const response = decodeApiPayload(
           raw,
-          decodeChatRunResponse,
+          chatRunFromWire,
           "Cancel chat run",
         );
         const runData = response.data;
@@ -396,10 +399,12 @@ export function useChatRunTail({
 
       const reconcile = async () => {
         try {
-          const raw = await apiFetch<unknown>(`/api/chat-runs/${runId}`);
+          const raw = await apiFetch<ApiJson<"/chat-runs/{run_id}", "get">>(
+            `/api/chat-runs/${runId}`,
+          );
           const response = decodeApiPayload(
             raw,
-            decodeChatRunResponse,
+            chatRunFromWire,
             "Reconcile chat run",
           );
           if (streamCtx.isSuperseded(runId, token)) return null;
@@ -682,10 +687,12 @@ export function useChatRunTail({
       };
 
       try {
-        const raw = await apiFetch<unknown>(`/api/chat-runs/${entry.runId}`);
+        const raw = await apiFetch<ApiJson<"/chat-runs/{run_id}", "get">>(
+          `/api/chat-runs/${entry.runId}`,
+        );
         const response = decodeApiPayload(
           raw,
-          decodeChatRunResponse,
+          chatRunFromWire,
           "Reconnect chat run",
         );
         const claimed = await tailChatRun(response.data);

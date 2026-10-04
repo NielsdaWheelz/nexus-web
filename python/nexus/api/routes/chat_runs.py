@@ -18,7 +18,7 @@ from nexus.api.deps import (
 )
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_repeatable_read_db, get_session_factory
-from nexus.responses import ok
+from nexus.responses import Data, ok
 from nexus.schemas.conversation import (
     CHAT_RUN_STATUS_FILTER,
     ChatRunCreateRequest,
@@ -75,7 +75,7 @@ async def list_chat_runs(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     conversation_id: Annotated[UUID, Query()],
     status: Annotated[CHAT_RUN_STATUS_FILTER, Query()] = "active",
-) -> dict:
+) -> Data[list[ChatRunResponse]]:
     def read() -> list[ChatRunResponse]:
         with get_session_factory()() as db:
             get_repeatable_read_db(db)
@@ -86,14 +86,14 @@ async def list_chat_runs(
                 status=status,
             )
 
-    return ok(await run_in_threadpool(read))
+    return Data(data=await run_in_threadpool(read))
 
 
 @router.get("/chat-runs/{run_id}")
 async def get_chat_run(
     run_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-) -> dict:
+) -> Data[ChatRunResponse]:
     def read() -> ChatRunResponse:
         with get_session_factory()() as db:
             get_repeatable_read_db(db)
@@ -103,14 +103,14 @@ async def get_chat_run(
                 run_id=run_id,
             )
 
-    return ok(await run_in_threadpool(read))
+    return Data(data=await run_in_threadpool(read))
 
 
 @router.post("/chat-runs/{run_id}/cancel")
 async def cancel_chat_run(
     run_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-) -> dict:
+) -> Data[ChatRunResponse]:
     def cancel() -> ChatRunResponse:
         with get_session_factory()() as db:
             return chat_runs_service.cancel_chat_run(
@@ -120,7 +120,7 @@ async def cancel_chat_run(
             )
 
     response = await run_in_threadpool(cancel)
-    return ok(response)
+    return Data(data=response)
 
 
 @router.post("/messages/{assistant_message_id}/rerun", status_code=200)
@@ -131,9 +131,9 @@ async def rerun_assistant_message(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     catalog: Annotated[GenerationCatalogService, Depends(get_generation_catalog_service)],
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-) -> dict:
-    return ok(
-        await chat_runs_service.repeat_assistant_response(
+) -> Data[ChatRunResponse]:
+    return Data(
+        data=await chat_runs_service.repeat_assistant_response(
             operation="rerun",
             viewer_id=viewer.user_id,
             assistant_message_id=assistant_message_id,
@@ -154,9 +154,9 @@ async def regenerate_assistant_message(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     catalog: Annotated[GenerationCatalogService, Depends(get_generation_catalog_service)],
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-) -> dict:
-    return ok(
-        await chat_runs_service.repeat_assistant_response(
+) -> Data[ChatRunResponse]:
+    return Data(
+        data=await chat_runs_service.repeat_assistant_response(
             operation="regenerate",
             viewer_id=viewer.user_id,
             assistant_message_id=assistant_message_id,

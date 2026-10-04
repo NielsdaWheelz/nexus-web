@@ -11,6 +11,7 @@ import type {
 } from "@/lib/conversations/types";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import type { ResourceActivation } from "@/lib/resources/activation";
+import type { Schema } from "@/lib/api/wire";
 import styles from "./MessageRow.module.css";
 
 export default function AssistantDetails({
@@ -333,7 +334,7 @@ function ToolRow({ tool }: { tool: MessageToolCall }) {
   );
 }
 
-function RetrievalRow({ retrieval }: { retrieval: MessageRetrieval }) {
+function RetrievalRow({ retrieval }: { retrieval: MessageRetrieval | Schema<"TrustRetrievalOut"> }) {
   const snippet =
     retrieval.exact_snippet ||
     ("snippet" in retrieval.result_ref &&

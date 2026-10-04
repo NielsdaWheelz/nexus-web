@@ -289,7 +289,6 @@ def get_conversation_tree(
             for leaf_id, path in path_by_leaf_id.items()
         },
         branch_graph=branch_graph,
-        page={"before_cursor": None},
     )
 
 
@@ -784,7 +783,7 @@ def _branch_graph(
                 message_id=message.id,
                 parent_message_id=message.parent_message_id,
                 leaf_message_id=leaf_by_message_id.get(message.id, message.id),
-                role=cast(Literal["user", "assistant"], message.role),
+                role=message.role,
                 depth=depth,
                 row=row,
                 title=branch.title if branch is not None else None,
@@ -912,7 +911,7 @@ def _fork_status(
     if run_status_by_assistant_id.get(assistant_message.id) == "cancelled":
         return "cancelled"
     if assistant_message.status in ("pending", "error", "complete"):
-        return cast(Literal["pending", "error", "complete"], assistant_message.status)
+        return assistant_message.status
     raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Invalid assistant status")
 
 
