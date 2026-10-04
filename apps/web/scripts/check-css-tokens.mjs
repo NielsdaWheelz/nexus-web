@@ -12,9 +12,6 @@ const allowedFiles = new Set([
   "src/app/globals.css",
   "src/app/brand.css",
   "src/app/(authenticated)/media/[id]/page.module.css",
-  // The shared reader leaf owns the reader-scoped find-highlight palette that
-  // moved out of the media route stylesheet with the reader-core extraction.
-  "src/components/reader/textDocumentReader.module.css",
 ]);
 
 // The packaged APK shelf and the Firefox extension popup are each their own

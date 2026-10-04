@@ -15,7 +15,6 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -25,12 +24,12 @@ import { useDocentWalk } from "@/lib/conversations/useDocentWalk";
 import Button from "@/components/ui/Button";
 import ChatComposer from "@/components/chat/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
-import PaneSearchResults from "@/components/resource-inspector/PaneSearchResults";
+import { FindResults } from "@/components/find/FindBar";
 import type { DossierCitationActivate } from "@/components/dossier/DossierSurface";
 import ConversationForksPanel from "@/components/chat/ConversationForksPanel";
 import ConversationContextRefsSurface from "@/components/chat/ConversationContextRefsSurface";
 import { useConversation } from "@/components/chat/useConversation";
-import { useConversationPaneFind } from "@/components/chat/useConversationPaneFind";
+import { useConversationFindSource } from "@/components/chat/conversationFind";
 import { usePendingReaderSelection } from "@/components/chat/usePendingReaderSelection";
 import { useConversationContextRefs } from "@/lib/conversations/useConversationContextRefs";
 import {
@@ -71,11 +70,8 @@ import {
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
-import {
-  useResourceInspector,
-  type ResourceInspectorComposition,
-} from "@/lib/dossiers/useResourceInspector";
-import type { PaneFindOccurrencesPublication } from "@/lib/panes/paneSearch";
+import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
+import { useFind } from "@/lib/find/useFind";
 import styles from "@/app/(authenticated)/conversations/page.module.css";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 
@@ -252,12 +248,14 @@ export default function Conversation() {
   upsertContextRefRef.current = upsertContextRef;
 
   const branch = convo.branch;
-  const paneFind = useConversationPaneFind({
-    conversationId: convo.conversationId,
-    activeLeafMessageId: branch.activeLeafMessageId,
-    messages: convo.messages,
-    scrollRef: convo.scrollRef,
-  });
+  const find = useFind(
+    useConversationFindSource({
+      conversationId: convo.conversationId,
+      activeLeafMessageId: branch.activeLeafMessageId,
+      messages: convo.messages,
+      scroll: convo.scrollRef,
+    }),
+  );
 
   // Exact identity while it is known; the route label once the load is terminal
   // without one, so a failed conversation never sits pending forever.
@@ -485,74 +483,9 @@ export default function Conversation() {
     ),
     [branch, convo.conversationId, handleSelectFork],
   );
-  const searchCommandsRef =
-    useRef<
-      Pick<
-        ResourceInspectorComposition,
-        "openSearchResults" | "closeSearchResults" | "previewSearchResult"
-      >
-    >(null);
-  const dismissPaneFind = paneFind.onDismiss;
-  const activatePaneFind = paneFind.onActivate;
-  const dismissFind = useCallback(() => {
-    dismissPaneFind();
-    searchCommandsRef.current?.closeSearchResults();
-  }, [dismissPaneFind]);
-  const showFindResults = useCallback((trigger: HTMLButtonElement | null) => {
-    searchCommandsRef.current?.openSearchResults(trigger);
-  }, []);
-  const activateFindResult = useCallback(
-    (key: Parameters<PaneFindOccurrencesPublication["onActivate"]>[0]) => {
-      void activatePaneFind(key).then((previewed) => {
-        if (previewed) searchCommandsRef.current?.previewSearchResult();
-      });
-    },
-    [activatePaneFind],
-  );
-  const findPublicationBase = useMemo(
-    () => ({
-      kind: "FindOccurrences" as const,
-      query: paneFind.query,
-      inputLabel: "Find in conversation",
-      placeholder: "Find in conversation",
-      onOpen: paneFind.onOpen,
-      onQueryChange: paneFind.onQueryChange,
-      onDismiss: dismissFind,
-      result: paneFind.result,
-      scope: paneFind.scope,
-      matchCase: paneFind.matchCase,
-      wholeWord: paneFind.wholeWord,
-      onMatchCaseChange: paneFind.onMatchCaseChange,
-      onWholeWordChange: paneFind.onWholeWordChange,
-      onStep: paneFind.onStep,
-      onActivate: activateFindResult,
-      onShowResults: showFindResults,
-      returnToReadingPosition: paneFind.returnToReadingPosition,
-    }),
-    [
-      activateFindResult,
-      dismissFind,
-      paneFind.matchCase,
-      paneFind.onMatchCaseChange,
-      paneFind.onOpen,
-      paneFind.onQueryChange,
-      paneFind.onStep,
-      paneFind.query,
-      paneFind.result,
-      paneFind.returnToReadingPosition,
-      paneFind.scope,
-      paneFind.wholeWord,
-      paneFind.onWholeWordChange,
-      showFindResults,
-    ],
-  );
   const searchResultsBody = useMemo(
-    () => (
-      <PaneSearchResults
-        publication={{ ...findPublicationBase, resultsExpanded: true }}
-      />
-    ),
-    [findPublicationBase],
+    () => (find ? <FindResults find={find} /> : undefined),
+    [find],
   );
   const inspector = useResourceInspector({
     scheme: "conversation",
@@ -561,20 +494,6 @@ export default function Conversation() {
     searchResults: searchResultsBody,
     onCitationActivate: handleDossierCitationActivate,
   });
-  searchCommandsRef.current = inspector;
-  const previousFindSourceRef = useRef(paneFind.sourceKey);
-  useLayoutEffect(() => {
-    if (previousFindSourceRef.current === paneFind.sourceKey) return;
-    previousFindSourceRef.current = paneFind.sourceKey;
-    inspector.closeSearchResults();
-  }, [inspector, paneFind.sourceKey]);
-  const findPublication = useMemo<PaneFindOccurrencesPublication>(
-    () => ({
-      ...findPublicationBase,
-      resultsExpanded: inspector.searchResultsExpanded,
-    }),
-    [findPublicationBase, inspector.searchResultsExpanded],
-  );
   usePanePrimaryChrome({
     // A conversation being read from the route promises Find once its messages
     // land, so the header holds the entry, blocked, across that window. A chat
@@ -583,7 +502,9 @@ export default function Conversation() {
       convo.conversationId &&
       !convo.loading &&
       !(conversationId !== null && convo.messages.length === 0 && convo.error)
-        ? findPublication
+        ? find
+          ? { kind: "Find" as const, find }
+          : undefined
         : conversationId !== null && convo.loading
           ? { kind: "Resolving" as const, control: "Find" as const }
           : undefined,

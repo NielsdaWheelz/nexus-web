@@ -1,4 +1,4 @@
-"""Reader routes: evidence, EPUB fragments and find, navigation, map, state, file."""
+"""Reader routes: evidence, EPUB fragments, navigation, map, state, file."""
 
 from typing import Annotated
 from uuid import UUID
@@ -10,13 +10,11 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.responses import Data, ok, success_response
-from nexus.schemas.epub_find import EpubFindRequest
 from nexus.schemas.media import MediaEvidenceResponse, MediaNavigationOut
 from nexus.schemas.offline_reader_progress import OfflineReaderWrite
 from nexus.schemas.reader import CursorWrite
 from nexus.schemas.reader_document_map import ReaderDocumentMapOut
 from nexus.services import (
-    epub_find,
     epub_read,
     locator_resolver,
     media_file_access,
@@ -53,16 +51,6 @@ def get_epub_fragment(
     db: RepeatableReadDbSession,
 ) -> dict:
     return ok(epub_read.get_epub_fragment_for_viewer(db, viewer.user_id, media_id, fragment_id))
-
-
-@router.post("/media/{media_id}/epub-find")
-def find_in_epub(
-    media_id: UUID,
-    payload: EpubFindRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: RepeatableReadDbSession,
-) -> dict:
-    return ok(epub_find.find_epub_for_viewer(db, viewer.user_id, media_id, payload))
 
 
 @router.get("/media/{media_id}/navigation")

@@ -13,10 +13,8 @@ export default function ConversationMessageText({
     <Fragment key={blockIndex}>
       {blockIndex > 0 ? "\n\n" : null}
       <span
-        data-pane-find-block="true"
-        data-pane-find-message-id={message.id}
+        data-pane-find-block={message.status === "pending" ? undefined : "true"}
         data-pane-find-message-ordinal={messageOrdinal}
-        data-pane-find-block-index={blockIndex}
         data-pane-find-role={message.role}
       >
         {block.text}

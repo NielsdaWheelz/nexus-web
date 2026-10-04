@@ -113,9 +113,7 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
       captureReadingPosition,
       restoreReadingPosition,
       getTranscriptElement,
-      previewFindOccurrence,
-      clearFindPresentation,
-      setReadingFocusTarget,
+      revealRange,
     } = useChatScroll(scrollportRef, transcriptRef, messages, historyLoading);
     const requestedTargetMessageIdRef = useRef<string | null>(null);
     const activatedTargetMessageIdRef = useRef<string | null>(null);
@@ -155,16 +153,14 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
         captureReadingPosition,
         restoreReadingPosition,
         getTranscriptElement,
-        previewFindOccurrence,
-        clearFindPresentation,
+        revealRange,
       }),
       [
         captureAnchor,
         captureReadingPosition,
-        clearFindPresentation,
         getTranscriptElement,
-        previewFindOccurrence,
         restoreReadingPosition,
+        revealRange,
         scrollToMessage,
       ],
     );
@@ -181,11 +177,6 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
           onWheel={beginUserScroll}
           onTouchMove={beginUserScroll}
           onKeyDown={beginUserScroll}
-          onFocusCapture={(event) => {
-            setReadingFocusTarget(
-              event.target instanceof HTMLElement ? event.target : null,
-            );
-          }}
         >
           <div
             ref={transcriptRef}
@@ -247,7 +238,6 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
         <div
           className={styles.composerSlot}
           onWheel={onComposerWheel}
-          onFocusCapture={() => setReadingFocusTarget(null)}
         >
           {docentOverlay}
           {composer}

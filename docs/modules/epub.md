@@ -9,8 +9,6 @@ private resource assets.
   publication, plus remote EPUB URLs and browser-captured EPUB files.
 - `epub_ingest.py` / related reader services: extraction, fragments, TOC,
   navigation, resume data.
-- `epub_find.py`: bounded literal Find over current canonical fragments in one
-  repeatable-read snapshot.
 - `epub_assets.py`: private extracted resource asset reads.
 
 `ingest_media_source` is the only worker job kind that starts source processing.
@@ -44,11 +42,12 @@ not be added to Next Image `images.localPatterns`.
 
 ## Find
 
-Readable EPUB panes publish the shared pane-local `FindOccurrences`
-capability. `POST /media/{id}/epub-find` validates the publication generation and
-current fragment witness, then scans one fragment at a time in spine order. it returns only
-ordered occurrence locators and plain-text snippets, stops at match 2,001, and
-uses no global search index.
+Readable EPUB panes publish the shared pane find (`lib/find`). the reader
+holds one section, so find loads the book's canonical text once per navigation
+generation from `GET /media/{id}/fragments` (prefetched when find opens) and
+matches it on the client with the same matcher as every other text surface.
+fragments that disagree with the navigation reload the navigation; there is no
+find endpoint and no global search index.
 
 cross-fragment results use the shared reader navigation owner. inspection keeps
 one captured origin, fences progress and completion, and never changes the

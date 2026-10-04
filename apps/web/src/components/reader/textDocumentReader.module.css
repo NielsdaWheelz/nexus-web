@@ -166,32 +166,6 @@
   }
 }
 
-/* ===== Find highlights (CSS Custom Highlight API) ===== */
-.fragments::highlight(nexus-find-all) {
-  background-color: var(--highlight-yellow);
-  color: inherit;
-}
-
-.fragments::highlight(nexus-find-active) {
-  background-color: rgba(255, 193, 7, 0.65);
-  color: var(--reader-text, var(--ink));
-  text-decoration: underline double currentColor;
-  text-underline-offset: 0.14em;
-  text-shadow: 0 0 0.08em currentColor;
-}
-
-@media (forced-colors: active) {
-  .fragments::highlight(nexus-find-all),
-  .fragments::highlight(nexus-find-active) {
-    background-color: Highlight;
-    color: HighlightText;
-  }
-
-  .fragments::highlight(nexus-find-active) {
-    text-decoration: underline double HighlightText;
-  }
-}
-
 @media (max-width: 768px),
   (max-width: 900px) and (orientation: landscape) and (pointer: coarse) {
   .documentViewport {

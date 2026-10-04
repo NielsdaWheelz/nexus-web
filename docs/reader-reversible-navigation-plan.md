@@ -1,6 +1,7 @@
 # reversible reader navigation
 
 status: implemented; bounded acceptance and open checks in [verification](reader-source-notes-verification.md)
+find: the per-surface find modules this plan names were replaced by `lib/find` on 2026-10-04 (see [reader implementation](modules/reader-implementation.md)).
 origin: 2026-09-26 owner approval of the reader navigation direction
 authority: this implementation contract settles that review's proposed choices.
 

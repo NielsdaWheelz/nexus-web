@@ -1793,23 +1793,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/media/{media_id}/epub-find": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Find In Epub */
-        post: operations["find_in_epub_media__media_id__epub_find_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/media/{media_id}/evidence/{evidence_span_id}": {
         parameters: {
             query?: never;
@@ -6087,42 +6070,6 @@ export interface components {
         /** EpubFacts */
         EpubFacts: {
             ebookRef: components["schemas"]["Presence_str_"];
-        };
-        /** EpubFindEntireResourceScopeIn */
-        EpubFindEntireResourceScopeIn: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "EntireResource";
-        };
-        /** EpubFindRequest */
-        EpubFindRequest: {
-            /** Match Case */
-            match_case: boolean;
-            /** Query */
-            query: string;
-            /** Scope */
-            scope: components["schemas"]["EpubFindEntireResourceScopeIn"] | components["schemas"]["EpubFindSectionScopeIn"];
-            /** Source Generation */
-            source_generation: number;
-            /**
-             * Source Witness Fragment Id
-             * Format: uuid
-             */
-            source_witness_fragment_id: string;
-            /** Whole Word */
-            whole_word: boolean;
-        };
-        /** EpubFindSectionScopeIn */
-        EpubFindSectionScopeIn: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Section";
-            /** Section Id */
-            section_id: string;
         };
         /** EpubFragmentOffsetsLocator */
         EpubFragmentOffsetsLocator: {
@@ -18896,43 +18843,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_ReaderDocumentMapOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    find_in_epub_media__media_id__epub_find_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EpubFindRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
                 };
             };
             /** @description Validation Error */

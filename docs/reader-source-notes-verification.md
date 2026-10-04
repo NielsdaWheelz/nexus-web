@@ -23,7 +23,8 @@ the ordered `0245` database. the android check used that tree's unchanged offlin
 apk and an earlier, already verified v4 downloaded book. the actual firefox
 capture flow and full mixed-book matrix were verified on the earlier task tree;
 the final merge did not change their extraction owners. generic chat and dossier
-find are owner-approved [blocked checks](tickets/generic-pane-find-live-acceptance-blocked.md).
+find were owner-approved blocked checks (closed 2026-10-04: conversation find
+passes on the isolated find harness; dossier find was deleted).
 the exact-head run also found and fixed a real article load race: the generic
 pane seed's intentionally empty web fragment list could overwrite the reader
 session's loaded list. the reader session now owns web fragments; transcript
@@ -93,8 +94,9 @@ each final authenticated read returned 404.
 
 - **blocked by available data:** live generic chat and dossier find smoke have
   no messages or revisions and the isolated model catalog returns 503; the
-  owner approved recording those two checks as blocked.
-  [ticket](tickets/generic-pane-find-live-acceptance-blocked.md).
+  owner approved recording those two checks as blocked (closed 2026-10-04:
+  conversation find passes on the isolated find harness; dossier find was
+  deleted).
 - **open:** spoken screen-reader announcements and linear accessibility focus
   were not established by the bounded talkback attempt. actual android touch
   and double-tap opened the source pane; native hierarchy capture could not

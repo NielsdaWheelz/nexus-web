@@ -196,22 +196,21 @@ root-to-leaf path. Terminal visible primary message blocks are independent
 literal-search units; pending/refused bodies and all auxiliary transcript
 chrome are absent.
 
-`conversationFind.ts` freezes source identity and maps the shared
-`canonicalTextFind` result. `conversationFindDom.ts` projects the committed
-message-block DOM after citation rewriting, Markdown/GFM, and syntax
-highlighting, excludes resolved citation/code-control descendants, and maps
-codepoint locators back to exact `Range`s. The shared Custom Highlight registry
-renders all matches plus the active match; no React/Markdown `<mark>` path
-exists.
+`components/chat/conversationFind.ts` is the conversation's `FindSource` for
+the shared `useFind`. only terminal blocks carry `data-pane-find-block`, so the
+DOM is the source: each block is projected with `buildDomTextCursor` after
+citation rewriting, Markdown/GFM and syntax highlighting, minus
+`[data-pane-find-exclude]` descendants, matched with the shared matcher and
+mapped back to exact `Range`s. the shared custom highlights render all matches
+plus the active match; no React/Markdown `<mark>` path exists.
 
-`useConversationPaneFind` keeps its snapshot and adapter stable while only a
-pending message streams. An effective selected-path projection change cancels
-old work and synchronously clears highlights, active-message presentation,
-the scroll preview lease, the one Return origin, and transient Inspector
-results; it preserves and reruns a nonempty query once. `useChatScroll` remains
-the sole viewport owner. Find preview pauses normal pin following without
-writing progress or navigation state; Close stays at the match, and **Go back
-to reading position** restores the saved eye-line and pin mode once.
+the source key is the conversation, the active leaf and the id and status of
+each terminal message, so streaming tokens never re-run a search; a new key
+re-runs the live query and drops the way back. `useChatScroll` remains the sole
+viewport owner: `revealRange` releases the pin (streaming follow yields) and
+scrolls the match to the top inset, nudging a code block sideways. close stays
+at the match, and **Go back to reading position** restores the scroll offset
+and pin mode captured at the first reveal.
 
 ## Send Path
 

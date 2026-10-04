@@ -53,8 +53,8 @@ export interface UseResourceInspectorParams {
   handle: string | null;
   /** Route-owned domain bodies the capability requires (only these). */
   bodies: InspectorDomainBodies;
-  /** Optional pane-owned Find result body. It remains transient and is never a
-   * durable Inspector tab or default. */
+  /** Optional pane-owned Find results body (`FindResults`). It remains
+   * transient and is never a durable Inspector tab or default. */
   searchResults?: ReactNode;
   /** Citation activation routed through the pane (kept reference-stable here so
    * it never destabilizes the Dossier body identity). */
@@ -65,11 +65,6 @@ export interface ResourceInspectorComposition {
   /** The sole action eligible for direct promotion in primary pane chrome, or
    * null when the subject has no Inspector. */
   companionAction: PaneCompanionAction | null;
-  /** Pure host projection used by `PaneSearchPublication.resultsExpanded`. */
-  searchResultsExpanded: boolean;
-  openSearchResults: (trigger: HTMLButtonElement | null) => void;
-  closeSearchResults: () => void;
-  previewSearchResult: () => void;
 }
 
 interface StoreBox {
@@ -255,30 +250,6 @@ export function useResourceInspector({
     secondaryPane?.visibility === "visible" &&
     paneRuntime?.transientSecondarySurface === null;
 
-  const searchResultsExpanded =
-    paneRuntime?.transientSecondarySurface?.id === "resource-search" &&
-    paneRuntime.transientSecondarySurface.expanded;
-  const requestTransientSecondarySurface =
-    paneRuntime?.requestTransientSecondarySurface;
-  const closeTransientSecondarySurface =
-    paneRuntime?.closeTransientSecondarySurface;
-  const previewTransientSecondaryResult =
-    paneRuntime?.previewTransientSecondaryResult;
-  const openSearchResults = useCallback(
-    (trigger: HTMLButtonElement | null) => {
-      requestTransientSecondarySurface?.("resource-search", {
-        returnFocusTo: trigger,
-      });
-    },
-    [requestTransientSecondarySurface],
-  );
-  const closeSearchResults = useCallback(() => {
-    closeTransientSecondarySurface?.();
-  }, [closeTransientSecondarySurface]);
-  const previewSearchResult = useCallback(() => {
-    previewTransientSecondaryResult?.();
-  }, [previewTransientSecondaryResult]);
-
   // Restore a still-valid workspace tab, else the first published default.
   const storedActive = secondaryPane?.activeSurfaceId ?? null;
   const openTarget =
@@ -325,11 +296,5 @@ export function useResourceInspector({
     ],
   );
 
-  return {
-    companionAction: companion,
-    searchResultsExpanded,
-    openSearchResults,
-    closeSearchResults,
-    previewSearchResult,
-  };
+  return { companionAction: companion };
 }

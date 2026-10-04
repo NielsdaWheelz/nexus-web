@@ -145,11 +145,15 @@ hosted activity can count genuine reading duration without progress or word
 endpoints. close, input and waiting never adopt a detour. the reserved reader
 status offers return, explicit adoption, remote cursor arbitration and recovery.
 
-`usePaneFind` still owns query and result identity. hosted article, epub,
-transcript and pdf find delegate reader movement to `useReaderNavigation`;
-conversation and artifact find keep their own non-reader return behavior.
-epub find retains its bounded server scan, and pdf find retains pdf.js matching
-and marks. closing find removes marks while the reader origin remains held.
+`useFind` (`lib/find/useFind.ts`) owns query, results and staleness for every
+pane; a reader supplies a `FindSource` (`media/[id]/mediaFind.ts` for article,
+epub and transcript, `components/pdfFind.ts` for pdf). find's reveal delegates
+reader movement to `useReaderNavigation`; conversation find keeps its own
+return. article, epub and transcript match canonical text with the shared
+matcher (`lib/find/find.ts`); pdf keeps pdf.js matching, normalization and
+marks. the initial match is the first at or after the reading position frozen
+when find opens. closing find removes marks while the reader origin remains
+held.
 
 rich transcript chapters have one readonly, required-nullable `TranscriptChapter`
 shape in `lib/media/transcriptView.ts`. media-detail ingress strictly decodes
@@ -160,35 +164,21 @@ absent or invalid ends fall back to the next start, a missing final end stays op
 ends are exclusive, and tied overlapping intervals have no active chapter. the
 lectern's separate `ChapterOut` protocol remains independent.
 
-### canonical Find marks and rebind
+### find marks and repaint
 
-Web-article and EPUB Find share one presentation owner,
-`canonicalTextFindPresentation.ts`. Its `publish` filters an adapter's logical
-occurrences to the rendered fragment, projects each through
-`domTextRanges.ts`’s `resolveDomTextRanges` against the current cursor, and defects on any range
-that is absent, collapsed, disconnected, outside the viewport, or inconsistent
-with its nonempty span. It paints every in-fragment passive range and only the
-visible active target; it stores no occurrence source of truth. It privately
-composes `paneFindHighlightRegistry.ts`, the document-global fixed-name CSS
-Custom Highlight aggregate (`nexus-find-all`/`nexus-find-active`) with explicit
-active-over-passive priority and owner-scoped clearing. Conversation Find
-consumes that lower-level registry directly.
-
-the web and epub adapters expose `rebuildPresentation()`. `MediaPaneBody`
-retains ordered post-commit layout phases: source cancellation, canonical dom
-binding/publication, source-note binding, transcript references, find repaint
-and epub membership invalidation. each keeps its own dependencies and cleanup.
-changed decorated markup rebuilds the cursor even within the same fragment;
-find query changes repaint without rebuilding it. the selected canonical
-adapter rebinds after the cursor is published and before paint. exact marks therefore
-survive same-fragment HTML replacement (delayed persisted-highlight load),
-cross-fragment/section preview, and reflow; stale ranges are never retained, and
-Find never converts into a persisted Highlight. `page.module.css` styles the
-marks with only `::highlight()`-supported properties (`background-color`, not the
-`background` shorthand); active is distinguishable without color via a double
-underline, and forced colors keeps both marks perceivable while retaining the
-active cue. There is no native, DOM-wrapper, or approximate fallback; a missing
-CSS Custom Highlight API fails loudly.
+paint is declarative: `useFind` hands the source its rows and active index after
+every change and on every `presentation` change. article and epub paint resolve
+matches in the rendered fragment through `resolveDomTextRanges` against the
+cursor `MediaPaneBody` publishes (`findRenderedRef`) in its canonical-cursor
+layout effect; `useFind` is called after that effect, so a fragment that renders
+after a reveal is painted in the same commit, and a match outside the rendered
+fragment is not painted. transcript paint maps codepoint offsets onto each
+segment's single `canonical_text` text node. `highlightPainter` publishes the
+document-global CSS custom highlights `nexus-find-all` / `nexus-find-active`
+(active over passive priority), one share per painter; `app/globals.css` styles
+them with only `::highlight()`-supported properties, a double underline marks
+the active match without color, and forced colors keeps both perceivable. find
+never converts into a persisted Highlight.
 
 ### natural document completion
 

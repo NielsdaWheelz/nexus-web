@@ -1,99 +1,24 @@
-import type { EmphasisSegment } from "@/lib/ui/emphasis";
+import type { FindController } from "@/lib/find/useFind";
 import type { PaneFilterRowsStatus } from "@/lib/panes/paneFilterRows";
 
-export const PANE_SEARCH_QUERY_MAX_CODEPOINTS = 256;
+/** The pane search row's input cap, for filter and find alike. */
+const PANE_SEARCH_QUERY_MAX_CODEPOINTS = 256;
 
-export type PaneFindResultKey = string & {
-  readonly __paneFindResultKey: unique symbol;
-};
-
-export type PaneFindSourceKey = string & {
-  readonly __paneFindSourceKey: unique symbol;
-};
-
-export type PaneFindIdentityValue =
-  | null
-  | boolean
-  | number
-  | string
-  | readonly PaneFindIdentityValue[]
-  | { readonly [key: string]: PaneFindIdentityValue };
-
-export interface PaneFindScopeOption {
-  readonly kind: "EntireResource" | "Narrow";
-  readonly id: string;
-  readonly label: string;
-}
-
-export type PaneFindScopeControl =
-  | { readonly kind: "EntireResource" }
-  | {
-      readonly kind: "Selectable";
-      readonly selectedId: string;
-      readonly options: readonly PaneFindScopeOption[];
-      readonly onChange: (id: string) => void;
-    };
-
-export interface PaneFindResultRow {
-  readonly key: PaneFindResultKey;
-  readonly context: readonly string[];
-  readonly snippet: readonly EmphasisSegment[];
-}
-
-export type PaneFindResult =
-  | { readonly kind: "Idle" }
-  | { readonly kind: "Searching" }
-  | {
-      readonly kind: "NoMatches";
-      readonly completeness: "Complete" | "Partial";
-    }
-  | {
-      readonly kind: "Ready";
-      readonly completeness: "Complete" | "Partial";
-      readonly rows: readonly PaneFindResultRow[];
-      readonly activeKey: PaneFindResultKey;
-    }
-  | { readonly kind: "TooManyMatches"; readonly threshold: number }
-  | {
-      readonly kind: "Failed";
-      readonly message: string;
-      readonly onRetry: () => void;
-    };
-
-interface PaneSearchBase {
+export interface PaneFilterRowsPublication {
+  readonly kind: "FilterRows";
   readonly query: string;
   readonly inputLabel: string;
   readonly placeholder: string;
   readonly onQueryChange: (query: string) => void;
   readonly onDismiss: () => void;
+  readonly rowStatus: PaneFilterRowsStatus;
 }
 
-export type PaneFilterRowsPublication = PaneSearchBase & {
-  readonly kind: "FilterRows";
-  readonly rowStatus: PaneFilterRowsStatus;
-};
-
-export type PaneFindOccurrencesPublication = PaneSearchBase & {
-  readonly kind: "FindOccurrences";
-  readonly partialSourceLabel?: string;
-  readonly onOpen: () => void;
-  readonly result: PaneFindResult;
-  readonly scope: PaneFindScopeControl;
-  readonly matchCase: boolean;
-  readonly wholeWord: boolean;
-  readonly onMatchCaseChange: (value: boolean) => void;
-  readonly onWholeWordChange: (value: boolean) => void;
-  readonly onStep: (direction: "Previous" | "Next") => void;
-  readonly onActivate: (key: PaneFindResultKey) => void;
-  readonly onShowResults: (trigger: HTMLButtonElement | null) => void;
-  readonly resultsExpanded: boolean;
-  readonly returnToReadingPosition:
-    | { readonly kind: "Unavailable" }
-    | {
-        readonly kind: "Available";
-        readonly onReturn: () => void;
-      };
-};
+/** Find publishes its controller; the bar and the results list drive it directly. */
+export interface PaneFindPublication {
+  readonly kind: "Find";
+  readonly find: FindController;
+}
 
 /**
  * A pane with nothing to search publishes nothing. A pane whose search source
@@ -110,8 +35,7 @@ export interface PaneSearchResolvingPublication {
 
 /** What every search renderer consumes; a resolving pane has none of it yet. */
 export type PaneReadySearchPublication =
-  | PaneFilterRowsPublication
-  | PaneFindOccurrencesPublication;
+  PaneFilterRowsPublication | PaneFindPublication;
 
 export type PaneSearchPublication =
   | PaneSearchResolvingPublication
@@ -121,75 +45,6 @@ export function truncatePaneSearchQuery(query: string): string {
   return Array.from(query)
     .slice(0, PANE_SEARCH_QUERY_MAX_CODEPOINTS)
     .join("");
-}
-
-function canonicalIdentityJson(value: PaneFindIdentityValue): string {
-  if (value === null || typeof value === "boolean" || typeof value === "string") {
-    return JSON.stringify(value);
-  }
-  if (typeof value === "number") {
-    if (!Number.isFinite(value) || Object.is(value, -0)) {
-      throw new Error("Pane Find identities require canonical finite numbers.");
-    }
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalIdentityJson).join(",")}]`;
-  }
-  const entries = Object.entries(value).sort(([left], [right]) =>
-    left < right ? -1 : left > right ? 1 : 0,
-  );
-  return `{${entries
-    .map(
-      ([key, child]) =>
-        `${JSON.stringify(key)}:${canonicalIdentityJson(child)}`,
-    )
-    .join(",")}}`;
-}
-
-export function createPaneFindSourceKey(
-  identity: PaneFindIdentityValue,
-): PaneFindSourceKey {
-  // justify-type-assertion: this sole constructor encodes the complete
-  // structured source identity canonically before applying the opaque brand.
-  return canonicalIdentityJson(identity) as PaneFindSourceKey;
-}
-
-export function createPaneFindResultKey(input: {
-  readonly source: PaneFindIdentityValue;
-  readonly locator: PaneFindIdentityValue;
-}): PaneFindResultKey {
-  // justify-type-assertion: this sole constructor encodes both the frozen
-  // source and logical locator canonically before applying the opaque brand.
-  return canonicalIdentityJson(input) as PaneFindResultKey;
-}
-
-function areScopeControlsEqual(
-  left: PaneFindScopeControl,
-  right: PaneFindScopeControl,
-): boolean {
-  if (left === right) return true;
-  if (left.kind !== right.kind) return false;
-  return (
-    left.kind === "EntireResource" ||
-    (right.kind === "Selectable" &&
-      left.selectedId === right.selectedId &&
-      left.options === right.options &&
-      left.onChange === right.onChange)
-  );
-}
-
-function arePaneSearchBasesEqual(
-  left: PaneSearchBase,
-  right: PaneSearchBase,
-): boolean {
-  return (
-    left.query === right.query &&
-    left.inputLabel === right.inputLabel &&
-    left.placeholder === right.placeholder &&
-    left.onQueryChange === right.onQueryChange &&
-    left.onDismiss === right.onDismiss
-  );
 }
 
 function areFilterRowsStatusesEqual(
@@ -233,36 +88,15 @@ export function arePaneSearchPublicationsEqual(
       left.control === right.control
     );
   }
-  if (!arePaneSearchBasesEqual(left, right)) return false;
-  if (left.kind === "FilterRows") {
-    return (
-      right.kind === "FilterRows" &&
-      areFilterRowsStatusesEqual(left.rowStatus, right.rowStatus)
-    );
-  }
-  if (right.kind !== "FindOccurrences") return false;
-  if (
-    left.onOpen !== right.onOpen ||
-    left.partialSourceLabel !== right.partialSourceLabel ||
-    left.result !== right.result ||
-    !areScopeControlsEqual(left.scope, right.scope) ||
-    left.matchCase !== right.matchCase ||
-    left.wholeWord !== right.wholeWord ||
-    left.onMatchCaseChange !== right.onMatchCaseChange ||
-    left.onWholeWordChange !== right.onWholeWordChange ||
-    left.onStep !== right.onStep ||
-    left.onActivate !== right.onActivate ||
-    left.onShowResults !== right.onShowResults ||
-    left.resultsExpanded !== right.resultsExpanded ||
-    left.returnToReadingPosition.kind !==
-      right.returnToReadingPosition.kind
-  ) {
-    return false;
-  }
+  if (left.kind === "Find")
+    return right.kind === "Find" && left.find === right.find;
   return (
-    left.returnToReadingPosition.kind === "Unavailable" ||
-    (right.returnToReadingPosition.kind === "Available" &&
-      left.returnToReadingPosition.onReturn ===
-        right.returnToReadingPosition.onReturn)
+    right.kind === "FilterRows" &&
+    left.query === right.query &&
+    left.inputLabel === right.inputLabel &&
+    left.placeholder === right.placeholder &&
+    left.onQueryChange === right.onQueryChange &&
+    left.onDismiss === right.onDismiss &&
+    areFilterRowsStatusesEqual(left.rowStatus, right.rowStatus)
   );
 }

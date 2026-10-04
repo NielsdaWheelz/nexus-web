@@ -198,9 +198,17 @@ search and instrument. the row scrolls with results and has no separate mobile
 chrome height or scrollport.
 
 `search` remains transient document/editor find: `FilterRows` matches direct
-page/note items, while `FindOccurrences` delegates document matching and exact
-preview to the format owner. `PaneShell` owns the shared Pane.Search command,
-transient expanded row, focus, and active-pane request consumption. `WorkspaceHost`
+page/note items, while `Find` publishes the pane's `useFind` controller
+(`lib/find`); its `FindSource` owns where text comes from, how a match is
+revealed and how it is painted. `PaneShell` owns the shared Pane.Search command,
+transient expanded row (`FindBar` or the filter `PaneSearchBar`), focus, and
+active-pane request consumption. the row stays expanded for one source (pane,
+visit, route, path), not one query string: a reader that rewrites its own
+`?fragment` keeps its find open, while leaving that source ends the expansion,
+so going back to it starts closed. every end of an expansion, by the user or by
+leaving the source, dismisses the search it expanded (`find.close()` or the
+filter's `onDismiss`): media and chat bodies mount by resource and outlive a
+same-path push, so nothing else would clear their query and paint. `WorkspaceHost`
 arbitrates bindable `Pane.Search` before the editable-target guard, so
 Cmd/Ctrl+F reaches Page and Note editors; it prevents native Find only when the
 active pane consumes the request. Cmd/Ctrl+K remains Nexus retrieval.
@@ -331,8 +339,9 @@ and mobile, but the chrome owner differs:
 - desktop: `SecondaryPaneShell`
 - mobile: `MobileSecondaryPaneHost`
 
-Pane Find results use the separately typed, route-keyed transient
-`resource-search` surface in the existing `resource-inspector` group.
+Pane Find results (`FindResults`) use the separately typed, route-keyed transient
+`resource-search` surface in the existing `resource-inspector` group; the find
+bar requests it and closing the find row closes it.
 `WorkspaceHost` owns that activation outside `WorkspaceSecondaryState`: it
 never enters workspace persistence, never changes the underlying durable
 visibility or active tab, and is pruned on route replacement. Desktop keeps it
@@ -351,10 +360,9 @@ disclosure command and explicit surface requests open or close the group. The
 pane runtime value changes identity only when the pane's runtime facts change,
 so republishing an unchanged publication cannot re-render its publisher.
 
-Standalone Artifact panes use that transient-only form directly. The active
-accepted Dossier revision owns its opaque-frame Find capability; the Artifact
-route publishes contextual results without `useResourceInspector`, a durable
-Dossier tab, workspace persistence, or a second secondary group.
+Standalone Artifact panes publish no search and no secondary group: the
+dossier renders in a sandboxed frame, so Cmd/Ctrl+F falls through to the
+browser's own find (docs/tickets/dossier-frame-runtime-blocked-by-inherited-csp.md).
 
 An expanded secondary region uses
 `paneSecondaryRegionId(primaryPaneId, groupId)`. Disclosure actions expose that
@@ -439,8 +447,8 @@ Highlight-to-Idea command succeeds.
 Pane Find movement is inspection, not pane navigation. reader Find consumes the
 shared mounted-reader navigation owner: its origin survives closing Find and
 ordinary input, and only verified return or explicit adoption ends inspection.
-Artifact and other non-reader Find retain their own return contract. previews
-write no pane history entry.
+Conversation find keeps its own way back, offered in the find bar and the pane
+header. previews write no pane history entry.
 
 `targetLinkActivation.ts` is the one browser gesture adapter. Plain click and
 `Enter` are `Follow`; `Shift`+click is `Fork`; Meta/Ctrl/Alt, middle-click,

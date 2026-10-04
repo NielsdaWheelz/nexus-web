@@ -562,3 +562,22 @@ body [data-modal-backdrop="true"][data-suspended="true"] {
   pointer-events: none;
   background: transparent;
 }
+
+/* Pane find: every in-document surface paints into these two custom highlights. */
+::highlight(nexus-find-all) {
+  background-color: var(--highlight-yellow);
+  color: inherit;
+}
+::highlight(nexus-find-active) {
+  background-color: rgba(255, 193, 7, 0.65);
+  color: inherit;
+  text-decoration: underline double currentColor;
+  text-underline-offset: 0.14em;
+}
+@media (forced-colors: active) {
+  ::highlight(nexus-find-all),
+  ::highlight(nexus-find-active) {
+    background-color: Highlight;
+    color: HighlightText;
+  }
+}

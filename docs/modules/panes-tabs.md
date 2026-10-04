@@ -78,8 +78,8 @@ result status sit at the list boundary. reset appears only for changed state.
 `Pane.Search` reveals, focuses and selects the active pane input; collection
 menus have no duplicate search command.
 page and note editors retain transient `FilterRows` over their direct ordered
-items. document panes, including individual conversations, retain transient
-`FindOccurrences` with transient Inspector results.
+items. document panes, including individual conversations, retain transient `Find`
+(the pane's `useFind` controller) with transient Inspector results.
 
 Every domain view is pane-URL state decoded by one strict, total owner codec.
 An unknown, duplicate, partial, or redundantly-default owned key is `Invalid`:

@@ -149,7 +149,6 @@ class ApiErrorCode(str, Enum):
         409,
     )  # completed answer not regeneratable
     E_ARCHIVE_UNSAFE = ("E_ARCHIVE_UNSAFE", 400)
-    E_EPUB_FIND_SOURCE_CHANGED = ("E_EPUB_FIND_SOURCE_CHANGED", 409)
 
     # Podcast provider errors
     E_BROWSE_PROVIDER_UNAVAILABLE = ("E_BROWSE_PROVIDER_UNAVAILABLE", 503)  # upstream unavailable

@@ -104,35 +104,20 @@ export interface PdfLinkServiceLike {
   executeNamedAction(action: string): void;
 }
 
-export interface PdfFindMatchLike {
-  readonly index: number;
-  readonly length: number;
-}
-
-export interface PdfFindSelectionLike {
-  readonly pageIdx: number;
-  readonly matchIdx: number;
-}
-
-interface PdfFindStateLike {
-  readonly highlightAll: boolean;
-}
-
-export interface PdfFindControllerLike {
+/** The pdf.js find controller surface `pdfFind.ts` subclasses. */
+interface PdfFindControllerLike {
   readonly highlightMatches: boolean | undefined;
-  readonly pageMatches:
-    | readonly (readonly number[] | undefined)[]
-    | undefined;
+  readonly pageMatches: readonly (readonly number[] | undefined)[] | undefined;
   readonly pageMatchesLength:
-    | readonly (readonly number[] | undefined)[]
-    | undefined;
-  readonly selected: PdfFindSelectionLike | undefined;
-  readonly state: PdfFindStateLike | null;
+    readonly (readonly number[] | undefined)[] | undefined;
+  readonly selected:
+    { readonly pageIdx: number; readonly matchIdx: number } | undefined;
+  readonly state: { readonly highlightAll: boolean } | null;
   match(
     query: string | string[],
     pageContent: string,
     pageIndex: number,
-  ): readonly PdfFindMatchLike[] | undefined;
+  ): readonly { readonly index: number; readonly length: number }[] | undefined;
   setDocument(doc: PdfDocumentLike | null): void;
   scrollMatchIntoView(params: {
     element: HTMLElement;
