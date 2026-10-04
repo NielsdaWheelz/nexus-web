@@ -22,7 +22,7 @@ import type {
   ReaderSemanticViewport,
 } from "@/lib/reader/readerDocumentPosition";
 import { useReaderPulseHighlight } from "@/lib/reader/pulseEvent";
-import { isElementInPaneView, type ReaderScrollPositioner } from "@/lib/reader/paneScroll";
+import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import { composeRefs } from "@/lib/ui/composeRefs";
 import {
   PDF_CMAP_URL,
@@ -42,12 +42,7 @@ import {
   type PdfPageViewLike,
   type PdfViewerLike,
 } from "@/components/pdfReaderRuntime";
-import {
-  createPdfFindRuntime,
-  PDF_FIND_STALL_TIMEOUT_MS,
-  type PdfFindLocator,
-  type PdfFindRuntime,
-} from "@/components/pdfPaneFind";
+import { createPdfFind, type PdfFind } from "@/components/pdfFind";
 import SelectionPopover, { DEFAULT_COLOR } from "./SelectionPopover";
 import { useReaderKeyChord } from "@/lib/reader/useReaderKeyChord";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
@@ -101,7 +96,7 @@ export type PdfReaderNavigationTarget =
   | { kind: "Resume"; locator: PdfReaderResumeState }
   | { kind: "Destination"; destination: string | PdfDestinationArray }
   | { kind: "Hash"; hash: string }
-  | { kind: "Find"; locator: PdfFindLocator }
+  | { kind: "Find"; pageNumber: number }
   | { kind: "Highlight"; request: PdfHighlightNavigationRequest };
 
 export interface PdfReaderNavigationAdapter extends ReaderNavigationAdapter<PdfReaderNavigationTarget, PdfReaderNavigationPlacement> {
@@ -293,8 +288,8 @@ interface PdfReaderProps {
   onSemanticViewportChange?: (
     semanticViewport: ReaderSemanticViewport | null,
   ) => void;
-  /** Publishes the exact document-bound PDF Find runtime. */
-  onFindRuntimeReady?: (runtime: PdfFindRuntime | null) => void;
+  /** Publishes the document-bound pdf.js find, or null while no document is loaded. */
+  onFindReady?: (find: PdfFind | null) => void;
 }
 
 interface SelectionState {
@@ -350,6 +345,7 @@ const PDF_HIGHLIGHT_SCROLL_TARGET_FRACTION = 0.35;
 const PDF_PULSE_DURATION_MS = 1200;
 const PDF_SELECTION_POLL_INTERVAL_MS = 150;
 const PDF_FIND_VIEWPORT_FRAME_BUDGET = 180;
+const PDF_SOURCE_RECOVERY_TIMEOUT_MS = 30_000;
 const PDF_FIND_VIEWPORT_POSITION_EPSILON_PX = 1;
 const PDF_FIND_VIEWPORT_SCALE_EPSILON = 0.01;
 // PDF.js destination geometry uses these CSS-unit and fit-padding constants.
@@ -943,7 +939,7 @@ export default function PdfReader({
   startPageProgression,
   startZoom,
   onSemanticViewportChange,
-  onFindRuntimeReady,
+  onFindReady,
 }: PdfReaderProps) {
   const isMobileRef = useRef(isMobile);
   const initialMobileFitDoneRef = useRef(false);
@@ -1016,10 +1012,7 @@ export default function PdfReader({
   const navigationActionsRef = useRef(navigationActions);
   navigationActionsRef.current = navigationActions;
   const pdfViewerRef = useRef<PdfViewerLike | null>(null);
-  const pdfFindRuntimeRef = useRef<ReturnType<
-    typeof createPdfFindRuntime
-  > | null>(null);
-  const pdfFindPublicationRef = useRef<{ runtime: PdfFindRuntime; published: boolean } | null>(null);
+  const pdfFindRef = useRef<PdfFind | null>(null);
   const eventHandlersRef = useRef<ViewerEventHandlers | null>(null);
   const signedUrlExpiryRef = useRef<number | null>(null);
   const recoverAndRenderRef = useRef<
@@ -1132,8 +1125,8 @@ export default function PdfReader({
 
   const onSemanticViewportChangeRef = useRef(onSemanticViewportChange);
   onSemanticViewportChangeRef.current = onSemanticViewportChange;
-  const onFindRuntimeReadyRef = useRef(onFindRuntimeReady);
-  onFindRuntimeReadyRef.current = onFindRuntimeReady;
+  const onFindReadyRef = useRef(onFindReady);
+  onFindReadyRef.current = onFindReady;
   const onIntrinsicWidthChangeRef = useRef(onIntrinsicWidthChange);
   onIntrinsicWidthChangeRef.current = onIntrinsicWidthChange;
   const lastIntrinsicWidthPxRef = useRef<number | null>(null);
@@ -1873,78 +1866,6 @@ export default function PdfReader({
     };
   }, [getPageElement]);
 
-  const revealPdfFindMatch = useCallback(
-    async (element: HTMLElement, signal: AbortSignal): Promise<void> => {
-      if (signal.aborted) throw new DOMException("PDF Find was aborted", "AbortError");
-      const container = viewerContainerRef.current;
-      if (!container || !container.contains(element)) {
-        throw new Error("PDF Find match is outside the active scroll owner");
-      }
-      const page = element.closest<HTMLElement>(".page");
-      if (!page || !container.contains(page)) {
-        throw new Error("PDF Find match has no active page");
-      }
-      await readerScrollPositioner.run(({ reveal }) => {
-        if (!signal.aborted) reveal(container, element);
-      }, signal);
-      if (signal.aborted) throw new DOMException("PDF Find was aborted", "AbortError");
-      // PDF.js may replace the text layer after reporting the selected span.
-      // The live selected span, not that transient node, owns the final position.
-      const selected = page.querySelector<HTMLElement>(".highlight.selected");
-      if (selected && !isElementInPaneView(container, selected)) {
-        await readerScrollPositioner.run(({ reveal }) => {
-          if (!signal.aborted) reveal(container, selected);
-        }, signal);
-      }
-      if (signal.aborted) throw new DOMException("PDF Find was aborted", "AbortError");
-      const currentSelected = page.querySelector<HTMLElement>(".highlight.selected");
-      if (!currentSelected || !isElementInPaneView(container, currentSelected)) {
-        throw new DOMException("PDF Find match did not become visible", "InvalidStateError");
-      }
-    },
-    [readerScrollPositioner],
-  );
-
-  const revealPdfFindPage = useCallback(
-    async ({
-      pageNumber: targetPage,
-      signal,
-    }: {
-      readonly pageNumber: number;
-      readonly signal: AbortSignal;
-    }) => {
-      if (signal.aborted) {
-        throw new DOMException("PDF Find was aborted", "AbortError");
-      }
-      const previousIntent = viewportIntentRef.current;
-      viewportIntentGenerationRef.current += 1;
-      const intentGeneration = viewportIntentGenerationRef.current;
-      viewportIntentRef.current = "Inspection";
-      try {
-        await readerScrollPositioner.run(async () => {
-          applyPdfViewportPage(targetPage, "Inspection");
-          await awaitPdfPageSurface(
-            targetPage,
-            null,
-            textLayerRenderEpochByPageRef.current.get(targetPage) ?? 0,
-            true,
-            signal,
-          );
-        }, signal);
-      } finally {
-        window.requestAnimationFrame(() => {
-          if (
-            viewportIntentGenerationRef.current === intentGeneration &&
-            viewportIntentRef.current === "Inspection"
-          ) {
-            viewportIntentRef.current = previousIntent;
-          }
-        });
-      }
-    },
-    [applyPdfViewportPage, awaitPdfPageSurface, readerScrollPositioner],
-  );
-
   const restorePdfViewport = useCallback(
     async (origin: PdfReaderNavigationPlacement, signal: AbortSignal) => {
       const viewer = pdfViewerRef.current;
@@ -2105,12 +2026,10 @@ export default function PdfReader({
       latestSemanticViewportRef.current = null;
       onSemanticViewportChangeRef.current?.(null);
       if (publishFindUnavailable) {
-        onFindRuntimeReadyRef.current?.(null);
+        onFindReadyRef.current?.(null);
       }
-      pdfFindPublicationRef.current = null;
-      pdfFindRuntimeRef.current?.setDocument(null);
-      pdfFindRuntimeRef.current?.dispose();
-      pdfFindRuntimeRef.current = null;
+      pdfFindRef.current?.setDocument(null);
+      pdfFindRef.current = null;
       const eventBus = eventBusRef.current;
       const handlers = eventHandlersRef.current;
       if (eventBus && handlers) {
@@ -2193,20 +2112,13 @@ export default function PdfReader({
           executeNamedAction(action);
         }
       };
-      const pdfFindRuntime = createPdfFindRuntime({
-        mediaId,
-        viewerModule,
-        eventBus,
-        revealPage: revealPdfFindPage,
-        revealMatch: revealPdfFindMatch,
-        currentPageNumber: () => pageNumberRef.current,
-      });
+      const pdfFind = createPdfFind(viewerModule, eventBus);
       const pdfViewer = new viewerModule.PDFViewer({
         container,
         viewer: viewerHost,
         eventBus,
         linkService,
-        findController: pdfFindRuntime.findController,
+        findController: pdfFind.controller,
         textLayerMode: PDF_VIEWER_TEXT_LAYER_MODE_ENABLE,
         enableAutoLinking: false,
       });
@@ -2218,7 +2130,7 @@ export default function PdfReader({
         // Some viewer shims may not expose scrollMode mutability.
       }
       linkService.setViewer(pdfViewer);
-      pdfFindRuntime.setViewer(pdfViewer);
+      pdfFind.setViewer(pdfViewer);
 
       const handlePageChanging = (rawEvent: unknown) => {
         if (runId !== runRef.current) {
@@ -2307,11 +2219,7 @@ export default function PdfReader({
           invalidateSemanticViewport();
           scheduleSemanticViewportCapture();
         });
-        const findPublication = pdfFindPublicationRef.current;
-        if (findPublication !== null && !findPublication.published) {
-          findPublication.published = true;
-          onFindRuntimeReadyRef.current?.(findPublication.runtime);
-        }
+        onFindReadyRef.current?.(pdfFindRef.current);
       };
 
       const handlePageRendered = (rawEvent: unknown) => {
@@ -2437,7 +2345,7 @@ export default function PdfReader({
       eventBusRef.current = eventBus;
       linkServiceRef.current = linkService;
       pdfViewerRef.current = pdfViewer;
-      pdfFindRuntimeRef.current = pdfFindRuntime;
+      pdfFindRef.current = pdfFind;
       eventHandlersRef.current = {
         updateviewarea: handleUpdateViewArea,
         pagechanging: handlePageChanging,
@@ -2455,12 +2363,9 @@ export default function PdfReader({
       invalidateSemanticViewport,
       isTextLayerUsableForPage,
       markPageSurface,
-      mediaId,
       readerScrollPositioner,
       reportReaderError,
       rememberPageScale,
-      revealPdfFindMatch,
-      revealPdfFindPage,
       scheduleIntrinsicWidthPublish,
       scheduleSemanticViewportCapture,
       scheduleTextLayerStateRefresh,
@@ -2516,11 +2421,7 @@ export default function PdfReader({
       pendingViewerScaleRef.current = effectiveScale;
       pendingViewerPageRef.current = boundedPage > 1 ? boundedPage : null;
       linkService.setDocument(doc, null);
-      const findRuntime = pdfFindRuntimeRef.current?.setDocument(doc);
-      if (!findRuntime) {
-        throw new Error("PDF Find runtime failed to bind the document");
-      }
-      pdfFindPublicationRef.current = { runtime: findRuntime, published: false };
+      pdfFindRef.current?.setDocument(doc);
       viewer.setDocument(doc);
     },
     [
@@ -3283,7 +3184,7 @@ export default function PdfReader({
         signedUrlExpiryRef.current = signedUrlResource.data.expiresAtMs;
         const refreshesExistingSource =
           recoveryTargetPageRef.current !== null &&
-          pdfFindRuntimeRef.current !== null;
+          pdfViewerRef.current !== null;
         teardownViewer({
           publishFindUnavailable: !refreshesExistingSource,
         });
@@ -3295,7 +3196,7 @@ export default function PdfReader({
         }
       } catch (err) {
         if (active && runId === runRef.current) {
-          onFindRuntimeReadyRef.current?.(null);
+          onFindReadyRef.current?.(null);
           if (!handleAuthenticationErrorRef.current(err)) reportReaderError(err);
         }
       } finally {
@@ -3815,71 +3716,69 @@ export default function PdfReader({
         if (parsed === null) return unavailable("TargetUnavailable");
         target = parsed;
       }
-      let positionedPage: number;
-      if (target.kind === "Find") {
-        positionedPage = target.locator.pageNumber;
-        const runtime = pdfFindPublicationRef.current?.runtime;
-        if (runtime === undefined) return unavailable("TargetUnavailable");
-        await runtime.activate(target.locator, signal);
-      } else {
-        let targetPage: number;
-        let destination: PdfDestinationArray | undefined;
-        if (target.kind === "Destination") {
-          const resolved = typeof target.destination === "string" ? await doc.getDestination(target.destination) : target.destination;
-          if (!current()) return signal.aborted ? { kind: "Cancelled", displaced: displaced() } : unavailable("SourceChanged");
-          if (resolved === null || !validPdfDestination(resolved)) return unavailable("TargetUnavailable");
-          destination = resolved;
-          try {
-            targetPage = typeof resolved[0] === "number" ? resolved[0] + 1 : await doc.getPageIndex(resolved[0]) + 1;
-          } catch (error) {
-            if (isLikelySignedUrlExpiryError(error)) throw error;
-            return unavailable("TargetUnavailable");
-          }
-        } else {
-          targetPage = target.kind === "Page" ? target.pageNumber : target.kind === "Resume" ? target.locator.page : target.request.pageNumber;
+      let targetPage: number;
+      let destination: PdfDestinationArray | undefined;
+      if (target.kind === "Destination") {
+        const resolved = typeof target.destination === "string" ? await doc.getDestination(target.destination) : target.destination;
+        if (!current()) return signal.aborted ? { kind: "Cancelled", displaced: displaced() } : unavailable("SourceChanged");
+        if (resolved === null || !validPdfDestination(resolved)) return unavailable("TargetUnavailable");
+        destination = resolved;
+        try {
+          targetPage = typeof resolved[0] === "number" ? resolved[0] + 1 : await doc.getPageIndex(resolved[0]) + 1;
+        } catch (error) {
+          if (isLikelySignedUrlExpiryError(error)) throw error;
+          return unavailable("TargetUnavailable");
         }
-        if (!current()) return signal.aborted ? { kind: "Cancelled", displaced: displaced() } : unavailable("SourceChanged");
-        if (!Number.isInteger(targetPage) || targetPage < 1 || targetPage > doc.numPages) return unavailable("TargetUnavailable");
-        positionedPage = targetPage;
-        const previousLocation = latestPdfLocationRef.current;
-        await readerScrollPositioner.run(async ({ adjustTop }) => {
-          if (!current()) return;
-          const previousZoom = readViewerZoom(viewer);
-          const previousEpoch = textLayerRenderEpochByPageRef.current.get(targetPage) ?? 0;
-          if (target.kind === "Resume" && target.locator.zoom !== null) {
-            zoomRef.current = target.locator.zoom;
-            setZoom(target.locator.zoom);
-            applyViewerScale(viewer, target.locator.zoom, "navigation/currentScaleValue");
-          }
-          viewer.scrollPageIntoView({ pageNumber: targetPage, ...(destination ? { destArray: destination } : {}) });
-          const destinationZoom = readViewerZoom(viewer);
-          const changedZoom = destinationZoom !== null && previousZoom !== null && Math.abs(destinationZoom - previousZoom) > PDF_FIND_VIEWPORT_SCALE_EPSILON;
-          if (destinationZoom !== null && destinationZoom !== zoomRef.current) {
-            zoomRef.current = destinationZoom;
-            viewerReportedZoomRef.current = destinationZoom;
-            setZoom(destinationZoom);
-          }
-          await awaitPdfPageSurface(targetPage, null, previousEpoch + (changedZoom ? 1 : 0), false, signal);
-          if (!current()) return;
-          if (target.kind === "Resume") {
-            const page = getPageElement(targetPage);
-            if (!page) return;
-            const delta = page.getBoundingClientRect().top - container.getBoundingClientRect().top;
-            adjustTop(container, delta + (target.locator.page_progression ?? 0) * page.getBoundingClientRect().height);
-          } else if (target.kind === "Highlight") {
-            if (!await scrollToProjectedHighlight(targetPage, target.request.quads, current) && current()) {
-              throw new DOMException("PDF highlight could not be positioned", "InvalidStateError");
-            }
-          }
-          await awaitPdfFrame(signal);
-          await awaitPdfFrame(signal);
-        }, signal);
-        if (!current()) return signal.aborted ? { kind: "Cancelled", displaced: displaced() } : unavailable("SourceChanged");
-        if (target.kind === "Page" || target.kind === "Destination") {
+      } else {
+        targetPage = target.kind === "Page" || target.kind === "Find" ? target.pageNumber : target.kind === "Resume" ? target.locator.page : target.request.pageNumber;
+      }
+      if (!current()) return signal.aborted ? { kind: "Cancelled", displaced: displaced() } : unavailable("SourceChanged");
+      if (!Number.isInteger(targetPage) || targetPage < 1 || targetPage > doc.numPages) return unavailable("TargetUnavailable");
+      const previousLocation = latestPdfLocationRef.current;
+      await readerScrollPositioner.run(async ({ adjustTop, reveal }) => {
+        if (!current()) return;
+        const previousZoom = readViewerZoom(viewer);
+        const previousEpoch = textLayerRenderEpochByPageRef.current.get(targetPage) ?? 0;
+        if (target.kind === "Resume" && target.locator.zoom !== null) {
+          zoomRef.current = target.locator.zoom;
+          setZoom(target.locator.zoom);
+          applyViewerScale(viewer, target.locator.zoom, "navigation/currentScaleValue");
+        }
+        viewer.scrollPageIntoView({ pageNumber: targetPage, ...(destination ? { destArray: destination } : {}) });
+        const destinationZoom = readViewerZoom(viewer);
+        const changedZoom = destinationZoom !== null && previousZoom !== null && Math.abs(destinationZoom - previousZoom) > PDF_FIND_VIEWPORT_SCALE_EPSILON;
+        if (destinationZoom !== null && destinationZoom !== zoomRef.current) {
+          zoomRef.current = destinationZoom;
+          viewerReportedZoomRef.current = destinationZoom;
+          setZoom(destinationZoom);
+        }
+        await awaitPdfPageSurface(targetPage, null, previousEpoch + (changedZoom ? 1 : 0), target.kind === "Find", signal);
+        if (!current()) return;
+        if (target.kind === "Find") {
+          // pdf.js paints the match find selected; it may land a frame after the text layer.
+          const selected = () => getPageElement(targetPage)?.querySelector<HTMLElement>(".highlight.selected");
+          if (!selected()) await awaitPdfFrame(signal);
+          const match = selected();
+          if (!match) throw new DOMException("PDF find match did not render", "InvalidStateError");
+          reveal(container, match);
+        } else if (target.kind === "Resume") {
           const page = getPageElement(targetPage);
-          if (!page || !pdfDestinationArrived(viewer, container, page, targetPage, destination, previousLocation)) {
-            return unavailable("PositioningFailed");
+          if (!page) return;
+          const delta = page.getBoundingClientRect().top - container.getBoundingClientRect().top;
+          adjustTop(container, delta + (target.locator.page_progression ?? 0) * page.getBoundingClientRect().height);
+        } else if (target.kind === "Highlight") {
+          if (!await scrollToProjectedHighlight(targetPage, target.request.quads, current) && current()) {
+            throw new DOMException("PDF highlight could not be positioned", "InvalidStateError");
           }
+        }
+        await awaitPdfFrame(signal);
+        await awaitPdfFrame(signal);
+      }, signal);
+      if (!current()) return signal.aborted ? { kind: "Cancelled", displaced: displaced() } : unavailable("SourceChanged");
+      if (target.kind === "Page" || target.kind === "Destination") {
+        const page = getPageElement(targetPage);
+        if (!page || !pdfDestinationArrived(viewer, container, page, targetPage, destination, previousLocation)) {
+          return unavailable("PositioningFailed");
         }
       }
       if (!current()) return signal.aborted ? { kind: "Cancelled", displaced: displaced() } : unavailable("SourceChanged");
@@ -3893,7 +3792,7 @@ export default function PdfReader({
         });
       }
       if (target.kind !== "Find") {
-        const destinationFocus = getTextLayerRootForPage(positionedPage) ?? getPageElement(positionedPage) ?? container;
+        const destinationFocus = getTextLayerRootForPage(targetPage) ?? getPageElement(targetPage) ?? container;
         if (!destinationFocus.hasAttribute("tabindex")) destinationFocus.tabIndex = -1;
         destinationFocus.focus({ preventScroll: true });
       }
@@ -3908,7 +3807,7 @@ export default function PdfReader({
         if (!(error instanceof PdfSourceAccessRefresh) && !isLikelySignedUrlExpiryError(error)) throw error;
         const previousDocument = documentRef.current;
         if (!(error instanceof PdfSourceAccessRefresh)) requestSignedUrlRecovery(pageNumberRef.current, runRef.current);
-        const deadline = performance.now() + PDF_FIND_STALL_TIMEOUT_MS;
+        const deadline = performance.now() + PDF_SOURCE_RECOVERY_TIMEOUT_MS;
         while (documentRef.current === previousDocument || pdfViewerRef.current === null || semanticSourceKeyRef.current === null) {
           if (signal.aborted) return { kind: "Cancelled", displaced: displaced() };
           if (performance.now() >= deadline) return unavailable("PositioningFailed");

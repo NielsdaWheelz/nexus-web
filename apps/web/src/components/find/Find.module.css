@@ -1,0 +1,39 @@
+.bar,
+.results {
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.group {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-2);
+  white-space: nowrap;
+}
+
+.status {
+  max-width: 16rem;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-4);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.partial {
+  composes: message;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--stroke-hairline) solid var(--edge-subtle);
+}

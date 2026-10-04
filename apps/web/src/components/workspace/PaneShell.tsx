@@ -10,6 +10,7 @@ import {
   useState,
   type CSSProperties,
 } from "react";
+import FindBar from "@/components/find/FindBar";
 import PaneSearchBar from "@/components/workspace/PaneSearchBar";
 import SurfaceHeader, {
   type SurfaceHeaderNavigation,
@@ -81,12 +82,6 @@ type PaneShellStyle = CSSProperties & {
 type PaneRefreshIndicatorStyle = CSSProperties & {
   "--pane-refresh-offset": string;
 };
-
-interface ExpandedPaneSearchIdentity {
-  readonly paneId: string;
-  readonly routeKey: string;
-  readonly sourceKey: string;
-}
 
 interface PaneShellProps {
   paneId: string;
@@ -260,8 +255,27 @@ export default function PaneShell({
     [],
   );
 
-  const [expandedSearchIdentity, setExpandedSearchIdentity] =
-    useState<ExpandedPaneSearchIdentity | null>(null);
+  // The search row stays expanded for one source (pane, visit, route, path),
+  // not one query string: a reader rewriting its own ?fragment keeps its find.
+  // Every end of an expansion dismisses the search it expanded, so a body that
+  // outlives the source (media and chat mount by resource) keeps no live find.
+  const [expandedSearchSource, setExpandedSearchSource] = useState<
+    string | null
+  >(null);
+  const expandedSearchRef = useRef<PaneReadySearchPublication | undefined>(
+    undefined,
+  );
+  const dismissExpandedSearch = useCallback(() => {
+    const search = expandedSearchRef.current;
+    expandedSearchRef.current = undefined;
+    setExpandedSearchSource(null);
+    if (search?.kind === "Find") search.find.close();
+    else search?.onDismiss();
+  }, []);
+  useLayoutEffect(
+    () => dismissExpandedSearch,
+    [dismissExpandedSearch, sourceContinuityKey],
+  );
   const acceptedPrimaryChrome =
     primaryChromeRecord !== null &&
     primaryChromeRecord.routeKey === routeKey &&
@@ -293,10 +307,17 @@ export default function PaneShell({
     pullEnabled: pullRefreshEligible,
     scrollportRef: bodyRef,
   });
+  // Across a query-only route change the body republishes under the new route
+  // key; until then its find (the same mounted controller) stays accepted.
+  const continuingFind =
+    primaryChromeRecord?.sourceContinuityKey === sourceContinuityKey &&
+    primaryChromeRecord.publication.search?.kind === "Find"
+      ? primaryChromeRecord.publication.search
+      : undefined;
   const acceptedSearch =
     acceptedCollection !== undefined
       ? undefined
-      : acceptedPrimaryChrome?.search;
+      : (acceptedPrimaryChrome?.search ?? continuingFind);
   // A resolving publication carries no row, no query, and no dismissal, so it
   // reaches the descriptor and nothing else: every expansion, focus, and
   // gesture path below sees only a search that can actually run.
@@ -314,12 +335,10 @@ export default function PaneShell({
   const searchTriggerRef = useRef<HTMLButtonElement | null>(null);
   const searchRowId = `${paneId}-pane-search`;
   const searchExpanded =
-    readySearch !== undefined &&
-    expandedSearchIdentity?.paneId === paneId &&
-    expandedSearchIdentity.routeKey === routeKey &&
-    expandedSearchIdentity.sourceKey === sourceContinuityKey;
+    readySearch !== undefined && expandedSearchSource === sourceContinuityKey;
   const searchExpandedRef = useRef(searchExpanded);
   searchExpandedRef.current = searchExpanded;
+  if (searchExpanded) expandedSearchRef.current = readySearch;
   const focusSearchInput = useCallback(() => {
     window.requestAnimationFrame(() => {
       searchInputRef.current?.focus({ preventScroll: true });
@@ -339,17 +358,13 @@ export default function PaneShell({
     const publication = acceptedSearchRef.current;
     if (!publication) return false;
     if (!searchExpandedRef.current) {
-      if (publication.kind === "FindOccurrences") publication.onOpen();
+      if (publication.kind === "Find") publication.find.open();
       searchExpandedRef.current = true;
-      setExpandedSearchIdentity({
-        paneId,
-        routeKey: currentRouteKeyRef.current,
-        sourceKey: currentSourceContinuityKeyRef.current,
-      });
+      setExpandedSearchSource(currentSourceContinuityKeyRef.current);
     }
     focusSearchInput();
     return true;
-  }, [focusSearchInput, paneId]);
+  }, [focusSearchInput]);
   usePaneSearchRequested(openSearch);
   const consumedSearchRequestIdRef = useRef<number | null>(null);
   // A browser resize can lead the React projection by one input event. Consume
@@ -365,9 +380,14 @@ export default function PaneShell({
     consumedSearchRequestIdRef.current = responsiveSearchHandoff.id;
     responsiveSearchHandoff.onConsumed(responsiveSearchHandoff.id);
   }, [acceptedCollection, acceptedSearch, openSearch, responsiveSearchHandoff]);
+  const closeFindResults =
+    paneRuntime.transientSecondarySurface?.id === "resource-search"
+      ? paneRuntime.closeTransientSecondarySurface
+      : null;
   const closeSearch = useCallback(() => {
     searchExpandedRef.current = false;
-    setExpandedSearchIdentity(null);
+    dismissExpandedSearch();
+    closeFindResults?.();
     if (isMobile) {
       void paneChromeFocusReturn.focus(paneId);
       return;
@@ -385,7 +405,13 @@ export default function PaneShell({
       const focusTarget = trigger ?? findPaneSearchFocusTarget(paneId);
       focusTarget?.focus({ preventScroll: true });
     });
-  }, [isMobile, paneChromeFocusReturn, paneId]);
+  }, [
+    closeFindResults,
+    dismissExpandedSearch,
+    isMobile,
+    paneChromeFocusReturn,
+    paneId,
+  ]);
   // The mobile chrome provider re-renders active PaneShell consumers when a pane
   // publishes. Keep this projection referentially stable across that feedback render;
   // otherwise the publication effect below sees a new header, republishes, and can
@@ -486,8 +512,7 @@ export default function PaneShell({
             },
         onSelect: ({ triggerEl }) => {
           searchTriggerRef.current = triggerEl;
-          if (searchExpanded && readySearch) {
-            readySearch.onDismiss();
+          if (searchExpanded) {
             closeSearch();
             return;
           }
@@ -495,16 +520,13 @@ export default function PaneShell({
         },
       },
     ];
-    if (
-      acceptedSearch.kind === "FindOccurrences" &&
-      acceptedSearch.returnToReadingPosition.kind === "Available"
-    ) {
+    if (acceptedSearch.kind === "Find" && acceptedSearch.find.returnable) {
       actions.push({
         kind: "command",
         id: "Pane.SearchReturn",
         label: "Go back to reading position",
         icon: <RotateCcw size={16} aria-hidden="true" />,
-        onSelect: acceptedSearch.returnToReadingPosition.onReturn,
+        onSelect: acceptedSearch.find.goBack,
       });
     }
     return actions;
@@ -512,7 +534,6 @@ export default function PaneShell({
     acceptedSearch,
     closeSearch,
     openSearch,
-    readySearch,
     searchExpanded,
     searchRowId,
   ]);
@@ -772,11 +793,19 @@ export default function PaneShell({
               }
             >
               {effectiveContextualRow.kind === "Search" ? (
-                <PaneSearchBar
-                  ref={searchInputRef}
-                  publication={effectiveContextualRow.publication}
-                  onClose={closeSearch}
-                />
+                effectiveContextualRow.publication.kind === "Find" ? (
+                  <FindBar
+                    ref={searchInputRef}
+                    find={effectiveContextualRow.publication.find}
+                    onClose={closeSearch}
+                  />
+                ) : (
+                  <PaneSearchBar
+                    ref={searchInputRef}
+                    publication={effectiveContextualRow.publication}
+                    onClose={closeSearch}
+                  />
+                )
               ) : (
                 effectiveContextualRow.publication.content
               )}

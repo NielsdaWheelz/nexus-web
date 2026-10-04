@@ -57,7 +57,6 @@ import PdfReader, {
   type PdfReaderNavigationTarget,
   type PdfReaderNavigationActions,
 } from "@/components/PdfReader";
-import type { ReaderTextFindNavigation } from "@/lib/reader/canonicalTextFindPresentation";
 import type { PdfHighlightOut } from "@/lib/reader/ReaderDecorations";
 import SelectionPopover, { DEFAULT_COLOR } from "@/components/SelectionPopover";
 import HighlightResourceActionMenu from "@/components/highlights/HighlightResourceActionMenu";
@@ -167,7 +166,7 @@ import {
 } from "@/lib/panes/paneRuntime";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
-import PaneSearchResults from "@/components/resource-inspector/PaneSearchResults";
+import { FindResults } from "@/components/find/FindBar";
 import {
   useMobileChromeReaderScrollport,
   useMobileChromeVisibleLocks,
@@ -178,11 +177,8 @@ import {
   PANE_COMMAND_RESOLVING_REASON,
   type PanePrimaryChromePublication,
 } from "@/lib/panes/panePublications";
-import type {
-  PaneFindOccurrencesPublication,
-  PaneFindSourceKey,
-} from "@/lib/panes/paneSearch";
-import { usePaneFind, type PaneFindCapability } from "@/lib/panes/usePaneFind";
+import type { FindSource, TextHit } from "@/lib/find/find";
+import { useFind } from "@/lib/find/useFind";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import {
   artifactPaneHref,
@@ -287,16 +283,12 @@ import { useReaderActivityAdapter } from "./ReaderActivityAdapter";
 import { useActivityRuntimeSnapshot } from "@/lib/consumption/activityRuntime";
 import { activityStatus } from "@/lib/consumption/activityStatus";
 import {
-  useWebPaneFindCapability,
-  type WebFindRenderedState,
-} from "./useMediaPaneFind";
-import {
-  useEpubPaneFind,
-  type EpubFindRenderedState,
-} from "./useEpubPaneFind";
-import type { MediaPaneFindError } from "./mediaPaneFind";
-import { usePdfPaneFind } from "./usePdfPaneFind";
-import type { PdfFindError, PdfFindRuntime } from "@/components/pdfPaneFind";
+  epubUnits,
+  textFindSource,
+  transcriptFindSource,
+  type RenderedFragment,
+} from "./mediaFind";
+import type { PdfFind } from "@/components/pdfFind";
 import {
   mediaPaneErrorMessage,
   transcriptSeedErrorMessage,
@@ -310,19 +302,13 @@ import {
   projectMediaEvidenceHighlights,
   projectMediaEvidenceRoute,
 } from "./mediaEvidenceProjection";
-import TranscriptContentPanel, {
-  type TranscriptFindPresentation,
-} from "./TranscriptContentPanel";
+import TranscriptContentPanel from "./TranscriptContentPanel";
 import {
   captureTranscriptPlacement,
   positionTranscriptMatch,
   restoreTranscriptPlacement,
   type TranscriptPlacement,
 } from "./transcriptNavigation";
-import {
-  createTranscriptFindAdapter,
-  createTranscriptFindSnapshot,
-} from "./transcriptPaneFind";
 import TranscriptStatePanel, {
   type TranscriptRuntimeUpdate,
 } from "./TranscriptStatePanel";
@@ -708,8 +694,6 @@ export default function MediaPaneBody() {
   const [activeTranscriptFragmentId, setActiveTranscriptFragmentId] = useState<
     string | null
   >(null);
-  const [transcriptFindPresentation, setTranscriptFindPresentation] =
-    useState<TranscriptFindPresentation>({ kind: "Text" });
 
   // ---- EPUB state ----
   const [activeEpubFragmentId, setActiveEpubFragmentId] = useState<string | null>(null);
@@ -738,22 +722,7 @@ export default function MediaPaneBody() {
   const [pdfIntrinsicWidthPx, setPdfIntrinsicWidthPx] = useState<number | null>(
     null,
   );
-  const [pdfFindRuntimePublication, setPdfFindRuntimePublication] = useState<{
-    readonly mediaId: string;
-    readonly runtime: PdfFindRuntime;
-  } | null>(null);
-  const handlePdfFindRuntimeReady = useCallback(
-    (runtime: PdfFindRuntime | null) => {
-      setPdfFindRuntimePublication((current) =>
-        runtime === null
-          ? current?.mediaId === id
-            ? null
-            : current
-          : { mediaId: id, runtime },
-      );
-    },
-    [id],
-  );
+  const [pdfFind, setPdfFind] = useState<PdfFind | null>(null);
   const pdfControlsRef = useRef<PdfReaderControlActions | null>(null);
   const pdfNavigationAdapterRef = useRef<PdfReaderNavigationAdapter | null>(null);
   const [pdfNavigationSource, setPdfNavigationSource] = useState<string | null>(null);
@@ -1280,8 +1249,7 @@ export default function MediaPaneBody() {
   } = useRetainedReaderSelection<SelectionState>({
     sameSemanticSelection: sameMediaSelection,
   });
-  const webFindRenderedStateRef = useRef<WebFindRenderedState | null>(null);
-  const epubFindRenderedStateRef = useRef<EpubFindRenderedState | null>(null);
+  const findRenderedRef = useRef<RenderedFragment | null>(null);
   const renderedFragmentIdRef = useRef<string | null>(null);
   const textProgressGenerationRef = useRef(0);
   const hasTrustedForwardTextScrollIntentRef = useRef(false);
@@ -1448,8 +1416,6 @@ export default function MediaPaneBody() {
     readerNavigation?.kind === "epub" ? readerNavigation.sections : null;
   const epubFragments =
     readerNavigation?.kind === "epub" ? readerNavigation.fragments : null;
-  const webSections =
-    readerNavigation?.kind === "web_article" ? readerNavigation.sections : null;
   const loadedDocumentMap = readerDocumentMapResource.status === "ready" ? readerDocumentMapResource.data : null;
   const mapGenerationMismatch = loadedDocumentMap !== null && readerNavigation !== null &&
     (loadedDocumentMap.generation.kind === "Absent" || loadedDocumentMap.generation.value !== readerNavigation.generation);
@@ -1780,43 +1746,19 @@ export default function MediaPaneBody() {
     semanticViewportPublication,
   ]);
 
-  const transcriptFindSnapshotCandidate = useMemo(
-    () =>
-      isTranscriptMedia &&
-      canRead &&
-      fragments.length > 0 &&
-      (transcriptState === "ready" || transcriptState === "partial")
-        ? createTranscriptFindSnapshot({
-            mediaId: id,
-            transcriptState,
-            transcriptCoverage,
-            fragments,
-            chapters: media?.chapters ?? [],
-          })
-        : null,
-    [
-      canRead,
-      fragments,
-      id,
-      isTranscriptMedia,
-      media?.chapters,
-      transcriptCoverage,
-      transcriptState,
-    ],
-  );
-  const transcriptFindSnapshotRef = useRef(transcriptFindSnapshotCandidate);
-  if (
-    transcriptFindSnapshotRef.current?.sourceKey !==
-    transcriptFindSnapshotCandidate?.sourceKey
-  ) {
-    transcriptFindSnapshotRef.current = transcriptFindSnapshotCandidate;
-  }
-  const transcriptFindSnapshot = transcriptFindSnapshotRef.current;
+  // The loaded transcript's identity: appended or replaced segments change it.
+  const transcriptSourceKey =
+    isTranscriptMedia &&
+    canRead &&
+    fragments.length > 0 &&
+    (transcriptState === "ready" || transcriptState === "partial")
+      ? `${fragments.length}:${fragments.at(-1)!.id}`
+      : null;
   const navigationSource = isPdf
     ? pdfNavigationSource
     : isTranscriptMedia
-      ? activeContent && transcriptFindSnapshot
-        ? `${id}:transcript:${transcriptFindSnapshot.sourceKey}`
+      ? activeContent && transcriptSourceKey
+        ? `${id}:transcript:${transcriptSourceKey}`
         : null
       : readerNavigation
         ? `${id}:${documentReader.contentGeneration}`
@@ -1833,15 +1775,16 @@ export default function MediaPaneBody() {
     let locator = selectedLocator;
     if (placement.listVisible) {
       let documentStartOffset = 0;
-      const fragment = transcriptFindSnapshot?.fragments.find((candidate) => {
+      const fragment = fragments.find((candidate) => {
         if (candidate.id === placement.fragmentId) return true;
-        documentStartOffset += canonicalCpLength(candidate.canonicalText);
+        documentStartOffset += canonicalCpLength(candidate.canonical_text);
         return false;
       });
-      if (!fragment || fragment.canonicalText !== placement.canonicalText) return null;
+      if (!fragment || fragment.canonical_text !== placement.canonicalText)
+        return null;
       const visibleLocator = buildTextReaderLocatorAtOffset({
         anchorOffset: placement.text.anchorCp,
-        canonicalText: fragment.canonicalText,
+        canonicalText: fragment.canonical_text,
         fragmentId: fragment.id,
         format: "transcript",
         documentStartOffset,
@@ -1916,9 +1859,6 @@ export default function MediaPaneBody() {
     beginSeek: navigationBeginSeek,
     cancelPositioning: navigationCancelPositioning,
   }), [navigationBeginSeek, navigationCancelPositioning, navigationInspect]);
-  const readerTextFindNavigation = useMemo<ReaderTextFindNavigation>(() => ({
-    inspect: (target, signal) => navigationInspect({ kind: "Text", ...target, focus: "Preserve" }, absent(), signal),
-  }), [navigationInspect]);
 
   const readerDocumentVisibleRange = useMemo(
     () =>
@@ -3241,18 +3181,16 @@ export default function MediaPaneBody() {
   // ==========================================================================
 
   // Ordered post-commit canonical seam: after each renderedHtml/fragment commit,
-  // rebuild the cursor and publish the active canonical format's rendered-state
-  // ref from one local validity read, so the format rebind below repaints exact
-  // ranges against current DOM before paint (see canonicalFindRebind). The ref
-  // stays null until layout is ready, so find positions only a settled layout.
+  // rebuild the cursor and publish find's rendered fragment from one local
+  // validity read, so find (declared below) repaints exact ranges against the
+  // current DOM before paint. The ref stays null until layout is ready.
   useLayoutEffect(() => {
     const content = contentRef.current;
     const viewport = textViewportRef.current;
     if (textHighlightInitialLoading || !activeContent || !content) {
       cursorRef.current = null;
       setIsMismatchDisabled(false);
-      webFindRenderedStateRef.current = null;
-      epubFindRenderedStateRef.current = null;
+      findRenderedRef.current = null;
       return;
     }
     const cursor = buildCanonicalCursor(content);
@@ -3270,18 +3208,12 @@ export default function MediaPaneBody() {
         expectedLength: canonicalCpLength(activeContent.canonicalText),
       });
     }
-    webFindRenderedStateRef.current =
-      isValid && viewport && readerLayoutReady && media?.kind === "web_article"
-        ? {
-            fragmentId: activeContent.fragmentId,
-            canonicalText: activeContent.canonicalText,
-            cursor,
-            viewport,
-          }
-        : null;
-    epubFindRenderedStateRef.current =
-      isValid && viewport && readerLayoutReady && isEpub && activeEpubFragment
-        ? { fragment: activeEpubFragment, cursor, viewport }
+    findRenderedRef.current =
+      isValid &&
+      viewport &&
+      readerLayoutReady &&
+      (media?.kind === "web_article" || (isEpub && activeEpubFragment))
+        ? { fragmentId: activeContent.fragmentId, cursor, viewport }
         : null;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: rebuild when rendered canonical content changes
   }, [
@@ -3336,131 +3268,112 @@ export default function MediaPaneBody() {
     mismatchLoggedFragmentRef.current = null;
   }, [activeContent?.fragmentId]);
 
-  const transcriptFindSourceKeyRef = useRef<PaneFindSourceKey | null>(null);
-  const transcriptFindActiveFragmentIdRef = useRef<string | null>(null);
-  useLayoutEffect(() => {
-    transcriptFindSourceKeyRef.current =
-      transcriptFindSnapshot?.sourceKey ?? null;
-    transcriptFindActiveFragmentIdRef.current =
-      activeTranscriptFragment?.id ?? null;
-  }, [activeTranscriptFragment?.id, transcriptFindSnapshot?.sourceKey]);
-  const transcriptFindAdapter = useMemo(
-    () =>
-      transcriptFindSnapshot
-        ? createTranscriptFindAdapter({
-            snapshot: transcriptFindSnapshot,
-            getCurrentSourceKey: () => transcriptFindSourceKeyRef.current,
-            getActiveFragmentId: () =>
-              transcriptFindActiveFragmentIdRef.current,
-            publishPresentation: setTranscriptFindPresentation,
-            readerNavigation: readerTextFindNavigation,
-          })
-        : null,
-    [readerTextFindNavigation, transcriptFindSnapshot],
-  );
-  useLayoutEffect(() => {
-    if (!transcriptFindAdapter) return;
-    return () => transcriptFindAdapter.dispose();
-  }, [transcriptFindAdapter]);
-  const pdfFindAdapter = usePdfPaneFind({
-    mediaId: id,
-    runtime:
-      isPdf && canRead && pdfFindRuntimePublication?.mediaId === id
-        ? pdfFindRuntimePublication.runtime
-        : null,
-    navigationActions: pdfNavigationActions,
-  });
-
-  const webPaneFindSource = useMemo(
-    () =>
-      media?.kind === "web_article" &&
-      canRead &&
-      fragments.length > 0 &&
-      webSections !== null
-        ? {
-            kind: "Available" as const,
-            mediaId: id,
-            fragments,
-            sections: webSections,
-            generation: readerNavigation!.generation,
-          }
-        : { kind: "Unavailable" as const },
-    [canRead, fragments, id, media?.kind, webSections, readerNavigation],
-  );
-  const webPaneFindCapability = useWebPaneFindCapability({
-    source: webPaneFindSource,
-    renderedStateRef: webFindRenderedStateRef,
-    readerNavigation: readerTextFindNavigation,
-  });
-  const handleEpubFindSourceChanged = useCallback(() => {
+  const handleEpubSourceChanged = useCallback(() => {
     setActiveEpubFragmentId(null);
     setActiveEpubFragment(null);
     setEpubRestoreRequest(null);
     appliedEpubNavigationRef.current = null;
     setEpubSourceGeneration((generation) => generation + 1);
   }, [setActiveEpubFragment]);
-  const epubFindNavigation = isEpub && canRead ? readerNavigation : null;
-  const epubPaneFindCapability = useEpubPaneFind({
-    mediaId: id,
-    navigation: epubFindNavigation,
-    renderedStateRef: epubFindRenderedStateRef,
-    readerNavigation: readerTextFindNavigation,
-    onSourceChanged: handleEpubFindSourceChanged,
+
+  // Find: one source per snapshot key; live reader state reaches it through findLive.
+  const findLive = useRef({
+    activeTranscriptFragment,
+    pdfPage: pdfReaderResourceState.pageNumber,
+    navigationInspect,
+    handleEpubSourceChanged,
   });
-  const selectedMediaFindCapability = useMemo<
-    PaneFindCapability<MediaPaneFindError | PdfFindError>
-  >(() => {
-    switch (media?.kind) {
-      case "web_article":
-        return webPaneFindCapability;
-      case "podcast_episode":
-      case "video":
-        return transcriptFindAdapter
-          ? { kind: "Available", adapter: transcriptFindAdapter }
-          : { kind: "Unavailable" };
-      case "epub":
-        return epubPaneFindCapability;
-      case "pdf":
-        return pdfFindAdapter
-          ? { kind: "Available", adapter: pdfFindAdapter }
-          : { kind: "Unavailable" };
-      default:
-        return { kind: "Unavailable" };
-    }
-  }, [
-    epubPaneFindCapability,
-    media?.kind,
-    pdfFindAdapter,
-    transcriptFindAdapter,
-    webPaneFindCapability,
-  ]);
-  const mediaPaneFindResult = usePaneFind({
-    capability: selectedMediaFindCapability,
-  });
-  const mediaPaneFind =
-    mediaPaneFindResult.kind === "Available"
-      ? mediaPaneFindResult.controller
-      : null;
-  const canonicalFindRebind =
-    media?.kind === "web_article"
-      ? webPaneFindCapability.kind === "Available"
-        ? webPaneFindCapability.adapter.rebuildPresentation
-        : null
-      : isEpub
-        ? epubPaneFindCapability.kind === "Available"
-          ? epubPaneFindCapability.adapter.rebuildPresentation
-          : null
-        : null;
-  useLayoutEffect(() => {
-    canonicalFindRebind?.();
-  }, [
-    canonicalFindRebind,
-    activeContent?.fragmentId,
-    activeContent?.canonicalText,
-    renderedHtml,
-    activeEpubFragment,
-    readerLayoutReady,
-  ]);
+  findLive.current = {
+    activeTranscriptFragment,
+    pdfPage: pdfReaderResourceState.pageNumber,
+    navigationInspect,
+    handleEpubSourceChanged,
+  };
+  const transcriptPartial =
+    transcriptState === "partial" || transcriptCoverage === "partial";
+  const findStructure =
+    documentStructure.kind === "Present" ? documentStructure.value : null;
+  const findKey =
+    !media || !canRead
+      ? null
+      : (media.kind === "web_article" || media.kind === "epub") &&
+          readerNavigation?.kind === media.kind &&
+          findStructure &&
+          (isEpub || fragments.length > 0)
+        ? `${media.kind}:${id}:${readerNavigation.generation}`
+        : transcriptSourceKey
+          ? `transcript:${id}:${transcriptSourceKey}:${transcriptPartial}`
+          : isPdf && pdfFind?.identity
+            ? `pdf:${id}:${pdfFind.identity}`
+            : null;
+  const findSource = useMemo((): FindSource<unknown> | null => {
+    const live = () => findLive.current; // read at call time, not when the source was built
+    const inspect = (hit: TextHit, signal: AbortSignal) =>
+      live().navigationInspect(
+        {
+          kind: "Text",
+          fragmentId: hit.unit,
+          startOffset: hit.start,
+          endOffset: hit.end,
+          focus: "Preserve",
+        },
+        absent(),
+        signal,
+      );
+    if (!findKey) return null;
+    if (findKey.startsWith("pdf:"))
+      return pdfFind!.source({
+        key: findKey,
+        currentPage: () => live().pdfPage,
+        inspect: (pageNumber, signal) =>
+          live().navigationInspect(
+            { kind: "Pdf", target: { kind: "Find", pageNumber } },
+            absent(),
+            signal,
+          ),
+      });
+    if (findKey.startsWith("transcript:"))
+      return transcriptFindSource({
+        key: findKey,
+        fragments,
+        chapters: media?.chapters ?? [],
+        partial: transcriptPartial,
+        inspect,
+        activeId: () => live().activeTranscriptFragment?.id ?? null,
+        list: () => transcriptSegmentListRef.current,
+      });
+    const text = fragments.map((fragment) => ({
+      id: fragment.id,
+      text: fragment.canonical_text,
+    }));
+    return textFindSource({
+      key: findKey,
+      label: isEpub ? "Find in book" : "Find in article",
+      structure: findStructure!,
+      inspect,
+      units: isEpub
+        ? epubUnits(id, readerNavigation!, () =>
+            live().handleEpubSourceChanged(),
+          )
+        : async () => text,
+      rendered: () => findRenderedRef.current,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: one source per snapshot key
+  }, [findKey]);
+  // The reader re-rendered the text find paints into; repaint against the new DOM.
+  const findPresentation = useMemo(
+    () => ({}),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: these are the reader's render inputs
+    [
+      activeContent?.fragmentId,
+      activeContent?.canonicalText,
+      activeTextPublicationKey,
+      renderedHtml,
+      activeEpubFragment,
+      readerLayoutReady,
+    ],
+  );
+  const find = useFind(findSource, findPresentation);
 
   useLayoutEffect(() => {
     if (!isEpub || !epubFragments || !activeEpubFragment) {
@@ -3473,11 +3386,11 @@ export default function MediaPaneBody() {
     );
     if (!renderedSectionStillCurrent) {
       clearEpubFragmentAuxiliaryState();
-      handleEpubFindSourceChanged();
+      handleEpubSourceChanged();
     }
   }, [
     epubFragments,
-    handleEpubFindSourceChanged,
+    handleEpubSourceChanged,
     isEpub,
     clearEpubFragmentAuxiliaryState,
     activeEpubFragment,
@@ -6489,116 +6402,13 @@ export default function MediaPaneBody() {
       secondaryPane?.activeSurfaceId,
     ],
   );
-  const transcriptFindAvailable = transcriptFindAdapter !== null;
-  const mediaFindInputLabel =
-    media?.kind === "epub"
-      ? "Find in book"
-      : media?.kind === "pdf"
-        ? "Find in PDF"
-        : transcriptFindAvailable
-          ? "Find in transcript"
-          : "Find in article";
   const inspectorCommandsRef =
-    useRef<
-      Pick<
-        ReturnType<typeof useResourceInspector>,
-        | "openSearchResults"
-        | "closeSearchResults"
-        | "previewSearchResult"
-        | "companionAction"
-      >
-    >(null);
-  const paneFindChromeReleaseRef = useRef<(() => void) | null>(null);
-  const releasePaneFindChromeLock = useCallback(() => {
-    paneFindChromeReleaseRef.current?.();
-    paneFindChromeReleaseRef.current = null;
-  }, []);
-  const openFind = useCallback(() => {
-    if (!mediaPaneFind) return;
-    paneFindChromeReleaseRef.current ??=
-      mobileChromeVisibleLocks.acquire("pane-find");
-    try {
-      mediaPaneFind.onOpen();
-    } catch (error) {
-      releasePaneFindChromeLock();
-      throw error;
-    }
-  }, [mediaPaneFind, mobileChromeVisibleLocks, releasePaneFindChromeLock]);
-  const dismissFind = useCallback(() => {
-    try {
-      mediaPaneFind?.onDismiss();
-      inspectorCommandsRef.current?.closeSearchResults();
-    } finally {
-      releasePaneFindChromeLock();
-    }
-  }, [mediaPaneFind, releasePaneFindChromeLock]);
-  useEffect(() => {
-    if (mediaPaneFind) return;
-    releasePaneFindChromeLock();
-  }, [mediaPaneFind, releasePaneFindChromeLock]);
-  useEffect(
-    () => () => {
-      releasePaneFindChromeLock();
-    },
-    [releasePaneFindChromeLock],
-  );
-  const showFindResults = useCallback((trigger: HTMLButtonElement | null) => {
-    inspectorCommandsRef.current?.openSearchResults(trigger);
-  }, []);
-  const activateFindResult = useCallback(
-    (key: Parameters<PaneFindOccurrencesPublication["onActivate"]>[0]) => {
-      if (!mediaPaneFind) return;
-      void mediaPaneFind.onActivate(key).then((previewed) => {
-        if (previewed) inspectorCommandsRef.current?.previewSearchResult();
-      });
-    },
-    [mediaPaneFind],
-  );
-  const findPublicationBase = useMemo<PaneFindOccurrencesPublication | null>(
-    () =>
-      mediaPaneFind
-        ? {
-            kind: "FindOccurrences",
-            query: mediaPaneFind.query,
-            partialSourceLabel: transcriptFindAvailable
-              ? "available transcript"
-              : undefined,
-            inputLabel: mediaFindInputLabel,
-            placeholder: mediaFindInputLabel,
-            onOpen: openFind,
-            onQueryChange: mediaPaneFind.onQueryChange,
-            onDismiss: dismissFind,
-            result: mediaPaneFind.result,
-            scope: mediaPaneFind.scope,
-            matchCase: mediaPaneFind.matchCase,
-            wholeWord: mediaPaneFind.wholeWord,
-            onMatchCaseChange: mediaPaneFind.onMatchCaseChange,
-            onWholeWordChange: mediaPaneFind.onWholeWordChange,
-            onStep: mediaPaneFind.onStep,
-            onActivate: activateFindResult,
-            onShowResults: showFindResults,
-            returnToReadingPosition: mediaPaneFind.returnToReadingPosition,
-            resultsExpanded: false,
-          }
-        : null,
-    [
-      activateFindResult,
-      dismissFind,
-      mediaPaneFind,
-      mediaFindInputLabel,
-      openFind,
-      showFindResults,
-      transcriptFindAvailable,
-    ],
-  );
+    useRef<Pick<ReturnType<typeof useResourceInspector>, "companionAction">>(
+      null,
+    );
   const searchResultsBody = useMemo(
-    () =>
-      findPublicationBase ? (
-        <PaneSearchResults
-          publication={{ ...findPublicationBase, resultsExpanded: true }}
-        />
-      ) : undefined,
-    [findPublicationBase],
+    () => (find ? <FindResults find={find} /> : undefined),
+    [find],
   );
   const inspector = useResourceInspector({
     scheme: "media",
@@ -6716,34 +6526,13 @@ export default function MediaPaneBody() {
     requestSecondarySurface,
   ]);
 
-  const mediaFindSourceKey =
-    selectedMediaFindCapability.kind === "Available"
-      ? selectedMediaFindCapability.adapter.sourceKey
-      : null;
-  const previousMediaFindSourceRef = useRef(mediaFindSourceKey);
-  useLayoutEffect(() => {
-    if (previousMediaFindSourceRef.current === mediaFindSourceKey) return;
-    previousMediaFindSourceRef.current = mediaFindSourceKey;
-    releasePaneFindChromeLock();
-    inspector.closeSearchResults();
-  }, [inspector, mediaFindSourceKey, releasePaneFindChromeLock]);
-  const findPublication = useMemo<PaneFindOccurrencesPublication | null>(
-    () =>
-      findPublicationBase
-        ? {
-            ...findPublicationBase,
-            resultsExpanded: inspector.searchResultsExpanded,
-          }
-        : null,
-    [findPublicationBase, inspector.searchResultsExpanded],
-  );
   // Find rides the reader's parsed source, which always lands after the media
   // record. A readable document promises Find, so between those two moments the
   // answer is unknown, not negative, and the header holds the entry in place.
   // Transcript media is not promised: with no transcript there is nothing to
   // find, and a resolving entry that later vanished would be the same reflow.
   const findResolving =
-    findPublication === null &&
+    find === null &&
     (media === null ||
       (canRead &&
         (media.kind === "web_article" ||
@@ -6774,11 +6563,11 @@ export default function MediaPaneBody() {
           }
         : {}),
       ...(mediaInstrument ? { instrument: mediaInstrument } : {}),
-      search:
-        findPublication ??
-        (findResolving
+      search: find
+        ? { kind: "Find" as const, find }
+        : findResolving
           ? { kind: "Resolving" as const, control: "Find" as const }
-          : undefined),
+          : undefined,
       companionAction: companionAction ?? undefined,
       // The pane's canonical identity is its route key, not a fact of any read it
       // is still waiting on. Publishing it late leaves the menu with no subject,
@@ -6790,7 +6579,7 @@ export default function MediaPaneBody() {
     [
       companionAction,
       activityMenuAction,
-      findPublication,
+      find,
       findResolving,
       id,
       readerViewActions,
@@ -7063,7 +6852,6 @@ export default function MediaPaneBody() {
       evidenceEndMs={resolvedEvidenceRoute.transcriptHighlight?.endMs}
       contentRef={contentRef}
       segmentListRef={transcriptSegmentListRef}
-      findPresentation={transcriptFindPresentation}
       onSegmentSelect={handleTranscriptSegmentSelect}
       onSeek={handleTranscriptSeek}
       onContentClick={handleReaderContentClick}
@@ -7307,7 +7095,7 @@ export default function MediaPaneBody() {
                     }
                   }}
                   onIntrinsicWidthChange={handlePdfIntrinsicWidthChange}
-                  onFindRuntimeReady={handlePdfFindRuntimeReady}
+                  onFindReady={setPdfFind}
                   startPageNumber={
                     canonicalResetRevision === null
                       ? (activeRequestedPdfPageNumber ??

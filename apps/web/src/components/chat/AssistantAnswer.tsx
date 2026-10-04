@@ -31,10 +31,10 @@ export default function AssistantAnswer({
         <div
           key={blockIndex}
           className={styles.assistantBlock}
-          data-pane-find-block="true"
-          data-pane-find-message-id={message.id}
+          data-pane-find-block={
+            message.status === "pending" ? undefined : "true"
+          }
           data-pane-find-message-ordinal={messageOrdinal}
-          data-pane-find-block-index={blockIndex}
           data-pane-find-role={message.role}
         >
           <MarkdownMessage

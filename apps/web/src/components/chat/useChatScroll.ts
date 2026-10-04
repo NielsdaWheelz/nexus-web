@@ -26,30 +26,17 @@ export interface ChatScrollHandle {
   captureAnchor: (activationAnchorMessageId?: string | null) => void;
   /** Scroll the scoped transcript to a rendered message. */
   scrollToMessage: (messageId: string) => void;
-  /** Capture one exact visible transcript eye-line before a Find preview. */
+  /** Find's way back: the transcript's scroll offset and whether it was following. */
   captureReadingPosition: () => ChatReadingPosition | null;
-  /** Restore a previously captured Find eye-line and reading focus exactly. */
   restoreReadingPosition: (position: ChatReadingPosition) => void;
-  /** Return the instance-scoped committed transcript root for DOM projection. */
+  /** The committed transcript root Find projects. */
   getTranscriptElement: () => HTMLDivElement | null;
-  /** Preview one revision-scoped Find occurrence without navigation. */
-  previewFindOccurrence: (request: {
-    readonly messageId: string;
-    readonly ranges: readonly Range[];
-    readonly signal: AbortSignal;
-  }) => Promise<ChatFindPreviewSettlement>;
-  /** Remove transient Find presentation without moving the transcript. */
-  clearFindPresentation: () => void;
+  /** Release the pin and bring a Find match to the top inset (and into its code block's horizontal view). */
+  revealRange: (range: Range) => void;
 }
 
-type ChatFindPreviewSettlement =
-  | { readonly kind: "Revealed" }
-  | { readonly kind: "Cancelled" };
-
 export interface ChatReadingPosition {
-  readonly anchorMessageId: string;
-  readonly anchorOffsetTop: number;
-  readonly focusTarget: HTMLElement | null;
+  readonly scrollTop: number;
   readonly pinMode: PinMode;
 }
 
@@ -72,7 +59,8 @@ type PinMode = "top" | "bottom" | "released";
 // bottom (reference: use-stick-to-bottom STICK_TO_BOTTOM_OFFSET_PX).
 const NEAR_BOTTOM_PX = 72;
 
-interface UseChatScroll {
+/** The view's wiring, plus the methods exposed to the engine via ChatSurface's ref. */
+interface UseChatScroll extends ChatScrollHandle {
   /** Reserved spacer height (px) rendered as the last child of the transcript. */
   spacerHeight: number;
   /** True when the newest message bottom sits below the fold (drives ↓ Latest). */
@@ -85,15 +73,6 @@ interface UseChatScroll {
   onScroll: () => void;
   /** A user scroll gesture (wheel/touch/key); yields the next scroll to onScroll. */
   beginUserScroll: () => void;
-  /** Methods exposed to the engine via ChatSurface's ref. */
-  captureAnchor: ChatScrollHandle["captureAnchor"];
-  scrollToMessage: ChatScrollHandle["scrollToMessage"];
-  captureReadingPosition: ChatScrollHandle["captureReadingPosition"];
-  restoreReadingPosition: ChatScrollHandle["restoreReadingPosition"];
-  getTranscriptElement: ChatScrollHandle["getTranscriptElement"];
-  previewFindOccurrence: ChatScrollHandle["previewFindOccurrence"];
-  clearFindPresentation: ChatScrollHandle["clearFindPresentation"];
-  setReadingFocusTarget: (target: HTMLElement | null) => void;
 }
 
 function findMessage(scrollport: HTMLElement, messageId: string) {
@@ -137,10 +116,6 @@ export function useChatScroll(
   // no target pending is a genuine user gesture (wheel, touch, key, or scrollbar
   // drag) and re-engages or releases following (see onScroll).
   const programmaticTargetRef = useRef<number | null>(null);
-  const activeFindMessageRef = useRef<HTMLElement | null>(null);
-  const findPreviewGenerationRef = useRef(0);
-  const findPreviewLeaseRef = useRef(false);
-  const readingFocusTargetRef = useRef<HTMLElement | null>(null);
 
   const topInset = useCallback(() => {
     const transcript = transcriptRef.current;
@@ -213,7 +188,7 @@ export function useChatScroll(
   // frame. `released` is left untouched (a user gesture owns the viewport).
   const holdPin = useCallback(() => {
     const scrollport = scrollportRef.current;
-    if (!scrollport || findPreviewLeaseRef.current) return;
+    if (!scrollport) return;
 
     if (pinModeRef.current === "top") {
       const anchorId = anchorMessageIdRef.current;
@@ -266,150 +241,44 @@ export function useChatScroll(
     [scrollportRef, scrollTo, topInset],
   );
 
-  const setReadingFocusTarget = useCallback((target: HTMLElement | null) => {
-    readingFocusTargetRef.current = target;
-  }, []);
-
   const captureReadingPosition = useCallback<
     ChatScrollHandle["captureReadingPosition"]
   >(() => {
     const scrollport = scrollportRef.current;
-    if (!scrollport) return null;
-    const scrollTopNow = scrollport.scrollTop;
-    const viewportBottom = scrollTopNow + scrollport.clientHeight;
-    let firstIntersecting: HTMLElement | null = null;
-    let firstAtOrBelowTop: HTMLElement | null = null;
-    for (const element of scrollport.querySelectorAll<HTMLElement>(
-      "[data-message-id]",
-    )) {
-      if (element.offsetTop + element.offsetHeight <= scrollTopNow) continue;
-      if (element.offsetTop >= viewportBottom) continue;
-      firstIntersecting ??= element;
-      if (!firstAtOrBelowTop && element.offsetTop >= scrollTopNow) {
-        firstAtOrBelowTop = element;
+    return (
+      scrollport && {
+        scrollTop: scrollport.scrollTop,
+        pinMode: pinModeRef.current,
       }
-    }
-    const anchor = firstAtOrBelowTop ?? firstIntersecting;
-    const anchorMessageId = anchor?.dataset.messageId;
-    if (!anchor || !anchorMessageId) return null;
-    const focusTarget = readingFocusTargetRef.current;
-    return {
-      anchorMessageId,
-      anchorOffsetTop: anchor.offsetTop - scrollTopNow,
-      focusTarget:
-        focusTarget?.isConnected === true && scrollport.contains(focusTarget)
-          ? focusTarget
-          : null,
-      pinMode: pinModeRef.current,
-    };
+    );
   }, [scrollportRef]);
-
-  const clearFindPresentation = useCallback(() => {
-    findPreviewGenerationRef.current += 1;
-    const active = activeFindMessageRef.current;
-    if (active) {
-      delete active.dataset.findActive;
-    }
-    activeFindMessageRef.current = null;
-    if (findPreviewLeaseRef.current) {
-      findPreviewLeaseRef.current = false;
-      pinModeRef.current = "released";
-    }
-  }, []);
-
-  const yieldFindPreview = useCallback(() => {
-    findPreviewGenerationRef.current += 1;
-    findPreviewLeaseRef.current = false;
-  }, []);
 
   const getTranscriptElement = useCallback(
     () => transcriptRef.current,
     [transcriptRef],
   );
 
-  const previewFindOccurrence = useCallback<
-    ChatScrollHandle["previewFindOccurrence"]
-  >(
-    async ({ messageId, ranges, signal }) => {
+  const revealRange = useCallback<ChatScrollHandle["revealRange"]>(
+    (range) => {
       const scrollport = scrollportRef.current;
-      if (!scrollport) {
-        throw new Error("Conversation Find scroll owner is unavailable.");
-      }
-      if (signal.aborted) return { kind: "Cancelled" };
-      const target = findMessage(scrollport, messageId);
-      if (!target) {
-        throw new Error("Conversation Find message anchor is unavailable.");
-      }
-      if (
-        ranges.length === 0 ||
-        ranges.some(
-          (range) =>
-            !range.startContainer.isConnected ||
-            !range.endContainer.isConnected ||
-            !target.contains(range.startContainer) ||
-            !target.contains(range.endContainer),
-        )
-      ) {
-        throw new Error("Conversation Find ranges are unavailable.");
-      }
-      const generation = findPreviewGenerationRef.current + 1;
-      findPreviewGenerationRef.current = generation;
-      findPreviewLeaseRef.current = true;
-      await new Promise<void>((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      const code = range.startContainer.parentElement?.closest<HTMLElement>(
+        "[data-pane-find-code-scroll]",
       );
-      if (
-        signal.aborted ||
-        findPreviewGenerationRef.current !== generation
-      ) {
-        if (findPreviewGenerationRef.current === generation) {
-          findPreviewLeaseRef.current = false;
-        }
-        return { kind: "Cancelled" };
-      }
-      const priorMessage = activeFindMessageRef.current;
-      if (priorMessage && priorMessage !== target) {
-        delete priorMessage.dataset.findActive;
-      }
-      target.dataset.findActive = "true";
-      activeFindMessageRef.current = target;
-
-      const firstRange = ranges[0]!;
-      const firstRangeElement =
-        firstRange.startContainer.nodeType === Node.ELEMENT_NODE
-          ? (firstRange.startContainer as Element)
-          : firstRange.startContainer.parentElement;
-      const codeScroll = firstRangeElement?.closest<HTMLElement>(
-        "[data-pane-find-code-scroll='true']",
-      );
-      if (codeScroll && target.contains(codeScroll)) {
-        const rangeRects = ranges
-          .filter((range) => {
-            const element =
-              range.startContainer.nodeType === Node.ELEMENT_NODE
-                ? (range.startContainer as Element)
-                : range.startContainer.parentElement;
-            return (
-              element?.closest("[data-pane-find-code-scroll='true']") ===
-              codeScroll
-            );
-          })
-          .map((range) => range.getBoundingClientRect());
-        const rangeLeft = Math.min(...rangeRects.map((rect) => rect.left));
-        const rangeRight = Math.max(...rangeRects.map((rect) => rect.right));
-        const codeRect = codeScroll.getBoundingClientRect();
-        if (rangeLeft < codeRect.left) {
-          codeScroll.scrollLeft += rangeLeft - codeRect.left;
-        } else if (rangeRight > codeRect.right) {
-          codeScroll.scrollLeft += rangeRight - codeRect.right;
-        }
-      }
-      const rangeTop =
+      const rect = range.getBoundingClientRect();
+      const box = code?.getBoundingClientRect();
+      if (code && box)
+        code.scrollLeft +=
+          rect.left < box.left
+            ? rect.left - box.left
+            : Math.max(0, rect.right - box.right);
+      if (!scrollport) return;
+      pinModeRef.current = "released";
+      scrollTo(
         scrollport.scrollTop +
-        firstRange.getBoundingClientRect().top -
-        scrollport.getBoundingClientRect().top;
-      scrollTo(rangeTop - topInset());
-      return { kind: "Revealed" };
+          range.getBoundingClientRect().top -
+          scrollport.getBoundingClientRect().top -
+          topInset(),
+      );
     },
     [scrollTo, scrollportRef, topInset],
   );
@@ -418,25 +287,10 @@ export function useChatScroll(
     ChatScrollHandle["restoreReadingPosition"]
   >(
     (position) => {
-      const scrollport = scrollportRef.current;
-      if (!scrollport) {
-        throw new Error("Conversation Find scroll owner is unavailable.");
-      }
-      const target = findMessage(scrollport, position.anchorMessageId);
-      if (!target) {
-        throw new Error("Conversation Find return anchor is unavailable.");
-      }
-      clearFindPresentation();
       pinModeRef.current = position.pinMode;
-      scrollTo(target.offsetTop - position.anchorOffsetTop);
-      if (
-        position.focusTarget?.isConnected === true &&
-        scrollport.contains(position.focusTarget)
-      ) {
-        position.focusTarget.focus({ preventScroll: true });
-      }
+      scrollTo(position.scrollTop);
     },
-    [clearFindPresentation, scrollTo, scrollportRef],
+    [scrollTo],
   );
 
   const captureAnchor = useCallback<ChatScrollHandle["captureAnchor"]>(
@@ -627,7 +481,6 @@ export function useChatScroll(
         programmaticTargetRef.current = null;
       }
     } else if (scrollport) {
-      yieldFindPreview();
       const maxScrollTop = Math.max(
         0,
         scrollport.scrollHeight - scrollport.clientHeight,
@@ -638,7 +491,7 @@ export function useChatScroll(
           : "released";
     }
     measureLatestBelowFold();
-  }, [scrollportRef, measureLatestBelowFold, yieldFindPreview]);
+  }, [scrollportRef, measureLatestBelowFold]);
 
   // A user input gesture (wheel / touch / key) is taking over the viewport. Drop
   // the programmatic-settle marker so the resulting scroll is read by `onScroll`
@@ -648,8 +501,7 @@ export function useChatScroll(
   // (e.g. a wheel at the bottom) must not drop an active follow.
   const beginUserScroll = useCallback(() => {
     programmaticTargetRef.current = null;
-    yieldFindPreview();
-  }, [yieldFindPreview]);
+  }, []);
 
   const onComposerWheel = useCallback(
     (event: WheelEvent<HTMLElement>) => {
@@ -678,11 +530,10 @@ export function useChatScroll(
         return;
       }
       programmaticTargetRef.current = null;
-      yieldFindPreview();
       scrollport.scrollTop += event.deltaY;
       event.preventDefault();
     },
-    [scrollportRef, yieldFindPreview],
+    [scrollportRef],
   );
 
   return {
@@ -697,8 +548,6 @@ export function useChatScroll(
     captureReadingPosition,
     restoreReadingPosition,
     getTranscriptElement,
-    previewFindOccurrence,
-    clearFindPresentation,
-    setReadingFocusTarget,
+    revealRange,
   };
 }
