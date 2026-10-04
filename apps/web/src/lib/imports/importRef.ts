@@ -1,7 +1,7 @@
 /**
- * The Imports identities and closed wire vocabularies that carry no decoder and
- * no client directive, so the URL codec, the strict decoders and a server
- * component can all read them (contract §5, D18/D19).
+ * Imports URL/input catalogs and branded identities, shared without a client
+ * directive. Read payloads use generated wire types; docs/modules/imports.md
+ * owns the read boundary.
  */
 
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
@@ -24,10 +24,9 @@ export const IMPORT_STATE_KINDS = [
 export type ImportStateKind = (typeof IMPORT_STATE_KINDS)[number];
 
 /**
- * The browser mirror of `SafeFailureCode` (`python/nexus/schemas/import_history.py`).
- * A Python kernel case reads this list and asserts set equality, so a code added
- * to the catalog on one side fails a proof rather than reaching a reader as an
- * unexplained token.
+ * Runtime failure-code options for URL filters and media failure copy.
+ * The server vocabulary is owned by python/nexus/schemas/import_history.py;
+ * typed read consumers use the generated contract.
  */
 export const SAFE_FAILURE_CODES = [
   "E_ARCHIVE_UNSAFE",

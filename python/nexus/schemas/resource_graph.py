@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from nexus.schemas.highlights import HIGHLIGHT_COLORS, PdfQuadIn
 from nexus.schemas.resource_items import (
@@ -78,6 +78,12 @@ class ConnectionLinkNoteOut(ResourceGraphModel):
     ref: str
     note_block_id: UUID
     preview: str | None
+
+    @model_validator(mode="after")
+    def validate_note_identity(self) -> "ConnectionLinkNoteOut":
+        if self.ref != f"note_block:{self.note_block_id}":
+            raise ValueError("link note ref must identify note_block_id")
+        return self
 
 
 class ConnectionOut(ResourceGraphModel):

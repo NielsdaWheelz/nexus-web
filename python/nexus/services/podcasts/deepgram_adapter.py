@@ -107,7 +107,7 @@ class DeepgramClient:
                 timeout=self.timeout_seconds,
             )
             response.raise_for_status()
-            payload = response.json()
+            segments = _extract_segments(response.json())
         except httpx.TimeoutException:
             return _failure(ApiErrorCode.E_TRANSCRIPTION_TIMEOUT.value, "Transcription timed out")
         except httpx.HTTPStatusError as exc:
@@ -122,7 +122,6 @@ class DeepgramClient:
             logger.warning("deepgram_provider_request_failed", error=str(exc))
             return _failure(ApiErrorCode.E_TRANSCRIPTION_FAILED.value, "Transcription failed")
 
-        segments = _extract_segments(payload)
         if not segments:
             return _failure(ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value, "Transcript unavailable")
         return TranscriptionResult(status="completed", segments=segments)
@@ -148,8 +147,11 @@ def _extract_segments(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(results, dict):
         raise ValueError("Deepgram response is missing results")
 
+    utterances = results.get("utterances")
+    if utterances is not None and not isinstance(utterances, list):
+        raise ValueError("Deepgram utterances must be an array")
     segments: list[dict[str, Any]] = []
-    for utterance in results.get("utterances") or []:
+    for utterance in utterances or []:
         if not isinstance(utterance, dict):
             continue
         transcript = str(utterance.get("transcript") or "").strip()
@@ -169,15 +171,26 @@ def _extract_segments(payload: Any) -> list[dict[str, Any]]:
     if segments:
         return segments
 
-    alternatives = _first_dict(_first_dict(results.get("channels")).get("alternatives"))
-    transcript = str(alternatives.get("transcript") or "").strip()
+    channels = results.get("channels")
+    if channels is not None and not isinstance(channels, list):
+        raise ValueError("Deepgram channels must be an array")
+    alternatives = _first_dict(channels).get("alternatives")
+    if alternatives is not None and not isinstance(alternatives, list):
+        raise ValueError("Deepgram alternatives must be an array")
+    alternative = _first_dict(alternatives)
+    transcript = str(alternative.get("transcript") or "").strip()
     metadata = payload.get("metadata")
-    duration_ms = _seconds_to_ms(metadata.get("duration") if isinstance(metadata, dict) else None)
+    if metadata is not None and not isinstance(metadata, dict):
+        raise ValueError("Deepgram metadata must be an object")
+    duration_ms = _seconds_to_ms(metadata.get("duration") if metadata else None)
     if duration_ms is None:
+        words = alternative.get("words")
+        if words is not None and not isinstance(words, list):
+            raise ValueError("Deepgram words must be an array")
         duration_ms = max(
             (
                 end_ms
-                for word in alternatives.get("words") or []
+                for word in words or []
                 if isinstance(word, dict)
                 and (end_ms := _seconds_to_ms(word.get("end"))) is not None
             ),
@@ -188,8 +201,8 @@ def _extract_segments(payload: Any) -> list[dict[str, Any]]:
     return [{"text": transcript, "t_start_ms": 0, "t_end_ms": duration_ms, "speaker_label": None}]
 
 
-def _first_dict(value: Any) -> dict[str, Any]:
-    if isinstance(value, list) and value and isinstance(value[0], dict):
+def _first_dict(value: list[Any] | None) -> dict[str, Any]:
+    if value and isinstance(value[0], dict):
         return value[0]
     return {}
 
@@ -197,8 +210,9 @@ def _first_dict(value: Any) -> dict[str, Any]:
 def _seconds_to_ms(raw_value: Any) -> int | None:
     try:
         seconds = float(raw_value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     if not math.isfinite(seconds) or seconds < 0:
         return None
-    return int(round(seconds * 1000))
+    milliseconds = seconds * 1000
+    return int(round(milliseconds)) if math.isfinite(milliseconds) else None

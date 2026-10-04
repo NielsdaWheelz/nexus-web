@@ -2,66 +2,60 @@
 
 import { useState } from "react";
 import Button from "@/components/ui/Button";
-import {
-  activityRuntime,
-  useActivityRuntimeSnapshot,
-} from "@/lib/consumption/activityRuntime";
+import { activityRuntime, useActivityRuntimeSnapshot } from "@/lib/consumption/activityRuntime";
 import { activityStatus } from "@/lib/consumption/activityStatus";
 import styles from "./StatsPaneBody.module.css";
 
+const DISCARD = "Discard failed activity? This permanently removes only the failed local rows.";
+
 export default function ActivityHealth() {
   const snapshot = useActivityRuntimeSnapshot();
+  const { capture, sync } = snapshot;
   const [busy, setBusy] = useState(false);
-  const [asyncDefect, setAsyncDefect] = useState<unknown>(null);
+  const [defect, setDefect] = useState<unknown>(null);
+  if (defect !== null) throw defect;
+  const runtime = activityRuntime();
   const run = (operation: () => Promise<void>) => {
     setBusy(true);
-    void operation().catch(setAsyncDefect).finally(() => setBusy(false));
+    void operation()
+      .catch(setDefect)
+      .finally(() => setBusy(false));
   };
-  if (asyncDefect !== null) throw asyncDefect;
+  const blocked =
+    capture.kind === "Blocked" &&
+    (capture.reason === "StorageUnavailable"
+      ? "Local storage is unavailable."
+      : "The local activity queue is full.");
 
-  const status = activityStatus(snapshot);
   return (
-    <section className={styles.activityHealth} aria-labelledby="activity-health-title">
+    <section className={styles.health} aria-labelledby="activity-health-title">
       <div>
         <h2 id="activity-health-title">Activity</h2>
-        <strong role="status">{status.label}</strong>
-        {snapshot.capture.kind === "Blocked" ? (
+        <strong role="status">{activityStatus(snapshot).label}</strong>
+        {blocked ? <span>{blocked}</span> : null}
+        {sync.kind === "Pending" ? (
           <span>
-            {snapshot.capture.reason === "StorageUnavailable"
-              ? "Local storage is unavailable."
-              : "The local activity queue is full."}
+            {sync.count} pending · oldest {new Date(sync.oldestAt).toLocaleString()}
           </span>
         ) : null}
-        {snapshot.sync.kind === "Pending" ? (
-          <span>
-            {snapshot.sync.count} pending · oldest{" "}
-            {new Date(snapshot.sync.oldestAt).toLocaleString()}
-          </span>
-        ) : null}
-        {snapshot.sync.kind === "Failed" ? (
-          <span>{snapshot.sync.count} failed</span>
-        ) : null}
+        {sync.kind === "Failed" ? <span>{sync.count} failed</span> : null}
       </div>
-      <div className={styles.activityHealthActions}>
+      <div className={styles.healthActions}>
         <Button
           variant="secondary"
           size="sm"
-          disabled={busy || snapshot.capture.kind === "Blocked"}
-          onClick={() =>
-            run(() =>
-              activityRuntime().setPaused(snapshot.capture.kind !== "Paused"),
-            )
-          }
+          disabled={busy || capture.kind === "Blocked"}
+          onClick={() => run(() => runtime.setPaused(capture.kind !== "Paused"))}
         >
-          {snapshot.capture.kind === "Paused" ? "Resume" : "Pause"}
+          {capture.kind === "Paused" ? "Resume" : "Pause"}
         </Button>
-        {snapshot.sync.kind === "Failed" ? (
+        {sync.kind === "Failed" ? (
           <>
             <Button
               variant="secondary"
               size="sm"
               disabled={busy}
-              onClick={() => run(() => activityRuntime().retryFailed())}
+              onClick={() => run(runtime.retryFailed)}
             >
               Retry now
             </Button>
@@ -69,15 +63,7 @@ export default function ActivityHealth() {
               variant="ghost"
               size="sm"
               disabled={busy}
-              onClick={() => {
-                if (
-                  window.confirm(
-                    "Discard failed activity? This permanently removes only the failed local rows.",
-                  )
-                ) {
-                  run(() => activityRuntime().discardFailed());
-                }
-              }}
+              onClick={() => window.confirm(DISCARD) && run(runtime.discardFailed)}
             >
               Discard failed
             </Button>

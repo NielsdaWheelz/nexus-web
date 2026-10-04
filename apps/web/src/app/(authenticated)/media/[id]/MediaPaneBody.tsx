@@ -248,7 +248,7 @@ import {
   type ReaderLocationTarget,
 } from "@/lib/reader/readerLocationHref";
 import ReaderNavigationStatus, { type ReaderNavigationStatusView } from "@/components/reader/ReaderNavigationStatus";
-import { usePlayerCommands } from "@/lib/player/globalPlayer";
+import { usePlayerCommands } from "@/lib/player/playerRuntime";
 import {
   type ReaderNavigationSection,
   type ReaderNavigationTextPoint,

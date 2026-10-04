@@ -1,10 +1,8 @@
 """Wire schemas for resource items.
 
-Two serialization families live here and the split is load-bearing: the item /
-activation / capability / locator / mutation models are camelCase on the wire
-(:class:`CamelModel`), while the surface and command models stay snake_case — the web
-decodes both key-exact, so a blanket alias generator over the module would break the
-surface routes.
+Item / capability / locator / mutation models are camelCase on the wire
+(:class:`CamelModel`). The shared activation, surface and command models stay
+snake_case; a blanket alias generator would break their contracts.
 """
 
 from __future__ import annotations
@@ -14,7 +12,15 @@ from typing import Annotated, Any, Literal, TypeGuard
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from pydantic import AliasChoices, AliasGenerator, BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    AliasChoices,
+    AliasGenerator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 from pydantic.alias_generators import to_camel
 
 from nexus.services.resource_graph.refs import (
@@ -229,7 +235,7 @@ class ResourceItemCapabilitiesOut(CamelModel):
     chat_subject: Literal["none", "label", "scope", "readable", "quote", "generated_output"]
     readable: Literal["none", "scope", "body", "media"]
     inspectable: Literal["none", "media_document_map"]
-    citable_result_type: str | None = None
+    citable_result_type: str | None
     citation_output_source: bool
     app_search_scope: bool
     conversation_search_scope: bool
@@ -246,11 +252,19 @@ class ResourceItemCapabilitiesOut(CamelModel):
     expandable: bool
 
 
-class ResourceActivationOut(CamelModel):
+class ResourceActivationOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     resource_ref: str
     kind: Literal["route", "external", "none"]
     href: str | None
     unresolved_reason: str | None
+
+    @model_validator(mode="after")
+    def _validate_href(self) -> ResourceActivationOut:
+        if (self.kind == "none") != (self.href is None):
+            raise ValueError("activation href must be absent exactly for none")
+        return self
 
 
 class ResourceItemOut(CamelModel):
@@ -259,11 +273,11 @@ class ResourceItemOut(CamelModel):
     id: UUID
     label: str
     summary: str
-    route: str | None = None
+    route: str | None
     activation: ResourceActivationOut
     missing: bool = False
     capabilities: ResourceItemCapabilitiesOut
-    version_by_lane: dict[str, int] = Field(default_factory=dict)
+    version_by_lane: dict[str, int]
 
 
 class ResourceRefLocatorIn(BaseModel):
@@ -302,7 +316,7 @@ class ResourceLocatorResolveRequest(BaseModel):
 class ResourceLocatorResolutionOut(CamelModel):
     locator: ResourceLocatorIn
     resource_item: ResourceItemOut
-    canonical_href: str | None = None
+    canonical_href: str | None
 
 
 class ResourceLocatorResolveResponse(BaseModel):
@@ -354,7 +368,7 @@ class ResourceSurfaceOccurrence(BaseModel):
 
 class ResourceSurfaceOut(BaseModel):
     source: ResourceSurfaceNode
-    ordered_items: list[ResourceSurfaceOccurrence] = Field(default_factory=list)
+    ordered_items: list[ResourceSurfaceOccurrence]
 
     model_config = ConfigDict(extra="forbid")
 
@@ -590,5 +604,5 @@ class ResourceBodyMutationOut(CamelModel):
 class ResourceTitleMutationOut(CamelModel):
     client_mutation_id: str
     item: ResourceItemOut
-    versions: dict[str, dict[str, int]] = Field(default_factory=dict)
+    versions: dict[str, dict[str, int]]
     updated_at: datetime

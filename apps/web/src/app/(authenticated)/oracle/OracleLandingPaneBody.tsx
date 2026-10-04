@@ -16,9 +16,9 @@ import { createRandomId } from "@/lib/createRandomId";
 import { decodeOracleCreateResponse } from "@/lib/oracle/oracleReadingWire";
 import {
   requirePaneRuntime,
-  usePaneReturnReady,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
+import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import OracleAlephGrid from "./OracleAlephGrid";
 import OracleThemeWrapper from "./OracleThemeWrapper";
 import styles from "./oracle.module.css";

@@ -61,6 +61,15 @@ availability facts; it does not aggregate related-resource histories. the
 invoking menu trigger owns focus return, with pane chrome as fallback. an old
 request cannot install into a newer overlay session.
 
+`GET /media/{id}` owns the generated `Data[MediaOut]` contract, including required
+nullable fields and nested player aliases. it keeps the existing default
+response serialization. the pane loader and metadata overlay share one
+media-detail ingress: typed wire facts retain their values, duration minutes
+become their existing domain wrappers, and media identity/date/player identity
+receive local brands. requested-media identity stays checked. chapter
+presentation remains owned by that ingress as described in the
+[reader module](reader-implementation.md).
+
 author works sort oldest first by default on `media.original_published_date`.
 podcasts and catalogue-only gutenberg works have unknown publication dates and
 sort last in either date direction. the gutenberg mirror stores no date.

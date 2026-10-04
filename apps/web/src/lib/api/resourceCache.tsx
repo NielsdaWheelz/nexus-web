@@ -43,27 +43,29 @@ export class ResourceCache {
 
   // Warm a key's data on intent: idempotent (a present key is a no-op), bounded (LRU),
   // abortable. Never poisons — a failed/aborted prefetch is removed so the mount fetches
-  // normally. At most one in-flight fetch per key, deduping concurrent prefetch + mount.
+  // normally. One cached prefetch per key; a mount adopts and consumes its promise.
+  // A consumed request keeps running, but only the installed entry may settle the cache.
   prefetch(key: string, run: (signal: AbortSignal) => Promise<unknown>): void {
     if (this.entries.has(key)) {
       return;
     }
     const controller = new AbortController();
     const promise = run(controller.signal);
-    this.entries.set(key, {
+    const pending: ResourceCacheEntry = {
       status: "pending",
       promise,
       abort: () => controller.abort(),
-    });
+    };
+    this.entries.set(key, pending);
     this.prefetchOrder.push(key);
     promise.then(
       (data) => {
-        if (this.entries.get(key)?.status === "pending") {
+        if (this.entries.get(key) === pending) {
           this.entries.set(key, { status: "ready", data });
         }
       },
       () => {
-        if (this.entries.get(key)?.status === "pending") {
+        if (this.entries.get(key) === pending) {
           this.entries.delete(key);
           this.forgetPrefetch(key);
         }

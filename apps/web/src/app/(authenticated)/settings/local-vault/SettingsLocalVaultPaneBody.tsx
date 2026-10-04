@@ -28,7 +28,7 @@ import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import Pill from "@/components/ui/Pill";
 import Toggle from "@/components/ui/Toggle";
-import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
+import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import {
   localVaultErrorMessage,
   type LocalVaultOperation,

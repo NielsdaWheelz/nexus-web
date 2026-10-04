@@ -1,4 +1,4 @@
-"""The Imports query owner (spec `imports-workspace-hard-cutover.md`).
+"""The Imports query owner (spec `docs/modules/imports.md`).
 
 One classification over two owners: every upload session the viewer created and
 every viewer-visible media row that has a source attempt. An upload keeps its
@@ -25,6 +25,7 @@ from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
+from nexus.db.models import MediaKind
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.import_history import (
     SAFE_FAILURE_CODES,
@@ -52,7 +53,6 @@ from nexus.schemas.imports import (
     ImportStateNeedsAttention,
     ImportSummary,
     MediaImportRef,
-    MediaKind,
     ParsedImportRef,
     RepairSearchOffer,
     RepairSourceOffer,
@@ -939,7 +939,7 @@ def _item(
     return ImportItem(
         ref=ref,
         title=str(row["title"]),
-        media_kind=cast(MediaKind, str(row["media_kind"])),
+        media_kind=MediaKind(row["media_kind"]),
         source_label=absent() if host is None else present(str(host)),
         media_ref=absent() if media is None else present(f"media:{media.id}"),
         state=_state(row, media),

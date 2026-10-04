@@ -36,8 +36,10 @@ from nexus.schemas.presence import Present
 from nexus.schemas.resource_action_snapshots import (
     ConsumptionResourceActionCapabilityOut,
     EpisodeConsumptionResourceActionCapabilityOut,
-    HighlightNoteResourceActionCapabilityOut,
-    LecternMembershipResourceActionCapabilityOut,
+    HighlightNoteAbsentOut,
+    HighlightNotePresentOut,
+    LecternMembershipAbsentOut,
+    LecternMembershipPresentOut,
     OfflineReadingResourceActionCapabilityOut,
     OpenSourceResourceActionCapabilityOut,
     PlaybackResourceActionCapabilityOut,
@@ -518,7 +520,7 @@ def _capabilities_for_ref(
     elif ref.scheme == "external_snapshot":
         pass
     elif ref.scheme == "contributor":
-        capabilities.append(_simple("RenameContributor", _blocked("PermissionDenied")))
+        pass
     elif ref.scheme == "podcast":
         _extend_podcast(ref, capability=capability, facts=facts, capabilities=capabilities)
     elif ref.scheme == "reader_apparatus_item":
@@ -607,14 +609,12 @@ def _extend_media(
     item_id = facts.lectern_item_ids.get(ref.id)
     if item_id is not None:
         capabilities.append(
-            LecternMembershipResourceActionCapabilityOut(
+            LecternMembershipPresentOut(
                 availability=_available(), state="Present", lectern_item_id=item_id
             )
         )
     else:
-        capabilities.append(
-            LecternMembershipResourceActionCapabilityOut(availability=_available(), state="Absent")
-        )
+        capabilities.append(LecternMembershipAbsentOut(availability=_available(), state="Absent"))
 
     if capability.library_placement == "ManageEntries":
         capabilities.append(_simple("LibraryPlacement"))
@@ -687,14 +687,14 @@ def _extend_highlight(
     capabilities.append(_simple("EditHighlight", owner_availability))
     if action.note_block_id is None:
         capabilities.append(
-            HighlightNoteResourceActionCapabilityOut(
+            HighlightNoteAbsentOut(
                 availability=_available(),
                 state="Absent",
             )
         )
     else:
         capabilities.append(
-            HighlightNoteResourceActionCapabilityOut(
+            HighlightNotePresentOut(
                 availability=_available(),
                 state="Present",
                 note_block_id=action.note_block_id,

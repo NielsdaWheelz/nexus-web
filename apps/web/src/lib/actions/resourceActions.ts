@@ -125,7 +125,6 @@ export const RESOURCE_ACTION_CATALOG = {
       Ready: { label: "Open transcript", icon: Captions },
       Partial: { label: "Open transcript", icon: Captions },
       Unavailable: { label: "Transcript unavailable", icon: Captions },
-      FailedQuota: { label: "Retry transcript", icon: RotateCcw },
       FailedProvider: { label: "Retry transcript", icon: RotateCcw },
     },
   },
@@ -225,11 +224,6 @@ export const RESOURCE_ACTION_CATALOG = {
   "ResourceOperation.NoteBlock.EditBody": {
     label: "Edit note",
     icon: FilePenLine,
-    group: "CreateTransform",
-  },
-  "ResourceOperation.Contributor.Rename": {
-    label: "Edit name…",
-    icon: Pencil,
     group: "CreateTransform",
   },
   "ResourceOperation.Artifact.Regenerate": {

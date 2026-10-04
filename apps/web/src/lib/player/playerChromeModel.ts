@@ -1,7 +1,7 @@
 import type {
   GlobalPlayerState,
   PlayerSessionCapability,
-} from "@/lib/player/globalPlayer";
+} from "@/lib/player/playerRuntime";
 
 type CanonicalState = Extract<
   GlobalPlayerState,

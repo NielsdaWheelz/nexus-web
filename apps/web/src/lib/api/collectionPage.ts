@@ -35,7 +35,7 @@ function invalidCollectionPage(message: string): never {
   throw new ApiError(200, "E_INVALID_RESPONSE", message);
 }
 
-function decodeCollectionCursor(raw: unknown): CollectionCursor {
+export function decodeCollectionCursor(raw: unknown): CollectionCursor {
   const cursor = expectString(raw, "CollectionPage.data.nextCursor.value");
   if (cursor.length === 0) {
     return invalidCollectionPage(

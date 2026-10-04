@@ -1,29 +1,27 @@
-import { type ApiPath, apiFetch } from "@/lib/api/client";
+import { ApiError, type ApiPath, apiFetch } from "@/lib/api/client";
 import {
-  decodeCollectionPage,
+  decodeCollectionCursor,
+  decodeCollectionRevision,
   type CollectionCursor,
   type CollectionPage,
   type CollectionRevision,
 } from "@/lib/api/collectionPage";
+import { absent, present } from "@/lib/api/presence";
+import type { ApiJson } from "@/lib/api/wire";
 import { contributorWorksResource } from "@/lib/api/resource";
-import { decodeContributorDetail } from "@/lib/contributors/detail";
 import type { AuthorWorksView } from "@/lib/contributors/workView";
 import { parseContributorHandle } from "@/lib/contributors/handle";
-import { decodeContributorWorkItem } from "@/lib/contributors/workItem";
+import { decodeOptionalPublicationDate } from "@/lib/dates/publicationDate";
+import { mediaSummaryFromWire } from "@/lib/media/mediaSummary";
+import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import type {
   ContributorDetail,
-  ContributorRenameBody,
-  ContributorSearchItem,
   ContributorSearchPage,
   ContributorWorkItem,
   MediaAuthorCredit,
   MediaAuthors,
   MediaAuthorsPutBody,
 } from "@/lib/contributors/types";
-
-// Every inbound handle is branded via parseContributorHandle at this decode
-// boundary (D-45): a non-canonical handle from the wire is a defect, surfaced as a
-// throw here rather than propagated as a bare string into the UI.
 
 interface Envelope<T> {
   data: T;
@@ -33,25 +31,52 @@ function encode(value: string): string {
   return encodeURIComponent(value);
 }
 
-function decodeSearchItem(raw: unknown): ContributorSearchItem {
-  const item = raw as {
-    handle: string;
-    href: string;
-    displayName: string;
-    workCount: number;
-    workExamples?: Array<{ title: string; href: string }> | null;
-    matchedAlias?: string | null;
-  };
+export function contributorDetailFromWire(
+  detail: ApiJson<"/contributors/{contributor_handle}", "get">["data"],
+): ContributorDetail {
   return {
-    handle: parseContributorHandle(item.handle),
-    href: item.href,
-    displayName: item.displayName,
-    workCount: item.workCount,
-    workExamples: Array.isArray(item.workExamples)
-      ? item.workExamples.map((example) => ({ title: example.title, href: example.href }))
-      : [],
-    matchedAlias: item.matchedAlias ?? null,
+    ...detail,
+    handle: parseContributorHandle(detail.handle),
+    actionSubject: { ref: assumeCanonicalResourceRef(detail.actionSubject.ref) },
   };
+}
+
+export function contributorWorksPageFromWire(
+  page: ApiJson<"/contributors/{contributor_handle}/works", "get">["data"],
+): CollectionPage<ContributorWorkItem> {
+  try {
+    return {
+      items: page.items.map((item): ContributorWorkItem => {
+        if (item.kind === "Media") {
+          return {
+            ...item,
+            mediaSummary: mediaSummaryFromWire(item.mediaSummary),
+            actionSubject: { ref: assumeCanonicalResourceRef(item.actionSubject.ref) },
+          };
+        }
+        const date = decodeOptionalPublicationDate(item.date, "ContributorWorkItem.date");
+        if (item.kind === "Podcast") {
+          return {
+            ...item,
+            date,
+            actionSubject: { ref: assumeCanonicalResourceRef(item.actionSubject.ref) },
+          };
+        }
+        return { ...item, date };
+      }),
+      collectionRevision: decodeCollectionRevision(page.collectionRevision),
+      nextCursor: page.nextCursor.kind === "Present"
+        ? present(decodeCollectionCursor(page.nextCursor.value))
+        : absent(),
+    };
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(
+      200,
+      "E_INVALID_RESPONSE",
+      error instanceof Error ? error.message : "Invalid CollectionPage",
+    );
+  }
 }
 
 function decodeMediaAuthorCredit(raw: unknown): MediaAuthorCredit {
@@ -97,24 +122,25 @@ export async function fetchContributorSearch(
   if (options.cursor) params.set("cursor", options.cursor);
   if (options.limit !== undefined) params.set("limit", String(options.limit));
   const path = `/api/contributors?${params.toString()}` as ApiPath;
-  const response = await apiFetch<Envelope<{ contributors?: unknown[]; nextCursor?: string | null }>>(
+  const response = await apiFetch<ApiJson<"/contributors", "get">>(
     path,
     { cache: "no-store", signal: options.signal },
   );
   return {
-    contributors: Array.isArray(response.data.contributors)
-      ? response.data.contributors.map(decodeSearchItem)
-      : [],
-    nextCursor: response.data.nextCursor ?? null,
+    ...response.data,
+    contributors: response.data.contributors.map((item) => ({
+      ...item,
+      handle: parseContributorHandle(item.handle),
+    })),
   };
 }
 
 export async function fetchContributorDetail(handle: string): Promise<ContributorDetail> {
-  const response = await apiFetch<Envelope<unknown>>(
+  const response = await apiFetch<ApiJson<"/contributors/{contributor_handle}", "get">>(
     `/api/contributors/${encode(handle)}` as ApiPath,
     { cache: "no-store" },
   );
-  return decodeContributorDetail(response.data);
+  return contributorDetailFromWire(response.data);
 }
 
 export interface ContributorWorksOptions {
@@ -130,7 +156,7 @@ export async function fetchContributorWorks(
   handle: string,
   { view, cursor, collectionRevision, limit, signal }: ContributorWorksOptions,
 ): Promise<CollectionPage<ContributorWorkItem>> {
-  const response = await apiFetch<unknown>(
+  const response = await apiFetch<ApiJson<"/contributors/{contributor_handle}/works", "get">>(
     contributorWorksResource.clientPath({
       handle,
       view,
@@ -140,7 +166,7 @@ export async function fetchContributorWorks(
     }),
     { cache: "no-store", signal },
   );
-  return decodeCollectionPage(response, decodeContributorWorkItem);
+  return contributorWorksPageFromWire(response.data);
 }
 
 export async function putMediaAuthors(
@@ -152,15 +178,4 @@ export async function putMediaAuthors(
     { method: "PUT", body: JSON.stringify(body) },
   );
   return decodeMediaAuthors(response.data);
-}
-
-export async function patchContributorDisplayName(
-  handle: string,
-  body: ContributorRenameBody,
-): Promise<ContributorDetail> {
-  const response = await apiFetch<Envelope<unknown>>(
-    `/api/contributors/${encode(handle)}` as ApiPath,
-    { method: "PATCH", body: JSON.stringify(body) },
-  );
-  return decodeContributorDetail(response.data);
 }

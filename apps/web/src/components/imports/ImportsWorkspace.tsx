@@ -253,9 +253,9 @@ function ImportsWorkspaceView({
       ? undefined
       : page.items.find((item) => item.ref === selectedRef);
   const matchedEvent =
-    selected === undefined || selected.matchedEvent.kind !== "Present"
+    selected === undefined || selected.matched_event.kind !== "Present"
       ? null
-      : selected.matchedEvent.value;
+      : selected.matched_event.value;
   useEffect(() => {
     onMatchedEvent(matchedEvent);
   }, [matchedEvent, onMatchedEvent]);
@@ -307,8 +307,8 @@ function ImportsWorkspaceView({
   const viewCount = (candidate: ImportsView): number | null => {
     if (summary === null || candidate === "History") return null;
     return candidate === "NeedsAttention"
-      ? summary.needsAttentionCount
-      : summary.activeCount;
+      ? summary.needs_attention_count
+      : summary.active_count;
   };
   // What every import is doing is a claim the reader reads against the list
   // under it, so it is published only over a list that states facts: the page

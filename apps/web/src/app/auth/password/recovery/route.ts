@@ -5,7 +5,7 @@ import {
 } from "@/lib/auth/form-response";
 import { parsePasswordRecoveryForm } from "@/lib/auth/form-fields";
 import { requestPasswordRecoveryFlow } from "@/lib/auth/password-flow";
-import { createRouteHandlerClient } from "@/lib/supabase/route-handler";
+import { createSessionEstablishmentClient } from "@/lib/supabase/route-handler";
 
 export const runtime = "nodejs";
 
@@ -23,7 +23,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
   }
 
-  const auth = await createRouteHandlerClient();
+  const auth = await createSessionEstablishmentClient();
   const outcome = await requestPasswordRecoveryFlow({
     supabase: auth.supabase,
     email: form.email,
@@ -31,7 +31,6 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   switch (outcome.kind) {
     case "Requested": {
-      await auth.settlePendingCookieWrites();
       return auth.applyCookies(
         NextResponse.redirect(new URL("/forgot-password?sent=1", requestForm.origin), {
           status: 303,

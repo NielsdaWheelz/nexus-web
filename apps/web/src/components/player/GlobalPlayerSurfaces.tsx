@@ -11,7 +11,7 @@ import {
   usePlayerCommands,
   usePlayerSession,
   usePlayerSettings,
-} from "@/lib/player/globalPlayer";
+} from "@/lib/player/playerRuntime";
 import { projectPlayerChrome } from "@/lib/player/playerChromeModel";
 import { usePlayerCapture } from "@/lib/walknotes/usePlayerCapture";
 import { useWorkspaceStore } from "@/lib/workspace/store";

@@ -1,5 +1,6 @@
-import { decodePresence, type Presence } from "@/lib/api/presence";
-import { decodeReaderSourceIssues, type ReaderSourceIssue } from "@/lib/media/readerSourceIssues";
+import type { Schema } from "@/lib/api/wire";
+import { decodePresence } from "@/lib/api/presence";
+import { decodeReaderSourceIssues } from "@/lib/media/readerSourceIssues";
 import {
   expectArray,
   expectExactRecord,
@@ -8,62 +9,14 @@ import {
   expectString,
 } from "@/lib/validation";
 
-export interface ReaderNavigationFragment {
-  fragment_id: string;
-  fragment_idx: number;
-  char_count: number;
-}
+export type ReaderNavigationFragment = Schema<"ReaderNavigationFragmentOut">;
+export type ReaderNavigationTextPoint = Schema<"NavigationTextPointOut">;
+export type ReaderNavigationSection = Schema<"ReaderNavigationSectionOut">;
+export type ReaderNavigationTocNode = Schema<"ReaderNavigationTocNodeOut">;
+type ReaderNavigationLocation = Schema<"ReaderNavigationLocationOut">;
+export type MediaNavigation = Schema<"MediaNavigationOut">;
 
-export interface ReaderNavigationTextPoint {
-  fragment_id: string;
-  offset: number;
-}
-
-export interface ReaderNavigationTextRange {
-  start: ReaderNavigationTextPoint;
-  end: ReaderNavigationTextPoint;
-}
-
-export interface ReaderNavigationSection {
-  section_id: string;
-  anchor_id: Presence<string>;
-  label: string;
-  parent_section_id: Presence<string>;
-  target: ReaderNavigationTextPoint;
-  extent: Presence<ReaderNavigationTextRange>;
-  source: "Publisher" | "Heading" | "Both" | "InferredNumberedEntry";
-}
-
-export interface ReaderNavigationTocNode {
-  id: string;
-  label: string;
-  target: Presence<ReaderNavigationTextPoint>;
-  section_id: Presence<string>;
-  children: ReaderNavigationTocNode[];
-}
-
-export interface ReaderNavigationLocation {
-  id: string;
-  label: string;
-  target: Presence<ReaderNavigationTextPoint>;
-}
-
-export interface MediaNavigationResponse {
-  data: {
-    media_id: string;
-    kind: "epub" | "web_article";
-    generation: number;
-    fragments: ReaderNavigationFragment[];
-    sections: ReaderNavigationSection[];
-    toc_nodes: ReaderNavigationTocNode[];
-    landmarks: ReaderNavigationLocation[];
-    page_list: ReaderNavigationLocation[];
-    source_issues: ReaderSourceIssue[];
-  };
-}
-
-export type MediaNavigation = MediaNavigationResponse["data"];
-
+/** Persisted offline packages still need strict version-independent validation. */
 export function decodeMediaNavigation(
   raw: unknown,
   name = "MediaNavigation",
@@ -262,15 +215,6 @@ function decodeNavigationFragment(
       value.char_count,
       `${name}.char_count`,
     ),
-  };
-}
-
-export function decodeMediaNavigationResponse(
-  raw: unknown,
-): MediaNavigationResponse {
-  const value = expectExactRecord(raw, ["data"], "MediaNavigationResponse");
-  return {
-    data: decodeMediaNavigation(value.data, "MediaNavigationResponse.data"),
   };
 }
 

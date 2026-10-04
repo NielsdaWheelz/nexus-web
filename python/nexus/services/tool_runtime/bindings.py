@@ -22,7 +22,7 @@ from nexus.services.tool_runtime.handlers import execute_nexus_tool
 type NexusToolAvailability = Available[Any] | Unavailable
 
 # Rotate when a handler or its transitive domain behavior changes.
-_IMPLEMENTATION_REVISION = "nexus-tools.v5"
+_IMPLEMENTATION_REVISION = "nexus-tools.v6"
 _POLICY_EPOCH = PolicyEpoch("nexus-v1")
 
 

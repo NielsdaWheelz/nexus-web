@@ -2,7 +2,9 @@ import { cookies } from "next/headers";
 import {
   getSupabaseAuthCookieNames,
   getSupabaseAuthCookieValue,
+  getSupabaseRefreshToken,
   readSupabaseSessionCookie,
+  withholdSupabaseSessionCredentials,
   type CookieValue,
 } from "@/lib/auth/session-cookie";
 import {
@@ -72,9 +74,15 @@ function applyCookieWrites(
 async function runRefresh(
   presentedCookies: readonly CookieValue[],
 ): Promise<SessionRefreshOutcome> {
-  let providerCookies = [...presentedCookies];
+  const refreshToken = getSupabaseRefreshToken(presentedCookies);
+  if (!refreshToken) {
+    return {
+      kind: "SessionEnded",
+      cookieNames: getSupabaseAuthCookieNames(presentedCookies),
+    };
+  }
+  let providerCookies = withholdSupabaseSessionCredentials(presentedCookies);
   const cookiesToSet: CookieToSet[] = [];
-  let cookieWriteCount = 0;
 
   const supabase = createSupabaseServerClient(
     {
@@ -84,7 +92,6 @@ async function runRefresh(
       setAll(nextCookies: CookieToSet[]) {
         cookiesToSet.push(...nextCookies);
         providerCookies = applyCookieWrites(providerCookies, nextCookies);
-        cookieWriteCount += nextCookies.length;
       },
     },
     "Supabase refresh timed out",
@@ -92,7 +99,7 @@ async function runRefresh(
 
   let result: Awaited<ReturnType<typeof supabase.auth.refreshSession>>;
   try {
-    result = await supabase.auth.refreshSession();
+    result = await supabase.auth.refreshSession({ refresh_token: refreshToken });
   } catch (error) {
     if (isAbortError(error) || isAuthDependencyFailure(error)) {
       throw new AuthDependencyError();
@@ -123,15 +130,6 @@ async function runRefresh(
   if (!data.session) {
     // justify-defect: provider success must establish a session.
     throw new Error("Supabase refresh succeeded without a session");
-  }
-
-  let previousWriteCount = cookieWriteCount;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    if (cookieWriteCount === previousWriteCount) {
-      break;
-    }
-    previousWriteCount = cookieWriteCount;
   }
 
   const [firstCookie, ...remainingCookies] = cookiesToSet;

@@ -1,4 +1,4 @@
-"""Imports workspace wire contracts (spec `imports-workspace-hard-cutover.md`).
+"""Imports workspace wire contracts (`docs/modules/imports.md`).
 
 One import is either an upload obligation (`upload:<handle>`) or a media row
 that has at least one source attempt (`media:<uuid>`). A published upload keeps
@@ -21,6 +21,7 @@ from uuid import UUID
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 from pydantic_core import core_schema
 
+from nexus.db.models import MediaKind
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.import_history import HistoryCoverage, HistoryEntry, SafeFailureCode, Stage
 from nexus.schemas.media import SourceProgress
@@ -42,7 +43,6 @@ def _media_resource_ref(value: str) -> str:
 # The linked media named in the resource-action grammar (`media:<uuid>`), the
 # identity every media action speaks (contract D16).
 MediaResourceRef = Annotated[str, AfterValidator(_media_resource_ref)]
-MediaKind = Literal["web_article", "epub", "pdf", "podcast_episode", "video"]
 WaitingReason = Literal["Queue", "Capacity", "RetryBackoff"]
 ImportView = Literal["NeedsAttention", "InProgress", "History"]
 ImportCurrentState = Literal["Active", "NeedsAttention", "Complete"]
@@ -254,6 +254,18 @@ class ImportPage(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    @model_validator(mode="after")
+    def _page_coherence(self) -> Self:
+        if len(self.items) > self.matched_count:
+            raise ValueError("import page returned more items than it matched")
+        if len({item.ref for item in self.items}) != len(self.items):
+            raise ValueError("import page returned the same import twice")
+        if sum(group.count for group in self.groups) > self.matched_count:
+            raise ValueError("import page grouped more imports than it matched")
+        if isinstance(self.next_cursor, Present) and not self.items:
+            raise ValueError("import page continues a page that returned no items")
+        return self
+
 
 class ImportSummary(BaseModel):
     observed_at: datetime
@@ -285,6 +297,15 @@ class ImportDetail(BaseModel):
     source_issues: Presence[ImportSourceIssues]
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _source_issue_count(self) -> Self:
+        count = (
+            len(self.source_issues.value.issues) if isinstance(self.source_issues, Present) else 0
+        )
+        if self.item.source_issue_count != count:
+            raise ValueError("import source issues must match the current import count")
+        return self
 
 
 class HistoryPage(BaseModel):

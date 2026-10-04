@@ -9,7 +9,7 @@ import {
   buildAuthReturnTargetUrl,
   parseAuthReturnTarget,
 } from "@/lib/auth/redirects";
-import { createRouteHandlerClient } from "@/lib/supabase/route-handler";
+import { createSessionEstablishmentClient } from "@/lib/supabase/route-handler";
 
 export const runtime = "nodejs";
 
@@ -28,7 +28,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   const target = parseAuthReturnTarget(form.next);
-  const auth = await createRouteHandlerClient();
+  const auth = await createSessionEstablishmentClient();
   const outcome = await signInWithPasswordFlow({
     supabase: auth.supabase,
     email: form.email,
@@ -37,7 +37,6 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   switch (outcome.kind) {
     case "SignedIn": {
-      await auth.settlePendingCookieWrites();
       return auth.applyCookies(
         NextResponse.redirect(buildAuthReturnTargetUrl(requestForm.origin, target), {
           status: 303,

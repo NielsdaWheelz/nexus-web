@@ -48,13 +48,13 @@ import {
 } from "@/lib/libraries/client";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
+import { usePaneIsActive } from "@/lib/panes/paneRuntime";
 import {
   definePaneVisitDataKey,
   useClearAllPaneVisitData,
-  usePaneIsActive,
   usePaneReturnReady,
   usePaneVisitData,
-} from "@/lib/panes/paneRuntime";
+} from "@/lib/workspace/paneReturnMemento";
 import { isAbortError } from "@/lib/errors";
 import { useRevalidationSettlement } from "@/lib/panes/useRevalidationSettlement";
 import {
@@ -70,7 +70,10 @@ import {
   type SubscriptionFilter,
   type SubscriptionSort,
 } from "@/lib/podcasts/subscriptionView";
-import { runPodcastRefresh } from "@/lib/podcasts/refresh";
+import {
+  podcastRefreshRequestAnnouncement,
+  requestPodcastRefresh,
+} from "@/lib/podcasts/refresh";
 import type { PaneRefreshExecute } from "@/lib/panes/panePublications";
 import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
 import styles from "./page.module.css";
@@ -150,7 +153,6 @@ interface PodcastsSnapshot {
   readonly queryIdentity: string;
   readonly collectionRevision: CollectionRevision;
   readonly nextCursor: Presence<CollectionCursor>;
-  readonly exhaustion: "Partial" | "Complete";
   readonly libraries: readonly MemberLibrary[];
 }
 
@@ -292,7 +294,6 @@ export default function PodcastsPaneBody() {
       queryIdentity: subscriptionQueryIdentity,
       collectionRevision: page.collectionRevision,
       nextCursor: page.nextCursor,
-      exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       libraries: initialLibrariesRef.current,
     };
     controllerRef.current = snapshot;
@@ -516,7 +517,6 @@ export default function PodcastsPaneBody() {
         ...current,
         subscriptions,
         nextCursor: page.nextCursor,
-        exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       };
       controllerRef.current = next;
       setController(next);
@@ -800,24 +800,16 @@ export default function PodcastsPaneBody() {
     visibleRows.length === 0;
 
   const executeRefresh = useCallback<PaneRefreshExecute>(
-    async ({ signal, reportProgress }) => {
+    async ({ signal }) => {
       try {
-        const result = await runPodcastRefresh(
+        const requestedCount = await requestPodcastRefresh(
           { kind: "Podcasts" },
-          {
-            signal,
-            onProgress: ({ finishedCount, requestedCount }) =>
-              reportProgress({
-                kind: "Determinate",
-                finishedCount,
-                requestedCount,
-              }),
-          },
+          signal,
         );
         await revalidateSubscriptions(signal);
         return {
-          kind: result.kind,
-          announcement: result.announcement,
+          kind: "Complete",
+          announcement: podcastRefreshRequestAnnouncement(requestedCount),
         };
       } catch (refreshError: unknown) {
         if (isAbortError(refreshError)) throw refreshError;

@@ -5,124 +5,51 @@ import { NextResponse } from "next/server";
 import { privateNoStoreResponse } from "@/lib/api/privateNoStoreResponse.server";
 import { proxyToFastAPI } from "@/lib/api/proxy";
 import { readDeviceId } from "@/lib/auth/deviceCookie";
-import {
-  decodeActivityRequest,
-  type ActivityRequest,
-} from "./activityContract";
-import { decodeActivityExclusionRequest } from "./activityExclusions";
 
-const ACTIVITY_BATCH_MAX_BYTES = 48_000;
+// Device identity is server-owned: only this BFF names the device, from the httpOnly nx_device
+// cookie, overwriting anything the client sent. FastAPI is the sole validator of the frozen
+// capture body.
 
-function privateJson(
-  body: { error: { code: string; message: string } },
-  status: number,
-): Response {
-  return privateNoStoreResponse(NextResponse.json(body, { status }));
+const failure = (status: number, code: string, message: string) =>
+  privateNoStoreResponse(NextResponse.json({ error: { code, message } }, { status }));
+
+/** The device cookie, which authenticated middleware mints before any request reaches here. */
+async function deviceId(): Promise<string | null> {
+  const id = readDeviceId(await cookies());
+  if (id === null) console.error("consumption_history_device_cookie_missing");
+  return id;
 }
 
-export function invalidConsumptionRequest(message: string): Response {
-  return privateJson(
-    { error: { code: "E_INVALID_REQUEST", message } },
-    400,
-  );
-}
-
-export function activityTooLargeResponse(): Response {
-  return privateJson(
-    {
-      error: {
-        code: "E_CAPTURE_TOO_LARGE",
-        message: "Activity batch is too large",
-      },
-    },
-    413,
-  );
-}
-
-async function consumptionDeviceId(): Promise<
-  { kind: "Present"; value: string } | { kind: "Defect"; response: Response }
-> {
-  const deviceId = readDeviceId(await cookies());
-  if (deviceId !== null) {
-    return { kind: "Present", value: deviceId };
+export async function postActivity(request: Request): Promise<Response> {
+  const raw = await request.text();
+  if (new TextEncoder().encode(raw).byteLength > 48_000) {
+    return failure(413, "E_CAPTURE_TOO_LARGE", "Activity batch is too large");
   }
-  // justify-defect: authenticated app middleware must mint nx_device before a
-  // private Consumption-history request can reach its BFF.
-  console.error("consumption_history_device_cookie_missing");
-  return {
-    kind: "Defect",
-    response: privateJson(
-      { error: { code: "E_INTERNAL", message: "Device cookie missing" } },
-      500,
-    ),
-  };
+  let body: unknown = null;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    // Not JSON: rejected below with every other non-object body.
+  }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return failure(400, "E_INVALID_REQUEST", "Invalid activity batch");
+  }
+  const device = await deviceId();
+  if (device === null) return failure(500, "E_INTERNAL", "Device cookie missing");
+  const { headers, signal } = request;
+  const forwarded = JSON.stringify({ ...body, deviceId: device });
+  const init = { method: "POST", headers, body: forwarded, signal };
+  return proxyToFastAPI(new Request(request.url, init), "/consumption/activity");
 }
 
 export async function proxyConsumptionRead(
   request: Request,
   backendPath: "/consumption/stats" | "/consumption/sessions",
 ): Promise<Response> {
+  const device = await deviceId();
+  if (device === null) return failure(500, "E_INTERNAL", "Device cookie missing");
   const url = new URL(request.url);
-  if (url.searchParams.has("currentDeviceId")) {
-    return invalidConsumptionRequest("currentDeviceId is server-owned");
-  }
-  const device = await consumptionDeviceId();
-  if (device.kind === "Defect") {
-    return device.response;
-  }
-  url.searchParams.set("currentDeviceId", device.value);
-  const forwarded = new Request(url, {
-    method: "GET",
-    headers: request.headers,
-    signal: request.signal,
-  });
-  return proxyToFastAPI(forwarded, backendPath);
-}
-
-export async function postActivity(request: Request): Promise<Response> {
-  const raw = await request.text();
-  if (new TextEncoder().encode(raw).byteLength > ACTIVITY_BATCH_MAX_BYTES) {
-    return activityTooLargeResponse();
-  }
-
-  let decoded: ActivityRequest;
-  try {
-    decoded = decodeActivityRequest(JSON.parse(raw));
-  } catch {
-    return invalidConsumptionRequest("Invalid activity batch");
-  }
-
-  const device = await consumptionDeviceId();
-  if (device.kind === "Defect") return device.response;
-  const forwarded = new Request(request.url, {
-    method: "POST",
-    headers: request.headers,
-    body: JSON.stringify({
-      clientMutationId: decoded.clientMutationId,
-      mediaRef: decoded.mediaRef,
-      deviceId: device.value,
-      deviceClass: decoded.deviceClass,
-      batch: decoded.batch,
-    }),
-    signal: request.signal,
-  });
-  return proxyToFastAPI(forwarded, "/consumption/activity");
-}
-
-export async function postActivityExclusion(
-  request: Request,
-): Promise<Response> {
-  let decoded: ReturnType<typeof decodeActivityExclusionRequest>;
-  try {
-    decoded = decodeActivityExclusionRequest(await request.json());
-  } catch {
-    return invalidConsumptionRequest("Invalid activity exclusion");
-  }
-  const forwarded = new Request(request.url, {
-    method: "POST",
-    headers: request.headers,
-    body: JSON.stringify(decoded),
-    signal: request.signal,
-  });
-  return proxyToFastAPI(forwarded, "/consumption/activity-exclusions");
+  url.searchParams.set("currentDeviceId", device);
+  const { headers, signal } = request;
+  return proxyToFastAPI(new Request(url, { method: "GET", headers, signal }), backendPath);
 }

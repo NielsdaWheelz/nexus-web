@@ -4,9 +4,8 @@ import { internalAuthHeaders } from "@/lib/auth/internal-auth-headers";
 
 // Mints a single-use handoff code against the session tokens. Both the web
 // OAuth callback (Flow B) and the native Google sign-in (Flow C) need the same
-// POST to `/auth/handoff-codes`; this is the one owner. The discriminated
-// return matches the `mintHandoffCode` dep that `handleAuthCallback` consumes;
-// the native route maps `error` to its own 502 surface.
+// POST to `/auth/handoff-codes`; this is the one owner. callers map errors
+// to their existing handoff failure surface.
 export async function mintHandoffCode(args: {
   accessToken: string;
   refreshToken: string;
@@ -30,7 +29,6 @@ export async function mintHandoffCode(args: {
           challenge: args.challenge,
         }),
       },
-      "Handoff mint request timed out",
     );
   } catch (error) {
     if (!(error instanceof Error)) {
@@ -45,7 +43,17 @@ export async function mintHandoffCode(args: {
     return { error: "non_2xx" };
   }
 
-  const body = await response.json();
+  let body;
+  try {
+    body = await response.json();
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) {
+      throw error;
+    }
+    // justify-ignore-error: invalid JSON is the same malformed mint response
+    // as a missing or empty code.
+    return { error: "malformed_response" };
+  }
   const code = body?.data?.code;
   if (typeof code !== "string" || !code) {
     return { error: "malformed_response" };

@@ -1,19 +1,18 @@
-import type { ContributorCredit } from "@/lib/contributors/types";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
-import { absent, type Presence } from "@/lib/api/presence";
+import { absent, present, type Presence } from "@/lib/api/presence";
+import type { ApiJson } from "@/lib/api/wire";
 import {
   decodeOptionalPublicationDate,
+  decodePublicationDateOnly,
   type PublicationDate,
 } from "@/lib/dates/publicationDate";
-import { hrefForResourceActivation } from "@/lib/resources/activation";
-import { normalizeSearchResult } from "./normalizeSearchResult";
-import type {
-  SearchApiResult,
-  SearchResultRowViewModel,
-  SearchType,
-} from "./types";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
+import { mediaSummaryFromWire } from "@/lib/media/mediaSummary";
+import type { SearchResultRowViewModel, SearchType } from "./types";
 
-type NonMediaSearchResult = Exclude<SearchApiResult, { mediaSummary: unknown }>;
+type SearchResult = ApiJson<"/search", "get">["results"][number];
+type NonMediaSearchResult = Exclude<SearchResult, { mediaSummary: unknown }>;
 
 function sanitizeSnippet(snippet: string): string {
   return snippet.replace(/<\/?b>/gi, "");
@@ -49,8 +48,7 @@ export function parseSnippetSegments(snippet: string): EmphasisSegment[] {
 
 function buildSourceMeta(result: NonMediaSearchResult): string | null {
   if (result.type === "contributor") {
-    // Author rows carry no status/kind after the cutover; the "author" type label
-    // is the only meta signal a contributor row needs.
+    // the author label supplies this row's metadata.
     return null;
   }
 
@@ -96,14 +94,15 @@ function buildSourceMeta(result: NonMediaSearchResult): string | null {
     );
   }
 
-  if (result.source_label) {
-    return result.source_label;
-  }
-
   if (result.type === "content_chunk") {
-    const parts = [result.title, result.media_kind.replace(/_/g, " ")];
-    return parts.filter(Boolean).join(" — ") || null;
+    if (result.media_id === null || result.media_kind === null) {
+      // justify-defect: a chunk must identify its source media, unlike other titled rows.
+      throw new Error("Search chunk has no media identity");
+    }
+    return result.source_label ||
+      [result.title, result.media_kind.replace(/_/g, " ")].filter(Boolean).join(" — ") || null;
   }
+  if (result.source_label) return result.source_label;
 
   const parts = [result.source.title];
   if (result.source.media_kind) {
@@ -123,7 +122,12 @@ function publicationDateFor(
     );
   }
   if (!("source" in result)) return absent();
-  return result.source.original_published_date;
+  const date = result.source.original_published_date;
+  return date.kind === "Absent"
+    ? date
+    : present(
+        decodePublicationDateOnly(date.value, "Search source.original_published_date"),
+      );
 }
 
 function buildPrimaryText(result: NonMediaSearchResult): string {
@@ -169,7 +173,6 @@ function buildPrimaryText(result: NonMediaSearchResult): string {
 }
 
 const TYPE_LABELS: Partial<Record<SearchType, string>> = {
-  episode: "episode",
   contributor: "author",
   page: "page",
   conversation: "conversation",
@@ -177,40 +180,67 @@ const TYPE_LABELS: Partial<Record<SearchType, string>> = {
   web_result: "web result",
 };
 
-function getContributorCredits(result: NonMediaSearchResult): ContributorCredit[] {
-  if ("source" in result) return result.source.contributors;
-  if (result.type === "podcast") return result.contributors;
-  return [];
-}
-
-export function adaptSearchResultRow(
-  result: SearchApiResult,
-): SearchResultRowViewModel {
-  const href = hrefForResourceActivation(result.activation);
-  if (!href) {
-    throw new Error("Search result missing activation href");
+function adaptSearchResultRow(result: SearchResult): SearchResultRowViewModel {
+  const activation = result.activation;
+  if (
+    parseResourceRef(activation.resource_ref) === null ||
+    activation.kind === "none" ||
+    !activation.href
+  ) {
+    // justify-defect: search only emits canonical, activatable occurrences.
+    throw new Error("Search result missing canonical activation");
   }
-
+  const context = result.context_ref;
+  if (
+    ("mediaSummary" in result && context.type !== "media") ||
+    ([
+      "contributor", "content_chunk", "fragment", "evidence_span",
+      "reader_apparatus_item", "conversation", "artifact", "web_result",
+    ].includes(result.type) && context.type !== result.type) ||
+    (result.type === "content_chunk" &&
+      (!context.evidence_span_ids || context.evidence_span_ids.length === 0)) ||
+    (result.type === "note_block" &&
+      ((result.note_origin === "highlight_note") !== (result.highlight_excerpt !== null))) ||
+    (result.type === "web_result" && context.id !== result.source_id)
+  ) {
+    // justify-defect: occurrence context and variant-specific identities must agree.
+    throw new Error("Search result identity is inconsistent");
+  }
+  if (
+    result.type === "contributor" &&
+    (!result.contributor_handle || !result.contributor.display_name)
+  ) {
+    // justify-defect: contributor search identities and their display names are nonempty.
+    throw new Error("Search contributor identity is empty");
+  }
+  if (result.type === "artifact") {
+    const ref = parseResourceRef(result.resource_ref);
+    if (ref?.scheme !== "artifact_revision" || ref.id !== result.revision_id) {
+      // justify-defect: a dossier occurrence names the exact revision it carries.
+      throw new Error("Search artifact revision is inconsistent");
+    }
+  }
   const base = {
     key: `${result.type}-${result.id}`,
     score: result.score,
     resourceRef: result.resource_ref,
     ownerResourceRef: result.owner_resource_ref,
-    activation: result.activation,
-    actionSubject: result.actionSubject,
-    citationTarget: result.citation_target,
-    contextRef: {
-      type: result.context_ref.type,
-      id: result.context_ref.id,
-      evidenceSpanIds: result.context_ref.evidence_span_ids ?? [],
-      ...(result.context_ref.locator
-        ? { locator: result.context_ref.locator }
-        : {}),
-    },
+    activation,
+    actionSubject: { ref: assumeCanonicalResourceRef(result.actionSubjectRef) },
     snippetSegments: parseSnippetSegments(result.snippet),
   };
   if ("mediaSummary" in result) {
-    return { ...base, type: result.type, mediaSummary: result.mediaSummary };
+    const summary = result.mediaSummary;
+    if (
+      summary.mediaId !== result.id ||
+      ((result.type === "episode") !== (summary.mediaKind === "podcast_episode")) ||
+      ((result.type === "video") !== (summary.mediaKind === "video"))
+    ) {
+      // justify-defect: the summary and result tag must name the same media and kind.
+      throw new Error("Search media identity is inconsistent");
+    }
+    const mediaSummary = mediaSummaryFromWire(summary);
+    return { ...base, type: result.type, mediaSummary };
   }
   const primaryText = buildPrimaryText(result);
   return {
@@ -224,16 +254,14 @@ export function adaptSearchResultRow(
     primaryText,
     sourceMeta: buildSourceMeta(result),
     publicationDate: publicationDateFor(result),
-    contributorCredits: getContributorCredits(result),
-    noteBody: result.type === "note_block" ? result.body_text : null,
-    noteOrigin: result.type === "note_block" ? result.note_origin : null,
+    contributorCredits: "source" in result
+      ? result.source.contributors
+      : result.type === "podcast" ? result.contributors : [],
   };
 }
 
 export function adaptSearchResults(
-  results: unknown[],
+  results: SearchResult[],
 ): SearchResultRowViewModel[] {
-  return results.map((result) =>
-    adaptSearchResultRow(normalizeSearchResult(result)),
-  );
+  return results.map(adaptSearchResultRow);
 }

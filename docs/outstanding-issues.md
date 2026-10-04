@@ -30,20 +30,18 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
+- [local documents access blocks owned cleanup](tickets/local-documents-access-blocks-owned-cleanup.md): host access denies source reads and cleanup of an unused owned writing checkout; product behavior is unaffected.
+
+- [open] operator credentials · 2026-10-02 cleanup workflow · skid's three peer bearer fields were printed into a tool transcript; coordinate rotation with active sessions: [ticket](tickets/local-qualification-credential-transcript-exposure.md).
 - [open] processing recovery / release · 2026-09-28 pr #387 investigation · the keats normalizations and gutenberg correction never ran in production (commands are unreleased); run them after the release, then land #387: [ticket](tickets/processing-repairs-await-release-then-387.md).
-- [open] release / production · 2026-09-28 cleanup campaign · production still serves 7dc68929b at alembic 0241; main carries irreversible migrations 0242–0251 with preflights to run first: [ticket](tickets/production-release-pending-since-7dc68929b.md).
+- [open] release / production · 2026-09-28 campaign, qualified 2026-10-03 · production schema remains 0241; pending migrations and paired API/web promotion require existing release preflights: [ticket](tickets/production-release-pending-since-7dc68929b.md).
 - [open] resource sharing / production migration · 2026-09-28 resource-sharing reauthoring · run 0249's malformed/duplicate `resource_grants` count read-only against production before deploy: [ticket](tickets/resource-grants-0249-production-preflight.md).
-- [open] resource sharing / sealed handles · 2026-09-28 resource-sharing reauthoring · the public `nxps1_`/`nxpa1_` codec re-derives `sealed_handles`' key schedule byte for byte: [ticket](tickets/public-handle-kdf-duplicates-sealed-handles.md).
 - [deferred] resource sharing / sealed handles · 2026-09-28 resource-sharing reauthoring · owner call: keep `nxps1_`/`nxpa1_` byte-stable across deploys, or scope them to the open tab: [ticket](tickets/public-sealed-handle-codec-stability-decision.md).
 - [deferred] resource sharing / public reader · 2026-09-28 resource-sharing reauthoring · owner call: public PDF bytes keep streaming through the api, or move to signed storage urls: [ticket](tickets/public-pdf-signed-url-decision.md).
-- [open] resource sharing / public reader web · 2026-09-28 resource-sharing review · `/s` article and transcript views re-check an anchor ordinal the server guarantees: [ticket](tickets/public-reader-dead-anchor-ordinal-guard.md).
 - [open] resource sharing / share overlay web · 2026-09-28 resource-sharing review · the Native and X bearer-link triggers stay enabled while another change is in flight: [ticket](tickets/share-overlay-bearer-warning-triggers-ignore-busy.md).
 - [open] web / python comments · 2026-09-28 pr-06 library placement · 25 code comments cite deleted `docs/cutovers/` files as rule owners: [ticket](tickets/code-comments-cite-deleted-cutovers.md).
 - [open] ingest-imports web · 2026-09-28 pr-06 library placement · Add Content still rereads and decides settlement-unknown placement writes and publishes the bus by hand, where the overlay now resends: [ticket](tickets/add-content-placement-unknown-machine.md).
-- [open] typed wire / resource graph · 2026-09-28 typed-wire foundation · `ResourceActivationOut` is camelCase on typed routes and snake_case in the chat citation_index / context_ref_added and oracle passage SSE frames, which are unlisted from the wire dump until they dump by alias: [ticket](tickets/resource-activation-has-two-wire-casings.md).
-- [open] typed wire / sse · 2026-09-28 typed-wire foundation · chat tool_* frames and the media snapshot have no wire model, so their web decoders stay: [ticket](tickets/sse-payloads-without-wire-models.md).
-- [open] resource graph / citations · 2026-09-28 cleanup pr 05 · a citation target on a geometry-less pdf span raises a `ValidationError` in `reader_targets` instead of opening the media: [ticket](tickets/citation-target-pdf-without-geometry.md).
-- [open] search / locator resolver · 2026-09-28 cleanup pr 05 review · `evidence_resolution` and `locator_from_resolution` each build the span's text quote, with different missing-prefix normalization: [ticket](tickets/evidence-locator-rebuilds-text-quote.md).
+- [open] typed wire / chat sse · 2026-09-28 typed-wire foundation · projected chat tool_* frames still lack public wire models and keep hand decoders; media state/done now uses a generated snapshot type: [ticket](tickets/sse-payloads-without-wire-models.md).
 - [open] collections / offline audio · 2026-09-27 cleanup pr 01 · episode rows lost download status in #385; CollectionRow's localAvailability path is dead until restored or deleted: [ticket](tickets/media-rows-lost-offline-download-status.md).
 - [open] android / offline-hosted handoff · 2026-09-26 reader navigation acceptance · shelf-to-hosted bootstrap can fail in mobile viewport and leave a late bridge reply; cold restart recovers: [ticket](tickets/android-offline-to-hosted-deep-link-transient-boundary.md).
 - [open] reader / accessibility · 2026-09-26 reader navigation acceptance · talkback exposed the held-position live region, but its spoken words could not be independently observed: [ticket](tickets/reader-navigation-talkback-spoken-announcement-unverified.md).
@@ -69,7 +67,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] api / operations · 2026-09-27 release preflight · a read-only live source-hash probe exited 137 and restarted the api once: [ticket](tickets/live-api-source-hash-probe-restarted-container.md).
 - [open] reader / selection · 2026-09-24 reader-inspector-controls · retained selection geometry ignores a canonical reset: [ticket](tickets/retained-selection-geometry-ignores-canonical-reset.md).
 - [open] workspace / geometry · 2026-09-24 reader-inspector-controls · pdf inspector overflows the viewport at the pane minimum: [ticket](tickets/pdf-inspector-overflows-viewport-at-pane-minimum.md).
-- [open] workspace / rendering · 2026-09-24 reader-inspector-controls · PaneRuntimeFrame memo never bails out: [ticket](tickets/pane-runtime-frame-memo-never-bails-out.md).
 - [open] workspace / copy · 2026-09-24 reader-inspector-controls · secondary tab close label case differs from pane close: [ticket](tickets/secondary-tab-close-label-case.md).
 - [open] epub ingest · 2026-09-26 fragment-only nav fix review · unsafe authored nav hrefs lack source issues: [ticket](tickets/epub-unsafe-nav-targets-have-no-source-issue.md).
 - [open] worker / indexing · 2026-09-24 reader-inspector-controls · a missing indexing credential is classified as a child defect: [ticket](tickets/indexing-without-credential-is-a-child-defect.md).
@@ -86,13 +83,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] reader / workspace docs · 2026-09-25 article-section-navigation final review · reader and workspace modules cite deleted cutover contracts: [ticket](tickets/reader-workspace-docs-reference-deleted-cutovers.md).
 - [open] android / workspace · 2026-09-22 device verification · an intermediate compatibility probe showed an unproven transient bootstrap failure on reconnect: [ticket](tickets/android-reconnect-transient-workspace-bootstrap.md).
 - [open] collection docs · 2026-09-21 council · library and lectern contracts still point to deleted cutovers: [ticket](tickets/collection-contract-docs-reference-deleted-cutovers.md).
-
-### [OPEN] OI-003 — Imports live re-read loses one tick after a failed re-key
-frontend · opened 2026-09-08 by Claude (imports cutover, Track D2) · P3
-A manual refresh or invalidation whose own summary read fails re-keys the page
-and detail without delivering a tick, so the next successful observation is
-suppressed and the 5 s cadence of contract D10 slips once. See
-[docs/tickets/imports-live-reread-loses-one-tick-after-a-failed-rekey.md](tickets/imports-live-reread-loses-one-tick-after-a-failed-rekey.md).
 
 ### [OPEN] OI-005 — The Imports upload retry guard cannot check the file's size
 frontend · opened 2026-09-08 by Claude (imports cutover, Track E) · P3
@@ -112,12 +102,6 @@ backend · opened 2026-09-08 by Claude (imports cutover, Track A) · P3
 The safe-code catalog carries a PDF text warning as if it were a failure; the
 browser copy is corrected, but warnings still share the failure vocabulary. See
 [docs/tickets/import-history-pdf-text-warning-is-not-a-failure.md](tickets/import-history-pdf-text-warning-is-not-a-failure.md).
-
-### [OPEN] OI-019 — The media-kind Literal has no single owner
-backend · opened 2026-09-08 by Claude (imports cutover, Track C1) · P3
-The media-kind literal is re-listed in several wire schemas instead of being
-owned once. See
-[docs/tickets/media-kind-literal-has-no-owner.md](tickets/media-kind-literal-has-no-owner.md).
 
 ### [OPEN] OI-023 — X-post quote completion defects when its ingest job is not running
 backend · opened 2026-09-08 by Claude (imports cutover, Track B) · P2
@@ -182,14 +166,6 @@ Contract D9's mobile entry — the shared `AccountMenu` item `Imports` with its
 `Pill` badge — is captured in no D15 artifact set, so the visual gate reads it
 from the browser proof alone. See
 [docs/tickets/mobile-imports-entry-has-no-d15-capture.md](tickets/mobile-imports-entry-has-no-d15-capture.md).
-
-### [OPEN] OI-049 — `player_descriptor` is installed after the media DTO is built
-backend · opened 2026-09-08 by Claude (imports cutover, Phase 4 chain M) · P3
-`_media_out_from_row` builds every `MediaOut` with an absent `playerDescriptor`
-and `_apply_consumption_state` then rebuilds the whole DTO through
-`model_validate` to install the derived one, so the descriptor's owner is a
-second pass over an already-built object. See
-[docs/tickets/media-player-descriptor-is-installed-after-construction.md](tickets/media-player-descriptor-is-installed-after-construction.md).
 
 ### [OPEN] OI-050 — Four rules outside `Pill` paint a tone as text over its own tint
 frontend · opened 2026-09-10 by Claude (imports cutover, Phase 7 chain Z review) · P2
@@ -267,17 +243,13 @@ unexpected timeouts. See
 - [open] latest model end-to-end proof · 2026-09-25 model cutover · final permitted provider, codex shell and brave paths passed; background, lifecycle, auth-refresh and owner-blocked anthropic cells remain: [ticket](tickets/latest-model-end-to-end-qualification-incomplete.md).
 - [open] codex background effects · 2026-09-27 shell qualification · a cited dossier ignored a persisted note-create instruction despite `CodexShell` authority: [ticket](tickets/codex-background-write-instruction-ignored.md).
 - [deferred] anthropic nexus cells · 2026-09-27 owner decision · 20 browser/api/worker cells remain blocked by the retention decision: [ticket](tickets/anthropic-nexus-live-cells-owner-blocked.md).
-- [open] nexus · 2026-09-28 launcher rewrite review · bare `/p ` or `/c ` then Enter runs the previous query's active row: [ticket](tickets/nexus-bare-slash-command-keeps-stale-active-row.md).
 - [open] nexus url ingress · 2026-09-28 launcher rewrite review · `?nexus=1` returns after a reload via the SSR pane href: [ticket](tickets/nexus-url-ingress-reappears-after-reload.md).
 - [open] daily page · 2026-09-28 launcher rewrite review · the Today editor drops focus ~150 ms after mobile Add to Today: [ticket](tickets/add-to-today-editor-loses-focus.md).
 - [open] nexus pane warm · 2026-09-28 launcher rewrite review · the first pane warm delays the active-row commit ~60 ms, so a fast Enter hits the previous row: [ticket](tickets/nexus-first-pane-warm-delays-active-row.md).
-- [open] nexus / api client · 2026-09-28 launcher rewrite · Nexus transport-failure copy duplicates `apiTransportFeedback` with different wording: [ticket](tickets/nexus-failure-copy-duplicates-api-transport-feedback.md).
-- [open] typed wire / search · 2026-09-28 launcher rewrite · `/search` and openables search, consumed by the Nexus, keep hand decoders and defect classes: [ticket](tickets/nexus-consumed-search-routes-keep-hand-decoders.md).
-- [deferred] nexus history · 2026-09-28 launcher rewrite (F7, owner decision) · `nexus_usages.source`/`created_at`/`updated_at` and the selection response have no reader: [ticket](tickets/nexus-usage-provenance-columns-have-no-reader.md).
+- [deferred] nexus history · 2026-09-28 launcher rewrite (F7, owner decision) · unused provenance/output retirement is unadopted; preserve creation time, eligibility and replay guards, with sequential-release quiescence undecided: [ticket](tickets/nexus-usage-provenance-columns-have-no-reader.md).
 - [deferred] nexus url ingress · 2026-09-28 launcher rewrite (F10, owner decision) · `?nexus=1&intent=&action=` has no producer; delete or document it: [ticket](tickets/nexus-url-ingress-has-no-producer.md).
 - [deferred] nexus rows · 2026-09-28 launcher rewrite (F13, owner decision) · the row projection branches on surface instead of leaving presentation to the shells: [ticket](tickets/nexus-row-projection-is-surface-aware.md).
 - [deferred] nexus error policy · 2026-09-28 launcher rewrite (F19, owner decision) · an openables or `/search` defect or 500 replaces the whole workspace: [ticket](tickets/nexus-retrieval-defects-replace-the-workspace.md).
-- [open] nexus history · 2026-09-28 launcher rewrite lander · three or more concurrent first selections of one target exhaust the serializable retry, answer 500 and take down the workspace: [ticket](tickets/nexus-selection-concurrent-upserts-exhaust-retry.md).
 - [open] codex shell runtime · 2026-09-26 owner-approved redesign · shell/api chat proof passed; auth refresh, full lifecycle denials and twelve background roles remain unqualified: [ticket](tickets/codex-shell-runtime-unqualified.md).
 - [open] oi-130 · synapse jobs · 2026-09-15 ecbe production observation · p2 · cancellation after lost admission claim requires an absent Prepared checkpoint: [ticket](tickets/synapse-cancellation-missing-prepared-checkpoint.md).
 - [open] oi-131 · background memory · 2026-09-15 ecbe observation · p2 · retained peak447.902/448 mib leaves100 kib margin, without observed oom: [ticket](tickets/background-worker-production-memory-margin.md).
@@ -295,25 +267,18 @@ unexpected timeouts. See
 - [open] oi-167 · pdf highlights · 2026-09-17 typecheck cleanup · p2 · write-time matching combines cached text with current publication spans: [ticket](tickets/pdf-highlight-matching-mixes-publication-snapshots.md).
 - [open] oi-170 · consumption activity · 2026-09-17 slop sweep · p3 · `clientMutationId` on activity uploads is a wire no-op held by the shipped android client: [ticket](tickets/activity-upload-client-mutation-id-is-a-wire-no-op.md).
 - [open] oi-171 · appearance · 2026-09-18 owner decisions · p3 · Press and Study declare no color-scheme, so native controls and UA scrollbars follow the browser default: [ticket](tickets/press-and-study-leave-native-controls-on-the-ua-scheme.md).
-- [open] oi-172 · contributors · 2026-09-18 owner decisions · p3 · author rename is dead end to end now that no viewer can hold the admin role; delete the feature or grant it to a real principal: [ticket](tickets/author-rename-has-no-principal-who-may-perform-it.md).
 - [open] secret scanning · 2026-09-18 pr #334 · gitguardian repeats an operator-classified false positive on a compose variable reference: [ticket](tickets/gitguardian-repeats-classified-variable-reference.md).
 - [open] oi-175 · chat tool runtime · 2026-09-21 reauthoring · p3 · `tool_call_delta` has no producer but remains in the event vocabulary, the CHECK and the browser decoder; removal needs one owner preflight count: [ticket](tickets/tool-call-delta-event-has-no-producer.md).
-- [open] oi-176 · consumption · 2026-09-21 reauthoring · p3 · the python and SQL read-state ladders enter the audio arm on different predicates for a podcast episode with no audio: [ticket](tickets/consumption-read-state-divergence.md).
 - [open] oi-178 · dossiers · 2026-09-21 reauthoring · p2 · a recheck raising DossierInputTooLarge escapes the terminal writers and leaves a build active with no terminal: [ticket](tickets/dossier-recheck-can-raise-past-the-terminal-writer.md).
 
 - [open] 2026-09-21 chat-database repair · chat worker runs synchronous database work on its execution loop: [ticket](tickets/chat-worker-database-work-runs-on-its-execution-loop.md).
 - [open] 2026-09-21 chat-database repair · request session release runs on the api event loop: [ticket](tickets/request-db-session-release-runs-on-event-loop.md).
 - [open] 2026-09-21 cleanup audit · offline reading store retains unused construction modes: [ticket](tickets/cleanup-offline-reading-unused-construction-seams.md).
-- [open] highlight interaction · 2026-09-21 reader cleanup · hook keeps unused focus callbacks and hover metadata: [ticket](tickets/highlight-interaction-unused-api.md).
 - [deferred] 2026-09-23 firefox v1 · the signed unlisted build needs AMO credentials and the production origins: [ticket](tickets/extension-firefox-distribution-consent-is-undeclared.md).
 - [open] 2026-09-23 firefox v1 track a · remove the browser-capture conversion command after its production run: [ticket](tickets/remove-browser-capture-conversion-command.md).
-- [open] 2026-09-21 auth audit · cookie settlement polls callbacks already awaited by the sdk: [ticket](tickets/auth-cookie-settlement-polls-an-awaited-sdk-callback.md).
-- [open] 2026-09-21 auth audit · one refresh can rotate the provider session twice: [ticket](tickets/auth-refresh-can-rotate-the-provider-session-twice.md).
 - [open] 2026-09-21 auth audit · response cookie ownership is split between route clients and refresh: [ticket](tickets/auth-response-cookie-ownership-is-split.md).
-- [open] 2026-09-21 auth audit · auth flows retain unused injection seams: [ticket](tickets/auth-flows-retain-unused-injection-seams.md).
 - [open] 2026-09-21 auth audit · default android debug origin disagrees with bff csrf configuration: [ticket](tickets/android-debug-origin-disagrees-with-bff-csrf-origin.md).
-- [open] 2026-09-21 auth audit · browser auth redirects have two owners with different handled results: [ticket](tickets/unauthenticated-api-redirect-has-two-owners.md).
-- [open] 2026-09-21 auth audit · sdk operation deadlines end before response bodies: [ticket](tickets/supabase-operation-deadline-ends-at-response-headers.md).
+- [open] 2026-09-21 auth audit · sdk fetch deadlines do not cover body reads or refresh retry/backoff: [ticket](tickets/supabase-operation-deadline-ends-at-response-headers.md).
 - [open] 2026-09-25 local qualification · credential values appeared in an internal tool transcript; rotate outside the transcript's trust boundary: [ticket](tickets/local-qualification-credential-transcript-exposure.md).
 
 - [open] 2026-09-26 processing review · 24 diagnosed imports still need individual owned recovery: [ticket](tickets/processing-backlog-needs-owned-recovery.md).
@@ -324,7 +289,7 @@ unexpected timeouts. See
 - [open] 2026-09-26 processing review · historical gutenberg epub retry retains the wrong source adapter: [ticket](tickets/gutenberg-failed-import-retains-obsolete-web-adapter.md).
 - [open] 2026-09-26 processing review · two historical note indexes still need owned recovery: [ticket](tickets/historical-note-index-failures-need-owned-recovery.md).
 - [open] 2026-09-26 processing review · source acceptance can commit before runnable work is durable: [ticket](tickets/source-acceptance-can-commit-without-enqueued-work.md).
-- [open] 2026-09-26 processing review · dead obligations can monopolize bounded reconciliation discovery: [ticket](tickets/ingest-reconciler-dead-rows-can-starve-new-work.md).
+- [deferred] ingest reconciliation · 2026-10-03 source recheck · nonterminal semantic jobs can monopolize oldest-25 discovery; prior source/index paths are fixed, runtime NOT_RUN: [ticket](tickets/ingest-reconciler-dead-rows-can-starve-new-work.md).
 - [open] 2026-09-26 processing review · transient storage errors are treated as permanent source loss: [ticket](tickets/storage-outage-is-misclassified-as-lost-source.md).
 - [open] 2026-09-26 processing review · superseded oracle sources retain three unfiled failed media rows: [ticket](tickets/superseded-oracle-seeds-retain-unfiled-failed-media.md).
 - [open] 2026-09-26 processing plan · publication lock upgrades can obstruct concurrent index settlement: [ticket](tickets/publication-lock-upgrade-can-block-index-settlement.md).
@@ -342,13 +307,19 @@ unexpected timeouts. See
 - [open] 2026-09-28 chat admission / oracle web · web keeps E_RATE_LIMITED / E_RATE_LIMITER_UNAVAILABLE arms until the backend with 0248 ships: [ticket](tickets/web-rate-limit-copy-outlives-limiter.md).
 - [open] 2026-09-28 sse transport · the listen cap's 429 E_RATE_LIMITED is misnamed and the sse client treats it as fatal: [ticket](tickets/sse-listen-cap-rejection-is-misnamed-and-fatal.md).
 - [open] 2026-09-28 api / bff observability · server-timing phases outlived the tests that read them; keep or delete at the api/auth/bff reauthor: [ticket](tickets/server-timing-phases-outlived-their-tests.md).
-- [open] dossiers / typed wire · 2026-09-28 cleanup pr-08 · the head ships `coverage` that the web ignores while it derives the same label from `input_manifest`: [ticket](tickets/dossier-coverage-is-computed-and-dropped.md).
-- [open] search / typed wire · 2026-09-28 cleanup pr-08 · `RetrievalLocator` `= None` defaults generate optional fields; stored locators omit those keys, so dropping them needs a backfill: [ticket](tickets/retrieval-locator-defaults-generate-optional-fields.md).
+- [open] search / typed wire · 2026-09-28 cleanup pr-08 · remaining always-sent locator output keys need a closure census and precise output views; compacted input/storage omissions remain intentional: [ticket](tickets/retrieval-locator-defaults-generate-optional-fields.md).
 - [open] dossiers / resource graph · 2026-09-28 cleanup pr-08 · user links to or from an `artifact_revision` die at the next regenerate; revisions should not be link endpoints: [ticket](tickets/dossier-revision-user-links-die-on-regenerate.md).
 - [open] dossiers / production migration · 2026-09-28 cleanup pr-08 · run 0250's stored-json preconditions and loss counts read-only against production before the backend deploy: [ticket](tickets/dossier-latest-revision-0250-production-preflight.md).
 - [open] schema / production migration · 2026-09-28 pr #413 · inventory irreversible 0251 data loss against the production lineage and verify the backup before release: [ticket](tickets/schema-0251-production-loss-preflight.md).
-- [open] resource actions web · 2026-09-28 cleanup pr-08 · web decodes and drops `MakeArtifactRevisionCurrent` until the backend with 0250 ships: [ticket](tickets/web-make-current-arm-outlives-revision-history.md).
-- [open] 2026-09-28 source ingest · `_publish_file_source(kind)` and `reusable_embedded_source_media_ids(viewer_id)` take parameters they never read: [ticket](tickets/source-ingest-unused-parameters.md).
-- [open] podcasts / transcript web · 2026-09-27 cleanup pr-03 · p3 · the web still decodes the retired `failed_quota` / `FailedQuota` transcript state; web and backend release together, so the arms can go now: [ticket](tickets/web-failed-quota-transcript-state-outlives-0252.md).
 - [open] release / billing · 2026-09-28 cleanup pr-03 · record the billing counts before the 0252 release; cancel stripe, delete its webhook and drop the billing env keys after it: [ticket](tickets/billing-0252-release-steps.md).
 - [open] podcasts / transcript api · 2026-09-27 cleanup pr-03 · p3 · the batch transcript forecast now only counts and fingerprints; removing it needs an expand step against the `extra=forbid` batch body: [ticket](tickets/podcast-batch-transcript-forecast-is-vestigial.md).
+- [deferred] consumption / schema · 2026-09-28 consumption-stats reauthoring · four consumption state timestamps are written by nothing and read by nothing; drop them one release later: [ticket](tickets/drop-write-only-consumption-timestamps.md).
+- [open] consumption / stats contracts · 2026-09-28 reauthoring, qualified 2026-10-03 · unproduced `Week` remains; retain read `recordedActiveMs` pending precision/conservation proof: [ticket](tickets/consumption-stats-over-its-line-target.md).
+- [open] consumption / stats pane · 2026-09-28 consumption-stats reauthoring · p3 · timeline modalities all paint `CanvasText` in forced colors: [ticket](tickets/stats-timeline-modalities-merge-in-forced-colors.md).
+- [open] consumption activity / web outbox · 2026-09-28 consumption-stats reauthoring · p3 · batches follow creation order, so two tabs on one work can fail a whole batch as out of order: [ticket](tickets/activity-outbox-batches-rows-in-creation-order.md).
+- author non-media work dates have no producer: [ticket](tickets/author-nonmedia-work-dates-have-no-producer.md).
+
+
+- [open] inbound share / account policy candidate · 2026-10-02 producer review · valid dependency failures reach the defect owner; terminal recovery policy is undecided, source-verified/live not_run: [ticket](tickets/share-account-transient-failures-escape-inline-feedback.md).
+- [open] nexus / command policy candidate · 2026-10-02 producer review · valid auth-dependency503 reaches all three writes; terminal recovery policy is undecided, source-verified/live not_run: [ticket](tickets/nexus-auth-dependency-failure-escapes-retry-feedback.md).
+- [open] local docker / inventory · 2026-10-03 selection-concurrency allocation · full enumeration failed again, then passed at cleanup; intermittent recurrence remains open, cause and initial stopped-state comparison unproved: [ticket](tickets/local-docker-stopped-container-snapshot-missing.md).

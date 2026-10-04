@@ -26,7 +26,7 @@ import { formatDisplayDate } from "@/lib/display/format";
 import { presentSettingsRow } from "@/lib/collections/presenters/settings";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
-import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
+import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "./page.module.css";
 
 const LOAD_FAILED_MESSAGE = "Failed to load identities";

@@ -15,6 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
+from nexus.db.models import MediaKind
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.collection_page import (
     CollectionCursor,
@@ -54,17 +55,9 @@ from nexus.services.reading_time import reading_time_rows_sql
 type EntrySort = Literal["canonical", "title", "creator", "published", "added", "remaining"]
 type EntryProjection = Literal["all-items", "unfiled", "in-progress"]
 type EntryCompletion = Literal["all", "unfinished"]
-type EntryType = Literal["web_article", "epub", "pdf", "video", "podcast_episode", "podcast"]
+type EntryType = MediaKind | Literal["podcast"]
 
 _FACTUAL_SORTS: tuple[EntrySort, ...] = ("title", "creator", "published", "added", "remaining")
-_ENTRY_TYPES: tuple[EntryType, ...] = (
-    "web_article",
-    "epub",
-    "pdf",
-    "video",
-    "podcast_episode",
-    "podcast",
-)
 _VIEW_QUERY_KEYS = frozenset({"sort", "direction", "completion", "projection", "entry_type"})
 
 
@@ -124,9 +117,15 @@ def parse_entries_query(
     if entry_projection == "in-progress" and completion == "unfinished":
         raise _invalid("In Progress cannot filter completion")
 
-    entry_type = query.parameters.get("entry_type")
-    if entry_type is not None and entry_type not in _ENTRY_TYPES:
-        raise _invalid("Unsupported Library entry type")
+    raw_entry_type = query.parameters.get("entry_type")
+    entry_type: EntryType | None = None
+    if raw_entry_type == "podcast":
+        entry_type = "podcast"
+    elif raw_entry_type is not None:
+        try:
+            entry_type = MediaKind(raw_entry_type)
+        except ValueError as exc:
+            raise _invalid("Unsupported Library entry type") from exc
     if entry_type == "podcast" and (entry_projection != "all-items" or completion != "all"):
         raise _invalid("Podcast shows support only the complete all-items view")
 

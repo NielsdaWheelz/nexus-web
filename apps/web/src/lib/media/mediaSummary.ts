@@ -1,9 +1,14 @@
-import { decodePresence, type Presence } from "@/lib/api/presence";
+import { absent, present, decodePresence, type Presence } from "@/lib/api/presence";
+import type { Schema } from "@/lib/api/wire";
 import { decodeContributorCredit } from "@/lib/contributors/credit";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import { decodePublicationDateOnly, type PublicationDate } from "@/lib/dates/publicationDate";
 import { MEDIA_KINDS, type MediaKind } from "@/lib/media/kind";
-import { decodeReadingTimeEstimate, type ReadingTimeEstimate } from "@/lib/media/readingTime";
+import {
+  parseReadingTimeEstimateWire,
+  readingTimeEstimateFromWire,
+  type ReadingTimeEstimate,
+} from "@/lib/media/readingTime";
 import type { MediaProcessingStatus } from "@/lib/status/mediaProcessing";
 import {
   expectArray,
@@ -36,7 +41,7 @@ export interface MediaSummary {
   readonly duration: Presence<MediaDuration>;
 }
 
-export function decodeMediaDuration(raw: unknown): MediaDuration {
+function parseMediaDurationWire(raw: unknown): Schema<"MediaDurationOut"> {
   const duration = expectExactRecord(
     raw,
     ["modality", "estimate"],
@@ -48,8 +53,46 @@ export function decodeMediaDuration(raw: unknown): MediaDuration {
       ["Read", "Listen"] as const,
       "MediaDuration.modality",
     ),
-    estimate: decodeReadingTimeEstimate(duration.estimate),
+    estimate: parseReadingTimeEstimateWire(duration.estimate),
   };
+}
+
+function mediaDurationFromWire(duration: Schema<"MediaDurationOut">): MediaDuration {
+  return {
+    modality: duration.modality,
+    estimate: readingTimeEstimateFromWire(duration.estimate),
+  };
+}
+
+export function decodeMediaDuration(raw: unknown): MediaDuration {
+  return mediaDurationFromWire(parseMediaDurationWire(raw));
+}
+
+export function mediaSummaryFromWire(value: Schema<"MediaSummaryOut">): MediaSummary {
+  const summary: MediaSummary = {
+    ...value,
+    originalPublishedDate: value.originalPublishedDate.kind === "Present"
+      ? present(decodePublicationDateOnly(
+          value.originalPublishedDate.value,
+          "MediaSummaryOut.originalPublishedDate.value",
+        ))
+      : absent(),
+    duration: value.duration.kind === "Present"
+      ? present(mediaDurationFromWire(value.duration.value))
+      : absent(),
+  };
+  const expectedModality = summary.mediaKind === "podcast_episode"
+    ? "Listen"
+    : summary.mediaKind === "video"
+      ? null
+      : "Read";
+  if (
+    summary.duration.kind === "Present" &&
+    summary.duration.value.modality !== expectedModality
+  ) {
+    throw new TypeError("MediaSummaryOut.duration does not match mediaKind");
+  }
+  return summary;
 }
 
 export function decodeMediaSummary(raw: unknown): MediaSummary {
@@ -66,7 +109,7 @@ export function decodeMediaSummary(raw: unknown): MediaSummary {
     ],
     "MediaSummaryOut",
   );
-  const summary: MediaSummary = {
+  return mediaSummaryFromWire({
     mediaId: expectCanonicalUuid(value.mediaId, "MediaSummaryOut.mediaId"),
     mediaKind: expectOneOf(value.mediaKind, MEDIA_KINDS, "MediaSummaryOut.mediaKind"),
     title: expectString(value.title, "MediaSummaryOut.title"),
@@ -76,25 +119,13 @@ export function decodeMediaSummary(raw: unknown): MediaSummary {
       "MediaSummaryOut.contributors",
     ),
     originalPublishedDate: decodePresence(value.originalPublishedDate, (date) =>
-      decodePublicationDateOnly(date, "MediaSummaryOut.originalPublishedDate.value"),
+      expectString(date, "MediaSummaryOut.originalPublishedDate.value"),
     ),
     processingStatus: expectOneOf(
       value.processingStatus,
       PROCESSING_STATUSES,
       "MediaSummaryOut.processingStatus",
     ),
-    duration: decodePresence(value.duration, decodeMediaDuration),
-  };
-  const expectedModality = summary.mediaKind === "podcast_episode"
-    ? "Listen"
-    : summary.mediaKind === "video"
-      ? null
-      : "Read";
-  if (
-    summary.duration.kind === "Present" &&
-    summary.duration.value.modality !== expectedModality
-  ) {
-    throw new TypeError("MediaSummaryOut.duration does not match mediaKind");
-  }
-  return summary;
+    duration: decodePresence(value.duration, parseMediaDurationWire),
+  });
 }

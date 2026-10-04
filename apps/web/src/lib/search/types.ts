@@ -1,4 +1,3 @@
-import type { RetrievalLocator } from "@/lib/api/sse/locators";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type { ResourceActivation } from "@/lib/resources/activation";
@@ -6,182 +5,9 @@ import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget
 import type { Presence } from "@/lib/api/presence";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
 import type { MediaSummary } from "@/lib/media/mediaSummary";
+import type { ApiJson } from "@/lib/api/wire";
 
-// Canonical internal result-type discriminants (the response union tags). Kept as
-// the validator for normalizeSearchResult — NOT a user-facing filter taxonomy.
-export const RESULT_TYPE_VALUES = [
-  "contributor",
-  "media",
-  "podcast",
-  "episode",
-  "video",
-  "content_chunk",
-  "fragment",
-  "page",
-  "note_block",
-  "highlight",
-  "message",
-  "evidence_span",
-  "conversation",
-  "artifact",
-  "web_result",
-  "reader_apparatus_item",
-] as const;
-
-export type SearchType = (typeof RESULT_TYPE_VALUES)[number];
-
-export interface SearchSourceMetadata {
-  media_id: string;
-  media_kind: string;
-  title: string;
-  contributors: ContributorCredit[];
-  original_published_date: Presence<PublicationDate>;
-  summary_md: string | null;
-}
-
-export interface SearchUntitledBaseResult {
-  id: string;
-  score: number;
-  snippet: string;
-  resource_ref: string;
-  owner_resource_ref: string;
-  activation: ResourceActivation;
-  actionSubject: ResourceActionSubject;
-  citation_target: string | null;
-  context_ref: {
-    type: SearchType;
-    id: string;
-    evidence_span_ids?: string[];
-    locator?: RetrievalLocator | null;
-  };
-}
-
-export interface SearchBaseResult extends SearchUntitledBaseResult {
-  title: string;
-  source_label: string | null;
-  media_id: string | null;
-  media_kind: string | null;
-}
-
-export interface SearchMediaResult extends SearchUntitledBaseResult {
-  type: "media" | "episode" | "video";
-  mediaSummary: MediaSummary;
-}
-
-export interface SearchPodcastResult extends SearchBaseResult {
-  type: "podcast";
-  contributors: ContributorCredit[];
-}
-
-export interface SearchContributorResult extends SearchBaseResult {
-  type: "contributor";
-  contributor_handle: string;
-  contributor: {
-    handle: string;
-    display_name: string;
-  };
-}
-
-export interface SearchContentChunkResult extends SearchBaseResult {
-  type: "content_chunk";
-  media_id: string;
-  media_kind: string;
-  citation_label: string;
-  source: SearchSourceMetadata;
-  locator: RetrievalLocator;
-}
-
-export interface SearchFragmentResult extends SearchBaseResult {
-  type: "fragment";
-  citation_label: string | null;
-  locator: RetrievalLocator;
-  source: SearchSourceMetadata;
-}
-
-export interface SearchNoteBlockResult extends SearchBaseResult {
-  type: "note_block";
-  body_text: string;
-  highlight_excerpt: string | null;
-  note_origin: "note" | "highlight_note";
-  locator: RetrievalLocator;
-}
-
-export interface SearchHighlightResult extends SearchBaseResult {
-  type: "highlight";
-  color: string;
-  exact: string;
-  citation_label: string | null;
-  locator: RetrievalLocator;
-  source: SearchSourceMetadata;
-}
-
-export interface SearchPageResult extends SearchBaseResult {
-  type: "page";
-}
-
-export interface SearchMessageResult extends SearchBaseResult {
-  type: "message";
-  conversation_id: string;
-  seq: number;
-  locator: RetrievalLocator;
-}
-
-export interface SearchEvidenceSpanResult extends SearchBaseResult {
-  type: "evidence_span";
-  evidence_span_id: string;
-  citation_label: string;
-  locator: RetrievalLocator;
-  source: SearchSourceMetadata;
-}
-
-export interface SearchReaderApparatusItemResult extends SearchBaseResult {
-  type: "reader_apparatus_item";
-  apparatus_kind: string;
-  locator: RetrievalLocator;
-  source: SearchSourceMetadata;
-}
-
-export interface SearchConversationResult extends SearchBaseResult {
-  type: "conversation";
-}
-
-export interface SearchArtifactResult extends SearchBaseResult {
-  type: "artifact";
-  revision_id: string;
-  subject_ref: string;
-}
-
-export interface SearchWebResult extends SearchBaseResult {
-  type: "web_result";
-  result_type: "web_result";
-  source_id: string;
-  result_ref: string;
-  url: string;
-  display_url: string | null;
-  extra_snippets: string[];
-  published_at: string | null;
-  source_name: string | null;
-  rank: number | null;
-  provider: string | null;
-  locator: Extract<RetrievalLocator, { type: "external_url" }>;
-  selected: boolean;
-}
-
-export type SearchApiResult =
-  | SearchMediaResult
-  | SearchPodcastResult
-  | SearchContributorResult
-  | SearchContentChunkResult
-  | SearchFragmentResult
-  | SearchPageResult
-  | SearchNoteBlockResult
-  | SearchHighlightResult
-  | SearchMessageResult
-  | SearchEvidenceSpanResult
-  | SearchReaderApparatusItemResult
-  | SearchConversationResult
-  | SearchArtifactResult
-  | SearchWebResult;
+export type SearchType = ApiJson<"/search", "get">["results"][number]["type"];
 
 interface SearchResultRowBase {
   key: string;
@@ -190,13 +16,6 @@ interface SearchResultRowBase {
   ownerResourceRef: string;
   activation: ResourceActivation;
   actionSubject: ResourceActionSubject;
-  citationTarget: string | null;
-  contextRef: {
-    type: SearchType;
-    id: string;
-    evidenceSpanIds: string[];
-    locator?: RetrievalLocator;
-  } | null;
   snippetSegments: readonly EmphasisSegment[];
 }
 
@@ -213,8 +32,6 @@ export type SearchResultRowViewModel = SearchResultRowBase & (
       sourceMeta: string | null;
       publicationDate: Presence<PublicationDate>;
       contributorCredits: ContributorCredit[];
-      noteBody: string | null;
-      noteOrigin: "note" | "highlight_note" | null;
     }
 );
 

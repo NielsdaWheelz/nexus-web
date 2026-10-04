@@ -32,12 +32,6 @@ function focusTarget(element: HTMLElement | null) {
   element?.focus({ preventScroll: true });
 }
 
-const HIGHLIGHT_UNAVAILABLE = (
-  <p className={styles.note} role="status">
-    Highlight unavailable.
-  </p>
-);
-
 /** The anonymous reader for `/s#share=<token>`; a hash change opens the new link in place. */
 export default function PublicShareReader() {
   const [state, setState] = useState<"Resolving" | "Unavailable" | { token: string; share: Share }>(
@@ -136,9 +130,6 @@ function SharedDocument({ token, share }: { token: string; share: Share }) {
         ) : null}
         {reader.kind === "Article" ? (
           <article className={styles.column}>
-            {mark && !reader.fragments.some((f) => f.ordinal === mark.ordinal)
-              ? HIGHLIGHT_UNAVAILABLE
-              : null}
             {reader.fragments.map((fragment) => (
               <MarkedHtml
                 key={fragment.ordinal}
@@ -150,9 +141,6 @@ function SharedDocument({ token, share }: { token: string; share: Share }) {
           </article>
         ) : reader.kind === "Transcript" ? (
           <div className={styles.column}>
-            {mark && !reader.segments.some((s) => s.ordinal === mark.ordinal)
-              ? HIGHLIGHT_UNAVAILABLE
-              : null}
             <ol className={styles.transcript}>
               {reader.segments.map((segment) => (
                 <Segment key={segment.ordinal} segment={segment} mark={markAt(segment.ordinal)} />
@@ -323,7 +311,11 @@ function MarkedHtml(props: { html: string; text: string; mark: Mark | null; toke
       tabIndex={markedOk ? -1 : undefined}
     >
       <HtmlRenderer htmlSanitized={rendered} headingLevelOffset={1} />
-      {marked !== null && !markedOk ? HIGHLIGHT_UNAVAILABLE : null}
+      {marked !== null && !markedOk ? (
+        <p className={styles.note} role="status">
+          Highlight unavailable.
+        </p>
+      ) : null}
     </section>
   );
 }

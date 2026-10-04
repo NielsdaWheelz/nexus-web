@@ -29,8 +29,8 @@ A wire decision: either `ImportItem` gains the upload intent's `size_bytes`
 ## Proposed fix
 
 Add `upload_intent: Presence<{size_bytes}>` to `ImportItem` for unpublished
-upload sessions, decode it in `lib/imports/importsClient.ts`, and restore the
-size comparison in `ImportRow`'s guard.
+upload sessions, expose it through the generated response contract and existing
+branded item adaptation, and restore the size comparison in `ImportRow`'s guard.
 
 ## Acceptance
 

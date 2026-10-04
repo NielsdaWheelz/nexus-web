@@ -10,11 +10,12 @@ from sqlalchemy.orm import Session
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
-from nexus.responses import ok, success_response
+from nexus.responses import Data, ok, success_response
 from nexus.schemas.epub_find import EpubFindRequest
-from nexus.schemas.media import MediaEvidenceResponse
+from nexus.schemas.media import MediaEvidenceResponse, MediaNavigationOut
 from nexus.schemas.offline_reader_progress import OfflineReaderWrite
 from nexus.schemas.reader import CursorWrite
+from nexus.schemas.reader_document_map import ReaderDocumentMapOut
 from nexus.services import (
     epub_find,
     epub_read,
@@ -70,8 +71,10 @@ def get_media_navigation(
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_repeatable_read_db)],
-) -> dict:
-    return ok(reader_navigation.get_media_navigation_for_viewer(db, viewer.user_id, media_id))
+) -> Data[MediaNavigationOut]:
+    return Data(
+        data=reader_navigation.get_media_navigation_for_viewer(db, viewer.user_id, media_id)
+    )
 
 
 @router.get("/media/{media_id}/document-map")
@@ -80,15 +83,17 @@ def get_reader_document_map(
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_repeatable_read_db)],
-) -> dict:
+) -> Data[ReaderDocumentMapOut]:
     unsupported_params = sorted(request.query_params)
     if unsupported_params:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             f"Unsupported Document Map params: {', '.join(unsupported_params)}",
         )
-    return ok(
-        reader_document_map.get_reader_document_map(db, viewer_id=viewer.user_id, media_id=media_id)
+    return Data(
+        data=reader_document_map.get_reader_document_map(
+            db, viewer_id=viewer.user_id, media_id=media_id
+        )
     )
 
 

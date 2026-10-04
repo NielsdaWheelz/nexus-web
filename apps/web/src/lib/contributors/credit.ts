@@ -1,8 +1,10 @@
 import type { ContributorCredit } from "@/lib/contributors/types";
+import { CONTRIBUTOR_ROLE_ORDER } from "@/lib/contributors/vocab";
 import {
   expectExactRecord,
   expectInteger,
   expectNullableString,
+  expectOneOf,
   expectString,
 } from "@/lib/validation";
 
@@ -37,7 +39,7 @@ export function decodeContributorCredit(
     ),
     href: expectNullableString(row.href, `${name}.href`),
     credited_name: expectString(row.credited_name, `${name}.credited_name`),
-    role: expectString(row.role, `${name}.role`),
+    role: expectOneOf(row.role, CONTRIBUTOR_ROLE_ORDER, `${name}.role`),
     raw_role: expectNullableString(row.raw_role, `${name}.raw_role`),
     ordinal:
       row.ordinal === null

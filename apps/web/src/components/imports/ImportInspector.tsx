@@ -71,14 +71,14 @@ export default function ImportInspector({
     return <PaneLoadingState label="Loading this import" announcement="Polite" />;
   }
 
-  const { item, readiness, historyCoverage, sourceIssues } = detail.data;
+  const { item, readiness, history_coverage: historyCoverage, source_issues: sourceIssues } = detail.data;
   const recovery =
     item.capabilities.recovery.kind === "Present"
       ? item.capabilities.recovery.value
       : null;
   const restriction =
-    item.capabilities.unavailableReason.kind === "Present"
-      ? item.capabilities.unavailableReason.value
+    item.capabilities.unavailable_reason.kind === "Present"
+      ? item.capabilities.unavailable_reason.value
       : null;
   const matched =
     matchedEvent === null
@@ -96,7 +96,7 @@ export default function ImportInspector({
       <PaneSection title={item.title}>
         <p className={styles.inspectorState}>
           <Pill
-            tone={item.state.kind === "NeedsAttention" || item.sourceIssueCount > 0 ? "warning" : "info"}
+            tone={item.state.kind === "NeedsAttention" || item.source_issue_count > 0 ? "warning" : "info"}
             size="sm"
           >
             {importStateLabel(item)}
@@ -108,7 +108,7 @@ export default function ImportInspector({
 
       {sourceIssues.kind === "Present" && sourceIssues.value.issues.length > 0 ? (
         <PaneSection title="Source quality">
-          <ReaderSourceIssuesNotice issues={sourceIssues.value.issues} readable={readiness.canRead} />
+          <ReaderSourceIssuesNotice issues={sourceIssues.value.issues} readable={readiness.can_read} />
         </PaneSection>
       ) : null}
 
@@ -127,7 +127,7 @@ export default function ImportInspector({
         title="Attempts"
         description={
           historyCoverage.kind === "Partial"
-            ? historyCoverageLine(historyCoverage.recordedSince, display)
+            ? historyCoverageLine(historyCoverage.recorded_since, display)
             : undefined
         }
       >
@@ -164,8 +164,8 @@ export default function ImportInspector({
                             </span>
                           </Pill>
                         ) : null}
-                        <time dateTime={entry.occurredAt}>
-                          {importMomentText(entry.occurredAt, display)}
+                        <time dateTime={entry.occurred_at}>
+                          {importMomentText(entry.occurred_at, display)}
                         </time>
                       </li>
                     );
@@ -194,7 +194,7 @@ export default function ImportInspector({
           </div>
           <div>
             <dt>Kind</dt>
-            <dd>{importKindLabel(item.mediaKind)}</dd>
+            <dd>{importKindLabel(item.media_kind)}</dd>
           </div>
           {item.state.kind === "Complete" ? null : (
             <div>
@@ -203,27 +203,27 @@ export default function ImportInspector({
             </div>
           )}
           {item.state.kind === "NeedsAttention" &&
-          item.state.failureCode.kind === "Present" ? (
+          item.state.failure_code.kind === "Present" ? (
             <div>
               <dt>Code</dt>
               <dd>
-                <code>{item.state.failureCode.value}</code>
+                <code>{item.state.failure_code.value}</code>
               </dd>
             </div>
           ) : null}
           <div>
             <dt>Accepted</dt>
             <dd>
-              <time dateTime={item.acceptedAt}>
-                {importMomentText(item.acceptedAt, display)}
+              <time dateTime={item.accepted_at}>
+                {importMomentText(item.accepted_at, display)}
               </time>
             </dd>
           </div>
           <div>
             <dt>Updated</dt>
             <dd>
-              <time dateTime={item.updatedAt}>
-                {importMomentText(item.updatedAt, display)}
+              <time dateTime={item.updated_at}>
+                {importMomentText(item.updated_at, display)}
               </time>
             </dd>
           </div>

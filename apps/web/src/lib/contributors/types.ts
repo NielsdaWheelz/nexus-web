@@ -1,101 +1,37 @@
-// Contributor/author frontend types (lightweight-author-deduplication hard cutover).
-//
-// Two wire cases live here by design (spec D-1):
-//  - EMBEDDED read credits inside existing media/search/podcast/library GET DTOs stay
-//    snake_case and narrowed to the effective-credit facts (D-33): the
-//    `ContributorCredit` below. A handle-less credit is a legitimate text fact
-//    (podcast browse/discovery previews, D-9), so `contributor_handle`/`href` are
-//    optional.
-//  - The five author-surface endpoints speak strict camelCase; their DTOs are the
-//    camel types below. Every handle field on those types carries the branded
-//    `ContributorHandle` (D-45) — the api-layer decode brands them at ingress.
-
+import type { Schema } from "@/lib/api/wire";
 import type { ContributorHandle } from "@/lib/contributors/handle";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
 import type { Presence } from "@/lib/api/presence";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { MediaSummary } from "@/lib/media/mediaSummary";
 
-// ---------------------------------------------------------------------------
-// Embedded snake credit (narrowed, D-33)
-// ---------------------------------------------------------------------------
+export type ContributorCredit = Schema<"ContributorCreditOut">;
 
-export interface ContributorCredit {
-  contributor_handle?: string | null;
-  contributor_display_name?: string | null;
-  credited_name: string;
-  role: string;
-  raw_role?: string | null;
-  href?: string | null;
-  ordinal?: number | null;
-}
-
-// ---------------------------------------------------------------------------
-// Author-surface camel DTOs (strict camelCase wire; handles branded, D-45)
-// ---------------------------------------------------------------------------
-
-export interface ContributorWorkExample {
-  title: string;
-  href: string;
-}
-
-export interface ContributorSearchItem {
+export type ContributorSearchItem = Omit<Schema<"ContributorSearchItemOut">, "handle"> & {
   handle: ContributorHandle;
-  href: string;
-  displayName: string;
-  workCount: number;
-  /** At most two example works, used for disambiguation in the picker listbox. */
-  workExamples: ContributorWorkExample[];
-  /** A non-display alias literal whose normalized form matched, else null. */
-  matchedAlias: string | null;
-}
+};
 
-export interface ContributorSearchPage {
+export type ContributorSearchPage = Omit<Schema<"ContributorSearchPageOut">, "contributors"> & {
   contributors: ContributorSearchItem[];
-  nextCursor: string | null;
-}
+};
 
-export interface ContributorDetail {
+export type ContributorDetail = Omit<Schema<"ContributorDetailOut">, "handle" | "actionSubject"> & {
   handle: ContributorHandle;
-  href: string;
-  displayName: string;
-  otherNames: string[];
-  canRename: boolean;
   actionSubject: ResourceActionSubject;
-}
-
-export interface ContributorRoleFact {
-  creditedName: string;
-  role: string;
-  rawRole: string | null;
-}
+};
 
 export type ContributorWorkItem =
-  | {
-      kind: "Media";
+  | (Omit<Schema<"MediaContributorWorkItemOut">, "mediaSummary" | "actionSubject"> & {
       mediaSummary: MediaSummary;
-      href: string;
-      roleFacts: ContributorRoleFact[];
       actionSubject: ResourceActionSubject;
-    }
-  | {
-      kind: "Podcast";
-      title: string;
-      href: string;
-      contentKind: string;
+    })
+  | (Omit<Schema<"PodcastContributorWorkItemOut">, "date" | "actionSubject"> & {
       date: Presence<PublicationDate>;
-      roleFacts: ContributorRoleFact[];
       actionSubject: ResourceActionSubject;
-    }
-  | {
-      kind: "ExternalWork";
-      title: string;
-      href: string;
-      contentKind: string;
+    })
+  | (Omit<Schema<"ExternalContributorWorkItemOut">, "date"> & {
       date: Presence<PublicationDate>;
-      roleFacts: ContributorRoleFact[];
-      actionSubject: null;
-    };
+    });
 
 export interface MediaAuthorCredit {
   contributorHandle: ContributorHandle;
@@ -115,10 +51,6 @@ export type AuthorBinding =
   | { kind: "existing"; contributorHandle: ContributorHandle }
   | { kind: "new"; displayName: string };
 
-// ---------------------------------------------------------------------------
-// Author-surface request bodies (camelCase; shared by editor + rename)
-// ---------------------------------------------------------------------------
-
 export interface MediaAuthorsManualBody {
   clientMutationId: string;
   mode: "manual";
@@ -131,8 +63,3 @@ export interface MediaAuthorsAutomaticBody {
 }
 
 export type MediaAuthorsPutBody = MediaAuthorsManualBody | MediaAuthorsAutomaticBody;
-
-export interface ContributorRenameBody {
-  clientMutationId: string;
-  displayName: string;
-}

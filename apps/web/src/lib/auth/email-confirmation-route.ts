@@ -11,7 +11,7 @@ import {
   authFormFailure,
   readSameOriginAuthForm,
 } from "@/lib/auth/form-response";
-import { createRouteHandlerClient } from "@/lib/supabase/route-handler";
+import { createSessionEstablishmentClient } from "@/lib/supabase/route-handler";
 
 /**
  * Owns the shared invite/recovery token-consumption protocol. Route wrappers
@@ -37,7 +37,7 @@ export async function handleEmailConfirmation(
     });
   }
 
-  const auth = await createRouteHandlerClient();
+  const auth = await createSessionEstablishmentClient();
   const outcome = await confirmEmail({
     supabase: auth.supabase,
     purpose,
@@ -46,7 +46,6 @@ export async function handleEmailConfirmation(
 
   switch (outcome.kind) {
     case "Confirmed": {
-      await auth.settlePendingCookieWrites();
       return auth.applyCookies(
         NextResponse.redirect(new URL("/account/password", requestForm.origin), {
           status: 303,

@@ -14,7 +14,7 @@ import type { ResourceActionMutationBoundary } from "@/lib/actions/resourceActio
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { absent, presenceValueOr, present } from "@/lib/api/presence";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { usePlayerSettings } from "@/lib/player/globalPlayer";
+import { usePlayerSettings } from "@/lib/player/playerRuntime";
 import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import {
   fetchPodcastSubscriptionSettingsSource,

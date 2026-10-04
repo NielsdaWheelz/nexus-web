@@ -3,7 +3,7 @@
  * projection; CollectionRow owns formatting and visual hierarchy.
  */
 
-import type { ResourceRowPrimary } from "@/components/ui/ResourceRow";
+import type { ResourceRowPrimary } from "@/components/ui/ResourceActivation";
 import type { LocalAvailability } from "@/lib/offlineMedia/contract";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import type { Presence } from "@/lib/api/presence";
@@ -14,8 +14,6 @@ import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
 import type { MediaDuration } from "@/lib/media/mediaSummary";
 import type { PositiveCount } from "@/lib/consumption/activityFacts";
-
-export type { ResourceRowPrimary };
 
 export type CollectionItemKind =
   | "media"

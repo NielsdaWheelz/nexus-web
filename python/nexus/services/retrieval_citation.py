@@ -20,11 +20,16 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from nexus.schemas.retrieval import (
+    ExternalSnapshotId,
+    ProviderResultRef,
+    RetrievalContextRef,
+    WebRetrievalResultRef,
     retrieval_context_ref_json,
     retrieval_locator_json,
     retrieval_result_ref_json,
 )
-from nexus.schemas.search import SearchResultMediaOut, SearchResultOut
+from nexus.schemas.search import SearchResultMediaOut, SearchResultOut, SearchResultWebOut
+from nexus.services.search.projection import build_source_label
 
 STRICT_LOCATOR_RESULT_TYPES = frozenset(
     {
@@ -147,14 +152,6 @@ def citation_from_search_result(
     filters: dict[str, Any],
 ) -> RetrievalCitation:
     payload = result.model_dump(mode="json")
-    if isinstance(result, SearchResultMediaOut):
-        summary = result.media_summary
-        payload.update(
-            title=summary.title,
-            media_id=str(summary.media_id),
-            media_kind=summary.media_kind,
-            contributors=[credit.model_dump(mode="json") for credit in summary.contributors],
-        )
     result_type = str(payload["type"])
     if result_type == "web_result":
         source_id = str(payload["source_id"])
@@ -179,11 +176,51 @@ def citation_from_search_result(
             if isinstance(evidence_span_ids, list) and evidence_span_ids
             else None
         )
+    if isinstance(result, SearchResultMediaOut):
+        summary = result.media_summary
+        title = summary.title
+        source_label = build_source_label(summary)
+        media_id = str(summary.media_id)
+        media_kind = summary.media_kind.value
+        contributors = [credit.model_dump(mode="json") for credit in summary.contributors]
+    else:
+        title = result.title
+        source_label = result.source_label
+        media_id = payload.get("media_id")
+        media_kind = payload.get("media_kind")
+        contributors = _contributors_from_search_payload(payload)
+    result_ref = dict(payload)
+    if isinstance(result, SearchResultWebOut):
+        snapshot_id = ExternalSnapshotId(UUID(result.source_id))
+        result_ref = WebRetrievalResultRef(
+            type="web_result",
+            id=snapshot_id,
+            result_type="web_result",
+            source_id=snapshot_id,
+            result_ref=ProviderResultRef(result.result_ref),
+            title=result.title,
+            source_label=result.source_label,
+            snippet=result.snippet,
+            deep_link=deep_link,
+            citation_target=result.citation_target,
+            context_ref=RetrievalContextRef(type="web_result", id=snapshot_id),
+            locator=result.locator,
+            score=result.score,
+            selected=result.selected,
+            url=result.url,
+            display_url=result.display_url,
+            extra_snippets=result.extra_snippets,
+            published_at=result.published_at,
+            source_name=result.source_name,
+            rank=result.rank,
+            provider=result.provider,
+            provider_request_id=result.provider_request_id,
+        ).model_dump(mode="json", exclude_none=True, exclude_defaults=True)
     return RetrievalCitation(
         result_type=result_type,
         source_id=str(payload["source_id"] if result_type == "web_result" else payload["id"]),
-        title=str(payload["title"]),
-        source_label=payload.get("source_label"),
+        title=title,
+        source_label=source_label,
         snippet=str(payload["snippet"]),
         deep_link=deep_link,
         citation_target=payload.get("citation_target"),
@@ -191,12 +228,12 @@ def citation_from_search_result(
         locator=_locator_from_search_payload(payload),
         context_ref=context_ref,
         evidence_span_id=evidence_span_id,
-        media_id=payload.get("media_id"),
-        media_kind=payload.get("media_kind"),
+        media_id=media_id,
+        media_kind=media_kind,
         score=float(payload["score"]) if payload.get("score") is not None else None,
-        contributors=_contributors_from_search_payload(payload),
+        contributors=contributors,
         filters=filters,
-        result_ref=dict(payload),
+        result_ref=result_ref,
     )
 
 

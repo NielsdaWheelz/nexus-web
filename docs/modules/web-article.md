@@ -117,3 +117,23 @@ HTML bibliography support is intentionally link-layer conservative. MediaWiki
 `sup.reference -> li#cite_note` note graphs are supported through the link-graph
 branch. Bibliography records with no in-document marker are out of scope and are
 not standalone apparatus rows.
+
+document embed presentation preserves the published source figure/figcaption
+and its highlight nodes as visible canonical text. `documentEmbeds.ts` appends
+interactive card metadata/actions under the renderer-only
+`data-document-embed-ui` marker; `canonicalCursor.ts` excludes that subtree
+before text or block separators enter offsets. the added UI is nonselectable;
+the source caption remains selectable. x compact references wrap the existing
+caption nodes in their activation link. `Pending` names a display state, which
+also covers resolved children without an authorized href; it does not equate
+to a resolving child or introduce polling.
+
+manual qualification observed the actual pending reader, document map, find,
+and two native before/after highlights with persisted offsets; an owner-controlled
+resolved transition retained those highlights and controls on reload. six
+imported render/cursor cases preserved canonical text; four previously accepted
+projections and widget fields/actions matched exactly. unicode/highlight range
+roundtrips passed. terminal/x
+derivatives were projection-only; external navigation, worker/provider
+completion, and actual progress writes were not exercised. static checks are
+separate from these observations.

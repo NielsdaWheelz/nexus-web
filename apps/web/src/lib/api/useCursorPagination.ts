@@ -9,19 +9,20 @@ import {
   useState,
 } from "react";
 import { isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
+import { absent, type Presence } from "@/lib/api/presence";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { AsyncResource } from "@/lib/api/useResource";
 import { isAbortError } from "@/lib/errors";
 
-export interface CursorPage<T> {
-  data: T[];
-  page: { has_more: boolean; next_cursor: string | null };
+export interface CursorPage<T, Cursor extends string = string> {
+  readonly items: readonly T[];
+  readonly nextCursor: Presence<Cursor>;
 }
 
-interface CursorContinuation<T> {
-  readonly owner: CursorPage<T> | null;
+interface CursorContinuation<T, Cursor extends string> {
+  readonly owner: CursorPage<T, Cursor> | null;
   readonly appended: T[];
-  readonly nextCursor: string | null;
+  readonly nextCursor: Presence<Cursor>;
   readonly loadingMore: boolean;
   readonly error: ApiError | null;
 }
@@ -29,16 +30,16 @@ interface CursorContinuation<T> {
 // One owner for the "page 1 via useResource, then append more pages by cursor"
 // pane pattern (CT-1). page-1 items+cursor derive from `firstPage`; later pages
 // accumulate in local state, reset whenever the page-1 data reference changes.
-export function useCursorPagination<T>(args: {
-  firstPage: AsyncResource<CursorPage<T>>;
+export function useCursorPagination<T, Cursor extends string = string>(args: {
+  firstPage: AsyncResource<CursorPage<T, Cursor>>;
   initialMoreError: ApiError | null;
-  loadMorePage: (cursor: string, signal: AbortSignal) => Promise<CursorPage<T>>;
+  loadMorePage: (cursor: Cursor, signal: AbortSignal) => Promise<CursorPage<T, Cursor>>;
 }): {
   items: T[];
   status: "loading" | "error" | "ready";
   error: ApiError | null;
   hasMore: boolean;
-  nextCursor: string | null;
+  nextCursor: Presence<Cursor>;
   loadingMore: boolean;
   loadMore: () => void;
   retry: () => void;
@@ -46,15 +47,15 @@ export function useCursorPagination<T>(args: {
   const { firstPage, initialMoreError, loadMorePage } = args;
   const firstData = firstPage.status === "ready" ? firstPage.data : null;
 
-  const [continuation, setContinuation] = useState<CursorContinuation<T>>({
+  const [continuation, setContinuation] = useState<CursorContinuation<T, Cursor>>({
     owner: null,
     appended: [],
-    nextCursor: null,
+    nextCursor: absent(),
     loadingMore: false,
     error: initialMoreError,
   });
   const [defect, setDefect] = useState<{
-    readonly owner: CursorPage<T>;
+    readonly owner: CursorPage<T, Cursor>;
     readonly error: unknown;
   } | null>(null);
 
@@ -65,16 +66,16 @@ export function useCursorPagination<T>(args: {
     firstData !== null && continuation.owner === firstData;
   const effectiveCursor =
     firstData === null
-      ? null
+      ? absent<Cursor>()
       : firstDataIsCurrent
         ? continuation.nextCursor
-        : firstData.page.next_cursor;
+        : firstData.nextCursor;
   const items = useMemo(() => {
     if (firstData === null) {
       return [];
     }
     return [
-      ...firstData.data,
+      ...firstData.items,
       ...(firstDataIsCurrent ? continuation.appended : []),
     ];
   }, [continuation.appended, firstData, firstDataIsCurrent]);
@@ -86,7 +87,7 @@ export function useCursorPagination<T>(args: {
     setContinuation({
       owner: firstData,
       appended: [],
-      nextCursor: firstData.page.next_cursor,
+      nextCursor: firstData.nextCursor,
       loadingMore: false,
       error: initialMoreError,
     });
@@ -113,7 +114,7 @@ export function useCursorPagination<T>(args: {
 
   const loadMore = useCallback(() => {
     const next = cursorRef.current;
-    if (next === null || loadingRef.current) return;
+    if (next.kind === "Absent" || loadingRef.current) return;
     const generation = generationRef.current;
     loadingRef.current = true;
     setContinuation((current) => ({
@@ -126,13 +127,13 @@ export function useCursorPagination<T>(args: {
     abortRef.current = controller;
     void (async () => {
       try {
-        const page = await loadRef.current(next, controller.signal);
+        const page = await loadRef.current(next.value, controller.signal);
         if (controller.signal.aborted || generation !== generationRef.current)
           return;
         setContinuation((current) => ({
           ...current,
-          appended: [...current.appended, ...page.data],
-          nextCursor: page.page.next_cursor,
+          appended: [...current.appended, ...page.items],
+          nextCursor: page.nextCursor,
         }));
       } catch (err) {
         if (
@@ -177,7 +178,7 @@ export function useCursorPagination<T>(args: {
         status: "loading",
         error: null,
         hasMore: false,
-        nextCursor: null,
+        nextCursor: absent(),
         loadingMore: false,
         loadMore,
         retry: () => {},
@@ -188,7 +189,7 @@ export function useCursorPagination<T>(args: {
         status: "error",
         error: firstPage.error,
         hasMore: false,
-        nextCursor: null,
+        nextCursor: absent(),
         loadingMore: false,
         loadMore,
         retry: firstPage.retry,
@@ -198,7 +199,7 @@ export function useCursorPagination<T>(args: {
         items,
         status: "ready",
         error: firstDataIsCurrent ? continuation.error : null,
-        hasMore: effectiveCursor !== null,
+        hasMore: effectiveCursor.kind === "Present",
         nextCursor: effectiveCursor,
         loadingMore: firstDataIsCurrent ? continuation.loadingMore : false,
         loadMore,

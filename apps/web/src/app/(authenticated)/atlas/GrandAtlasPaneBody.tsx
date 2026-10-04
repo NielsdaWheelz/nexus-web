@@ -10,6 +10,7 @@ import {
   isSameSystemApiDefect,
 } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
+import type { ApiJson, Schema } from "@/lib/api/wire";
 import {
   requirePaneRuntime,
   usePaneRuntime,
@@ -38,33 +39,9 @@ import {
 
 // ---- API read model --------------------------------------------------------
 
-interface StarOut {
-  media_id: string;
-  x: number | null;
-  y: number | null;
-  title: string;
-  kind: string;
-  magnitude: number;
-}
-
-interface ConstellationOut {
-  library_id: string;
-  name: string;
-  member_media_ids: string[];
-}
-
-interface AtlasEdgeOut {
-  source_media_id: string;
-  target_media_id: string;
-  kind: "context" | "contradicts";
-  origin: string;
-}
-
-interface AtlasOut {
-  stars: StarOut[];
-  constellations: ConstellationOut[];
-  edges: AtlasEdgeOut[];
-}
+type StarOut = Schema<"StarOut">;
+type ConstellationOut = Schema<"ConstellationOut">;
+type AtlasEdgeOut = Schema<"AtlasEdgeOut">;
 
 function atlasLoadErrorMessage(error: unknown): FeedbackContent {
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
@@ -400,7 +377,7 @@ export default function GrandAtlasPaneBody() {
   const [selectedReadingId, setSelectedReadingId] = useState<string | null>(null);
   const [peerIds, setPeerIds] = useState<readonly string[]>([]);
 
-  const atlasResource = useResource<{ data: AtlasOut }>({
+  const atlasResource = useResource<ApiJson<"/atlas", "get">>({
     cacheKey: "atlas",
     path: () => "/api/atlas",
   });

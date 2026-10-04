@@ -76,17 +76,19 @@ import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInpu
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import {
-  definePaneVisitDataKey,
-  useClearAllPaneVisitData,
   usePaneParam,
   usePaneIsActive,
-  usePaneReturnReady,
   usePaneRouter,
   usePaneRuntime,
   requirePaneRuntime,
-  usePaneVisitData,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
+import {
+  definePaneVisitDataKey,
+  useClearAllPaneVisitData,
+  usePaneReturnReady,
+  usePaneVisitData,
+} from "@/lib/workspace/paneReturnMemento";
 import type { LibraryOut } from "@/lib/libraries/contract";
 import { useLibraryMembers } from "@/lib/libraries/useLibraryMembers";
 import {
@@ -141,7 +143,10 @@ import type { PaneRefreshExecute } from "@/lib/panes/panePublications";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { isAbortError } from "@/lib/errors";
 import { useRevalidationSettlement } from "@/lib/panes/useRevalidationSettlement";
-import { runPodcastRefresh } from "@/lib/podcasts/refresh";
+import {
+  podcastRefreshRequestAnnouncement,
+  requestPodcastRefresh,
+} from "@/lib/podcasts/refresh";
 import {
   decodeLibraryEntryListItem,
   type LibraryEntryListItem,
@@ -200,7 +205,6 @@ interface CommittedLibraryView {
   readonly entries: readonly LibraryEntry[];
   readonly collectionRevision: CollectionRevision;
   readonly nextCursor: Presence<CollectionCursor>;
-  readonly exhaustion: "Partial" | "Complete";
   // The fact revisions this committed page was fetched at; a later reacted-to
   // advance reconciles the current view against fresh authoritative truth.
   readonly revisions: LibraryRevisions;
@@ -1028,10 +1032,6 @@ export default function LibraryPaneBody() {
               entries: result.page.items,
               collectionRevision: result.page.collectionRevision,
               nextCursor: result.page.nextCursor,
-              exhaustion:
-                result.page.nextCursor.kind === "Absent"
-                  ? "Complete"
-                  : "Partial",
               revisions: result.request.revisions,
             },
           },
@@ -1117,7 +1117,6 @@ export default function LibraryPaneBody() {
             entries: libraryResource.data.entries,
             collectionRevision: libraryResource.data.collectionRevision,
             nextCursor: libraryResource.data.nextCursor,
-            exhaustion: libraryResource.data.exhaustion,
             revisions: seedRevisions,
           },
         });
@@ -1219,10 +1218,6 @@ export default function LibraryPaneBody() {
         entries: firstPageResource.data.page.items,
         collectionRevision: firstPageResource.data.page.collectionRevision,
         nextCursor: firstPageResource.data.page.nextCursor,
-        exhaustion:
-          firstPageResource.data.page.nextCursor.kind === "Absent"
-            ? "Complete"
-            : "Partial",
         revisions: committedRevisions,
       },
     });
@@ -1451,7 +1446,6 @@ export default function LibraryPaneBody() {
           ...current.entries,
           entries: merged,
           nextCursor: page.nextCursor,
-        exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
         },
       };
       controllerRef.current = next;
@@ -1486,7 +1480,7 @@ export default function LibraryPaneBody() {
     if (
       !viewIsCommitted ||
       !canReorder ||
-      controller?.entries.exhaustion !== "Complete" ||
+      controller?.entries.nextCursor.kind !== "Absent" ||
       entryExhaustion.kind !== "Complete"
     ) {
       return;
@@ -1580,7 +1574,7 @@ export default function LibraryPaneBody() {
     [entries, isVisibleEntry],
   );
   const entryCollectionComplete =
-    controller?.entries.exhaustion === "Complete" &&
+    controller?.entries.nextCursor.kind === "Absent" &&
     entryExhaustion.kind === "Complete";
   const invalidView = decodedView.kind === "Invalid" || viewInvalid;
   const orderPresetIds = useMemo(
@@ -1857,22 +1851,12 @@ export default function LibraryPaneBody() {
   const retryLibraryRefresh = useCallback(() => {
     const controller = new AbortController();
     setError(null);
-    void runPodcastRefresh(
+    void requestPodcastRefresh(
       { kind: "Library", libraryId: id },
-      { signal: controller.signal, onProgress: () => {} },
+      controller.signal,
     )
-      .then(async (result) => {
+      .then(async () => {
         await revalidateLibraryEntries(controller.signal);
-        if (result.kind === "Complete") return;
-        setError({
-          content: {
-            tone: result.kind === "Failed" ? "Danger" : "Warning",
-            title: result.announcement,
-          },
-          actions: [
-            { label: "Retry", onClick: () => retryLibraryRefreshRef.current() },
-          ],
-        });
       })
       .catch((refreshError: unknown) => {
         if (isAbortError(refreshError)) return;
@@ -1890,24 +1874,16 @@ export default function LibraryPaneBody() {
   }, [id, presentFailure, revalidateLibraryEntries]);
   retryLibraryRefreshRef.current = retryLibraryRefresh;
   const executeRefresh = useCallback<PaneRefreshExecute>(
-    async ({ signal, reportProgress }) => {
+    async ({ signal }) => {
       try {
-        const result = await runPodcastRefresh(
+        const requestedCount = await requestPodcastRefresh(
           { kind: "Library", libraryId: id },
-          {
-            signal,
-            onProgress: ({ finishedCount, requestedCount }) =>
-              reportProgress({
-                kind: "Determinate",
-                finishedCount,
-                requestedCount,
-              }),
-          },
+          signal,
         );
         await revalidateLibraryEntries(signal);
         return {
-          kind: result.kind,
-          announcement: result.announcement,
+          kind: "Complete",
+          announcement: podcastRefreshRequestAnnouncement(requestedCount),
         };
       } catch (refreshError: unknown) {
         if (isAbortError(refreshError)) throw refreshError;
@@ -2044,7 +2020,7 @@ export default function LibraryPaneBody() {
     committedView.projection.kind === "AllItems" &&
     committedView.projection.completion === "all" &&
     committedView.entryType.kind === "AllTypes" &&
-    controller?.entries.exhaustion === "Complete" &&
+    controller?.entries.nextCursor.kind === "Absent" &&
     entryExhaustion.kind === "Complete";
   const entryFooter = <CollectionExhaustionNotice state={entryExhaustion} />;
   const retryEntryReconciliation = entryReconciliationRequest
@@ -2417,7 +2393,7 @@ export default function LibraryPaneBody() {
           {mainBody}
         </div>
         {currentLibrary !== null &&
-        controller?.entries.exhaustion === "Complete" &&
+        controller?.entries.nextCursor.kind === "Absent" &&
         entryExhaustion.kind === "Complete" ? (
           <ReadingSlateSection
             returnScope="Library.ReadingSlate"

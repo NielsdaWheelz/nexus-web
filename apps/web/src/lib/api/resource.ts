@@ -65,12 +65,12 @@ export interface ContributorWorksResourceParams
   view?: AuthorWorksView;
 }
 
-// The chats index carries no caller-chosen page size: the server seed, the
-// client mount, and every continuation must request the same one.
+// The primary chats index uses 100 rows; the destination picker uses 25.
 export interface ConversationIndexResourceParams
-  extends Omit<CollectionPageParams, "limit"> {
+  extends CollectionPageParams {
   // The current Chats index view. Canonical emits no sort/direction keys.
   view?: UpdatedTitleIndexView;
+  titleSearch?: string;
 }
 
 export interface ReadingSlateResourceParams {
@@ -136,12 +136,24 @@ function contributorWorksPageQuery(
 
 const CONVERSATION_INDEX_LIMIT = 100;
 
+function conversationIndexViewQuery(
+  params: ConversationIndexResourceParams,
+): string {
+  const query = new URLSearchParams(
+    params.view ? updatedTitleIndexViewQuery(params.view).replace(/^\?/, "") : "",
+  );
+  const titleSearch = params.titleSearch?.trim();
+  if (titleSearch) query.set("title_search", titleSearch);
+  const suffix = query.toString();
+  return suffix ? `?${suffix}` : "";
+}
+
 function conversationIndexPageQuery(
   params: ConversationIndexResourceParams,
 ): string {
   return collectionPageQuery(
-    { ...params, limit: CONVERSATION_INDEX_LIMIT },
-    params.view ? updatedTitleIndexViewQuery(params.view) : "",
+    { ...params, limit: params.limit ?? CONVERSATION_INDEX_LIMIT },
+    conversationIndexViewQuery(params),
   );
 }
 
@@ -237,9 +249,12 @@ export const noteBlockResource: ResourceDescriptor<NoteBlockResourceParams> = {
 
 export const conversationsInitialResource: ResourceDescriptor<ConversationIndexResourceParams> =
   {
-    // View-scoped but cursor-free: every page of one chats view shares an entry.
+    // Query-scoped but cursor-free: every page of one chats query shares an entry.
     cacheKey: (params) =>
-      `conversations:list${params.view ? updatedTitleIndexViewQuery(params.view) : ""}`,
+      `conversations:list${collectionPageQuery(
+        { limit: params.limit === CONVERSATION_INDEX_LIMIT ? undefined : params.limit },
+        conversationIndexViewQuery(params),
+      )}`,
     serverPath: (params) =>
       `/conversations${conversationIndexPageQuery(params)}`,
     clientPath: (params) =>

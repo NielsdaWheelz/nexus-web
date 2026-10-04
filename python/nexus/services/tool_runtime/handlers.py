@@ -27,6 +27,7 @@ from llm_tools import (
 from sqlalchemy.orm import Session
 
 from nexus.db.async_session import open_async_session
+from nexus.db.models import MediaKind
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.search import SearchResultMediaOut
 from nexus.services.agent_tools.app_search import (
@@ -589,7 +590,7 @@ def _run_resource_inspect(
                 },
                 citation=citation,
             ),
-            media_kind=cast("Any", document_map.kind),
+            media_kind=MediaKind(document_map.kind),
             sections=sections,
             title=document_map.title,
             total_sections=document_map.total_sections,

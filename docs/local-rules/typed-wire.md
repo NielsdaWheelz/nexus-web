@@ -17,20 +17,29 @@ its wire types are generated from FastAPI's OpenAPI schema, so tsc catches drift
   the schema. a route that dumped by field name (`ok()`'s default) keeps its
   bytes only if its models (nested ones included) have no aliases on output;
   make an input-only alias a `validation_alias`.
-- a field of an Out model has no `None` default and no `default_factory`
-  (`x: T | None`, not `= None`; `xs: list[T]`, not `Field(default_factory=list)`).
-  FastAPI's schema drops `default: null` and never shows a factory's default,
-  so either would generate an optional `x?:` for a field that is always sent. a
-  plain non-None default (`= False`) generates a required field and may stay.
+- always-serialized fields of an Out model must be required in its output
+  schema. `json_schema_serialization_defaults_required=True` on that selected
+  output model keeps useful nullable/factory constructor defaults while making
+  their wire presence explicit. it does not apply to input models or global
+  bases, and does not turn genuinely omitted/excluded fields into output keys.
+  without that setting, an Out field has no `None` default or `default_factory`:
+  either generates an optional key for a field that is always sent. plain
+  non-None defaults (`= False`) generate required output fields and may stay.
 - a route that returned `JSONResponse` was serialized by `json.dumps`; the
   typed route is serialized by pydantic, which renders floats in exponent form
   differently (`1e-05` becomes `0.00001`). a dynamic status or header goes on
   an injected `Response`, and the route still returns the model.
+- atlas is the named conditional-json exception: `GET /atlas` explicitly declares
+  `Data[AtlasOut]`, constructs that validated envelope, renders one `JSONResponse`
+  and hashes its actual body before returning 200 or bodyless 304. this preserves
+  the existing standard-json float bytes and makes the tag identify exactly what
+  is sent. the [atlas owner](../modules/atlas.md#conditional-http-owner) specifies
+  this boundary; other typed json routes return their model directly.
 - 204, binary, redirect and SSE routes keep their shape.
 - an SSE `data:` frame that is a model as-is is listed in `nexus/wire_schema.py`
-  and generates under its own name, e.g. `Schema<"ChatRunDoneEventPayload">`,
-  except the three that nest `ResourceActivationOut` by field name (ticket
-  `resource-activation-has-two-wire-casings`).
+  and generates under its own name, e.g. `Schema<"ChatRunDoneEventPayload">`.
+  chat citation-index/context-ref-added and oracle passage share the canonical
+  snake `ResourceActivationOut` and are registered with the other SSE payloads.
 
 ## generation
 

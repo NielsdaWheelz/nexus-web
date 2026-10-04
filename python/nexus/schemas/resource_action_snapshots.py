@@ -5,26 +5,24 @@ This is the single source of per-resource action FACTS. It carries only facts:
 which capabilities exist for a ref and whether the server blocks each one. It
 never carries labels, icons, order, separators, confirmation copy, mutation
 URLs, executors, busy state, or client-only blocked reasons — those are owned by
-the frontend planner/runtime. See the design contract's "Backend wire contract".
+the frontend planner/runtime. See ``docs/modules/resource-actions.md``.
 
 Serialization is camelCase via ``by_alias=True`` (repo convention, mirroring
-``ResourceActivationOut``). Every model is a closed discriminated union on
-``kind`` so an unknown or mis-shaped variant is a boundary defect, not silent
-coercion.
+``ResourceActivationOut``). Capabilities are closed unions on ``kind``; conditional membership and note
+states discriminate on ``state``. Unknown or mis-shaped variants are boundary
+defects, not silent coercion.
 """
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    SerializerFunctionWrapHandler,
     field_validator,
-    model_serializer,
     model_validator,
 )
 from pydantic.alias_generators import to_camel
@@ -34,7 +32,12 @@ from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySou
 from nexus.schemas.resource_items import ResourceActivationOut
 
 _MAX_REFS = 100
-_OUT_CONFIG = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+_OUT_CONFIG = ConfigDict(
+    alias_generator=to_camel,
+    populate_by_name=True,
+    extra="forbid",
+    json_schema_serialization_defaults_required=True,
+)
 
 
 class ResourceActionSnapshotResolveRequest(BaseModel):
@@ -78,7 +81,7 @@ ServerActionAvailabilityOut = Annotated[
 
 # Capability kinds whose only fact is availability. Grouped into one model
 # because they share an identical wire shape (``{kind, availability}``); the
-# frontend union mirrors this.
+# generated web contract preserves this union.
 SimpleResourceActionCapabilityKind = Literal[
     "Open",
     "OpenInNewPane",
@@ -110,7 +113,6 @@ SimpleResourceActionCapabilityKind = Literal[
     "EditPageTitle",
     "DeletePage",
     "EditNoteBody",
-    "RenameContributor",
     "RegenerateArtifact",
     "RemoveMedia",
     "LibraryPlacement",
@@ -228,39 +230,48 @@ class TranscriptResourceActionCapabilityOut(BaseModel):
     model_config = _OUT_CONFIG
 
 
-class LecternMembershipResourceActionCapabilityOut(BaseModel):
+class LecternMembershipAbsentOut(BaseModel):
     kind: Literal["LecternMembership"] = "LecternMembership"
     availability: ServerActionAvailabilityOut
-    state: Literal["Absent", "Present"]
-    lectern_item_id: UUID | None = None
+    state: Literal["Absent"] = "Absent"
 
     model_config = _OUT_CONFIG
 
-    @model_serializer(mode="wrap")
-    def _serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
-        value = handler(self)
-        if self.state == "Absent":
-            value.pop("lecternItemId", None)
-            value.pop("lectern_item_id", None)
-        return value
+
+class LecternMembershipPresentOut(BaseModel):
+    kind: Literal["LecternMembership"] = "LecternMembership"
+    availability: ServerActionAvailabilityOut
+    state: Literal["Present"] = "Present"
+    lectern_item_id: UUID
+
+    model_config = _OUT_CONFIG
 
 
-class HighlightNoteResourceActionCapabilityOut(BaseModel):
+type LecternMembershipResourceActionCapabilityOut = Annotated[
+    LecternMembershipAbsentOut | LecternMembershipPresentOut, Field(discriminator="state")
+]
+
+
+class HighlightNoteAbsentOut(BaseModel):
     kind: Literal["HighlightNote"] = "HighlightNote"
     availability: ServerActionAvailabilityOut
-    state: Literal["Absent", "Present"]
-    note_block_id: UUID | None = None
+    state: Literal["Absent"] = "Absent"
 
     model_config = _OUT_CONFIG
 
-    @model_serializer(mode="wrap")
-    def _serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
-        value = handler(self)
-        if self.state == "Absent":
-            value.pop("noteBlockId", None)
-            value.pop("note_block_id", None)
-        return value
 
+class HighlightNotePresentOut(BaseModel):
+    kind: Literal["HighlightNote"] = "HighlightNote"
+    availability: ServerActionAvailabilityOut
+    state: Literal["Present"] = "Present"
+    note_block_id: UUID
+
+    model_config = _OUT_CONFIG
+
+
+type HighlightNoteResourceActionCapabilityOut = Annotated[
+    HighlightNoteAbsentOut | HighlightNotePresentOut, Field(discriminator="state")
+]
 
 ResourceActionCapabilityOut = Annotated[
     SimpleResourceActionCapabilityOut
@@ -282,9 +293,19 @@ class ResourceActionSnapshotOut(BaseModel):
     ref: str
     activation: ResourceActivationOut
     missing: bool
-    capabilities: list[ResourceActionCapabilityOut] = Field(default_factory=list)
+    capabilities: list[ResourceActionCapabilityOut]
 
     model_config = _OUT_CONFIG
+
+    @model_validator(mode="after")
+    def _validate_snapshot(self) -> ResourceActionSnapshotOut:
+        if self.ref != self.activation.resource_ref:
+            raise ValueError("snapshot ref must equal activation resource ref")
+        if self.missing and self.capabilities:
+            raise ValueError("missing snapshot must have no capabilities")
+        if self.missing and self.activation.kind != "none":
+            raise ValueError("missing snapshot must have no activation")
+        return self
 
 
 class ResourceActionSnapshotResolveResponse(BaseModel):

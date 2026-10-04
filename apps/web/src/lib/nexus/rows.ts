@@ -52,15 +52,15 @@ const BROWSE_LABELS: Record<BrowseKind, string> = { WebArticle: "articles", Podc
 type Hints = Readonly<Partial<Record<NexusCommandId, string>>>;
 type Frecency = Readonly<Record<string, number>>;
 
-/** The ranked result rows of one normalized query and the row the keyboard acts on. */
+/** The ranked result rows of one query identity and the row the keyboard acts on. */
 export interface NexusList {
-  readonly norm: string;
+  readonly identity: string;
   readonly rows: readonly NexusRow[];
   readonly active: string | null;
   readonly moved: boolean;
 }
 
-export const EMPTY_LIST: NexusList = { norm: "", rows: [], active: null, moved: false };
+export const EMPTY_LIST: NexusList = { identity: "", rows: [], active: null, moved: false };
 
 function prefixOrToken(query: string, candidate: string): boolean {
   return candidate.startsWith(query) || candidate.split(/\s+/).some((token) => token.startsWith(query));
@@ -344,32 +344,32 @@ function firstInOrder(incoming: readonly NexusRow[], stable: readonly NexusRow[]
 }
 
 /**
- * A new query restarts on its first row. For the same query the active row keeps its
+ * A new query identity restarts on its first row. For the same identity the active row keeps its
  * identity: a moved list keeps every row up to it in place (all rows when the active row
  * is a query action); an unmoved list re-ranks, reserving the active row (and its parent)
  * at the end when it would fall past the cap. A vanished active row keeps its index.
  */
-export function mergeResults(previous: NexusList, norm: string, incoming: readonly NexusRow[]): NexusList {
-  if (previous.norm !== norm || previous.active === null) {
+export function mergeResults(previous: NexusList, identity: string, incoming: readonly NexusRow[]): NexusList {
+  if (previous.identity !== identity || previous.active === null) {
     const rows = incoming.slice(0, RESULT_CAP);
-    return { norm, rows, active: rows[0]?.key ?? null, moved: previous.norm === norm && previous.moved };
+    return { identity, rows, active: rows[0]?.key ?? null, moved: previous.identity === identity && previous.moved };
   }
   const { active, moved } = previous;
   const index = previous.rows.findIndex((row) => row.key === active);
   const kept = incoming.find((row) => row.key === active);
   if (index >= 0 && !kept) {
     const rows = firstInOrder(incoming, moved ? previous.rows.slice(0, index) : []);
-    return { norm, rows, active: rows[Math.min(index, rows.length - 1)]?.key ?? null, moved };
+    return { identity, rows, active: rows[Math.min(index, rows.length - 1)]?.key ?? null, moved };
   }
   if (moved) {
-    return { norm, rows: firstInOrder(incoming, index < 0 ? previous.rows : previous.rows.slice(0, index + 1)), active, moved };
+    return { identity, rows: firstInOrder(incoming, index < 0 ? previous.rows : previous.rows.slice(0, index + 1)), active, moved };
   }
   const ranked = incoming.slice(0, RESULT_CAP);
-  if (!kept || ranked.includes(kept)) return { norm, rows: ranked, active, moved };
+  if (!kept || ranked.includes(kept)) return { identity, rows: ranked, active, moved };
   const parent = incoming.find((row) => row.key === kept.parent?.key);
   const reserved = parent ? [parent, kept] : [kept];
   const rest = incoming.filter((row) => !reserved.includes(row)).slice(0, RESULT_CAP - reserved.length);
-  return { norm, rows: [...rest, ...reserved], active, moved };
+  return { identity, rows: [...rest, ...reserved], active, moved };
 }
 
 export function playbackRow(title: string, subtitle: string | undefined): NexusRow {

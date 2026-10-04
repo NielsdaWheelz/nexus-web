@@ -24,7 +24,7 @@ export const metadata: Metadata = { title: null };
 // Only LOCAL work runs above the Suspense boundary — the auth gate (may redirect) and the
 // header-derived render environment. The chrome skeleton is the first flush (TTFB depends on
 // nothing networked); the data root resolves behind the boundary and streams in (S4 / R1).
-// The client class boundary owns bootstrap failure (the required profile read): a
+// The client class boundary owns required account, profile and session bootstrap failure: a
 // same-segment error.tsx cannot catch its own layout.
 export default async function AuthenticatedLayout() {
   await verifySession();

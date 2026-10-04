@@ -1,36 +1,7 @@
 "use client";
 
-import {
-  apiErrorFromResponse,
-  decodeApiPayload,
-} from "@/lib/api/client";
-import {
-  expectExactRecord,
-  expectNullableNonnegativeInteger,
-  expectString,
-} from "@/lib/validation";
-
-export function decodeWalknoteTranscriptionResponse(raw: unknown): string {
-  const envelope = expectExactRecord(
-    raw,
-    ["data"],
-    "Walknote transcription response",
-  );
-  const data = expectExactRecord(
-    envelope.data,
-    ["transcript", "duration_ms"],
-    "Walknote transcription response.data",
-  );
-  const transcript = expectString(
-    data.transcript,
-    "Walknote transcription response.data.transcript",
-  );
-  expectNullableNonnegativeInteger(
-    data.duration_ms,
-    "Walknote transcription response.data.duration_ms",
-  );
-  return transcript;
-}
+import { apiErrorFromResponse } from "@/lib/api/client";
+import type { ApiJson } from "@/lib/api/wire";
 
 export async function transcribeAudio(blob: Blob): Promise<string> {
   const form = new FormData();
@@ -46,10 +17,6 @@ export async function transcribeAudio(blob: Blob): Promise<string> {
     throw await apiErrorFromResponse(response);
   }
 
-  const body: unknown = await response.json();
-  return decodeApiPayload(
-    body,
-    decodeWalknoteTranscriptionResponse,
-    "Walknote transcription",
-  );
+  const body: ApiJson<"/walknotes/transcribe-audio", "post"> = await response.json();
+  return body.data.transcript;
 }

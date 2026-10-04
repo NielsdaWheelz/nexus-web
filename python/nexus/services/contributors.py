@@ -246,7 +246,6 @@ def get_contributor_detail(
         href=f"/authors/{contributor.handle}",
         displayName=contributor.display_name,
         otherNames=other_names,
-        canRename=False,
         actionSubject=ResourceActionSubjectOut(
             ref=ResourceRef(scheme="contributor", id=contributor.id).uri
         ),
@@ -798,15 +797,3 @@ def _media_authors_out(
         # True by construction: the PUT already authorized this viewer.
         canEditAuthors=True,
     )
-
-
-def ensure_contributor_display_name(
-    *, viewer: Viewer, contributor_handle: ContributorHandle
-) -> ContributorDetailOut:
-    """Rename an author: 404 an invisible handle, then refuse — no principal may rename."""
-    fresh = get_session_factory()()
-    try:
-        _load_visible_contributor_by_handle(fresh, str(contributor_handle), viewer.user_id)
-    finally:
-        fresh.close()
-    raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Renaming an author is not available")

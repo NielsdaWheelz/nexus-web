@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
+import { assertNever } from "@/lib/assertNever";
 import {
   isApiError,
   isSameSystemApiDefect,
@@ -34,6 +35,9 @@ import type {
   PlaybackPhase,
   PlayerError,
 } from "@/lib/player/playerSession";
+
+export const PLAYER_SKIP_BACK_SECONDS = 15;
+export const PLAYER_SKIP_FORWARD_SECONDS = 30;
 
 export type GlobalPlayerState =
   | { kind: "Absent" }
@@ -74,6 +78,28 @@ export type GlobalPlayerState =
 
 export interface PreviewAudioSession {
   descriptor: PreviewAudioDescriptor;
+}
+
+export function canonicalSessionOfGlobalState(
+  state: GlobalPlayerState,
+): AudioSession | null {
+  switch (state.kind) {
+    case "Absent":
+    case "UpdateRequired":
+    case "RuntimeFailed":
+    case "PreviewAudio":
+    case "PreviewAudioFailed":
+    case "PreviewAudioAtEnd":
+      return null;
+    case "Active":
+    case "Completing":
+    case "CompletionFailed":
+    case "PlaybackFailed":
+    case "PausedAtEnd":
+      return state.session;
+    default:
+      return assertNever(state);
+  }
 }
 
 export interface PreviewAudioPosition {

@@ -14,6 +14,7 @@ import {
 } from "react";
 import { RefreshCw } from "lucide-react";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useFeedback } from "@/components/feedback/Feedback";
 import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
@@ -30,7 +31,7 @@ import {
 } from "@/lib/actions/resourceActionEnvironment";
 import type { ResourceActionId } from "@/lib/actions/resourceActions";
 import {
-  decodeResourceActionSnapshotResolveResponse,
+  adaptResourceActionSnapshotResolveResponse,
   type ResourceActionSnapshot,
 } from "@/lib/actions/resourceActionSnapshot";
 import {
@@ -59,7 +60,7 @@ import {
   canonicalSessionOfGlobalState,
   usePlayerCommands,
   usePlayerSession,
-} from "@/lib/player/globalPlayer";
+} from "@/lib/player/playerRuntime";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { assertNever } from "@/lib/assertNever";
@@ -70,14 +71,14 @@ async function resolveActionSnapshots(
   const requests: Promise<readonly ResourceActionSnapshot[]>[] = [];
   for (let offset = 0; offset < refs.length; offset += 100) {
     requests.push(
-      apiFetch<{ data: unknown }>(
+      apiFetch<ApiJson<"/resource-items/action-snapshots/resolve", "post">>(
         "/api/resource-items/action-snapshots/resolve",
         {
           method: "POST",
           body: JSON.stringify({ refs: refs.slice(offset, offset + 100) }),
         },
       ).then((response) =>
-        decodeResourceActionSnapshotResolveResponse(response.data),
+        adaptResourceActionSnapshotResolveResponse(response.data),
       ),
     );
   }

@@ -1,44 +1,35 @@
-"""Wire contracts for Consumption activity capture, exclusions, and statistics.
+"""Wire contracts for activity capture, exclusions and personal statistics.
 
-The browser and the Android shell own observation; this module owns the bounded
-factual batch they may submit and the key-exact statistics payload the Stats
-pane decodes. Private device identity never appears here: the BFF injects
-``deviceId`` at the trusted service boundary and only sealed handles go out.
+The capture body is frozen: the web outbox and the Android app both post it. Raw device ids
+arrive only through the BFF; only sealed handles go out.
 """
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 from nexus.schemas.presence import Absent, Presence
 
-_INT64_MAX = 9_223_372_036_854_775_807
-_MAX_ACTIVITY_SPAN_MS = 30_000
+
+def _civil_date(value: object) -> str:
+    if not isinstance(value, str) or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value) is None:
+        raise ValueError("Expected YYYY-MM-DD")
+    return value
 
 
-class _In(BaseModel):
-    """Strict camelCase ingress: no snake aliases, no unknown keys."""
-
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=False, extra="forbid")
-
-
-class _Out(BaseModel):
-    """Strict camelCase egress: built with snake names, serialized by alias."""
-
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+ConsumptionDate = Annotated[date, BeforeValidator(_civil_date)]
 
 
 ActivityModality = Literal["Reading", "Listening", "Viewing"]
 ActivityDeviceClass = Literal["Desktop", "Mobile"]
-_NonNegativeInt64 = Annotated[int, Field(ge=0, le=_INT64_MAX)]
+_Position = Annotated[int, Field(ge=0, le=9_223_372_036_854_775_807)]
 _Progress = Annotated[float, Field(ge=0, le=1)]
-_DurationMs = Annotated[int, Field(gt=0, le=_MAX_ACTIVITY_SPAN_MS)]
-
 CompletionHandle = Annotated[str, Field(pattern=r"^ncc1\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{22}$")]
 DeviceHandle = Annotated[str, Field(pattern=r"^ncd1\.[A-Za-z0-9_-]{22}$")]
 ActivityExclusionHandle = Annotated[
@@ -46,66 +37,72 @@ ActivityExclusionHandle = Annotated[
 ]
 
 
-def _require_paired(label: str, first: object, second: object) -> None:
-    """Both halves of an optional measurement are present, or neither is."""
-    if isinstance(first, Absent) != isinstance(second, Absent):
-        raise ValueError(f"{label} must have the same presence")
+class CamelIn(BaseModel):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=False, extra="forbid")
 
 
-class _ActivitySpanIn(_In):
+class CamelOut(BaseModel):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+
+
+class CommandIn(CamelIn):
+    """A write that replays by its ``clientMutationId``."""
+
+    client_mutation_id: UUID
+
+
+class _Row(CamelOut):
+    """Validated from a query row whose columns carry its field names; other columns are ignored."""
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class _SpanIn(CamelIn):
     capture_key: UUID
     occurred_at: AwareDatetime
-    duration_ms: _DurationMs
+    duration_ms: int = Field(gt=0, le=30_000)
+
+    @model_validator(mode="after")
+    def _paired(self) -> Self:
+        """Each ``*_start`` measurement is present exactly when its ``*_end`` is."""
+        for start in (name for name in type(self).model_fields if "_start" in name):
+            end = start.replace("_start", "_end")
+            if isinstance(getattr(self, start), Absent) != isinstance(getattr(self, end), Absent):
+                raise ValueError(
+                    f"{to_camel(start)} and {to_camel(end)} must have the same presence"
+                )
+        return self
+
+
+class ViewingActivitySpanIn(_SpanIn):
+    pass
+
+
+class ReadingActivitySpanIn(_SpanIn):
     progress_start: Presence[_Progress]
     progress_end: Presence[_Progress]
-
-    @model_validator(mode="after")
-    def _paired_progress(self) -> _ActivitySpanIn:
-        _require_paired("progressStart and progressEnd", self.progress_start, self.progress_end)
-        return self
+    word_start: Presence[_Position]
+    word_end: Presence[_Position]
 
 
-class ReadingActivitySpanIn(_ActivitySpanIn):
-    word_start: Presence[_NonNegativeInt64]
-    word_end: Presence[_NonNegativeInt64]
-
-    @model_validator(mode="after")
-    def _paired_words(self) -> ReadingActivitySpanIn:
-        _require_paired("wordStart and wordEnd", self.word_start, self.word_end)
-        return self
+class ListeningActivitySpanIn(_SpanIn):
+    progress_start: Presence[_Progress]
+    progress_end: Presence[_Progress]
+    media_position_start_ms: Presence[_Position]
+    media_position_end_ms: Presence[_Position]
 
 
-class ListeningActivitySpanIn(_ActivitySpanIn):
-    media_position_start_ms: Presence[_NonNegativeInt64]
-    media_position_end_ms: Presence[_NonNegativeInt64]
-
-    @model_validator(mode="after")
-    def _paired_media_positions(self) -> ListeningActivitySpanIn:
-        _require_paired(
-            "mediaPositionStartMs and mediaPositionEndMs",
-            self.media_position_start_ms,
-            self.media_position_end_ms,
-        )
-        return self
-
-
-class ViewingActivitySpanIn(_In):
-    capture_key: UUID
-    occurred_at: AwareDatetime
-    duration_ms: _DurationMs
-
-
-class ReadingActivityBatchIn(_In):
+class ReadingActivityBatchIn(CamelIn):
     modality: Literal["Reading"]
     spans: list[ReadingActivitySpanIn] = Field(min_length=1, max_length=120)
 
 
-class ListeningActivityBatchIn(_In):
+class ListeningActivityBatchIn(CamelIn):
     modality: Literal["Listening"]
     spans: list[ListeningActivitySpanIn] = Field(min_length=1, max_length=120)
 
 
-class ViewingActivityBatchIn(_In):
+class ViewingActivityBatchIn(CamelIn):
     modality: Literal["Viewing"]
     spans: list[ViewingActivitySpanIn] = Field(min_length=1, max_length=120)
 
@@ -114,15 +111,10 @@ ActivityBatchIn = Annotated[
     ReadingActivityBatchIn | ListeningActivityBatchIn | ViewingActivityBatchIn,
     Field(discriminator="modality"),
 ]
-ActivitySpanIn = ReadingActivitySpanIn | ListeningActivitySpanIn | ViewingActivitySpanIn
 
 
-class ActivityRecordIn(_In):
-    """Trusted backend activity record; the BFF alone injects ``deviceId``.
-
-    ``clientMutationId`` is a wire no-op the shipped Android app still sends
-    (ticket oi-170); ``extra="forbid"`` means it must stay declared.
-    """
+class ActivityRecordIn(CamelIn):
+    """``clientMutationId`` is accepted and ignored: the shipped Android app still sends it."""
 
     client_mutation_id: UUID
     media_ref: str = Field(min_length=1, max_length=100)
@@ -131,16 +123,15 @@ class ActivityRecordIn(_In):
     batch: ActivityBatchIn
 
     @model_validator(mode="after")
-    def _distinct_capture_keys(self) -> ActivityRecordIn:
-        capture_keys = [span.capture_key for span in self.batch.spans]
-        if len(capture_keys) != len(set(capture_keys)):
+    def _distinct_capture_keys(self) -> Self:
+        keys = [span.capture_key for span in self.batch.spans]
+        if len(keys) != len(set(keys)):
             raise ValueError("captureKey must be unique within one activity batch")
         return self
 
 
-class ExcludeActivityIn(_In):
+class ExcludeActivityIn(CommandIn):
     kind: Literal["Exclude"]
-    client_mutation_id: UUID
     media_ref: str = Field(min_length=1, max_length=100)
     modality: ActivityModality
     device_handle: DeviceHandle
@@ -148,140 +139,123 @@ class ExcludeActivityIn(_In):
     ended_at: AwareDatetime
 
 
-class RestoreActivityExclusionIn(_In):
+class RestoreActivityExclusionIn(CommandIn):
     kind: Literal["Restore"]
-    client_mutation_id: UUID
     exclusion_handle: ActivityExclusionHandle
 
 
 ActivityExclusionIn = Annotated[
-    ExcludeActivityIn | RestoreActivityExclusionIn,
-    Field(discriminator="kind"),
+    ExcludeActivityIn | RestoreActivityExclusionIn, Field(discriminator="kind")
 ]
 
 
-class ActivityExclusionResultOut(_Out):
+class ActivityExclusionResultOut(CamelOut):
     outcome: Literal["Excluded", "Restored"]
     exclusion_handle: ActivityExclusionHandle
 
 
-class DeviceSummaryOut(_Out):
+class DeviceSummaryOut(_Row):
     device_handle: DeviceHandle
     label: str
 
 
-class ActivitySessionOut(_Out):
+class ActivitySessionOut(_Row):
     media_ref: str
     title: str
     modality: ActivityModality
     device: DeviceSummaryOut
     started_at: datetime
     ended_at: datetime
-    active_ms: int = Field(ge=0)
-    forward_word_position: int = Field(ge=0)
-    forward_media_position_ms: int = Field(ge=0)
-    first_progress: Presence[float]
-    last_progress: Presence[float]
+    active_ms: int
+    forward_word_position: int
+    forward_media_position_ms: int
     continues_before_range: bool
     continues_after_range: bool
 
 
-class ActivitySessionPageOut(_Out):
-    sessions: list[ActivitySessionOut]
+class ActivitySessionPageOut(CamelOut):
+    items: list[ActivitySessionOut]
     next_cursor: Presence[str]
 
 
-class ActivitySessionsOut(_Out):
-    """The same session rows inside the Stats payload, keyed ``rows``."""
-
-    rows: list[ActivitySessionOut]
-    next_cursor: Presence[str]
-
-
-class ActivityMetricsOut(_Out):
-    active_ms: int = Field(ge=0)
-    forward_word_position: int = Field(ge=0)
-    forward_media_position_ms: int = Field(ge=0)
+class ActivityTotalsOut(CamelOut):
+    active_ms: int
+    recorded_active_ms: int
+    forward_word_position: int
+    forward_media_position_ms: int
+    active_days: int
+    streak: int
+    longest_streak: int
+    session_count: int
 
 
-class ActivityTotalsOut(ActivityMetricsOut):
-    recorded_active_ms: int = Field(ge=0)
-    excluded_active_ms: int = Field(ge=0)
-    active_days: int = Field(ge=0)
-    streak: int = Field(ge=0)
-    longest_streak: int = Field(ge=0)
-    session_count: int = Field(ge=0)
-
-
-class ActivityTimelineRowOut(ActivityMetricsOut):
+class ActivityTimelineRowOut(_Row):
     start: datetime
     end: datetime
     local_label: str
     utc_offset_minutes: int
-    reading_active_ms: int = Field(ge=0)
-    listening_active_ms: int = Field(ge=0)
-    viewing_active_ms: int = Field(ge=0)
+    reading_active_ms: int
+    listening_active_ms: int
+    viewing_active_ms: int
+    active_ms: int
 
 
-class LocalDayOut(_Out):
+class LocalDayOut(CamelOut):
     date: date
-    active_ms: int = Field(ge=0)
+    active_ms: int
 
 
-class LocalHourOut(_Out):
-    hour: int = Field(ge=0, le=23)
-    active_ms: int = Field(ge=0)
+class LocalHourOut(CamelOut):
+    hour: int
+    active_ms: int
 
 
-class MediaActivityOut(ActivityMetricsOut):
+class MediaActivityOut(_Row):
     media_ref: str
     title: str
+    active_ms: int
+    forward_word_position: int
+    forward_media_position_ms: int
 
 
-class MediaActivityBreakdownOut(_Out):
+class MediaActivityBreakdownOut(CamelOut):
     rows: list[MediaActivityOut]
-    other_active_ms: int = Field(ge=0)
+    other_active_ms: int
 
 
-class ContributorActivityOut(ActivityMetricsOut):
+class ContributorActivityOut(CamelOut):
     contributor_handle: str
     display_name: str
     roles: list[str]
+    active_ms: int
 
 
-class ContributorActivityBreakdownOut(_Out):
+class ContributorActivityBreakdownOut(CamelOut):
     rows: list[ContributorActivityOut]
-    other_active_ms: int = Field(ge=0)
-    non_additive: Literal[True] = True
 
 
-class DeviceActivityOut(_Out):
+class DeviceActivityOut(_Row):
     device_handle: DeviceHandle
     label: str
-    first_observed_at: datetime
-    last_observed_at: datetime
-    device_classes: list[ActivityDeviceClass]
     is_current: bool
-    active_ms: int = Field(ge=0)
+    active_ms: int
 
 
-class ActiveExclusionOut(_Out):
+class ActiveExclusionOut(_Row):
     exclusion_handle: ActivityExclusionHandle
-    media_ref: str
     title: str
     modality: ActivityModality
     device: DeviceSummaryOut
     started_at: datetime
-    ended_at: datetime
-    excluded_active_ms: int = Field(ge=0)
+    excluded_active_ms: int
 
 
-class ScopedSectionOut(_Out):
+class _Scoped(CamelOut):
     applied_filters: list[str]
     inapplicable_filters: list[str]
 
 
-class ActivityStatsSectionOut(ScopedSectionOut):
+class ActivityStatsSectionOut(_Scoped):
     totals: ActivityTotalsOut
     timeline: list[ActivityTimelineRowOut]
     local_days: list[LocalDayOut]
@@ -289,53 +263,37 @@ class ActivityStatsSectionOut(ScopedSectionOut):
     media: MediaActivityBreakdownOut
     contributors: ContributorActivityBreakdownOut
     devices: list[DeviceActivityOut]
-    sessions: ActivitySessionsOut
+    sessions: ActivitySessionPageOut
     longest_session: Presence[ActivitySessionOut]
     active_exclusions: list[ActiveExclusionOut]
 
 
-class CompletionDateOut(_Out):
-    date: date
-    total: int = Field(ge=0)
-
-
-class CompletionTimelineRowOut(_Out):
-    start: datetime
-    end: datetime
-    local_label: str
-    total: int = Field(ge=0)
-
-
-class MediaCompletionOut(_Out):
+class MediaCompletionOut(_Row):
     media_ref: str
     title: str
-    total: int = Field(ge=0)
+    total: int
 
 
-class ContributorCompletionOut(_Out):
+class ContributorCompletionOut(CamelOut):
     contributor_handle: str
     display_name: str
     roles: list[str]
-    total: int = Field(ge=0)
+    total: int
 
 
-class CompletionStatsSectionOut(ScopedSectionOut):
-    total: int = Field(ge=0)
-    dates: list[CompletionDateOut]
-    timeline: list[CompletionTimelineRowOut]
+class CompletionStatsSectionOut(_Scoped):
+    total: int
     media: list[MediaCompletionOut]
     contributors: list[ContributorCompletionOut]
-    by_modality: dict[ActivityModality, int]
 
 
-class RetainedArtifactsOut(ScopedSectionOut):
-    period_wide: Literal[True] = True
-    highlights: int = Field(ge=0)
-    note_blocks: int = Field(ge=0)
-    neutral_links: int = Field(ge=0)
+class RetainedArtifactsOut(_Scoped):
+    highlights: int
+    note_blocks: int
+    neutral_links: int
 
 
-class ConsumptionStatsOut(_Out):
+class ConsumptionStatsOut(CamelOut):
     activity: ActivityStatsSectionOut
     completion: CompletionStatsSectionOut
     retained_artifacts: RetainedArtifactsOut

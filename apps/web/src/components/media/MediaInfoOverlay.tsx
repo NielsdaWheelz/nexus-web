@@ -2,13 +2,14 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { apiFetch } from "@/lib/api/client";
+import type { ApiJson } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { formatCollectionPublicationDate } from "@/components/collections/collectionRowFormatting";
 import Dialog from "@/components/ui/Dialog";
 import Button from "@/components/ui/Button";
 import MobileSheet from "@/components/ui/MobileSheet";
 import { groupContributorCredits, selectMediaAuthors } from "@/lib/contributors/formatting";
-import { decodeMediaDetailResponse, type MediaDetail } from "@/lib/media/mediaDetail";
+import { mediaDetailFromResponse, type MediaDetail } from "@/lib/media/mediaDetail";
 import { mediaErrorMessage } from "@/lib/media/mediaErrorMessage";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
@@ -169,7 +170,7 @@ export default function MediaInfoOverlay({
     if (!open) return;
     const controller = new AbortController();
     setState({ kind: "Loading", mediaId });
-    void apiFetch<unknown>(`/api/media/${encodeURIComponent(mediaId)}`, {
+    void apiFetch<ApiJson<"/media/{media_id}", "get">>(`/api/media/${encodeURIComponent(mediaId)}`, {
       signal: controller.signal,
     })
       .then((raw) => {
@@ -178,7 +179,7 @@ export default function MediaInfoOverlay({
           setState({
             kind: "Ready",
             mediaId,
-            media: decodeMediaDetailResponse(raw, mediaId),
+            media: mediaDetailFromResponse(raw, mediaId),
           });
         } catch (error) {
           setState({ kind: "Defect", mediaId, error });

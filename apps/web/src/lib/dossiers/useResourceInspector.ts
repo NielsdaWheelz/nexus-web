@@ -174,7 +174,7 @@ export function useResourceInspector({
         return;
       }
       if (
-        runtime.resourceRef === activation.resourceRef ||
+        runtime.resourceRef === activation.resource_ref ||
         (activation.href && hasSamePaneResource(runtime.href, activation.href))
       ) {
         return;

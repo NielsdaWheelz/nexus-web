@@ -11,7 +11,7 @@ import {
 import {
   usePlayerCommands,
   usePlayerSettings,
-} from "@/lib/player/globalPlayer";
+} from "@/lib/player/playerRuntime";
 import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import { playerTransportLocked } from "@/lib/player/playerChromeModel";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";

@@ -169,11 +169,14 @@ removed. nexus generation deadlines and per-operation bounds remain; 64,000/8,00
 are admitted context/output reservations, without native hard token enforcement.
 raw provider-api billing/admission keeps its existing contract.
 
-migration 0254 backfills original historical principals, retains original effect
+migration 0255 backfills original historical principals, retains original effect
 and continuation bytes without invented seals, then deletes shell credentials.
 uncertain legacy shell work blocks migration. historical undo uses persisted
-principal/effect ownership. the single combined chain is 0252 ->0254 ->0255;
-metadata owns the final separately committed/reparented migration.
+principal/effect ownership. this branch's canonical chain is
+0252 -> resource0253 -> atlas0254 -> native0255. metadata separately owns the
+following metadata0256 -> effects0257 migrations. qualification of the earlier
+0252 -> native0254 -> metadata0255 candidate is historical; it does not qualify
+the integrated chain.
 
 ## Product API and reset boundary
 

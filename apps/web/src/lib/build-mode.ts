@@ -9,7 +9,3 @@
 export function isDevBuild(): boolean {
   return process.env.NODE_ENV === "development";
 }
-
-export function isProdBuild(): boolean {
-  return process.env.NODE_ENV === "production";
-}

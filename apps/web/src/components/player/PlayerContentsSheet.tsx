@@ -6,7 +6,7 @@ import type { ChapterOut } from "@/lib/lectern/contract";
 import {
   usePlayerCommands,
   usePlayerTimeline,
-} from "@/lib/player/globalPlayer";
+} from "@/lib/player/playerRuntime";
 import { formatClock } from "@/lib/formatClock";
 import styles from "./MobileNowPlaying.module.css";
 

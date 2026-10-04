@@ -6,16 +6,15 @@
  *
  * SERVER / DEPLOY ONLY. This module owns NEXUS_INTERNAL_SECRET; import it from middleware,
  * server components, server actions, route handlers, and next.config.ts — never from a Client
- * Component, which would bundle the secret-owning module. The NODE_ENV build-mode helpers a
- * client needs live in the client-safe ./build-mode (re-exported below for server ergonomics).
+ * Component, which would bundle the secret-owning module. The NODE_ENV build-mode predicate
+ * lives in the client-safe ./build-mode.
  * env.ts is not marked `import "server-only"` because next.config.ts imports it (a Node build
  * context, where server-only throws).
  *
  * Two orthogonal axes, never conflated:
  *   - Deployment env (NEXUS_ENV):  local | test | staging | prod
- *   - Build/run mode (NODE_ENV):   isDevBuild / isProdBuild — `next start` forces production
+ *   - Build/run mode (NODE_ENV):   isDevBuild — `next start` forces production
  */
-export { isDevBuild, isProdBuild } from "./build-mode";
 import { parseWebOrigin, parseWebOriginList } from "./security/origin";
 
 type NexusEnv = "local" | "test" | "staging" | "prod";

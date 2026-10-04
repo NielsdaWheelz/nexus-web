@@ -3,30 +3,22 @@
 import {
   useCallback,
   useEffect,
-  useId,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
-  type FormEvent,
 } from "react";
 import Button from "@/components/ui/Button";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
-import Input from "@/components/ui/Input";
-import Dialog from "@/components/ui/Dialog";
 import PaneSurface from "@/components/ui/PaneSurface";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
 import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
-import {
-  FeedbackNotice,
-  FieldFeedback,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
+import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import {
   isApiError,
   isInvalidViewError,
@@ -45,26 +37,8 @@ import {
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
 import { useExhaustivePagination } from "@/lib/api/useExhaustivePagination";
 import { useResource } from "@/lib/api/useResource";
-import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import {
-  fetchContributorWorks,
-  patchContributorDisplayName,
-} from "@/lib/contributors/api";
-import { createMutationIntent } from "@/lib/contributors/mutationIntent";
-import {
-  notifyContributorActionIntentOwnerReady,
-  useContributorActionIntentOwner,
-  type ContributorActionIntent,
-} from "@/lib/contributors/actionIntent";
-import {
-  createMountedEditorIntentController,
-  type MountedEditorIntentController,
-  type MountedEditorMutationLease,
-} from "@/lib/actions/mountedActionHandoff";
-import type {
-  ContributorDetail,
-  ContributorWorkItem,
-} from "@/lib/contributors/types";
+import { fetchContributorWorks } from "@/lib/contributors/api";
+import type { ContributorWorkItem } from "@/lib/contributors/types";
 import {
   AUTHOR_WORKS_SORT_OPTION_IDS,
   CANONICAL_AUTHOR_WORKS_VIEW,
@@ -85,23 +59,24 @@ import {
 } from "@/lib/panes/paneResourceLoaders";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import {
-  definePaneVisitDataKey,
   type PaneResourceStatus,
-  useClearAllPaneVisitData,
   usePaneIsActive,
   usePaneParam,
-  usePaneReturnReady,
   usePaneRuntime,
   requirePaneRuntime,
-  usePaneVisitData,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
+import {
+  definePaneVisitDataKey,
+  useClearAllPaneVisitData,
+  usePaneReturnReady,
+  usePaneVisitData,
+} from "@/lib/workspace/paneReturnMemento";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import usePaneScrollRetention from "@/lib/panes/usePaneScrollRetention";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import SelectField from "@/components/ui/SelectField";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { isAbortError } from "@/lib/errors";
 import { useRevalidationSettlement } from "@/lib/panes/useRevalidationSettlement";
 import styles from "./page.module.css";
@@ -133,46 +108,6 @@ function authorLoadErrorMessage(error: unknown): FeedbackContent {
         tone: "Danger",
         title: "This author couldn’t be loaded",
         message: "Check your connection and retry.",
-        requestId: error.requestId,
-      };
-    default:
-      throw error;
-  }
-}
-
-function authorRenameErrorMessage(error: unknown): FeedbackContent {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  switch (error.code) {
-    case "E_NETWORK":
-      return {
-        tone: "Danger",
-        title: "The change couldn’t be confirmed",
-        message: "Retry to safely check whether it was saved.",
-        requestId: error.requestId,
-      };
-    case "E_NOT_FOUND":
-      return {
-        tone: "Danger",
-        title: "This author is no longer available",
-        requestId: error.requestId,
-      };
-    case "E_FORBIDDEN":
-      return {
-        tone: "Danger",
-        title: "You can’t rename this author",
-        requestId: error.requestId,
-      };
-    case "E_INVALID_REQUEST":
-      return {
-        tone: "Danger",
-        title: "Enter a valid author name",
-        requestId: error.requestId,
-      };
-    case "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH":
-      return {
-        tone: "Danger",
-        title: "The name wasn’t updated",
-        message: "Retry the saved draft.",
         requestId: error.requestId,
       };
     default:
@@ -265,47 +200,6 @@ export default function AuthorPaneBody() {
   }
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const [renameIntent, setRenameIntent] =
-    useState<ContributorActionIntent | null>(null);
-  const renameIntentControllerRef = useRef<
-    MountedEditorIntentController<ContributorActionIntent> | null
-  >(null);
-  if (renameIntentControllerRef.current === null) {
-    renameIntentControllerRef.current = createMountedEditorIntentController(
-      notifyContributorActionIntentOwnerReady,
-    );
-  }
-  const renameIntentController = renameIntentControllerRef.current;
-  const acceptRenameIntent = useCallback(
-    (intent: ContributorActionIntent) => {
-      if (!data?.detail.canRename || !renameIntentController.accept(intent)) {
-        return false;
-      }
-      setRenameIntent(intent);
-      return true;
-    },
-    [data?.detail.canRename, renameIntentController],
-  );
-  useContributorActionIntentOwner(
-    data?.detail.actionSubject.ref ?? null,
-    acceptRenameIntent,
-  );
-  const abortRename = useCallback(() => {
-    if (renameIntentController.abortEditing()) setRenameIntent(null);
-  }, [renameIntentController]);
-  const beginRenameMutation = useCallback(
-    () => renameIntentController.beginMutation(),
-    [renameIntentController],
-  );
-  const closeCommittedRename = useCallback(() => {
-    setRenameIntent(null);
-  }, []);
-  useEffect(
-    () => () => {
-      renameIntentController.releaseOwner();
-    },
-    [renameIntentController],
-  );
   const capturePaneScroll = usePaneScrollRetention(worksRegionRef, data);
   // Set by a refresh so the already-committed view refetches once under a new
   // request identity; cleared by the commit that answers it. A view change needs
@@ -379,8 +273,6 @@ export default function AuthorPaneBody() {
         works: firstPage.data.items,
         collectionRevision: firstPage.data.collectionRevision,
         nextCursor: firstPage.data.nextCursor,
-        exhaustion:
-          firstPage.data.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       };
       committedSnapshotRef.current = committed;
       setData(committed);
@@ -521,7 +413,6 @@ export default function AuthorPaneBody() {
         ...current,
         works,
         nextCursor: page.nextCursor,
-        exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
       };
       committedSnapshotRef.current = next;
       setData(next);
@@ -780,18 +671,6 @@ export default function AuthorPaneBody() {
   });
 
   const otherNames = data?.detail.otherNames ?? [];
-  const handleRenamed = useCallback(
-    (detail: ContributorDetail) => {
-      setData((current) =>
-        current && current.detail.handle === detail.handle
-          ? { ...current, detail }
-          : current,
-      );
-      clearAllVisitData();
-    },
-    [clearAllVisitData],
-  );
-
   if (defect) throw defect.error;
 
   if (invalidView) {
@@ -900,160 +779,8 @@ export default function AuthorPaneBody() {
             />
           </section>
 
-          {renameIntent ? (
-            <RenameAuthorDialog
-              handle={data.detail.handle}
-              currentName={data.detail.displayName}
-              onAbort={abortRename}
-              onMutationStarted={beginRenameMutation}
-              onCommittedClose={closeCommittedRename}
-              onRenamed={handleRenamed}
-              returnFocusTo={() => null}
-              returnFocusFallback={() =>
-                findPaneLandmarkFocusTarget(runtime.paneId)
-              }
-            />
-          ) : null}
         </div>
       ) : null}
     </PaneSurface>
-  );
-}
-
-function RenameAuthorDialog({
-  handle,
-  currentName,
-  onAbort,
-  onMutationStarted,
-  onCommittedClose,
-  onRenamed,
-  returnFocusTo,
-  returnFocusFallback,
-}: {
-  handle: string;
-  currentName: string;
-  onAbort: () => void;
-  onMutationStarted: () => MountedEditorMutationLease | null;
-  onCommittedClose: () => void;
-  onRenamed: (detail: ContributorDetail) => void;
-  returnFocusTo: () => HTMLElement | null;
-  returnFocusFallback: () => HTMLElement | null;
-}) {
-  const [value, setValue] = useState(currentName);
-  const [saving, setSaving] = useState(false);
-  const [notice, setNotice] = useState<FeedbackContent | null>(null);
-  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const intentRef = useRef(createMutationIntent());
-  const emptyErrorId = useId();
-
-  const trimmed = value.trim();
-  const isBlank = trimmed.length === 0;
-  const isUnchanged = trimmed === currentName.trim();
-  const canSave = !isBlank && !isUnchanged && !saving;
-
-  const emptyFeedback = useMemo<FeedbackContent | null>(
-    () => (isBlank ? { tone: "Danger", title: "Enter a name." } : null),
-    [isBlank],
-  );
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    if (!canSave) return;
-    const mutation = onMutationStarted();
-    if (mutation === null) {
-      // justify-defect: this dialog exists only as the owner of one accepted
-      // canonical RenameContributor interaction.
-      setDefect({ error: new Error("Rename action has no accepted mutation") });
-      return;
-    }
-    setSaving(true);
-    setNotice(null);
-    const clientMutationId = intentRef.current.clientMutationId(trimmed);
-    try {
-      const detail = await patchContributorDisplayName(handle, {
-        clientMutationId,
-        displayName: trimmed,
-      });
-      intentRef.current.discard();
-      onRenamed(detail);
-      await mutation.committed();
-      onCommittedClose();
-    } catch (renameError) {
-      mutation.failed();
-      if (handleUnauthenticatedApiError(renameError)) return;
-      if (isApiError(renameError)) {
-        // A proven 409 replay mismatch rotates the mutation id — the reused key is
-        // now bound to a different request server-side (spec §7 shared
-        // mutation-intent rule; matches MediaAuthorsEditor). Other 4xx keep the
-        // key. The draft is preserved either way.
-        if (renameError.code === "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH") {
-          intentRef.current.rotate();
-        }
-        try {
-          setNotice(authorRenameErrorMessage(renameError));
-        } catch (caughtDefect) {
-          setDefect({ error: caughtDefect });
-        }
-      } else {
-        setDefect({ error: renameError });
-      }
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  if (defect) throw defect.error;
-
-  return (
-    <Dialog
-      open
-      title="Edit name"
-      onClose={() => {
-        if (!saving) onAbort();
-      }}
-      returnFocusTo={returnFocusTo}
-      returnFocusFallback={returnFocusFallback}
-    >
-      <form className={styles.renameForm} onSubmit={submit}>
-        <p className={styles.renameHelper}>
-          Used across Nexus. Each work keeps the name it was credited under.
-        </p>
-        <label className={styles.renameField}>
-          <span className={styles.renameLabel}>Author name</span>
-          <Input
-            value={value}
-            dir="auto"
-            autoFocus
-            aria-invalid={isBlank || undefined}
-            aria-describedby={isBlank ? emptyErrorId : undefined}
-            onChange={(nextEvent) => setValue(nextEvent.target.value)}
-          />
-        </label>
-        <FieldFeedback content={emptyFeedback} id={emptyErrorId} />
-        {notice ? (
-          <FeedbackNotice content={notice} announcement="Assertive" />
-        ) : null}
-        <div className={styles.renameActions}>
-          <Button
-            type="button"
-            variant="secondary"
-            size="md"
-            disabled={saving}
-            onClick={onAbort}
-          >
-            Cancel
-          </Button>
-          <Button
-            type="submit"
-            variant="primary"
-            size="md"
-            disabled={!canSave}
-            loading={saving}
-          >
-            Save
-          </Button>
-        </div>
-      </form>
-    </Dialog>
   );
 }

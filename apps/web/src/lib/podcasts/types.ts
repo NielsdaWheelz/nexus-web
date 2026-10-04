@@ -1,3 +1,4 @@
+import type { Schema } from "@/lib/api/wire";
 import { expectOneOf } from "@/lib/validation";
 
 const PODCAST_SYNC_STATUSES = [
@@ -21,19 +22,9 @@ export type PodcastSyncStatus = (typeof PODCAST_SYNC_STATUSES)[number];
 export type PodcastBackfillState = (typeof PODCAST_BACKFILL_STATES)[number];
 
 export type PodcastRefreshScope =
-  | { readonly kind: "Podcast"; readonly podcastId: string }
-  | { readonly kind: "Podcasts" }
-  | { readonly kind: "Library"; readonly libraryId: string };
-
-export interface PodcastRefreshProgress {
-  readonly finishedCount: number;
-  readonly requestedCount: number;
-}
-
-export interface PodcastRefreshResult {
-  readonly kind: "Complete" | "Failed";
-  readonly announcement: string;
-}
+  | Schema<"PodcastRefreshPodcastScope">
+  | Schema<"PodcastRefreshPodcastsScope">
+  | Schema<"PodcastRefreshLibraryScope">;
 
 export function decodePodcastSyncStatus(
   raw: unknown,

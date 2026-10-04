@@ -2,7 +2,7 @@
 # Release one main SHA: converge the Hetzner backend, then bind the Vercel
 # frontend that CI already built for the same SHA. Idempotent; rerun it.
 #
-#   VERCEL_TOKEN=... deploy/hetzner/deploy.sh <source-sha>
+#   VERCEL_TOKEN=... deploy/hetzner/deploy.sh <source-sha> [--model-cutover-snapshot <reviewed-json>]
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -22,9 +22,16 @@ die() {
   exit 1
 }
 
-[ "$#" = 1 ] || die "usage: deploy/hetzner/deploy.sh <source-sha>"
+[[ "$#" = 1 || ( "$#" = 3 && "$2" = --model-cutover-snapshot ) ]] || \
+  die "usage: deploy/hetzner/deploy.sh <source-sha> [--model-cutover-snapshot <reviewed-json>]"
 readonly SOURCE_SHA="$1"
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || die "source SHA must be 40 lowercase hex characters"
+RELEASE_ARGUMENTS=("$SOURCE_SHA")
+if [ "$#" = 3 ]; then
+  [ -f "$3" ] && [ -r "$3" ] || die "model cutover snapshot must be a readable local file"
+  RELEASE_ARGUMENTS+=("--model-cutover-snapshot=$3")
+fi
+readonly -a RELEASE_ARGUMENTS
 
 for command in curl git jq python3 timeout; do
   command -v "$command" >/dev/null 2>&1 || die "$command is not installed"
@@ -102,7 +109,7 @@ require_version() {
 require_version "$deployment_url" staged
 
 # Converge the backend before the public frontend can call it.
-PYTHONPATH="${ROOT_DIR}/python" python3 -B "${ROOT_DIR}/deploy/hetzner/release.py" "$SOURCE_SHA"
+PYTHONPATH="${ROOT_DIR}/python" python3 -B "${ROOT_DIR}/deploy/hetzner/release.py" "${RELEASE_ARGUMENTS[@]}"
 
 timeout --foreground 4m "$VERCEL_CLI" promote "$deployment_id" \
   --yes --timeout 3m --scope "$VERCEL_SCOPE" --non-interactive

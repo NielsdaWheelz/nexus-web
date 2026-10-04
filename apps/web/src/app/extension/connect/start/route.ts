@@ -136,7 +136,6 @@ export async function GET(req: Request) {
           requestId,
         }),
       },
-      "Extension session request timed out"
     );
   } catch (error) {
     if (!(error instanceof Error)) {
