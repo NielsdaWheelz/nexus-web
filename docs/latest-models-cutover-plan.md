@@ -196,7 +196,7 @@ no blanket truncate/cascade. domain jobs follow their owner and updated policy.
 the reviewed input and finite drain/backup/restore/disposition/release sequence
 live in [deployment.md](../deployment.md#reviewed-model-history-reset). completed
 write receipts become independent of deleted ledger/chat history before reset;
-existing 0255 data uses the forward 0256 storage migration. preserve original
+post-reset 0256 data uses the forward 0257 storage migration. preserve original
 unknowns, explicit orphan acknowledgement and the metadata uncertainty barrier.
 preflight persisted workspace sessions against the expected pane/history shape;
 the migration names any invalid session id and aborts transactionally for repair.

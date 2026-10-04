@@ -9,8 +9,8 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "0255"
-down_revision: str | Sequence[str] | None = "0254"
+revision: str = "0256"
+down_revision: str | Sequence[str] | None = "0255"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -71,4 +71,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise NotImplementedError("0255 metadata memo cutover requires the verified release backup")
+    raise NotImplementedError("0256 metadata memo cutover requires the verified release backup")

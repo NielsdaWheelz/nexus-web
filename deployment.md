@@ -206,8 +206,10 @@ one `model_cutover_archives` row records the reviewed disposition and both sourc
 and execution database identities. restored-copy qualification uses the explicit
 trusted migration interface, with its own execution identity and the same
 original census. ordinary releases retain the existing backup and plain
-migration path. used 0255 databases gain receipt/audit storage through 0256;
-0255's metadata uncertainty barrier stays intact.
+migration path. the canonical suffix is 0252 -> resource 0253 -> atlas 0254 ->
+native 0255 -> metadata 0256 -> effects 0257. post-reset 0256 databases gain
+receipt/audit storage through 0257; 0256's metadata uncertainty barrier stays
+intact.
 
 ## Codex agent host isolation
 

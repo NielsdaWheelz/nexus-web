@@ -71,7 +71,7 @@ class ModelCutoverRestore(BaseModel):
     backup_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     census_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     target_source_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
-    target_revision: str = Field(pattern=r"^0256$")
+    target_revision: str = Field(pattern=r"^0257$")
     restored_database_identity: str = Field(min_length=1)
     receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
@@ -350,7 +350,7 @@ def _validate_original_job_links(connection: Connection, reviewed: ReviewedModel
 
 
 def create_model_cutover_archive_table(connection: Connection) -> None:
-    """Storage exists early for the reset and later for already-used 0255 databases."""
+    """Storage exists early for the reset and later through the receipt migration."""
 
     if sa.inspect(connection).has_table("model_cutover_archives"):
         return

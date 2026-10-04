@@ -1,8 +1,8 @@
-"""Finite 0246/0256 preservation of original completed additive-write facts.
+"""Finite 0246/0257 preservation of original completed additive-write facts.
 
 This data migration reads no executable generation spec. The two source shapes
 are explicit: original Chat ownership before 0246, and persisted principals
-after 0255. Missing facts and unresolved writes abort the enclosing migration.
+after 0256. Missing facts and unresolved writes abort the enclosing migration.
 """
 
 from collections import Counter, defaultdict
@@ -73,7 +73,7 @@ def _created_targets(*, position_id: UUID, tool_id: str, evidence: object) -> se
 
 
 def preserve_generation_effect_receipts(
-    connection: Connection, *, source: Literal["Before0246", "After0255"]
+    connection: Connection, *, source: Literal["Before0246", "After0256"]
 ) -> None:
     """Create on either known migration path; preserve and validate every write."""
 
@@ -96,7 +96,7 @@ def preserve_generation_effect_receipts(
         );
     """)
     )
-    principal_column = "c.tool_principal_user_id" if source == "After0255" else "NULL::uuid"
+    principal_column = "c.tool_principal_user_id" if source == "After0256" else "NULL::uuid"
     positions = (
         connection.execute(
             text(f"""
@@ -300,7 +300,7 @@ def preserve_generation_effect_receipts(
         )
         if {(a["target_kind"], a["target_id"]) for a in original_authorships} != expected:
             raise ValueError(f"authorship position {position_id} changed its exact created targets")
-        if source == "After0255" and any(
+        if source == "After0256" and any(
             a["generation_id"] != receipt["generation_id"]
             or a["generation_seq"] != receipt["generation_seq"]
             or a["tool_position"] != receipt["tool_position"]
