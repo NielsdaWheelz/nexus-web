@@ -187,12 +187,6 @@ export const mediaResource: ResourceDescriptor<IdResourceParams> = {
   clientPath: ({ id }) => `/api/media/${encoded(id)}`,
 };
 
-export const mediaFragmentsResource: ResourceDescriptor<IdResourceParams> = {
-  cacheKey: ({ id }) => `media:${id}:fragments`,
-  serverPath: ({ id }) => `/media/${encoded(id)}/fragments`,
-  clientPath: ({ id }) => `/api/media/${encoded(id)}/fragments`,
-};
-
 export const contributorResource: ResourceDescriptor<ContributorResourceParams> =
   {
     cacheKey: ({ handle }) => `author:${handle}`,

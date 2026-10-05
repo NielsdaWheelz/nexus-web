@@ -13,8 +13,8 @@ import {
   type FindSource,
 } from "@/lib/find/find";
 import { useFind } from "@/lib/find/useFind";
-import { buildDomTextCursor } from "@/lib/highlights/domTextCursor";
-import { resolveDomTextRanges } from "@/lib/highlights/domTextRanges";
+import { buildDomTextCursor } from "@/lib/canonicalText/domTextCursor";
+import { resolveDomTextRanges } from "@/lib/canonicalText/domTextRanges";
 import {
   requirePaneRuntime,
   usePaneParam,
@@ -50,7 +50,7 @@ export default function ArtifactPaneBody() {
   const articleRef = useRef<HTMLElement | null>(null);
   const revisionRef =
     head?.revision.kind === "Present" ? head.revision.value.revision_ref : null;
-  const source = useMemo<FindSource<readonly Range[]> | null>(
+  const source = useMemo<FindSource<readonly StaticRange[]> | null>(
     () =>
       revisionRef === null
         ? null

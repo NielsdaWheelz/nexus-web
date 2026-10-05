@@ -1,197 +1,22 @@
 import type { Schema } from "@/lib/api/wire";
-import { normalizeDocumentEmbeds } from "@/lib/media/documentEmbeds";
-import type { MediaPlaybackSource } from "@/lib/media/playback";
-import { expectOneOf } from "@/lib/validation";
 
-export type TranscriptPlaybackSource = MediaPlaybackSource;
-
-export const TRANSCRIPT_STATES = [
-  "not_requested",
-  "queued",
-  "running",
-  "failed_provider",
-  "unavailable",
-  "ready",
-  "partial",
-] as const;
-
-export type TranscriptState = (typeof TRANSCRIPT_STATES)[number] | null;
-
-export const TRANSCRIPT_COVERAGES = ["none", "partial", "full"] as const;
-
-export type TranscriptCoverage =
-  (typeof TRANSCRIPT_COVERAGES)[number] | null;
-
-export function decodeTranscriptState(
-  raw: unknown,
-  name = "TranscriptState",
-): TranscriptState {
-  return raw === null ? null : expectOneOf(raw, TRANSCRIPT_STATES, name);
-}
-
-export function decodeTranscriptCoverage(
-  raw: unknown,
-  name = "TranscriptCoverage",
-): TranscriptCoverage {
-  return raw === null ? null : expectOneOf(raw, TRANSCRIPT_COVERAGES, name);
-}
-
-export interface TranscriptFragment {
-  id: string;
-  canonical_text: string;
-  t_start_ms?: number | null;
-  t_end_ms?: number | null;
-  speaker_label?: string | null;
-}
-
+export type TranscriptState = Schema<"TranscriptState"> | null;
 export type TranscriptChapter = Readonly<Schema<"PodcastEpisodeChapterOut">>;
 
-/** Native fragments share their owned wire. Offline/EPUB projections may omit word/time metadata. */
-export type Fragment = Omit<Schema<"FragmentOut">,
-  "word_count" | "document_word_start" | "t_start_ms" | "t_end_ms" | "speaker_label"
-> & Partial<Pick<Schema<"FragmentOut">,
-  "word_count" | "document_word_start" | "t_start_ms" | "t_end_ms" | "speaker_label"
->>;
-
-interface TranscriptFragmentSelectionOptions {
-  activeFragmentId?: string | null;
-  requestedFragmentId?: string | null;
-  requestedStartMs?: number | null;
-  readerResumeFragmentId?: string | null;
-  waitForInitialResumeState?: boolean;
-}
-
-export function canRequestTranscript(transcriptState: TranscriptState): boolean {
-  if (transcriptState === null) {
-    return false;
-  }
-
-  return !(
-    transcriptState === "queued" ||
-    transcriptState === "running" ||
-    transcriptState === "ready" ||
-    transcriptState === "partial" ||
-    transcriptState === "unavailable"
+/** A transcript can be requested unless one exists, is on its way, or cannot exist. */
+export function canRequestTranscript(
+  transcriptState: TranscriptState,
+): boolean {
+  return (
+    transcriptState !== null &&
+    !["queued", "running", "ready", "partial", "unavailable"].includes(
+      transcriptState,
+    )
   );
 }
 
 export function shouldPollTranscriptProvisioning(
-  transcriptState: TranscriptState
+  transcriptState: TranscriptState,
 ): boolean {
   return transcriptState === "queued" || transcriptState === "running";
-}
-
-export function normalizeFragments(fragments: readonly Fragment[]): Fragment[] {
-  return fragments.map((fragment) => ({
-    ...fragment,
-    document_embeds: normalizeDocumentEmbeds(fragment.document_embeds),
-  }));
-}
-
-export function formatTranscriptTimestampMs(
-  timestampMs: number | null | undefined
-): string | null {
-  if (timestampMs == null || timestampMs < 0) {
-    return null;
-  }
-
-  const totalSeconds = Math.floor(timestampMs / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  return `${hours.toString().padStart(2, "0")}:${minutes
-    .toString()
-    .padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
-}
-
-function findNearestTranscriptFragmentByStartMs(
-  fragments: readonly Fragment[],
-  requestedStartMs: number
-): Fragment | null {
-  let nearest: Fragment | null = null;
-  let nearestDistance = Number.POSITIVE_INFINITY;
-
-  for (const fragment of fragments) {
-    if (fragment.t_start_ms == null) {
-      continue;
-    }
-
-    if (
-      fragment.t_end_ms != null &&
-      requestedStartMs >= fragment.t_start_ms &&
-      requestedStartMs <= fragment.t_end_ms
-    ) {
-      return fragment;
-    }
-
-    const distance = Math.abs(fragment.t_start_ms - requestedStartMs);
-    if (distance < nearestDistance) {
-      nearest = fragment;
-      nearestDistance = distance;
-    }
-  }
-
-  return nearest;
-}
-
-export function resolveActiveTranscriptFragment(
-  fragments: readonly Fragment[],
-  {
-    activeFragmentId = null,
-    requestedFragmentId = null,
-    requestedStartMs = null,
-    readerResumeFragmentId = null,
-    waitForInitialResumeState = false,
-  }: TranscriptFragmentSelectionOptions
-): Fragment | null {
-  if (fragments.length === 0) {
-    return null;
-  }
-
-  if (requestedFragmentId) {
-    const requestedFragment = fragments.find(
-      (fragment) => fragment.id === requestedFragmentId
-    );
-    if (requestedFragment) {
-      return requestedFragment;
-    }
-  }
-
-  if (requestedStartMs != null) {
-    const nearestFragment = findNearestTranscriptFragmentByStartMs(
-      fragments,
-      requestedStartMs
-    );
-    if (nearestFragment) {
-      return nearestFragment;
-    }
-  }
-
-  if (activeFragmentId) {
-    const activeFragment = fragments.find((fragment) => fragment.id === activeFragmentId);
-    if (activeFragment) {
-      return activeFragment;
-    }
-  }
-
-  if (
-    activeFragmentId == null &&
-    !requestedFragmentId &&
-    requestedStartMs == null &&
-    waitForInitialResumeState
-  ) {
-    return null;
-  }
-
-  if (readerResumeFragmentId) {
-    const resumedFragment = fragments.find(
-      (fragment) => fragment.id === readerResumeFragmentId
-    );
-    if (resumedFragment) {
-      return resumedFragment;
-    }
-  }
-
-  return fragments[0] ?? null;
 }

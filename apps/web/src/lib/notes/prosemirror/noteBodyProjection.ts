@@ -1,5 +1,5 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
-import { codepointLength } from "@/lib/highlights/codepoints";
+import { codepointLength } from "@/lib/canonicalText/codepoints";
 
 // Python str.strip/rstrip includes these controls and excludes U+FEFF.
 const PYTHON_WHITESPACE = /[\p{White_Space}\u001c-\u001f]/u;

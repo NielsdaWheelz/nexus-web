@@ -1,4 +1,5 @@
-import type { ContributorCredit } from "@/lib/contributors/types";
+import type { ContributorCredit, MediaAuthorCredit } from "@/lib/contributors/types";
+import { tryParseContributorHandle } from "@/lib/contributors/handle";
 import { contributorAuthorHref } from "@/lib/contributors/routes";
 import {
   CONTRIBUTOR_ROLE_ORDER,
@@ -67,4 +68,26 @@ function getContributorCreditLabel(credit: ContributorCredit): string | null {
     return creditedName;
   }
   return credit.contributor_display_name?.trim() || null;
+}
+
+/**
+ * A media's author-role credits as the authors editor's rows. A credit without a
+ * canonical handle is an anomaly and is skipped: seeding it would 422 the save.
+ */
+export function mapMediaAuthorCredits(
+  contributors: readonly ContributorCredit[] | null | undefined,
+): MediaAuthorCredit[] {
+  const rows: MediaAuthorCredit[] = [];
+  for (const credit of contributors ?? []) {
+    if (credit.role !== "author") continue;
+    const handle = tryParseContributorHandle(credit.contributor_handle ?? "");
+    if (!handle) continue;
+    rows.push({
+      contributorHandle: handle,
+      href: credit.href ?? contributorAuthorHref(handle),
+      displayName: credit.contributor_display_name ?? credit.credited_name,
+      creditedName: credit.credited_name,
+    });
+  }
+  return rows;
 }

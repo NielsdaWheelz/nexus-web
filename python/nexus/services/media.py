@@ -15,16 +15,14 @@ from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session, load_only
 
 from nexus.auth.permissions import (
-    can_read_media,
     non_system_media_ref_exists_sql,
     visible_media_ids_cte_sql,
 )
 from nexus.db.models import Media, MediaKind, TranscriptCoverage, TranscriptState
-from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
 from nexus.schemas.media import (
-    FragmentOut,
     ListeningStateOut,
     MediaOut,
     MediaProcessingSnapshotOut,
@@ -47,7 +45,6 @@ from nexus.services.capabilities import (
     SearchRecoveryAnswer,
     SourceRecoveryAnswer,
     derive_capabilities,
-    is_text_document_ready,
     media_file_exists_sql,
 )
 from nexus.services.consumption import projection
@@ -55,7 +52,6 @@ from nexus.services.content_indexing import SearchRecoveryFacts, search_recovery
 from nexus.services.contributor_credits import load_contributor_credits_for_media
 from nexus.services.document_embeds import (
     document_embed_summaries_for_media,
-    list_document_embeds_for_fragments,
 )
 from nexus.services.media_source_ingest import (
     SourceRecoveryFacts,
@@ -896,77 +892,6 @@ def list_visible_media(
         else None
     )
     return media_list, next_cursor
-
-
-def list_fragments_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> list[FragmentOut]:
-    """Ordered fragments with their running word offset and resolved embeds.
-
-    404-masks unreadable media; a text media that is not ready is a 409-class
-    ``E_MEDIA_NOT_READY``.
-    """
-    if not can_read_media(db, viewer_id, media_id):
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    media_row = db.execute(
-        text("""
-            SELECT m.kind, m.processing_status, mts.transcript_state, mts.transcript_coverage
-            FROM media m
-            LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
-            WHERE m.id = :media_id
-        """),
-        {"media_id": media_id},
-    ).fetchone()
-    if media_row is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    media_kind = str(media_row[0])
-    if media_kind in {
-        "web_article",
-        "epub",
-        "podcast_episode",
-        "video",
-    } and not is_text_document_ready(
-        media_kind, str(media_row[1]), _nullable_str(media_row[2]), _nullable_str(media_row[3])
-    ):
-        raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
-
-    fragments = [
-        FragmentOut(**row)
-        for row in db.execute(
-            text("""
-                SELECT
-                    f.id,
-                    f.media_id,
-                    f.idx,
-                    f.html_sanitized,
-                    f.canonical_text,
-                    f.canonical_text_word_count AS word_count,
-                    COALESCE(
-                        SUM(f.canonical_text_word_count) OVER (
-                            PARTITION BY f.media_id
-                            ORDER BY f.idx
-                            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-                        ),
-                        0
-                    ) AS document_word_start,
-                    f.t_start_ms,
-                    f.t_end_ms,
-                    f.speaker_label,
-                    f.created_at
-                FROM fragments f
-                WHERE f.media_id = :media_id
-                ORDER BY f.t_start_ms ASC NULLS LAST, f.idx ASC
-            """),
-            {"media_id": media_id},
-        )
-        .mappings()
-        .all()
-    ]
-    embeds_by_fragment = list_document_embeds_for_fragments(
-        db, viewer_id=viewer_id, fragment_ids=[fragment.id for fragment in fragments]
-    )
-    for fragment in fragments:
-        fragment.document_embeds = embeds_by_fragment.get(fragment.id, [])
-    return fragments
 
 
 @dataclass(frozen=True)

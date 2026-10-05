@@ -1,4 +1,4 @@
-"""Reader routes: document, evidence, EPUB fragments, navigation, map, state, file, reading copy."""
+"""Reader routes: document, deep-link targets, map, state, file, reading copy."""
 
 import os
 import tempfile
@@ -7,28 +7,31 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
 from nexus.api.deps import get_stream_viewer
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
-from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
-from nexus.responses import Data, ok, success_response
-from nexus.schemas.media import MediaEvidenceResponse, MediaNavigationOut
-from nexus.schemas.reader import CursorWrite
+from nexus.errors import ApiErrorCode, InvalidRequestError
+from nexus.responses import Data
+from nexus.schemas.media import MediaFileOut
+from nexus.schemas.reader import (
+    CursorWrite,
+    ReaderCursorSnapshot,
+    ReaderTargetKind,
+    ReaderTargetOut,
+)
 from nexus.schemas.reader_document import ReaderDocumentOut
 from nexus.schemas.reader_document_map import ReaderDocumentMapOut
 from nexus.services import (
-    epub_read,
-    locator_resolver,
     media_file_access,
     reader_document,
     reader_document_map,
-    reader_navigation,
     reading_copy,
 )
 from nexus.services.consumption import service as consumption_service
+from nexus.services.resource_graph import reader_targets
 
 router = APIRouter(tags=["media"])
 
@@ -43,40 +46,19 @@ def get_reader_document(
     return Data(data=reader_document.read_reader_document(db, viewer.user_id, media_id))
 
 
-@router.get("/media/{media_id}/evidence/{evidence_span_id}", response_model=MediaEvidenceResponse)
-def resolve_media_evidence(
+@router.get("/media/{media_id}/reader-targets/{kind}/{target_id}")
+def get_reader_target(
     media_id: UUID,
-    evidence_span_id: UUID,
+    kind: ReaderTargetKind,
+    target_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
-) -> dict:
-    result = locator_resolver.resolve_evidence_span(
-        db, viewer_id=viewer.user_id, evidence_span_id=evidence_span_id
-    )
-    if result["media_id"] != str(media_id) or result["resolver"]["kind"] == "note":
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Evidence not found")
-    del result["resolver"]["selector"]
-    return success_response(result)
-
-
-@router.get("/media/{media_id}/fragments/{fragment_id}")
-def get_epub_fragment(
-    media_id: UUID,
-    fragment_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: RepeatableReadDbSession,
-) -> dict:
-    return ok(epub_read.get_epub_fragment_for_viewer(db, viewer.user_id, media_id, fragment_id))
-
-
-@router.get("/media/{media_id}/navigation")
-def get_media_navigation(
-    media_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: RepeatableReadDbSession,
-) -> Data[MediaNavigationOut]:
+) -> Data[ReaderTargetOut]:
+    """Where a highlight, evidence span, passage or apparatus deep link lands in this media."""
     return Data(
-        data=reader_navigation.get_media_navigation_for_viewer(db, viewer.user_id, media_id)
+        data=reader_targets.reader_target_for_media(
+            db, viewer_id=viewer.user_id, media_id=media_id, kind=kind, target_id=target_id
+        )
     )
 
 
@@ -105,16 +87,15 @@ def get_reader_state(
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
-) -> dict:
-    return ok(consumption_service.get_reader_cursor(db, viewer.user_id, media_id))
+) -> Data[ReaderCursorSnapshot]:
+    return Data(data=consumption_service.get_reader_cursor(db, viewer.user_id, media_id))
 
 
 @router.put("/media/{media_id}/reader-state")
 def put_reader_state(
     media_id: UUID, payload: CursorWrite, viewer: Annotated[Viewer, Depends(get_viewer)]
-) -> JSONResponse:
-    snapshot = consumption_service.put_reader_cursor(viewer.user_id, media_id, payload)
-    return JSONResponse(content=ok(snapshot))
+) -> Data[ReaderCursorSnapshot]:
+    return Data(data=consumption_service.put_reader_cursor(viewer.user_id, media_id, payload))
 
 
 @router.get("/media/{media_id}/file")
@@ -122,11 +103,13 @@ def get_media_file(
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
-) -> dict:
+) -> Data[MediaFileOut]:
     """A short-lived signed download URL: url and expires_at."""
-    return success_response(
-        media_file_access.get_signed_download_url(
-            db=db, viewer_id=viewer.user_id, media_id=media_id
+    return Data(
+        data=MediaFileOut.model_validate(
+            media_file_access.get_signed_download_url(
+                db=db, viewer_id=viewer.user_id, media_id=media_id
+            )
         )
     )
 

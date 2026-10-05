@@ -26,7 +26,7 @@ export interface ChatScrollHandle {
   captureReadingPosition(): ChatReadingPosition | null;
   restoreReadingPosition(position: ChatReadingPosition): void;
   getTranscriptElement(): HTMLDivElement | null;
-  revealRange(range: Range): void;
+  revealRange(at: AbstractRange): void;
 }
 
 const NEAR_BOTTOM_PX = 72;
@@ -145,7 +145,10 @@ function createScrollOwner(
       jump(position.scrollTop, true);
     },
     getTranscriptElement: () => transcript.current,
-    revealRange(range) {
+    revealRange(at) {
+      const range = document.createRange();
+      range.setStart(at.startContainer, at.startOffset);
+      range.setEnd(at.endContainer, at.endOffset);
       const port = scrollport.current;
       const code = range.startContainer.parentElement?.closest<HTMLElement>(
         "[data-pane-find-code-scroll]",

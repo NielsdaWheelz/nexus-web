@@ -1143,15 +1143,14 @@ text. This is a linchpin area with its own design contract — read
 [`modules/reader-implementation.md`](modules/reader-implementation.md) and
 [`modules/reader-design-rationale.md`](modules/reader-design-rationale.md).
 
-The shared document-reader composition coordinates hosted and local document
-sources. `DocumentReaderSession` owns source/progress orchestration, initial
-active-unit and preferred-locator selection, and canonical locator projection;
-format composition and `useReaderProgress` retain visible navigation/Find state
-and cursor ordering/writes. Hosted composition supplies current API inputs,
-decorations, activity, and the canonical online cursor port. The Android shelf
-supplies a source over a downloaded copy and a device progress port; the core
-does not import workspace, auth, or Next route owners. Leaf text/PDF renderers
-consume resolved content rather than fetching media or progress themselves.
+One primitive, `lib/documentReader`, reads for three hosts: the hosted media
+pane, the public `/s` reader and the Android shelf. Its runtime loads the
+publication (`GET /media/{id}/reader`, one snapshot) and the cursor together,
+restores once, owns reading/exploring mode and the cursor sync; the text and
+PDF surfaces render, measure and position. Hosts supply ports: a source, a
+progress port (the hosted pane's revisioned online cursor, the shelf's device
+store, none on `/s`), decorations and a host for mobile chrome. The primitive
+does not import workspace, auth, API client or Next route owners.
 
 An offline reading copy (`services/reading_copy.py`) is the hosted reader's
 own payloads (`navigation`, `fragments` or EPUB fragments, serialized as their
@@ -1167,9 +1166,10 @@ The core idea is two coordinate systems, both **codepoint-based**:
   fragment's `canonical_text`. `canonical_text` is produced by a browser-equivalent
   HTML5 parse (`services/canonicalize.py`) and is **stable for the current
   artifact after `ready_for_reading`**, so the frontend DOM-text walk
-  (`lib/highlights/canonicalCursor.ts`) yields identical offsets regardless of
-  typography. The frontend canonicalizer must byte-match the Python one;
-  `validateCanonicalText` is a hard gate.
+  (`lib/canonicalText/domTextCursor.ts`) yields identical offsets regardless of
+  typography. The frontend canonicalizer must byte-match the Python one; a unit
+  whose rendered text differs from its `canonical_text` disables selection and
+  paint for that unit.
 - **PDF**: a locator is `(page_number, geometry quads)` plus a match into
   `media.plain_text` via `pdf_page_text_spans`. Highlight geometry is canonical
   page-space quads; duplicate detection uses the current anchor rows and PDF writes
@@ -1183,13 +1183,13 @@ sections: fragments own document length and sections own targets. Resume stores
 reflow-safe canonical offsets (web/transcript/EPUB) or page/normalized
 page-space position (PDF), never pixels.
 
-The active renderer publishes one exact semantic viewport for the current
-source and layout generation. `readerDocumentPosition.ts` projects that
-viewport into `0..1`; backend marker owners publish their normalized exact
-start positions. The module owns neither DOM discovery nor persistence.
-`useReaderProgress`, Consumption activity, and the desktop
-Document Map overview rail consume this same capture. Preview, Return, and
-restore can update the rail but cannot create reader progress or activity.
+The attached surface measures one viewport per scroll frame for the current
+publication identity (a point at the reading line and the visible band as
+`0..1` document fractions); backend marker owners publish their normalized
+start positions. The cursor sync, Consumption activity and the desktop
+document-map rail consume this same viewport. Only a viewport within a second of
+genuine input is reading: restore, jumps, reflow and find can move the rail but
+cannot create reader progress or activity.
 
 EPUB resource assets use a private media asset lane:
 `/api/media/[id]/assets/[...assetKey]` → FastAPI `/media/{id}/assets/{assetKey}`.
@@ -1209,18 +1209,10 @@ persistence has one strict request wire: `note_block_id`,
 `client_mutation_id`, and `body_pm_json`. Camel-case spellings and the generic
 `id` alias are not accepted or emitted.
 
-Hosted inline projection has one owner per reader family:
-`useHostedTextHighlights` owns the active reflowable fragment and
-`useHostedPdfPageHighlights` owns the active PDF page. The text owner uses the
-shared abortable retry policy, treats an empty list as ready, gates optimistic
-mutation projection and authoritative reconciliation with one latest-wins
-generation, and routes expected failures to Retry while same-system response
-defects throw to the render boundary. Highlight HTTP responses are strictly
-decoded once by `lib/highlights/highlightContract.ts`; route components do not
-own fallback envelopes, raw retry timers, or parallel reload paths. Selectable
-canonical text mounts after the first active highlight projection settles, so
-persisted decoration cannot replace a live selection; subsequent refreshes keep
-settled content mounted.
+The hosted pane reads every visible highlight once, through the document map,
+and paints them as css custom highlights over the untouched dom (PDF: overlay
+rects); a write paints from its acknowledgement until a later map read settles
+it. See [`modules/reader-implementation.md`](modules/reader-implementation.md).
 
 **Source-authored apparatus** (`services/reader_apparatus.py`): web article,
 EPUB, and PDF ingest paths persist document-authored notes, endnotes,
@@ -1237,22 +1229,21 @@ apparatus is extracted before sanitization removes semantic attributes. PDF
   rather than inferring from raw layout text. Replacement preserves proven
   occurrence identities and rejects ambiguous changes to referenced items.
 
-**Frontend** (`components/reader/*`, `PdfReader.tsx`, `HtmlRenderer.tsx`,
-`lib/reader/*`, `lib/highlights/*`): `HtmlRenderer` is the only
-`dangerouslySetInnerHTML` site. It renders already-sanitized HTML, permits
-annotation transforms, and applies the bounded media `h1`-to-`h2` projection
-beneath the resource heading. Inline
-highlight rendering remains separate for text selection. Media publishes one
+**Frontend** (`lib/documentReader/*`, `lib/canonicalText/*`, `HtmlRenderer.tsx`,
+`lib/reader/*`, `app/(authenticated)/media/[id]/*`): `HtmlRenderer` is the only
+`dangerouslySetInnerHTML` site. It renders already-sanitized HTML and applies
+the bounded media `h1`-to-`h2` projection beneath the resource heading; the
+reader never rewrites that dom for decorations. Media publishes one
 shared **Resource Inspector** whose tabs are `Contents` when
 available, `Evidence`, and `Dossier`. Contents and Highlights &
 citations retain their internal **Document Map** semantics:
 Evidence is a target-centered aggregate of highlights, source references,
 generated citations, links, and Synapses, separated into passage and
   whole-document scopes with typed one-hop associations. the evidence pane
-  aligns these facts with the visible source and owns complete note content;
-  its browse mode retains the full inventory. the narrow desktop overview bar
-  shows aggregate marker positions and previews and navigates only on explicit
-  activation. the shared inspector action opens the
+  follows the reading position and owns complete note content; *all items*
+  retains the full inventory. the narrow desktop rail shows aggregate marker
+  positions and navigates only on explicit activation. the shared inspector
+  action opens the
 same `resource-inspector` publication on desktop and in the workspace mobile
 sheet.
 The contract is

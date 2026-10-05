@@ -86,11 +86,10 @@ def build_reader_document(
         ):
             raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
         units, embeds = _units(db, media_id=media_id, epub=False, viewer_id=viewer_id)
-        digest = hashlib.sha256("\n".join(unit.id for unit in units).encode()).hexdigest()
         sections = _chapter_sections(db, media_id=media_id, units=units)
         return ReaderTextDocumentOut(
             kind="transcript",
-            identity=f"t{digest[:24]}",
+            identity=transcript_identity([unit.id for unit in units]),
             title=title,
             units=units,
             sections=sections,
@@ -164,6 +163,11 @@ def build_reader_document(
         source_issues=navigation.source_issues,
         embeds=embeds,
     )
+
+
+def transcript_identity(unit_ids: list[str]) -> str:
+    """A transcript's identity: a digest of its segment ids in reading order."""
+    return f"t{hashlib.sha256('\n'.join(unit_ids).encode()).hexdigest()[:24]}"
 
 
 def _units(

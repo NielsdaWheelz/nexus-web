@@ -1,4 +1,4 @@
-import { canonicalCpLength } from "@/lib/reader/textOffsets";
+import { codepointLength } from "@/lib/canonicalText/codepoints";
 
 /** PostgreSQL `[[:space:]]` under the UTF-8 locale, deliberately not JS `\s`. */
 const SEPARATORS = new Set(
@@ -20,7 +20,7 @@ export function documentWordBoundaryOrdinal(input: {
   if (!Number.isInteger(documentWordStart) || documentWordStart < 0) {
     throw new TypeError("documentWordStart must be a non-negative integer");
   }
-  const length = canonicalCpLength(canonicalText);
+  const length = codepointLength(canonicalText);
   if (!Number.isInteger(offset) || offset < 0 || offset > length) {
     throw new TypeError(`Canonical word offset must be an integer in 0..${length}`);
   }

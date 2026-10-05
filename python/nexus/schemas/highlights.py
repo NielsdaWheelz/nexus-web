@@ -58,7 +58,7 @@ class LinkedNoteBlockRef(BaseModel):
 class TypedHighlightOut(BaseModel):
     id: UUID
     anchor: FragmentAnchorOut | PdfAnchorOut
-    color: str
+    color: HIGHLIGHT_COLORS
     exact: str
     prefix: str
     suffix: str
@@ -91,10 +91,6 @@ class FragmentOffsets(BaseModel):
         return self
 
 
-class CreateHighlightRequest(FragmentOffsets):
-    color: HIGHLIGHT_COLORS
-
-
 class FragmentAnchorUpdateRequest(FragmentOffsets):
     type: Literal["fragment_offsets"] = "fragment_offsets"
 
@@ -107,8 +103,24 @@ class PdfBoundsUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class CreatePdfHighlightRequest(PdfBoundsUpdate):
+class TextHighlightAnchorIn(FragmentOffsets):
+    """A span of one reader unit (fragment) of the media."""
+
+    kind: Literal["text"]
+    unit_id: UUID
+
+
+class PdfHighlightAnchorIn(PdfBoundsUpdate):
+    kind: Literal["pdf"]
+
+
+class CreateMediaHighlightRequest(BaseModel):
+    """One highlight model on the wire: a text span or page quads, and a colour."""
+
+    anchor: Annotated[TextHighlightAnchorIn | PdfHighlightAnchorIn, Field(discriminator="kind")]
     color: HIGHLIGHT_COLORS
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class PdfAnchorUpdateRequest(BaseModel):

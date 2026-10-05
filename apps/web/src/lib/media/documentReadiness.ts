@@ -29,19 +29,3 @@ export function canReadMediaDocument(media: {
 }): boolean {
   return media.capabilities?.can_read === true;
 }
-
-// The ONE initial-fragments gate (allowlist), shared by the server seed, the client
-// mount, and prefetch via paneResourceLoaders — so a server seed can never under-load
-// vs the client for a given kind. Only podcast/video render the `fragments` array as
-// first-paint content (epub → /sections, pdf → binary, web_article → the reader
-// session's text source). Any future fragment-rendering kind must be added here
-// so the seed and its first-paint consumer remain aligned.
-export function shouldLoadInitialMediaFragments(media: {
-  kind?: string;
-  capabilities?: { can_read?: boolean } | null;
-}): boolean {
-  return (
-    (media.kind === "podcast_episode" || media.kind === "video") &&
-    canReadMediaDocument(media)
-  );
-}

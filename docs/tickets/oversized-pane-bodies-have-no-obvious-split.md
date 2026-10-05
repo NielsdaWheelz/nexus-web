@@ -5,7 +5,9 @@ status: open · origin: 2026-09-17 slop sweep (claude session) · area: web pane
 
 the sweep reported four units as too large to read and then declined to act:
 `MediaPaneBody.tsx` (one 7.1k-line function), `LibraryPaneBody` (2.4k),
-`StatsPaneBody` (1.6k) and `PodcastDetailPaneBody` (1.6k). every verifier agreed
+`StatsPaneBody` (1.6k) and `PodcastDetailPaneBody` (1.6k). the reader rewrite
+(pr2, 2026-10-05) replaced `MediaPaneBody` with a ~600-line composition over
+`lib/documentReader`; three remain. every verifier agreed
 that no split is obvious without inventing abstractions, which would trade size
 for indirection and leave the reader worse off.
 
@@ -17,7 +19,7 @@ split.
 
 prerequisite: the slice PRs and oi-155 / oi-156 have landed.
 
-fix: re-measure the four files afterwards. split only where a cohesive concept
+fix: re-measure the three files afterwards. split only where a cohesive concept
 with an explicit contract falls out of the remaining code — a named hook, a
 presenter, a state machine — never a mechanical division by line count.
 

@@ -11,8 +11,8 @@ import {
   highlightPainter,
   type FindSource,
 } from "@/lib/find/find";
-import { buildDomTextCursor } from "@/lib/highlights/domTextCursor";
-import { resolveDomTextRanges } from "@/lib/highlights/domTextRanges";
+import { buildDomTextCursor } from "@/lib/canonicalText/domTextCursor";
+import { resolveDomTextRanges } from "@/lib/canonicalText/domTextRanges";
 
 /**
  * Conversation find searches what the transcript shows: each rendered
@@ -25,7 +25,7 @@ export function useConversationFindSource(input: {
   readonly activeLeafMessageId: string | null;
   readonly messages: readonly Message[];
   readonly scroll: RefObject<ChatScrollHandle | null>;
-}): FindSource<readonly Range[]> | null {
+}): FindSource<readonly StaticRange[]> | null {
   const { conversationId, scroll } = input;
   const terminal = input.messages.map((message) =>
     message.status === "pending" ? "" : `${message.id}:${message.status}`,

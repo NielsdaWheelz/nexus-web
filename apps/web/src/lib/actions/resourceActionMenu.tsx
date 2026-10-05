@@ -2,7 +2,7 @@ import { createElement } from "react";
 import type { LucideIcon } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { present } from "@/lib/api/presence";
-import type { Schema } from "@/lib/api/wire";
+import type { ApiJson, Schema } from "@/lib/api/wire";
 import { assertNever } from "@/lib/assertNever";
 import type { FeedbackContextValue } from "@/components/feedback/Feedback";
 import {
@@ -729,9 +729,9 @@ export function resourceActionDescriptors({
           capability,
           "ResourceOperation.Media.DownloadOriginal",
           async () => {
-            const response = await apiFetch<{
-              data: { url: string; expires_at: string };
-            }>(`/api/media/${id()}/file`, { cache: "no-store" });
+            const response = await apiFetch<
+              ApiJson<"/media/{media_id}/file", "get">
+            >(`/api/media/${id()}/file`, { cache: "no-store" });
             window.location.assign(response.data.url);
           },
         );

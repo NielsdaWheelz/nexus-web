@@ -37,7 +37,7 @@ export type RetrievalLocator =
       type: "pdf_page_geometry";
       media_id: string;
       page_number: number;
-      quads: unknown[];
+      quads: Record<"x1" | "y1" | "x2" | "y2" | "x3" | "y3" | "x4" | "y4", number>[];
       exact: string;
       prefix?: string | null;
       suffix?: string | null;

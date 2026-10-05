@@ -5,7 +5,11 @@
 // reader jumps. A failed open refreshes the file once and reopens at the
 // last placement. Marks are page-space quads drawn under the text layer.
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { PDFDocumentLoadingTask, PageViewport } from "pdfjs-dist";
+import type {
+  PDFDocumentLoadingTask,
+  PDFDocumentProxy,
+  PageViewport,
+} from "pdfjs-dist";
 import type { PDFViewer } from "pdfjs-dist/web/pdf_viewer.mjs";
 import type { DocumentReaderViewProps } from "../DocumentReader";
 import type {
@@ -18,6 +22,7 @@ import type {
 import type { NavOutcome } from "../navigator";
 import type { PdfState, ReaderRuntime, SurfaceHandle } from "../runtime";
 import { nextFrame, useScrollport } from "../scrollport";
+import { createPdfFind } from "./find";
 import { quadContains, quadRects, rangeQuads, toPage } from "./geometry";
 import { loadPdfJs, PDF_ASSETS } from "./pdfjs";
 import styles from "../documentReader.module.css";
@@ -29,6 +34,8 @@ interface Live {
 }
 
 const MARK = "data-reader-mark";
+/** pdf.js leaves this much of the container's width beside a page fitted to it. */
+const PAGE_WIDTH_PADDING_PX = 40;
 
 /** `#page=4`, `#nameddest=intro`, or a bare named destination. */
 function hashTarget(hash: string): ReaderTarget | null {
@@ -76,6 +83,7 @@ export default function PdfSurface({
   const live = useRef<Live | null>(null);
   const viewRef = useRef(view);
   viewRef.current = view;
+  const hovered = useRef("");
   const [status, setStatus] = useState<"opening" | "open" | "failed">(
     "opening",
   );
@@ -98,12 +106,16 @@ export default function PdfSurface({
     let first: number | null = null;
     let last = 0;
     const pages = viewer.pagesCount;
-    // pdf.js's current page is at or just below the viewport's top.
-    for (
-      let page = Math.max(1, viewer.currentPageNumber - 1);
-      page <= pages;
-      page += 1
-    ) {
+    // The first page reaching below the viewport's top (pages stack in order;
+    // pdf.js's current page lags a scroll).
+    let [lo, hi] = [1, pages];
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      const rect = pageView(viewer, mid)?.div.getBoundingClientRect();
+      if (rect && rect.bottom >= bounds.top) hi = mid;
+      else lo = mid + 1;
+    }
+    for (let page = lo; page <= pages; page += 1) {
       const rect = pageView(viewer, page)?.div.getBoundingClientRect();
       if (!rect || rect.bottom < bounds.top) continue;
       if (rect.top > bounds.bottom) break;
@@ -127,21 +139,35 @@ export default function PdfSurface({
     };
   }, []);
 
-  // The widest page, measured once per scale.
-  const widest = useRef({ scale: 0, px: 0 });
+  // The widest page at scale 1, measured once per opened pdf.
+  const natural = useRef<{ viewer: PDFViewer; px: number } | null>(null);
   const pdfState = useCallback((): PdfState | null => {
     const viewer = live.current?.viewer;
     if (!viewer) return null;
-    if (widest.current.scale !== viewer.currentScale) {
-      const pages = host.current!.querySelectorAll<HTMLElement>(".page");
-      const px = Math.max(0, ...[...pages].map((page) => page.offsetWidth));
-      widest.current = { scale: viewer.currentScale, px };
+    if (natural.current?.viewer !== viewer) {
+      const widths = Array.from(
+        { length: viewer.pagesCount },
+        (_, i) => viewer.getPageView(i)?.viewport.width ?? 0,
+      );
+      natural.current = {
+        viewer,
+        px: Math.max(0, ...widths) / viewer.currentScale,
+      };
     }
+    const zoom = chosenZoom(viewer);
+    const port = container.current!;
     return {
       page: viewer.currentPageNumber,
       pages: viewer.pagesCount,
-      zoom: chosenZoom(viewer),
-      widthPx: widest.current.px,
+      zoom,
+      scale: viewer.currentScale,
+      // Fitted, a pane this wide shows the widest page at scale 1; zoomed, at the zoom.
+      widthPx: Math.ceil(
+        natural.current.px * (zoom ?? 1) +
+          PAGE_WIDTH_PADDING_PX +
+          port.offsetWidth -
+          port.clientWidth,
+      ),
     };
   }, []);
 
@@ -170,9 +196,10 @@ export default function PdfSurface({
         for (const rect of quadRects(mark.anchor.quads, shown.viewport)) {
           const element = document.createElement("div");
           element.className = `${styles.pdfMark} hl-${mark.color}`;
-          element.classList.toggle("hl-focused", mark.id === current.focused);
+          element.toggleAttribute("data-focused", mark.id === current.focused);
+          element.toggleAttribute("data-hovered", mark.id === current.hovered);
           element.setAttribute(MARK, mark.id);
-          element.style.cssText = `left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px`;
+          element.style.cssText = `left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;background:var(--highlight-${mark.color})`;
           shown.div.insertBefore(element, below);
         }
       }
@@ -190,7 +217,14 @@ export default function PdfSurface({
     const controller = new AbortController();
     const { signal } = controller;
     let task: PDFDocumentLoadingTask | null = null;
+    let refit: ResizeObserver | null = null;
     let detach = () => {};
+    /** pdf.js scrolls when it scales; the host's chrome must not read that as reading. */
+    const scaleTo = (viewer: PDFViewer, value: string) => {
+      const release = runtime.host?.holdChrome?.();
+      viewer.currentScaleValue = value;
+      requestAnimationFrame(() => requestAnimationFrame(() => release?.()));
+    };
 
     async function open(file: PdfFile, refreshed: boolean): Promise<void> {
       const { pdfjs, viewer: lib } = await loadPdfJs();
@@ -230,11 +264,13 @@ export default function PdfSurface({
             point: { kind: "pdf", page, y: 0 },
           });
       };
+      const find = createPdfFind(lib, eventBus, runtime);
       const viewer = new lib.PDFViewer({
         container: container.current!,
         viewer: host.current!,
         eventBus,
         linkService: links,
+        findController: find.controller,
         textLayerMode: 1,
         // Only the pdf's own links are links; url-like text stays text.
         enableAutoLinking: false,
@@ -249,8 +285,9 @@ export default function PdfSurface({
         disableAutoFetch: file.expiresAtMs === null,
         ...PDF_ASSETS,
       });
+      let pdf: PDFDocumentProxy;
       try {
-        const pdf = await task.promise;
+        pdf = await task.promise;
         if (signal.aborted) return;
         const initialized = new Promise<void>((resolve) =>
           eventBus.on("pagesinit", () => resolve(), { once: true }),
@@ -266,10 +303,17 @@ export default function PdfSurface({
         return open(await runtime.source.refreshPdf(signal), true);
       }
       if (signal.aborted) return;
-      viewer.currentScaleValue = "page-width";
-      eventBus.on("pagechanging", ({ pageNumber }: { pageNumber: number }) =>
-        setPosition({ page: pageNumber, pages: viewer.pagesCount }),
-      );
+      scaleTo(viewer, "page-width");
+      // Fitted stays fitted when the pane resizes (pdf.js refits only on assignment).
+      refit = new ResizeObserver(() => {
+        if (viewer.currentScaleValue === "page-width")
+          scaleTo(viewer, "page-width");
+      });
+      refit.observe(container.current!);
+      eventBus.on("pagechanging", ({ pageNumber }: { pageNumber: number }) => {
+        setPosition({ page: pageNumber, pages: viewer.pagesCount });
+        requestAnimationFrame(measure);
+      });
       eventBus.on("pagerendered", ({ pageNumber }: { pageNumber: number }) =>
         paint(pageNumber),
       );
@@ -277,7 +321,11 @@ export default function PdfSurface({
       live.current = { viewer, goTo };
       setPosition({ page: viewer.currentPageNumber, pages: viewer.pagesCount });
       setStatus("open");
-      detach = runtime.attach(handle);
+      const key = `${doc.identity}:${pdf.fingerprints[0]}:${attempt}`;
+      detach = runtime.attach({
+        ...handle,
+        find: find.attach(viewer, pdf, key),
+      });
       measure();
     }
 
@@ -345,7 +393,7 @@ export default function PdfSurface({
       return rect.top + at.y * rect.height - want;
     }
 
-    const handle: SurfaceHandle = {
+    const handle: Omit<SurfaceHandle, "find"> = {
       capture() {
         const measured = capture();
         return measured && { ...measured.placement, identity: doc.identity };
@@ -373,7 +421,7 @@ export default function PdfSurface({
         const viewer = live.current?.viewer;
         const at = handle.capture();
         if (!viewer || zoom === viewer.currentScale) return;
-        viewer.currentScaleValue = String(zoom);
+        scaleTo(viewer, String(zoom));
         if (at) void settle({ ...at, zoom }, new AbortController().signal);
       },
     };
@@ -386,6 +434,7 @@ export default function PdfSurface({
     });
     return () => {
       controller.abort();
+      refit?.disconnect();
       detach();
       live.current = null;
       void task?.destroy();
@@ -444,39 +493,35 @@ export default function PdfSurface({
     };
   }, [isMobile, selectable]);
 
-  /** Marks under a pointer, hit-tested in page space (they sit under the text layer). */
-  function marksAt(event: React.MouseEvent): {
-    ids: string[];
-    rect: DOMRect | null;
-  } {
+  /** Marks under a pointer, topmost first, hit-tested in page space (they sit under the text layer). */
+  function marks(event: React.MouseEvent, kind: "activate" | "hover") {
     const page = pageOf(event.target);
-    const shown =
-      page && pageView(live.current?.viewer, Number(page.dataset.pageNumber));
+    const number = Number(page?.dataset.pageNumber);
+    const shown = page && pageView(live.current?.viewer, number);
     const current = viewRef.current.decorations;
-    if (!page || !shown || current?.identity !== doc.identity)
-      return { ids: [], rect: null };
-    const origin = page.getBoundingClientRect();
-    const [x, y] = toPage(
-      event.clientX - origin.left - page.clientLeft,
-      event.clientY - origin.top - page.clientTop,
-      shown.viewport,
-    );
-    const ids = current.marks
+    const origin = page?.getBoundingClientRect();
+    const [x, y] =
+      shown && origin
+        ? toPage(
+            event.clientX - origin.left - page.clientLeft,
+            event.clientY - origin.top - page.clientTop,
+            shown.viewport,
+          )
+        : [NaN, NaN];
+    const ids = (current?.identity === doc.identity ? current.marks : [])
       .filter(
-        (mark) =>
-          mark.anchor.kind === "pdf" &&
-          mark.anchor.page === Number(page.dataset.pageNumber),
-      )
-      .filter(
-        (mark) =>
-          mark.anchor.kind === "pdf" &&
-          mark.anchor.quads.some((quad) => quadContains(quad, x, y)),
+        ({ anchor }) =>
+          anchor.kind === "pdf" &&
+          anchor.page === number &&
+          anchor.quads.some((quad) => quadContains(quad, x, y)),
       )
       .map((mark) => mark.id);
-    return {
-      ids,
-      rect: ids.length ? new DOMRect(event.clientX, event.clientY, 0, 0) : null,
-    };
+    if (kind === "hover" && ids.join(" ") === hovered.current) return;
+    hovered.current = ids.join(" ");
+    if (ids.length || kind === "hover") {
+      const rect = new DOMRect(event.clientX, event.clientY, 0, 0);
+      viewRef.current.onMarks?.({ kind, ids, rect });
+    }
   }
 
   return (
@@ -513,11 +558,12 @@ export default function PdfSurface({
         aria-label="PDF document"
         tabIndex={-1}
         data-pane-content="true"
-        onClick={(event) => {
-          const { ids, rect } = marksAt(event);
-          if (ids.length)
-            viewRef.current.onMarks?.({ kind: "activate", ids, rect });
-        }}
+        onClick={(event) => marks(event, "activate")}
+        onMouseMove={
+          view.onMarks && !isMobile
+            ? (event) => marks(event, "hover")
+            : undefined
+        }
       >
         {view.before}
         <div ref={host} className="pdfViewer" />

@@ -1,7 +1,0 @@
-# publisher href locations may retire when a heading becomes note content
-
-status: open. origin: 2026-10-04 rearnote navigation source review at `9d293824156f78b17cf03c250e0f77c5688b36f2`; area: epub navigation. priority: p2.
-
-`epub_structure.py:203–218` skips a publisher navigation node as a routine section when its point belongs to a note group. before that promotion, its section id can be the authored href, while the surviving publisher toc node has a separate `toc/...` id. `MediaPaneBody.tsx:4589–4598` writes section ids to `?loc=`. the heading-location fix also accepts toc ids, but an old authored href is neither the promoted section id nor its `toc/...` id. thus an old href-based location could lose its destination when note classification changes. the frozen wasteland candidate proves four lost generated heading ids, but **no publisher href location loss or saved-link journey was observed**.
-
-qualify one real or controlled publisher toc node whose href-based section lies in a newly recognized note region. if its old `?loc=` becomes unavailable, preserve the intrinsic published destination and its exact point without duplicating routine note sections or adding an alias ledger. acceptance is arrival at the same point before and after promotion, with publisher toc identity/order and unaffected section navigation intact. keep this distinct from the four verified generated heading ids.

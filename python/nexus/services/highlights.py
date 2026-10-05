@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import delete, func, select, text, update
@@ -30,19 +31,19 @@ from nexus.db.retries import retry_read_committed
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.highlights import (
-    CreateHighlightRequest,
+    HIGHLIGHT_COLORS,
     FragmentAnchorOut,
     LinkedConversationRef,
     LinkedNoteBlockRef,
     PdfAnchorOut,
     PdfBoundsUpdate,
     PdfQuadOut,
+    TextHighlightAnchorIn,
     TypedHighlightOut,
     UpdateHighlightRequest,
 )
-from nexus.schemas.reader import ResolvedHighlightReaderTarget
 from nexus.schemas.resource_items import NoteBodyVersionsOut
-from nexus.services import locator_resolver, text_quote
+from nexus.services import text_quote
 from nexus.services.capabilities import is_text_document_ready
 from nexus.services.passage_anchors import normalize_quote_text
 from nexus.services.resource_graph.cleanup import (
@@ -322,7 +323,7 @@ def _highlight_out(
     return TypedHighlightOut(
         id=highlight.id,
         anchor=anchor,
-        color=highlight.color,
+        color=cast(HIGHLIGHT_COLORS, highlight.color),
         exact=highlight.exact,
         prefix=highlight.prefix,
         suffix=highlight.suffix,
@@ -456,17 +457,20 @@ def _build_fragment_highlight(
     return highlight
 
 
-def create_highlight_for_fragment(
-    db: Session, viewer_id: UUID, fragment_id: UUID, req: CreateHighlightRequest
+def create_text_highlight(
+    db: Session, viewer_id: UUID, media_id: UUID, anchor: TextHighlightAnchorIn, color: str
 ) -> TypedHighlightOut:
+    """A highlight over one unit of the media; the unit must belong to it."""
+    if db.scalar(select(Fragment.media_id).where(Fragment.id == anchor.unit_id)) != media_id:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
     try:
         highlight = _build_fragment_highlight(
             db,
             viewer_id=viewer_id,
-            fragment_id=fragment_id,
-            start_offset=req.start_offset,
-            end_offset=req.end_offset,
-            color=req.color,
+            fragment_id=anchor.unit_id,
+            start_offset=anchor.start_offset,
+            end_offset=anchor.end_offset,
+            color=color,
         )
         db.commit()
     except IntegrityError as e:
@@ -511,29 +515,6 @@ def create_fragment_highlight_in_txn(
             ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Highlight id names a different selection"
         )
     return existing
-
-
-def list_highlights_for_fragment(
-    db: Session, viewer_id: UUID, fragment_id: UUID, mine_only: bool = True
-) -> list[TypedHighlightOut]:
-    fragment = db.get(Fragment, fragment_id)
-    if fragment is None or not can_read_media(db, viewer_id, fragment.media_id):
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-    highlights = list(
-        db.scalars(
-            select(Highlight)
-            .join(HighlightFragmentAnchor, Highlight.id == HighlightFragmentAnchor.highlight_id)
-            .where(
-                Highlight.anchor_kind == "fragment_offsets",
-                HighlightFragmentAnchor.fragment_id == fragment_id,
-                Highlight.user_id == viewer_id
-                if mine_only
-                else highlight_visibility_filter(viewer_id, fragment.media_id),
-            )
-            .order_by(HighlightFragmentAnchor.start_offset, Highlight.created_at, Highlight.id)
-        ).all()
-    )
-    return project_highlights_with_links(db, viewer_id, highlights)
 
 
 def _repair_missing_fragment_caches(db: Session, *, media_id: UUID, stale: list[Highlight]) -> bool:
@@ -642,17 +623,6 @@ def list_highlights_for_media(
 def get_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> TypedHighlightOut:
     highlight = get_highlight_for_visible_read_or_404(db, viewer_id, highlight_id)
     return project_highlights_with_links(db, viewer_id, [highlight])[0]
-
-
-def get_highlight_reader_target(
-    db: Session, *, viewer_id: UUID, highlight_id: UUID
-) -> ResolvedHighlightReaderTarget:
-    if not can_read_highlight(db, viewer_id, highlight_id):
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Highlight unavailable")
-    target = locator_resolver.resolve_highlight_reader_target(db, highlight_id=highlight_id)
-    if target is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Highlight unavailable")
-    return target
 
 
 def update_highlight(

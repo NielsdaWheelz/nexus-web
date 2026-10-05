@@ -10,10 +10,6 @@ import {
   mediaSummaryFromWire,
   type MediaSummary,
 } from "@/lib/media/mediaSummary";
-import {
-  parseReaderCursorSnapshot,
-  type ReaderCursorSnapshot,
-} from "@/lib/reader/readerProgress";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { isCanonicalUuid } from "@/lib/validation";
@@ -82,7 +78,7 @@ export interface LecternResult {
 }
 export interface MediaProgressState {
   mediaId: MediaId;
-  readerCursor: ReaderCursorSnapshot;
+  readerCursor: Schema<"MediaProgressState">["readerCursor"];
   listeningState: Presence<{ positionMs: number; resetEpoch: number }>;
 }
 export interface ConsumptionResult {
@@ -163,9 +159,7 @@ export function consumptionResultFromWire(
             kind: "Present",
             value: {
               mediaId: parseMediaId(progressState.value.mediaId),
-              readerCursor: parseReaderCursorSnapshot(
-                progressState.value.readerCursor,
-              ),
+              readerCursor: progressState.value.readerCursor,
               listeningState: progressState.value.listeningState,
             },
           }

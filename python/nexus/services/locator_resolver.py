@@ -271,7 +271,7 @@ def evidence_resolution(
     selector: dict[str, Any],
     resolver_kind: str,
 ) -> dict[str, Any]:
-    """Resolve one read, authorized evidence span into reader routing params and geometry.
+    """Resolve one read, authorized evidence span into its resolver status and geometry.
 
     The status is a predicate on the selector alone. The span is not re-proved against
     ``content_blocks``: ``publish_content_index``, the only writer, inserts a span with
@@ -286,19 +286,13 @@ def evidence_resolution(
         "suffix": str(stored_quote.get("suffix") or ""),
     }
     span_id = str(evidence_span_id)
-    params = {"evidence": span_id}
     status = "unresolved"
     highlight: dict[str, Any] | None = None
     start_offset = selector.get("start_offset")
     end_offset = selector.get("end_offset")
 
     if resolver_kind in ("web", "epub"):
-        section_id = selector.get("section_id")
         fragment_id = selector.get("fragment_id")
-        if resolver_kind == "epub" and isinstance(section_id, str):
-            params["loc"] = section_id
-        if isinstance(fragment_id, str):
-            params["fragment"] = fragment_id
         if (
             isinstance(fragment_id, str)
             and isinstance(start_offset, int)
@@ -319,7 +313,6 @@ def evidence_resolution(
         geometry: dict[str, Any] = raw_geometry if isinstance(raw_geometry, dict) else {}
         quads = _pdf_quads_from_geometry(geometry)
         if isinstance(page_number, int) and page_number >= 1:
-            params["page"] = str(page_number)
             status = "resolved" if quads else "no_geometry"
             page_label = selector.get("page_label")
             highlight = {
@@ -333,8 +326,6 @@ def evidence_resolution(
     elif resolver_kind == "transcript":
         t_start_ms = selector.get("t_start_ms")
         t_end_ms = selector.get("t_end_ms")
-        if isinstance(t_start_ms, int) and t_start_ms >= 0:
-            params["t_start_ms"] = str(t_start_ms)
         if (
             isinstance(t_start_ms, int)
             and isinstance(t_end_ms, int)
@@ -358,7 +349,6 @@ def evidence_resolution(
             and start_offset >= 0
             and end_offset > start_offset
         ):
-            params["note_block"] = note_block_id
             status = "resolved"
             highlight = {
                 "kind": "note_text",
@@ -374,7 +364,6 @@ def evidence_resolution(
         "span_text": span_text,
         "resolver": {
             "kind": resolver_kind,
-            "params": params,
             "status": status,
             "selector": selector,
             "highlight": highlight,

@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import "@/components/PdfReader.module.css";
+import "@/lib/documentReader/documentReader.module.css";
 import { verifySession } from "@/lib/auth/dal";
 import { loadRenderEnvironment } from "@/lib/renderEnvironment/server";
-import "./media/[id]/page.module.css";
+import "./media/[id]/media.module.css";
 import { AuthenticatedShellSkeleton } from "./AuthenticatedShellSkeleton";
 import { AuthenticatedWorkspaceErrorBoundary } from "./AuthenticatedWorkspaceErrorBoundary";
 import WorkspaceBootstrapGate from "./WorkspaceBootstrapGate";

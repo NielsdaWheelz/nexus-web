@@ -1,7 +1,7 @@
 "use client";
 
 import { FeedbackNotice } from "@/components/feedback/Feedback";
-import ReaderSourceIssuesNotice from "@/components/reader/ReaderSourceIssuesNotice";
+import { SourceIssuesNotice } from "@/lib/documentReader/chrome/Contents";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import PaneSection from "@/components/ui/PaneSection";
 import Pill from "@/components/ui/Pill";
@@ -108,7 +108,7 @@ export default function ImportInspector({
 
       {sourceIssues.kind === "Present" && sourceIssues.value.issues.length > 0 ? (
         <PaneSection title="Source quality">
-          <ReaderSourceIssuesNotice issues={sourceIssues.value.issues} readable={readiness.can_read} />
+          <SourceIssuesNotice issues={sourceIssues.value.issues} readable={readiness.can_read} />
         </PaneSection>
       ) : null}
 

@@ -8,15 +8,35 @@ here through the single locator owner. Note-owned evidence projects to
 
 from __future__ import annotations
 
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media
-from nexus.errors import NotFoundError
+from nexus.auth.permissions import can_read_highlight, can_read_media
+from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.schemas.passage_anchors import (
+    FragmentPassageTarget,
+    NotePassageTarget,
+    PdfPassageTarget,
+    TimePassageTarget,
+)
+from nexus.schemas.reader import (
+    PdfPageGeometryTargetOut,
+    ReaderTargetKind,
+    ReaderTargetOut,
+    ReaderTargetPdfOut,
+    ReaderTargetTextOut,
+    ReaderTargetTimeOut,
+)
 from nexus.schemas.retrieval import retrieval_locator_json
-from nexus.services.locator_resolver import locator_from_resolution, resolve_evidence_span
+from nexus.services.locator_resolver import (
+    locator_from_resolution,
+    resolve_evidence_span,
+    resolve_highlight_reader_target,
+)
+from nexus.services.passage_anchors import get_navigation_target
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.resolve import (
     oracle_anchor_current_target,
@@ -173,3 +193,74 @@ def _reader_apparatus_target(db: Session, *, viewer_id: UUID, item_id: UUID) -> 
     if row is None or not can_read_media(db, viewer_id, row[0]):
         return None, None
     return row[0], retrieval_locator_json(row[1])
+
+
+def reader_target_for_media(
+    db: Session, *, viewer_id: UUID, media_id: UUID, kind: ReaderTargetKind, target_id: UUID
+) -> ReaderTargetOut:
+    """Where a deep link into one media's reader lands; 404 when it lands nowhere there."""
+    unavailable = NotFoundError(ApiErrorCode.E_NOT_FOUND, "Reader target unavailable")
+    if kind == "passage":
+        passage = get_navigation_target(
+            db,
+            viewer_id=viewer_id,
+            passage_anchor_id=target_id,
+            owner=ResourceRef(scheme="media", id=media_id),
+        )
+        if passage.kind == "Absent":
+            raise unavailable
+        match passage.value:
+            case FragmentPassageTarget() as text_target:
+                return ReaderTargetTextOut(
+                    unit_id=str(text_target.fragment_id),
+                    start_offset=text_target.start_offset,
+                    end_offset=text_target.end_offset,
+                )
+            case TimePassageTarget() as time_target:
+                return ReaderTargetTimeOut(start_ms=time_target.start_ms, end_ms=time_target.end_ms)
+            case PdfPassageTarget() as pdf_target:
+                return ReaderTargetPdfOut(page_number=pdf_target.page_number, quads=[])
+            case NotePassageTarget():
+                raise unavailable
+    if kind == "highlight":
+        owner = db.scalar(
+            text("SELECT anchor_media_id FROM highlights WHERE id = :id"), {"id": target_id}
+        )
+        if owner != media_id or not can_read_highlight(db, viewer_id, target_id):
+            raise unavailable
+        match resolve_highlight_reader_target(db, highlight_id=target_id):
+            case PdfPageGeometryTargetOut() as pdf_target:
+                return ReaderTargetPdfOut(
+                    page_number=pdf_target.page_number, quads=pdf_target.quads
+                )
+            case None:
+                raise unavailable
+            case text_target:
+                return ReaderTargetTextOut(
+                    unit_id=str(text_target.fragment_id),
+                    start_offset=text_target.start_offset,
+                    end_offset=text_target.end_offset,
+                )
+    scheme = "evidence_span" if kind == "evidence" else "reader_apparatus_item"
+    owner_id, locator = reader_target_for_citation_target(
+        db, viewer_id=viewer_id, target=ResourceRef(scheme=scheme, id=target_id)
+    )
+    if owner_id != media_id or locator is None:
+        raise unavailable
+    match locator["type"]:
+        case "web_text_offsets" | "epub_fragment_offsets":
+            return ReaderTargetTextOut(
+                unit_id=str(locator["fragment_id"]),
+                start_offset=cast(int, locator["start_offset"]),
+                end_offset=cast(int, locator["end_offset"]),
+            )
+        case "pdf_page_geometry":
+            return ReaderTargetPdfOut.model_validate(
+                {"page_number": locator["page_number"], "quads": locator["quads"]}
+            )
+        case "transcript_time_range":
+            return ReaderTargetTimeOut(
+                start_ms=cast(int, locator["t_start_ms"]), end_ms=cast(int, locator["t_end_ms"])
+            )
+        case _:
+            raise unavailable

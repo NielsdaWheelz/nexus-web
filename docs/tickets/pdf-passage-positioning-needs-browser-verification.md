@@ -1,18 +1,15 @@
 # pdf passage positioning needs browser verification
 
-status: open · origin: 2026-09-17 passage navigation cleanup, base 1bee992eb · area: pdf navigation
+status: open · origin: 2026-09-17 passage navigation cleanup; restated after the reader rewrite (pr2, 2026-10-05) · area: pdf navigation
 
-the new passage target calls the existing `PdfReader` control
-`applyResumeState` after controls become ready and consumes the hash only after
-its successful positioning receipt. source review and static checks passed;
-actual pdf viewport positioning is `NOT_RUN`.
-
-the temporary standalone actual-renderer harness repeatedly fetched
-`/pdfjs/pdf.worker.min.mjs`, remained `page 1 of 0 / loading pdf`, and never
-requested its valid local pdf or exposed controls. no browser/request error
-remained after stabilizing harness props. this is an isolated setup blocker,
-not evidence of production success or failure. the harness was removed.
+a passage deep link (`#passage-<id>`) resolves through
+`GET /media/{id}/reader-targets/passage/{id}` to page quads (or a page start) and
+becomes one reader jump (`hostedReader.ts` `useReaderEntry` /
+`useLiveReaderTargets` → `reader.inspect({kind: "quads"})`). the reader harness
+covers pdf open, page buttons, internal links, zoom, selection and highlights,
+but no pdf passage arrival: actual positioning on a passage is `NOT_RUN`.
 
 acceptance: in a working media pane, open a passage after pdf mount and then a
-different passage in the same pane. verify both target pages enter the viewport,
-hashes clear only after positioning, and navigation away cancels pending work.
+different passage in the same pane. both target pages enter the viewport with
+the passage near the reading line, the hash clears once, and navigation away
+cancels pending work.

@@ -1,9 +1,9 @@
 // The dossier article's stylesheet, adopted by its shadow root. It is written
 // in app tokens, which inherit through the host, so a theme switch restyles the
 // article without a rebuild. The host inherits the machine face and ink from
-// MachineText. The find highlights are repeated here so find does not depend on
-// document rules reaching into a shadow tree (chromium does that; others are
-// unprobed).
+// MachineText. The find highlights are repeated here because document rules
+// reach into a shadow tree only in chromium, with literal colours because
+// chromium and android webview <= 113 ignore var() inside ::highlight.
 const CSS = `
 :host { display: block; contain: layout paint; }
 article { max-width: 72ch; margin: 0 auto; padding: var(--space-4) var(--space-1) var(--space-12); line-height: var(--leading-loose); overflow-wrap: anywhere; }
@@ -38,7 +38,7 @@ th { background: var(--surface-2); color: var(--ink); font-family: var(--font-sa
 .dossier-citation sup { vertical-align: baseline; font-size: inherit; }
 .dossier-citation:hover { border-color: var(--edge); background: var(--surface-hover); }
 .dossier-citation:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: var(--focus-ring-offset); }
-::highlight(nexus-find-all) { background-color: var(--highlight-yellow); color: inherit; }
+::highlight(nexus-find-all) { background-color: rgba(255, 235, 59, 0.4); color: inherit; }
 ::highlight(nexus-find-active) { background-color: rgba(255, 193, 7, 0.65); color: inherit; text-decoration: underline double currentColor; text-underline-offset: 0.14em; }
 @media (forced-colors: active) { ::highlight(nexus-find-all), ::highlight(nexus-find-active) { background-color: Highlight; color: HighlightText; } }
 @media print { section + section { border-color: currentColor; } pre, table, figure { break-inside: avoid; } }

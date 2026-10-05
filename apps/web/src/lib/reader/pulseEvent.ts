@@ -26,7 +26,8 @@ const readerPulseChannel = createWindowEventChannel<ReaderPulseTarget>({
 const pendingReaderPulseByMediaId = new Map<string, ReaderPulseTarget>();
 
 export function dispatchReaderPulse(target: ReaderPulseTarget): void {
-  if (target.focusBehavior === "scroll_into_view") pendingReaderPulseByMediaId.set(target.mediaId, target);
+  if (target.focusBehavior === "scroll_into_view")
+    pendingReaderPulseByMediaId.set(target.mediaId, target);
   readerPulseChannel.dispatch(target);
 }
 

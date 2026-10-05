@@ -1,4 +1,4 @@
-"""Highlight routes. Snake_case envelopes; the two PDF endpoints delegate."""
+"""Highlight routes: one create for text and pdf, read, recolour/rebound, delete, note."""
 
 from typing import Annotated
 from uuid import UUID
@@ -7,15 +7,14 @@ from fastapi import APIRouter, Depends, Query, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession
-from nexus.responses import Data, ok, success_response
+from nexus.responses import Data
 from nexus.schemas.highlights import (
-    CreateHighlightRequest,
-    CreatePdfHighlightRequest,
+    CreateMediaHighlightRequest,
     LinkedNoteBlockRef,
     SetHighlightNoteRequest,
+    TypedHighlightOut,
     UpdateHighlightRequest,
 )
-from nexus.schemas.reader import ResolvedHighlightReaderTargetResponse
 from nexus.schemas.resource_items import NoteBodyVersionsOut
 from nexus.services import highlights as highlights_service
 from nexus.services import notes as notes_service
@@ -24,85 +23,36 @@ from nexus.services import pdf_highlights as pdf_highlights_service
 router = APIRouter(tags=["highlights"])
 
 ViewerDep = Annotated[Viewer, Depends(get_viewer)]
-MineOnly = Annotated[bool, Query()]
 
 
-@router.post("/fragments/{fragment_id}/highlights", status_code=201)
+@router.post("/media/{media_id}/highlights", status_code=201)
 def create_highlight(
-    fragment_id: UUID, request: CreateHighlightRequest, viewer: ViewerDep, db: DbSession
-) -> dict:
-    return ok(
-        highlights_service.create_highlight_for_fragment(db, viewer.user_id, fragment_id, request)
-    )
-
-
-@router.get("/fragments/{fragment_id}/highlights")
-def list_highlights(
-    fragment_id: UUID, viewer: ViewerDep, db: DbSession, mine_only: MineOnly = True
-) -> dict:
-    highlights = highlights_service.list_highlights_for_fragment(
-        db, viewer.user_id, fragment_id, mine_only
-    )
-    return success_response({"highlights": [item.model_dump(mode="json") for item in highlights]})
-
-
-@router.post("/media/{media_id}/pdf-highlights", status_code=201)
-def create_pdf_highlight(
-    media_id: UUID, request: CreatePdfHighlightRequest, viewer: ViewerDep, db: DbSession
-) -> dict:
-    return ok(
-        pdf_highlights_service.create_pdf_highlight(
-            db=db, viewer_id=viewer.user_id, media_id=media_id, req=request
+    media_id: UUID, request: CreateMediaHighlightRequest, viewer: ViewerDep, db: DbSession
+) -> Data[TypedHighlightOut]:
+    anchor = request.anchor
+    if anchor.kind == "pdf":
+        return Data(
+            data=pdf_highlights_service.create_pdf_highlight(
+                db, viewer.user_id, media_id, anchor, request.color
+            )
         )
-    )
-
-
-@router.get("/media/{media_id}/pdf-highlights")
-def list_pdf_highlights(
-    media_id: UUID,
-    viewer: ViewerDep,
-    db: DbSession,
-    page_number: Annotated[int, Query(ge=1, description="1-based PDF page number")],
-    mine_only: MineOnly = True,
-) -> dict:
-    highlights = pdf_highlights_service.list_pdf_highlights(
-        db=db,
-        viewer_id=viewer.user_id,
-        media_id=media_id,
-        page_number=page_number,
-        mine_only=mine_only,
-    )
-    return success_response(
-        {
-            "page_number": page_number,
-            "highlights": [item.model_dump(mode="json") for item in highlights],
-        }
+    return Data(
+        data=highlights_service.create_text_highlight(
+            db, viewer.user_id, media_id, anchor, request.color
+        )
     )
 
 
 @router.get("/highlights/{highlight_id}")
-def get_highlight(highlight_id: UUID, viewer: ViewerDep, db: DbSession) -> dict:
-    return ok(highlights_service.get_highlight(db, viewer.user_id, highlight_id))
-
-
-@router.get(
-    "/highlights/{highlight_id}/reader-target", response_model=ResolvedHighlightReaderTargetResponse
-)
-def get_highlight_reader_target(
-    highlight_id: UUID, viewer: ViewerDep, db: DbSession
-) -> ResolvedHighlightReaderTargetResponse:
-    return ResolvedHighlightReaderTargetResponse(
-        data=highlights_service.get_highlight_reader_target(
-            db, viewer_id=viewer.user_id, highlight_id=highlight_id
-        )
-    )
+def get_highlight(highlight_id: UUID, viewer: ViewerDep, db: DbSession) -> Data[TypedHighlightOut]:
+    return Data(data=highlights_service.get_highlight(db, viewer.user_id, highlight_id))
 
 
 @router.patch("/highlights/{highlight_id}")
 def update_highlight(
     highlight_id: UUID, request: UpdateHighlightRequest, viewer: ViewerDep, db: DbSession
-) -> dict:
-    return ok(highlights_service.update_highlight(db, viewer.user_id, highlight_id, request))
+) -> Data[TypedHighlightOut]:
+    return Data(data=highlights_service.update_highlight(db, viewer.user_id, highlight_id, request))
 
 
 @router.put("/highlights/{highlight_id}/note")

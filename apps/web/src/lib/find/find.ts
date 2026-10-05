@@ -160,24 +160,29 @@ export function findInUnits<L>(
 
 const shares = new Map<
   symbol,
-  { readonly all: readonly Range[]; readonly active: readonly Range[] }
+  {
+    readonly all: readonly StaticRange[];
+    readonly active: readonly StaticRange[];
+  }
 >();
 
 /**
  * A FindSource.paint over the document-wide `nexus-find-all` / `nexus-find-active`
  * custom highlights. Every pane paints into the same two highlights, so each
- * painter owns one share and publishes the union.
+ * painter owns one share and publishes the union. Ranges are registered as
+ * StaticRanges: a live range would be updated on every dom mutation anywhere.
  */
 export function highlightPainter<L>(
-  ranges: (at: L) => readonly Range[],
+  ranges: (at: L) => readonly AbstractRange[],
 ): FindSource<L>["paint"] {
   const owner = Symbol("find");
+  const frozen = (at: L) => ranges(at).map((range) => new StaticRange(range));
   return (rows, active) => {
-    const all = rows.flatMap((row) => ranges(row.at));
+    const all = rows.flatMap((row) => frozen(row.at));
     if (all.length > 0)
       shares.set(owner, {
         all,
-        active: active < 0 ? [] : ranges(rows[active]!.at),
+        active: active < 0 ? [] : frozen(rows[active]!.at),
       });
     else if (!shares.delete(owner)) return;
     for (const [name, priority] of [

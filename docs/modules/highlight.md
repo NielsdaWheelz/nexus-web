@@ -13,9 +13,11 @@ Backend owners are `python/nexus/services/highlights.py`,
 `python/nexus/api/routes/highlights.py`, and the highlight schemas under
 `python/nexus/schemas/highlights.py`.
 
-Frontend owners are `apps/web/src/lib/highlights/*` and
-`apps/web/src/components/highlights/*`. Reader-specific highlight presentation
-lives in the reader module, and chat run assembly lives in the chat module.
+Frontend owners are the hosted media pane's `annotations.ts` (reads and
+writes), `useAnnotationVerbs.ts` and `SelectionDock.tsx` (the verbs), and
+`apps/web/src/lib/highlights/actionIntent.ts` (app-global highlight intents).
+Paint and hit-testing live in the reader module, and chat run assembly lives in
+the chat module.
 
 The highlight module does not own Resource Inspector chrome, Document
 Map aggregation, reader projection state, chat citations, source-authored
@@ -98,41 +100,22 @@ geometry-only Highlight.
 
 ## Read Paths
 
-There are two read scopes:
+The browser reader reads every highlight of a media the viewer can see (theirs
+and library-mates') once, through `GET /media/{id}/document-map`, whose
+aggregate response is owned by the reader Document Map service; each highlight
+item carries `is_owner`. That endpoint is a read model only. It must not become
+the mutation API. `GET /highlights/{id}` reads one highlight; there are no
+per-fragment or per-page list routes.
 
-- Per-fragment and per-page highlight reads feed inline highlight rendering and
-  visible-row projection for the active reader location.
-- Media-wide reads feed highlight facts in Evidence, linked
-  note/chat summaries, markers, and quote-to-chat lookup.
+The pane's `AnnotationStore` projects the map into marks, topmost (newest)
+first. A write paints at once from its acknowledgement through a pending ledger
+until a map read issued after it settles; a failed read keeps the last map
+painted. Before creating, the store looks for the viewer's own highlight of the
+exact extent and reuses it (one highlight per user per span); a library-mate's
+highlight there never blocks the viewer's own.
 
-The browser reader consumes media-wide highlight data through
-`GET /media/{id}/document-map`, whose aggregate response is owned by the reader
-Document Map service. That endpoint may include highlight payloads, but it is a
-read model only. It must not become the mutation API.
-
-The standalone highlight list routes remain highlight-owned because other
-callers may need highlight reads without the full Document Map aggregate.
-
-Hosted reader projection has two format-specific owners. Reflowable web,
-transcript, and EPUB content uses
-`app/(authenticated)/media/[id]/useHostedTextHighlights.ts`; PDF pages use
-`app/(authenticated)/media/[id]/useHostedPdfPageHighlights.ts`. The text owner
-keys reads by media and active fragment, aborts superseded requests, applies the
-shared bounded browser retry policy, and owns the generation that gates
-mutation projection and reconciliation. An empty highlight list is a complete,
-successful response and is never retried. Expected request failures become a
-visible Retry obligation, authentication failures go to the authentication
-boundary, and malformed same-system responses go to the render defect
-boundary. The reader publishes selectable canonical text only after the first
-active projection settles, so persisted decoration cannot replace a live DOM
-selection; later refreshes keep the settled content mounted. `MediaPaneBody`
-composes these owners; it does not run a parallel timer, request-version
-counter, or direct fragment-highlight reload path.
-
-`lib/highlights/highlightContract.ts` is the browser's strict decoder for the
-standalone highlight response wires. The transport accepts the canonical
-`{data: ...}` envelopes and exact highlight/anchor fields only; it does not
-unwrap alternate envelopes or fill omitted response fields.
+Highlight responses are generated wire types (`TypedHighlightOut`); creation is
+one typed route, `POST /media/{id}/highlights` with a text or pdf anchor.
 
 ## Mutations And Notes
 
@@ -190,16 +173,13 @@ still publishes no Inspector.
 
 ## Reader Presentation
 
-Inline highlight rendering remains separate from the Document Map. Inline
-rendering follows the current reader location and active fragment/page data.
-
-`useHighlightInteraction` owns focus, bounds-edit state and overlap cycling.
-focus changes emphasis and the bounds-edit target without moving the viewport.
-clicks use the current DOM id order; another click on the same element cycles
-that current list, while a new element starts at its supplied topmost id.
-`focusHighlight(null)` ends editing and retains the cycle; `clearFocus()` also
-resets the clicked element and cycle. non-null focus retains bounds-edit state.
-the reader owns span evidence and action anchors from the clicked topmost id.
+Marks are css custom highlights over the untouched reader dom (pdf: overlay
+rects under the text layer); overlapping marks paint as disjoint segments in the
+topmost colour. See
+[reader-implementation](reader-implementation.md#paint-css-custom-highlights).
+A click resolves the marks under the pointer, topmost first. Focus is an
+underline and moves no viewport; bounds editing takes the next selection as the
+highlight's new extent.
 
 Evidence is the Media Resource Inspector's cross-document reader
 surface for highlights. It remains a Document Map body: it renders the stored `exact` quote
@@ -208,31 +188,25 @@ mounts the canonical resource menu, and shows linked note/chat summaries from
 the aggregate read model. Highlight does not publish the Inspector group or its
 inspector action.
 
-Evidence also aligns highlight-linked annotations beside their in-text
-referents when the reader is visible. The narrow overview bar previews their
+Evidence follows the reading position (the group there stays in view; groups
+in the visible band are marked), and the document-map rail shows marker
 locations across the document. Evidence owns neither highlight persistence nor
 mutation behavior.
 
-A fresh reader selection has no Highlight yet. Its `SelectionPopover` renders
-the dedicated icon-only `SelectionActionDock`; `buildSelectionActions` owns
-only this pre-resource gesture. Materialized Highlights mount
-`ResourceActionMenu`, whose snapshot, catalog, planner, and runtime own the same
-action list in every representation. Clicking a Highlight in reader text or a
-PDF opens that menu directly at the Highlight, with no intermediate overflow
-button. Loading and unavailable states explain themselves in the open surface;
-Escape, outside clicks, and reader scrolling dismiss it. Scrolling within the
-menu keeps its actions reachable. Rows in Evidence retain their
-overflow trigger.
+A fresh reader selection has no Highlight yet: the pane's `SelectionDock` offers
+this pre-resource gesture. Materialized Highlights mount `ResourceActionMenu`,
+whose snapshot, catalog, planner, and runtime own the same action list in every
+representation. Clicking one mark in reader text or a PDF opens that menu at the
+click; where marks overlap, a *Highlights here* chooser lists them topmost
+first. Rows in Evidence retain their overflow trigger.
 The selection actions use the fixed names
 **Highlight**, **Note**, **Link**, **Ask**, **Learn**,
-**Ask in existing chat…**, and **Share**. `projectSelectionActionPlan` is the sole
-owner of their presentation order: the direct icon row is **Highlight**,
-**Note**, **Link**, **Ask**, and the **More** overflow menu is **Learn**,
-**Ask in existing chat…**, **Share**. Capability decides which descriptors exist
-and never which tier they land in. Composite selection actions are
-synchronously single-flight; the reader creation entrypoint independently
-prevents same-turn duplicate Highlight writes and releases after a null result
-or failure so the selection can retry.
+**Ask in existing chat…**, and **Share**. `SelectionDock` owns their order: the
+direct icon row is **Highlight**, **Note**, **Link**, **Ask**, and the **More**
+overflow menu is **Learn**, **Ask in existing chat…**, **Share**. Capability
+decides which actions exist and never which tier they land in. Selection actions
+are single-flight (`useAnnotationVerbs`): one creation at a time, released after
+success or failure so the selection can retry.
 
 The canonical passage/document scope and typed highlight association contract
 is

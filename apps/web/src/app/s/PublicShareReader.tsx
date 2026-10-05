@@ -171,6 +171,8 @@ function SharedDocument({
             noteRefs: [],
             focused: mark.id,
             hovered: null,
+            evidence: null,
+            pulse: null,
           }
         : undefined,
     [identity, mark],

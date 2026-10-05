@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 from nexus.db.models import MediaKind, ProcessingStatus
@@ -544,93 +544,11 @@ class MediaLibrariesRequest(BaseModel):
     library_ids: list[UUID] = Field(default_factory=list)
 
 
-class MediaEvidenceTextQuoteOut(_Strict):
-    exact: str
-    prefix: str
-    suffix: str
+class MediaFileOut(_Strict):
+    """A short-lived signed url of the media's file; ``expires_at`` is ISO 8601."""
 
-
-class MediaEvidenceWebHighlightOut(_Strict):
-    kind: Literal["web_text"]
-    evidence_span_id: UUID
-    fragment_id: UUID
-    start_offset: int = Field(ge=0)
-    end_offset: int = Field(ge=0)
-    text_quote: MediaEvidenceTextQuoteOut
-
-
-class MediaEvidenceEpubHighlightOut(_Strict):
-    kind: Literal["epub_text"]
-    evidence_span_id: UUID
-    fragment_id: UUID
-    start_offset: int = Field(ge=0)
-    end_offset: int = Field(ge=0)
-    text_quote: MediaEvidenceTextQuoteOut
-
-
-class MediaEvidencePdfQuadOut(_Strict):
-    x1: FiniteFloat
-    y1: FiniteFloat
-    x2: FiniteFloat
-    y2: FiniteFloat
-    x3: FiniteFloat
-    y3: FiniteFloat
-    x4: FiniteFloat
-    y4: FiniteFloat
-
-
-class MediaEvidencePdfGeometryOut(_Strict):
-    coordinate_space: Literal["pdf_points"]
-    page_width: FiniteFloat = Field(gt=0)
-    page_height: FiniteFloat = Field(gt=0)
-    page_rotation_degrees: int = Field(ge=0)
-    page_box: str | None = None
-    projection: str | None = None
-    quads: list[MediaEvidencePdfQuadOut]
-
-
-class MediaEvidencePdfHighlightOut(_Strict):
-    kind: Literal["pdf_text"]
-    evidence_span_id: UUID
-    page_number: int = Field(ge=1)
-    page_label: str | None = None
-    text_quote: MediaEvidenceTextQuoteOut
-    geometry: MediaEvidencePdfGeometryOut | None = None
-
-
-class MediaEvidenceTranscriptHighlightOut(_Strict):
-    kind: Literal["transcript_time_text"]
-    evidence_span_id: UUID
-    t_start_ms: int | None = Field(default=None, ge=0)
-    t_end_ms: int | None = Field(default=None, ge=0)
-    text_quote: MediaEvidenceTextQuoteOut
-
-
-MediaEvidenceHighlightOut = Annotated[
-    MediaEvidenceWebHighlightOut
-    | MediaEvidenceEpubHighlightOut
-    | MediaEvidencePdfHighlightOut
-    | MediaEvidenceTranscriptHighlightOut,
-    Field(discriminator="kind"),
-]
-
-
-class MediaEvidenceResolverOut(_Strict):
-    kind: Literal["web", "epub", "pdf", "transcript"]
-    params: dict[str, str]
-    status: Literal["resolved", "unresolved", "no_geometry"]
-    highlight: MediaEvidenceHighlightOut | None
-
-
-class MediaEvidenceOut(_Strict):
-    evidence_span_id: UUID
-    media_id: UUID
-    span_text: str
-    resolver: MediaEvidenceResolverOut
-
-
-class MediaEvidenceResponse(_Strict):
-    data: MediaEvidenceOut
+    url: str
+    expires_at: str
 
 
 class ReaderNavigationFragmentOut(_Strict):
@@ -726,18 +644,3 @@ class MediaNavigationOut(_Strict):
             ):
                 raise ValueError("Reader contents section linkage disagrees with its target")
         return self
-
-
-class EpubFragmentOut(_Strict):
-    """One EPUB render unit, independent of the publication's outline."""
-
-    fragment_id: UUID
-    fragment_idx: int = Field(ge=0, strict=True)
-    href_path: str = Field(min_length=1)
-    generation: int = Field(ge=1, strict=True)
-    html_sanitized: str
-    canonical_text: str
-    char_count: int = Field(ge=0, strict=True)
-    word_count: int = Field(ge=0, strict=True)
-    document_word_start: int = Field(ge=0, strict=True)
-    created_at: datetime

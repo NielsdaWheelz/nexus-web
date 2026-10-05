@@ -1,6 +1,6 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { Decoration, DecorationSet } from "prosemirror-view";
-import { codepointToUtf16 } from "@/lib/highlights/codepoints";
+import { codepointToUtf16 } from "@/lib/canonicalText/codepoints";
 import { projectNoteBody } from "@/lib/notes/prosemirror/noteBodyProjection";
 
 /** Map stored note-body codepoints to editor positions without changing the note.
