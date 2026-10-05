@@ -4,9 +4,6 @@ import re
 from uuid import UUID
 
 _BARE_EXTENSION_RE = re.compile(r"[a-z0-9][a-z0-9_-]*")
-_PLATE_SLUG_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,191}")
-
-PLATE_CONTENT_TYPE_TO_EXT = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
 
 
 def _require_bare_storage_extension(ext: str) -> str:
@@ -63,23 +60,3 @@ def build_epub_attempt_asset_storage_path(
     if any(part in {"", ".", ".."} for part in asset_key.split("/")):
         raise ValueError("EPUB asset key must not contain empty, dot, or dot-dot path parts.")
     return f"media/{media_id}/source/{attempt_id}/assets/{asset_key}"
-
-
-def ext_for_content_type(content_type: str) -> str:
-    """Map a plate content-type to its storage extension."""
-    ext = PLATE_CONTENT_TYPE_TO_EXT.get(content_type)
-    if ext is None:
-        raise ValueError(f"unsupported oracle plate content-type: {content_type}")
-    return ext
-
-
-def build_oracle_plate_storage_path(slug: str, ext: str) -> str:
-    """oracle/plates/{slug}.{ext} — the stable current path of a corpus plate."""
-    if not _PLATE_SLUG_RE.fullmatch(slug):
-        raise ValueError(
-            "oracle plate slug must be lowercase letters, numbers, dots, underscores, or hyphens"
-        )
-    ext = _require_bare_storage_extension(ext)
-    if ext not in set(PLATE_CONTENT_TYPE_TO_EXT.values()):
-        raise ValueError("oracle plate ext must be jpg|png|webp")
-    return f"oracle/plates/{slug}.{ext}"

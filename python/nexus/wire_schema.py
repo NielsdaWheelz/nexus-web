@@ -36,16 +36,6 @@ from nexus.schemas.dossier import DossierBuildOut
 from nexus.schemas.execution import ChatRunExecutionOut
 from nexus.schemas.media import MediaProcessingSnapshotOut
 from nexus.schemas.metadata_enrichment import MetadataEnrichmentView
-from nexus.schemas.oracle import (
-    OracleBindEventPayload,
-    OracleCompleteDoneEventPayload,
-    OracleFailedDoneEventPayload,
-    OracleMetaEventPayload,
-    OracleOmensEventPayload,
-    OracleReadingImageOut,
-    OracleReadingPassageOut,
-    OracleTextEventPayload,
-)
 from nexus.schemas.podcast import PodcastSubscriptionLifecycleSnapshotOut
 
 # Every model whose JSON is an SSE `data:` frame as-is (api/routes/stream.py),
@@ -64,14 +54,6 @@ SSE_PAYLOADS_BY_NAME = (
     ChatRunCitationIndexEventPayload,
     ChatRunContextRefAddedEventPayload,
     ChatRunExecutionOut,
-    OracleMetaEventPayload,
-    OracleBindEventPayload,
-    OracleTextEventPayload,
-    OracleReadingImageOut,
-    OracleReadingPassageOut,
-    OracleOmensEventPayload,
-    OracleCompleteDoneEventPayload,
-    OracleFailedDoneEventPayload,
     DossierBuildOut,
 )
 SSE_PAYLOADS_BY_ALIAS = (PodcastSubscriptionLifecycleSnapshotOut,)

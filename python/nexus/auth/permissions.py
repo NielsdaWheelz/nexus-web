@@ -27,8 +27,10 @@ Conversation Visibility (can_read_conversation):
 
 Highlight Visibility (can_read_highlight):
 - Viewer can read anchor media (via can_read_media), AND
-- Viewer is its author, shares a library containing the media with its author,
-  or has an incoming or creator grant on that exact highlight
+- Viewer is its author, shares a non-system library containing the media with
+  its author, or has an incoming or creator grant on that exact highlight. A
+  system library (the Oracle corpus) admits every asker as a member; it grants
+  media reach, never a view of fellow members' highlights.
 """
 
 from uuid import UUID
@@ -42,6 +44,7 @@ from nexus.db.models import (
     Highlight,
     HighlightFragmentAnchor,
     HighlightPdfAnchor,
+    Library,
     LibraryEntry,
     Media,
     MediaTeardownIntent,
@@ -319,7 +322,7 @@ def highlight_library_intersection_exists(
     """Core SQL exists expression for highlight library intersection check.
 
     Returns an exists() expression checking if viewer and highlight author share
-    membership in at least one library containing the given media.
+    membership in at least one non-system library containing the given media.
 
     Args:
         viewer_user_id: UUID of the viewer.
@@ -332,10 +335,15 @@ def highlight_library_intersection_exists(
     """
     viewer_m = Membership.__table__.alias("hl_viewer_m")
     author_m = Membership.__table__.alias("hl_author_m")
+    library = Library.__table__.alias("hl_library")
 
     return (
         select(literal(1))
         .select_from(LibraryEntry.__table__)
+        .join(
+            library,
+            (library.c.id == LibraryEntry.__table__.c.library_id) & library.c.system_key.is_(None),
+        )
         .join(viewer_m, viewer_m.c.library_id == LibraryEntry.__table__.c.library_id)
         .join(
             author_m,
@@ -357,6 +365,7 @@ def highlight_visibility_sql(highlight_alias: str = "h") -> str:
         OR EXISTS (
             SELECT 1
             FROM library_entries le
+            JOIN libraries shared_l ON shared_l.id = le.library_id AND shared_l.system_key IS NULL
             JOIN memberships viewer_m ON viewer_m.library_id = le.library_id
             JOIN memberships author_m ON author_m.library_id = le.library_id
             WHERE le.media_id = {highlight_alias}.anchor_media_id
@@ -404,8 +413,8 @@ def highlight_readability_sql(highlight_alias: str = "h") -> str:
 def highlight_visibility_filter(viewer_user_id: UUID, media_id: MediaIdExpression):
     """SQL filter expression for visible highlights in list queries.
 
-    Evaluates to True when the viewer is the author, shares a library containing
-    the media with the author, or has an exact incoming/creator grant.
+    Evaluates to True when the viewer is the author, shares a non-system library
+    containing the media with the author, or has an exact incoming/creator grant.
 
     For use in .where() clauses on queries selecting from Highlight.
     Correlates with Highlight.user_id from the outer query.

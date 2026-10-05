@@ -11,10 +11,7 @@ import {
 } from "./sse-client";
 import { fetchStreamToken } from "./streamToken";
 
-export type GenerationRunKind =
-  | "chat-runs"
-  | "oracle-readings"
-  | "media";
+export type GenerationRunKind = "chat-runs" | "media";
 
 export type GenerationRunPhase =
   | "idle"
@@ -25,13 +22,12 @@ export type GenerationRunPhase =
 
 /**
  * Stream path prefix per run kind, joined as `${prefix}/${id}/events` under
- * the stream base URL. All three browser-callable generation-run SSE
+ * the stream base URL. Both browser-callable generation-run SSE
  * endpoints live under `/stream/` (one prefix predicate guards the
  * bearer-auth boundary).
  */
 export const GENERATION_RUN_STREAM_PATHS: Record<GenerationRunKind, string> = {
   "chat-runs": "/stream/chat-runs",
-  "oracle-readings": "/stream/oracle-readings",
   media: "/stream/media",
 };
 
@@ -74,7 +70,7 @@ export async function openGenerationRunStream<TEvent>(
 
 /**
  * One SSE subscription to a generation run: transport + lifecycle only.
- * Domain machinery (chat's multi-run registry, oracle's reducer, LI's
+ * Domain machinery (chat's multi-run registry, LI's
  * progress mapping, media's snapshot folding) stays in the per-surface layer
  * on top.
  *
@@ -92,7 +88,7 @@ export function useGenerationRun<TEvent, TPayload = unknown>(cfg: {
   /** Unified terminal predicate (`type === "done"`). */
   isTerminal: (e: TEvent) => boolean;
   onEvent: (e: TEvent) => void;
-  /** Initial stream cursor (oracle seq, chat Last-Event-ID). */
+  /** Initial stream cursor (chat Last-Event-ID). */
   resume?: { lastEventId?: string };
   reconnect?: {
     max?: number;

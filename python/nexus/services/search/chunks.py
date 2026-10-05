@@ -1,12 +1,13 @@
 """The indexed-passage retrievers: hybrid lexical ∪ ANN over ``content_chunks``.
 
-One pipeline serves document chunks, note chunks, and Oracle's candidate
-probe. Only chunks whose owner index is ``ready`` on the query's active
+One pipeline serves document chunks, note chunks, and the oracle's two
+candidate lanes. Only chunks whose owner index is ``ready`` on the query's active
 provider/model are eligible, so a partially rebuilt index is never visible.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -26,7 +27,6 @@ from nexus.services.locator_resolver import evidence_resolution, locator_from_re
 from nexus.services.resource_graph.highlight_notes import highlight_excerpts_for_note_blocks
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search.projection import _snippet_around_query, _truncate_snippet
-from nexus.services.search.query import SearchScope
 from nexus.services.search.results import (
     InternalSearchResult,
     _build_search_score,
@@ -596,7 +596,7 @@ def resolve_note_block(
 
 
 # =============================================================================
-# Oracle's semantic candidate probe
+# Oracle's candidate lanes
 # =============================================================================
 
 
@@ -612,7 +612,6 @@ class ContentChunkCandidate:
     heading_path: list[str]
     primary_evidence_span_id: UUID | None
     title: str  # media title, or "Note" for note-owned chunks
-    semantic_score: float
 
 
 def retrieve_content_chunk_candidates(
@@ -620,67 +619,53 @@ def retrieve_content_chunk_candidates(
     *,
     viewer_id: UUID,
     query_embedding: tuple[str, list[float]],
-    scope: SearchScope,
+    exclude_media_ids: Sequence[UUID],
     limit: int = 200,
 ) -> list[ContentChunkCandidate]:
-    """Semantic chunk candidates for ``viewer_id``, ordered by ANN distance.
-
-    ``scope=all`` returns visible media + owned-note chunks; ``library:<id>``
-    returns that library's media chunks (the content_chunk cell is media-only).
-    """
-    cell = scope_filter_sql(scope.kind, scope.id, "content_chunk")
-    if cell is None:
-        return []
-    scope_sql, params = cell
-    dims = transcript_embedding_dimensions()
+    """The viewer's visible media and own note chunks nearest the query, minus excluded media."""
     model, vector = query_embedding
-    params |= {
-        "viewer_id": viewer_id,
-        "query_embedding": to_pgvector_literal(vector),
-        "query_embedding_provider": transcript_embedding_provider_for_model(model),
-        "query_embedding_model": model,
-        "embedding_dims": dims,
-        "limit": limit,
-    }
-    rows = (
-        db.execute(
-            text(
-                f"""
-                WITH visible_media AS ({visible_media_ids_cte_sql()}),
-                     {_query_embedding_cte(dims)}
-                SELECT cc.id AS content_chunk_id, cc.owner_kind, cc.owner_id, cc.chunk_text,
-                       cc.source_kind, cc.heading_path, cc.primary_evidence_span_id,
-                       COALESCE(m.title, 'Note') AS title,
-                       (1 - (ce.embedding_vector <=> qe.embedding)) AS semantic_score
-                FROM content_chunks cc
-                LEFT JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
-                JOIN content_index_states mcis ON mcis.owner_kind = cc.owner_kind
-                    AND mcis.owner_id = cc.owner_id AND mcis.status = 'ready'
-                JOIN content_embeddings ce ON ce.chunk_id = cc.id
-                    AND ce.embedding_provider = mcis.active_embedding_provider
-                    AND ce.embedding_model = mcis.active_embedding_model
-                    AND ce.embedding_dimensions = :embedding_dims
-                    AND ce.embedding_vector IS NOT NULL
-                JOIN query_embedding qe ON true
-                WHERE btrim(cc.chunk_text) <> ''
-                  AND mcis.active_embedding_provider = :query_embedding_provider
-                  AND mcis.active_embedding_model = :query_embedding_model
-                  AND (
-                    (cc.owner_kind = 'media'
-                        AND cc.owner_id IN (SELECT media_id FROM visible_media))
-                    OR (cc.owner_kind = 'note_block' AND cc.owner_id IN (
-                        SELECT id FROM note_blocks WHERE user_id = :viewer_id))
-                  )
-                  {scope_sql}
-                ORDER BY ce.embedding_vector <=> qe.embedding ASC, cc.id ASC
-                LIMIT :limit
-                """
-            ),
-            params,
-        )
-        .mappings()
-        .all()
-    )
+    dims = transcript_embedding_dimensions()
+    rows = db.execute(
+        text(
+            f"""
+            WITH visible_media AS ({visible_media_ids_cte_sql()}),
+                 {_query_embedding_cte(dims)}
+            SELECT cc.id AS content_chunk_id, cc.owner_kind, cc.owner_id, cc.chunk_text,
+                   cc.source_kind, cc.heading_path, cc.primary_evidence_span_id,
+                   COALESCE(m.title, 'Note') AS title
+            FROM content_chunks cc
+            LEFT JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
+            JOIN content_index_states mcis ON mcis.owner_kind = cc.owner_kind
+                AND mcis.owner_id = cc.owner_id AND mcis.status = 'ready'
+            JOIN content_embeddings ce ON ce.chunk_id = cc.id
+                AND ce.embedding_provider = mcis.active_embedding_provider
+                AND ce.embedding_model = mcis.active_embedding_model
+                AND ce.embedding_dimensions = :embedding_dims
+                AND ce.embedding_vector IS NOT NULL
+            JOIN query_embedding qe ON true
+            WHERE btrim(cc.chunk_text) <> ''
+              AND mcis.active_embedding_provider = :query_embedding_provider
+              AND mcis.active_embedding_model = :query_embedding_model
+              AND (
+                (cc.owner_kind = 'media' AND cc.owner_id IN (SELECT media_id FROM visible_media)
+                    AND cc.owner_id <> ALL(:exclude_media_ids))
+                OR (cc.owner_kind = 'note_block' AND cc.owner_id IN (
+                    SELECT id FROM note_blocks WHERE user_id = :viewer_id))
+              )
+            ORDER BY ce.embedding_vector <=> qe.embedding ASC, cc.id ASC
+            LIMIT :limit
+            """
+        ),
+        {
+            "viewer_id": viewer_id,
+            "query_embedding": to_pgvector_literal(vector),
+            "query_embedding_provider": transcript_embedding_provider_for_model(model),
+            "query_embedding_model": model,
+            "embedding_dims": dims,
+            "exclude_media_ids": list(exclude_media_ids),
+            "limit": limit,
+        },
+    ).mappings()
     return [
         ContentChunkCandidate(
             content_chunk_id=row["content_chunk_id"],
@@ -691,67 +676,45 @@ def retrieve_content_chunk_candidates(
             heading_path=[str(part) for part in row["heading_path"] or [] if str(part).strip()],
             primary_evidence_span_id=row["primary_evidence_span_id"],
             title=str(row["title"] or "Untitled"),
-            semantic_score=float(row["semantic_score"] or 0.0),
         )
         for row in rows
     ]
 
 
-def has_searchable_content_chunks(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    scope: SearchScope,
-    exclude_media_ids: set[UUID] | None = None,
-) -> bool:
-    """Whether the viewer has any ready, non-empty chunks under ``scope``.
+def score_content_chunks(
+    db: Session, *, query_embedding: tuple[str, list[float]], chunk_ids: Sequence[UUID]
+) -> dict[UUID, float]:
+    """Cosine similarity of each chunk in its owner's ready index under the query's model.
 
-    The existence probe for callers deciding whether a semantic pass is
-    meaningful before paying for an embedding.
+    No visibility filter: the caller supplies trusted ids. A chunk without an
+    active-model embedding is absent from the result.
     """
-    cell = scope_filter_sql(scope.kind, scope.id, "content_chunk")
-    if cell is None:
-        return False
-    scope_sql, params = cell
-    note_cell = scope_filter_sql(scope.kind, scope.id, "note_block")
-    note_exists = (
-        f"""
-            OR EXISTS (
-                SELECT 1 FROM content_chunks cc
-                JOIN note_blocks nb ON nb.id = cc.owner_id AND cc.owner_kind = 'note_block'
-                    AND nb.user_id = :viewer_id
-                JOIN content_index_states ncis ON ncis.owner_kind = cc.owner_kind
-                    AND ncis.owner_id = cc.owner_id AND ncis.status = 'ready'
-                WHERE btrim(cc.chunk_text) <> '' {note_cell[0]}
-                LIMIT 1
-            )
-        """
-        if note_cell is not None
-        else ""
-    )
-    excluded = list(exclude_media_ids or ())
-    exclude_clause = (
-        "AND NOT (cc.owner_kind = 'media' AND cc.owner_id = ANY(:exclude_media_ids))"
-        if excluded
-        else ""
-    )
-    return bool(
-        db.execute(
-            text(
-                f"""
-                WITH visible_media AS ({visible_media_ids_cte_sql()})
-                SELECT EXISTS (
-                    SELECT 1 FROM content_chunks cc
-                    JOIN visible_media vm ON vm.media_id = cc.owner_id
-                        AND cc.owner_kind = 'media'
-                    JOIN content_index_states mcis ON mcis.owner_kind = cc.owner_kind
-                        AND mcis.owner_id = cc.owner_id AND mcis.status = 'ready'
-                    WHERE btrim(cc.chunk_text) <> '' {exclude_clause} {scope_sql}
-                    LIMIT 1
-                )
-                {note_exists}
-                """
-            ),
-            {"viewer_id": viewer_id, "exclude_media_ids": excluded, **params},
-        ).scalar_one()
-    )
+    model, vector = query_embedding
+    dims = transcript_embedding_dimensions()
+    rows = db.execute(
+        text(
+            f"""
+            WITH {_query_embedding_cte(dims)}
+            SELECT cc.id, 1 - (ce.embedding_vector <=> qe.embedding) AS similarity
+            FROM content_chunks cc
+            JOIN content_index_states cis ON cis.owner_kind = cc.owner_kind
+                AND cis.owner_id = cc.owner_id AND cis.status = 'ready'
+            JOIN content_embeddings ce ON ce.chunk_id = cc.id
+                AND ce.embedding_provider = cis.active_embedding_provider
+                AND ce.embedding_model = cis.active_embedding_model
+                AND ce.embedding_dimensions = {dims}
+                AND ce.embedding_vector IS NOT NULL
+            JOIN query_embedding qe ON true
+            WHERE cc.id = ANY(:chunk_ids)
+              AND cis.active_embedding_provider = :query_embedding_provider
+              AND cis.active_embedding_model = :query_embedding_model
+            """
+        ),
+        {
+            "query_embedding": to_pgvector_literal(vector),
+            "query_embedding_provider": transcript_embedding_provider_for_model(model),
+            "query_embedding_model": model,
+            "chunk_ids": list(chunk_ids),
+        },
+    ).all()
+    return {row[0]: float(row[1]) for row in rows}

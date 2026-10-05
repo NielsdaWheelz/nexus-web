@@ -13,7 +13,6 @@ does not authorize access and must not encode user identity.
 | Media source artifacts | `media_source_attempts.source_payload` | `media/{media_id}/source/{attempt_id}.{html,tar}` | private source lifecycle only |
 | Pre-cutover browser-article blobs | `media_source_attempts.source_payload.retained_legacy_paths` (until the rollback window closes; `docs/tickets/remove-browser-capture-conversion-command.md`) | `media/{media_id}/source/{attempt_id}.{html,source-html}` | none; retained for rollback, swept once the key is dropped |
 | Extracted EPUB resources | `epub_resources` | `media/{media_id}/assets/{asset_key}` | viewer-authenticated EPUB asset route |
-| Oracle plates | `oracle_plates` | `oracle/plates/{slug}.{jpg,png,webp}` | public owned-asset route, internal-header protected |
 
 All storage path construction goes through `python/nexus/storage/paths.py`.
 Extension-taking builders accept only bare extensions: no leading dot, dot,
@@ -21,21 +20,18 @@ slash, backslash, or empty value. Storage keys are owner IDs or stable source
 keys, not content hashes. Object reads enforce DB-owned byte-size metadata at
 read time.
 
-Oracle plates remain a public owned-asset lane (`oracle/plates/...`) holding plate
-image metadata only — no embeddings. The Oracle public-domain corpus is ordinary
-media: its source files (EPUB/PDF/web-article) use the normal `media_file` /
-`epub_resources` lanes above, never plate storage.
+The Oracle public-domain corpus is ordinary media: its source files
+(EPUB/PDF/web-article) use the normal `media_file` / `epub_resources` lanes above.
+Oracle plates are not stored objects; they are static web assets
+(`apps/web/public/oracle-plates/<key>.jpg`).
 
 ## Public vs Private Assets
 
 Private media assets require a viewer authorization check before metadata is
 resolved. They must not be added to Next Image `images.localPatterns`.
 
-Public owned Oracle plates are different: the browser requests
-`/api/oracle/plates/[id]`, the BFF strips browser credentials, and FastAPI serves
-`/oracle/plates/{id}` only after internal-header verification. The route uses DB
-metadata for ETags and storage metadata validation, then reads the object through
-the storage client only for `200` responses.
+Static web assets (the Oracle plates under `/oracle-plates/**`) are the only
+Next Image local pattern; they are public files, not storage objects.
 
 ## Media Teardown & Lifecycle
 
@@ -137,7 +133,4 @@ file with `deploy/cloudflare/apply-r2-lifecycle.sh`.
 
 Object-storage preconditions that migrations depend on are established by deploy
 or operator code, not app startup. Application release records the expected
-Oracle manifest digest but does not read or mutate Oracle. The independent
-Oracle reconciler writes plate objects before their DB metadata, proves the
-exact DB/selector/R2 set, and publishes the current marker last. Runtime surfaces
-accept only that published identity.
+Oracle manifest digest but does not read or mutate Oracle.

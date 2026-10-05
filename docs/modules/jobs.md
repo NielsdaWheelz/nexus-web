@@ -101,7 +101,7 @@ kind is a frozen `JobDefinition`:
 
 `oracle_reading_generate` has one canonical producer and one exact payload:
 `{"reading_id": "<canonical-lowercase-uuid>"}`. Its registry adapter passes a
-typed `UUID` to the Oracle task, which does not decode the durable carrier again.
+typed `UUID` to `services/oracle/readings.run_reading_job`.
 
 `synapse_scan` has no `tasks/` wrapper: its adapter hands the payload
 `{user_id, ref, reason}` to `services/synapse.py:synapse_scan_job`, which runs
@@ -220,10 +220,8 @@ a raw allowlist. A bounded maintenance process requires
 non-empty `WORKER_ALLOWED_JOB_KINDS` subset of the maintenance declaration.
 There is no deployed maintenance service.
 
-Oracle reconcile is a bounded shared-image invocation, not a third lane. Its
-`ORACLE_RECONCILE_JOB_KINDS` contract contains exactly `ingest_media_source` and
-`media_content_reindex_job`. The operator reconciler claims only the job IDs it
-created or resolved; it never scans or drains unrelated work.
+The oracle corpus seed (`python -m nexus.services.oracle.corpus seed`) only enqueues
+ordinary ingest and reindex work for the background lane; it runs no jobs itself.
 
 There is no `contributor_reconciliation` job (or any other author-dedupe job):
 author identity is resolved inline, synchronously, inside the ingest/enrichment

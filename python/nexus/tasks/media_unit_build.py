@@ -31,7 +31,6 @@ from nexus.jobs.queue import (
 from nexus.schemas.presence import Present
 from nexus.services import durable_step_journal as step_journal
 from nexus.services import generation_policy
-from nexus.services.atlas_projection import try_enqueue_atlas_project
 from nexus.services.generation_spec import ImmutablePromptPayloadRef, generation_fact_digest
 from nexus.services.generation_terminal import GenerationTerminal
 from nexus.services.llm_execution import (
@@ -444,9 +443,6 @@ def _apply(
             ref=ResourceRef(scheme="media", id=head.media_id),
             reason="media_unit_ready",
         )
-        # Re-project the grand atlas once the unpositioned backlog is meaningful
-        # (soft, dedupes, rides this transaction).
-        try_enqueue_atlas_project(db, user_id=owner_user_id)
         db.execute(
             text("DELETE FROM media_claims WHERE summary_id = :summary_id"),
             {"summary_id": head.summary_id},

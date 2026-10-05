@@ -22,10 +22,6 @@ R2_SECRET_ACCESS_KEY=<r2-secret-access-key>
 R2_BUCKET=media
 # R2_REGION=auto
 
-# Production Oracle Corpus system library owner. Independent Oracle reconcile
-# binds this owner to the current release; application deploy never seeds Oracle.
-NEXUS_ORACLE_CORPUS_OWNER_USER_ID=<prod-user-uuid>
-
 # Generate with:
 # python -c "import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"
 STREAM_TOKEN_SIGNING_KEY=<base64-encoded-32-byte-key>

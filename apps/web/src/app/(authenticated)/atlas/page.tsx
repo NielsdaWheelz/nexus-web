@@ -1,5 +1,4 @@
-// The pane system renders GrandAtlasPaneBody via the `atlas` pane route; this
-// App Router page is a null stub (mirrors the other pane routes).
+// Pane routes render through the pane registry; this App Router page is a null stub.
 export default function Page() {
   return null;
 }

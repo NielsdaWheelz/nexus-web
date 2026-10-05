@@ -21,7 +21,7 @@ lifecycle + numbered Provider API tool-output rendering), and the
 append owner (typed streaming methods commit inline for SSE visibility; batch
 tool-result/citation/context events defer to the executor's transaction). The
 cross-surface run-tail query + terminal check are `run_kit.get_run_events` /
-`run_kit.is_run_terminal` (kind-dispatched for chat and Oracle); viewer scoping stays in each `/stream/*` route's `assert_viewer`,
+`run_kit.is_run_terminal`; viewer scoping stays in each `/stream/*` route's `assert_viewer`,
 never in the query.
 
 Web owners: `apps/web/src/lib/chat/*` (wire names, tree derivations, selection,

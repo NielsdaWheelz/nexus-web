@@ -1,45 +1,25 @@
-"""Pydantic models for Black Forest Oracle endpoints."""
-
-from __future__ import annotations
+"""Oracle wire models (one reading shape for detail and the status stream) and the two
+jsonb shapes the reading row stores: its passages and a captured plate."""
 
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+import regex
+from pydantic import AfterValidator, BaseModel, StringConstraints
 
-from nexus.schemas.citation import CitationOut
+from nexus.schemas.citation import CitationOut, CitationRole, CitationSnapshot, CitationTargetRef
 
+# The browser's rule (lib/oracle/oracle.ts): Unicode White_Space at either end, so
+# U+0085 goes and U+FEFF stays; str.strip and pydantic's trim also take U+001C–U+001F.
+_EDGE_SPACE = regex.compile(r"\A\p{White_Space}+|\p{White_Space}+\Z")
+
+# `streaming` is history only: a stored streaming row, or a pending one whose retired
+# log had started (`started_at`); either is unfinished, like `pending`.
 type OracleReadingStatus = Literal["pending", "streaming", "complete", "failed"]
-type OracleReadingPhase = Literal["descent", "ordeal", "ascent"]
-type OracleReadingSourceKind = Literal["user_media", "public_domain"]
-type OracleFolioTheme = Literal[
-    "Of Time",
-    "Of Death",
-    "Of the Threshold",
-    "Of Vanity",
-    "Of Solitude",
-    "Of Love",
-    "Of Fortune",
-    "Of Memory",
-    "Of the Self",
-    "Of the Other",
-    "Of Fear",
-    "Of Courage",
-    "Of Faith",
-    "Of Doubt",
-    "Of Power",
-    "Of Wisdom",
-    "Of the Body",
-    "Of the Soul",
-    "Of Origins",
-    "Of Endings",
-    "Of Silence",
-    "Of the Word",
-    "Of Justice",
-    "Of Mercy",
-]
-type OracleReadingFailureCode = Literal[
+type OraclePhase = Literal["descent", "ordeal", "ascent"]
+type OracleSourceKind = Literal["public_domain", "user_media"]
+type OracleFailureCode = Literal[
     "auth",
     "quota",
     "timeout",
@@ -53,319 +33,100 @@ type OracleReadingFailureCode = Literal[
     "E_ORACLE_CORPUS_NOT_READY",
     "E_APP_SEARCH_FAILED",
     "E_GENERATION_SOURCE_CHANGED",
-    "E_RATE_LIMITED",
 ]
-type OracleReadingEventType = Literal[
-    "meta",
-    "bind",
-    "argument",
-    "plate",
-    "passage",
-    "delta",
-    "omens",
-    "done",
-]
-_ORACLE_FAILURE_CODE_ADAPTER: TypeAdapter[OracleReadingFailureCode] = TypeAdapter(
-    OracleReadingFailureCode
-)
-_ORACLE_STATUS_ADAPTER: TypeAdapter[OracleReadingStatus] = TypeAdapter(OracleReadingStatus)
-_ORACLE_PHASE_ADAPTER: TypeAdapter[OracleReadingPhase] = TypeAdapter(OracleReadingPhase)
-_ORACLE_SOURCE_KIND_ADAPTER: TypeAdapter[OracleReadingSourceKind] = TypeAdapter(
-    OracleReadingSourceKind
-)
-_ORACLE_THEME_ADAPTER: TypeAdapter[OracleFolioTheme] = TypeAdapter(OracleFolioTheme)
-_ORACLE_EVENT_TYPE_ADAPTER: TypeAdapter[OracleReadingEventType] = TypeAdapter(
-    OracleReadingEventType
-)
-
-
-def oracle_reading_failure_code(value: str) -> OracleReadingFailureCode:
-    """Narrow one persisted/product Oracle failure code at its owner boundary."""
-
-    return _ORACLE_FAILURE_CODE_ADAPTER.validate_python(value)
-
-
-def oracle_reading_status(value: str) -> OracleReadingStatus:
-    return _ORACLE_STATUS_ADAPTER.validate_python(value)
-
-
-def oracle_reading_phase(value: str) -> OracleReadingPhase:
-    return _ORACLE_PHASE_ADAPTER.validate_python(value)
-
-
-def oracle_reading_source_kind(value: str) -> OracleReadingSourceKind:
-    return _ORACLE_SOURCE_KIND_ADAPTER.validate_python(value)
-
-
-def oracle_folio_theme(value: str) -> OracleFolioTheme:
-    return _ORACLE_THEME_ADAPTER.validate_python(value)
-
-
-def oracle_reading_event_type(value: str) -> OracleReadingEventType:
-    return _ORACLE_EVENT_TYPE_ADAPTER.validate_python(value)
 
 
 class OracleReadingCreateRequest(BaseModel):
-    """User-submitted divination question."""
+    question: Annotated[
+        str,
+        AfterValidator(lambda question: _EDGE_SPACE.sub("", question)),
+        StringConstraints(min_length=1, max_length=280),
+    ]
 
-    question: str = Field(min_length=1, max_length=280)
-    model_config = ConfigDict(str_strip_whitespace=True)
 
-
-class OracleReadingCreateResponse(BaseModel):
-    """POST /oracle/readings response contract (clients stream via /stream-tokens)."""
-
+class OracleReadingCreatedOut(BaseModel):
     reading_id: UUID
+
+
+class OraclePlateOut(BaseModel):
+    """A plate; its image is the static asset ``/oracle-plates/{key}.jpg``. Also the
+    shape of ``oracle_readings.plate``, the display publication (or history) captured."""
+
+    key: str
+    artist: str
+    work_title: str
+    year: str | None
+    attribution: str
+    width: int
+    height: int
+
+
+class OraclePassageText(BaseModel):
+    """What a passage says; publication or history wrote it once."""
+
+    phase: OraclePhase
+    source_kind: OracleSourceKind
+    quote: str
+    attribution: str
+    locator_label: str | None
+    marginalia: str
+
+
+class OracleCitationFacts(BaseModel):
+    """A historical passage's captured citation: its saved target and hover facts."""
+
+    ordinal: int
+    role: CitationRole
+    target_ref: CitationTargetRef
+    deep_link: str | None
+    snapshot: CitationSnapshot | None
+
+
+class OracleStoredPassage(OraclePassageText):
+    """One element of ``oracle_readings.passages``. ``ordinal`` names the reading's own
+    citation edge (null when history saved only a target); ``citation`` holds captured
+    facts (null when the edge carries them, as for every published reading)."""
+
+    ordinal: int | None
+    citation: OracleCitationFacts | None
+
+
+class OraclePassageOut(OraclePassageText):
+    """One phase's passage; ``citation`` is its current navigation, null when the
+    target is unavailable (typography)."""
+
+    citation: CitationOut | None
+
+
+class OracleReadingOut(BaseModel):
+    """The reading: every fact it has; a pending one has none, history may be partial."""
+
+    id: UUID
     folio_number: int
-    status: Literal["pending"]
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class OracleCompleteDoneEventPayload(BaseModel):
-    """Successful terminal payload; success never carries an error code."""
-
-    status: Literal["complete"]
-    error_code: None
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-class OracleFailedDoneEventPayload(BaseModel):
-    """Expected product terminal payload; defects have no variant."""
-
-    status: Literal["failed"]
-    error_code: OracleReadingFailureCode
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-type OracleDoneEventPayload = OracleCompleteDoneEventPayload | OracleFailedDoneEventPayload
-_ORACLE_DONE_ADAPTER: TypeAdapter[OracleDoneEventPayload] = TypeAdapter(OracleDoneEventPayload)
-
-
-def oracle_done_payload(
-    *,
-    status: Literal["complete", "failed"],
-    error_code: OracleReadingFailureCode | None,
-) -> dict[str, Any]:
-    """Build the validated ``done`` payload for ``run_kit.mark_terminal``."""
-
-    return _ORACLE_DONE_ADAPTER.validate_python(
-        {"status": status, "error_code": error_code}
-    ).model_dump(mode="json")
+    question_text: str
+    status: OracleReadingStatus
+    created_at: datetime
+    folio_motto: str | None
+    folio_motto_gloss: str | None
+    folio_theme: str | None
+    argument_text: str | None
+    interpretation_text: str | None
+    omens: list[str]
+    plate: OraclePlateOut | None
+    passages: list[OraclePassageOut]  # descent, ordeal, ascent
+    error_code: OracleFailureCode | None
 
 
 class OracleReadingSummaryOut(BaseModel):
-    """All-readings list row (the Aleph)."""
-
     id: UUID
     folio_number: int
-    folio_motto: str | None = None
-    folio_motto_gloss: str | None = None
-    folio_theme: OracleFolioTheme | None = None
-    plate_thumbnail_url: str | None = None
-    plate_alt_text: str | None = None
-    question_text: str
     status: OracleReadingStatus
-    created_at: datetime
-    completed_at: datetime | None = None
-    failed_at: datetime | None = None
-
-    model_config = ConfigDict(from_attributes=True, extra="forbid")
+    folio_motto: str | None
+    folio_theme: str | None
+    plate: OraclePlateOut | None
 
 
-class OracleReadingPassageOut(BaseModel):
-    """One persisted citation in a reading.
-
-    ``citation`` is the read-model CitationOut when the persisted citation edge
-    resolves to a live shared reader/note locator. Resolved public-domain anchors
-    render the same chip path as user content; unresolved or span-less targets
-    carry ``None`` and remain typographic only.
-    """
-
-    phase: OracleReadingPhase
-    source_kind: OracleReadingSourceKind
-    exact_snippet: str = Field(min_length=1)
-    locator_label: str = Field(min_length=1)
-    attribution_text: str = Field(min_length=1)
-    marginalia_text: str = Field(min_length=1)
-    deep_link: str | None
-    citation: CitationOut | None
-
-    model_config = ConfigDict(extra="forbid")
-
-
-def oracle_passage_payload(
-    *,
-    phase: OracleReadingPhase,
-    source_kind: OracleReadingSourceKind,
-    exact_snippet: str,
-    locator_label: str,
-    attribution_text: str,
-    marginalia_text: str,
-    deep_link: str | None,
-    citation: CitationOut | None,
-) -> dict[str, Any]:
-    """Build the ``passage`` event payload for ``run_kit.append_event``.
-
-    The streamed payload is byte-identical to the REST ``OracleReadingPassageOut``;
-    that out model is its sole shape owner.
-    """
-    return OracleReadingPassageOut(
-        phase=phase,
-        source_kind=source_kind,
-        exact_snippet=exact_snippet,
-        locator_label=locator_label,
-        attribution_text=attribution_text,
-        marginalia_text=marginalia_text,
-        deep_link=deep_link,
-        citation=citation,
-    ).model_dump(mode="json")
-
-
-class OracleReadingImageOut(BaseModel):
-    """Plate displayed atop a reading."""
-
-    url: str
-    attribution_text: str = Field(min_length=1)
-    artist: str = Field(min_length=1)
-    work_title: str = Field(min_length=1)
-    year: str | None
-    width: int = Field(gt=0)
-    height: int = Field(gt=0)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class OracleMetaEventPayload(BaseModel):
-    question: str = Field(min_length=1, max_length=280)
-    folio_number: int = Field(gt=0)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class OracleBindEventPayload(BaseModel):
-    folio_motto: str = Field(min_length=1, max_length=80)
-    folio_motto_gloss: str | None = Field(min_length=1, max_length=120)
-    folio_theme: OracleFolioTheme
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class OracleTextEventPayload(BaseModel):
-    text: str = Field(min_length=1)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-_OracleOmenLine = Annotated[str, Field(min_length=1)]
-
-
-class OracleOmensEventPayload(BaseModel):
-    lines: tuple[_OracleOmenLine, _OracleOmenLine, _OracleOmenLine]
-
-    model_config = ConfigDict(extra="forbid")
-
-
-_ORACLE_EVENT_PAYLOAD_ADAPTERS: dict[OracleReadingEventType, TypeAdapter[Any]] = {
-    "meta": TypeAdapter(OracleMetaEventPayload),
-    "bind": TypeAdapter(OracleBindEventPayload),
-    "argument": TypeAdapter(OracleTextEventPayload),
-    "plate": TypeAdapter(OracleReadingImageOut),
-    "passage": TypeAdapter(OracleReadingPassageOut),
-    "delta": TypeAdapter(OracleTextEventPayload),
-    "omens": TypeAdapter(OracleOmensEventPayload),
-    "done": _ORACLE_DONE_ADAPTER,
-}
-
-
-def oracle_event_payload(
-    event_type: OracleReadingEventType,
-    payload: dict[str, Any],
-) -> dict[str, Any]:
-    """Validate one event at write and at replay ingress."""
-
-    return (
-        _ORACLE_EVENT_PAYLOAD_ADAPTERS[event_type].validate_python(payload).model_dump(mode="json")
-    )
-
-
-class OracleReadingEventOut(BaseModel):
-    """One persisted SSE replay event."""
-
-    seq: int = Field(ge=1)
-    event_type: OracleReadingEventType
-    payload: dict[str, Any]
-
-    model_config = ConfigDict(extra="forbid")
-
-    @model_validator(mode="after")
-    def validate_payload(self) -> OracleReadingEventOut:
-        self.payload = oracle_event_payload(self.event_type, self.payload)
-        return self
-
-
-class OracleReadingDetailOut(BaseModel):
-    """Full reading record returned from REST + first-paint hydration."""
-
-    id: UUID
-    folio_number: int
-    folio_motto: str | None = None
-    folio_motto_gloss: str | None = None
-    folio_theme: OracleFolioTheme | None = None
-    argument_text: str | None = None
-    question_text: str
-    status: OracleReadingStatus
-    image: OracleReadingImageOut | None = None
-    passages: list[OracleReadingPassageOut] = Field(default_factory=list)
-    events: list[OracleReadingEventOut] = Field(default_factory=list)
-    created_at: datetime
-    started_at: datetime | None = None
-    completed_at: datetime | None = None
-    failed_at: datetime | None = None
-    error_code: OracleReadingFailureCode | None = None
-
-    model_config = ConfigDict(extra="forbid")
-
-    @model_validator(mode="after")
-    def validate_terminal_facts(self) -> OracleReadingDetailOut:
-        if self.status == "failed" and (self.error_code is None or self.failed_at is None):
-            raise ValueError("failed Oracle reading requires failure facts")
-        if self.status != "failed" and self.error_code is not None:
-            raise ValueError("non-failed Oracle reading carries a failure code")
-        if self.status == "complete" and self.completed_at is None:
-            raise ValueError("complete Oracle reading requires completed_at")
-        for expected_seq, event in enumerate(self.events, start=1):
-            if event.seq != expected_seq:
-                raise ValueError("Oracle reading events must be contiguous from one")
-        terminal = self.events[-1] if self.events else None
-        if self.status == "complete":
-            if (
-                terminal is None
-                or terminal.event_type != "done"
-                or terminal.payload != oracle_done_payload(status="complete", error_code=None)
-            ):
-                raise ValueError("complete Oracle reading requires its terminal done event")
-        elif self.status == "failed":
-            error_code = self.error_code
-            if error_code is None:
-                raise ValueError("failed Oracle reading requires an error code")
-            if (
-                terminal is None
-                or terminal.event_type != "done"
-                or terminal.payload.get("status") != "failed"
-                or terminal.payload.get("error_code") != error_code
-            ):
-                raise ValueError("failed Oracle reading disagrees with its terminal event")
-        elif any(event.event_type == "done" for event in self.events):
-            raise ValueError("non-terminal Oracle reading carries a terminal event")
-        return self
-
-
-class ConcordanceEntryOut(BaseModel):
-    """One prior folio that echoes the current reading."""
-
+class OracleConcordanceOut(BaseModel):
     id: UUID
     folio_number: int
     folio_motto: str

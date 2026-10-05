@@ -59,8 +59,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [deferred] resource sharing / public reader · 2026-09-28 resource-sharing reauthoring · owner call: public PDF bytes keep streaming through the api, or move to signed storage urls: [ticket](tickets/public-pdf-signed-url-decision.md).
 - [open] resource sharing / share overlay web · 2026-09-28 resource-sharing review · the Native and X bearer-link triggers stay enabled while another change is in flight: [ticket](tickets/share-overlay-bearer-warning-triggers-ignore-busy.md).
 - [open] web / python comments · 2026-09-28 pr-06 library placement · 25 code comments cite deleted `docs/cutovers/` files as rule owners: [ticket](tickets/code-comments-cite-deleted-cutovers.md).
-- [open] oracle rest · 2026-10-04 pr #499 follow-up · browser bounds count utf-16 units instead of canonical code points: [ticket](tickets/oracle-rest-string-bounds-count-different-units.md).
-- [deferred] oracle rest · 2026-10-04 pr #499 follow-up · outer readers rebuild existing named outputs; all-source gain is unmeasured: [ticket](tickets/oracle-rest-readers-repeat-owned-outputs.md).
 - [open] jobs / documentation · 2026-10-04 backend owner audit · the jobs module still describes retired chat result kinds and a media-unit failed-result declaration absent from the registry: [ticket](tickets/jobs-handler-outcome-docs-stale.md).
 - [deferred] pdf reader / web · 2026-10-04 source audit · completed document teardown also destroys its loading task a second time: [ticket](tickets/pdf-reader-destroys-completed-loading-task-twice.md).
 - [deferred] pdf reader / web · 2026-10-04 source audit · a superseded signed-url open can attach after delayed viewer import: [ticket](tickets/pdf-reader-superseded-url-can-attach-old-viewer.md).
@@ -322,7 +320,6 @@ unexpected timeouts. See
 - [open] 2026-09-27 epub apparatus identity · one note with distinct id/name aliases can become two target items with one dom stamp: [ticket](tickets/epub-note-id-name-alias-duplicates-target.md).
 - [open] 2026-09-26 notes bullets cache review · non-note card labels lack a revision for ordering concurrent reads: [ticket](tickets/resource-surface-card-labels-have-no-revision.md).
 - [open] 2026-09-25 notes writing live action probe · overlapping pdf highlight overlays block pointer access to a covered highlight: [ticket](tickets/pdf-overlapping-highlights-block-pointer-action.md).
-- [open] 2026-09-28 oracle web · web keeps two unreachable "oracle is busy" E_RATE_LIMITED arms (the chat arms went with the 2026-10-04 rewrite): [ticket](tickets/web-rate-limit-copy-outlives-limiter.md).
 - [open] 2026-09-28 sse transport · the listen cap's 429 E_RATE_LIMITED is misnamed and the sse client treats it as fatal: [ticket](tickets/sse-listen-cap-rejection-is-misnamed-and-fatal.md).
 - [open] 2026-09-28 api / bff observability · server-timing phases outlived the tests that read them; keep or delete at the api/auth/bff reauthor: [ticket](tickets/server-timing-phases-outlived-their-tests.md).
 - [open] search / typed wire · 2026-09-28 cleanup pr-08 · remaining always-sent locator output keys need a closure census and precise output views; compacted input/storage omissions remain intentional: [ticket](tickets/retrieval-locator-defaults-generate-optional-fields.md).
@@ -365,7 +362,6 @@ unexpected timeouts. See
 - [open] library members / confirmation focus · 2026-10-04 mounted controls · canceling a revoke confirmation focuses an adjacent row while the target row still exists; qualify keyboard behavior: [ticket](tickets/library-confirmation-cancel-focuses-adjacent-row.md).
 - [open] web / unused output contracts · 2026-10-04 simplification audit · unused media capability alias remains for a later scoped deletion: [ticket](tickets/unused-client-output-contracts.md).
 - [open] jobs / registry · 2026-10-04 simplification audit · six adapters forward unchanged arguments to concrete handlers: [ticket](tickets/jobs-registry-has-pure-forwarding-adapters.md).
-- [open] oracle / reading reconstruction · 2026-10-04 source audit · browser passage replay replaces current citation locators with historical values: [ticket](tickets/oracle-replay-overwrites-current-citation-locators.md).
 
 - [open] web / library focus · 2026-10-04 presentation audit · row-removal traversal is promised by a comment but absent from the current implementation: [ticket](tickets/library-row-removal-focus-contract-unimplemented.md).
 - [open] web / library write uncertainty · 2026-10-04 snapshot-owner audit · reorder transport rejection restores rows without proving authoritative order: [ticket](tickets/library-reorder-acknowledgement-loss-leaves-uncertain-order.md).
@@ -373,8 +369,15 @@ unexpected timeouts. See
 - [open] native player / chapters · 2026-10-04 source audit · android rejects equal-end chapters accepted by native storage/model/web: [ticket](tickets/android-rejects-zero-length-chapters.md).
 - [open] web / lectern mutations · 2026-10-04 source audit · unexpected defects become ordinary retryable mutation or reconciliation recovery: [ticket](tickets/lectern-mutation-masks-unexpected-defects.md).
 - [open] player / completion · 2026-10-04 source audit · unexpected completion and installation failures become ordinary paused-at-end state: [ticket](tickets/player-completion-masks-unexpected-defects.md).
-- [open] oracle / reading detail · 2026-10-04 source audit · composite detail can mix atomic publication states under read committed: [ticket](tickets/oracle-detail-read-can-mix-publication-states.md).
-- [open] oracle / job recovery · 2026-10-04 source audit · dead jobs can leave pending readings while pruning deletes their publication replay checkpoint: [ticket](tickets/oracle-dead-jobs-can-lose-publication-replay.md).
+- [open] oracle / job recovery · 2026-10-04 source audit, restated by the oracle rewrite · a dead generation job leaves its reading pending forever, and a stored streaming reading has no owner; pruning deletes its journal: [ticket](tickets/oracle-dead-jobs-can-lose-publication-replay.md).
+- [open] oracle / storage · 2026-10-04 oracle rewrite · 36 plate objects under `oracle/plates/` lost their owner when plates became static assets: [ticket](tickets/oracle-plates-orphaned-r2-objects.md).
+- [open] atlas / projection · 2026-10-04 oracle rewrite · one global sweep over every active-model embedding is untimed at production scale: [ticket](tickets/atlas-global-projection-cost-unmeasured.md).
+- [open] oracle / search · 2026-10-04 oracle rewrite · the personal lane's ANN query inherits the restored-corpus semantic timeout: [ticket](tickets/oracle-personal-lane-semantic-timeout-risk.md).
+- [open] oracle / production migration · 2026-10-04 combined oracle landing · run 0262 against a restored copy of the release backup before releasing (the release drains the oracle queue); it refuses on held claims, unresumable journals and fold inconsistencies: [ticket](tickets/oracle-0262-production-preflight.md).
+- [open] api / http transport · 2026-10-05 combined oracle landing review · a loaded read storm once got a response llhttp rejects as not http; cause unknown: [ticket](tickets/oracle-read-storm-http-parse-error.md).
+- [open] oracle / search · 2026-10-05 combined oracle landing · the personal lane once ranked another note above the one a question names (harness r14): [ticket](tickets/oracle-personal-lane-ranking-varied-once.md).
+- [open] oracle / generation · 2026-10-04 oracle rewrite · the quote guard's false-positive rate on real readings is unmeasured: [ticket](tickets/oracle-quote-guard-false-positive-rate-unmeasured.md).
+- [open] oracle / corpus · 2026-10-04 oracle rewrite · a reindexed work's chips stay typographic until the next reading heals its anchors: [ticket](tickets/oracle-anchor-chips-typographic-after-corpus-reindex.md).
 - [deferred] pdf / find cancellation · 2026-10-04 source review · abort removes the counted listener without settling its search promise: [ticket](tickets/pdf-find-abort-leaves-search-pending.md).
 - [deferred] pdf / mobile fit · 2026-10-04 source review · page-width fit changes vendor scale without publishing it to semantic zoom: [ticket](tickets/pdf-mobile-fit-keeps-seeded-semantic-zoom.md).
 - [deferred] transcript / reading activity · 2026-10-04 source review · viewport publisher and accepted content-generation key disagree: [ticket](tickets/transcript-semantic-viewport-key-mismatch.md).

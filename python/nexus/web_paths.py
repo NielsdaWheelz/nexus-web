@@ -18,10 +18,6 @@ def media_asset_url(media_id: UUID, asset_key: str) -> str:
     return f"{API_PREFIX}/media/{media_id}/assets/{asset_key}"
 
 
-def oracle_plate_url(image_id: UUID) -> str:
-    return f"{API_PREFIX}/oracle/plates/{image_id}"
-
-
 # EXACT EPUB-asset classifier: /api/media/{uuid}/assets/..., NOT a bare /api/media/ prefix
 # (a prefix match would wrongly catch /api/media/image and every other media path).
 _MEDIA_ASSET_RE = re.compile(rf"^{re.escape(API_PREFIX)}/media/[0-9a-f-]{{36}}/assets/")

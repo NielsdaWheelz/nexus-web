@@ -25,7 +25,7 @@ const nextConfig: NextConfig = {
   images: {
     localPatterns: [
       {
-        pathname: "/api/oracle/plates/**",
+        pathname: "/oracle-plates/**",
       },
     ],
   },
@@ -51,6 +51,16 @@ const nextConfig: NextConfig = {
       {
         source: "/:path*",
         headers: [...STATIC_SECURITY_HEADERS],
+      },
+      // A plate key never changes its bytes (corpus.json), so a plate is immutable.
+      {
+        source: "/oracle-plates/:file",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=31536000, immutable",
+          },
+        ],
       },
     ];
   },

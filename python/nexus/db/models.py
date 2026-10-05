@@ -24,7 +24,7 @@ from sqlalchemy import (
     Text,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -2552,67 +2552,45 @@ class WorkspaceSession(Base):
 
 
 class OracleCorpusSource(Base):
-    """Maps one curated Oracle corpus work to a real media row + library entry.
-
-    The media row is the authoritative source text owner; corpus text, chunks,
-    and embeddings live in the shared content-index substrate, not here.
-    """
+    """One corpus work (``corpus.json`` key) and the system media that holds its text."""
 
     __tablename__ = "oracle_corpus_sources"
 
     id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
+        PG_UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
     )
-    corpus_key: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'oracle'"))
     work_key: Mapped[str] = mapped_column(Text, nullable=False)
-    library_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("libraries.id"), nullable=False
-    )
     media_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("media.id"), nullable=False
     )
     title: Mapped[str] = mapped_column(Text, nullable=False)
     author_text: Mapped[str] = mapped_column(Text, nullable=False)
-    source_repository: Mapped[str] = mapped_column(Text, nullable=False)
-    source_url: Mapped[str] = mapped_column(Text, nullable=False)
     source_download_url: Mapped[str] = mapped_column(Text, nullable=False)
     source_media_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    display_order: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
     )
 
 
 class OraclePassageAnchor(Base):
-    """Stable Oracle curation/concordance identity that resolves to current media evidence.
+    """One curated passage and its cache pointers into its work's current index.
 
-    ``current_evidence_span_id`` / ``current_content_chunk_id`` are cache pointers
-    into the current index generation and deliberately carry no FK — evidence/chunk
-    rows are regenerated on reindex and must not block content-index deletion.
+    The pointers carry no FK: chunks and spans are regenerated on reindex, and the
+    reading job re-resolves stale pointers lazily.
     """
 
     __tablename__ = "oracle_passage_anchors"
 
     id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
+        PG_UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
     )
     corpus_source_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("oracle_corpus_sources.id"), nullable=False
     )
     passage_key: Mapped[str] = mapped_column(Text, nullable=False)
     display_label: Mapped[str] = mapped_column(Text, nullable=False)
-    selector: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    quote: Mapped[str] = mapped_column(Text, nullable=False)
     tags: Mapped[list[str]] = mapped_column(
-        JSONB, nullable=False, server_default=text("'[]'::jsonb")
-    )
-    phase_hints: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
     current_evidence_span_id: Mapped[UUID | None] = mapped_column(
@@ -2627,150 +2605,47 @@ class OraclePassageAnchor(Base):
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
     )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
-
-    source: Mapped["OracleCorpusSource"] = relationship("OracleCorpusSource")
-
-
-class OraclePlate(Base):
-    """Curated public-domain image plate, a public owned asset under oracle/plates/.
-
-    Plate selection is deterministic over tags/phase hints (no text embeddings).
-    """
-
-    __tablename__ = "oracle_plates"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    source_repository: Mapped[str] = mapped_column(Text, nullable=False)
-    source_page_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    source_url: Mapped[str] = mapped_column(Text, nullable=False)
-    license_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    artist: Mapped[str] = mapped_column(Text, nullable=False)
-    work_title: Mapped[str] = mapped_column(Text, nullable=False)
-    year: Mapped[str | None] = mapped_column(Text, nullable=True)
-    attribution_text: Mapped[str] = mapped_column(Text, nullable=False)
-    width: Mapped[int] = mapped_column(Integer, nullable=False)
-    height: Mapped[int] = mapped_column(Integer, nullable=False)
-    storage_key: Mapped[str] = mapped_column(Text, nullable=False)
-    content_type: Mapped[str] = mapped_column(Text, nullable=False)
-    byte_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    tags: Mapped[list[str]] = mapped_column(
-        JSONB, nullable=False, server_default=text("'[]'::jsonb")
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-
-class OracleCorpusPublication(Base):
-    """Singleton marker whose presence publishes one exact Oracle corpus."""
-
-    __tablename__ = "oracle_corpus_publications"
-
-    corpus_key: Mapped[str] = mapped_column(Text, primary_key=True)
-    manifest_digest: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding_provider: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding_model: Mapped[str] = mapped_column(Text, nullable=False)
 
 
 class OracleReading(Base):
-    """One oracle reading: a question, retrieved sources, generated interpretation."""
+    """One reading: pending until one transaction makes it complete or failed. 0262
+    folded the retired event log into it, so history may be partial or ``streaming``."""
 
     __tablename__ = "oracle_readings"
 
     id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
+        PG_UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
     )
     user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
+        PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
     folio_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    question_text: Mapped[str] = mapped_column(Text, nullable=False)
+    # required at create; readings from before 0262 may have none
+    idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))
     folio_motto: Mapped[str | None] = mapped_column(Text, nullable=True)
     folio_motto_gloss: Mapped[str | None] = mapped_column(Text, nullable=True)
     folio_theme: Mapped[str | None] = mapped_column(Text, nullable=True)
     argument_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    question_text: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))
-    image_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("oracle_plates.id"),
-        nullable=True,
-    )
     interpretation_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    omens: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, server_default=text("'{}'")
+    )
+    plate_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # schemas.oracle.OraclePlateOut: the plate as publication (or history) showed it
+    plate: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    # list of schemas.oracle.OracleStoredPassage, descent, ordeal, ascent
+    passages: Mapped[list[dict[str, object]]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # when the retired writers began streaming (their meta event); a pending reading with
+    # it displays `streaming`. nothing writes it now.
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     failed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    image: Mapped["OraclePlate | None"] = relationship("OraclePlate")
-
-
-class OracleReadingFolio(Base):
-    """Generated folio content for one reading phase, referencing its citation edge."""
-
-    __tablename__ = "oracle_reading_folios"
-
-    reading_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("oracle_readings.id"),
-        primary_key=True,
-    )
-    phase: Mapped[str] = mapped_column(Text, primary_key=True)
-    edge_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("resource_edges.id"),
-        nullable=False,
-    )
-    source_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    locator_label: Mapped[str] = mapped_column(Text, nullable=False)
-    attribution_text: Mapped[str] = mapped_column(Text, nullable=False)
-    marginalia_text: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-
-class OracleReadingEvent(Base):
-    """Append-only SSE replay event for an oracle reading."""
-
-    __tablename__ = "oracle_reading_events"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    reading_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("oracle_readings.id"),
-        nullable=False,
-    )
-    seq: Mapped[int] = mapped_column(Integer, nullable=False)
-    event_type: Mapped[str] = mapped_column(Text, nullable=False)
-    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
+        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
     )

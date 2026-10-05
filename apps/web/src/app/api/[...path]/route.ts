@@ -18,8 +18,7 @@ export const revalidate = 0;
 // Denied: the internal trust lane, unauthenticated operational and schema
 // endpoints, the SSE streams the browser opens directly against the stream
 // origin with a minted token, and every lane whose callers authenticate
-// themselves against FastAPI (share tokens, the extension token, public
-// plate bytes). The
+// themselves against FastAPI (share tokens, the extension token). The
 // explicit route files under those prefixes are the only doors into them.
 const DENIED_FIRST_SEGMENTS: ReadonlySet<string> = new Set([
   "agent-api",
@@ -36,24 +35,13 @@ const DENIED_FIRST_SEGMENTS: ReadonlySet<string> = new Set([
   "stream",
   "version",
 ]);
-const DENIED_PREFIXES = [
-  "oracle/plates",
-];
-
-function isDenied(segments: readonly string[]): boolean {
-  if (DENIED_FIRST_SEGMENTS.has(segments[0])) {
-    return true;
-  }
-  const path = segments.join("/");
-  return DENIED_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
-}
 
 async function proxy(
   request: Request,
   { params }: { params: Promise<{ path: string[] }> },
 ): Promise<Response> {
   const { path } = await params;
-  if (isDenied(path)) {
+  if (DENIED_FIRST_SEGMENTS.has(path[0])) {
     return NextResponse.json(
       { error: { code: "E_NOT_FOUND", message: "Not found" } },
       { status: 404 },

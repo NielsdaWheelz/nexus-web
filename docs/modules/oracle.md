@@ -1,151 +1,162 @@
 # Oracle
 
-Oracle has three runtime service owners and one operator boundary.
+status: reauthored (cleanup/oracle-reauthor, migration 0262) · 2026-10-04
 
-`python/nexus/services/oracle.py` owns readings: question validation, corpus and
-personal retrieval, plate selection, LLM prompt/call/parse, persisted folios, and
-SSE event emission.
+The oracle answers one question with a folio: an engraved public-domain plate, a
+Latin motto, an argument, three passages (descent, ordeal, ascent) drawn from a
+curated public-domain corpus and the asker's own library, marginalia, an
+interpretation and three omens. It is three concepts, each with one owner.
 
-`python/nexus/services/oracle_corpus.py` owns corpus support mutation, exact
-DB/R2 inspection, the publication marker, and the readiness derivation that
-gates reading generation.
+## Corpus — `services/oracle/corpus.py`, `corpus.json`
 
-`python/nexus/services/oracle_plates.py` owns plate assets: URL construction,
-metadata lookup, ETag metadata, and byte-size-checked storage reads.
+`corpus.json` is the truth: 19 works (title, author, media kind, download url) with
+87 passages (key, label, tags, curated quote), and 36 plates (key, artist, title,
+year, attribution, tags, size, source page, image url, licence). The plates are
+static web assets, `apps/web/public/oracle-plates/<key>.jpg`, served immutable
+(`next.config.ts`); new bytes take a new key, so a plate URL never changes its image.
 
-`python/nexus/oracle/manifest.py` parses the reviewed desired state.
-`python/nexus/ops/oracle_reconcile.py` is the sole container-internal operator
-boundary; the host state machine invokes its narrow phase commands.
+The database holds a projection of the file: the system library
+`system_key='oracle_corpus'` holding one ordinary system media per work,
+`oracle_corpus_sources (work_key → media_id)`, and `oracle_passage_anchors` (one
+per passage: label, quote, tags, and FK-free cache pointers to the chunk and
+evidence span of its work's current index that quotes it). Corpus text lives in
+the shared content index like any media; chips open the real reader.
 
-## Corpus
+`seed` (the operator command below) converges the projection while the app is
+live: per work, in its own transaction, it accepts the system url source when the
+work is new or its url or kind changed (the superseded media is unfiled, not
+deleted), repairs a failed ingest, requests a reindex when the work has no ready
+active-model index and none is in flight, files the media, and upserts anchors; a
+changed quote or a failed anchor is pending again. Anchors no longer in the file
+are deleted. Ordinary workers ingest and index. Nothing publishes the corpus.
 
-The public-domain corpus is a **real Nexus library**, not an Oracle-owned
-text/vector store. The library is identified by `libraries.system_key =
-'oracle_corpus'` (never by name); its works are ordinary `media` rows ingested and
-indexed through the shared media/content-index substrate, so corpus text lives in
-`content_chunks`/`content_embeddings` and membership in `library_entries` like any
-other media. Three small Oracle-owned table families sit above that substrate:
+Anchors heal lazily: the reading job's `refresh_anchors` re-resolves every pending
+anchor and every resolved one whose chunk left its work's ready active-model index
+(a reindex or model cutover). An anchor whose work is not indexed waits pending; a
+quote found in no chunk is failed until the next seed. The matcher folds quotes,
+dashes and archaic contractions on both sides, tries the quote's first 80
+alphanumerics verbatim, then a token window of n−2…n+4 tokens sharing a common
+subsequence of at least max(6, 78% of n) with the quote's first n ≤ 18 tokens.
 
-- `oracle_corpus_sources` maps each curated `(corpus_key, work_key)` to its
-  authoritative `media_id` (provenance + display order; no text or vectors).
-  When the manifest changes a work's ingest URL or media kind, seeding performs a
-  hard cutover: it accepts the new source through shared source ingest, repoints
-  the source row to the new `media_id`, and removes the previous media from the
-  Oracle Corpus library.
-- `oracle_passage_anchors` is stable curation/concordance identity: a deterministic
-  `selector`, `tags`, `phase_hints`, and cache pointers (`current_evidence_span_id`
-  / `current_content_chunk_id`) into the current index. The anchor `id` is the
-  durable identity; the pointers are FK-free because evidence/chunk rows are
-  regenerated on reindex, and `resolve_oracle_passage_anchors` re-points them
-  against the mapped media. Resolution is source-local and exact-first: it
-  matches normalized text-quote prefixes against active ready chunks, then uses a
-  bounded token-window match for small source-edition spelling/punctuation
-  variants. The fallback tolerates line-number/note tokens and small word-level
-  insertions where the quote still matches the same passage in the same mapped
-  media. Edition line breaks, quote/dash style, and minor public-domain spelling
-  differences do not make otherwise identical passages unavailable, but a
-  selector still fails closed if the mapped media is a version page,
-  table-of-contents-only extraction, or the wrong book.
-- `oracle_corpus_publications` contains either no row or the sole key `current`.
-  Its manifest digest and embedding provider/model are the publication boundary,
-  not a cache of support readiness. Code rejects every other key or malformed
-  value.
+`rank_passages` scores every resolved anchor by its chunk's cosine similarity
+under the active model plus two per tag shared with the question's words, keeps
+one per work, and offers six. Fewer than three is the reading's typed failure
+`E_ORACLE_CORPUS_NOT_READY`. The plate is the one sharing most tags with the
+question's words and every offered passage, ties broken by key; it is chosen
+before the model sees the passages, so the model can write to it.
 
-Some Wikisource works use proofread-page HTML where the poem body and reference
-sections share similar page wrappers. The shared web article extractor recognizes
-the proofread-page body shape and extracts the `.prp-pages-output` body before
-Readability can prefer notes. Corpus entries may pin a Wikisource revision URL as
-`source_download_url` when deterministic re-ingest is required; the user-facing
-`source_url` remains the canonical readable page.
+## Reading — `services/oracle/readings.py`, `synthesis.py`
 
-Operator publication readiness proves the system library, exact manifest
-works/metadata, shared media/index state, resolved anchors, plate metadata, and
-R2 object size/type sets. Generation-time `get_oracle_corpus_readiness` performs the
-bounded DB support derivation and reports `ready` only when it is ready and the
-sole publication marker exactly matches the baked manifest digest and active
-embedding provider/model. It does not contact R2 on each request; the marker
-records that the quiesced operator proof published successfully. Marker absence
-or drift is not ready. Runtime code does not select among corpus releases,
-persist provider request hashes, or store DB-only passage provenance objects.
+`oracle_readings` is the reading: `pending` until one transaction makes it
+`complete` (folio fields, `omens`, `plate_key`, `plate`, `passages`, three citation
+edges) or `failed` (`error_code`, `failed_at`). Scalar facts are typed nullable
+columns; `passages` is jsonb, a list of `OracleStoredPassage` (prose, the `ordinal`
+of the reading's own citation edge, and captured citation facts, null for every
+published reading); `plate` is jsonb, the `OraclePlateOut` publication showed (null
+for history whose log never captured one). Each jsonb shape has that one pydantic
+owner (`schemas/oracle.py`). History migrated by 0262 may be partial: any fact null,
+fewer than three passages, a `complete` row without a motto, or `streaming` — a
+stored `streaming` row, or a `pending` one whose retired log had started
+(`started_at`, its meta event). Nothing writes `streaming` or `started_at` now; the
+job still owns a started pending reading and settles it.
 
-## Retrieval
+`POST /oracle/readings` takes a question and a required `Idempotency-Key`. The
+question is trimmed of Unicode `White_Space` at both ends (U+0085 goes, U+FEFF
+stays; the browser counts with the same rule) and must then be 1–280 code points.
+Creating is one transaction under an advisory lock per viewer: the viewer's
+reading under that key, whatever its status or question, is the answer and
+nothing is enqueued; otherwise folio number max+1, the row with its key (unique
+per viewer), its job, and the viewer's membership in the corpus library (so every
+asker's search and chips reach the corpus). The route acknowledges
+`{reading_id}`; the browser mints one key per press.
 
-Oracle retrieval consumes the shared search substrate; it owns no embedding or
-vector SQL. One active-model query embedding from
-`services/search/embedding.build_query_embedding` feeds both lanes of
-`search/content_chunk_candidates.retrieve_content_chunk_candidates`:
+The job (`oracle_reading_generate`) publishes a journaled outcome without
+dispatch; an uncertain dispatch without local recovery raises and the job
+dead-letters. Otherwise it prepares a snapshot — one query embedding, refreshed
+anchors, the public lane, the personal lane (the viewer's visible media and notes,
+corpus media excluded in SQL, four distinct owners), the plate — and dispatches it
+once through the durable generation contract; a replay decodes the snapshot from
+the frozen admission and never retrieves again. `synthesis.py` owns the prompt,
+the strict output and every reading rule (argument 80–180 chars beginning "Of ",
+motto, gloss, one of the 24 themes, three distinct offered passages one per phase,
+a user passage when one was offered, no URLs, citation markers or four-word
+windows of an offered quote); any violation is `invalid_output` with no repair.
 
-- **Public-domain candidates** are retrieved scoped to the Oracle Corpus library,
-  then kept only where a resolved `oracle_passage_anchor` points at the retrieved
-  chunk/span. They are boosted by anchor tag/phase/question-token overlap, deduped
-  one-per-work, and cited as `oracle_passage_anchor:<id>`.
-- **Personal candidates** are retrieved over the viewer's visible media/notes
-  **excluding** the corpus library's media, and cited as `evidence_span` (or
-  `content_chunk` when no span exists).
+Publication re-refreshes anchors and replaces the reading's citation edges with
+three (ordinal = phase: title = attribution, excerpt = quote, section label =
+locator), with the folio fields, the plate's current record and the three stored
+passages; a cited target that vanished during
+generation fails the reading `E_GENERATION_SOURCE_CHANGED`. Reads project the row;
+only navigation is current. A passage's chip is the reading's own edge at its
+`ordinal` (captured facts overlay its ordinal, role, hover and deep link), shown
+when it has a reader locator; a passage with no such edge but a saved target
+hydrates that target without writing an edge, shown when it has a locator or an
+href; otherwise the passage is typography. Detail and summaries show the captured
+plate, else (history without a plate event) `plate_key`'s current `corpus.json`
+record, so plate keys are permanent; concordance compares `plate_key`. Concordance is one query: the viewer's other complete readings with
+a motto, scored 2·shared plate + 2·shared theme + shared cited targets, top five.
 
-Plate selection is deterministic over `oracle_plates` tags vs. question tokens and
-selected-candidate tags (no embeddings; tie-broken by `source_url`).
+Clients follow a pending or streaming reading over
+`GET /stream/oracle-readings/{id}/events`: each frame is the whole
+`OracleReadingOut` (`state` on change, `done` once it is complete or failed),
+pushed by the `oracle_readings` status NOTIFY.
 
-The generation worker calls `get_oracle_corpus_readiness` before generating and
-fails typed `E_ORACLE_CORPUS_NOT_READY` when the exact publication is not ready.
+## Operator
 
-## Folios, Citation Edges, And Concordance
+After a release that changes `corpus.json` (or to heal failed anchors), run
+`python -m nexus.services.oracle.corpus seed --owner-user <uuid>` once inside the
+running background worker, with the production owner's user id
+([deployment.md](../../deployment.md#oracle-corpus-seed) has the host command).
+It is idempotent and safe while every writer runs; it prints its counts.
 
-A reading persists one `oracle_reading_folios` row per phase (descent / ordeal /
-ascent) carrying the generated content (attribution, marginalia, locator label).
-Each folio references its citation `resource_edge` by `edge_id`: in the same
-per-phase transaction `oracle.py` calls
-`resource_graph.citations.record_citation` to mint an `origin='citation'` edge
-whose source is the `oracle_reading:<id>` and whose target is the cited resource —
-a stable `oracle_passage_anchor:<id>` for public-domain text or an
-`evidence_span:`/`content_chunk:` for user media. The edge owns identity and the
-display snapshot (excerpt, label) captured at generation time; the folio owns the
-generated prose, not duplicated on the edge. Navigation is rebuilt by the current
-resolver: opening an anchor citation routes through the anchor's current
-evidence/media target (`oracle_anchor_current_target`), so the jump tracks reindex
-while the cited identity stays fixed.
+## Assumptions
 
-Concordance ("other readings that drew the same source") is
-`resource_graph.citations.concordant_sources` scoped to `source_scheme='oracle_reading'`:
-identity equality on the cited `(target_scheme, target_id)`, so two readings that
-drew the same public-domain passage share one anchor target id by construction.
+Owner questions this rewrite answered by assumption (spec §7; reversible in review):
 
-## Plate Contract
+1. Multi-user: consulting joins the viewer to the corpus library as `member`, so
+   the corpus enters their search and library list as it does the owner's. The
+   membership is permanent (no leave path; system libraries refuse member
+   removal) and shares nothing between askers: highlight visibility ignores
+   system libraries, so no asker sees another's highlights on the corpus works.
+2. The app seeds and heals its own corpus; fewer than three rankable passages is the
+   reading's typed failure, not a global gate.
+3. A folio shows the curated quote; the works stay ingested for the reader jump
+   and the ranking embedding.
+4. The event log goes (its display is folded into the row); push stays as a
+   status-snapshot stream. Omens are a column.
+5. Generation conforms to the shared durable contract's minimum arms; a dead job
+   leaves its reading pending (ticketed).
+6. Plates are static web assets; a plate change is a web deploy.
+7. The atlas has one global frame and no ETag; the readings layer stays.
+8. Failed readings open from the aleph; readings cannot be deleted.
+9. The 24 themes stay, owned in python and the DB CHECK.
 
-- Frontend URL: `/api/oracle/plates/[id]`.
-- Backend URL: `/oracle/plates/{id}`.
-- Frontend type contract: `OraclePlateImageSrc`.
-- BFF helper: `proxyPublicToFastAPI`.
-- Backend route auth: internal header only; no viewer bearer and no cookies.
-- Storage key: `oracle/plates/<stable plate key>.<jpg|png|webp>`.
-- DB owner: `oracle_plates` (public owned-asset metadata only; **no text
-  embeddings** — plate selection is deterministic over tags/phase hints).
+## Owner decisions (2026-10-04)
 
-`oracle_plates.py` releases the DB session before reading object storage.
-Matching `If-None-Match` requests return `304` from validated DB metadata
-without touching storage. The ETag is route metadata, not a content hash.
-
-## Operational Rule
-
-Application release only records the expected manifest digest. Oracle publication
-is the independent host operation `deploy/hetzner/reconcile-oracle.sh`; runtime
-requests never create, repair, or publish support.
-
-The script reads the expected manifest digest from the running API's `/version`,
-so it always targets whatever release is current. It exits early when exact
-DB/selector/R2 state and the current marker already agree. Otherwise it runs
-`preflight` (which rejects removal of any active work, anchor, or plate key),
-stops all app writers, unpublishes first, reconciles ordinary
-library/media/index and plate support through their owners, publishes, restarts
-the stack, and re-proves exact publication. R2 objects precede DB metadata; no
-DB transaction spans HTTP, R2, or job execution; the marker is inserted last in
-one short transaction.
-
-The operation is idempotent: rerun it after a failure. Writers stay stopped if
-it fails mid-sequence, which is deliberate — rerunning converges and restarts
-them. Physical garbage collection and destructive manifest removals are out of scope.
-
-The manifest describes direct ingestable media sources, passage selectors, and
-plate inputs, not corpus text or embeddings. Source URLs must contain the target
-text itself. Corpus readiness is internal: the reading task checks it,
-marker-gated and read-only, before generation.
+1. The per-viewer idempotency key stays (above): a replay, pending or settled,
+   returns the first reading and enqueues nothing; another viewer's same key is
+   their own reading.
+2. One landing (combined with simplify-04, 2026-10-04): claude owns it; codex's
+   102989a8 does not land. The row materializes simplify-04's qualified fold of
+   the event log: 0262 folds every reading once (meta, bind, argument, plate,
+   passage, delta, omens and done replacement rules; nullable and partial facts;
+   event-only citation targets; captured passage, hover and plate display; a plate
+   without a plate event keeps current corpus metadata) into the row, then drops
+   the log, folio rows and plate table. Navigation stays current: the owned phase
+   edge wins, else the saved target is rehydrated without inserting an edge, else
+   typography. Historical `streaming` and partial rows stay renderable; stored
+   status is kept (pending plus meta displays `streaming` without changing what
+   the job owns). Publication captures the plate too, as simplify-04's did. The
+   equivalence proof against simplify-04's own projection over its 0259 backup is
+   listed in docs/tickets/oracle-0262-production-preflight.md.
+3. No loss at release: 0262 refuses, before any write and with counts and sample
+   reading ids, on a held claim (a running job with an unexpired lease) or an
+   unfinished job whose journal the new worker cannot resume (an admitted or
+   completed generation in the retired snapshot or outcome shape; a completed
+   failure is resumable), and on any fold inconsistency (its docstring lists them,
+   including a plate whose image identity maps to no static key). Pending jobs,
+   expired claims and their journals carry over; the new worker settles them. It
+   cancels no reading and deletes no job, journal or key; keyless readings stay
+   keyless. `E_RATE_LIMITED` becomes `capacity_unavailable`. The release crossing
+   0262 stops the api and lets the old workers finish every oracle job before it
+   stops them (`deploy/hetzner/release.py`), so production meets neither refusal.

@@ -227,24 +227,6 @@ export async function proxyMediaAssetToFastAPI(
   return proxySession(request, path, "MediaAsset");
 }
 
-export async function proxyPublicToFastAPI(
-  request: Request, path: string,
-): Promise<Response> {
-  if (path.includes("?")) {
-    throw new Error("Path must not contain query string. Query params are extracted from request URL.");
-  }
-  const headers = pickHeaders(request.headers, ["if-none-match"]);
-  headers.set("accept-encoding", "identity");
-  return forward({
-    request, path, headers,
-    id: requestId(request.headers.get("x-request-id")),
-    responseHeaderNames: [
-      "content-type", "content-length", "cache-control", "etag", "x-content-type-options",
-    ],
-    method: "GET",
-  });
-}
-
 export async function proxyResourceShareToFastAPI(
   request: Request, path: string,
 ): Promise<Response> {

@@ -28,7 +28,3 @@ PRODUCTION_ENABLED_JOB_KINDS: tuple[str, ...] = (
     INTERACTIVE_WORKER_JOB_KINDS + BACKGROUND_WORKER_JOB_KINDS
 )
 MAINTENANCE_JOB_KINDS: tuple[str, ...] = ("sync_gutenberg_catalog_job",)
-ORACLE_RECONCILE_JOB_KINDS: tuple[str, ...] = (
-    "ingest_media_source",
-    "media_content_reindex_job",
-)

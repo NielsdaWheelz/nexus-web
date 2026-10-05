@@ -14,8 +14,9 @@ valid epub containers. validation correctly rejected the original html.
 production `7dc68929b4d5ddfd77eb1a50228d477fa0148b5d` now maps these works
 to different gutenberg media, all readable and indexed. each old row has zero
 library entries and zero oracle mappings; none appears in the 24 attention
-items. `services/oracle_corpus.py:186` replaces mapping/filing but retains the
-old media. evidence: `/tmp/nexus-processing-review-20260926/visible-and-oracle.jsonl`
+items. `services/oracle/corpus.py` (`_seed_work`) replaces mapping/filing but
+retains the old media, and a work removed from `corpus.json` keeps its media
+filed in the corpus library (only its anchors go). evidence: `/tmp/nexus-processing-review-20260926/visible-and-oracle.jsonl`
 and `standardebooks-probes/artifact-results.json`.
 
 audit all remaining references and the existing media lifecycle before any

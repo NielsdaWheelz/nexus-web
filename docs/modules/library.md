@@ -122,6 +122,14 @@ idempotent (by `system_key`) creator, and the seed is an explicit system-mainten
 command, never a user request — system libraries still never bypass
 `library_entries`.
 
+`join_system_library` adds a user as `member` (the oracle does this for every
+asker). That membership is permanent: there is no leave path, and
+`remove_library_member` refuses system libraries. It grants reach to the
+library's media and nothing between members: highlight visibility counts only
+shared **non-system** libraries (`permissions.highlight_library_intersection_exists`
+and its text twin), so co-members of a system library never see each other's
+highlights.
+
 `LibraryOut` carries the policy to the client so UI never infers protection or
 owner authority from names, roles, or raw identity: `system_key`, plus the
 booleans `can_rename` / `can_delete` / `can_edit_entries` /
@@ -496,8 +504,7 @@ library-to-media write route and no scoped resource-delete query mode.
   policy. They may attach deduped canonical media only by calling
   `library_entries` from the shared source-ingest transaction.
 - Library entries never make a private media file public.
-- Public owned Oracle plates are not library resources; readings may reference
-  them, but the plate asset route is owned by `oracle_plates.py`.
+- Oracle plates are static web assets, not library resources.
 - The default library's virtual read surface affects which media rows are
   visible, not object-storage keys.
 

@@ -38,9 +38,8 @@ the expected Oracle manifest digest.
   cannot produce a deployable candidate: merge a new commit instead.
 - Production pulls GHCR digests named by the candidate manifest. It never
   builds an application image.
-- Config publication (`sync-env.sh`) and Oracle reconcile
-  (`reconcile-oracle.sh`) are explicit, separate operations. The release
-  neither performs nor waits for them.
+- Config publication (`sync-env.sh`) and the Oracle corpus seed are explicit,
+  separate operations. The release neither performs nor waits for them.
 - There is no automatic database downgrade. After the migration runs, recovery
   moves forward; the verified R2 archive is a recovery point, not a rollback.
 - Secrets belong only in provider settings and unpublished env inputs. They
@@ -157,7 +156,9 @@ it binds, and re-proves the public `/version`.
 3. **images** — pull both digests; prove the OCI revision label and the baked
    runtime identity against the manifest.
 4. **backup** — read the current Alembic revision, prove it descends from the
-   candidate head, stop `api`, `worker-interactive` and `worker-background`,
+   candidate head (crossing 0262: stop `api` first and wait, up to 20 minutes,
+   until the old workers have finished every oracle job), stop `api`,
+   `worker-interactive` and `worker-background`,
    then stop the codex host with at least 45 seconds of grace and require clean
    exit from every writer and host before running
    `nexus.release_backup create`: one pass that streams `pg_dump`
@@ -342,19 +343,25 @@ before treating the rehearsal as complete. Do not substitute this disposable
 database for production, and do not start predecessor code against a migrated
 database.
 
-## Oracle publication
+## Oracle corpus seed
 
-The release records nothing about Oracle. After the application SHA is current,
-reconcile explicitly:
+The release records nothing about the Oracle. After a release that changes
+`python/nexus/services/oracle/corpus.json`, or to heal failed passage anchors,
+run the seed once inside the running background worker, with the production
+owner's user id:
 
 ```bash
-./deploy/hetzner/reconcile-oracle.sh
+ssh nexus@5.78.194.235 'sudo docker exec "$(sudo docker ps --quiet \
+  --filter label=com.docker.compose.project=nexus \
+  --filter label=com.docker.compose.service=worker-background \
+  --filter label=com.docker.compose.oneoff=False)" \
+  python -m nexus.services.oracle.corpus seed --owner-user <uuid>'
 ```
 
-It reads the expected manifest digest from the running API's `/version`, exits
-early if the corpus already publishes it, otherwise stops the writers, runs
-`nexus.ops.oracle_reconcile` unpublish / reconcile-support / publish inside the
-background worker, restarts the stack and re-proves the publication.
+It is idempotent and safe while every writer runs: it converges the corpus
+library, sources and anchors to the file and prints its counts; ordinary
+workers ingest and index, and the next reading resolves the anchors. See
+[docs/modules/oracle.md](docs/modules/oracle.md).
 
 ## Reader publication preflight
 
@@ -425,5 +432,5 @@ and can be deleted by hand at any time:
 | VPS config publication | `deploy/hetzner/sync-env.sh` |
 | Streamed database backup | `python/nexus/release_backup.py` |
 | Vercel config publication | `deploy/vercel/sync-env.sh` |
-| Oracle operation | `deploy/hetzner/reconcile-oracle.sh` |
+| Oracle corpus seed | `python/nexus/services/oracle/corpus.py` (`seed`) |
 | Environment contract | `deploy/env/README.md` and `deploy/env/*.example` |
