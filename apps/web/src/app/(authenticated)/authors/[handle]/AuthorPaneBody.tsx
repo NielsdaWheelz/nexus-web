@@ -14,7 +14,6 @@ import Button from "@/components/ui/Button";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
 import PaneSurface from "@/components/ui/PaneSurface";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
@@ -66,7 +65,6 @@ import {
   usePaneIsVisible,
   usePaneParam,
   usePaneRuntime,
-  requirePaneRuntime,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import {
@@ -153,11 +151,9 @@ export default function AuthorPaneBody() {
     throw new Error("author route requires a handle");
   }
   const paneRuntime = usePaneRuntime();
-  const runtime = requirePaneRuntime(paneRuntime, "AuthorPaneBody");
   const isPaneActive = usePaneIsActive();
   const isPaneVisible = usePaneIsVisible();
   const metadataRevision = useMetadataCollectionRevision();
-  const activateTarget = runtime.activateTarget;
   // The pane URL owns the works view through a strict, total codec; `view` is
   // null only for an Invalid URL, a terminal, user-recoverable state.
   const worksViewCodec = useMemo(
@@ -602,10 +598,6 @@ export default function AuthorPaneBody() {
     [filterQuery, workRows],
   );
   const canonicalHandle = data?.detail.handle ?? null;
-  const connectionsComposerController = useConnectionsComposerController({
-    scheme: "contributor",
-    id: canonicalHandle ?? handle,
-  });
   const connectionsResource = useMemo(
     () =>
       resolveAuthorConnectionsResource(
@@ -619,8 +611,6 @@ export default function AuthorPaneBody() {
       connectionsResource.kind === "Ready" ? (
         <ConnectionsSurface
           resourceRef={connectionsResource.ref}
-          composerController={connectionsComposerController}
-          activateTarget={activateTarget}
         />
       ) : connectionsResource.kind === "Loading" ? (
         <FeedbackNotice
@@ -637,7 +627,7 @@ export default function AuthorPaneBody() {
           announcement="None"
         />
       ),
-    [activateTarget, connectionsComposerController, connectionsResource],
+    [connectionsResource],
   );
   const { companionAction } = useResourceInspector({
     scheme: "contributor",

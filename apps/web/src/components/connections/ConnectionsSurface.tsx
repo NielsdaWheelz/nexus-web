@@ -1,72 +1,45 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type FormEvent,
-  type KeyboardEvent,
-} from "react";
-import { Link, Paperclip, Sparkles } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Plus, Sparkles } from "lucide-react";
 import {
   FeedbackNotice,
+  type FeedbackActions,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import ContextEdgeMenu from "@/components/resources/ContextEdgeMenu";
+import LinkTargetDialog from "@/components/resources/LinkTargetDialog";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
-import ResourceTargetListbox, {
-  resourceTargetKey,
-  resourceTargetOptionId,
-} from "@/components/resources/ResourceTargetListbox";
+import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
-import Input from "@/components/ui/Input";
 import MachineText from "@/components/ui/MachineText";
-import Pill from "@/components/ui/Pill";
-import Select from "@/components/ui/Select";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import ResourceList from "@/components/ui/ResourceList";
+import ResourceRow from "@/components/ui/ResourceRow";
+import {
+  apiTransportFeedback,
+  isApiError,
+  isSameSystemApiDefect,
+} from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
 import {
-  getFileUploadError,
-  uploadIngestFile,
-} from "@/lib/media/ingestionClient";
-import { mediaCaptureErrorMessage } from "@/lib/media/captureFeedback";
-import {
   queryConnections,
   type ConnectionOut,
   type EdgeKind,
-  type EdgeOrigin,
 } from "@/lib/resourceGraph/connections";
 import {
   createLink,
   deleteLink,
-  targetLabel,
-  toLinkTarget,
+  type LinkTarget,
 } from "@/lib/resourceGraph/links";
-import { deleteStance, putStance } from "@/lib/resourceGraph/stances";
 import {
   formatResourceRef,
   type ResourceRef,
 } from "@/lib/resourceGraph/resourceRef";
-import {
-  activateResource,
-  hrefForResourceActivation,
-  type ResourceActivation,
-} from "@/lib/resources/activation";
-import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
-import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
-import type {
-  WorkspaceTarget,
-  WorkspaceTargetDisposition,
-} from "@/lib/workspace/targetActivation";
-import { SYNAPSE_SOURCE_SCHEMES } from "@/lib/resources/resourceCapabilities";
+import { deleteStance, putStance } from "@/lib/resourceGraph/stances";
+import { hrefForResourceActivation } from "@/lib/resources/activation";
 import { resourceIconForUri } from "@/lib/resources/resourceKind";
-import { useResourceTargetSearch } from "@/lib/resources/useResourceTargetSearch";
-import type { ResourceTarget } from "@/lib/resources/resourceTargets";
 import {
   dismissSynapseEdge,
   fetchSynapseScanStatus,
@@ -75,1157 +48,417 @@ import {
 } from "@/lib/synapse";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import styles from "./ConnectionsSurface.module.css";
-import type {
-  ConnectionsComposerController,
-  ConnectionsComposerDraft,
-  ConnectionsPendingAttachment,
-} from "./connectionsComposerController";
 
-/** The endpoint of a connection that is NOT the object being viewed. */
-interface Connection {
-  edgeId: string;
-  ref: string;
-  label: string;
-  activation: ResourceActivation;
-  missing: boolean;
-  actionSubject: ResourceActionSubject;
-  kind: EdgeKind;
-  origin: ConnectionOut["origin"];
-  rationale: string | null;
-  createdAt: string;
-}
+type ScanPhase = "idle" | "scanning" | "settled" | "failed" | "overdue";
 
-/**
- * Human assertions read as the record; synapse proposals trail them. Newest
- * first within each group (ISO timestamps compare lexicographically).
- */
-function compareConnections(a: Connection, b: Connection): number {
-  const aProposed = a.origin === "synapse" ? 1 : 0;
-  const bProposed = b.origin === "synapse" ? 1 : 0;
-  if (aProposed !== bProposed) return aProposed - bProposed;
-  return b.createdAt.localeCompare(a.createdAt);
-}
-
-const CONNECTION_PANEL_ORIGINS: EdgeOrigin[] = [
+const ORIGINS = [
   "user",
   "note_body",
   "highlight_note",
   "citation",
   "synapse",
   "document_embed",
-];
-const CONNECTION_PANEL_KINDS: EdgeKind[] = [
-  "context",
-  "supports",
-  "contradicts",
-];
+] as const;
+const ERROR_COPY: Record<string, string> = {
+  E_NOT_FOUND:
+    "The connection or one of its objects is gone. Reload Connections.",
+  E_FORBIDDEN: "This account can’t make that change.",
+  E_INVALID_REQUEST: "That request is no longer valid. Review it and retry.",
+  E_LINK_SELF: "An item can’t link to itself. Choose another target.",
+  E_LINK_CAPABILITY: "This source or target doesn’t support links.",
+  E_LINK_TARGET_AMBIGUOUS:
+    "That passage matches more than once. Choose a narrower one.",
+  E_LINK_TARGET_STALE: "That passage changed. Search for it again, then retry.",
+  E_HIGHLIGHT_CONFLICT:
+    "The selected passage changed. Select it again, then retry.",
+};
 
-export type ConnectionOperation =
-  | "Load"
-  | "Chat"
-  | "Unlink"
-  | "Dismiss"
-  | "CreateLink"
-  | "RecordStance"
-  | "ConnectAttachment"
-  | "ScanStatus"
-  | "StartScan";
-
-function connectionOperationTitle(operation: ConnectionOperation): string {
-  switch (operation) {
-    case "Load":
-      return "Connections couldn’t be loaded";
-    case "Chat":
-      return "Chat wasn’t started";
-    case "Unlink":
-      return "Connection wasn’t unlinked";
-    case "Dismiss":
-      return "Connection wasn’t dismissed";
-    case "CreateLink":
-      return "Link wasn’t created";
-    case "RecordStance":
-      return "Stance wasn’t recorded";
-    case "ConnectAttachment":
-      return "File was saved, but its connection wasn’t created";
-    case "ScanStatus":
-      return "Scan status couldn’t be checked";
-    case "StartScan":
-      return "Scan wasn’t started";
-  }
+/** Expected failures become copy; anything else is a defect and throws. */
+function failure(error: unknown, title: string): FeedbackContent {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  const message = ERROR_COPY[error.code];
+  const content =
+    apiTransportFeedback(error, title) ??
+    (message && {
+      tone: "Danger" as const,
+      title,
+      message,
+      requestId: error.requestId,
+    });
+  if (!content) throw error;
+  return content;
 }
 
-/** Finite Connections-domain copy adapter; unknown codes remain defects. */
-function connectionErrorMessage(
-  error: unknown,
-  operation: ConnectionOperation,
-): FeedbackContent {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-
-  const title = connectionOperationTitle(operation);
-  const requestId = error.requestId;
-  switch (error.code) {
-    case "E_NETWORK":
-      return {
-        tone: "Danger",
-        title,
-        message: "Check your connection and retry.",
-        requestId,
-      };
-    case "E_UPSTREAM":
-    case "E_UPSTREAM_TIMEOUT":
-      return {
-        tone: "Danger",
-        title,
-        message: "Nexus couldn’t complete that request. Wait a moment, then retry.",
-        requestId,
-      };
-    case "E_RATE_LIMITED":
-      return {
-        tone: "Danger",
-        title,
-        message: "Wait a moment, then retry.",
-        requestId,
-      };
-    case "E_NOT_FOUND":
-      return {
-        tone: "Danger",
-        title,
-        message: "The connection or one of its objects is no longer available. Reload Connections.",
-        requestId,
-      };
-    case "E_FORBIDDEN":
-      return {
-        tone: "Danger",
-        title,
-        message: "This account can’t make that change.",
-        requestId,
-      };
-    case "E_INVALID_REQUEST":
-      return {
-        tone: "Danger",
-        title,
-        message: "That request is no longer valid. Review the connection and retry.",
-        requestId,
-      };
-    case "E_LINK_SELF":
-      if (operation !== "CreateLink" && operation !== "RecordStance") {
-        throw error;
-      }
-      return {
-        tone: "Danger",
-        title,
-        message: "An item can’t link to itself. Choose another target.",
-        requestId,
-      };
-    case "E_LINK_CAPABILITY":
-      if (
-        operation !== "CreateLink" &&
-        operation !== "RecordStance" &&
-        operation !== "ConnectAttachment"
-      ) {
-        throw error;
-      }
-      return {
-        tone: "Danger",
-        title,
-        message: "This source or target doesn’t support links. Choose another target.",
-        requestId,
-      };
-    case "E_LINK_TARGET_AMBIGUOUS":
-      if (operation !== "CreateLink") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message: "That passage matches more than once. Choose a more specific target.",
-        requestId,
-      };
-    case "E_LINK_TARGET_STALE":
-      if (operation !== "CreateLink") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message: "That passage changed. Search for it again, then retry.",
-        requestId,
-      };
-    case "E_HIGHLIGHT_CONFLICT":
-      if (operation !== "CreateLink") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message: "The selected passage changed. Select it again, then retry.",
-        requestId,
-      };
-    case "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH":
-      if (operation !== "CreateLink") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message: "The link request changed. Close Link, then try again.",
-        requestId,
-      };
-    case "E_CONFLICT":
-      if (operation !== "Dismiss") throw error;
-      return {
-        tone: "Danger",
-        title,
-        message: "This proposal changed. Reload Connections, then retry.",
-        requestId,
-      };
-    default:
-      throw error;
-  }
+/** Every page, human assertions first, then synapse; newest first in each. */
+async function loadConnections(ref: string, signal: AbortSignal) {
+  const items: ConnectionOut[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await queryConnections(
+      {
+        refs: [ref],
+        direction: "both",
+        rollup: "owner",
+        filters: { origins: [...ORIGINS] },
+        limit: 100,
+        cursor,
+      },
+      { signal },
+    );
+    items.push(...page.items);
+    cursor = page.next_cursor ?? undefined;
+  } while (cursor);
+  return items.sort(
+    (a, b) =>
+      Number(a.origin === "synapse") - Number(b.origin === "synapse") ||
+      b.created_at.localeCompare(a.created_at),
+  );
 }
 
 export default function ConnectionsSurface({
   resourceRef,
-  composerController,
-  activateTarget,
 }: {
   resourceRef: ResourceRef;
-  composerController: ConnectionsComposerController;
-  activateTarget: (input: {
-    target: WorkspaceTarget;
-    disposition: WorkspaceTargetDisposition;
-  }) => void;
 }) {
-  const composerId = useId();
-  const composerDraft = useSyncExternalStore(
-    composerController.subscribe,
-    composerController.getSnapshot,
-    composerController.getSnapshot,
-  );
-  const composerOpen = composerDraft.open;
-  const [refreshTick, setRefreshTick] = useState(0);
   const selfRef = formatResourceRef(resourceRef);
-  const connectionsResource = useResource<{ data: ConnectionOut[] }>({
-    cacheKey: `${selfRef}:${refreshTick}`,
-    load: async (signal) => ({
-      data: (
-        await queryConnections(
-          {
-            refs: [selfRef],
-            direction: "both",
-            rollup: "owner",
-            filters: {
-              origins: CONNECTION_PANEL_ORIGINS,
-              kinds: CONNECTION_PANEL_KINDS,
-            },
-            limit: 100,
-          },
-          { signal },
-        )
-      ).items,
-    }),
+  const [tick, setTick] = useState(0);
+  const reload = () => setTick((value) => value + 1);
+  const list = useResource<ConnectionOut[]>({
+    cacheKey: `connections:${selfRef}:${tick}`,
+    load: (signal) => loadConnections(selfRef, signal),
   });
-  const loading = connectionsResource.status === "loading";
-  const loadFailure: unknown | null =
-    connectionsResource.status === "error"
-      ? connectionsResource.error
-      : null;
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  // A pick's failure stays in the open dialog, with the exact retry.
+  const [notice, setNotice] = useState<{
+    content: FeedbackContent;
+    actions: FeedbackActions;
+  } | null>(null);
+  // The menu item that opened the dialog is gone by close: focus returns to ＋.
+  const [linking, setLinking] = useState<{
+    kind: EdgeKind;
+    trigger: HTMLElement | null;
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const linkIdentity = useRef<{ key: string; id: string } | null>(null);
+  const scannable =
+    resourceRef.scheme === "note_block" || resourceRef.scheme === "page";
+  const scan = useSynapseScan(selfRef, scannable, reload);
+  if (defect) throw defect.error;
+  if (scan.defect) throw scan.defect;
 
-  const connections: Connection[] =
-    connectionsResource.status === "ready"
-      ? connectionsResource.data.data
-          .map((connection) => {
-            const href = hrefForResourceActivation(connection.other.activation);
-            const unavailable = connection.other.missing || href === null;
-            return {
-              edgeId: connection.edge_id,
-              ref: connection.other.ref,
-              label: connection.other.label ?? connection.other.ref,
-              activation: connection.other.activation,
-              missing: unavailable,
-              actionSubject: connection.other.actionSubject,
-              kind: connection.kind,
-              origin: connection.origin,
-              rationale:
-                connection.snapshot?.excerpt &&
-                typeof connection.snapshot.excerpt === "string"
-                  ? connection.snapshot.excerpt
-                  : null,
-              createdAt: connection.created_at,
-            };
-          })
-          .sort(compareConnections)
-      : [];
-
-  const reloadConnections = useCallback(() => {
-    setRefreshTick((value) => value + 1);
-  }, []);
-
-  const scannable = (SYNAPSE_SOURCE_SCHEMES as readonly string[]).includes(
-    resourceRef.scheme,
-  );
-  const [scanVoice, setScanVoice] = useState<string | null>(null);
-  const scanBaselineRef = useRef<number | null>(null);
-  const connectionsCountRef = useRef(0);
-  if (connectionsResource.status === "ready") {
-    connectionsCountRef.current = connections.length;
-  }
-
-  useEffect(() => {
-    scanBaselineRef.current = null;
-    setScanVoice(null);
-  }, [selfRef]);
-
-  const handleScanSettled = useCallback(() => {
-    // Snapshot the pre-reload count; the post-reload ready state reports the
-    // delta as the scan-voice line.
-    scanBaselineRef.current = connectionsCountRef.current;
-    reloadConnections();
-  }, [reloadConnections]);
-
-  const scan = useSynapseScan({
-    selfRef,
-    enabled: scannable,
-    onSettled: handleScanSettled,
-  });
-  const scanning = scan.phase !== "idle";
-
-  useEffect(() => {
-    if (
-      connectionsResource.status !== "ready" ||
-      scanBaselineRef.current === null
-    ) {
+  /** A stance needs a whole item; a retried Link replays its mutation id. */
+  async function pick(kind: EdgeKind, target: LinkTarget) {
+    if (kind !== "context" && target.kind === "passage") {
+      setNotice({
+        content: {
+          tone: "Warning",
+          title: "A stance needs a whole item, not a passage.",
+        },
+        actions: [{ label: "Choose again", onClick: () => setNotice(null) }],
+      });
       return;
     }
-    const found =
-      connectionsResource.data.data.length - scanBaselineRef.current;
-    scanBaselineRef.current = null;
-    setScanVoice(
-      found > 0
-        ? `${found} new connection${found === 1 ? "" : "s"} found.`
-        : "No new connections found.",
-    );
-  }, [connectionsResource]);
+    const key = JSON.stringify(target);
+    if (linkIdentity.current?.key !== key)
+      linkIdentity.current = { key, id: createRandomId("link") };
+    const clientMutationId = linkIdentity.current.id;
+    setBusy(true);
+    setNotice(null);
+    try {
+      if (kind === "context" || target.kind === "passage") {
+        await createLink({
+          clientMutationId,
+          source: { kind: "resource", ref: selfRef },
+          target,
+        });
+      } else {
+        await putStance({ sourceRef: selfRef, targetRef: target.ref, kind });
+      }
+      linkIdentity.current = null;
+      setLinking(null);
+      reload();
+    } catch (error) {
+      if (handleUnauthenticatedApiError(error)) return;
+      try {
+        setNotice({
+          content: failure(
+            error,
+            kind === "context"
+              ? "Link wasn’t created"
+              : "Stance wasn’t recorded",
+          ),
+          actions: [{ label: "Retry", onClick: () => void pick(kind, target) }],
+        });
+      } catch (caught) {
+        setDefect({ error: caught });
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
 
-  const openConnection = useCallback(
-    (connection: Connection, disposition: WorkspaceTargetDisposition) => {
-      activateResource(connection.activation, {
-        labelHint: connection.label,
-        activateTarget,
-        disposition,
-      });
-    },
-    [activateTarget],
-  );
-
-  if (scan.defectState !== null) throw scan.defectState.error;
-  const error =
-    loadFailure === null
-      ? null
-      : connectionErrorMessage(loadFailure, "Load");
+  const connections = list.status === "ready" ? list.data : [];
+  const proposed = connections.filter(
+    (c) => c.origin === "synapse" && c.source_ref === selfRef,
+  ).length;
+  const voice = {
+    idle: null,
+    scanning: "Scanning…",
+    settled:
+      list.status !== "ready"
+        ? null
+        : proposed > 0
+          ? `${proposed} proposed connection${proposed === 1 ? "" : "s"}.`
+          : "No connections proposed.",
+    failed: "The scan failed. Try again later.",
+    overdue: "Still scanning. Proposals appear here when it finishes.",
+  }[scan.phase];
 
   return (
-    <section className={styles.backlinks} aria-label="Connections">
+    <section className={styles.section} aria-label="Connections">
       <div className={styles.header}>
         <h2 className={styles.title}>Connections</h2>
-        <div className={styles.headerActions}>
-          <button
-            type="button"
-            className={styles.composerToggle}
-            aria-expanded={composerOpen}
-            aria-controls={composerId}
-            onClick={() => composerController.update({ open: !composerOpen })}
+        <ActionMenu
+          label="Add connection"
+          triggerDisabled={busy}
+          renderTrigger={(props) => (
+            <button {...props} className={styles.add}>
+              <Plus size={14} aria-hidden="true" /> Link
+            </button>
+          )}
+          options={(["context", "supports", "contradicts"] as const).map(
+            (kind) => ({
+              kind: "command",
+              id: kind,
+              label: kind === "context" ? "Link…" : `Record “${kind}”…`,
+              restoreFocusOnClose: false,
+              onSelect: ({ triggerEl }) =>
+                setLinking({ kind, trigger: triggerEl }),
+            }),
+          )}
+        />
+        {scannable ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            loading={scan.phase === "scanning"}
+            aria-label="Find connections"
+            title="Find connections"
+            onClick={() => void scan.start()}
           >
-            ＋ Link
-          </button>
-          {scannable ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              iconOnly
-              loading={scanning}
-              aria-label="Find connections"
-              title="Find connections"
-              onClick={() => {
-                setScanVoice(null);
-                void scan.start();
-              }}
-            >
-              <Sparkles size={14} aria-hidden="true" />
-            </Button>
-          ) : null}
-        </div>
+            <Sparkles size={14} aria-hidden="true" />
+          </Button>
+        ) : null}
       </div>
       {scan.feedback ? (
         <FeedbackNotice
           content={scan.feedback}
           announcement="Assertive"
-          actions={[{ label: "Retry", onClick: () => void scan.retry() }]}
+          actions={[{ label: "Retry", onClick: () => void scan.start() }]}
         />
       ) : null}
-      {scanning ? (
-        <p className={styles.scanVoice}>Scanning…</p>
-      ) : scanVoice ? (
-        <p className={styles.scanVoice}>{scanVoice}</p>
+      {voice ? (
+        <p className={styles.voice} role="status">
+          {voice}
+        </p>
       ) : null}
-      <ConnectionComposer
-        key={selfRef}
-        id={composerId}
-        selfRef={selfRef}
-        onChanged={reloadConnections}
-        active={composerOpen}
-        draft={composerDraft}
-        controller={composerController}
-      />
-      {loading ? (
+      {list.status === "error" ? (
+        <FeedbackNotice
+          content={failure(list.error, "Connections couldn’t be loaded")}
+          announcement="Assertive"
+          actions={[{ label: "Retry", onClick: list.retry }]}
+        />
+      ) : list.status !== "ready" ? (
         <FeedbackNotice
           content={{ tone: "Info", title: "Loading connections…" }}
           announcement="Polite"
         />
-      ) : null}
-      {!loading && error ? (
-        <FeedbackNotice
-          content={error}
-          announcement="Assertive"
-          actions={[{ label: "Retry", onClick: reloadConnections }]}
-        />
-      ) : null}
-      {!loading && !error && connections.length === 0 ? (
+      ) : connections.length === 0 ? (
         <p className={styles.empty}>
           {scannable
-            ? "No connections yet. Scan to find resonant material, or link one manually."
+            ? "No connections yet. Scan to find resonant material, or link one."
             : "No connected objects yet."}
         </p>
-      ) : null}
-      {connections.length > 0 ? (
-        <div className={styles.list}>
+      ) : (
+        <ResourceList ariaLabel="Connections">
           {connections.map((connection) => (
-            <ConnectionRow
-              key={connection.edgeId}
+            <Row
+              key={connection.edge_id}
               connection={connection}
-              onOpen={(disposition) =>
-                openConnection(connection, disposition)
-              }
-              onChanged={reloadConnections}
+              onChanged={reload}
             />
           ))}
-        </div>
-      ) : null}
+        </ResourceList>
+      )}
+      <LinkTargetDialog
+        open={linking !== null}
+        sourceRef={selfRef}
+        busy={busy}
+        failure={notice}
+        returnFocusTo={() => linking?.trigger ?? null}
+        onPick={(target) => linking && void pick(linking.kind, target)}
+        onClose={() => {
+          setLinking(null);
+          setNotice(null);
+        }}
+      />
     </section>
   );
 }
 
-function ConnectionRow({
+function Row({
   connection,
-  onOpen,
   onChanged,
 }: {
-  connection: Connection;
-  onOpen: (disposition: WorkspaceTargetDisposition) => void;
+  connection: ConnectionOut;
   onChanged: () => void;
 }) {
-  const Icon = resourceIconForUri(connection.ref);
-
-  // The one edge command this connection exposes: a user-authored edge unlinks
-  // (deleteLink for a context Link, deleteStance for a stance), a synapse
-  // proposal dismisses. Both are edge mutations owned by the separate
-  // context-edge control, never the canonical resource dropdown.
-  const edge:
-    | {
-        readonly action: "Unlink" | "Dismiss";
-        readonly operation: "Unlink" | "Dismiss";
-        readonly execute: () => Promise<void>;
-      }
-    | null =
+  const far = connection.other;
+  const label = far.label ?? far.ref;
+  const href = far.missing ? null : hrefForResourceActivation(far.activation);
+  const Icon = resourceIconForUri(far.ref);
+  const synapse = connection.origin === "synapse";
+  const rationale = synapse ? connection.snapshot?.excerpt : undefined;
+  // Edge commands own their control: a user edge unlinks (Link or stance), a
+  // synapse proposal dismisses. Other origins are derived and read-only.
+  const edge =
     connection.origin === "user"
       ? {
-          action: "Unlink",
-          operation: "Unlink",
-          execute: async () => {
-            if (connection.kind === "context") {
-              await deleteLink(connection.edgeId);
-            } else {
-              await deleteStance(connection.edgeId);
-            }
-            onChanged();
-          },
+          action: "Unlink" as const,
+          title: "Connection wasn’t unlinked",
+          run: () =>
+            connection.kind === "context"
+              ? deleteLink(connection.edge_id)
+              : deleteStance(connection.edge_id),
         }
-      : connection.origin === "synapse"
+      : synapse
         ? {
-            action: "Dismiss",
-            operation: "Dismiss",
-            execute: async () => {
-              await dismissSynapseEdge(connection.edgeId);
-              onChanged();
-            },
+            action: "Dismiss" as const,
+            title: "Proposal wasn’t dismissed",
+            run: () => dismissSynapseEdge(connection.edge_id),
           }
         : null;
 
   return (
-    <div
-      className={`${styles.linkRow}${connection.missing ? ` ${styles.missing}` : ""}`}
-    >
-      <button
-        type="button"
-        className={styles.linkButton}
-        disabled={connection.missing}
-        onClick={(event) =>
-          onOpen(workspaceTargetClickIntent(event).disposition)
-        }
-      >
-        <Icon size={14} aria-hidden="true" />
-        <span className={styles.connectionText}>
-          <span>{connection.label}</span>
-          <span className={styles.connectionMeta}>
-            {connection.origin === "synapse" ? (
-              <Pill
-                tone="accent"
-                className={styles.synapseMarker}
-                role="img"
-                aria-label="Synapse connection"
-              >
-                ✦
-              </Pill>
-            ) : null}
-            {connection.kind}
-          </span>
-          {connection.origin === "synapse" && connection.rationale ? (
-            <MachineText
-              variant="inline"
-              as="span"
-              origin={{ label: "Synapse" }}
-              className={styles.rationale}
-            >
-              {connection.rationale}
-            </MachineText>
-          ) : null}
-        </span>
-      </button>
-      {/* Canonical resource dropdown — Open/Share/Chat/… via the runtime. */}
-      <ResourceActionMenu
-        actionSubject={connection.actionSubject}
-        label={`Actions for ${connection.label}`}
-      />
-      {/* Separate context-edge control: unlink/dismiss are edge mutations,
-          not resource actions, so they publish on their own labelled trigger. */}
-      {edge ? (
-        <ContextEdgeMenu
-          action={edge.action}
-          label={`Edit connection ${connection.label}`}
-          retryable
-          execute={edge.execute}
-          presentFailure={(error) =>
-            connectionErrorMessage(error, edge.operation)
-          }
-        />
-      ) : null}
-    </div>
-  );
-}
-
-function targetRefOf(target: ResourceTarget): string {
-  return target.kind === "resource" ? target.item.ref : target.candidateRef;
-}
-
-function ConnectionComposer({
-  id,
-  selfRef,
-  onChanged,
-  active,
-  draft,
-  controller,
-}: {
-  id: string;
-  selfRef: string;
-  onChanged: () => void;
-  active: boolean;
-  draft: ConnectionsComposerDraft;
-  controller: ConnectionsComposerController;
-}) {
-  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const listboxId = useId();
-  const {
-    query,
-    kind,
-    selected,
-    activeKey,
-    feedback,
-    submitting,
-    attaching,
-    pendingAttachments,
-  } = draft;
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const createIntentRef = useRef<{
-    key: string;
-    clientMutationId: string;
-  } | null>(null);
-
-  function presentConnectionFailure(
-    error: unknown,
-    operation: "CreateLink" | "RecordStance" | "ConnectAttachment",
-  ) {
-    try {
-      controller.update({ feedback: connectionErrorMessage(error, operation) });
-    } catch (caughtDefect) {
-      setDefect({ error: caughtDefect });
-    }
-  }
-
-  function presentCaptureFailure(error: unknown) {
-    try {
-      controller.update({
-        feedback: mediaCaptureErrorMessage(error, "AddAttachment"),
-      });
-    } catch (caughtDefect) {
-      setDefect({ error: caughtDefect });
-    }
-  }
-
-  // Once a target is picked the field shows its label but the picker closes —
-  // an empty search key disables `useResourceTargetSearch` entirely.
-  const {
-    targets: fetchedTargets,
-    loading,
-    error: searchError,
-  } = useResourceTargetSearch({
-    purpose: "link",
-    query: selected ? "" : query,
-    sourceRef: selfRef,
-  });
-
-  // A stance (supports/contradicts) requires a *direct* resource target: its
-  // `PutStanceRequest.target_ref` has no passage-materialization union the way a
-  // Link's target does. The shared `purpose="link"` search may emit passage
-  // candidates regardless of `kind`, so filter them out of the listbox for a
-  // stance kind — the impossible combination is never selectable up front.
-  const targets =
-    kind === "context"
-      ? fetchedTargets
-      : fetchedTargets.filter((target) => target.kind === "resource");
-
-  // Derived during render (never via an effect) so an in-flight Arrow move
-  // can't be clobbered by a stale "initialize" effect: an explicit `activeKey`
-  // wins while it still names a live target, otherwise the first target is
-  // active by default.
-  const effectiveActiveKey =
-    activeKey &&
-    targets.some((target) => resourceTargetKey(target) === activeKey)
-      ? activeKey
-      : targets[0]
-        ? resourceTargetKey(targets[0])
-        : null;
-
-  // The composer only mounts when the "＋ Link" disclosure opens it, so focus
-  // the first field on mount to keep the keyboard on the reveal (AC-7).
-  useEffect(() => {
-    if (active) searchInputRef.current?.focus();
-  }, [active]);
-
-  const targetRef = selected ? targetRefOf(selected) : null;
-
-  function pickTarget(target: ResourceTarget | undefined) {
-    if (!target) return;
-    controller.update({
-      selected: target,
-      query: targetLabel(target),
-      activeKey: null,
-    });
-    controller.update({ feedback: null });
-  }
-
-  function onSearchKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (selected || targets.length === 0) return;
-    if (
-      event.key === "ArrowDown" ||
-      event.key === "ArrowUp" ||
-      event.key === "Home" ||
-      event.key === "End"
-    ) {
-      event.preventDefault();
-      const current = targets.findIndex(
-        (target) => resourceTargetKey(target) === effectiveActiveKey,
-      );
-      const start = current >= 0 ? current : 0;
-      const last = targets.length - 1;
-      const next =
-        event.key === "Home"
-          ? 0
-          : event.key === "End"
-            ? last
-            : event.key === "ArrowDown"
-              ? Math.min(last, start + 1)
-              : Math.max(0, start - 1);
-      controller.update({ activeKey: resourceTargetKey(targets[next]!) });
-      return;
-    }
-    if (event.key === "Enter") {
-      event.preventDefault();
-      pickTarget(
-        targets.find(
-          (target) => resourceTargetKey(target) === effectiveActiveKey,
-        ) ?? targets[0],
-      );
-    }
-  }
-
-  async function submitConnection(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    controller.update({ feedback: null });
-    if (targetRef === null || selected === null) {
-      controller.update({
-        feedback: {
-          tone: "Warning",
-          title: "Choose a result from the search.",
-        },
-      });
-      return;
-    }
-    if (targetRef === selfRef) {
-      controller.update({
-        feedback: {
-          tone: "Warning",
-          title: "A resource cannot connect to itself.",
-        },
-      });
-      return;
-    }
-    if (kind !== "context" && selected.kind === "passage") {
-      controller.update({
-        feedback: {
-          tone: "Warning",
-          title: "A stance needs a resource target, not a passage.",
-        },
-      });
-      return;
-    }
-    controller.update({ submitting: true });
-    try {
-      if (kind === "context") {
-        const intentKey = JSON.stringify({ selfRef, target: toLinkTarget(selected) });
-        if (createIntentRef.current?.key !== intentKey) {
-          createIntentRef.current = {
-            key: intentKey,
-            clientMutationId: createRandomId("link"),
-          };
-        }
-        await createLink({
-          clientMutationId: createIntentRef.current.clientMutationId,
-          source: { kind: "resource", ref: selfRef },
-          target: toLinkTarget(selected),
-        });
-      } else {
-        await putStance({ sourceRef: selfRef, targetRef, kind });
-      }
-      controller.update({ query: "", selected: null, activeKey: null });
-      createIntentRef.current = null;
-      onChanged();
-    } catch (err) {
-      if (handleUnauthenticatedApiError(err)) return;
-      presentConnectionFailure(
-        err,
-        kind === "context" ? "CreateLink" : "RecordStance",
-      );
-    } finally {
-      controller.update({ submitting: false });
-    }
-  }
-
-  async function attachFiles(files: File[]) {
-    if (files.length === 0) {
-      return;
-    }
-    controller.update({ feedback: null, attaching: true });
-    let changed = false;
-    try {
-      for (const file of files) {
-        const uploadError = getFileUploadError(file);
-        if (uploadError) {
-          controller.update({
-            feedback: { tone: "Danger", title: uploadError },
-          });
-          continue;
-        }
-        let upload;
-        try {
-          upload = await uploadIngestFile({
-            file,
-            libraryIds: [],
-          });
-        } catch (error) {
-          if (isSameSystemApiDefect(error)) {
-            setDefect({ error });
-            return;
-          }
-          if (handleUnauthenticatedApiError(error)) return;
-          presentCaptureFailure(error);
-          continue;
-        }
-        const pending: ConnectionsPendingAttachment = {
-          clientMutationId: createRandomId("link"),
-          mediaId: upload.mediaId,
-          sourceAttemptId: upload.sourceAttemptId,
-          label: file.name,
-          warning: null,
-        };
-        controller.update((current) => ({
-          pendingAttachments: upsertPending(
-            current.pendingAttachments,
-            pending,
-          ),
-        }));
-        const edge: AttachmentEdgeOutcome = await createAttachmentLink(
-          selfRef,
-          pending,
-        ).then(
-          () => ({ kind: "Fulfilled" as const }),
-          (error: unknown) => ({ kind: "Rejected" as const, error }),
-        );
-        if (edge.kind === "Rejected") {
-          if (isSameSystemApiDefect(edge.error)) {
-            setDefect({ error: edge.error });
-            return;
-          }
-          if (handleUnauthenticatedApiError(edge.error)) return;
-          presentConnectionFailure(edge.error, "ConnectAttachment");
-          continue;
-        }
-        controller.update((current) => ({
-          pendingAttachments: current.pendingAttachments.filter(
-            (item) => item.mediaId !== pending.mediaId,
-          ),
-        }));
-        changed = true;
-      }
-    } finally {
-      if (changed) onChanged();
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
-      controller.update({ attaching: false });
-    }
-  }
-
-  async function retryAttachment(pending: ConnectionsPendingAttachment) {
-    controller.update({ feedback: null, attaching: true });
-    try {
-      await createAttachmentLink(selfRef, pending);
-      controller.update((current) => ({
-        pendingAttachments: current.pendingAttachments.filter(
-          (item) => item.mediaId !== pending.mediaId,
-        ),
-        ...(pending.warning ? { feedback: pending.warning } : {}),
-      }));
-      onChanged();
-    } catch (error) {
-      if (isSameSystemApiDefect(error)) {
-        setDefect({ error });
-        return;
-      }
-      if (handleUnauthenticatedApiError(error)) return;
-      presentConnectionFailure(error, "ConnectAttachment");
-    } finally {
-      controller.update({ attaching: false });
-    }
-  }
-
-  if (defect) throw defect.error;
-
-  return (
-    <form
-      id={id}
-      hidden={!active}
-      className={styles.composer}
-      onSubmit={(event) => void submitConnection(event)}
-      onDragOver={(event) => {
-        if (event.dataTransfer.types.includes("Files"))
-          event.preventDefault();
-      }}
-      onDrop={(event) => {
-        const files = Array.from(event.dataTransfer.files);
-        if (files.length === 0) return;
-        event.preventDefault();
-        void attachFiles(files);
-      }}
-    >
-      <div className={styles.composerControls}>
-        <div className={styles.searchWrap}>
-          <Input
-            ref={searchInputRef}
-            size="sm"
-            value={query}
-            role="combobox"
-            aria-expanded={!selected && targets.length > 0}
-            aria-controls={listboxId}
-            aria-autocomplete="list"
-            aria-activedescendant={
-              !selected && effectiveActiveKey
-                ? resourceTargetOptionId(
-                    listboxId,
-                    targets.find(
-                      (target) =>
-                        resourceTargetKey(target) === effectiveActiveKey,
-                    )!,
-                  )
-                : undefined
+    <ResourceRow
+      primary={
+        href === null
+          ? { kind: "static" }
+          : {
+              kind: "link",
+              href,
+              paneLabelHint: label,
+              ...(far.activation.kind === "external"
+                ? { target: "_blank", rel: "noopener noreferrer" }
+                : {}),
             }
-            placeholder="Search to link…"
-            aria-label="Connection target"
-            onChange={(event) => {
-              controller.update({
-                selected: null,
-                query: event.currentTarget.value,
-              });
-              controller.update({ feedback: null });
-            }}
-            onKeyDown={onSearchKeyDown}
+      }
+      title={
+        <>
+          <Icon size={14} aria-hidden="true" /> {label}
+        </>
+      }
+      supporting={synapse ? `✦ proposed · ${connection.kind}` : connection.kind}
+      evidence={
+        typeof rationale === "string" ? (
+          <MachineText variant="inline" as="span" origin={{ label: "Synapse" }}>
+            {rationale}
+          </MachineText>
+        ) : undefined
+      }
+      actions={
+        <>
+          <ResourceActionMenu
+            actionSubject={far.actionSubject}
+            label={`Actions for ${label}`}
           />
-          {!selected && query.trim().length > 0 ? (
-            <div className={styles.autocomplete}>
-              <ResourceTargetListbox
-                id={listboxId}
-                ariaLabel="Link targets"
-                targets={targets}
-                activeKey={effectiveActiveKey}
-                loading={loading}
-                error={searchError}
-                onHover={(target) =>
-                  controller.update({
-                    activeKey: resourceTargetKey(target),
-                  })
-                }
-                onPick={pickTarget}
-              />
-            </div>
+          {edge ? (
+            <ContextEdgeMenu
+              action={edge.action}
+              label={`Edit connection ${label}`}
+              retryable
+              execute={async () => {
+                await edge.run();
+                onChanged();
+              }}
+              presentFailure={(error) => failure(error, edge.title)}
+            />
           ) : null}
-        </div>
-        <Select
-          size="sm"
-          value={kind}
-          aria-label="Connection kind"
-          onChange={(event) => {
-            const nextKind = event.currentTarget.value as EdgeKind;
-            controller.update({ kind: nextKind });
-            // Passage anchors are Links; Stances require a resource.
-            if (nextKind !== "context" && selected?.kind === "passage") {
-              controller.update({ selected: null });
-              controller.update({ feedback: null });
-            }
-          }}
-        >
-          <option value="context">context</option>
-          <option value="supports">supports</option>
-          <option value="contradicts">contradicts</option>
-        </Select>
-        <Button
-          type="submit"
-          size="sm"
-          variant="secondary"
-          loading={submitting}
-          leadingIcon={<Link size={14} />}
-        >
-          {kind === "context" ? "Link" : "Record stance"}
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          leadingIcon={<Paperclip size={14} />}
-          loading={attaching}
-          onClick={() => fileInputRef.current?.click()}
-        >
-          Attach
-        </Button>
-        <input
-          ref={fileInputRef}
-          className={styles.fileInput}
-          type="file"
-          multiple
-          accept="application/pdf,application/epub+zip,.pdf,.epub"
-          aria-label="Attach files"
-          tabIndex={-1}
-          onChange={(event) =>
-            void attachFiles(Array.from(event.currentTarget.files ?? []))
-          }
-        />
-      </div>
-      {pendingAttachments.length > 0 ? (
-        <ul
-          className={styles.pendingAttachments}
-          aria-label="Pending attachments"
-        >
-          {pendingAttachments.map((pending) => (
-            <li key={pending.mediaId} className={styles.pendingAttachment}>
-              <span>
-                {pending.label} was saved and still needs its connection.
-              </span>
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                disabled={attaching}
-                onClick={() => void retryAttachment(pending)}
-              >
-                Retry attachment
-              </Button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      {feedback ? (
-        <FeedbackNotice content={feedback} announcement="Assertive" />
-      ) : null}
-    </form>
+        </>
+      }
+    />
   );
 }
-
-type AttachmentEdgeOutcome =
-  { kind: "Fulfilled" } | { kind: "Rejected"; error: unknown };
-
-function upsertPending(
-  current: readonly ConnectionsPendingAttachment[],
-  pending: ConnectionsPendingAttachment,
-): ConnectionsPendingAttachment[] {
-  return [
-    ...current.filter((item) => item.mediaId !== pending.mediaId),
-    pending,
-  ];
-}
-
-function createAttachmentLink(
-  sourceRef: string,
-  pending: ConnectionsPendingAttachment,
-): Promise<unknown> {
-  return createLink({
-    clientMutationId: pending.clientMutationId,
-    source: { kind: "resource", ref: sourceRef },
-    target: { kind: "resource", ref: `media:${pending.mediaId}` },
-  });
-}
-
-const SYNAPSE_SCAN_POLL_MS = 2000;
-const SYNAPSE_SCAN_TIMEOUT_MS = 45_000;
 
 /**
- * The manual-scan lifecycle for a scannable ref: request → bounded status poll
- * → settle. `onSettled` fires once per finished scan — idle status reached,
- * the request short-circuiting to idle, or the 45s deadline lapsing.
+ * Manual scan: request, then poll the job-backed status every 2 s until it
+ * leaves pending/running or 45 s pass. A scan already in flight when the
+ * section mounts (a tab switch mid-scan) resumes the wait.
  */
-function useSynapseScan({
-  selfRef,
-  enabled,
-  onSettled,
-}: {
-  selfRef: string;
-  enabled: boolean;
-  onSettled: () => void;
-}): {
-  phase: "idle" | "requesting" | "polling";
-  feedback: FeedbackContent | null;
-  defectState: { error: unknown } | null;
-  start: () => Promise<void>;
-  retry: () => Promise<void>;
-} {
-  const [phase, setPhase] = useState<"idle" | "requesting" | "polling">("idle");
+function useSynapseScan(ref: string, enabled: boolean, onSettled: () => void) {
+  const [phase, setPhase] = useState<ScanPhase>("idle");
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
-  const [failureOperation, setFailureOperation] = useState<
-    "ScanStatus" | "StartScan" | null
-  >(null);
-  const [defectState, setDefectState] = useState<{ error: unknown } | null>(null);
-  const deadlineRef = useRef(0);
+  const [defect, setDefect] = useState<unknown>(null);
+  const deadline = useRef(0);
+  const inFlight = (status: SynapseScanStatus) =>
+    status === "pending" || status === "running";
 
-  // A tab switch unmounts the section mid-scan; one status read on mount
-  // resumes the poll (with a fresh deadline) when a scan is still in flight.
+  function observe(status: SynapseScanStatus) {
+    if (inFlight(status))
+      return setPhase(Date.now() < deadline.current ? "scanning" : "overdue");
+    setPhase(status === "failed" ? "failed" : "settled");
+    onSettled();
+  }
+
+  function fail(error: unknown, title: string) {
+    setPhase("idle");
+    if (handleUnauthenticatedApiError(error)) return;
+    try {
+      setFeedback(failure(error, title));
+    } catch (caught) {
+      setDefect(caught);
+    }
+  }
+
   useEffect(() => {
     if (!enabled) return;
-    let cancelled = false;
-    void fetchSynapseScanStatus(selfRef)
-      .then((status) => {
-        if (cancelled || status === "idle") return;
-        deadlineRef.current = Date.now() + SYNAPSE_SCAN_TIMEOUT_MS;
-        setPhase("polling");
-      })
-      .catch((err) => {
-        // Best-effort resume probe; a manual scan surfaces real errors.
-        if (cancelled || handleUnauthenticatedApiError(err)) return;
-        try {
-          connectionErrorMessage(err, "ScanStatus");
-        } catch (caughtDefect) {
-          setDefectState({ error: caughtDefect });
-        }
-      });
+    let live = true;
+    // Best effort: a failed probe is not the user's action.
+    fetchSynapseScanStatus(ref).then(
+      (status) => {
+        if (!live || !inFlight(status)) return;
+        deadline.current = Date.now() + 45_000;
+        setPhase("scanning");
+      },
+      () => undefined,
+    );
     return () => {
-      cancelled = true;
+      live = false;
     };
-  }, [enabled, selfRef]);
+  }, [enabled, ref]);
 
-  // justify-polling: scans run on the background worker with no SSE plane
-  // (synapse spec N5); the poll is user-initiated, 2s, and self-bounds at the
-  // 45s scan deadline.
+  // justify-polling: scans run on the background worker with no event plane;
+  // the poll is user-started, every 2 s, and ends at the 45 s deadline.
   useIntervalPoll({
-    enabled: phase === "polling",
-    pollIntervalMs: SYNAPSE_SCAN_POLL_MS,
-    onPoll: async () => {
-      try {
-        const status = await fetchSynapseScanStatus(selfRef);
-        if (status !== "idle" && Date.now() < deadlineRef.current) return;
-        setPhase("idle");
-        onSettled();
-      } catch (err) {
-        setPhase("idle");
-        if (handleUnauthenticatedApiError(err)) return;
-        try {
-          setFeedback(connectionErrorMessage(err, "ScanStatus"));
-          setFailureOperation("ScanStatus");
-        } catch (caughtDefect) {
-          setDefectState({ error: caughtDefect });
-        }
-      }
-    },
+    enabled: phase === "scanning",
+    pollIntervalMs: 2000,
+    onPoll: () =>
+      fetchSynapseScanStatus(ref).then(observe, (error) =>
+        fail(error, "Scan status couldn’t be checked"),
+      ),
   });
 
-  // One begin: read the scan status (by starting a scan, or by reading the
-  // status of one already running) and either settle or poll to the deadline.
-  const begin = useCallback(
-    async (
-      read: () => Promise<SynapseScanStatus>,
-      operation: "StartScan" | "ScanStatus",
-    ) => {
-      setFeedback(null);
-      setFailureOperation(null);
-      setPhase("requesting");
-      try {
-        const status = await read();
-        if (status === "idle") {
-          // Engine disabled or the scan already finished: nothing to poll.
-          setPhase("idle");
-          onSettled();
-          return;
-        }
-        deadlineRef.current = Date.now() + SYNAPSE_SCAN_TIMEOUT_MS;
-        setPhase("polling");
-      } catch (err) {
-        setPhase("idle");
-        if (handleUnauthenticatedApiError(err)) return;
-        try {
-          setFeedback(connectionErrorMessage(err, operation));
-          setFailureOperation(operation);
-        } catch (caughtDefect) {
-          setDefectState({ error: caughtDefect });
-        }
-      }
-    },
-    [onSettled],
-  );
+  async function start() {
+    setFeedback(null);
+    deadline.current = Date.now() + 45_000;
+    setPhase("scanning");
+    try {
+      observe(await requestSynapseScan(ref));
+    } catch (error) {
+      fail(error, "Scan wasn’t started");
+    }
+  }
 
-  const start = useCallback(
-    () => begin(async () => (await requestSynapseScan(selfRef)).status, "StartScan"),
-    [begin, selfRef],
-  );
-
-  const retryStatus = useCallback(
-    () => begin(() => fetchSynapseScanStatus(selfRef), "ScanStatus"),
-    [begin, selfRef],
-  );
-
-  return {
-    phase,
-    feedback,
-    defectState,
-    start,
-    retry: failureOperation === "ScanStatus" ? retryStatus : start,
-  };
+  return { phase, feedback, defect, start };
 }

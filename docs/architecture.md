@@ -1463,7 +1463,7 @@ the hide-finished completion filter for reads — no DML on
   then title and target identity. finite `FloatOrNull` cursor keys retain exact
   view/plan binding. existing cursor/content revision changes invalidate old
   continuations. filters and authored positions retain their owners.
-- **resonance is the one relevance owner.** `services/resonance/` composes
+- **resonance is the one relevance owner.** `services/resonance.py` composes
   policy-neutral read ports from consumption, libraries, the resource graph,
   contributors and the semantic index. it owns quick reads, at hand and library
   suggestions; fact owners retain their tables and mutations. library entry

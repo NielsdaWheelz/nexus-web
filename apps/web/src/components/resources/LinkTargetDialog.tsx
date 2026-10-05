@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
+import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
 import { useResourceTargetSearch } from "@/lib/resources/useResourceTargetSearch";
 import ResourceTargetListbox, {
   resourceTargetKey,
@@ -47,6 +48,8 @@ export interface LinkTargetDialogProps {
    */
   onPick: (target: LinkTarget, label: string) => void;
   onClose: () => void;
+  /** Where focus returns on close, when the opener is gone by then (a menu item). */
+  returnFocusTo?: ReturnFocusTarget;
 }
 
 /**
@@ -65,6 +68,7 @@ export default function LinkTargetDialog({
   failure,
   onPick,
   onClose,
+  returnFocusTo,
 }: LinkTargetDialogProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -92,6 +96,7 @@ export default function LinkTargetDialog({
     active: open,
     onDismiss: onClose,
     initialFocus: () => inputRef.current,
+    returnFocusTo,
   });
 
   if (!open) return null;

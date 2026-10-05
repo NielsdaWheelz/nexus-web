@@ -103,6 +103,12 @@ kind is a frozen `JobDefinition`:
 `{"reading_id": "<canonical-lowercase-uuid>"}`. Its registry adapter passes a
 typed `UUID` to the Oracle task, which does not decode the durable carrier again.
 
+`synapse_scan` has no `tasks/` wrapper: its adapter hands the payload
+`{user_id, ref, reason}` to `services/synapse.py:synapse_scan_job`, which runs
+the scan inside `run_llm_task` and returns `{status, error_code, ref}`. it
+declares no `failed_result_statuses`; a terminal model failure is a succeeded
+row whose result status is `terminal_failed` ([synapse.md](synapse.md)).
+
 ### Lease policy by kind
 
 The generation kinds use these exact renewable registry leases:

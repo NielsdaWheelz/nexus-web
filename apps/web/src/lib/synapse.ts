@@ -1,40 +1,30 @@
-/**
- * Client for the Synapse resonance engine (synapse-resonance-engine spec §8):
- * manual scan requests, scan-status reads for bounded polling, and dismissal
- * of agent-proposed (`origin: "synapse"`) edges. The Connections section is
- * the sole consumer.
- */
+/** Synapse scans and dismissal; types come from the generated wire. */
 
-import type { ApiPath } from "@/lib/api/client";
-import { apiFetch } from "@/lib/api/client";
+import { apiFetch, type ApiPath } from "@/lib/api/client";
+import type { ApiJson, Schema } from "@/lib/api/wire";
 
-export type SynapseScanStatus = "idle" | "pending" | "running";
-
-interface ScanQueuedResponse {
-  data: { queued: boolean; status: SynapseScanStatus };
-}
-
-interface ScanStatusResponse {
-  data: { status: SynapseScanStatus };
-}
+export type SynapseScanStatus = Schema<"SynapseScanOut">["status"];
 
 export async function requestSynapseScan(
   ref: string,
-): Promise<{ queued: boolean; status: SynapseScanStatus }> {
-  const response = await apiFetch<ScanQueuedResponse>("/api/synapse/scans", {
-    method: "POST",
-    body: JSON.stringify({ ref }),
-  });
-  return response.data;
+): Promise<SynapseScanStatus> {
+  const { data } = await apiFetch<ApiJson<"/synapse/scans", "post">>(
+    "/api/synapse/scans",
+    {
+      method: "POST",
+      body: JSON.stringify({ ref }),
+    },
+  );
+  return data.status;
 }
 
 export async function fetchSynapseScanStatus(
   ref: string,
 ): Promise<SynapseScanStatus> {
-  const response = await apiFetch<ScanStatusResponse>(
+  const { data } = await apiFetch<ApiJson<"/synapse/scans", "get">>(
     `/api/synapse/scans?ref=${encodeURIComponent(ref)}` as ApiPath,
   );
-  return response.data.status;
+  return data.status;
 }
 
 export async function dismissSynapseEdge(edgeId: string): Promise<void> {

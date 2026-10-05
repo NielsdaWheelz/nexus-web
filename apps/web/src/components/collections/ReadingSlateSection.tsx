@@ -1,130 +1,44 @@
 "use client";
 
-import {
-  useId,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
-import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import type { CollectionRowView } from "@/lib/collections/types";
-import { usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
-import { presentSlateItem } from "@/lib/resonance/presentSlateItem";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { lecternSlateResource, librarySlateResource } from "@/lib/api/resource";
+import { useResource } from "@/lib/api/useResource";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { isAbortError } from "@/lib/errors";
 import {
-  readingSlateErrorMessage,
-  useReadingSlate,
-  type ReadingSlateAccept,
-  type ReadingSlateDestination,
-  type ReadingSlateState,
-} from "@/lib/resonance/useReadingSlate";
+  getSlate,
+  presentSlateItem,
+  type Slate,
+  type SlateItem,
+  type SlateTarget,
+} from "@/lib/resonance";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { usePaneChromeFocusReturn } from "@/lib/workspace/mobileChrome";
 import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
-import { assertNever } from "@/lib/assertNever";
+import { usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "./ReadingSlateSection.module.css";
 
-function shouldMoveTerminalFocusToPaneChrome(
-  isActive: boolean,
-  section: HTMLElement | null,
-  activeElement: Element | null,
-): boolean {
-  return isActive && section?.contains(activeElement) === true;
-}
+export type SlateDestination =
+  { kind: "Lectern" } | { kind: "Library"; id: string; name: string };
 
-function rowsForState(state: ReadingSlateState): CollectionRowView[] {
-  switch (state.kind) {
-    case "InitialLoading":
-    case "InitialFailed":
-      return [];
-    case "Ready":
-    case "Refreshing":
-    case "RefreshFailed":
-    case "Adding":
-    case "AddFailed":
-    case "AddUnknown":
-      return state.items.map(presentSlateItem);
-    case "Refilling":
-    case "RefillFailed":
-      return state.survivors.map(presentSlateItem);
-    default:
-      return assertNever(state);
-  }
-}
+/**
+ * Files the target into the destination. Resolves once it is there; rejects
+ * with the reason it is not. A destination that owns its own unknown-outcome
+ * recovery (the Lectern) keeps the promise pending until that settles.
+ */
+export type SlateAccept = (target: SlateTarget) => Promise<void>;
 
-function isBusy(state: ReadingSlateState): boolean {
-  return (
-    state.kind === "InitialLoading" ||
-    state.kind === "Refreshing" ||
-    state.kind === "Adding" ||
-    state.kind === "Refilling"
-  );
-}
-
-function addControlsDisabled(state: ReadingSlateState): boolean {
-  return (
-    state.kind === "Adding" ||
-    state.kind === "AddUnknown" ||
-    state.kind === "Refilling" ||
-    state.kind === "RefillFailed"
-  );
-}
-
-function stateNotice(state: ReadingSlateState) {
-  switch (state.kind) {
-    case "InitialLoading":
-    case "InitialFailed":
-    case "Ready":
-    case "Refreshing":
-    case "Adding":
-    case "Refilling":
-      return null;
-    case "RefreshFailed":
-      return (
-        <div className={styles.quietNotice}>
-          <span>{readingSlateErrorMessage("refresh", state.error)}</span>
-          <Button variant="ghost" size="sm" onClick={state.retry}>
-            Retry
-          </Button>
-        </div>
-      );
-    case "AddFailed":
-      return (
-        <p className={styles.alert} role="alert">
-          {readingSlateErrorMessage("add", state.error)}
-        </p>
-      );
-    case "AddUnknown":
-      return state.recovery.kind === "Local" ? (
-        <div className={styles.alert} role="alert">
-          <span>{readingSlateErrorMessage("unknown", state.error)}</span>
-          <Button variant="ghost" size="sm" onClick={state.recovery.retry}>
-            Retry
-          </Button>
-        </div>
-      ) : (
-        <p className={styles.quietNotice}>
-          {readingSlateErrorMessage("unknown", state.error)}
-        </p>
-      );
-    case "RefillFailed":
-      return (
-        <div className={styles.quietNotice}>
-          <span>{readingSlateErrorMessage("refill", state.error)}</span>
-          <Button variant="ghost" size="sm" onClick={state.retry}>
-            Retry
-          </Button>
-        </div>
-      );
-    default:
-      return assertNever(state);
-  }
-}
-
+/**
+ * Next-read suggestions for one destination. Key it by destination: state
+ * belongs to one. Add files the item, removes its row, appends at most one
+ * fresh replacement and moves focus to the survivor in the same position; an
+ * emptied section hands focus to pane chrome before it hides. Activation
+ * refreshes the list.
+ */
 export default function ReadingSlateSection({
   destination,
   paneId,
@@ -132,247 +46,191 @@ export default function ReadingSlateSection({
   accept,
   returnScope,
 }: {
-  destination: ReadingSlateDestination;
+  destination: SlateDestination;
   paneId: string;
   isActive: boolean;
-  accept: ReadingSlateAccept;
+  accept: SlateAccept;
   returnScope: string;
 }) {
-  const reactId = useId();
-  const sectionId = `reading-slate-${reactId.replaceAll(":", "")}`;
-  const controller = useReadingSlate({ destination, isActive, accept });
-  const isMobile = useIsMobileViewport();
-  const { focus: returnPaneChromeFocus } = usePaneChromeFocusReturn();
-  const { state } = controller;
-  const returnReadyRootRef = useRef<HTMLDivElement>(null);
-  usePaneReturnDescendantReady({
-    rootRef: returnReadyRootRef,
-    ready: state.kind !== "InitialLoading",
+  const lectern = destination.kind === "Lectern";
+  const load = (signal?: AbortSignal) =>
+    getSlate(
+      lectern
+        ? "/api/lectern/slate"
+        : `/api/libraries/${encodeURIComponent(destination.id)}/slate`,
+      signal,
+    );
+  const [version, setVersion] = useState(0);
+  const wasActive = useRef(isActive);
+  useEffect(() => {
+    if (isActive && !wasActive.current) setVersion((value) => value + 1);
+    wasActive.current = isActive;
+  }, [isActive]);
+  const resource = useResource<Slate>({
+    cacheKey: !isActive
+      ? null
+      : lectern
+        ? lecternSlateResource.cacheKey({ refreshVersion: version })
+        : librarySlateResource.cacheKey({
+            id: destination.id,
+            refreshVersion: version,
+          }),
+    load,
   });
+
+  // Rows follow each fresh read; an Add edits them locally until the next one.
+  const [rows, setRows] = useState<SlateItem[] | null>(null);
+  const [read, setRead] = useState<Slate | null>(null);
+  if (resource.status === "ready" && resource.data !== read) {
+    setRead(resource.data);
+    setRows(resource.data.items);
+  }
+  const [adding, setAdding] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{
+    text: string;
+    alert?: boolean;
+  } | null>(null);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  if (defect) throw defect.error;
+
+  const sectionId = `reading-slate-${useId().replaceAll(":", "")}`;
+  const title = lectern ? "At hand" : "Suggested for this library";
+  const ariaLabel = lectern
+    ? "At hand suggestions"
+    : `Suggestions for ${destination.name}`;
+  const isMobile = useIsMobileViewport();
+  const { focus: focusPaneChrome } = usePaneChromeFocusReturn();
+  const live = useRef(true);
   const activeRef = useRef(isActive);
   activeRef.current = isActive;
-  const handledFocusRequestRef = useRef<typeof controller.focusRequest>(null);
-  const rows = rowsForState(state);
-  const rowOwnerKey =
-    destination.kind === "Lectern" ? "Lectern" : `Library:${destination.id}`;
-  const retainedRowsRef = useRef<{
-    ownerKey: string;
-    rows: CollectionRowView[];
-  }>({ ownerKey: rowOwnerKey, rows: [] });
-  const title =
-    destination.kind === "Lectern" ? "At hand" : "Suggested for this library";
-  const ariaLabel =
-    destination.kind === "Lectern"
-      ? "At hand suggestions"
-      : `Suggestions for ${destination.name}`;
-  const terminalEmpty = state.kind === "Ready" && state.items.length === 0;
-  const [terminalHidden, setTerminalHidden] = useState(false);
-  const rendersSection = !terminalEmpty || !terminalHidden;
-  // Keep only this destination's previous rows through the terminal layout
-  // handoff. That leaves focused DOM connected until pane chrome owns focus,
-  // while a destination change can never resurrect another slate's rows.
-  const renderedRows =
-    terminalEmpty && retainedRowsRef.current.ownerKey === rowOwnerKey
-      ? retainedRowsRef.current.rows
-      : rows;
+  useEffect(() => () => void (live.current = false), []);
+  const focusRef = useRef<string | null | undefined>(undefined);
+  const rootRef = useRef<HTMLDivElement>(null);
+  // The root always commits: pane return needs it even while the section hides.
+  usePaneReturnDescendantReady({
+    rootRef,
+    ready: rows !== null || resource.status === "error",
+  });
 
   useLayoutEffect(() => {
-    if (!terminalEmpty) {
-      retainedRowsRef.current = { ownerKey: rowOwnerKey, rows };
-      if (terminalHidden) setTerminalHidden(false);
-      return;
-    }
-    if (terminalHidden) return;
+    const ref = focusRef.current;
+    if (ref === undefined) return;
+    focusRef.current = undefined;
     const section = document.getElementById(sectionId);
-    const pendingFocusRequest =
-      controller.focusRequest !== null &&
-      handledFocusRequestRef.current !== controller.focusRequest;
-    const activeElement = document.activeElement;
-    const shouldReturnFocus =
-      shouldMoveTerminalFocusToPaneChrome(isActive, section, activeElement) ||
-      (isActive &&
-        pendingFocusRequest &&
-        (activeElement === null || activeElement === document.body));
-    if (shouldReturnFocus) {
-      if (pendingFocusRequest) {
-        handledFocusRequestRef.current = controller.focusRequest;
-      }
-      if (!isMobile) {
-        findPaneChromeFocusTarget(paneId)?.focus();
-        setTerminalHidden(true);
-        return;
-      }
-      let live = true;
-      void returnPaneChromeFocus(paneId).then(() => {
-        if (live) setTerminalHidden(true);
+    const row = section?.querySelector<HTMLElement>(
+      `[data-collection-row-id="${CSS.escape(ref ?? "")}"] [data-row-focusable]`,
+    );
+    (row ?? section)?.focus();
+  }, [rows, sectionId]);
+
+  async function add(item: SlateItem, row: HTMLElement) {
+    const current = rows ?? [];
+    const index = current.indexOf(item);
+    const ownsFocus = row.contains(document.activeElement);
+    setAdding(item.target.ref);
+    setNotice(null);
+    try {
+      await accept(item.target);
+    } catch (error) {
+      setAdding(null);
+      // An aborted command (its owner went away) and a sign-out end quietly.
+      if (isAbortError(error) || handleUnauthenticatedApiError(error)) return;
+      if (!isApiError(error) || isSameSystemApiDefect(error))
+        return setDefect({ error });
+      return setNotice({
+        text: error.message || "Couldn’t add this item.",
+        alert: true,
       });
-      return () => {
-        live = false;
-      };
     }
-    setTerminalHidden(true);
-  }, [
-    isActive,
-    controller.focusRequest,
-    isMobile,
-    paneId,
-    returnPaneChromeFocus,
-    rowOwnerKey,
-    rows,
-    sectionId,
-    terminalEmpty,
-    terminalHidden,
-  ]);
-
-  useLayoutEffect(() => {
-    const request = controller.focusRequest;
-    if (request === null || handledFocusRequestRef.current === request) {
-      return;
+    const survivors = current.filter((candidate) => candidate !== item);
+    let next = survivors;
+    try {
+      const known = new Set([
+        item.target.ref,
+        ...survivors.map((r) => r.target.ref),
+      ]);
+      const fresh = (await load()).items.find((r) => !known.has(r.target.ref));
+      if (fresh) next = [...survivors, fresh];
+    } catch {
+      setNotice({ text: "Added, but couldn’t refill suggestions." });
     }
-    // A request is one-shot even when the pane is inactive. Reactivating a
-    // pane must never replay focus repair from an earlier Add.
-    handledFocusRequestRef.current = request;
-    if (!isActive) return;
-
-    const { survivorRef } = request;
-    const section = document.getElementById(sectionId);
-    if (!section) return;
-    if (!activeRef.current) return;
-    if (
-      document.activeElement !== null &&
-      document.activeElement !== document.body
-    ) {
-      return;
+    if (!live.current) return;
+    if (ownsFocus && activeRef.current && next.length === 0) {
+      if (isMobile) await focusPaneChrome(paneId);
+      else findPaneChromeFocusTarget(paneId)?.focus();
+    } else if (ownsFocus) {
+      focusRef.current = (next[index] ?? next.at(-1))?.target.ref ?? null;
     }
-    if (survivorRef === null) {
-      section.focus();
-      return;
-    }
-    const row = Array.from(
-      section.querySelectorAll<HTMLElement>("[data-collection-row-id]"),
-    ).find((candidate) => candidate.dataset.collectionRowId === survivorRef);
-    (
-      row?.querySelector<HTMLElement>("[data-row-focusable]") ?? section
-    ).focus();
-  }, [controller.focusRequest, isActive, sectionId]);
-
-  const controls = useMemo(() => {
-    const byRef: Record<string, ReactNode> = {};
-    const disabled = addControlsDisabled(state);
-    const items =
-      state.kind === "Refilling" || state.kind === "RefillFailed"
-        ? state.survivors
-        : state.kind === "InitialLoading" || state.kind === "InitialFailed"
-          ? []
-          : state.items;
-    for (const item of items) {
-      const title = item.target.kind === "Media"
-        ? item.target.mediaSummary.title
-        : item.target.title;
-      const loading =
-        state.kind === "Adding" && state.acceptedRef === item.target.ref;
-      const accessibleName =
-        destination.kind === "Lectern"
-          ? `Add ${title} to Lectern`
-          : `Add ${title} to ${destination.name}`;
-      byRef[item.target.ref] = (
-        <Button
-          variant="secondary"
-          size="sm"
-          aria-label={accessibleName}
-          disabled={disabled}
-          loading={loading}
-          onClick={(event) => {
-            const originatingRow = event.currentTarget.closest<HTMLElement>(
-              "[data-collection-row-id]",
-            );
-            if (originatingRow === null) {
-              throw new Error(
-                "Reading Slate Add control must be contained by its collection row.",
-              );
-            }
-            const focusWasOwnedAtAdd =
-              document.activeElement !== null &&
-              originatingRow.contains(document.activeElement);
-            controller.add(item, {
-              // Evaluated by the controller immediately before successful
-              // removal. Disabling the pressed button may itself drop focus
-              // to body; preserve that owned interaction while still honoring
-              // a deliberate move to another meaningful target.
-              isFocusOwned: () => {
-                const activeElement = document.activeElement;
-                return (
-                  focusWasOwnedAtAdd &&
-                  originatingRow.isConnected &&
-                  (activeElement === null ||
-                    activeElement === document.body ||
-                    originatingRow.contains(activeElement))
-                );
-              },
-            });
-          }}
-        >
-          {destination.kind === "Lectern" ? "Add to Lectern" : "Add"}
-        </Button>
-      );
-    }
-    return byRef;
-  }, [controller, destination, state]);
-
-  let content: ReactNode = null;
-  if (state.kind === "InitialFailed") {
-    content = (
-      <PaneSection
-        id={sectionId}
-        aria-label={ariaLabel}
-        tabIndex={-1}
-        title={title}
-      >
-        <div className={styles.quietNotice}>
-          <span>{readingSlateErrorMessage("initial", state.error)}</span>
-          <Button variant="ghost" size="sm" onClick={state.retry}>
-            Retry
-          </Button>
-        </div>
-      </PaneSection>
-    );
-  } else if (
-    !(state.kind === "InitialLoading" && destination.kind === "Library") &&
-    rendersSection
-  ) {
-    content = (
-      <PaneSection
-        id={sectionId}
-        aria-label={ariaLabel}
-        tabIndex={-1}
-        title={title}
-        aria-busy={isBusy(state) || undefined}
-      >
-        {state.kind === "InitialLoading" ? (
-          <div className={styles.loading}>
-            <PaneLoadingState
-              label={`Loading ${ariaLabel}…`}
-              announcement="Polite"
-            />
-          </div>
-        ) : (
-          <CollectionView
-            returnScope={returnScope}
-            rows={renderedRows}
-            status="ready"
-            ariaLabel={ariaLabel}
-            notice={stateNotice(state)}
-            rowControls={controls}
-            surface={false}
-          />
-        )}
-      </PaneSection>
-    );
+    setAdding(null);
+    setRows(next);
   }
 
+  const failed = resource.status === "error" ? resource : null;
+  const hidden = rows === null ? !failed : rows.length === 0;
+  const status = failed
+    ? {
+        text: rows
+          ? "Couldn’t refresh suggestions."
+          : "Couldn’t load suggestions.",
+      }
+    : notice;
   return (
-    <div ref={returnReadyRootRef} style={{ display: "contents" }}>
-      {content}
+    <div ref={rootRef} style={{ display: "contents" }}>
+      {hidden ? null : (
+        <PaneSection
+          id={sectionId}
+          aria-label={ariaLabel}
+          tabIndex={-1}
+          title={title}
+          aria-busy={
+            adding !== null || resource.status === "loading" || undefined
+          }
+        >
+          <CollectionView
+            returnScope={returnScope}
+            rows={(rows ?? []).map(presentSlateItem)}
+            status="ready"
+            ariaLabel={ariaLabel}
+            surface={false}
+            notice={
+              status ? (
+                <div
+                  className={status.alert ? styles.alert : styles.quiet}
+                  role={status.alert ? "alert" : undefined}
+                >
+                  <span>{status.text}</span>
+                  {failed ? (
+                    <Button variant="ghost" size="sm" onClick={failed.retry}>
+                      Retry
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null
+            }
+            rowControls={Object.fromEntries(
+              (rows ?? []).map((item) => [
+                item.target.ref,
+                <Button
+                  key={item.target.ref}
+                  variant="secondary"
+                  size="sm"
+                  aria-label={`Add ${item.target.kind === "Media" ? item.target.mediaSummary.title : item.target.title} to ${lectern ? "Lectern" : destination.name}`}
+                  disabled={adding !== null}
+                  loading={adding === item.target.ref}
+                  onClick={(event) => {
+                    const row = event.currentTarget.closest<HTMLElement>(
+                      "[data-collection-row-id]",
+                    );
+                    if (row) void add(item, row);
+                  }}
+                >
+                  {lectern ? "Add to Lectern" : "Add"}
+                </Button>,
+              ]),
+            )}
+          />
+        </PaneSection>
+      )}
     </div>
   );
 }

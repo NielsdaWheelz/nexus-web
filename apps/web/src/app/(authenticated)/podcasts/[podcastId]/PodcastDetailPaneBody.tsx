@@ -27,8 +27,6 @@ import { useResource } from "@/lib/api/useResource";
 import {
   usePaneIsActive,
   usePaneParam,
-  usePaneRuntime,
-  requirePaneRuntime,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import {
@@ -70,7 +68,6 @@ import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
 import CollectionFilterEditor from "@/components/workspace/CollectionFilterEditor";
 import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import {
   retryPodcastSubscriptionBackfill,
@@ -255,12 +252,7 @@ function formatEpisodeUpdateStatus(
 
 export default function PodcastDetailPaneBody() {
   const podcastId = usePaneParam("podcastId");
-  const paneRuntime = requirePaneRuntime(
-    usePaneRuntime(),
-    "PodcastDetailPaneBody",
-  );
   const isPaneActive = usePaneIsActive();
-  const activateTarget = paneRuntime.activateTarget;
   const committedSnapshotRef = useRef<PodcastDetailSnapshot | null>(null);
   const refreshFallbackSnapshotRef =
     useRef<PodcastDetailSnapshot | null>(null);
@@ -1325,19 +1317,13 @@ export default function PodcastDetailPaneBody() {
     acceptPodcastActionIntent,
   );
 
-  const connectionsComposerController = useConnectionsComposerController({
-    scheme: "podcast",
-    id: podcastId ?? "",
-  });
   const connectionsBody = useMemo(
     () => (
       <ConnectionsSurface
         resourceRef={{ scheme: "podcast", id: podcastId ?? "" }}
-        composerController={connectionsComposerController}
-        activateTarget={activateTarget}
       />
     ),
-    [activateTarget, connectionsComposerController, podcastId],
+    [podcastId],
   );
   const { companionAction } = useResourceInspector({
     scheme: "podcast",

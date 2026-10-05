@@ -3027,10 +3027,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Dismiss Edge
-         * @description Suppress the edge's pair forever, then delete the edge. 409 off-origin.
-         */
+        /** Dismiss Edge */
         post: operations["dismiss_edge_synapse_edges__edge_id__dismiss_post"];
         delete?: never;
         options?: never;
@@ -3045,16 +3042,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * Read Scan Status
-         * @description Scan state for ``ref``: idle, pending, or running.
-         */
-        get: operations["read_scan_status_synapse_scans_get"];
+        /** Read Scan */
+        get: operations["read_scan_synapse_scans_get"];
         put?: never;
-        /**
-         * Request Scan
-         * @description Queue a manual scan. 404 when the object is not visible.
-         */
+        /** Request Scan */
         post: operations["request_scan_synapse_scans_post"];
         delete?: never;
         options?: never;
@@ -5575,6 +5566,10 @@ export interface components {
         /** Data[StanceOut] */
         Data_StanceOut_: {
             data: components["schemas"]["StanceOut"];
+        };
+        /** Data[SynapseScanOut] */
+        Data_SynapseScanOut_: {
+            data: components["schemas"]["SynapseScanOut"];
         };
         /** Data[TranscriptRequestOut] */
         Data_TranscriptRequestOut_: {
@@ -14025,6 +14020,14 @@ export interface components {
              */
             kind: "start";
         };
+        /** SynapseScanOut */
+        SynapseScanOut: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "idle" | "pending" | "running" | "failed";
+        };
         /** SynapseScanRequest */
         SynapseScanRequest: {
             /** Ref */
@@ -21487,10 +21490,9 @@ export interface operations {
             };
         };
     };
-    read_scan_status_synapse_scans_get: {
+    read_scan_synapse_scans_get: {
         parameters: {
             query: {
-                /** @description Source object ref, e.g. 'highlight:<uuid>' */
                 ref: string;
             };
             header?: never;
@@ -21505,9 +21507,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_SynapseScanOut_"];
                 };
             };
             /** @description Validation Error */
@@ -21540,9 +21540,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_SynapseScanOut_"];
                 };
             };
             /** @description Validation Error */

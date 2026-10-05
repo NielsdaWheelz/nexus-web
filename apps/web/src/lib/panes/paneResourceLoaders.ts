@@ -14,7 +14,6 @@ import {
   settingsAccountResource,
   type ConversationIndexResourceParams,
 } from "@/lib/api/resource";
-import { slateSnapshotFromWire } from "@/lib/resonance/contract";
 import type { ResourceFetcher } from "@/lib/api/resourceTransport";
 import type { PaneRouteId, RouteParams } from "@/lib/panes/paneRouteModel";
 import { loadNotePages } from "@/lib/notes/pageContract";
@@ -166,12 +165,12 @@ export const paneResourceLoaders: Partial<
   lectern: {
     cacheKey: () => lecternSlateResource.cacheKey({ refreshVersion: 0 }),
     load: async (request) =>
-      slateSnapshotFromWire((
+      (
         await request<{ refreshVersion: number }, ApiJson<"/lectern/slate", "get">>(
           lecternSlateResource,
           { refreshVersion: 0 },
         )
-      ).data),
+      ).data,
   },
 
   libraries: {

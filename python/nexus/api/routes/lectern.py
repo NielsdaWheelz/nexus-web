@@ -21,8 +21,8 @@ from nexus.schemas.consumption import (
     LecternSnapshot,
 )
 from nexus.schemas.resonance import QuickReadsOut, SlateOut
+from nexus.services import resonance as resonance_service
 from nexus.services.consumption import service as consumption_service
-from nexus.services.resonance import service as resonance_service
 
 router = APIRouter(tags=["lectern"])
 

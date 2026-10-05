@@ -248,7 +248,6 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
             lease_seconds=300,
-            failed_result_statuses=("failed",),
             child_runtime="Llm",
         ),
         "atlas_project_job": JobDefinition(
@@ -416,14 +415,9 @@ def _run_media_unit_build(*, payload: Payload, context: Context) -> JobResult:
 
 
 def _run_synapse_scan(*, payload: Payload, context: Context) -> JobResult:
-    from nexus.tasks.synapse_scan import synapse_scan
+    from nexus.services.synapse import synapse_scan_job
 
-    return synapse_scan(
-        user_id=str(payload["user_id"]),
-        ref=str(payload["ref"]),
-        reason=str(payload["reason"]),
-        context=context,
-    )
+    return synapse_scan_job(payload, context=context)
 
 
 def _run_atlas_project(*, payload: Payload, context: Context) -> JobResult:

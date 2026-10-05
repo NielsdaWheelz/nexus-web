@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
 import ResourceSurfaceEditor from "@/components/resource-surface/ResourceSurfaceEditor";
 import {
   FeedbackNotice,
@@ -38,10 +37,6 @@ import type { ResourceSurface } from "@/lib/resources/resourceItems";
 import { resourceSurfaceFilterFields } from "@/components/resource-surface/resourceSurfaceFilterFields";
 import { useOptionalAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
-import type {
-  WorkspaceTarget,
-  WorkspaceTargetDisposition,
-} from "@/lib/workspace/targetActivation";
 import type { PaneReadySearchPublication } from "@/lib/panes/paneSearch";
 import {
   notifyPageActionIntentOwnerReady,
@@ -400,12 +395,7 @@ export default function PagePaneBody({
     [sourceKey],
   );
   const chrome = (
-    <PageChrome
-      page={page}
-      search={search}
-      viewActions={viewActions}
-      activateTarget={activateTarget}
-    />
+    <PageChrome page={page} search={search} viewActions={viewActions} />
   );
   if (defect) throw defect.error;
   if (feedback && !page) {
@@ -475,22 +465,16 @@ function PageChrome({
   page,
   search,
   viewActions,
-  activateTarget,
 }: {
   page: PageView | null;
   search: PaneReadySearchPublication;
   viewActions: ActionDescriptor[];
-  activateTarget: (input: {
-    target: WorkspaceTarget;
-    disposition: WorkspaceTargetDisposition;
-  }) => void;
 }) {
   return page ? (
     <MaterializedPageChrome
       page={page}
       search={search}
       viewActions={viewActions}
-      activateTarget={activateTarget}
     />
   ) : (
     <LatentPageChrome search={search} />
@@ -506,29 +490,18 @@ function MaterializedPageChrome({
   page,
   search,
   viewActions,
-  activateTarget,
 }: {
   page: PageView;
   search: PaneReadySearchPublication;
   viewActions: ActionDescriptor[];
-  activateTarget: (input: {
-    target: WorkspaceTarget;
-    disposition: WorkspaceTargetDisposition;
-  }) => void;
 }) {
-  const composer = useConnectionsComposerController({
-    scheme: "page",
-    id: page.id,
-  });
   const connections = useMemo(
     () => (
       <ConnectionsSurface
         resourceRef={{ scheme: "page", id: page.id }}
-        composerController={composer}
-        activateTarget={activateTarget}
       />
     ),
-    [activateTarget, composer, page.id],
+    [page.id],
   );
   const { companionAction } = useResourceInspector({
     scheme: "page",
