@@ -15,7 +15,7 @@ from nexus.errors import (
     ResourceLimitError,
 )
 from nexus.logging import get_logger
-from nexus.schemas.presence import Present
+from nexus.schemas.presence import Present, present
 from nexus.services.collection_revisions import CollectionFamily, bump_all_collection_families
 from nexus.services.epub_ingest import (
     EpubExtractionError,
@@ -24,13 +24,17 @@ from nexus.services.epub_ingest import (
     build_epub_extraction_plan,
     publish_epub_extraction_plan,
 )
-from nexus.services.media_author_observation_seam import attach_author_observation
 from nexus.services.reader_publication import (
     ReaderPublicationSourceFile,
     ReplaceSourceIssues,
     replace_reader_publication,
     superseded_reader_source_paths,
     unpublished_reader_source_paths,
+)
+from nexus.services.source_outcome import (
+    SourceDiagnostics,
+    SourceRunOutcome,
+    source_contributor_observations,
 )
 from nexus.storage.client import get_storage_client
 
@@ -76,12 +80,12 @@ def publish_epub_source(
     media_id: UUID,
     plan: EpubExtractionPlan,
     source_file: ReaderPublicationSourceFile | None = None,
-) -> tuple[dict[str, object], list[str]]:
+) -> tuple[SourceRunOutcome, list[str]]:
     """Publish a prepared EPUB plan in the caller's fenced transaction.
 
     ``source_file`` is the newly prepared source object this publication makes
     reader-visible; the publication owner installs that pointer under its lock.
-    Returns the response and the storage paths the caller deletes only after its
+    Returns the native outcome and storage paths the caller deletes only after its
     transaction commits: either the rejected prepared source, or the source and
     assets this successful publication superseded.
     """
@@ -93,28 +97,26 @@ def publish_epub_source(
     if media.processing_status != ProcessingStatus.extracting:
         # Nothing is published, so the prepared object never becomes reader-visible
         # and the current pointer and generation both stand.
-        return {
-            "status": "skipped",
-            "reason": "not_extracting",
-        }, unpublished_reader_source_paths(db, media_id=media_id, source_file=source_file)
+        return SourceRunOutcome(
+            diagnostics={"status": "skipped", "reason": "not_extracting"}
+        ), unpublished_reader_source_paths(db, media_id=media_id, source_file=source_file)
     superseded_source_paths = superseded_reader_source_paths(
         db, media_id=media_id, source_file=source_file
     )
 
-    def replace_projection(locked_media: Media) -> tuple[dict[str, object], list[str]]:
+    def replace_projection(locked_media: Media) -> tuple[SourceRunOutcome, list[str]]:
         result, old_storage_paths = publish_epub_extraction_plan(db, media_id=media_id, plan=plan)
         _persist_epub_metadata(locked_media, result)
         bump_all_collection_families(
             db, families=(CollectionFamily.AuthorWorks, CollectionFamily.LibraryEntries)
         )
         db.flush()
-        response: dict[str, object] = {
+        diagnostics: SourceDiagnostics = {
             "status": "success",
             "fragment_count": result.fragment_count,
             "toc_node_count": result.toc_node_count,
             "asset_count": result.asset_count,
             "title": result.title,
-            "metadata_enrichment": True,
         }
         for issue in result.contributor_issues:
             logger.warning(
@@ -124,15 +126,18 @@ def publish_epub_source(
                 detail=issue.detail,
             )
         if result.contributor_issues:
-            response["contributor_issues"] = [
+            diagnostics["contributor_issues"] = [
                 {"code": issue.code, "detail": issue.detail} for issue in result.contributor_issues
             ]
-        attach_author_observation(
-            response, observation=result.contributor_observation, source="epub_opf"
-        )
-        return response, old_storage_paths
+        return SourceRunOutcome(
+            diagnostics=diagnostics,
+            observations=source_contributor_observations(
+                media_id=media_id, observation=result.contributor_observation, source="epub_opf"
+            ),
+            metadata_enrichment=present(True),
+        ), old_storage_paths
 
-    response, old_storage_paths = replace_reader_publication(
+    outcome, old_storage_paths = replace_reader_publication(
         db,
         media_id=media_id,
         expected_kind="epub",
@@ -140,7 +145,7 @@ def publish_epub_source(
         issues=ReplaceSourceIssues(issues=plan.source_issues),
         source_file=source_file,
     )
-    return response, superseded_source_paths + old_storage_paths
+    return outcome, superseded_source_paths + old_storage_paths
 
 
 def _persist_epub_metadata(media: Media, result: EpubExtractionResult) -> None:

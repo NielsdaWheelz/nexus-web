@@ -7,12 +7,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.models import Fragment, Media, ProcessingStatus
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.logging import get_logger
+from nexus.schemas.presence import absent, present
 from nexus.services import library_entries
 from nexus.services.collection_revisions import CollectionFamily, bump_all_collection_families
 from nexus.services.contributor_taxonomy import (
@@ -32,10 +33,10 @@ from nexus.services.document_embeds import (
 )
 from nexus.services.fragment_blocks import FragmentBlockSpec, insert_fragment_blocks
 from nexus.services.html_apparatus import attach_fragment_locators
-from nexus.services.media_author_observation_seam import attach_author_observation
 from nexus.services.media_processing_state import mark_ready_for_reading
 from nexus.services.reader_apparatus import replace_media_apparatus
 from nexus.services.reader_publication import ReplaceSourceIssues, replace_reader_publication
+from nexus.services.source_outcome import SourceRunOutcome, source_contributor_observations
 from nexus.services.source_publication import SourcePublicationFence, run_source_publication_phase
 from nexus.services.web_article_artifacts import delete_web_article_artifacts
 from nexus.services.web_article_structure import (
@@ -108,7 +109,7 @@ def materialize_x_author_thread_media(
     source_attempt_id: UUID,
     request_id: str | None,
     publication_fence: SourcePublicationFence,
-) -> dict[str, object]:
+) -> SourceRunOutcome:
     """Publish the author thread, deduping onto an existing canonical thread media."""
     snapshot = _fetch(lambda: fetch_author_thread_snapshot(post_id), viewer_id, request_id)
     if not snapshot.posts:
@@ -247,36 +248,31 @@ def materialize_x_author_thread_media(
         mutate=publish,
         discover=discover,
     )
-    result: dict[str, object] = {
-        "processing_status": processing_status,
-        "ingest_enqueued": False,
-        "idempotency_outcome": "reused" if winner_id else "refreshed",
-        "metadata_enrichment": True,
-        "additional_reindex_media_ids": [str(value) for value in reindex_media_ids],
-    }
-    author_observation = _author_observation(snapshot.author.name, snapshot.author.id)
-    if winner_id is not None:
-        result["superseded_by_media_id"] = str(winner_id)
-        attach_author_observation(
-            result,
-            media_id=winner_id,
-            observation=author_observation,
-            source="x_api_author_thread",
-        )
-        return result
-    attach_author_observation(
-        result, media_id=media_id, observation=author_observation, source="x_api_author_thread"
+    observations = source_contributor_observations(
+        media_id=winner_id if winner_id is not None else media_id,
+        observation=_author_observation(snapshot.author.name, snapshot.author.id),
+        source="x_api_author_thread",
     )
-    for quoted_id, quoted_post in quoted_posts.items():
-        quoted_author = snapshot.users.get(quoted_post.author_id)
-        if quoted_author is not None:
-            attach_author_observation(
-                result,
-                media_id=quote_media_ids[quoted_id],
-                observation=_author_observation(quoted_author.name, quoted_author.id),
-                source="x_api_quoted_post",
-            )
-    return result
+    if winner_id is None:
+        for quoted_id, quoted_post in quoted_posts.items():
+            quoted_author = snapshot.users.get(quoted_post.author_id)
+            if quoted_author is not None:
+                observations += source_contributor_observations(
+                    media_id=quote_media_ids[quoted_id],
+                    observation=_author_observation(quoted_author.name, quoted_author.id),
+                    source="x_api_quoted_post",
+                )
+    return SourceRunOutcome(
+        diagnostics={
+            "processing_status": processing_status,
+            "ingest_enqueued": False,
+            "idempotency_outcome": "reused" if winner_id is not None else "refreshed",
+        },
+        observations=observations,
+        superseded_by_media_id=present(winner_id) if winner_id is not None else absent(),
+        additional_reindex_media_ids=tuple(reindex_media_ids),
+        metadata_enrichment=present(True),
+    )
 
 
 def materialize_x_post_media(
@@ -287,7 +283,7 @@ def materialize_x_post_media(
     post_id: str,
     request_id: str | None,
     publication_fence: SourcePublicationFence,
-) -> dict[str, object]:
+) -> SourceRunOutcome:
     """Publish one single X post, deduping onto an existing canonical post media."""
     snapshot = _fetch(lambda: fetch_single_post_snapshot(post_id), viewer_id, request_id)
     provider_id = x_post_provider_id(snapshot.post.id)
@@ -334,23 +330,25 @@ def materialize_x_post_media(
         mutate=publish,
         discover=discover,
     )
-    result: dict[str, object] = {
-        "processing_status": processing_status,
-        "ingest_enqueued": False,
-        "idempotency_outcome": "reused" if winner_id else "refreshed",
-        "metadata_enrichment": True,
-    }
     author = snapshot.users.get(snapshot.post.author_id)
-    if winner_id is not None:
-        result["superseded_by_media_id"] = str(winner_id)
-    elif author is not None:
-        attach_author_observation(
-            result,
-            media_id=media_id,
-            observation=_author_observation(author.name, author.id),
-            source="x_api_post",
-        )
-    return result
+    return SourceRunOutcome(
+        diagnostics={
+            "processing_status": processing_status,
+            "ingest_enqueued": False,
+            "idempotency_outcome": "reused" if winner_id is not None else "refreshed",
+        },
+        observations=(
+            source_contributor_observations(
+                media_id=media_id,
+                observation=_author_observation(author.name, author.id),
+                source="x_api_post",
+            )
+            if winner_id is None and author is not None
+            else ()
+        ),
+        superseded_by_media_id=present(winner_id) if winner_id is not None else absent(),
+        metadata_enrichment=present(True),
+    )
 
 
 def _fetch[T](call: Callable[[], T], viewer_id: UUID, request_id: str | None) -> T:
@@ -374,20 +372,10 @@ def _fetch[T](call: Callable[[], T], viewer_id: UUID, request_id: str | None) ->
 def _other_media_with_provider_id(
     db: Session, provider_id: str, exclude_media_id: UUID | None
 ) -> UUID | None:
-    row = db.scalar(
-        text(
-            """
-            SELECT id FROM media
-            WHERE provider = 'x'
-              AND provider_id = :provider_id
-              AND (:exclude_media_id::uuid IS NULL OR id != :exclude_media_id)
-            ORDER BY id
-            LIMIT 1
-            """
-        ),
-        {"provider_id": provider_id, "exclude_media_id": exclude_media_id},
-    )
-    return UUID(str(row)) if row is not None else None
+    query = select(Media.id).where(Media.provider == "x", Media.provider_id == provider_id)
+    if exclude_media_id is not None:
+        query = query.where(Media.id != exclude_media_id)
+    return db.scalar(query.order_by(Media.id).limit(1))
 
 
 def _author_observation(display_name: str, x_user_id: str) -> ContributorObservationBatch:

@@ -77,14 +77,9 @@ from nexus.services.capabilities import (
     ViewerRecovery,
     is_same_source_terminal_error,
 )
-from nexus.services.contributor_taxonomy import ContributorObservationBatch, NotObserved
 from nexus.services.contributor_writes import MediaTarget
 from nexus.services.contributors import apply_observed_role_slices_in_current_transaction
 from nexus.services.import_history import append_processing_event
-from nexus.services.media_author_observation_seam import (
-    SourceAuthorObservation,
-    take_author_observations,
-)
 from nexus.services.media_deletion import (
     delete_document_storage_objects,
     delete_duplicate_document_media,
@@ -110,6 +105,7 @@ from nexus.services.source_attempt_failures import (
     source_attempt_failure_stage,
 )
 from nexus.services.source_history import source_failure_progress, source_history_stage
+from nexus.services.source_outcome import SourceRunOutcome, source_outcome_to_job_result
 from nexus.services.source_publication import (
     SourcePublicationFence,
     SourcePublicationSuperseded,
@@ -1928,42 +1924,6 @@ def _load_owned_media(db: Session, viewer_id: UUID, media_id: UUID, *, lock: boo
 # =============================================================================
 
 
-@dataclass(frozen=True, slots=True)
-class SourceRunOutcome:
-    """One adapter's closed result, decoded once for the runner."""
-
-    log: dict[str, object]
-    observations: tuple[SourceAuthorObservation, ...]
-    superseded_by_media_id: UUID | None
-    additional_reindex_media_ids: tuple[UUID, ...] = ()
-    warning_error_code: str | None = None
-    transcript_semantic_intent: bool = False
-    transcript_request_reason: object = None
-    metadata_enrichment: bool = False
-
-    @classmethod
-    def of(cls, result: dict[str, object]) -> SourceRunOutcome:
-        # The observations hold credited names and must never reach the logged
-        # or returned job result, so they are drained, not read.
-        observations = tuple(take_author_observations(result))
-        reindex = result.pop("additional_reindex_media_ids", [])
-        superseded = result.get("superseded_by_media_id")
-        return cls(
-            log=result,
-            observations=observations,
-            superseded_by_media_id=UUID(str(superseded)) if superseded else None,
-            additional_reindex_media_ids=tuple(
-                UUID(str(value)) for value in (reindex if isinstance(reindex, list) else [])
-            ),
-            warning_error_code=(
-                str(result["warning_error_code"]) if result.get("warning_error_code") else None
-            ),
-            transcript_semantic_intent=bool(result.get("transcript_semantic_intent")),
-            transcript_request_reason=result.get("transcript_request_reason"),
-            metadata_enrichment=bool(result.get("metadata_enrichment")),
-        )
-
-
 def run_source_attempt(
     *,
     session_factory: sessionmaker[Session],
@@ -2034,7 +1994,7 @@ def _run_fenced_attempt(
         snapshot_db.close()
 
     try:
-        result = run_source_adapter(
+        outcome = run_source_adapter(
             session_factory=session_factory,
             media_id=media_id,
             attempt=attempt,
@@ -2051,11 +2011,13 @@ def _run_fenced_attempt(
             session_factory, media_id=media_id, attempt_id=attempt_id, exc=exc, fence=fence
         )
 
-    outcome = SourceRunOutcome.of(result)
     superseded_storage_paths: list[str] = []
     terminal_media_id = media_id
-    if outcome.superseded_by_media_id is not None and outcome.superseded_by_media_id != media_id:
-        winner_media_id = outcome.superseded_by_media_id
+    if (
+        isinstance(outcome.superseded_by_media_id, Present)
+        and outcome.superseded_by_media_id.value != media_id
+    ):
+        winner_media_id = outcome.superseded_by_media_id.value
         superseded_storage_paths = run_source_publication_phase(
             session_factory=session_factory,
             label="publish_source_media_supersession",
@@ -2073,7 +2035,7 @@ def _run_fenced_attempt(
         media_id,
         terminal_media_id,
         *outcome.additional_reindex_media_ids,
-        *(observed for observed, _obs, _src in outcome.observations if observed is not None),
+        *(observed for observed, _obs, _src in outcome.observations),
     }
     discover = _document_embed_owners(base_media_ids)
 
@@ -2100,7 +2062,11 @@ def _run_fenced_attempt(
         ),
         discover=discover,
     )
-    if attempt.created_by_user_id is not None and outcome.metadata_enrichment:
+    if (
+        attempt.created_by_user_id is not None
+        and isinstance(outcome.metadata_enrichment, Present)
+        and outcome.metadata_enrichment.value
+    ):
         post_success_db = session_factory()
         try:
             metadata_job = try_enqueue_metadata_enrichment(
@@ -2114,7 +2080,7 @@ def _run_fenced_attempt(
         finally:
             post_success_db.close()
     delete_document_storage_objects(superseded_storage_paths)
-    return outcome.log
+    return source_outcome_to_job_result(outcome)
 
 
 def _document_embed_owners(media_ids: set[UUID]) -> Callable[[Session], list[UUID]]:
@@ -2143,12 +2109,10 @@ def _apply_observations(db: Session, terminal_media_id: UUID, outcome: SourceRun
     if media is None or media.processing_status == ProcessingStatus.failed:
         return
     for observed_media_id, observation, source in outcome.observations:
-        if isinstance(observation, NotObserved):
-            continue
         apply_observed_role_slices_in_current_transaction(
             db,
-            target=MediaTarget(observed_media_id or terminal_media_id),
-            observation=cast(ContributorObservationBatch, observation),
+            target=MediaTarget(observed_media_id),
+            observation=observation,
             source=source,
         )
 
@@ -2200,7 +2164,7 @@ def _publish_terminal_attempt(
             facts=SourceSucceeded(source_attempt_id=attempt.id, execution_id=present(execution_id)),
             failure_code=absent(),
         )
-        if outcome.warning_error_code == "E_PDF_TEXT_UNAVAILABLE":
+        if isinstance(outcome.pdf_has_text, Present) and not outcome.pdf_has_text.value:
             mark_stage_warning(
                 db,
                 media,
@@ -2209,11 +2173,11 @@ def _publish_terminal_attempt(
                 error_message="PDF text is unavailable; OCR is required.",
             )
         bump_all_media_fact_collections(db)
-        if outcome.transcript_semantic_intent:
+        if isinstance(outcome.transcript_request_reason, Present):
             enqueue_transcript_semantic_job(
                 db,
                 media_id=terminal_media_id,
-                request_reason=require_transcript_request_reason(outcome.transcript_request_reason),
+                request_reason=outcome.transcript_request_reason.value,
             )
         if media.kind in {
             MediaKind.web_article.value,

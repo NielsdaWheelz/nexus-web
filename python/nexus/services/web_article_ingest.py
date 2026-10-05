@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.config import get_settings
-from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus
+from nexus.db.models import Media, MediaKind, ProcessingStatus
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.schemas.presence import Present
+from nexus.schemas.presence import Present, absent, present
 from nexus.schemas.publication_dates import normalize_source_publication_date
 from nexus.services.collection_revisions import CollectionFamily, bump_all_collection_families
 from nexus.services.contributor_taxonomy import (
@@ -22,31 +21,24 @@ from nexus.services.contributor_taxonomy import (
     RawCreditEntry,
     build_observation,
 )
-from nexus.services.document_embeds import (
-    DocumentEmbedLockSetChanged,
-    replace_document_embed_artifact,
-)
-from nexus.services.fragment_blocks import insert_fragment_blocks
-from nexus.services.html_apparatus import (
-    accepted_apparatus_spans,
-    attach_fragment_locators,
-    derive_fragment_note_groups,
-)
-from nexus.services.media_author_observation_seam import attach_author_observation
+from nexus.services.document_embeds import DocumentEmbedLockSetChanged
 from nexus.services.node_ingest import (
     IngestError,
     IngestResult,
     node_ingest_command,
     run_node_ingest,
 )
-from nexus.services.reader_apparatus import replace_media_apparatus
 from nexus.services.reader_publication import ReplaceSourceIssues, replace_reader_publication
+from nexus.services.source_outcome import SourceRunOutcome, source_contributor_observations
 from nexus.services.source_publication import SourcePublicationFence, run_source_publication_phase
 from nexus.services.url_normalize import normalize_url_for_display
-from nexus.services.web_article_artifacts import delete_web_article_artifacts
+from nexus.services.web_article_artifacts import (
+    ArticleEmbedReplacement,
+    install_prepared_article_apparatus,
+    replace_prepared_article_content,
+)
 from nexus.services.web_article_structure import (
     WebArticlePreparedFragment,
-    document_embed_artifact_occurrences,
     prepare_web_article_fragment,
 )
 
@@ -62,7 +54,7 @@ def materialize_web_article_source(
     *,
     extract_embeds: bool,
     publication_fence: SourcePublicationFence,
-) -> dict[str, object]:
+) -> SourceRunOutcome:
     """Materialize a generic web URL under the durable source-ingest owner."""
     if source_attempt_id is None:
         raise ApiError(ApiErrorCode.E_INTERNAL, "Web source publication requires its attempt.")
@@ -103,11 +95,10 @@ def materialize_web_article_source(
         ),
     )
     if winner_id is not None:
-        return {
-            "status": "deduped",
-            "canonical_url": canonical_url,
-            "superseded_by_media_id": str(winner_id),
-        }
+        return SourceRunOutcome(
+            diagnostics={"status": "deduped", "canonical_url": canonical_url},
+            superseded_by_media_id=present(winner_id),
+        )
 
     try:
         prepared = prepare_web_article_fragment(
@@ -118,7 +109,6 @@ def materialize_web_article_source(
             fragment_idx=0,
             extract_embeds=extract_embeds,
         )
-        source_apparatus = prepared
     except Exception as exc:
         raise ApiError(ApiErrorCode.E_SANITIZATION_FAILED, f"Article prep failed: {exc}") from exc
 
@@ -160,7 +150,6 @@ def materialize_web_article_source(
                     extract_embeds=extract_embeds,
                     ingest_result=ingest_result,
                     prepared=prepared,
-                    source_apparatus=source_apparatus,
                     locked_embed_media_ids=frozenset(planned_existing_media_ids),
                 ),
             )
@@ -181,19 +170,20 @@ def materialize_web_article_source(
         # finite exact lock set.
         raise ApiError(ApiErrorCode.E_INGEST_FAILED, "Web embed media lock set did not stabilize")
 
-    result: dict[str, object] = {
-        "status": "success",
-        "canonical_url": canonical_url,
-        "title": ingest_result.title,
-        "fragment_id": str(fragment_id),
-        "metadata_enrichment": True,
-    }
-    attach_author_observation(
-        result,
-        observation=_web_article_observation(ingest_result),
-        source="web_article_byline",
+    return SourceRunOutcome(
+        diagnostics={
+            "status": "success",
+            "canonical_url": canonical_url,
+            "title": ingest_result.title,
+            "fragment_id": str(fragment_id),
+        },
+        observations=source_contributor_observations(
+            media_id=media_id,
+            observation=_web_article_observation(ingest_result),
+            source="web_article_byline",
+        ),
+        metadata_enrichment=present(True),
     )
-    return result
 
 
 def _claim_canonical_url(db: Session, *, media_id: UUID, canonical_url: str) -> UUID | None:
@@ -231,73 +221,38 @@ def _replace_projection(
     extract_embeds: bool,
     ingest_result: IngestResult,
     prepared: WebArticlePreparedFragment,
-    source_apparatus: WebArticlePreparedFragment,
     locked_embed_media_ids: frozenset[UUID],
 ) -> UUID:
     """Replace the fragment, embeds, metadata and apparatus inside the fence."""
-    owner_user_id = media.created_by_user_id or actor_user_id
-    delete_web_article_artifacts(db, media_id=media_id, include_content_index=False)
-    fragment = Fragment(
+    fragment_id = replace_prepared_article_content(
+        db,
         media_id=media_id,
-        idx=0,
-        html_sanitized=prepared.html_sanitized,
-        canonical_text=prepared.canonical_text,
-        created_at=datetime.now(UTC),
-    )
-    db.add(fragment)
-    db.flush()
-    insert_fragment_blocks(db, fragment.id, prepared.fragment_blocks)
-    if extract_embeds:
-        queued_children = replace_document_embed_artifact(
-            db,
-            owner_user_id=owner_user_id,
-            media_id=media_id,
-            source_attempt_id=source_attempt_id,
-            occurrences=document_embed_artifact_occurrences(
-                fragment_id=fragment.id, document_embeds=prepared.document_embeds
-            ),
-            extraction_failed=prepared.document_embed_extraction_failed,
-            locked_existing_target_media_ids=locked_embed_media_ids,
-        )
-        from nexus.services.media_source_ingest import (
-            enqueue_accepted_source_attempt_in_transaction,
-        )
-
-        for child_media_id, child_attempt_id in queued_children:
-            enqueue_accepted_source_attempt_in_transaction(
-                db,
-                media_id=child_media_id,
-                attempt_id=child_attempt_id,
-                actor_user_id=actor_user_id,
-                request_id=request_id,
+        prepared=prepared,
+        embeds=(
+            present(
+                ArticleEmbedReplacement(
+                    owner_user_id=media.created_by_user_id or actor_user_id,
+                    child_actor_user_id=actor_user_id,
+                    source_attempt_id=source_attempt_id,
+                    request_id=request_id,
+                    locked_existing_target_media_ids=locked_embed_media_ids,
+                )
             )
+            if extract_embeds
+            else absent()
+        ),
+    )
     if ingest_result.title:
         media.title = ingest_result.title[:255]
     _persist_web_metadata(db, media, ingest_result)
-    accepted_spans = accepted_apparatus_spans(prepared.structure, prepared.canonical_text)
-    replace_media_apparatus(
+    install_prepared_article_apparatus(
         db,
         media_id=media_id,
-        items=attach_fragment_locators(
-            media_id=media_id,
-            fragment_id=fragment.id,
-            media_kind="web_article",
-            canonical_text=prepared.canonical_text,
-            items=source_apparatus.apparatus_items,
-            accepted_spans=accepted_spans,
-            html_sanitized=prepared.html_sanitized,
-        ),
-        edges=source_apparatus.apparatus_edges,
-        note_groups=derive_fragment_note_groups(
-            prepared.html_sanitized,
-            prepared.canonical_text,
-            fragment.id,
-            structure=prepared.structure,
-            accepted_spans=accepted_spans,
-            source_html=ingest_result.content_html,
-        ),
+        fragment_id=fragment_id,
+        prepared=prepared,
+        source_html=ingest_result.content_html,
     )
-    return fragment.id
+    return fragment_id
 
 
 def _persist_web_metadata(db: Session, media: Media, ingest_result: IngestResult) -> None:
