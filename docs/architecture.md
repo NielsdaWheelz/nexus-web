@@ -470,6 +470,17 @@ user/date role assignment to an ordinary Page), `note_blocks` (ProseMirror JSON
 plus generated text only), `resource_versions`, `resource_mutations`, and
 `resource_view_states`. `users.calendar_time_zone` is the sole account-local
 Today clock.
+the account profile's single transport owner is native `UserProfileOut`, returned
+by GET and PATCH `/me` as `Data[UserProfileOut]`. all six keys are required,
+including nullable email, display name and ingest address. GET supplies the
+configured ingest address; PATCH retains null. settings preserves its GET
+address while acknowledging only the edited field. web calls use generated
+method-specific contracts; bootstrap alone projects the two-field account domain.
+its provider keeps the current account-local zone. plain-text share freezes that
+date before saving. native names allow 100 raw code points while the web form allows
+80 UTF-16 units; [alignment remains deferred](tickets/account-display-name-has-conflicting-length-bounds.md).
+bare `/daily` still opens an unsupported pane: the declared server redirect is a
+[hidden entry path](tickets/daily-root-entry-bypasses-server-redirect.md), not qualified behavior.
 Page/note ordering, inline note-to-object refs, highlight-note attachments, and
 backlinks are `resource_edges`, below — notes own no link table.
 

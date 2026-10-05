@@ -5,10 +5,7 @@ import { callFastAPI } from "@/lib/api/server";
 import { serverResourceFetcher } from "@/lib/api/resourceTransport.server";
 import type { DehydratedResources } from "@/lib/api/resourceCache";
 import type { ApiJson } from "@/lib/api/wire";
-import {
-  decodeAuthenticatedAccount,
-  type AuthenticatedAccount,
-} from "@/lib/account/contract";
+import type { AuthenticatedAccount } from "@/lib/account/contract";
 import { REQUEST_PATH_HEADER } from "@/lib/auth/requestPath";
 import { readDeviceId } from "@/lib/auth/deviceCookie";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
@@ -97,8 +94,11 @@ async function loadReaderProfile(): Promise<ReaderProfile> {
 }
 
 async function loadAuthenticatedAccount(): Promise<AuthenticatedAccount> {
-  const response = await callFastAPI<{ data: unknown }>("/me");
-  return decodeAuthenticatedAccount(response.data);
+  const response = await callFastAPI<ApiJson<"/me", "get">>("/me");
+  return {
+    accountId: response.data.user_id,
+    calendarTimeZone: response.data.calendar_time_zone,
+  };
 }
 
 // Saved state is required bootstrap input. Transport failure must not fabricate

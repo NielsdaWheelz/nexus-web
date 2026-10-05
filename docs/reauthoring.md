@@ -11,38 +11,39 @@ is about 70,776 physical lines. all tracked text is a separate denominator:
 while simplifying ownership; compressed syntax, file moves and outsourced
 implementation do not count as simplification. full target feasibility is open.
 
-| category | frozen `bbfd1df4` | delivery base `0adfa3ae` | current cut | cut delta |
+| category | frozen `bbfd1df4` | delivery base `56ca32ce` | precommit candidate | cut delta |
 |---|---:|---:|---:|---:|
-| authored runtime | 353,881 | 311,652 | 311,655 | +3 |
-| generated source | 19,513 | 22,196 | 22,196 | 0 |
-| migration history | 10,370 | 10,634 | 10,634 | 0 |
-| documentation/tickets | 31,296 | 32,531 | 32,636 | +105 |
+| authored runtime | 353,881 | 310,309 | 310,238 | -71 |
+| generated source | 19,513 | 22,395 | 22,419 | +24 |
+| migration history | 10,370 | 10,665 | 10,665 | 0 |
+| documentation/tickets | 31,296 | 33,111 | 33,145 | +34 |
 | locks | 3,695 | 3,684 | 3,684 | 0 |
-| other tooling/config/text | 11,008 | 10,864 | 10,864 | 0 |
-| all tracked text | 429,763 | 391,561 | 391,669 | +108 |
+| other tooling/config/text | 11,008 | 10,870 | 10,870 | 0 |
+| all tracked text | 429,763 | 391,034 | 391,021 | -13 |
 
-upstream #502/#522/#523 removed 16,218 authored lines since this slice's original
-`557aed14` pin. this cut repairs native url admission ownership: `media_source_ingest.py`
-2,427→2,430 physical lines; authored nonblank is unchanged. one read-committed
-retry owns the viewer transaction and preserves the library append-lock contract.
-system and embedded admission remain caller-owned. a locked reuse refresh costs
-one additional read and prevents stale lifecycle/error receipts; enqueue conflicts
-reach the existing retry owner unchanged. current authored runtime is 11.93% below
-the frozen baseline; the remaining four-fifths goal's feasibility remains open.
+this cut makes native `Data[UserProfileOut]` the single GET/PATCH `/me` transport
+owner and removes its browser decoders: authored −71, generated +24, combined −47.
+the four-line account domain and provider remain. GET's configured ingest address
+and PATCH's null remain distinct; settings acknowledges only the edited field.
+the oracle candidate was handed to its sole combined landing owner and contributes
+no landed reduction here. the campaign's four-fifths target remains unproven.
 
-[source admission](modules/video.md) owns the final transaction contract. real
-native HTTP/DB checks qualified canonical races, exact-key replay, refusal and
-rollback; twenty distinct ordinary admissions at concurrency two all returned
-202 with exact committed topology and zero natural serialization errors. native
-fenced publication, one-shot child-enqueue retry and caller-owned work were
-qualified separately. no worker, provider or extraction execution is claimed.
-generic defect request-ID loss remains an [open egress issue](tickets/native-defect-responses-lose-request-id.md).
+original controls were captured at `5bc79139`/source `d1898f45`; ten literal native
+responses, account/context/reload controls and actual date-bound share creation
+with three native durable readbacks passed on `f57a80e2`/source `2f401361`.
+delivery base `56ca32ce` preserves the selected sources and all 929 existing wire
+components; its two new profile components equal the qualified ones. final source
+`04a6960a` adds only an AST-equivalent formatter correction and passes `./scripts/test`.
+this is source composition, not a new browser run. bare `/daily` remains the
+[observed unsupported entry](tickets/daily-root-entry-bypasses-server-redirect.md);
+[name-bound alignment](tickets/account-display-name-has-conflicting-length-bounds.md)
+is deferred. provider, mail delivery, device and production checks were not run.
 
-counts read immutable tracked utf-8 git blobs, exclude nul/undecodable binaries,
-and use `str.splitlines()`; nonblank means `line.strip()` is nonempty. this
-reproduces the frozen physical denominator and its corrected nonblank subtotal.
-the exact source categories below stay fixed; temporary probes are deleted
-before the sole static gate, and the committed tree is recounted immutably.
+baseline/base counts read immutable tracked utf-8 git blobs; precommit candidate
+counts read the current tracked and task-owned new source bytes. both exclude
+nul/undecodable binaries and use `str.splitlines()`; nonblank means `line.strip()`
+is nonempty. the source categories below stay fixed. temporary probes are removed
+before delivery, after behavioral qualification and the sole required static gate.
 
 ## ownership map at campaign start
 
@@ -146,7 +147,7 @@ author retirement counts compare `2efd00ae4` with tested `0e8bcbb8f`: web `lib/c
 | substrate: resource graph (refs, edges, citations) | 5.2k | 2k | reauthor | first pass landed (size/resource-graph-py): 6.6k→4.9k, −25%; json boundary cut from delivery base `ef3f1d7f`: handwritten graph clients 620→133, affected authored runtime −464 (web −498, python +34), generated +166, total runtime plus generated source −298; native contracts replace duplicate codecs, keeping action/body projections and frozen replay; integrated nine literal api samples, nine real browser checks and static gate pass; the original ten browser checks remain prior qualification; [contract and qualification](modules/resource-graph.md); broader graph reauthoring remains open |
 | substrate: action menu (snapshot→menu→runtime/cache) | 11.4k | 1.5k | one catalog + one menu | catalog/environment/menu/runtime core: 3,265→2,168 lines and 104,151→70,217 bytes; direct capability-to-command projection replaces intent/plan/dispatch layers. typed action-snapshot read boundary removes another 518 handwritten lines: generated contracts, true omitted-id state unions and producer-owned coherence replace duplicate decoding; literal wire/menu, real scoped reads and local relationship mutation and final static qualified. cache, mutation leases, editor handoff and remaining substrate stay open |
 | substrate: workspace/panes (store, host, memento, mobile chrome, pane find, route model) | 20.7k | 6k | reauthor | session save lifecycle repaired (cleanup/workspace-save-acknowledgement): two production owners +65 lines for acknowledgement, serialized latest intent, dirty retry/flush and owned feedback; live failure/order/restore and fault handoff qualified; per-device last-write-wins and best-effort close retained; remaining workspace reauthoring open |
-| substrate: api/auth/bff (proxy, sse, session; BFF routes already collapsed) | 13.9k | 4k | reauthor | bff transport 940→328 lines: one forwarding owner with explicit session/public/share/extension lanes; server JSON fetch now owns its deadline through body consumption; request sessions now have one native function-scoped cleanup owner, replacing response middleware/tracking and nine local dependency aliases: 42 source owners −109 physical/−95 nonblank lines, generated wire unchanged; auth, client consolidation and sse remain open |
+| substrate: api/auth/bff (proxy, sse, session; BFF routes already collapsed) | 13.9k | 4k | reauthor | bff transport 940→328 lines: one forwarding owner with explicit session/public/share/extension lanes; server JSON fetch now owns its deadline through body consumption; request sessions now have one native function-scoped cleanup owner, replacing response middleware/tracking and nine local dependency aliases: 42 source owners −109 physical/−95 nonblank lines, generated wire unchanged; GET/PATCH `/me` now use native profile outputs and six generated web calls, removing parallel profile decoding (−71 authored, +24 generated); the two-field account domain, GET/PATCH ingest distinction and profile/provider ownership remain; auth, client consolidation and sse remain open |
 | substrate: ui primitives (+3.5k css, fonts/legal) | 14.3k | 6k | reauthor css | open |
 | substrate: jobs/worker | 6.6k | 2k | reauthor | first pass landed (size/jobs-py): 6.4k→4.0k, −38%; queue.py 1,027 (310 SQL lines) and worker.py 707 are the remaining mass |
 | codex agent host (+ deploy isolation) | 4.4k | 2k | keep; declare isolation in compose, not python | open |

@@ -4,7 +4,6 @@ import Link from "next/link";
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
   useTransition,
@@ -34,6 +33,7 @@ import {
   type NoResourceParams,
 } from "@/lib/api/resource";
 import { useResource } from "@/lib/api/useResource";
+import type { ApiJson } from "@/lib/api/wire";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { changeEmailAction } from "./actions";
 import styles from "./page.module.css";
@@ -42,12 +42,7 @@ import {
   copyText,
 } from "@/lib/ui/copyText";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import { decodeAuthenticatedAccountProfile } from "@/lib/account/contract";
 import { isAbortError } from "@/lib/errors";
-
-interface AccountResponse {
-  data: unknown;
-}
 
 interface GenerationEffect {
   position_id: string;
@@ -270,17 +265,14 @@ function accountErrorMessage(
 
 export default function SettingsAccountPaneBody() {
   const { setCalendarTimeZone } = useAuthenticatedAccount();
-  const accountResource = useResource<AccountResponse, NoResourceParams>({
+  const accountResource = useResource<ApiJson<"/me", "get">, NoResourceParams>({
     descriptor: settingsAccountResource,
     params: {},
   });
-  const accountProfile = useMemo(
-    () =>
-      accountResource.status === "ready"
-        ? decodeAuthenticatedAccountProfile(accountResource.data.data)
-        : null,
-    [accountResource],
-  );
+  const accountProfile =
+    accountResource.status === "ready" ? accountResource.data.data : null;
+  const ingestAddress =
+    accountProfile === null ? null : accountProfile.email_ingest_address;
   const accountLoadFailure =
     accountResource.status === "error"
       ? {
@@ -356,12 +348,12 @@ export default function SettingsAccountPaneBody() {
           setEmailInput(email);
         }
       }
-      const name = accountProfile.displayName ?? "";
+      const name = accountProfile.display_name ?? "";
       setCurrentDisplayName(name);
       if (!displayNameDirtyRef.current) {
         setDisplayNameInput(name);
       }
-      const calendarTimeZone = accountProfile.calendarTimeZone;
+      const calendarTimeZone = accountProfile.calendar_time_zone;
       setCurrentCalendarTimeZone(calendarTimeZone);
       if (!calendarTimeZoneDirtyRef.current) {
         setCalendarTimeZoneInput(calendarTimeZone);
@@ -405,12 +397,11 @@ export default function SettingsAccountPaneBody() {
       setDisplayNameFeedback(null);
       startDisplayNameTransition(async () => {
         try {
-          const response = await apiFetch<{ data: unknown }>("/api/me", {
+          const response = await apiFetch<ApiJson<"/me", "patch">>("/api/me", {
             method: "PATCH",
             body: JSON.stringify({ display_name: displayNameInput }),
           });
-          const profile = decodeAuthenticatedAccountProfile(response.data);
-          const name = profile.displayName ?? "";
+          const name = response.data.display_name ?? "";
           setCurrentDisplayName(name);
           setDisplayNameInput(name);
           displayNameDirtyRef.current = false;
@@ -435,14 +426,13 @@ export default function SettingsAccountPaneBody() {
       startCalendarTimeZoneTransition(async () => {
         try {
           const requestedCalendarTimeZone = calendarTimeZoneInput.trim();
-          const response = await apiFetch<{ data: unknown }>("/api/me", {
+          const response = await apiFetch<ApiJson<"/me", "patch">>("/api/me", {
             method: "PATCH",
             body: JSON.stringify({
               calendar_time_zone: requestedCalendarTimeZone,
             }),
           });
-          const profile = decodeAuthenticatedAccountProfile(response.data);
-          const calendarTimeZone = profile.calendarTimeZone;
+          const calendarTimeZone = response.data.calendar_time_zone;
           setCurrentCalendarTimeZone(calendarTimeZone);
           setCalendarTimeZoneInput(calendarTimeZone);
           calendarTimeZoneDirtyRef.current = false;
@@ -612,16 +602,14 @@ export default function SettingsAccountPaneBody() {
       </PaneSection>
 
       <PaneSection title="Post Room">
-        {accountProfile === null ? null : accountProfile.emailIngestAddress ? (
+        {accountProfile === null ? null : ingestAddress ? (
           <>
             <p className={styles.current}>
-              <code>{accountProfile.emailIngestAddress}</code>
+              <code>{ingestAddress}</code>
             </p>
             <Button
               variant="ghost"
-              onClick={() =>
-                handleCopyIngestAddress(accountProfile.emailIngestAddress!)
-              }
+              onClick={() => handleCopyIngestAddress(ingestAddress)}
             >
               {ingestAddressCopied
                 ? "Copied"

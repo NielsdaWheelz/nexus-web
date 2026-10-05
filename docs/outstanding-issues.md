@@ -387,3 +387,5 @@ unexpected timeouts. See
 - [deferred] library / destination search · 2026-10-05 source review · deactivation retains initial loading; visible impact unqualified: [ticket](tickets/library-destination-search-deactivation-loading.md).
 - [deferred] library / web output aliases · 2026-10-05 source census · two exported entry aliases have no caller; native output remains live: [ticket](tickets/library-entry-unused-export-aliases.md).
 - [qualification] library / index return · 2026-10-05 source review · qualify whether an older memento survives an intervening placement epoch: [ticket](tickets/library-index-return-placement-epoch-unqualified.md).
+- [deferred] account / display-name bounds · 2026-10-05 source audit · web allows 80 UTF-16 units while native allows 100 code points; choose and align the product contract: [ticket](tickets/account-display-name-has-conflicting-length-bounds.md).
+- [deferred] workspace / daily entry · 2026-10-05 original browser controls · bare `/daily` opens an unsupported pane while its hidden page declares a redirect: [ticket](tickets/daily-root-entry-bypasses-server-redirect.md).

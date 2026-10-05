@@ -10,14 +10,14 @@ from fastapi import APIRouter, Depends, Query
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.config import Settings, get_settings
 from nexus.db.session import DbSession
-from nexus.responses import Data, ok, success_response
+from nexus.responses import Data, success_response
 from nexus.schemas.nexus_history import (
     NexusHistoryOut,
     NexusSelectionRecordOut,
     NexusSelectionRecordRequest,
 )
 from nexus.schemas.reader import ReaderProfileOut, ReaderProfilePatch
-from nexus.schemas.user import UpdateProfileRequest
+from nexus.schemas.user import UpdateProfileRequest, UserProfileOut
 from nexus.schemas.workspace_session import (
     WORKSPACE_SESSION_DEVICE_ID_MAX_LENGTH,
     WORKSPACE_SESSION_DEVICE_ID_MIN_LENGTH,
@@ -42,7 +42,7 @@ def get_me(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
     settings: Annotated[Settings, Depends(get_settings)],
-) -> dict:
+) -> Data[UserProfileOut]:
     """Get current user information.
 
     Requires authentication. Returns the authenticated user's ID,
@@ -60,7 +60,7 @@ def get_me(
         profile.email_ingest_address = (
             f"{settings.email_ingest_address_slug}@{settings.email_ingest_domain}"
         )
-    return ok(profile)
+    return Data(data=profile)
 
 
 @router.patch("/me")
@@ -68,13 +68,14 @@ def patch_me(
     body: UpdateProfileRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
-) -> dict:
+) -> Data[UserProfileOut]:
     """Update supplied user profile fields."""
     users_service.update_user_profile(db, viewer.user_id, body)
-    profile = users_service.get_user_profile(
-        db, viewer.user_id, viewer.default_library_id, viewer.email
+    return Data(
+        data=users_service.get_user_profile(
+            db, viewer.user_id, viewer.default_library_id, viewer.email
+        )
     )
-    return ok(profile)
 
 
 @router.get("/me/reader-profile")

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import LibraryDestinationField from "@/components/libraries/LibraryDestinationField";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import { decodeAuthenticatedAccount } from "@/lib/account/contract";
+import type { ApiJson } from "@/lib/api/wire";
 import {
   apiTransportFeedback,
   isApiError,
@@ -94,16 +94,13 @@ export default function ShareCapture({
   const [selectedDestinations, setSelectedDestinations] = useState<
     readonly LibraryDestinationSelection[]
   >([]);
-  const accountResource = useResource<{ data: unknown }>({
+  const accountResource = useResource<ApiJson<"/me", "get">>({
     cacheKey: trimmed && urls.length === 0 ? "share-capture:account" : null,
     path: () => "/api/me",
   });
-  // Decode during render so a successful-but-malformed same-system response
-  // reaches the route's defect boundary. Transport failures remain retryable
-  // resource state and never start the capture mutation.
   const calendarTimeZone =
     accountResource.status === "ready"
-      ? decodeAuthenticatedAccount(accountResource.data.data).calendarTimeZone
+      ? accountResource.data.data.calendar_time_zone
       : null;
 
   useEffect(() => {
