@@ -6,8 +6,7 @@ status: open · origin: 2026-10-04 simplification audit at `765f335aed06795ef2b3
 generated-schema alias with no consumers. repository-wide imports, symbol uses
 and explicit app/extension/offline entrypoint registrations were traced; this
 lib file is not a framework entrypoint. the live generated contract already
-owns its shape. the chat finding is tracked separately in
-[its ownership ticket](chat-failure-contract-has-parallel-browser-owner.md).
+owns its shape.
 
 delete the unused alias in a later scoped cleanup. preserve the live generated
 capability contract and its genuine domain projections. acceptance:
