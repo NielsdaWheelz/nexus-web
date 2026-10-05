@@ -792,7 +792,7 @@ _KINDS: dict[str, _Kind] = {
     "highlight": _Kind("highlight", "h.id", _highlight_sql, _highlight_row, "h.id"),
     "message": _Kind("message", "m.id", _message_sql, _message_row, "m.id"),
     "conversation": _Kind("conversation", "c.id", _conversation_sql, _conversation_row),
-    "artifact": _Kind("conversation", "r.id", _artifact_sql, _artifact_row),
+    "artifact": _Kind("conversation", "a.revision_id", _artifact_sql, _artifact_row),
     "reader_apparatus_item": _Kind(
         "reader_apparatus_item", "a.id", _apparatus_sql, _apparatus_row, "rai.id"
     ),
