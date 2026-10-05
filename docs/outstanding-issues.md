@@ -79,6 +79,23 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] android offline reading · 2026-09-26 source-note implementation · authored note links work, but downloaded readers lack aligned evidence inspection: [ticket](tickets/offline-reader-lacks-source-apparatus-inspection.md).
 - [open] reader / web · 2026-10-04 reader rewrite pr1 · the whole-document mount is unmeasured on a large book and on the phone (risk r1): [ticket](tickets/reader-whole-mount-large-book-unmeasured.md).
 - [open] reader / web · 2026-10-04 reader rewrite pr1 · focus mode, reader theme, pulse, pdf mark hover, find sources and the import boundary of the shared reader core wait for the hosted cutover: [ticket](tickets/reader-core-pr2-surface-gaps.md).
+- [open] reader / web · 2026-10-04 cleanup campaign · the hosted media pane still runs the old reader; pr2 replaces it on the shared core under the owner's css-highlight conditions: [ticket](tickets/reader-pr2-replace-hosted-pane.md).
+- [open] reader / pdf · 2026-10-04 cleanup campaign · opening a pdf saves a position with nothing read: [ticket](tickets/pdf-open-saves-unread-position.md).
+- [open] reader / pdf · 2026-10-04 cleanup campaign · pdf page buttons jump without holding the reading spot: [ticket](tickets/pdf-page-buttons-do-not-hold-reading-spot.md).
+- [open] reader / web article · 2026-10-04 cleanup campaign · section navigation does nothing at the very top of an article: [ticket](tickets/reader-section-nav-stuck-at-article-top.md).
+- [open] reader / transcript · 2026-10-04 cleanup campaign · a segment click saves nothing; reload reopens at segment 1: [ticket](tickets/transcript-segment-click-does-not-save-position.md).
+- [open] reader / progress · 2026-10-04 cleanup campaign · a cursor save the server accepted logs a network error: [ticket](tickets/reader-cursor-save-logs-false-network-error.md).
+- [open] reader / navigation · 2026-10-04 cleanup campaign · a jump in a never-read article saves position 0: [ticket](tickets/reader-jump-saves-position-without-reading.md).
+- [deferred] player · 2026-10-04 cleanup campaign · the player slice is specified, designed and harnessed but not implemented; owner questions block it: [ticket](tickets/player-reauthor-ready.md).
+- [open] player · 2026-10-04 cleanup campaign · replaying a finished episode starts at its end and re-completes: [ticket](tickets/player-replay-finished-episode-starts-at-end.md).
+- [open] player / activity · 2026-10-04 cleanup campaign · desktop listening in a hidden tab records no activity: [ticket](tickets/desktop-hidden-tab-listening-records-no-activity.md).
+- [open] player / lectern · 2026-10-04 cleanup campaign · desktop natural end skips the override fence: [ticket](tickets/desktop-natural-end-skips-override-fence.md).
+- [open] player / listening · 2026-10-04 cleanup campaign · per-episode playback rate differs between desktop and android: [ticket](tickets/episode-playback-rate-differs-by-device.md).
+- [open] player / lectern · 2026-10-04 cleanup campaign · "Mark as played" keeps the lectern row and undo moves it: [ticket](tickets/mark-as-played-keeps-lectern-row.md).
+- [open] player / listening · 2026-10-04 cleanup campaign · the unload keepalive can lose the last position: [ticket](tickets/listening-unload-keepalive-can-lose-position.md).
+- [open] player / listening · 2026-10-04 cleanup campaign · natural end stores a position past the duration: [ticket](tickets/natural-end-position-exceeds-duration.md).
+- [open] owner review · 2026-10-04 cleanup campaign · reversible defaults taken without an explicit owner decision (oracle plates/seed/corpus access/plate metadata, connections attach): [ticket](tickets/cleanup-campaign-defaults-await-owner-review.md).
+- [open] oracle · 2026-10-04 cleanup campaign · the readings list can order readings against their folio numbers: [ticket](tickets/oracle-readings-list-order-can-invert-folios.md).
 - [open] reader / inspector · 2026-09-24 reader-inspector-controls · reload open on Contents briefly shows Evidence: [ticket](tickets/reader-contents-publishes-after-navigation.md).
 - [open] reader / apparatus · 2026-09-26 reader chapter repair · newly inferred notes in preserved legacy html lack inline marker activation: [ticket](tickets/reader-repaired-note-markers-not-inline.md).
 - [open] epub / sections · 2026-09-26 chapter implementation · ambiguous pillow frontmatter headings still become routine stops: [ticket](tickets/epub-contents-union-overpromotes-source-headings.md).
@@ -355,7 +372,6 @@ unexpected timeouts. See
 - [open] epub contributors / saved repair · 2026-10-04 pr #482 closure · shipped parser/repair is locally qualified; production source-only preview/apply and preserved reader/credit verification remain: [ticket](tickets/epub-contributors-production-repair-pending.md) · [github #486](https://github.com/NielsdaWheelz/nexus-web/issues/486).
 - [open] metadata production admission · 2026-10-01 investigation · catalog cause and three reviewed retry dispositions await runtime repair: [ticket](tickets/metadata-production-catalog-refresh-fails.md).
 - [open] atlas / production migration · 2026-10-04 current-main composition · bcb86e actual0241→0257 retains all atlas identities/non-timestamp fields; 502 timestamp losses still need approval and final backup/restore: [ticket](tickets/atlas-0254-production-timestamp-loss.md).
-- [open] reader navigation / find · 2026-10-04 one-find slice · after a contents jump, find's return goes to the spot held before the jump, not where find started; needs a decision: [ticket](tickets/reader-find-return-keeps-earlier-held-spot.md).
 - [open] native llm tool storage · 2026-10-04 source audit · nullable replay pointer has no current application reader or writer; qualify retained data before dropping it: [ticket](tickets/llm-tool-position-unused-replay-pointer.md).
 - [deferred] resource activation / native output · 2026-10-04 chat read review · shared output validates href relation but not canonical resource_ref; retain browser leaf validation until the native owner does: [ticket](tickets/resource-activation-output-canonical-ref-contract.md).
 - [deferred] consumption / result projection · 2026-10-04 source audit · a qualifying next item is projected once alone and again in the full lectern snapshot: [ticket](tickets/consumption-result-builds-next-item-twice.md).

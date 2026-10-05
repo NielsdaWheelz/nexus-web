@@ -110,3 +110,7 @@ not an applied production migration.
 ## done when
 
 production `/version` and alembic report the released sha and its head, every preflight above is closed, and the follow-up tickets in step 4 are resolved.
+
+## added to the release since `0257` (2026-10-04 cleanup campaign)
+
+main now also carries `0258` (local vault history), `0259` (dossier head carries its revision; preflight: [ticket](dossier-0259-production-preflight.md)), `0260` (retire admitted synapse scans), `0261` (chat tree owner; refuses on underivable `message_document`) and `0262` (oracle one-row readings; `release.py` drains oracle jobs first; preflight: [ticket](oracle-0262-production-preflight.md)). all are irreversible. the release also changes the android bridge and the offline copy format: follow [offline cutover release steps](offline-cutover-release-steps.md) (open the old app online once, deploy, clear app storage, install the new apk; never the apk first). after release, seed the oracle corpus once (`docs/modules/oracle.md`).

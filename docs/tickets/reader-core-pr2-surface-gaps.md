@@ -5,8 +5,9 @@ status: open · origin: 2026-10-04 reader rewrite pr1 (`cleanup/reader-reauthor`
 pr1 moved the public `/s` reader and the offline shelf onto
 `lib/documentReader` and left the hosted pane (`MediaPaneBody`) on the old
 reader. these primitive features have no pr1 consumer, or depend on the
-css-highlight probe the owner made a condition for paint (amendment r4), so pr1
-did not build them:
+css-highlight probe the owner made a condition for paint (amendment r4; verdict
+2026-10-04: go with conditions, listed in `reader-pr2-replace-hosted-pane.md`),
+so pr1 did not build them:
 
 - focus mode (paragraph, sentence, distraction-free) and the reader theme
   classes (`--reader-*` colours, today in `media/[id]/page.module.css`);

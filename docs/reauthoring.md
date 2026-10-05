@@ -163,6 +163,9 @@ author retirement counts compare `2efd00ae4` with tested `0e8bcbb8f`: web `lib/c
 
 ## decision log
 
+- 2026-10-04 · owner: reader — transcripts render as one continuous text; "back to your spot" keeps the first held spot (by design); two prs, pr2 replaces the hosted pane in one cut; highlights paint with css custom highlights only under the probe's conditions (verdict: go with conditions; `tickets/reader-pr2-replace-hosted-pane.md`).
+- 2026-10-04 · owner: oracle — claude's cleanup/oracle-reauthor is the single landing over codex's simplify-04; per-viewer idempotency key kept; one-row readings materialize the exact historical fold before the log is dropped; the migration never cancels readings or deletes keys.
+- 2026-10-04 · owner: run up to five slice prs in parallel; overlap with the codex sessions is resolved at merge.
 - 2026-10-04 · owner: chat forks become the inline strip plus one Forks outline; the svg fork graph and its keyboard tree navigation are deleted (supersedes 2026-09-18 "fork graph kept"). fork titles, the docent, Details, the chats index behaviour and passage forks (unmapped only) stay.
 - 2026-10-04 · owner: delete walknotes and vault. keep and reduce oracle, atlas, dossiers, synapse/connections/slate/resonance and consumption; x/arxiv ingest and lectern stay.
 - 2026-09-27 · owner: dossiers keep only the latest revision; revision history, Make current and the learn tables are deleted.
