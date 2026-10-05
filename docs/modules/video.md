@@ -8,6 +8,15 @@ canonical video media, records the source attempt, and enqueues
 once the source attempt is running; it is not a separate source-acquisition queue
 lane.
 
+viewer url admission requires a session without an open transaction. one bounded
+read committed retry owns validation, replay, media acquisition, filing, history
+and queue binding; a canonical-media collision retries the whole transaction and
+joins its winner. filing locks media before library rows and reads append state
+after waiting. reused media is reloaded under that lock before video identity,
+lifecycle and latest-attempt decisions. enqueue database errors reach the owning
+retry unchanged. system and embedded admission stage writes in their caller's
+transaction; oracle support runs with host writers stopped.
+
 `media.py` may list and hydrate video media rows, but YouTube URL parsing,
 accepted source attempts, retry, and refresh do not live in the catalog service.
 

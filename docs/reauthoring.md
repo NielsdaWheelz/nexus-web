@@ -11,33 +11,38 @@ is about 70,776 physical lines. all tracked text is a separate denominator:
 while simplifying ownership; compressed syntax, file moves and outsourced
 implementation do not count as simplification. full target feasibility is open.
 
-| category | frozen `bbfd1df4` | delivery base `464098c1` | current cut | cut delta |
+| category | frozen `bbfd1df4` | delivery base `0adfa3ae` | current cut | cut delta |
 |---|---:|---:|---:|---:|
-| authored runtime | 353,881 | 329,418 | 327,870 | −1,548 |
-| generated source | 19,513 | 22,262 | 22,439 | +177 |
+| authored runtime | 353,881 | 311,652 | 311,655 | +3 |
+| generated source | 19,513 | 22,196 | 22,196 | 0 |
 | migration history | 10,370 | 10,634 | 10,634 | 0 |
-| documentation/tickets | 31,296 | 31,969 | 32,216 | +247 |
+| documentation/tickets | 31,296 | 32,531 | 32,636 | +105 |
 | locks | 3,695 | 3,684 | 3,684 | 0 |
-| other tooling/config/text | 11,008 | 11,019 | 11,019 | 0 |
-| all tracked text | 429,763 | 408,986 | 407,862 | −1,124 |
+| other tooling/config/text | 11,008 | 10,864 | 10,864 | 0 |
+| all tracked text | 429,763 | 391,561 | 391,669 | +108 |
 
-this sequence started at `f2167baf3` with 329,649 authored lines; the delivery
-base includes upstream #519/#520's separate −231. this cut removes 1,548 authored
-lines: add's panel/session/reducer becomes one snapshot owner, 2,705→1,255;
-browser ingestion consumes generated native contracts. moving the independent
-extension decoder contributes only two lines of reduction. generated source
-grows 177 lines. current authored runtime is 7.35% below the frozen baseline;
-this bounded cut does not establish the remaining four-fifths goal's feasibility.
+upstream #502/#522/#523 removed 16,218 authored lines since this slice's original
+`557aed14` pin. this cut repairs native url admission ownership: `media_source_ingest.py`
+2,427→2,430 physical lines; authored nonblank is unchanged. one read-committed
+retry owns the viewer transaction and preserves the library append-lock contract.
+system and embedded admission remain caller-owned. a locked reuse refresh costs
+one additional read and prevents stale lifecycle/error receipts; enqueue conflicts
+reach the existing retry owner unchanged. current authored runtime is 11.93% below
+the frozen baseline; the remaining four-fifths goal's feasibility remains open.
 
-[add's contract and qualification](modules/add-content.md) owns the final behavior,
-intentional recovery changes, observed real-stack checks and source-reviewed
-limits. historical receipts belong to [resource graph](modules/resource-graph.md),
-[library commands](modules/library-command-settlement.md) and
-[chat](modules/chat.md#failure-card-and-rerun), rather than a delivery ledger here.
+[source admission](modules/video.md) owns the final transaction contract. real
+native HTTP/DB checks qualified canonical races, exact-key replay, refusal and
+rollback; twenty distinct ordinary admissions at concurrency two all returned
+202 with exact committed topology and zero natural serialization errors. native
+fenced publication, one-shot child-enqueue retry and caller-owned work were
+qualified separately. no worker, provider or extraction execution is claimed.
+generic defect request-ID loss remains an [open egress issue](tickets/native-defect-responses-lose-request-id.md).
+
 counts read immutable tracked utf-8 git blobs, exclude nul/undecodable binaries,
 and use `str.splitlines()`; nonblank means `line.strip()` is nonempty. this
-reproduces the frozen physical denominator and corrects its one-line nonblank
-subtotal typo. the exact source categories below stay fixed.
+reproduces the frozen physical denominator and its corrected nonblank subtotal.
+the exact source categories below stay fixed; temporary probes are deleted
+before the sole static gate, and the committed tree is recounted immutably.
 
 ## ownership map at campaign start
 
