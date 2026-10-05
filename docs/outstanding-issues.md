@@ -29,8 +29,11 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
+- [open] library filing / revision fanout · 2026-10-04 spec review · each filing locks the actor's libraries then advances four inventory families for every account, widening contention: [ticket](tickets/library-filing-invalidates-every-viewers-inventories.md).
+- [open] native / defect correlation · 2026-10-04 live qualification · generic defect bodies lose request ID after middleware clears context; header omission source-only, optional client routing unchanged: [ticket](tickets/native-defect-responses-lose-request-id.md).
+- [open] ingest / x thread acquisition · 2026-10-04 spec review · distinct keys can create duplicate thread media/jobs because nullable source identity has no unique constraint or lock; source-qualified: [ticket](tickets/concurrent-x-author-admission-duplicates-media.md).
+- [open] ingest / reuse deletion race · 2026-10-04 spec review · lookup may outlive a hard delete while the missing-row reference barrier silently continues into a foreign key or refresh defect; source-qualified: [ticket](tickets/url-reuse-after-hard-delete-raises-foreign-key.md).
 - [open] ingest / canonical teardown replay · 2026-10-04 source audit · loser teardown deletes the attempt carrying the original viewer/key, losing admission identity while history survives: [ticket](tickets/canonical-source-teardown-deletes-admission-replay.md).
-- [open] ingest / provider concurrency · 2026-10-04 mounted qualification · concurrent new youtube aliases race canonical media creation; one returns a uniqueness 500 instead of joining: [ticket](tickets/concurrent-provider-admission-collides-on-canonical-media.md).
 - [open] ingest / joined admission replay · 2026-10-04 source audit · joining an in-flight provider attempt forgets the new key; exact replay after settlement creates another terminal receipt: [ticket](tickets/joined-url-admission-does-not-record-its-replay-key.md).
 - [open] workspace / chat · 2026-10-04 mounted old proof · admitted pane/persisted visit and browser address diverged; two bounded follow-up controls and copied-url reload stayed aligned, leaving the historical overwriter unqualified: [ticket](tickets/workspace-url-reverts-after-new-chat-adoption.md).
 - [open] ingest / duplicate feedback · 2026-10-04 source audit · identical command replay is labeled content duplication; qualify the browser marker before changing the public result: [ticket](tickets/source-replay-is-reported-as-content-duplicate.md).

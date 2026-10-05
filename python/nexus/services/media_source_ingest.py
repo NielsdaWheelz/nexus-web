@@ -19,12 +19,12 @@ from urllib.parse import unquote, urlparse
 from uuid import UUID
 
 from sqlalchemy import func, select, text
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.auth.permissions import can_read_media
 from nexus.db.models import Media, MediaFile, MediaKind, MediaSourceAttempt, ProcessingStatus
-from nexus.db.retries import admit_serializable
+from nexus.db.retries import admit_serializable, retry_read_committed
+from nexus.db.session import transaction
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
@@ -692,18 +692,29 @@ def accept_url_source(
     idempotency_key: str | None = None,
     ingest_purpose: Literal["artifact_research"] | None = None,
 ) -> FromUrlResponse:
-    """Accept a URL source intent before any provider, network or storage work runs."""
-    library_governance.validate_writable_library_destinations(db, viewer_id, library_ids)
-    return _accept_url(
-        db=db,
-        viewer_id=viewer_id,
-        url=url,
-        library_ids=library_ids,
-        request_id=request_id,
-        idempotency_key=idempotency_key,
-        assign_viewer_libraries=True,
-        payload_extra=({"ingest_purpose": ingest_purpose} if ingest_purpose is not None else None),
-    )
+    """Accept a URL source intent on a fresh session before provider or storage work."""
+    # justify-service-invariant-check: Session cannot encode transaction ownership.
+    # justify-defect: committing or rolling back a caller's transaction violates this contract.
+    if db.in_transaction():
+        raise RuntimeError("url source admission requires a fresh session")
+
+    def admit() -> FromUrlResponse:
+        with transaction(db):
+            library_governance.validate_writable_library_destinations(db, viewer_id, library_ids)
+            return _accept_url(
+                db=db,
+                viewer_id=viewer_id,
+                url=url,
+                library_ids=library_ids,
+                request_id=request_id,
+                idempotency_key=idempotency_key,
+                assign_viewer_libraries=True,
+                payload_extra=(
+                    {"ingest_purpose": ingest_purpose} if ingest_purpose is not None else None
+                ),
+            )
+
+    return retry_read_committed(db, "accept_url_source", admit)
 
 
 def accept_system_url_source(
@@ -731,7 +742,6 @@ def accept_system_url_source(
         assign_viewer_libraries=False,
         expected_kind=expected_kind,
         payload_extra={"system_source": system_source},
-        caller_owns_transaction=True,
     )
 
 
@@ -746,7 +756,6 @@ def _accept_url(
     assign_viewer_libraries: bool,
     expected_kind: str | None = None,
     payload_extra: dict[str, object] | None = None,
-    caller_owns_transaction: bool = False,
 ) -> FromUrlResponse:
     validate_requested_url(url)
     spec = url_source_spec(url)
@@ -772,23 +781,24 @@ def _accept_url(
     created = media is None
     if media is None:
         media = _new_media_from_spec(db, spec, url=url, viewer_id=viewer_id)
-    elif spec.source_type == source_types.YOUTUBE_VIDEO:
-        _refresh_reused_video_identity(media, spec)
 
     if assign_viewer_libraries:
         library_entries.assign_libraries_for_media_in_current_transaction(
             db, viewer_id, media.id, library_ids
         )
+        if not created:
+            db.refresh(media)
         if not created and spec.source_type == source_types.X_AUTHOR_THREAD:
             _reconcile_reused_thread_libraries(db, viewer_id, media.id, library_ids)
+
+    if not created and spec.source_type == source_types.YOUTUBE_VIDEO:
+        _refresh_reused_video_identity(media, spec)
 
     if not created:
         in_flight = _latest_attempt(db, media.id)
         if in_flight is not None and in_flight.status in IN_FLIGHT_STATUSES:
             # A second submission joins the run already crossing the fence rather
             # than accepting a newer attempt over it.
-            if not caller_owns_transaction:
-                db.commit()
             return _from_url_response(media, in_flight, "reused")
 
     source_payload: dict[str, object] = {"url": url, "kind": spec.kind, **spec.source_payload}
@@ -817,8 +827,6 @@ def _accept_url(
             attempt.error_code = media.last_error_code
             attempt.error_message = media.last_error_message
     if not created:
-        if not caller_owns_transaction:
-            db.commit()
         return _from_url_response(media, attempt, "reused", ingest_enqueued=False)
     enqueue_accepted_source_attempt_in_transaction(
         db,
@@ -827,8 +835,6 @@ def _accept_url(
         actor_user_id=viewer_id,
         request_id=request_id,
     )
-    if not caller_owns_transaction:
-        db.commit()
     return _from_url_response(media, attempt, "created", ingest_enqueued=True)
 
 
@@ -1085,19 +1091,16 @@ def _release_in_flight_x_post_job(db: Session, attempt: MediaSourceAttempt) -> N
 def _enqueue_source_job(
     db: Session, media_id: UUID, attempt_id: UUID, actor_user_id: UUID, request_id: str | None
 ) -> JobRow:
-    try:
-        return enqueue_job(
-            db,
-            kind="ingest_media_source",
-            payload={
-                "media_id": str(media_id),
-                "attempt_id": str(attempt_id),
-                "actor_user_id": str(actor_user_id),
-                "request_id": request_id,
-            },
-        )
-    except SQLAlchemyError as exc:
-        raise ApiError(ApiErrorCode.E_INTERNAL, "Failed to enqueue source ingest job.") from exc
+    return enqueue_job(
+        db,
+        kind="ingest_media_source",
+        payload={
+            "media_id": str(media_id),
+            "attempt_id": str(attempt_id),
+            "actor_user_id": str(actor_user_id),
+            "request_id": request_id,
+        },
+    )
 
 
 def enqueue_accepted_source_attempt_in_transaction(
