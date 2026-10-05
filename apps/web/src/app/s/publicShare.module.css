@@ -1,14 +1,21 @@
 /* A quiet reading room: a serif title over one centered measure, the shared passage set apart. */
 
 .shell {
+  display: flex;
+  flex-direction: column;
   min-height: 100dvh;
   background:
-    radial-gradient(circle at 15% 0%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 34rem),
+    radial-gradient(
+      circle at 15% 0%,
+      color-mix(in srgb, var(--accent) 8%, transparent),
+      transparent 34rem
+    ),
     var(--surface-canvas);
   color: var(--ink);
 }
 
 .header,
+.callout,
 .reader,
 .footer {
   width: min(920px, 100% - 2 * var(--space-5));
@@ -16,7 +23,7 @@
 }
 
 .header {
-  padding: clamp(3rem, 9vw, 7rem) 0 var(--space-6);
+  padding: clamp(2rem, 6vw, 4rem) 0 var(--space-5);
   border-bottom: 1px solid var(--edge-subtle);
 }
 
@@ -30,7 +37,7 @@
 }
 
 .brand {
-  margin-bottom: var(--space-5);
+  margin-bottom: var(--space-4);
 }
 
 .header h1 {
@@ -38,27 +45,28 @@
   margin: 0;
   font-family: var(--font-eb-garamond), serif;
   font-weight: 500;
-  font-size: clamp(2.25rem, 7vw, 4.75rem);
+  font-size: clamp(2rem, 6vw, 4rem);
   line-height: 0.98;
   text-wrap: balance;
 }
 
 .header p {
-  margin: var(--space-4) 0 0;
+  margin: var(--space-3) 0 0;
   color: var(--ink-muted);
   font-size: var(--text-md);
 }
 
 .header a {
   display: inline-block;
-  margin-top: var(--space-4);
+  margin-top: var(--space-3);
   color: var(--accent);
   font-size: var(--text-sm);
 }
 
 .callout {
+  box-sizing: border-box;
   max-width: 760px;
-  margin: 0 auto var(--space-8);
+  margin-top: var(--space-5);
   padding: var(--space-4) var(--space-5);
   border: 1px solid var(--edge);
   border-inline-start: 4px solid var(--accent);
@@ -74,108 +82,23 @@
   line-height: var(--leading-relaxed);
 }
 
+/* The document reads in its own scroll, filling what the page has left. */
 .reader {
-  min-height: 45dvh;
-  padding: var(--space-8) 0;
-}
-
-.column {
-  display: grid;
-  gap: var(--space-6);
-  width: 100%;
-  max-width: 760px;
-  margin-inline: auto;
-}
-
-.target {
-  scroll-margin-block: 25dvh;
-  border-radius: var(--radius-md);
-  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
-  outline-offset: var(--space-3);
-}
-
-.note {
-  margin: 0;
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-}
-
-.transcript {
-  display: grid;
-  gap: var(--space-3);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.transcript li {
-  padding: var(--space-4);
-  border-bottom: 1px solid var(--edge-subtle);
-}
-
-.transcript p {
-  margin: var(--space-2) 0 0;
-  font-size: var(--text-md);
-  line-height: var(--leading-relaxed);
-}
-
-.meta {
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
+  display: flex;
+  flex: 1 0 auto;
+  height: 75dvh;
+  margin-block: var(--space-5);
 }
 
 .epub {
   display: grid;
-  grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
-  gap: var(--space-7);
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  gap: var(--space-5);
 }
 
-.epub nav {
-  position: sticky;
-  top: var(--space-4);
-  align-self: start;
-  max-height: calc(100dvh - 2 * var(--space-4));
-  overflow-y: auto;
+.epub > nav {
+  max-height: 100%;
   border-inline-end: 1px solid var(--edge-subtle);
-}
-
-.epub nav button {
-  width: 100%;
-  padding-block: var(--space-2);
-  border: 0;
-  background: transparent;
-  color: var(--ink-muted);
-  text-align: start;
-  cursor: pointer;
-}
-
-.epub nav button[aria-current] {
-  color: var(--ink);
-  font-weight: var(--weight-semibold);
-}
-
-.pdf {
-  position: relative;
-  height: min(78dvh, 900px);
-}
-
-.pdf > div {
-  position: absolute;
-  inset: 0;
-  overflow: auto;
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-lg);
-  background: var(--ink-faint);
-}
-
-.pdfRect {
-  position: absolute;
-  z-index: 5;
-  border-radius: var(--radius-xs);
-  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
-  outline-offset: 1px;
-  mix-blend-mode: multiply;
-  pointer-events: none;
 }
 
 .footer {
@@ -188,16 +111,12 @@
 @media (max-width: 720px) {
   .epub {
     grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
-  .epub nav {
-    position: static;
-    max-height: 12rem;
+  .epub > nav {
+    max-height: 10rem;
     border: 1px solid var(--edge-subtle);
     border-radius: var(--radius-md);
-  }
-
-  .pdf {
-    height: 70dvh;
   }
 }

@@ -13,8 +13,9 @@ web code through **one bridge** (`window.nexusOffline`), and shown in **one
 screen**, the shelf. the shelf is the Downloads screen whether or not there is
 a network. the hosted app only enqueues, reflects item state in its resource
 menus, opens the shelf and purges on sign-out. a reading copy is a zip of the
-**hosted reader's own api payloads**, so the shelf renders it with the hosted
-reader's own parsers. the server owns one route and one optional field.
+**reader document** the signed-in reader reads (`GET /media/{id}/reader`), so
+the shelf renders it with the same reader (`lib/documentReader`). the server
+owns one route and one optional field.
 
 ## parts
 
@@ -52,8 +53,11 @@ lease (`store.open`) and plays `file://`, else streams.
 - **read offline.** cold start without a validated network, the "could not
   connect" terminal and the account menu's *Downloads* all load the shelf.
   *Open* takes a lease; `ShelfReader` reads `/shelf/copies/{id}/reader.json`
-  (pdf: `document.pdf`, ranged) and rewrites epub `/api/media/{id}/assets/`
-  to `/shelf/copies/{id}/assets/`. web articles are text-only.
+  (pdf: `document.pdf`, ranged), rewrites epub `/api/media/{id}/assets/`
+  to `/shelf/copies/{id}/assets/` and mounts the whole document in the shared
+  reader with contents and the overview rail. web articles are text-only. a
+  copy that does not open (incomplete, or made before the reader-document
+  format) says so and offers *Remove downloaded copy*; download it again.
 - **positions.** every reader save is fsynced before its reply and schedules
   the sync job (10 s; 0 s on hello, on resume and when the user leaves the
   app). a pass checks `me()`, then for
@@ -99,9 +103,10 @@ progress}`. `progress` is set only on a ready reading copy: `Canonical
 `Nexus-Reader-Generation`, `Cache-Control: private, no-store`; 401
 `E_STREAM_TOKEN_INVALID|EXPIRED`, 404 `E_MEDIA_NOT_FOUND`, 409
 `E_MEDIA_NOT_READY|E_READER_CONTENT_CHANGED`. members: `reader.json` =
-`{media: {id, title, kind}, navigation, fragments, epubFragments}`, each
-payload serialized as its hosted route serializes it, plus `document.pdf` or
-`assets/{asset_key}`. the build reads one repeatable-read snapshot, releases
+`{media: {id, title, kind}, document: ReaderDocumentOut}`, the document as
+`GET /media/{id}/reader` builds it except that a pdf's `file.url` is the member
+`document.pdf` and web article images are text placeholders; plus
+`document.pdf` or `assets/{asset_key}`. the build reads one repeatable-read snapshot, releases
 it, then streams objects; a vanished object is `E_READER_CONTENT_CHANGED`.
 
 **position fence** `PUT /media/{id}/reader-state` accepts an optional
@@ -116,7 +121,8 @@ equal it, else 409 `E_READER_CONTENT_CHANGED`.
   absent, or Removing while leased (remove); Removing → absent (last close).
 - position (ready reading copies): synced → Pending (save); Pending and
   SourceUnavailable → synced | Conflict | ContentChanged | SourceUnavailable
-  (sync); Conflict → synced (Canonical) | Pending (Device).
+  (sync); Conflict → Conflict with the new device position (save: reading on
+  while the choice waits) | synced (Canonical) | Pending (Device).
 - shelf copy: *Download queued · waits for Wi-Fi · another download is
   active*, *Retrying after interruption*, *x of y*, *Downloaded · size · saved
   date* with *Position synced / saved on this device / needs your choice / A

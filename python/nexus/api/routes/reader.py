@@ -1,4 +1,4 @@
-"""Reader routes: evidence, EPUB fragments, navigation, map, state, file, reading copy."""
+"""Reader routes: document, evidence, EPUB fragments, navigation, map, state, file, reading copy."""
 
 import os
 import tempfile
@@ -17,11 +17,13 @@ from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.responses import Data, ok, success_response
 from nexus.schemas.media import MediaEvidenceResponse, MediaNavigationOut
 from nexus.schemas.reader import CursorWrite
+from nexus.schemas.reader_document import ReaderDocumentOut
 from nexus.schemas.reader_document_map import ReaderDocumentMapOut
 from nexus.services import (
     epub_read,
     locator_resolver,
     media_file_access,
+    reader_document,
     reader_document_map,
     reader_navigation,
     reading_copy,
@@ -29,6 +31,16 @@ from nexus.services import (
 from nexus.services.consumption import service as consumption_service
 
 router = APIRouter(tags=["media"])
+
+
+@router.get("/media/{media_id}/reader")
+def get_reader_document(
+    media_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: RepeatableReadDbSession,
+) -> Data[ReaderDocumentOut]:
+    """The whole publication the reader mounts, from one snapshot."""
+    return Data(data=reader_document.read_reader_document(db, viewer.user_id, media_id))
 
 
 @router.get("/media/{media_id}/evidence/{evidence_span_id}", response_model=MediaEvidenceResponse)

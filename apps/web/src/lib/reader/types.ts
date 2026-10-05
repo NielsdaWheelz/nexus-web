@@ -2,69 +2,10 @@ import { decodePresence, type Presence } from "@/lib/api/presence";
 import { expectString } from "@/lib/validation";
 
 /**
- * Reader profile and persisted resume-state types.
- *
- * Backend contract assumptions (served through the BFF mirror of the FastAPI
- * paths):
- * - GET /me/reader-profile returns { data: ReaderProfile } (exactly seven
- *   fields; the backend service owns the defaults — there is no frontend
- *   default profile)
- * - PATCH /me/reader-profile accepts any non-empty Partial<ReaderProfile>
- * - Reader cursor GET/PUT snapshots live in `readerProgress.ts`; the locator
- *   inside them is the `ReaderResumeState` decoded here.
+ * Persisted resume-state types. Reader cursor GET/PUT snapshots live in
+ * `readerProgress.ts`; the locator inside them is the `ReaderResumeState`
+ * decoded here.
  */
-
-export type ReaderTheme = "light" | "dark";
-export type ReaderFontFamily = "serif" | "sans";
-export type ReaderFocusMode = "off" | "distraction_free" | "paragraph" | "sentence";
-export type ReaderHyphenation = "auto" | "off";
-
-export const READER_THEMES = ["light", "dark"] as const satisfies readonly ReaderTheme[];
-export const READER_FONT_FAMILIES = [
-  "serif",
-  "sans",
-] as const satisfies readonly ReaderFontFamily[];
-export const READER_FOCUS_MODES = [
-  "off",
-  "distraction_free",
-  "paragraph",
-  "sentence",
-] as const satisfies readonly ReaderFocusMode[];
-export const READER_HYPHENATIONS = [
-  "auto",
-  "off",
-] as const satisfies readonly ReaderHyphenation[];
-
-export interface ReaderProfile {
-  theme: ReaderTheme;
-  font_family: ReaderFontFamily;
-  font_size_px: number;
-  line_height: number;
-  column_width_ch: number;
-  focus_mode: ReaderFocusMode;
-  hyphenation: ReaderHyphenation;
-}
-
-const READER_THEME_SET: ReadonlySet<string> = new Set(READER_THEMES);
-const READER_FONT_FAMILY_SET: ReadonlySet<string> = new Set(READER_FONT_FAMILIES);
-const READER_FOCUS_MODE_SET: ReadonlySet<string> = new Set(READER_FOCUS_MODES);
-const READER_HYPHENATION_SET: ReadonlySet<string> = new Set(READER_HYPHENATIONS);
-
-export function isReaderTheme(value: unknown): value is ReaderTheme {
-  return typeof value === "string" && READER_THEME_SET.has(value);
-}
-
-export function isReaderFontFamily(value: unknown): value is ReaderFontFamily {
-  return typeof value === "string" && READER_FONT_FAMILY_SET.has(value);
-}
-
-export function isReaderFocusMode(value: unknown): value is ReaderFocusMode {
-  return typeof value === "string" && READER_FOCUS_MODE_SET.has(value);
-}
-
-export function isReaderHyphenation(value: unknown): value is ReaderHyphenation {
-  return typeof value === "string" && READER_HYPHENATION_SET.has(value);
-}
 
 export interface ReaderResumeLocations {
   text_offset: number | null;

@@ -1,5 +1,5 @@
 import type { PaneWidthContract } from "@/lib/panes/paneRouteModel";
-import type { ReaderProfile } from "@/lib/reader/types";
+import type { ReaderProfile } from "@/lib/reader/ReaderContext";
 
 export interface WorkspacePrimaryMetrics {
   primaryMinWidthPx: number;

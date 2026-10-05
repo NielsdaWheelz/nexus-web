@@ -1,42 +1,37 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import HtmlRenderer from "@/components/HtmlRenderer";
+// The anonymous reader for `/s#share=<token>`: the share's title, source and
+// quote over the whole shared document, read-only, opened at the shared
+// highlight. A hash change opens the new link in place.
+import { useEffect, useMemo, useState } from "react";
 import type { ApiJson, Schema } from "@/lib/api/wire";
-import { formatClock } from "@/lib/formatClock";
-import { applyHighlightsToHtml } from "@/lib/highlights/applySegments";
-import PublicPdf from "./PublicPdf";
+import { Contents } from "@/lib/documentReader/chrome/Contents";
+import DocumentReaderView, {
+  useDocumentReader,
+  useReaderState,
+  type Decorations,
+  type Mark,
+} from "@/lib/documentReader/DocumentReader";
+import type { ReaderTarget } from "@/lib/documentReader/model";
+import { publicFetch, publicSource } from "./publicSource";
 import styles from "./publicShare.module.css";
 
 type Share = Schema<"PublicShareOut">;
-type Section = Schema<"PublicSectionEntryOut">;
-/** The shared highlight's text anchor: codepoint offsets into the canonical text of `ordinal`. */
-type Mark = Schema<"PublicTextAnchorOut"> & { color: Schema<"PublicHighlightOut">["color"] };
 
-/**
- * The token lives in the URL fragment, so the page request never carries it. It travels only
- * in this header, on requests that send no credentials, skip every cache, and refuse redirects.
- */
-function publicFetch(path: string, token: string, signal: AbortSignal): Promise<Response> {
-  return fetch(`/api/public/resource-share${path}`, {
-    headers: { "X-Nexus-Share-Token": token },
-    credentials: "omit",
-    cache: "no-store",
-    redirect: "error",
-    signal,
-  });
-}
+const PUBLIC_PROFILE: Schema<"ReaderProfileOut"> = {
+  theme: "light",
+  font_family: "serif",
+  font_size_px: 18,
+  line_height: 1.6,
+  column_width_ch: 68,
+  focus_mode: "off",
+  hyphenation: "auto",
+};
 
-function focusTarget(element: HTMLElement | null) {
-  element?.scrollIntoView({ behavior: "smooth", block: "center" });
-  element?.focus({ preventScroll: true });
-}
-
-/** The anonymous reader for `/s#share=<token>`; a hash change opens the new link in place. */
 export default function PublicShareReader() {
-  const [state, setState] = useState<"Resolving" | "Unavailable" | { token: string; share: Share }>(
-    "Resolving",
-  );
+  const [state, setState] = useState<
+    "Resolving" | "Unavailable" | { token: string; share: Share }
+  >("Resolving");
 
   useEffect(() => {
     let controller = new AbortController();
@@ -44,13 +39,19 @@ export default function PublicShareReader() {
       controller.abort();
       controller = new AbortController();
       const { signal } = controller;
-      const token = /^#share=(nxshr1_[A-Za-z0-9_-]{43})$/.exec(window.location.hash)?.[1];
+      const token = /^#share=(nxshr1_[A-Za-z0-9_-]{43})$/.exec(
+        window.location.hash,
+      )?.[1];
       setState(token ? "Resolving" : "Unavailable");
       if (!token) return;
       try {
         const response = await publicFetch("", token, signal);
-        if (!response.ok) throw new Error(`public share responded ${response.status}`);
-        const body = (await response.json()) as ApiJson<"/public/resource-share", "get">;
+        if (!response.ok)
+          throw new Error(`public share responded ${response.status}`);
+        const body = (await response.json()) as ApiJson<
+          "/public/resource-share",
+          "get"
+        >;
         if (!signal.aborted) setState({ token, share: body.data });
       } catch (error) {
         if (signal.aborted) return;
@@ -70,13 +71,18 @@ export default function PublicShareReader() {
 
   const ready = typeof state === "object" ? state : null;
   const title =
-    ready?.share.title ?? (state === "Resolving" ? "Shared reading" : "Share unavailable");
+    ready?.share.title ??
+    (state === "Resolving" ? "Shared reading" : "Share unavailable");
   return (
     <div className={styles.shell}>
       {/* The route emits no metadata title, so this is the document's only one. */}
       <title>{`${title} · Nexus`}</title>
       {ready ? (
-        <SharedDocument token={ready.token} share={ready.share} />
+        <SharedDocument
+          key={ready.token}
+          token={ready.token}
+          share={ready.share}
+        />
       ) : (
         <main className={styles.header} role="status">
           <div className={styles.brand}>Nexus</div>
@@ -94,12 +100,82 @@ export default function PublicShareReader() {
   );
 }
 
-function SharedDocument({ token, share }: { token: string; share: Share }) {
-  const highlight = share.highlight.kind === "Present" ? share.highlight.value : null;
-  const mark =
-    highlight?.anchor.kind === "Text" ? { ...highlight.anchor, color: highlight.color } : null;
-  const markAt = (ordinal: number) => (mark?.ordinal === ordinal ? mark : null);
-  const { reader } = share;
+/** The shared highlight as the reader's one mark, addressed by unit ordinal. */
+function sharedMark(share: Share): Mark | null {
+  if (share.highlight.kind !== "Present") return null;
+  const { color, anchor } = share.highlight.value;
+  return {
+    id: "shared",
+    color,
+    anchor:
+      anchor.kind === "Text"
+        ? {
+            kind: "text",
+            unit: String(anchor.ordinal),
+            start: anchor.start_offset,
+            end: anchor.end_offset,
+          }
+        : { kind: "pdf", page: anchor.page_number, quads: anchor.quads },
+  };
+}
+
+function SharedDocument({
+  token,
+  share,
+}: {
+  readonly token: string;
+  readonly share: Share;
+}) {
+  const highlight =
+    share.highlight.kind === "Present" ? share.highlight.value : null;
+  const mark = useMemo(() => sharedMark(share), [share]);
+  const options = useMemo(() => {
+    const target: ReaderTarget | null =
+      mark === null
+        ? null
+        : mark.anchor.kind === "text"
+          ? {
+              kind: "range",
+              unit: mark.anchor.unit,
+              start: mark.anchor.start,
+              end: mark.anchor.end,
+            }
+          : { kind: "quads", page: mark.anchor.page, quads: mark.anchor.quads };
+    return {
+      source: publicSource(token),
+      progress: null,
+      entry: { fresh: Promise.resolve(target), cold: null },
+    };
+  }, [mark, token]);
+  const reader = useDocumentReader(token, options);
+  const identity = useReaderState(reader, (state) =>
+    state.document.status === "ready" ? state.document.doc.identity : null,
+  );
+  const missed = useReaderState(
+    reader,
+    (state) => state.restored && state.navigation.failure !== null,
+  );
+  const epub = useReaderState(
+    reader,
+    (state) =>
+      state.document.status === "ready" &&
+      state.document.doc.kind === "text" &&
+      state.document.doc.format === "epub",
+  );
+  const decorations = useMemo<Decorations | undefined>(
+    () =>
+      identity && mark
+        ? {
+            identity,
+            marks: [mark],
+            noteRefs: [],
+            focused: mark.id,
+            hovered: null,
+          }
+        : undefined,
+    [identity, mark],
+  );
+
   return (
     <>
       <header className={styles.header}>
@@ -117,205 +193,31 @@ function SharedDocument({ token, share }: { token: string; share: Share }) {
           </a>
         ) : null}
       </header>
-      <main className={styles.reader}>
-        {highlight ? (
-          <aside className={styles.callout} aria-label="Shared highlight">
-            <span>Shared highlight</span>
-            {highlight.quote.kind === "Present" ? (
-              <blockquote>{highlight.quote.value}</blockquote>
-            ) : (
-              <p>The highlighted area is shown in the document below.</p>
-            )}
-          </aside>
-        ) : null}
-        {reader.kind === "Article" ? (
-          <article className={styles.column}>
-            {reader.fragments.map((fragment) => (
-              <MarkedHtml
-                key={fragment.ordinal}
-                html={fragment.html_sanitized}
-                text={fragment.canonical_text}
-                mark={markAt(fragment.ordinal)}
-              />
-            ))}
-          </article>
-        ) : reader.kind === "Transcript" ? (
-          <div className={styles.column}>
-            <ol className={styles.transcript}>
-              {reader.segments.map((segment) => (
-                <Segment key={segment.ordinal} segment={segment} mark={markAt(segment.ordinal)} />
-              ))}
-            </ol>
-          </div>
-        ) : reader.kind === "Epub" ? (
-          <PublicEpub token={token} sections={reader.sections} mark={mark} />
-        ) : (
-          <PublicPdf token={token} highlight={highlight} />
-        )}
+      {highlight ? (
+        <aside className={styles.callout} aria-label="Shared highlight">
+          <span>Shared highlight</span>
+          {highlight.quote.kind === "Present" ? (
+            <blockquote>{highlight.quote.value}</blockquote>
+          ) : (
+            <p>The highlighted area is shown in the document below.</p>
+          )}
+          {missed ? <p role="status">Highlight unavailable.</p> : null}
+        </aside>
+      ) : null}
+      <main
+        className={epub ? `${styles.reader} ${styles.epub}` : styles.reader}
+      >
+        {epub ? <Contents reader={reader} /> : null}
+        <DocumentReaderView
+          reader={reader}
+          profile={PUBLIC_PROFILE}
+          isMobile={false}
+          decorations={decorations}
+        />
       </main>
       <footer className={styles.footer}>
         Read-only shared view. No Nexus account is required.
       </footer>
     </>
-  );
-}
-
-function Segment({ segment, mark }: { segment: Schema<"PublicSegmentOut">; mark: Mark | null }) {
-  const chars = Array.from(segment.canonical_text);
-  return (
-    <li
-      className={mark ? styles.target : undefined}
-      tabIndex={mark ? -1 : undefined}
-      ref={mark ? focusTarget : undefined}
-    >
-      <span className={styles.meta}>
-        {segment.start_ms.kind === "Present" ? formatClock(segment.start_ms.value / 1000) : null}
-        {segment.speaker.kind === "Present" ? ` · ${segment.speaker.value}` : null}
-      </span>
-      <p>
-        {mark ? (
-          <>
-            {chars.slice(0, mark.start_offset).join("")}
-            <mark className={`hl-${mark.color}`}>
-              {chars.slice(mark.start_offset, mark.end_offset).join("")}
-            </mark>
-            {chars.slice(mark.end_offset).join("")}
-          </>
-        ) : (
-          segment.canonical_text
-        )}
-      </p>
-    </li>
-  );
-}
-
-function PublicEpub(props: { token: string; sections: Section[]; mark: Mark | null }) {
-  const { token, sections, mark } = props;
-  const [selected, setSelected] = useState(
-    () => sections.find((section) => section.ordinal === mark?.ordinal) ?? sections[0],
-  );
-  // The loaded body names its section, so a body never renders under another selection.
-  const [loaded, setLoaded] = useState<{
-    section: Section;
-    body: Schema<"PublicSectionOut"> | null;
-  } | null>(null);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void publicFetch(`/sections/${selected.section_handle}`, token, controller.signal)
-      .then(async (response) => {
-        type Json = ApiJson<"/public/resource-share/sections/{section_handle}", "get">;
-        return response.ok ? ((await response.json()) as Json).data : null;
-      })
-      .catch(() => null)
-      .then((body) => {
-        if (!controller.signal.aborted) setLoaded({ section: selected, body });
-      });
-    return () => controller.abort();
-  }, [selected, token]);
-
-  return (
-    <div className={styles.epub}>
-      <nav aria-label="Book contents">
-        {sections.map((section) => (
-          <button
-            key={section.section_handle}
-            type="button"
-            aria-current={section === selected ? "location" : undefined}
-            style={{ paddingInlineStart: `${12 + section.depth * 12}px` }}
-            onClick={() => setSelected(section)}
-          >
-            {section.label || `Section ${section.ordinal + 1}`}
-          </button>
-        ))}
-      </nav>
-      <article className={styles.column}>
-        {loaded?.section !== selected ? (
-          <p className={styles.note}>Loading section…</p>
-        ) : loaded.body === null ? (
-          <p className={styles.note}>Section unavailable.</p>
-        ) : (
-          <MarkedHtml
-            key={selected.section_handle}
-            token={token}
-            html={loaded.body.html_sanitized}
-            text={loaded.body.canonical_text}
-            mark={mark?.ordinal === selected.ordinal ? mark : null}
-          />
-        )}
-      </article>
-    </div>
-  );
-}
-
-/**
- * Sanitized HTML with the shared highlight marked by the reader's own applyHighlightsToHtml,
- * scrolled to and focused. With a token, EPUB images load by handle as blob URLs.
- */
-function MarkedHtml(props: { html: string; text: string; mark: Mark | null; token?: string }) {
-  const { html, text, mark, token } = props;
-  const rootRef = useRef<HTMLElement>(null);
-  const marked = useMemo(
-    () =>
-      mark &&
-      applyHighlightsToHtml(html, text, [
-        {
-          id: "shared",
-          start_offset: mark.start_offset,
-          end_offset: mark.end_offset,
-          color: mark.color,
-          created_at: "",
-        },
-      ]),
-    [html, mark, text],
-  );
-  const markedOk = marked !== null && marked.failedIds.length === 0;
-  const rendered = markedOk ? marked.html : html;
-
-  useEffect(() => {
-    if (!markedOk || !rootRef.current) return;
-    rootRef.current.querySelector("[data-active-highlight-ids]")?.scrollIntoView({
-      behavior: "smooth",
-      block: "center",
-    });
-    rootRef.current.focus({ preventScroll: true });
-  }, [markedOk, rendered]);
-
-  useEffect(() => {
-    const root = rootRef.current;
-    if (!root || !token) return;
-    const controller = new AbortController();
-    const objectUrls: string[] = [];
-    const images = root.querySelectorAll<HTMLImageElement>("img[data-nexus-public-asset-handle]");
-    for (const image of images) {
-      void publicFetch(`/assets/${image.dataset.nexusPublicAssetHandle}`, token, controller.signal)
-        .then((response) => (response.ok ? response.blob() : null))
-        .then((blob) => {
-          if (!blob || controller.signal.aborted) return;
-          const url = URL.createObjectURL(blob);
-          objectUrls.push(url);
-          image.src = url;
-        })
-        .catch(() => undefined);
-    }
-    return () => {
-      controller.abort();
-      for (const url of objectUrls) URL.revokeObjectURL(url);
-    };
-  }, [rendered, token]);
-
-  return (
-    <section
-      ref={rootRef}
-      className={markedOk ? styles.target : undefined}
-      tabIndex={markedOk ? -1 : undefined}
-    >
-      <HtmlRenderer htmlSanitized={rendered} headingLevelOffset={1} />
-      {marked !== null && !markedOk ? (
-        <p className={styles.note} role="status">
-          Highlight unavailable.
-        </p>
-      ) : null}
-    </section>
   );
 }

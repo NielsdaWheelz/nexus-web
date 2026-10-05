@@ -7,7 +7,7 @@
 // request {id, op, ...args} -> reply {id, ok: true, ...} | {id, ok: false, error}
 // push    {snapshot}, always before the reply to the op that caused it.
 import { useSyncExternalStore } from "react";
-import type { ReaderProgressView } from "@/lib/reader/ReaderProgressPort";
+import type { ProgressView } from "@/lib/documentReader/ports";
 
 export type MediaKind = "podcast_episode" | "pdf" | "epub" | "web_article";
 export type FailureReason =
@@ -26,7 +26,7 @@ export interface OfflineItem {
   readonly sizeBytes: number;
   readonly savedAt: string | null;
   /** Non-null only for a Ready reading copy. */
-  readonly progress: ReaderProgressView | null;
+  readonly progress: ProgressView | null;
 }
 
 export interface OfflineSnapshot {

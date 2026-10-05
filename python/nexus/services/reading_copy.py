@@ -1,11 +1,10 @@
-"""One offline reading copy: the hosted reader's own payloads and objects, zipped.
+"""One offline reading copy: the reader's document and its objects, zipped.
 
-``reader.json`` holds ``media``, ``navigation``, ``fragments`` (web article) or
-``epubFragments`` (epub), each serialized exactly as its hosted route serializes
-it, so the Android shelf parses them with the hosted reader's parsers. The zip
-also carries ``document.pdf`` (pdf) or ``assets/{asset_key}`` (epub). The only
-change to hosted html: web article images become text placeholders (offline
-web articles are text-only).
+``reader.json`` is ``{"media": {id, title, kind}, "document": ReaderDocumentOut}``,
+the document as ``GET /media/{id}/reader`` builds it, except that a pdf's
+``file.url`` names the member ``document.pdf`` and web article images become
+text placeholders (offline web articles are text-only). The zip also carries
+``document.pdf`` (pdf) or ``assets/{asset_key}`` (epub).
 """
 
 from __future__ import annotations
@@ -22,16 +21,17 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
-from nexus.services import epub_read, reader_navigation, reader_publication
-from nexus.services import media as media_service
+from nexus.schemas.reader_document import ReaderPdfFileOut
+from nexus.services import reader_publication
 from nexus.services.image_placeholder import replace_image_with_placeholder
+from nexus.services.reader_document import build_reader_document
 from nexus.storage.client import StorageError, get_storage_client
 
 
 def build_reading_copy(db: Session, *, viewer_id: UUID, media_id: UUID, path: Path) -> int:
     """Write ``viewer_id``'s copy of ``media_id`` to ``path``; return its generation.
 
-    Every read happens in the caller's repeatable-read snapshot, so the payloads
+    Every read happens in the caller's repeatable-read snapshot, so the document
     and the generation agree. The snapshot is released before object storage is
     read; an object that vanished meanwhile was superseded by a republication.
     """
@@ -43,48 +43,38 @@ def build_reading_copy(db: Session, *, viewer_id: UUID, media_id: UUID, path: Pa
     row = db.execute(
         text("SELECT kind, title FROM media WHERE id = :media_id"), {"media_id": media_id}
     ).one()
-    kind = str(row.kind)
-    reader: dict[str, object] = {
-        "media": {"id": str(media_id), "title": str(row.title), "kind": kind},
-        "navigation": None,
-        "fragments": None,
-        "epubFragments": None,
-    }
+    document = build_reader_document(
+        db,
+        media_id=media_id,
+        viewer_id=viewer_id,
+        pdf_file=lambda: ReaderPdfFileOut(url="document.pdf", expires_at=None),
+    )
     objects: list[tuple[str, str]] = []
-    if kind == "pdf":
+    if document.kind == "pdf":
         source = db.scalar(
             text("SELECT storage_path FROM media_file WHERE media_id = :media_id"),
             {"media_id": media_id},
         )
         objects.append(("document.pdf", str(source)))
+    elif document.kind == "web_article":
+        document.units = [
+            unit.model_copy(update={"html_sanitized": _without_images(unit.html_sanitized)})
+            for unit in document.units
+        ]
     else:
-        navigation = reader_navigation.get_media_navigation_for_viewer(db, viewer_id, media_id)
-        reader["navigation"] = navigation.model_dump(mode="json", by_alias=True)
-        if kind == "web_article":
-            reader["fragments"] = [
-                {
-                    **fragment.model_dump(mode="json", by_alias=True),
-                    "html_sanitized": _without_images(fragment.html_sanitized),
-                }
-                for fragment in media_service.list_fragments_for_viewer(db, viewer_id, media_id)
-            ]
-        else:
-            reader["epubFragments"] = [
-                epub_read.get_epub_fragment_for_viewer(
-                    db, viewer_id, media_id, fragment.fragment_id
-                ).model_dump(mode="json", by_alias=True)
-                for fragment in navigation.fragments
-            ]
-            objects.extend(
-                (f"assets/{asset.asset_key}", str(asset.storage_path))
-                for asset in db.execute(
-                    text(
-                        "SELECT asset_key, storage_path FROM epub_resources"
-                        " WHERE media_id = :media_id"
-                    ),
-                    {"media_id": media_id},
-                )
+        objects.extend(
+            (f"assets/{asset.asset_key}", str(asset.storage_path))
+            for asset in db.execute(
+                text(
+                    "SELECT asset_key, storage_path FROM epub_resources WHERE media_id = :media_id"
+                ),
+                {"media_id": media_id},
             )
+        )
+    reader = {
+        "media": {"id": str(media_id), "title": str(row.title), "kind": str(row.kind)},
+        "document": document.model_dump(mode="json", by_alias=True),
+    }
     db.rollback()
 
     storage = get_storage_client()

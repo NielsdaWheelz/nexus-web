@@ -13,7 +13,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from nexus.db.session import DbSession
 from nexus.errors import ApiErrorCode
 from nexus.responses import Data, error_response
-from nexus.schemas.public_resource_sharing import PublicSectionOut, PublicShareOut
+from nexus.schemas.public_resource_sharing import PublicShareOut
+from nexus.schemas.reader_document import ReaderDocumentOut
 from nexus.services import public_resource_sharing
 from nexus.services.media_file_access import parse_single_byte_range
 from nexus.storage.client import get_storage_client
@@ -27,11 +28,11 @@ def get_public_resource_share(db: DbSession, share_token: ShareToken = "") -> Da
     return Data(data=public_resource_sharing.read_share(db, share_token))
 
 
-@router.get("/sections/{section_handle}")
-def get_public_resource_share_section(
-    section_handle: str, db: DbSession, share_token: ShareToken = ""
-) -> Data[PublicSectionOut]:
-    return Data(data=public_resource_sharing.read_section(db, share_token, section_handle))
+@router.get("/document")
+def get_public_resource_share_document(
+    db: DbSession, share_token: ShareToken = ""
+) -> Data[ReaderDocumentOut]:
+    return Data(data=public_resource_sharing.read_document(db, share_token))
 
 
 @router.get("/assets/{asset_handle}")

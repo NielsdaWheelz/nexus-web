@@ -12,8 +12,7 @@ import { connectOffline } from "@/lib/offline/bridge";
 import { ImportsProvider } from "@/lib/imports/ImportsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { CompletionUndoFeedbackOwner } from "@/lib/lectern/useCompletionUndo";
-import { ReaderProvider } from "@/lib/reader/ReaderContext";
-import { ReaderProfileSaveFeedback } from "@/lib/reader/ReaderProfileSaveFeedback";
+import { ReaderProvider, type ReaderProfile } from "@/lib/reader/ReaderContext";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
 import ActivityCaptureLifecycle from "@/lib/consumption/ActivityCaptureLifecycle";
@@ -29,7 +28,6 @@ import {
   ResourceCacheProvider,
   type DehydratedResources,
 } from "@/lib/api/resourceCache";
-import type { ReaderProfile } from "@/lib/reader/types";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
@@ -65,7 +63,6 @@ export default function AuthenticatedShell({
           <ResourceCacheProvider value={resources}>
             <KeybindingsProvider>
               <ReaderProvider initialProfile={readerProfile}>
-                <ReaderProfileSaveFeedback />
                 <AuthenticatedWorkspace
                   accountId={account.accountId}
                   initialState={initialState}

@@ -16,7 +16,7 @@ from nexus.schemas.nexus_history import (
     NexusSelectionRecordOut,
     NexusSelectionRecordRequest,
 )
-from nexus.schemas.reader import ReaderProfilePatch
+from nexus.schemas.reader import ReaderProfileOut, ReaderProfilePatch
 from nexus.schemas.user import UpdateProfileRequest
 from nexus.schemas.workspace_session import (
     WORKSPACE_SESSION_DEVICE_ID_MAX_LENGTH,
@@ -81,10 +81,9 @@ def patch_me(
 def get_reader_profile(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
-) -> dict:
+) -> Data[ReaderProfileOut]:
     """Get reader profile (per-user defaults). Returns defaults when none exists."""
-    result = reader_profile_service.get_reader_profile(db, viewer.user_id)
-    return ok(result)
+    return Data(data=reader_profile_service.get_reader_profile(db, viewer.user_id))
 
 
 @router.patch("/me/reader-profile")
@@ -92,10 +91,9 @@ def patch_reader_profile(
     body: ReaderProfilePatch,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
-) -> dict:
+) -> Data[ReaderProfileOut]:
     """Update reader profile (partial)."""
-    result = reader_profile_service.patch_reader_profile(db, viewer.user_id, body)
-    return ok(result)
+    return Data(data=reader_profile_service.patch_reader_profile(db, viewer.user_id, body))
 
 
 @router.get("/me/nexus-history")
