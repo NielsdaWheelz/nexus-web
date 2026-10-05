@@ -9,11 +9,11 @@ import {
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import { apiFetch, apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHandoff";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
-import { decodeHighlightLinkedNoteBlock, type HighlightLinkedNoteBlock } from "@/lib/highlights/highlightContract";
 import { mediaCaptureErrorMessage } from "@/lib/media/captureFeedback";
 import { emptyNoteBody } from "@/lib/notes/prosemirror/schema";
 import { useNoteEditorSession } from "@/lib/notes/useNoteEditorSession";
@@ -25,6 +25,8 @@ import { expectExactRecord, expectOneOf, expectRecord, expectString } from "@/li
 import NoteBodyEditor, { type NoteBodyEdit } from "@/components/notes/NoteBodyEditor";
 import NoteDraftRecovery from "@/components/notes/NoteDraftRecovery";
 import styles from "./HighlightNoteEditor.module.css";
+
+type HighlightLinkedNoteBlock = Schema<"LinkedNoteBlockRef">;
 
 export interface AnnotationNoteTarget {
   kind: "highlight" | "link";
@@ -203,14 +205,15 @@ function AnnotationBody({
         version_by_lane: createdVersions,
       } : projection.current;
       if (!previous) {
-        const response = await apiFetch<{ data: unknown }>(`/api/notes/blocks/${encodeURIComponent(noteBlockId)}`);
-        const block = expectRecord(response.data, "saved annotation note");
-        previous = decodeHighlightLinkedNoteBlock({
+        const { data: block } = await apiFetch<ApiJson<"/notes/blocks/{block_id}", "get">>(
+          `/api/notes/blocks/${encodeURIComponent(noteBlockId)}`,
+        );
+        previous = {
           note_block_id: block.id,
           body_pm_json: block.bodyPmJson,
           body_text: block.bodyText,
-          version_by_lane: block.versionByLane,
-        });
+          version_by_lane: { body: block.versionByLane.body, links: block.versionByLane.links },
+        };
         if (previous.note_block_id !== noteBlockId) throw new TypeError("saved annotation changed note identity");
       }
       if (projection.current && projection.current.version_by_lane.body > ack.version) return;

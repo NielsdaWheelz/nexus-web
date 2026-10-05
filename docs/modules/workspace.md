@@ -203,8 +203,8 @@ page/note items, while `Find` publishes the pane's `useFind` controller
 revealed and how it is painted. `PaneShell` owns the shared Pane.Search command,
 transient expanded row (`FindBar` or the filter `PaneSearchBar`), focus, and
 active-pane request consumption. the row stays expanded for one source (pane,
-visit, route, path), not one query string: a reader that rewrites its own
-`?fragment` keeps its find open, while leaving that source ends the expansion,
+visit, route, path), not one query string: a reader consuming its own deep
+link (one replace) keeps its find open, while leaving that source ends the expansion,
 so going back to it starts closed. every end of an expansion, by the user or by
 leaving the source, dismisses the search it expanded (`find.close()` or the
 filter's `onDismiss`): media and chat bodies mount by resource and outlive a
@@ -281,13 +281,13 @@ composition so one pane failure cannot replace its siblings or the workspace.
 ### Mobile Reader Chrome
 
 `MobileChromeProvider` is the sole mobile reader chrome policy owner.
-`TextDocumentReader`, the `MediaPaneBody` transcript viewport, and `PdfReader`
-register their actual scroll element through
-`useMobileChromeReaderScrollport`. Exactly one active reader scrollport owns
+The reader's text and pdf surfaces register their actual scroll element through
+the host's `ReaderHost.scrollport` (the media pane passes
+`useMobileChromeReaderScrollport`). Exactly one active reader scrollport owns
 native scroll sampling and blank-canvas reveal. One stable active-reader
 interaction root owns primary-pointer focus handoff even while the scrollport
-is loading, short, or being replaced. Window, workspace, nested transcript
-segments, and non-reader pane scroll never participate.
+is loading, short, or being replaced. Window, workspace and non-reader pane
+scroll never participate.
 
 The provider reduces reader scroll to one normalized collapse progress. The app
 top bar, optional active contextual row, and inner Nexus control consume that
@@ -544,11 +544,8 @@ The passive mobile reader position ribbon does not participate in fixed primary
 chrome. It remains reader-relative, uses the reader-owned semantic range, and
 paints at the reader surface bottom (`bottom: 0`). It consumes no bottom
 clearance and does not rise above Nexus, Player, or Android navigation; a
-higher-priority surface may cover it. See the
-[mobile ribbon cutover](../cutovers/mobile-reader-position-ribbon-hard-cutover.md)
-for its semantic range, and the
-[bottom geometry cutover](../cutovers/mobile-reader-bottom-geometry-hard-cutover.md)
-for its placement.
+higher-priority surface may cover it. Its range is the reader's visible band
+(`PositionRibbon` in `lib/documentReader/chrome/MapRail.tsx`).
 
 The reader Document Map overview rail is fixed primary chrome and remains
 desktop-only. Its markers activate contextual targets; it contains no inspector

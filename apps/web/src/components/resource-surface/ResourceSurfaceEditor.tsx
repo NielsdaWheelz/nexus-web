@@ -38,7 +38,7 @@ import {
   readDailyDraftRaw,
   subscribeDailyDraft,
 } from "@/lib/notes/dailyDraftStore";
-import { getPaneScrollContainer } from "@/lib/reader/paneScroll";
+import { getPaneScrollContainer } from "@/lib/workspace/paneDom";
 import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { resolveResourceLocator } from "@/lib/resources/resourceLocators";

@@ -1,4 +1,4 @@
-"""EPUB source reads: fragments, navigation, and the public sharing projection."""
+"""EPUB source reads: navigation, link rewriting, and the public sharing projection."""
 
 from __future__ import annotations
 
@@ -11,10 +11,8 @@ from lxml.html import fragment_fromstring
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media
-from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.media import (
-    EpubFragmentOut,
     MediaNavigationOut,
     NavigationTextPointOut,
     NavigationTextRangeOut,
@@ -24,10 +22,8 @@ from nexus.schemas.media import (
     ReaderNavigationTocNodeOut,
 )
 from nexus.schemas.presence import absent, presence_from_nullable, present
-from nexus.services.capabilities import is_document_status_ready
 from nexus.services.html_tree import inner_html
 from nexus.services.reader_publication import (
-    read_publication_generation,
     read_publication_source_issues,
 )
 
@@ -52,18 +48,6 @@ _FRAGMENT_SOURCES_SQL = """
     WHERE f.media_id = :media_id
       AND (CAST(:after_ordinal AS INTEGER) IS NULL OR f.idx > :after_ordinal)
     ORDER BY f.idx LIMIT :limit
-"""
-
-_ONE_FRAGMENT_SQL = """
-    SELECT f.id, f.idx, source.package_href, f.html_sanitized, f.canonical_text,
-           f.canonical_text_word_count, f.created_at,
-           COALESCE((SELECT SUM(prior.canonical_text_word_count)
-             FROM fragments prior WHERE prior.media_id = f.media_id AND prior.idx < f.idx),
-             0) AS document_word_start
-    FROM fragments f
-    JOIN epub_fragment_sources source
-      ON source.media_id = f.media_id AND source.fragment_id = f.id
-    WHERE f.media_id = :mid AND f.id = :fragment_id
 """
 
 
@@ -100,35 +84,6 @@ def list_epub_fragment_sources(
         )
         for row in rows
     ]
-
-
-def require_readable_epub(db: Session, viewer_id: UUID, media_id: UUID) -> int:
-    """Enforce visibility, then kind, then readiness; return the publication generation."""
-    if not can_read_media(db, viewer_id, media_id):
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    row = db.execute(
-        text("SELECT kind, processing_status FROM media WHERE id = :mid"),
-        {"mid": media_id},
-    ).one_or_none()
-    if row is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    if row.kind != "epub":
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Endpoint only supports EPUB media")
-    if not is_document_status_ready(str(row.processing_status)):
-        raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
-    generation = read_publication_generation(db, media_id=media_id)
-    if generation is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    return generation
-
-
-def get_epub_navigation_for_viewer(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-) -> MediaNavigationOut:
-    generation = require_readable_epub(db, viewer_id, media_id)
-    return read_epub_navigation(db, media_id=media_id, generation=generation)
 
 
 def read_epub_navigation(
@@ -343,42 +298,3 @@ def rewrite_epub_fragment_links(
             link.set("data-nexus-anchor-id", unquote(parsed.fragment))
         link.set("href", "#")
     return inner_html(root)
-
-
-def get_epub_fragment_for_viewer(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-    fragment_id: UUID,
-) -> EpubFragmentOut:
-    """Read one owned EPUB fragment without requiring a navigation section."""
-    generation = require_readable_epub(db, viewer_id, media_id)
-    row = (
-        db.execute(text(_ONE_FRAGMENT_SQL), {"mid": media_id, "fragment_id": fragment_id})
-        .mappings()
-        .one_or_none()
-    )
-    if row is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "EPUB fragment not found")
-    source_paths = db.execute(
-        text("SELECT package_href, fragment_id FROM epub_fragment_sources WHERE media_id = :mid"),
-        {"mid": media_id},
-    )
-    return EpubFragmentOut(
-        fragment_id=row["id"],
-        fragment_idx=row["idx"],
-        href_path=row["package_href"],
-        generation=generation,
-        html_sanitized=rewrite_epub_fragment_links(
-            row["html_sanitized"],
-            href_path=row["package_href"],
-            fragment_ids_by_path={
-                source.package_href: source.fragment_id for source in source_paths
-            },
-        ),
-        canonical_text=row["canonical_text"],
-        char_count=len(row["canonical_text"]),
-        word_count=row["canonical_text_word_count"],
-        document_word_start=int(row["document_word_start"]),
-        created_at=row["created_at"],
-    )

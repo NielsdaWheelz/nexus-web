@@ -2,7 +2,7 @@
  * Origins of the embedded YouTube player — the single source of truth for:
  * - the CSP `frame-src` allowlist (./csp.ts),
  * - the `Permissions-Policy` feature delegation (./headers.ts), and
- * - the embed component's host check (media/[id]/TranscriptPlaybackPanel.tsx).
+ * - the embed component's host check (components/media/YouTubeEmbedFrame.tsx).
  *
  * The iframe `allow="…"` feature list in that component must stay in lockstep with the
  * media features delegated to these origins in headers.ts. The two are deliberately NOT

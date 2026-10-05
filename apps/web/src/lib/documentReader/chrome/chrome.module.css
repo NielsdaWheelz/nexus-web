@@ -38,10 +38,11 @@
   pointer-events: none;
 }
 
+/* Two lanes either side of the track line: structure left, evidence right. */
 .tick {
   position: absolute;
-  left: 4px;
-  width: 24px;
+  left: 1px;
+  width: 15px;
   height: 16px;
   padding: 0;
   border: 0;
@@ -50,11 +51,15 @@
   cursor: pointer;
 }
 
+.tick[data-lane="evidence"] {
+  left: 16px;
+}
+
 .tick::after {
   position: absolute;
   inset-block-start: 7.5px;
-  left: 5px;
-  width: 14px;
+  left: 2px;
+  width: 11px;
   height: 1px;
   background: var(--ink-muted);
   content: "";
@@ -90,24 +95,6 @@
   pointer-events: none;
 }
 
-.chooser {
-  position: absolute;
-  z-index: var(--z-raised);
-  top: var(--space-2);
-  right: 100%;
-  display: flex;
-  flex-direction: column;
-  min-width: 12rem;
-  max-height: 60vh;
-  overflow: auto;
-  padding: var(--space-1);
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-md);
-  background: var(--surface-1);
-  box-shadow: var(--shadow-2);
-}
-
-.chooser button,
 .toc button {
   display: block;
   width: 100%;
@@ -122,7 +109,6 @@
   cursor: pointer;
 }
 
-.chooser button:hover,
 .toc button:hover {
   background: var(--surface-hover);
 }

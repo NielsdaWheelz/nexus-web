@@ -11,7 +11,9 @@ const COLOR_LITERAL_PATTERN =
 const allowedFiles = new Set([
   "src/app/globals.css",
   "src/app/brand.css",
-  "src/app/(authenticated)/media/[id]/page.module.css",
+  // The reader theme and its ::highlight inks: var() is ignored inside
+  // ::highlight on chromium and android webview <= 113, so they are literal.
+  "src/lib/documentReader/documentReader.module.css",
 ]);
 
 // The packaged APK shelf and the Firefox extension popup are each their own
@@ -89,10 +91,6 @@ const runtimeCustomPropertyOwners = new Map([
   // fallback (`var(--grain-seed, 0% 0%)`), which is what keeps the session sky
   // out of the Study and the Press.
   ["--grain-seed", "src/components/theme/SolarEffects.tsx"],
-  [
-    "--marker-color",
-    "src/components/reader/ReaderDocumentMapOverviewRail.tsx",
-  ],
   ["--moon", "src/components/theme/SolarEffects.tsx"],
   ["--pane-refresh-offset", "src/components/workspace/PaneShell.tsx"],
 ]);

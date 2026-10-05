@@ -8,7 +8,9 @@ from fastapi import APIRouter, Depends, Response
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession
 from nexus.errors import InvalidRequestError
-from nexus.responses import ok
+from nexus.responses import Data
+from nexus.schemas.passage_anchors import PassageTarget
+from nexus.schemas.presence import Presence
 from nexus.services import passage_anchors
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 
@@ -22,13 +24,13 @@ def resolve_passage_anchor(
     response: Response,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
-) -> dict:
+) -> Data[Presence[PassageTarget]]:
     owner = parse_resource_ref(owner_ref)
     if isinstance(owner, ResourceRefParseFailure) or owner.scheme not in ("media", "note_block"):
         raise InvalidRequestError(message="Passage owner must be a media or note_block ref")
     response.headers["Cache-Control"] = "private, no-store"
-    return ok(
-        passage_anchors.get_navigation_target(
+    return Data(
+        data=passage_anchors.get_navigation_target(
             db, viewer_id=viewer.user_id, passage_anchor_id=anchor_id, owner=owner
         )
     )

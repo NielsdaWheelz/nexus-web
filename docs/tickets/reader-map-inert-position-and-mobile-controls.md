@@ -85,3 +85,9 @@ sizes, hit testing the header inspector control returns that button throughout
 its painted bounds. navigation alone records no reading/completion. retain candidate
 sha, device/runtime, actions, observed announcements/focus and verdict.
 screenshots or accessibility-tree inspection alone are insufficient.
+
+2026-10-05: the reader rewrite (pr2) replaced the hosted rail with
+`lib/documentReader/chrome/MapRail.tsx` (structure and evidence lanes; a crowded
+group opens its first destination and names all of them in its title; the phone
+gets the passive `PositionRibbon`). the witnesses above describe the old rail;
+the operator review applies to the new one.

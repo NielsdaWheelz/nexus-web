@@ -94,8 +94,37 @@ ResolvedHighlightReaderTarget = Annotated[
 ]
 
 
-class ResolvedHighlightReaderTargetResponse(ReaderTargetModel):
-    data: ResolvedHighlightReaderTarget
+class _ReaderTargetOut(BaseModel):
+    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
+
+
+class ReaderTargetTextOut(_ReaderTargetOut):
+    """A codepoint span of one reader unit."""
+
+    kind: Literal["Text"] = "Text"
+    unit_id: str
+    start_offset: int = Field(ge=0)
+    end_offset: int = Field(ge=0)
+
+
+class ReaderTargetPdfOut(_ReaderTargetOut):
+    """Page quads; none when only the page is known."""
+
+    kind: Literal["Pdf"] = "Pdf"
+    page_number: int = Field(ge=1)
+    quads: list[HighlightTargetPdfQuadOut]
+
+
+class ReaderTargetTimeOut(_ReaderTargetOut):
+    kind: Literal["Time"] = "Time"
+    start_ms: int = Field(ge=0)
+    end_ms: int = Field(ge=0)
+
+
+ReaderTargetOut = Annotated[
+    ReaderTargetTextOut | ReaderTargetPdfOut | ReaderTargetTimeOut, Field(discriminator="kind")
+]
+ReaderTargetKind = Literal["highlight", "evidence", "passage", "apparatus"]
 
 
 class ReaderProfileOut(BaseModel):

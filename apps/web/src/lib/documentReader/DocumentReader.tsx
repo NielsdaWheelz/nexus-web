@@ -52,23 +52,26 @@ export type MarkAnchor =
       readonly page: number;
       readonly quads: readonly PdfQuad[];
     };
-export interface NoteRef {
+export type TextRange = Extract<MarkAnchor, { kind: "text" }>;
+export interface NoteRef extends Omit<TextRange, "kind"> {
   readonly key: string;
-  readonly unit: string;
-  readonly start: number;
-  readonly end: number;
 }
 /** What the host paints over the publication; the paint mechanism is the surface's. */
 export interface Decorations {
   /** Marks measured against this publication; others are ignored. */
   readonly identity: string;
+  /** Topmost first: where marks overlap, the first paints. */
   readonly marks: readonly Mark[];
   readonly noteRefs: readonly NoteRef[];
   readonly focused: string | null;
   readonly hovered: string | null;
+  /** The active deep-link target, underlined. */
+  readonly evidence: TextRange | null;
+  /** Flashed once; a new object flashes again. */
+  readonly pulse: TextRange | null;
 }
 export type DraftAnchor =
-  | Extract<MarkAnchor, { kind: "text" }>
+  | TextRange
   | (Extract<MarkAnchor, { kind: "pdf" }> & { readonly exact: string });
 export interface SelectionCapture {
   readonly anchor: DraftAnchor;
@@ -187,12 +190,20 @@ export default function DocumentReaderView(
   } else if (publication.doc.kind === "pdf") {
     body = <PdfSurface runtime={runtime} doc={publication.doc} view={props} />;
   } else {
-    body = <TextSurface runtime={runtime} doc={publication.doc} view={props} />;
+    body = (
+      <TextSurface
+        runtime={runtime}
+        doc={publication.doc}
+        structure={publication.structure}
+        view={props}
+      />
+    );
   }
   return (
     <div
       className={styles.frame}
       style={readerSurfaceStyle(props.profile)}
+      data-theme={props.profile.theme}
       data-hyphenation={props.profile.hyphenation}
     >
       {tracked ? <StatusStrip reader={runtime} /> : null}

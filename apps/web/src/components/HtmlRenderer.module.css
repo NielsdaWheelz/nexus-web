@@ -1,7 +1,6 @@
+/* Sanitized document html. Size, line height, family and colour are the
+ * surrounding reader's (its profile); this sheet sets only block rhythm. */
 .renderer {
-  font-size: var(--text-base);
-  line-height: var(--leading-loose);
-  color: var(--reader-text, var(--ink));
   overflow-wrap: break-word;
   text-align: left;
 }
@@ -17,7 +16,6 @@
   margin-bottom: 0.5em;
   font-weight: var(--weight-semibold);
   line-height: var(--leading-snug);
-  color: var(--reader-text, var(--ink));
 }
 
 .renderer h1 {
@@ -38,11 +36,6 @@
 
 .renderer strong {
   font-weight: var(--weight-semibold);
-  color: var(--reader-text, var(--ink));
-}
-
-.renderer em {
-  font-style: italic;
 }
 
 /* Links */
@@ -132,24 +125,4 @@
   margin: 2em 0;
   border: none;
   border-top: 1px solid var(--reader-border, var(--edge));
-}
-
-.pulsing {
-  animation: htmlHighlightPulse 1200ms var(--ease-glide) 0s 2;
-}
-
-@keyframes htmlHighlightPulse {
-  0%,
-  100% {
-    background-color: var(--highlight-yellow);
-  }
-  50% {
-    background-color: transparent;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .pulsing {
-    animation: none;
-  }
 }

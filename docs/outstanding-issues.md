@@ -47,7 +47,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] ingest / replay authority · 2026-10-04 source audit · replay validates current destination write access before reading the saved admission: [ticket](tickets/url-replay-requires-current-destination-write-access.md).
 - [open] media upload retry · 2026-10-04 source audit · the fresh and memo retry paths repeat the same capability generation/expiry in a private result: [ticket](tickets/upload-retry-repeats-capability-result.md).
 - [open] ui field controls · 2026-10-04 source audit · input, textarea and select repeat appearance rules; qualify one shared class against caller overrides and focus behavior: [ticket](tickets/ui-field-controls-repeat-appearance-rules.md).
-- [open] epub / navigation · 2026-10-04 source review · a publisher href-based section id may retire when its point becomes note content; qualify the unobserved saved-location case before the rearnote alias release: [ticket](tickets/epub-publisher-href-loc-retirement-on-note-promotion.md).
 
 
 - [open] operator credentials · 2026-10-02 cleanup workflow · skid's three peer bearer fields were printed into a tool transcript; coordinate rotation with active sessions: [ticket](tickets/local-qualification-credential-transcript-exposure.md).
@@ -60,16 +59,12 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] resource sharing / share overlay web · 2026-09-28 resource-sharing review · the Native and X bearer-link triggers stay enabled while another change is in flight: [ticket](tickets/share-overlay-bearer-warning-triggers-ignore-busy.md).
 - [open] web / python comments · 2026-09-28 pr-06 library placement · 25 code comments cite deleted `docs/cutovers/` files as rule owners: [ticket](tickets/code-comments-cite-deleted-cutovers.md).
 - [open] jobs / documentation · 2026-10-04 backend owner audit · the jobs module still describes retired chat result kinds and a media-unit failed-result declaration absent from the registry: [ticket](tickets/jobs-handler-outcome-docs-stale.md).
-- [deferred] pdf reader / web · 2026-10-04 source audit · completed document teardown also destroys its loading task a second time: [ticket](tickets/pdf-reader-destroys-completed-loading-task-twice.md).
-- [deferred] pdf reader / web · 2026-10-04 source audit · a superseded signed-url open can attach after delayed viewer import: [ticket](tickets/pdf-reader-superseded-url-can-attach-old-viewer.md).
 - [deferred] notes / web · 2026-10-04 source audit · a delayed accepted attachment can resume against its destroyed editor view: [ticket](tickets/note-attachment-can-resume-into-destroyed-editor.md).
 - [deferred] notes / daily input · 2026-10-04 independent source review · raw handoff offsets and trimmed canonical text coordinates can disagree; the daily input/merge owner must qualify their contract: [ticket](tickets/daily-handoff-raw-and-canonical-text-coordinates-diverge.md).
-- [deferred] pdf / web · 2026-10-04 independent source review · source retry can bind before the error branch remounts the viewer viewport: [ticket](tickets/pdf-source-retry-binds-before-viewport-remount.md).
 - [deferred] resource actions / web · 2026-10-04 source audit · a caught action-snapshot 401 shows generic retry without the existing auth handoff: [ticket](tickets/resource-action-snapshot-unauthorized-skips-auth-handoff.md).
 - [open] wikisource / article apparatus · 2026-10-04 native baseline · `On Liberty/Chapter 2` retains note links but yields zero bound note items; the exact loss point needs qualification: [ticket](tickets/wikisource-note-links-unbound-after-extraction.md).
 - [open] epub / apparatus extraction · 2026-10-04 native baseline · official gutenberg 34901's plain inline footnote anchors yield zero reader apparatus items: [ticket](tickets/gutenberg-inline-footnotes-not-classified.md).
 - [open] epub / apparatus extraction · 2026-10-04 native baseline · official idpf wasteland's declared `rearnote` bodies yield zero reader apparatus items: [ticket](tickets/epub-rearnote-bodies-not-classified.md).
-- [open] hosted reader / web · 2026-10-04 source audit · the pane recomputes epub/web fragment position data already owned by its document structure; web content/navigation timing needs qualification: [ticket](tickets/media-pane-repeats-document-fragment-position-work.md).
 - [open] offline / release · 2026-10-04 offline reauthoring · the hard cutover must ship web+api first, then a storage-cleared apk; skew windows and orphaned old data: [ticket](tickets/offline-cutover-release-steps.md).
 - [open] android / auth · 2026-10-04 offline reauthoring harness · a force-stop right after login loses the session cookie; cookies flush only on page finish and pause: [ticket](tickets/android-session-cookie-not-flushed-after-login.md).
 - [open] hosted workspace / panes · 2026-10-04 offline review-fix harness · a restored pane whose media was deleted (404) replaces the whole workspace with "Something went wrong": [ticket](tickets/workspace-restore-fails-on-deleted-media-pane.md).
@@ -78,21 +73,16 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] podcast publisher transcript · 2026-09-26 reader acceptance · configured discovery through publisher transcript read/find remains unqualified: [ticket](tickets/podcast-publisher-transcript-journey-unqualified.md).
 - [open] android offline reading · 2026-09-26 source-note implementation · authored note links work, but downloaded readers lack aligned evidence inspection: [ticket](tickets/offline-reader-lacks-source-apparatus-inspection.md).
 - [open] player / release · 2026-10-05 player re-author · web, api and a signed apk ship together after old activity outboxes drain: [ticket](tickets/player-cutover-release-steps.md).
-- [open] reader / player · 2026-10-05 player re-author · whichever of reader pr2 and the player re-author merges second re-applies the other's pane edits: [ticket](tickets/reader-pr2-must-carry-player-consumer-edits.md).
 - [open] player / budget · 2026-10-05 player re-author · 7,202 in-budget lines against the 5,700 gate (full scope 8,545 against 7,000); owner accepts or orders cuts: [ticket](tickets/player-over-line-budget.md).
 - [open] reader / web · 2026-10-04 reader rewrite pr1 · the whole-document mount is unmeasured on a large book and on the phone (risk r1): [ticket](tickets/reader-whole-mount-large-book-unmeasured.md).
-- [open] reader / web · 2026-10-04 reader rewrite pr1 · focus mode, reader theme, pulse, pdf mark hover, find sources and the import boundary of the shared reader core wait for the hosted cutover: [ticket](tickets/reader-core-pr2-surface-gaps.md).
-- [open] reader / web · 2026-10-04 cleanup campaign · the hosted media pane still runs the old reader; pr2 replaces it on the shared core under the owner's css-highlight conditions: [ticket](tickets/reader-pr2-replace-hosted-pane.md).
-- [open] reader / pdf · 2026-10-04 cleanup campaign · opening a pdf saves a position with nothing read: [ticket](tickets/pdf-open-saves-unread-position.md).
-- [open] reader / pdf · 2026-10-04 cleanup campaign · pdf page buttons jump without holding the reading spot: [ticket](tickets/pdf-page-buttons-do-not-hold-reading-spot.md).
-- [open] reader / web article · 2026-10-04 cleanup campaign · section navigation does nothing at the very top of an article: [ticket](tickets/reader-section-nav-stuck-at-article-top.md).
-- [open] reader / transcript · 2026-10-04 cleanup campaign · a segment click saves nothing; reload reopens at segment 1: [ticket](tickets/transcript-segment-click-does-not-save-position.md).
-- [open] reader / progress · 2026-10-04 cleanup campaign · a cursor save the server accepted logs a network error: [ticket](tickets/reader-cursor-save-logs-false-network-error.md).
-- [open] reader / navigation · 2026-10-04 cleanup campaign · a jump in a never-read article saves position 0: [ticket](tickets/reader-jump-saves-position-without-reading.md).
+- [open] reader / progress · 2026-10-05 reader rewrite pr2 · a cursor that failed to load is never re-read, so the pane stays read-only until reopened: [ticket](tickets/reader-cursor-load-failure-has-no-recovery.md).
+- [open] reader / android · 2026-10-05 reader rewrite pr2 · the shipped css-highlight paint and taps are unverified in the android webview (hand check): [ticket](tickets/reader-highlights-android-webview-unverified.md).
+- [open] reader / accessibility · 2026-10-05 reader rewrite pr2 · a shared or deep-linked highlight no longer takes keyboard focus: [ticket](tickets/reader-focused-highlight-takes-no-keyboard-focus.md).
+- [open] reader / player · 2026-10-05 reader rewrite pr2 review · an episode pane's seeks act on whatever the global player holds (another episode plays at this time; nothing loaded: no audio), as before pr2: [ticket](tickets/transcript-seek-acts-on-whatever-the-player-holds.md).
+- [open] reader / budget · 2026-10-05 reader rewrite pr2 · the primitive is 4,519 formatted lines against its 4,200 gate and the scope 10,597 against 9,000; the gate was not raised, the owner re-plans: [ticket](tickets/reader-pr2-over-line-budget.md).
 - [open] owner review · 2026-10-04 cleanup campaign · reversible defaults taken without an explicit owner decision (oracle plates/seed/corpus access/plate metadata, connections attach): [ticket](tickets/cleanup-campaign-defaults-await-owner-review.md).
 - [open] oracle · 2026-10-04 cleanup campaign · the readings list can order readings against their folio numbers: [ticket](tickets/oracle-readings-list-order-can-invert-folios.md).
 - [open] reader / inspector · 2026-09-24 reader-inspector-controls · reload open on Contents briefly shows Evidence: [ticket](tickets/reader-contents-publishes-after-navigation.md).
-- [open] reader / apparatus · 2026-09-26 reader chapter repair · newly inferred notes in preserved legacy html lack inline marker activation: [ticket](tickets/reader-repaired-note-markers-not-inline.md).
 - [open] epub / sections · 2026-09-26 chapter implementation · ambiguous pillow frontmatter headings still become routine stops: [ticket](tickets/epub-contents-union-overpromotes-source-headings.md).
 - [open] reader / production · 2026-09-27 release preflight · four exact ready books need source-byte proof and fenced 0243 repair before the deferred cutover: [ticket](tickets/reader-chapter-production-correspondence-unverified.md).
 - [open] reader / production migration · 2026-09-27 source-note integration review · confirm every apparatus media has a publication before applying 0245: [ticket](tickets/reader-source-body-production-publication-preflight.md).
@@ -105,19 +95,15 @@ area · opened YYYY-MM-DD by <who> · P2
 - [deferred] epub / apparatus · 2026-09-27 pr #398 review · row 232's second false backlink awaits a deletion-scope decision: [ticket](tickets/reader-epub-row232-backlink-classification.md).
 - [open] epub / parser bound · 2026-09-27 corpus census · two backlink indexes exceed the bounded extractor: [ticket](tickets/reader-epub-backlink-index-exhaustion.md).
 - [open] api / operations · 2026-09-27 release preflight · a read-only live source-hash probe exited 137 and restarted the api once: [ticket](tickets/live-api-source-hash-probe-restarted-container.md).
-- [open] reader / selection · 2026-09-24 reader-inspector-controls · retained selection geometry ignores a canonical reset: [ticket](tickets/retained-selection-geometry-ignores-canonical-reset.md).
 - [open] workspace / geometry · 2026-09-24 reader-inspector-controls · pdf inspector overflows the viewport at the pane minimum: [ticket](tickets/pdf-inspector-overflows-viewport-at-pane-minimum.md).
 - [open] workspace / copy · 2026-09-24 reader-inspector-controls · secondary tab close label case differs from pane close: [ticket](tickets/secondary-tab-close-label-case.md).
 - [open] epub ingest · 2026-09-26 fragment-only nav fix review · unsafe authored nav hrefs lack source issues: [ticket](tickets/epub-unsafe-nav-targets-have-no-source-issue.md).
 - [open] worker / indexing · 2026-09-24 reader-inspector-controls · a missing indexing credential is classified as a child defect: [ticket](tickets/indexing-without-credential-is-a-child-defect.md).
 - [open] local development · 2026-09-24 reader-inspector-controls · worker overlay memory bound fails the lane check: [ticket](tickets/local-worker-overlay-memory-bound-fails-lane-check.md).
-- [open] reader / inspector contract · 2026-09-25 article-contents review · empty contents is published despite the documented toc-node availability condition: [ticket](tickets/reader-empty-contents-availability-contract.md).
-- [open] reader / epub routing · 2026-09-25 article-section-navigation acceptance · Return restores chapter IX while pane href retains the chapter XI `loc`: [ticket](tickets/epub-map-return-keeps-jump-loc.md).
 - [open] workspace / deep links · 2026-09-25 article-section-navigation acceptance · a full-page article deep link can revert to the restored EPUB pane during bootstrap: [ticket](tickets/workspace-deep-link-reverts-during-reader-jump.md).
 - [open] android / local auth · 2026-09-25 article-section-navigation acceptance · isolated Next dev login showed an unattributed JSON.parse overlay; standalone login passed: [ticket](tickets/android-isolated-login-dev-overlay.md).
 - [open] android / local startup · 2026-09-25 article-section-navigation acceptance · isolated standalone redirects unauthenticated 127 root to localhost; authenticated cold launch works: [ticket](tickets/android-isolated-root-redirect-blank.md).
 - [open] android / test hygiene · 2026-09-25 article-section-navigation device check · the apk and network were restored but pretest auth identity was not captured, so final account identity is unverified: [ticket](tickets/android-device-auth-baseline-not-captured.md).
-- [open] reader / workspace docs · 2026-09-25 article-section-navigation final review · reader and workspace modules cite deleted cutover contracts: [ticket](tickets/reader-workspace-docs-reference-deleted-cutovers.md).
 - [open] android / workspace · 2026-09-22 device verification · an intermediate compatibility probe showed an unproven transient bootstrap failure on reconnect: [ticket](tickets/android-reconnect-transient-workspace-bootstrap.md).
 - [open] collection docs · 2026-09-21 council · library and lectern contracts still point to deleted cutovers: [ticket](tickets/collection-contract-docs-reference-deleted-cutovers.md).
 
@@ -203,14 +189,6 @@ Contract D9's mobile entry — the shared `AccountMenu` item `Imports` with its
 `Pill` badge — is captured in no D15 artifact set, so the visual gate reads it
 from the browser proof alone. See
 [docs/tickets/mobile-imports-entry-has-no-d15-capture.md](tickets/mobile-imports-entry-has-no-d15-capture.md).
-
-### [OPEN] OI-050 — Four rules outside `Pill` paint a tone as text over its own tint
-frontend · opened 2026-09-10 by Claude (imports cutover, Phase 7 chain Z review) · P2
-`.mismatchBanner` and `.partialCoverageWarning` (media pane) and `.error`
-(`PdfReader`) paint `--warning` / `--danger` over a 10% mix of the same token and
-measure 4.20:1 to 4.47:1 on their worst ground — under WCAG AA for `--text-sm`
-body copy. Sibling of OI-047, which owns the two remaining `Pill` tones. See
-[docs/tickets/tone-text-on-its-own-tint-fails-aa-outside-pill.md](tickets/tone-text-on-its-own-tint-fails-aa-outside-pill.md).
 
 ### [OPEN] OI-054 — Docker Desktop VM crashes block trustworthy database/process verification
 infrastructure · opened 2026-09-09 by Claude (shared-kernel worktree) · P1
@@ -323,7 +301,6 @@ unexpected timeouts. See
 - [deferred] 2026-09-26 notes bullets acceptance · physical android webview b7 is not run until the stacked prs are reviewable: [ticket](tickets/notes-bullets-android-acceptance-deferred.md).
 - [open] 2026-09-27 epub apparatus identity · one note with distinct id/name aliases can become two target items with one dom stamp: [ticket](tickets/epub-note-id-name-alias-duplicates-target.md).
 - [open] 2026-09-26 notes bullets cache review · non-note card labels lack a revision for ordering concurrent reads: [ticket](tickets/resource-surface-card-labels-have-no-revision.md).
-- [open] 2026-09-25 notes writing live action probe · overlapping pdf highlight overlays block pointer access to a covered highlight: [ticket](tickets/pdf-overlapping-highlights-block-pointer-action.md).
 - [open] 2026-09-28 sse transport · the listen cap's 429 E_RATE_LIMITED is misnamed and the sse client treats it as fatal: [ticket](tickets/sse-listen-cap-rejection-is-misnamed-and-fatal.md).
 - [open] 2026-09-28 api / bff observability · server-timing phases outlived the tests that read them; keep or delete at the api/auth/bff reauthor: [ticket](tickets/server-timing-phases-outlived-their-tests.md).
 - [open] search / typed wire · 2026-09-28 cleanup pr-08 · remaining always-sent locator output keys need a closure census and precise output views; compacted input/storage omissions remain intentional: [ticket](tickets/retrieval-locator-defaults-generate-optional-fields.md).
@@ -366,7 +343,6 @@ unexpected timeouts. See
 
 - [open] web / library focus · 2026-10-04 presentation audit · row-removal traversal is promised by a comment but absent from the current implementation: [ticket](tickets/library-row-removal-focus-contract-unimplemented.md).
 - [open] web / library write uncertainty · 2026-10-04 snapshot-owner audit · reorder transport rejection restores rows without proving authoritative order: [ticket](tickets/library-reorder-acknowledgement-loss-leaves-uncertain-order.md).
-- [open] reader / typed wire · 2026-10-04 original reader proof · media file-access success has no native output contract: [ticket](tickets/media-file-access-success-untyped.md).
 - [open] oracle / job recovery · 2026-10-04 source audit, restated by the oracle rewrite · a dead generation job leaves its reading pending forever, and a stored streaming reading has no owner; pruning deletes its journal: [ticket](tickets/oracle-dead-jobs-can-lose-publication-replay.md).
 - [open] oracle / storage · 2026-10-04 oracle rewrite · 36 plate objects under `oracle/plates/` lost their owner when plates became static assets: [ticket](tickets/oracle-plates-orphaned-r2-objects.md).
 - [open] atlas / projection · 2026-10-04 oracle rewrite · one global sweep over every active-model embedding is untimed at production scale: [ticket](tickets/atlas-global-projection-cost-unmeasured.md).
@@ -376,12 +352,7 @@ unexpected timeouts. See
 - [open] oracle / search · 2026-10-05 combined oracle landing · the personal lane once ranked another note above the one a question names (harness r14): [ticket](tickets/oracle-personal-lane-ranking-varied-once.md).
 - [open] oracle / generation · 2026-10-04 oracle rewrite · the quote guard's false-positive rate on real readings is unmeasured: [ticket](tickets/oracle-quote-guard-false-positive-rate-unmeasured.md).
 - [open] oracle / corpus · 2026-10-04 oracle rewrite · a reindexed work's chips stay typographic until the next reading heals its anchors: [ticket](tickets/oracle-anchor-chips-typographic-after-corpus-reindex.md).
-- [deferred] pdf / find cancellation · 2026-10-04 source review · abort removes the counted listener without settling its search promise: [ticket](tickets/pdf-find-abort-leaves-search-pending.md).
-- [deferred] pdf / mobile fit · 2026-10-04 source review · page-width fit changes vendor scale without publishing it to semantic zoom: [ticket](tickets/pdf-mobile-fit-keeps-seeded-semantic-zoom.md).
-- [deferred] transcript / reading activity · 2026-10-04 source review · viewport publisher and accepted content-generation key disagree: [ticket](tickets/transcript-semantic-viewport-key-mismatch.md).
 - [deferred] daily / prepend ownership · 2026-10-04 source review · the sole anchor-capture callback is passed but never consumed: [ticket](tickets/daily-prepend-anchor-wiring-is-dormant.md).
-- [deferred] reader / success contract · 2026-10-04 source review · reader evidence native relations are weaker than browser checks: [ticket](tickets/reader-evidence-native-relations-are-weaker-than-browser.md).
-- [deferred] reader / request identity · 2026-10-04 independent fresh source review · raw request strings and canonical output uuids need an explicit correlation contract: [ticket](tickets/reader-evidence-request-uuid-canonicalization-contract.md).
 - [deferred] shared media / success contract · 2026-10-04 fresh podcast source census · native summary permits duration modality relationships rejected by its shared display conversion: [ticket](tickets/media-summary-native-duration-modality-relation-is-implicit.md).
 - [deferred] podcast / acquisition failure boundary · 2026-10-04 independent fresh source review · expected discovery provider exceptions escape acquisition translation as native defects: [ticket](tickets/podcast-acquisition-provider-failures-escape-domain-translation.md).
 - [deferred] collections / revision contract · 2026-10-04 source review · collection revision wire range exceeds javascript safe integers: [ticket](tickets/collection-revision-wire-range-exceeds-javascript-safe-integers.md).

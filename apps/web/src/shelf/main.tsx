@@ -3,8 +3,6 @@
 import "@/app/globals.css";
 import "@/app/packagedFonts.css";
 import "pdfjs-dist/web/pdf_viewer.css";
-import "@/lib/highlights/highlights.css";
-import "@/lib/reader/apparatus.css";
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";

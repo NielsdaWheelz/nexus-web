@@ -86,6 +86,8 @@ export function createProgressSync(
   let handoff: Handoff | null = null;
   let unsaved: Locator | null = null;
   let failed = false;
+  /** The page is going away (a keepalive flush): a save it cuts off is no failure. */
+  let leaving = false;
   let inFlight: Promise<void> | null = null;
   let revalidating = false;
   let dirtySince = 0;
@@ -144,6 +146,9 @@ export function createProgressSync(
     const locator = unsaved;
     if (inFlight !== null || locator === null || view === null)
       return inFlight ?? Promise.resolve();
+    // A save the leaving page cut off (or a keepalive one, which outlives it)
+    // has an unobservable outcome: the locator stays unsaved, no retry here.
+    let cutOff = false;
     const run = async () => {
       try {
         const result = await port.save(locator, {
@@ -168,12 +173,15 @@ export function createProgressSync(
           }
         }
       } catch (error) {
-        console.error("reader_cursor_save_failed", error);
-        failed = true;
+        cutOff = keepalive || leaving;
+        if (!cutOff) {
+          console.error("reader_cursor_save_failed", error);
+          failed = true;
+        }
       } finally {
         inFlight = null;
         publish();
-        if (!failed) schedule();
+        if (!failed && !cutOff) schedule();
       }
     };
     inFlight = run();
@@ -242,10 +250,12 @@ export function createProgressSync(
       movedAt = Date.now();
       unsaved = locator;
       failed = false;
+      leaving = false;
       schedule();
     },
     async flush(keepalive) {
       window.clearTimeout(timer);
+      leaving ||= keepalive;
       await inFlight;
       if (handoff?.kind !== "Newer") await save(keepalive);
     },

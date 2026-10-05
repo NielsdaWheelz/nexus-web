@@ -2,8 +2,6 @@ import localFont from "next/font/local";
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "pdfjs-dist/web/pdf_viewer.css";
-import "@/lib/highlights/highlights.css";
-import "@/lib/reader/apparatus.css";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { SolarEffects } from "@/components/theme/SolarEffects";
 import { readThemeCookie } from "@/lib/theme/cookie";

@@ -156,8 +156,8 @@ export default function NotePaneBody() {
     appliedPassageRef.current = paneHash;
     setPulseTarget({
       blockId,
-      startOffset: target.startOffset,
-      endOffset: target.endOffset,
+      startOffset: target.start_offset,
+      endOffset: target.end_offset,
       snippet: null,
       highlightBehavior: "pulse",
       focusBehavior: "scroll_into_view",

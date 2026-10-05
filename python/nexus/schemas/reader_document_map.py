@@ -9,7 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.schemas.highlights import HIGHLIGHT_COLORS
-from nexus.schemas.media import DocumentEmbedOut, MediaNavigationOut
+from nexus.schemas.media import DocumentEmbedOut
 from nexus.schemas.presence import Presence
 from nexus.schemas.reader_apparatus import (
     ReaderApparatusConfidence,
@@ -22,7 +22,6 @@ from nexus.schemas.retrieval import MediaRetrievalLocator
 ReaderDocumentMapStatus = Literal["ready", "empty", "partial"]
 ReaderEvidenceUnavailableReason = Literal["Missing", "Unanchorable", "Stale"]
 ReaderDocumentMapMarkerKind = Literal[
-    "Contents",
     "Embed",
     "Highlight",
     "SourceReference",
@@ -288,12 +287,11 @@ class ReaderDocumentMapDiagnosticsOut(_ReaderMapOut):
 
 
 class ReaderDocumentMapOut(_ReaderMapOut):
+    """Annotations over one publication: ``identity`` is the reader document's identity."""
+
     media_id: UUID
-    generation: Presence[Annotated[int, Field(ge=1, strict=True)]]
-    media_kind: str
-    title: str
+    identity: str
     status: ReaderDocumentMapStatus
-    navigation: Presence[MediaNavigationOut]
     embeds: list[DocumentEmbedOut] = Field(default_factory=list)
     evidence: ReaderEvidenceOut
     markers: list[ReaderDocumentMapMarkerOut] = Field(default_factory=list)

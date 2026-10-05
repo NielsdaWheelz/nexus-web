@@ -1,11 +1,11 @@
-"""PDF highlight create/list/update: geometry, duplicates, and quote context."""
+"""PDF highlight create/update: geometry, duplicates, and quote context."""
 
 from uuid import UUID, uuid4
 
 from sqlalchemy import delete, func, text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media, highlight_visibility_filter
+from nexus.auth.permissions import can_read_media
 from nexus.db.models import (
     Highlight,
     HighlightPdfAnchor,
@@ -15,14 +15,13 @@ from nexus.db.models import (
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.highlights import (
-    CreatePdfHighlightRequest,
     PdfBoundsUpdate,
+    PdfHighlightAnchorIn,
     TypedHighlightOut,
 )
 from nexus.services.capabilities import is_document_status_ready
 from nexus.services.highlights import (
     project_highlight,
-    project_highlights_with_links,
     require_pdf_highlight_or_404,
 )
 from nexus.services.pdf_highlight_geometry import (
@@ -41,17 +40,18 @@ def create_pdf_highlight(
     db: Session,
     viewer_id: UUID,
     media_id: UUID,
-    req: CreatePdfHighlightRequest,
+    anchor: PdfHighlightAnchorIn,
+    color: str,
 ) -> TypedHighlightOut:
     highlight = create_pdf_highlight_in_txn(
         db,
         viewer_id=viewer_id,
         highlight_id=uuid4(),
         media_id=media_id,
-        page_number=req.page_number,
-        quads=[quad.model_dump() for quad in req.quads],
-        exact=req.exact,
-        color=req.color,
+        page_number=anchor.page_number,
+        quads=[quad.model_dump() for quad in anchor.quads],
+        exact=anchor.exact,
+        color=color,
     )
     db.commit()
     db.refresh(highlight)
@@ -142,38 +142,6 @@ def create_pdf_highlight_in_txn(
         reason="highlight_create",
     )
     return highlight
-
-
-def list_pdf_highlights(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-    page_number: int,
-    mine_only: bool = True,
-) -> list[TypedHighlightOut]:
-    media = _require_readable_pdf(db, viewer_id, media_id)
-    _validate_page_number(page_number, media.page_count)
-    query = (
-        db.query(Highlight)
-        .join(HighlightPdfAnchor, Highlight.id == HighlightPdfAnchor.highlight_id)
-        .filter(
-            HighlightPdfAnchor.media_id == media_id,
-            HighlightPdfAnchor.page_number == page_number,
-            Highlight.anchor_kind == "pdf_page_geometry",
-        )
-    )
-    query = (
-        query.filter(Highlight.user_id == viewer_id)
-        if mine_only
-        else query.filter(highlight_visibility_filter(viewer_id, media_id))
-    )
-    highlights = query.order_by(
-        HighlightPdfAnchor.sort_top.asc(),
-        HighlightPdfAnchor.sort_left.asc(),
-        Highlight.created_at.asc(),
-        Highlight.id.asc(),
-    ).all()
-    return project_highlights_with_links(db, viewer_id, highlights)
 
 
 def update_pdf_highlight_bounds(

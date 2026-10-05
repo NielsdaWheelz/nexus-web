@@ -1,7 +1,6 @@
-/* The reader primitive: frame, status strip, the text scroll and its units,
- * the pdf viewport, and painted marks. Typography arrives as --reader-*
- * properties from the profile; colours are app tokens (a host may scope
- * --reader-* colour overrides around the frame). */
+/* The reader primitive: frame and reader theme, status strip, the text scroll
+ * and its units, painted marks, the pdf viewport. Typography arrives as
+ * --reader-* properties from the profile; the theme sets the reader colours. */
 
 .frame {
   position: relative;
@@ -11,6 +10,30 @@
   min-width: 0;
   min-height: 0;
   height: 100%;
+  background: var(--reader-bg);
+  color: var(--reader-text);
+}
+
+.frame[data-theme="light"] {
+  --reader-bg: #faf8f3;
+  --reader-bg-secondary: #f3efe6;
+  --reader-text: #1a1916;
+  --reader-text-secondary: #4a463e;
+  --reader-text-muted: #7a7468;
+  --reader-border: #d8d3c9;
+  --reader-border-subtle: #ece8df;
+  --reader-accent: #7d5e35;
+}
+
+.frame[data-theme="dark"] {
+  --reader-bg: #15140f;
+  --reader-bg-secondary: #1f1d18;
+  --reader-text: #ebe5d6;
+  --reader-text-secondary: #c2baa7;
+  --reader-text-muted: #8a8270;
+  --reader-border: #2e2c25;
+  --reader-border-subtle: #1f1d18;
+  --reader-accent: #c4a472;
 }
 
 .note {
@@ -140,14 +163,58 @@
   font-size: var(--text-sm);
 }
 
-.mark {
-  color: inherit;
-  border-radius: var(--radius-xs);
+/* Marks are custom highlights. Colours are literal (chromium and android
+ * webview <= 113 ignore var() inside ::highlight); highlights print as shown
+ * when the printer prints backgrounds. */
+.frame ::highlight(hl-yellow) {
+  background-color: rgba(255, 235, 59, 0.4);
 }
-
-.mark[data-hovered] {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+.frame ::highlight(hl-green) {
+  background-color: rgba(76, 175, 80, 0.35);
+}
+.frame ::highlight(hl-blue) {
+  background-color: rgba(33, 150, 243, 0.35);
+}
+.frame ::highlight(hl-pink) {
+  background-color: rgba(233, 30, 99, 0.35);
+}
+.frame ::highlight(hl-purple) {
+  background-color: rgba(156, 39, 176, 0.35);
+}
+.frame[data-theme="dark"] ::highlight(hl-yellow) {
+  background-color: rgba(249, 226, 175, 0.4);
+}
+.frame[data-theme="dark"] ::highlight(hl-green) {
+  background-color: rgba(166, 227, 161, 0.35);
+}
+.frame[data-theme="dark"] ::highlight(hl-blue) {
+  background-color: rgba(137, 180, 250, 0.35);
+}
+.frame[data-theme="dark"] ::highlight(hl-pink) {
+  background-color: rgba(243, 139, 168, 0.35);
+}
+.frame[data-theme="dark"] ::highlight(hl-purple) {
+  background-color: rgba(203, 166, 247, 0.35);
+}
+.frame ::highlight(hl-hover) {
+  background-color: rgba(125, 94, 53, 0.16);
+}
+.frame ::highlight(hl-focus) {
+  text-decoration: underline rgb(125, 94, 53);
+  text-decoration-thickness: 2px;
+}
+.frame ::highlight(hl-evidence) {
+  text-decoration: underline dotted rgb(125, 94, 53);
+  text-decoration-thickness: 2px;
+}
+.frame ::highlight(reader-pulse) {
+  background-color: rgba(255, 193, 7, 0.45);
+}
+.frame ::highlight(reader-focus) {
+  color: rgba(26, 25, 22, 0.35);
+}
+.frame[data-theme="dark"] ::highlight(reader-focus) {
+  color: rgba(235, 229, 214, 0.3);
 }
 
 @media (max-width: 600px) {
@@ -156,22 +223,12 @@
   }
 }
 
-@media (max-width: 768px),
-  (max-width: 900px) and (orientation: landscape) and (pointer: coarse) {
-  .scrollport {
-    padding-top: var(--mobile-pane-content-offset, 0px);
-    padding-bottom: var(--mobile-content-bottom-clearance, 0px);
-    scroll-padding-top: calc(
-      var(--mobile-pane-content-offset, 0px) + var(--space-4)
-    );
-  }
-}
-
-/* ===== Pdf ===== */
-
+/* A basis tall enough to fill a pane that sizes to its content (the phone's);
+ * a definite pane shrinks it to fit. */
 .pdfFrame {
   position: relative;
   flex: 1 1 auto;
+  height: 100vh;
   min-height: 0;
 }
 
@@ -183,9 +240,41 @@
   scroll-padding-top: var(--space-4);
 }
 
+@media (max-width: 768px),
+  (max-width: 900px) and (orientation: landscape) and (pointer: coarse) {
+  .scrollport,
+  .pdfScrollport {
+    padding-top: var(--mobile-pane-content-offset, 0px);
+    padding-bottom: var(--mobile-content-bottom-clearance, 0px);
+    scroll-padding-top: calc(
+      var(--mobile-pane-content-offset, 0px) + var(--space-4)
+    );
+  }
+
+  /* The pane chrome overlays the top on a phone: the strip floats above the
+   * bottom clearance, in thumb reach and clear of the passage at the reading line. */
+  .status {
+    position: absolute;
+    z-index: 2;
+    inset-inline: 0;
+    bottom: var(--mobile-content-bottom-clearance, 0px);
+    border-top: 1px solid var(--reader-border, var(--edge));
+  }
+}
+
+/* ===== Pdf ===== */
+
 .pdfMark {
   position: absolute;
   z-index: 1;
   pointer-events: none;
   mix-blend-mode: multiply;
+}
+
+.pdfMark[data-hovered] {
+  filter: brightness(0.9);
+}
+
+.pdfMark[data-focused] {
+  outline: 2px solid var(--accent);
 }

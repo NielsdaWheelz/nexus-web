@@ -1,6 +1,6 @@
 # Reader Design Rationale
 
-This document records the reader constraints we ship and the system shape they imply.
+This document records the reader constraints we ship and the system shape they imply. How it is built: [reader-implementation.md](reader-implementation.md).
 
 ## objectives
 
@@ -27,8 +27,9 @@ This document records the reader constraints we ship and the system shape they i
   `hyphenate-limit-chars: 6 3 3` and `hyphenate-limit-lines: 2`;
   user can disable globally for accessibility
 - focus mode: three discrete levels (distraction-free, paragraph,
-  sentence) plus off; shortcut Cmd/Ctrl+Shift+F; auto-suspend during
-  active text selection so annotation flow is uninterrupted
+  sentence) plus off; Cmd/Ctrl+Shift+F cycles, Shift+Esc turns it off;
+  auto-suspend during active text selection so annotation flow is
+  uninterrupted
 - contrast: high but not maximal; never pure black on pure white; reader
   surface stays in the warm-neutral family used by the rest of the app
 
@@ -102,294 +103,170 @@ exposed as `--reader-*` custom properties so that user font-family,
 font-size, line-height, and column-width settings can be applied without
 touching app theme tokens.
 
-## shipped architecture
+## the shape: three facts and one policy
 
-### attention without disorientation
+the reader is a publication (what is read), a placement (where the eye is), a
+cursor (where the reader means to resume) and a mode (whether the placement may
+move the cursor). everything else, the rail, contents, evidence, marks, find and
+the status strip, is a projection of those facts or a writer of targets. the
+old pane was 38k lines because it re-derived these facts in many places: three
+text-positioning engines, two positioning state machines, thirteen point shapes,
+four cross-read consistency checks and the url as transport. the rewrite owns
+each fact once, in `lib/documentReader`, and makes the format surfaces geometry.
+three structural moves carry most of the reduction.
 
-Sustained forward mobile reading retreats AppBar, format toolbar, and Nexus
-together. A short reverse movement restores them in every reader; an unhandled
-blank-canvas tap is supplementary recovery in Web, EPUB, and PDF.
-This is continuous chrome policy, not content motion: one real reader
-scrollport feeds one reducer/provider, while the reader box, selection,
-progress, and fixed Nexus bottom surface remain stable.
+### mount the whole text document
 
-Focus, Find, selection, menus, and code-owned positioning explicitly pin chrome
-through their owned lifetime. Reduced motion remains visible. This keeps
-commands recoverable without reserving a permanent slab of the reading
-viewport, and avoids per-format thresholds, gesture recognizers, or a second
-animation owner.
+web articles, epubs and transcripts are one model: an ordered list of units in
+one scroll, positions `(unit, codepoint offset)`. fragment switching, the epub
+restore-phase machine, fragment loading states and the transcript's segment list
+go. the cost is dom size and initial parse on large books;
+`content-visibility: auto` per unit at an estimated height bounds the layout
+cost, and the gate on the largest corpus book on the phone is still open
+(`tickets/reader-whole-mount-large-book-unmeasured.md`). windowing can slot in
+behind the same geometry interface if it fails.
 
-### reversible inspection
+### paint with css custom highlights
 
-find, contents, native links, source notes, home/end and scrollbar seeks are
-inspection. the first move holds one exact origin; later moves reuse it. closing
-a tool leaves the discovered passage visible. return restores the semantic
-passage and viewport placement; explicit **continue reading here** adopts the
-settled position. input and waiting never adopt. inspection cannot write
-progress or completion; hosted activity may record genuine duration without
-progress or word endpoints. one owner makes these rules independent of format.
+marks, find, focus dimming, hover and pulses are ranges in named
+`::highlight()`s. the document dom is never rewritten: no remounts, no "loading
+highlights" gate, text paints before annotations arrive, a selection survives a
+recolour. the owner approved this on the condition that a probe prove it across
+engines; the probe (chromium, chrome, firefox, webkit, android webview 113)
+returned *go with conditions*, and every condition is a rule of `text/paint.ts`:
 
-### global reader profile
+- overlaps split into disjoint segments in the topmost colour, because
+  translucent per-colour layers blend into colours no one chose and rank by
+  colour rather than recency;
+- `StaticRange` only, because every live range taxes every dom mutation in the
+  document (find had the same defect);
+- repaint only when marks change, a unit remounts, or a unit enters or leaves the
+  window one viewport around the visible band: static ranges follow reflow for
+  free, firefox pays per registered range at layout, and webkit never paints a
+  range registered while its unit was skipped by `content-visibility`;
+- strict priorities with colour-setting dimming above background tints (webkit
+  draws text in the topmost highlight's colour);
+- literal colours, since older chromium and webviews ignore `var()` in
+  highlight pseudos;
+- hit-testing through the caret apis, confirmed by grapheme rects, with node and
+  element scans for mixed-direction lines, answering every covering id topmost
+  first; overlapping marks open a chooser instead of hiding one another.
 
-- `reader_profiles` stores the global reader preferences for a user
-- shipped fields are `theme`, `font_family`, `font_size_px`,
-  `line_height`, `column_width_ch`, `focus_mode`, and `hyphenation`
-- `focus_mode` is one of `"off" | "distraction_free" | "paragraph" | "sentence"`
-- `hyphenation` is one of `"auto" | "off"`; default `auto` enables only
-  on viewports `<= 600px`; `off` disables on every viewport
-- all reflowable reader appearance comes from this single source of truth
-  across web article, transcript, and epub readers
+styling is limited to what `::highlight` supports: no radius, outline or shadow;
+focus is an underline.
 
-the bootstrap read of this profile is required, not best-effort, unlike the
-rest of the workspace data root. The profile's `column_width_ch`, `font_size_px`,
-and `line_height` feed the pane-width probe that sizes every non-PDF pane
-before the workspace mounts, so a silently defaulted profile would size and
-then re-size the workspace under the user, and a frontend default (e.g.
-falling back to Light) would mask a real backend/auth problem behind a
-plausible-looking screen. Making the read required and surfacing failure
-through `AuthenticatedWorkspaceErrorBoundary` with Retry costs one blocking
-round-trip behind the already-streamed skeleton in exchange for never
-lying about server state.
+### one reader read, typed
 
-the profile and the reader cursor (`reader_media_state`, above) deliberately
-use different conflict models for the same reason they are different data:
-the profile is one small preference bag per user with no meaningful
-"undo my last edit" shape, so serialization-order last-write-wins is
-sufficient — distinct-field partial writes already compose, and a same-field
-race is just a timing outcome, not a lost user action. The reader cursor is a
-positional bookmark where silently overwriting a genuine "go back" intent
-from another device is a real correctness bug, which is what the
-revision/CAS protocol exists to prevent. Adding CAS to the profile would add
-protocol cost without protecting anything that can actually go wrong.
+`GET /media/{id}/reader` returns the whole publication from one snapshot, and
+every reader route has a response model, so the client decoders, the
+cross-read consistency checks and the map's second copy of navigation go.
+contents arrive with the text. the document map is the one source of marks;
+writes paint at once through a ledger that a later map read settles, for text
+and pdf alike.
 
-the client also keeps optimistic `desired` pixels and server-acknowledged
-`acknowledged` state as two separate facts rather than one. Local intent must
-paint immediately for perceived responsiveness, but only a value the server
-has actually confirmed is safe to treat as the baseline a later clean-tab
-resume adopts from — collapsing the two would either let a background
-revalidation silently overwrite unacknowledged local intent, or force the UI
-to wait for the network before ever moving a control. This is also why the
-profile has no generic `save(Partial<ReaderProfile>)` and no React 19
-`useOptimistic`: `useOptimistic` cannot own single-flight transport ordering,
-a latest-merged queue, the attempt watchdog, lifecycle-flush promotion, or
-generation-guarded revalidation, so using it would either drop those
-guarantees or duplicate `desired` under another name. The same reasoning is
-why this coordinator is not generalized with reader progress, workspace
-session, or note autosave: a revisioned single value and an unrevisioned
-preference bag have different identity and conflict shapes that a shared
-sync hook would blur.
+## position and progress
 
-### per-media progress
+### reversible inspection, first origin
 
-- Consumption owns one canonical `reader_media_state` row per user/media: a
-  nullable jsonb `locator` and a monotonic bigint `revision` (starts `1`,
-  authoritative — `updated_at` is metadata only, not a conflict token).
-  `locator IS NULL` is an internal revisioned Empty reset tombstone.
-- `GET /api/media/{id}/reader-state` returns exactly
-  `{state:"Empty",revision>=0}` or
-  `{state:"Positioned",revision>=1,locator}`, never raw `null`; Empty revision
-  `0` means no row and Empty revision `>=1` is a persisted tombstone
-- `PUT /api/media/{id}/reader-state` takes the bare `CursorWrite`
-  (`{locator, base_revision}`) — no wrapping envelope and no sibling block;
-  old bare locators, extra fields, and a top-level `null` clear are rejected
-  with `400`
-- a matching `base_revision` replaces the cursor and increments `revision`; a
-  stale `base_revision` returns `409` with the exact current snapshot and
-  mutates nothing and records no engagement
-- an equal desired locator is idempotent success at the current revision — the
-  cursor does not advance, but the save still records engagement, because "the
-  user opened and saved this document again" is itself the engagement-worthy
-  fact, independent of whether the position moved
-- cursor success (including the idempotent equal-locator case), reader
-  engagement, and any completion transition commit in one Consumption
-  transaction. A stale CAS writes none of them.
-- `ResetProgress` writes a higher-revision Empty tombstone and clears current
-  reader engagement in that same owner transaction, so a stale pre-reset save
-  conflicts instead of resurrecting progress
-- `useReaderProgress` is the single browser-side coordinator that serializes
-  and coalesces cursor writes (single-flight, latest-only, revision-aware);
-  event-driven revalidation on pane activation, visibility, focus, `pageshow`,
-  and `online` lets a clean, dormant reader auto-adopt a newer cursor from
-  another device, while an active or locally dirty reader is offered the
-  handoff instead of being teleported
-- text readers persist explicit targets plus `locations` and quote context
-- pdf persists `page`, `page_progression`, `zoom`, and coarse `position`
-- the shipped contract is discriminated by `kind` and rejects removed flat
-  locator bags
+contents, links, footnotes, evidence rows, rail markers, find, section and page
+buttons, home/end and scrollbar seeks are inspection. the first jump holds the
+departure; later jumps keep that first origin, because *back to your spot* means
+the reading spot, not the last place visited (owner decision; find is one more
+inspection). inspection never writes progress or completion; input and waiting
+never adopt a detour; only *continue reading here*, or reading on after return,
+moves the cursor. a failed jump rolls back to its departure. one owner (the
+navigator) makes this independent of format.
+
+### only reading moves the cursor
+
+a viewport becomes the cursor only within a second of genuine input, never while
+positioning. the old pane wrote positions on open (pdf), on jumps in a
+never-read article and from the transcript list's selection; each was a write
+without reading. a save that fails while the page leaves is not an error and is
+not retried (its outcome is unobservable; a retry there became a request storm):
+the locator waits for the next movement, and the cursor is re-read next time.
+
+### the cursor is revisioned, the profile is not
+
+the cursor is a positional bookmark where silently overwriting a genuine "go
+back" from another device is a correctness bug, so revision is authority and a
+stale write is refused with the current snapshot. a newer cursor is adopted
+silently only when this reader was away and has nothing unsaved; otherwise the
+reader offers the choice and movement waits. the profile is a small preference
+bag with no meaningful "undo my edit" shape, so last write wins: a same-field
+race is a timing outcome, not a lost action, and a cas would add protocol cost
+protecting nothing. its bootstrap read is required, because the profile sizes
+every pane before the workspace mounts and a silent default would size and then
+re-size the workspace under the user.
+
+### the locator wire stays
+
+android stores locators opaquely, so changing their schema needs an apk and a
+data migration. the web writes the fields it means exactly (`target`,
+`text_offset`, `total_progression`; pdf `page`, `page_progression`, `zoom`) and
+`null` for the legacy `progression`, `position` and quote triple. completion
+needs end evidence, not a percentage: the terminal locator is the last unit at
+full length with `total_progression = 1`, observed only after trusted forward
+input at the end, so restore, links and reflow cannot finish a document.
+
+### the address is not the reader's state
+
+the reader never writes its location into the url. a hash, `?fragment` or
+`?apparatus_id` is a one-shot target consumed with one replace; the cursor is
+the durable record across visits and devices, and pane back/forward stays about
+panes, not passages. precedence on open is a fresh target, then the saved
+cursor, then a cold target, then the start: a copied coarse link must not
+override real saved progress.
+
+## the rest of the hosted pane
+
+- **transcripts are continuous text** (owner decision) with a time stamp per
+  segment; choosing a time reads from there. a click on the text does not seek:
+  in a reading surface the first click of a word selection, a tap or a click
+  that dismisses a menu would start audio and move the cursor. a deep link that
+  moves a transcript seeks without resuming. the player does not move the text;
+  the active chapter follows the player.
+- **evidence follows without alignment**: the list keeps the group at the
+  reading position in view and marks groups inside the visible band. geometric
+  alignment beside referents (~600 lines) went.
+- **pdf urls refresh on failure only**: pdf.js fetches the remaining ranges
+  after open, so proactive refresh cannot help a loaded document; a failed fetch
+  reopens with a fresh url at the placement.
+- **the note editor stays with notes**: the reader hosts
+  `HighlightNoteEditor` through its props; its durability and cas belong to the
+  notes slice.
+- **note markers bind from server locators**: the link around a resolved source
+  reference's range is the marker, so repaired legacy html needs no server
+  restamping.
 
 ### offline reading is a local copy, not a second Nexus
 
-Offline reading keeps the document and the latest pending position needed to
-read; it does not reproduce the workspace, annotations, search, AI, or server
-authorization. The authority split stays legible:
-
-- the server owns visibility, one document publication generation, the hosted
-  reader payloads a copy is made of, and the canonical cursor
-- the device owns the copy's files, account binding, transfer and removal,
-  leases, the baseline, and one latest pending locator
-- the shared web reader owns presentation through the same
-  `DocumentReaderSession`; hosted and local differ only at the source and
-  progress ports, and a copy is parsed by the hosted parsers
-
-A copy is the hosted reader's own payloads, zipped, so there is no second
-projection to keep faithful and nothing to re-verify: integrity is TLS, length
-and zip CRC, and the shelf's CSP keeps even a hostile copy off the network.
-Online open chooses the current hosted publication; the copy opens only from
-Downloads or when connectivity is absent, so a download never becomes a stale
-online cache.
-
-Publication generation is separate from cursor revision. Generation says which
-publication a copy and its locator belong to; cursor revision arbitrates
-same-publication progress. A generation mismatch never reanchors or writes
-into the new publication. A same-generation conflict keeps both Canonical and
-Device choices and asks the user; timestamps and furthest-wins heuristics
-cannot decide intent.
-
-Web article copies omit images and say so before download and while reading.
-Episode audio and reading copies share one store, one transfer job and one
-network policy; they differ only in what a transfer fetches. See
+offline reading keeps the document and the latest pending position needed to
+read; it does not reproduce the workspace, annotations, search, ai, or server
+authorization. a copy is the hosted reader's own payload, zipped, so there is no
+second projection to keep faithful; the shelf renders it with the same
+`DocumentReaderView` and a device progress port. publication generation is
+separate from cursor revision: generation says which publication a copy and its
+locator belong to, revision arbitrates same-publication progress, and a
+same-generation conflict keeps both choices and asks the user. see
 [offline](offline.md).
 
 ### reader-to-chat quote selection
 
-- quote-to-chat is highlight-first: a durable Highlight must exist before
-  launch; fresh selection uses **Ask** / **Ask in existing chat…**, existing
-  Highlights use **Ask in new chat** / **Ask in existing chat…**, and neither
-  path mutates a conversation on launch
-- the request sends only `reader_selection = { key: {media_id, highlight_id},
-  revision }`; on send the server row-locks the Highlight and captures an
-  immutable per-message snapshot (exact/prefix/suffix/source/locator) that drives
-  `<reader_selection>` for every current and historical turn — never the live
-  highlight, never client quote text
-- a sent quote is fixed: editing, moving, or deleting the Highlight afterward
-  cannot change the displayed or prompted passage
-- the snapshot is not a cited conversation context ref and is never numbered;
-  citation chips point at the attached `highlight:` reference or later
-  `nexus.resource.read` evidence
-- new-chat send is atomic — there is no eager blank-conversation create, so a
-  failed first send leaves no conversation behind
-
-### reflow-safe web resume
-
-web article resume uses canonical text offsets instead of raw scroll
-pixels.
-
-- map rendered DOM text to canonical codepoint offsets
-- capture first and last visible offsets once for the semantic viewport
-- persist the first offset as resume state only after genuine reader input
-- restore by mapping that offset back to dom position
-
-this makes resume resilient to font-size, line-height, and column-width
-changes. The same viewport is projected for progress, Consumption activity,
-and the Document Map rail; those consumers do not independently infer scroll
-position.
-
-### natural completion uses semantic end evidence
-
-First-visible canonical offsets are correct for resume but cannot prove the end
-of a reflowable document: at physical bottom the first visible line remains
-roughly one viewport before the final text. Completion therefore uses the
-actual text scrollport and an in-flow end marker, not another percentage
-heuristic.
-
-Trusted forward input gates the terminal observation so restore, hash
-navigation, and typography reflow cannot finish a document. The final canonical
-unit emits the existing locator at its exact text length with both progressions
-equal to `1`; Consumption remains the only Finished-policy owner. This reuses
-the cursor transaction, engagement high-water, and Lectern projection without a
-completion event model, observer framework, or second command.
-
-### layered epub/web/pdf resume
-
-- epub resolves fresh exact targets, then the saved exact fragment cursor,
-  then an empty-cursor outline query, then the first source fragment.
-- content loads by fragment identity; headings determine semantic context.
-  exact offsets and named anchors are verified after rendering. unavailable
-  targets do not become quote/progression approximations.
-- restore is one-shot and abortable; user scroll cancels any pending
-  automatic restore
-- web/transcript pick fresh explicit fragment/time targets first. A saved web
-  cursor selects its fragment before exact restore; fragment one is only the
-  Empty-cursor default.
-- pdf restores saved page, intra-page progression, and zoom on open and
-  persists later page changes without reopening the document file
-
-Bare routes resume the canonical cursor internally rather than through URL
-state: the stable entry `/media/:id` never redirects to progress parameters.
-Cold-mount precedence is fresh feature-owned hash/evidence/highlight target,
-then the Positioned canonical cursor, then a coarse cold `?loc`/`?fragment`
-query only when the cursor is Empty, then the default readable source. A
-copied or bookmarked coarse link should not silently override real saved
-progress; when the canonical cursor supersedes a cold query, pane-local
-replace strips only `loc`/`fragment` and preserves unrelated query state and
-hash. Ordinary scrolling never writes the URL, and pane Back/Forward is
-workspace-level traversal that never persists a cursor merely because
-history moved it.
-
-### semantic viewport and document map
-
-Position is source-coordinate truth; progress is a projection; pixels are only
-capture input. Text uses `(fragment_id, canonical codepoint offset)` over an
-ordered unique fragment list. PDF uses `(page, normalized full-page fraction)`.
-The format reader publishes both visible endpoints with a source/layout fence;
-`readerDocumentPosition.ts` only projects them. A missing exact endpoint stays
-absent rather than becoming a zero or a scrollbar estimate.
-
-Document Map markers use the most precise current owner locator. EPUB Contents
-targets are exact element starts; missing named anchors reject navigation. A
-PDF passage whose quote resolves without current geometry gets a page-start
-point and no fabricated extent. Dense rail targets retain exact ticks while
-bounded hit groups expose every destination. Structure and evidence use
-separate lanes; aliases do not duplicate content. Preview, Return, and restore
-can paint the rail but cannot write progress or activity.
-
-### addressability versus history
-
-reader location and pane history solve different problems and stay
-independent. reader location stays URL-addressable and durable: coarse
-`?loc`/`?fragment` state addresses the current mounted visit, and the
-canonical cursor is the durable record across visits and devices. pane
-Back/Forward is structural — a compact story of the destinations a user
-visited, not a transcript of every section, fragment, or footnote touched
-inside one visit. Treating in-reader movement as history noise would force
-Back to take many presses to leave a single document and would force the
-workspace to guess reader semantics from URL shape; instead the reader
-replaces its own address and the workspace's Back/Forward stays about panes,
-not passages.
-
-reader excursions retain one exact departure for return, without pane history
-or a reader history stack. successful arrival holds the first origin; failure
-restores the immediate departure. explicit adoption, source replacement and
-successful return retire it. inspector dismissal leaves it available.
-
-### epub request surface
-
-- epub navigation is sourced from `GET /api/media/{id}/navigation`
-- epub render content is sourced from
-  `GET /api/media/{id}/fragments/{fragment_id}`
-- section identity addresses structure; fragment identity addresses content
-- `#loc-<section_id>` is the one-shot reader target shape; `?loc={section_id}`
-  is the pane-local coarse address state that replace writes — not a
-  Back/Forward checkpoint
-- the reader no longer depends on removed chapter manifests or toc fetches
+quote-to-chat is highlight-first: a durable highlight exists before launch, the
+send carries only `reader_selection = {key: {media_id, highlight_id},
+revision}`, and the server captures an immutable per-message snapshot. a sent
+quote is fixed: editing, moving or deleting the highlight afterwards cannot
+change the displayed or prompted passage. new-chat send is atomic, so a failed
+first send leaves no conversation behind.
 
 ## regression strategy
 
-when reader behavior changes, manually check the affected behavior from this list:
-
-- reader settings persistence
-- web article canonical locator resume after profile typography reflow
-- epub `#loc-` hash deep link precedence over saved resume
-- a cold `?loc`/`?fragment` query loses to an existing Positioned cursor
-- epub delayed-hydration no-snap-back after manual scroll
-- epub intra-section locator resume after reload
-- pdf page + zoom + intra-page locator resume after reload
-- pdf in-session page persistence without file reopen
-- clean, dormant cross-device re-entry auto-applies a newer cursor without
-  remount; active/dirty re-entry shows the handoff
-- reader-to-chat quote flow sends `reader_selection` (highlight key + revision)
-  from a typed launch intent and captures an immutable per-message snapshot that
-  survives reload, branch, and rerun; a geometry-only Highlight is non-sendable
+the reader harness (isolated stack, playwright-managed browsers) is the
+behavioural contract: `R.*` journeys per surface, `S.*` public shares, `O.*`
+shelf copies, the find subset, and `R.HL.*` for the paint conditions on
+chromium, firefox and webkit. by hand: android webview paint and taps, real
+safari, the largest book on the phone.
 
 ## static verification
 

@@ -95,10 +95,10 @@ other static checks. no automated tests remain. manually verify affected
 browser behavior under [the verification contract](../../docs/local-rules/testing-standards.md).
 never pass the supabase admin key to next.js.
 
-## Highlight Libraries
+## Reader Internals
 
-Reference map for highlight internals used in code comments:
+Reference map for reader internals used in code comments:
 
-- `src/lib/highlights/canonicalCursor.ts`
-- `src/lib/highlights/applySegments.ts`
-- `src/lib/highlights/selectionToOffsets.ts`
+- `src/lib/canonicalText/domTextCursor.ts`: dom text ↔ canonical codepoints
+- `src/lib/canonicalText/domTextRanges.ts`: selections to offsets, offsets to ranges
+- `src/lib/documentReader/text/paint.ts`: css custom highlight paint and hit-testing

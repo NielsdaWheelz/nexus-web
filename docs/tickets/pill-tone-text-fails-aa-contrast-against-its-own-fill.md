@@ -72,9 +72,6 @@ follow already exists (`--info-ink` / `--success-ink` / `--warning-ink`).
 Add `--danger-ink` and `--accent-ink` to each palette in `globals.css` the same
 way, point `.toneDanger` / `.toneAccent` at them, and manually measure surfaces
 that paint those tones.
-The same tone-on-its-own-tint pairing outside `Pill` is
-`docs/tickets/tone-text-on-its-own-tint-fails-aa-outside-pill.md` (OI-050); the
-ink steps added here are what those rules should point at.
 
 ## Acceptance
 

@@ -8,7 +8,6 @@ import {
   libraryEntriesResource,
   libraryResource,
   lecternSlateResource,
-  mediaFragmentsResource,
   mediaResource,
   notePagesResource,
   settingsAccountResource,
@@ -17,14 +16,10 @@ import {
 import type { ResourceFetcher } from "@/lib/api/resourceTransport";
 import type { PaneRouteId, RouteParams } from "@/lib/panes/paneRouteModel";
 import { loadNotePages } from "@/lib/notes/pageContract";
-import { shouldLoadInitialMediaFragments } from "@/lib/media/documentReadiness";
 import {
   mediaDetailFromResponse,
   type MediaDetail,
 } from "@/lib/media/mediaDetail";
-import { mediaFragmentsFromResponse } from "@/lib/media/mediaFragment";
-import type { Fragment } from "@/lib/media/transcriptView";
-import { isAbortError } from "@/lib/errors";
 import {
   contributorDetailFromWire,
   contributorWorksPageFromWire,
@@ -88,29 +83,8 @@ export interface PaneResourceLoader {
   load: (request: ResourceFetcher, params: RouteParams) => Promise<unknown>;
 }
 
-export interface PaneSubresourceFailure {
-  readonly status: number | null;
-  readonly code: string | null;
-}
-
-export type PaneMediaFragmentsSeed<T = unknown> =
-  | { readonly status: "ready"; readonly data: readonly T[] }
-  | { readonly status: "error"; readonly error: PaneSubresourceFailure };
-
 export interface MediaPaneSeed {
   readonly media: MediaDetail;
-  readonly fragments: PaneMediaFragmentsSeed<Fragment>;
-}
-
-function paneSubresourceFailure(error: unknown): PaneSubresourceFailure {
-  if (typeof error !== "object" || error === null) {
-    return { status: null, code: null };
-  }
-  const candidate = error as { status?: unknown; code?: unknown };
-  return {
-    status: typeof candidate.status === "number" ? candidate.status : null,
-    code: typeof candidate.code === "string" ? candidate.code : null,
-  };
 }
 
 export async function loadMediaPane(
@@ -124,32 +98,7 @@ export async function loadMediaPane(
     ),
     params.id,
   );
-  let fragments: PaneMediaFragmentsSeed<Fragment> = {
-    status: "ready",
-    data: [],
-  };
-  if (shouldLoadInitialMediaFragments(media)) {
-    let fragmentsResponse: ApiJson<"/media/{media_id}/fragments", "get"> | undefined;
-    try {
-      fragmentsResponse = await request<{ id: string }, ApiJson<"/media/{media_id}/fragments", "get">>(
-        mediaFragmentsResource,
-        params,
-      );
-    } catch (error) {
-      if (isAbortError(error)) throw error;
-      fragments = {
-        status: "error",
-        error: paneSubresourceFailure(error),
-      };
-    }
-    if (fragmentsResponse !== undefined) {
-      fragments = {
-        status: "ready",
-        data: mediaFragmentsFromResponse(fragmentsResponse, media.id),
-      };
-    }
-  }
-  return { media, fragments };
+  return { media };
 }
 
 // Only panes whose primary first-paint resource is FastAPI-backed AND

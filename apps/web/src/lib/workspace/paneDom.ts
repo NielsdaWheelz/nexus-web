@@ -62,3 +62,29 @@ export function findPaneSearchFocusTarget(
   if (action) return action;
   return findPaneChromeFocusTarget(paneId);
 }
+
+function isScrollableY(element: HTMLElement): boolean {
+  const { overflowY } = window.getComputedStyle(element);
+  return (
+    /(auto|scroll|overlay)/.test(overflowY) &&
+    element.scrollHeight > element.clientHeight
+  );
+}
+
+/** The element that scrolls a node inside a pane: its pane viewport, else its nearest scrolling ancestor. */
+export function getPaneScrollContainer(
+  contentNode: HTMLElement | null,
+): HTMLElement | null {
+  if (!contentNode) return null;
+  const paneViewport = contentNode.closest<HTMLElement>(
+    '[data-pane-content="true"]',
+  );
+  if (paneViewport && isScrollableY(paneViewport)) return paneViewport;
+  for (
+    let candidate: HTMLElement | null = contentNode;
+    candidate && candidate !== document.body;
+    candidate = candidate.parentElement
+  )
+    if (isScrollableY(candidate)) return candidate;
+  return paneViewport ?? (document.scrollingElement as HTMLElement | null);
+}

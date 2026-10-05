@@ -563,9 +563,10 @@ body [data-modal-backdrop="true"][data-suspended="true"] {
   background: transparent;
 }
 
-/* Pane find: every in-document surface paints into these two custom highlights. */
+/* Pane find: every in-document surface paints into these two custom highlights.
+   Colours are literal: chromium and android webview <= 113 ignore var() here. */
 ::highlight(nexus-find-all) {
-  background-color: var(--highlight-yellow);
+  background-color: rgba(255, 235, 59, 0.4);
   color: inherit;
 }
 ::highlight(nexus-find-active) {

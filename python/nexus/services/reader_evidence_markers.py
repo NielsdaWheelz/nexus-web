@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import cast
 from uuid import UUID
 
-from nexus.schemas.media import DocumentEmbedOut, MediaNavigationOut
+from nexus.schemas.media import DocumentEmbedOut
 from nexus.schemas.presence import absent, present
 from nexus.schemas.reader_document_map import (
     ReaderDocumentMapMarkerKind,
@@ -28,8 +28,6 @@ _ITEM_TONES: dict[str, ReaderDocumentMapMarkerTone] = {
 def build_markers(
     *,
     media_id: UUID,
-    media_kind: str,
-    navigation: MediaNavigationOut | None,
     embeds: list[DocumentEmbedOut],
     groups: list[ReaderEvidencePassageGroupOut],
     fragment_ranges: dict[str, tuple[int, int]],
@@ -49,37 +47,7 @@ def build_markers(
             locator, fragment_ranges, total_fragment_chars, page_count, pdf_page_heights
         )
 
-    offsets_type = "web_text_offsets" if media_kind == "web_article" else "epub_fragment_offsets"
     markers: list[ReaderDocumentMapMarkerOut] = []
-    for section in navigation.sections if navigation is not None else []:
-        position = fraction(
-            {
-                "type": offsets_type,
-                "media_id": str(media_id),
-                "fragment_id": str(section.target.fragment_id),
-                "start_offset": section.target.offset,
-            }
-        )
-        if position is None:
-            continue
-        markers.append(
-            _marker(
-                kind="Contents",
-                item_id=f"contents:{section.section_id}",
-                position=position,
-                end_position=fraction(
-                    {
-                        "fragment_id": str(section.extent.value.end.fragment_id),
-                        "start_offset": section.extent.value.end.offset,
-                    }
-                )
-                if section.extent.kind == "Present"
-                else None,
-                tone="Neutral",
-                label=section.label,
-                preview=None,
-            )
-        )
     for embed in embeds:
         locator = _document_embed_locator(media_id, embed)
         position = fraction(locator)

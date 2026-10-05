@@ -18,7 +18,7 @@ import LibrarySettingsDialog from "@/components/LibrarySettingsDialog";
 import AcquisitionControl from "@/components/browse/AcquisitionControl";
 import PodcastSubscriptionSettingsOverlay from "@/components/podcasts/PodcastSubscriptionSettingsOverlay";
 import MediaInfoOverlay from "@/components/media/MediaInfoOverlay";
-import { mapMediaAuthorCredits } from "@/app/(authenticated)/media/[id]/mediaFormatting";
+import { mapMediaAuthorCredits } from "@/lib/contributors/formatting";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";

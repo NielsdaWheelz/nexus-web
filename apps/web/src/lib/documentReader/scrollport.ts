@@ -15,6 +15,7 @@ export function useScrollport(
   useEffect(() => {
     const port = ref.current;
     if (!port) return;
+    const release = runtime.host?.scrollport?.(port);
     let frame = 0;
     let touchY: number | null = null;
     let seek: {
@@ -116,6 +117,7 @@ export function useScrollport(
       window.removeEventListener("pointercancel", cancel);
       cancelAnimationFrame(frame);
       finish(true);
+      release?.();
     };
   }, [ref, runtime]);
 }

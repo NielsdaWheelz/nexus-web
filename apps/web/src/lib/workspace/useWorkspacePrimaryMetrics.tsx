@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
-import { buildReaderSurfaceStyle } from "@/lib/reader/readerSurfaceStyle";
+import { readerSurfaceStyle as surfaceStyle } from "@/lib/documentReader/DocumentReader";
 import {
   estimatePrimaryWidthPx,
   type WorkspacePrimaryMetrics,
@@ -40,7 +40,7 @@ export function useWorkspacePrimaryMetrics(): {
   const [primaryWidthPx, setPrimaryWidthPx] = useState(() =>
     estimatePrimaryWidthPx(profile),
   );
-  const readerSurfaceStyle = useMemo(() => buildReaderSurfaceStyle(profile), [profile]);
+  const readerSurfaceStyle = useMemo(() => surfaceStyle(profile), [profile]);
 
   useLayoutEffect(() => {
     if (typeof ResizeObserver === "undefined") {

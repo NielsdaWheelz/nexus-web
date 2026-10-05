@@ -26,6 +26,10 @@ export interface TextUnit {
   readonly time: { readonly startMs: number; readonly endMs: number } | null;
   readonly speaker: string | null;
 }
+/** A media time as `m:ss`, or `h:mm:ss` from an hour. */
+export const clock = (ms: number) =>
+  new Date(ms).toISOString().slice(ms >= 3_600_000 ? 11 : 14, 19);
+
 export interface TextPoint {
   readonly unit: string;
   readonly offset: number;

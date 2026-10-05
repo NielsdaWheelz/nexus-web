@@ -256,7 +256,7 @@ export default function PaneShell({
   );
 
   // The search row stays expanded for one source (pane, visit, route, path),
-  // not one query string: a reader rewriting its own ?fragment keeps its find.
+  // not one query string: a reader consuming its own deep link keeps its find.
   // Every end of an expansion dismisses the search it expanded, so a body that
   // outlives the source (media and chat mount by resource) keeps no live find.
   const [expandedSearchSource, setExpandedSearchSource] = useState<

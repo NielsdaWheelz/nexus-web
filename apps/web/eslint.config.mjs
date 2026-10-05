@@ -20,6 +20,30 @@ export default [
     },
   },
   {
+    // The reader primitive is free of hosted modules: hosts plug in through its ports.
+    files: ["src/lib/documentReader/**"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: [
+                "@/app/*",
+                "@/lib/api/client",
+                "@/lib/auth/*",
+                "@/lib/panes/*",
+                "@/lib/workspace/*",
+              ],
+              message:
+                "lib/documentReader is free of hosted modules: a host plugs in through its ports.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     files: ["src/components/HtmlRenderer.tsx"],
     rules: {
       "react/no-danger": "off",

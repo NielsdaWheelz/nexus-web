@@ -1,0 +1,380 @@
+/* The media pane around the reader: its states and banners, the pane-bar
+ * instrument, the rail slot, the selection dock and quick note, evidence,
+ * the transcript chrome and embed cards. */
+
+.layout {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.state {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-4);
+  color: var(--ink-muted);
+}
+
+.status {
+  padding: var(--space-3);
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
+}
+
+.banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: var(--reader-column-width-ch, 65ch);
+  margin: var(--space-2) auto;
+  padding: 0 var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.instrumentStatus {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.sectionSelect {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.menuStatus {
+  padding: var(--space-2);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.rail {
+  display: flex;
+  height: 100%;
+}
+
+.textButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.iconButton {
+  display: inline-flex;
+  padding: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+.kind {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+}
+
+/* ===== Selection dock and annotation surfaces ===== */
+
+.dock {
+  display: inline-flex;
+  gap: var(--space-1);
+}
+
+.dock > * {
+  flex: none;
+}
+
+.colourDialog {
+  padding: var(--space-2) 0 0;
+}
+
+.colours {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.colour {
+  width: var(--size-sm);
+  height: var(--size-sm);
+  border: 2px solid transparent;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+}
+
+.colour[aria-pressed="true"] {
+  border-color: var(--ink);
+}
+
+.quickNote,
+.noteEditor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: min(24rem, 90vw);
+}
+
+.quickNote blockquote {
+  margin: 0;
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--edge-strong);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.chooser {
+  display: flex;
+  flex-direction: column;
+  max-width: 20rem;
+}
+
+.chooser button {
+  overflow: hidden;
+  padding: var(--space-2);
+  border: 0;
+  background: none;
+  color: var(--ink);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.chooser button:hover {
+  background: var(--surface-hover);
+}
+
+/* ===== Evidence ===== */
+
+.evidence {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.evidenceHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--edge-subtle);
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.filters button {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-full);
+  background: none;
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.filters button[aria-pressed="true"] {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.evidenceList {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-2) var(--space-3) var(--space-8);
+}
+
+.group {
+  margin-bottom: var(--space-4);
+  padding-left: var(--space-2);
+  border-left: 2px solid transparent;
+}
+
+.group[data-in-view],
+.group[data-active] {
+  border-left-color: var(--accent);
+}
+
+.groupHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+
+.groupLabel {
+  flex: 1 1 100%;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.item {
+  margin: var(--space-2) 0;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+}
+
+.item[data-hovered],
+.item[data-active] {
+  background: var(--surface-2);
+}
+
+.itemHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.itemHead .kind {
+  flex: 1 1 auto;
+}
+
+.itemLabel {
+  margin: var(--space-1) 0;
+  color: var(--ink);
+}
+
+.excerpt,
+.note {
+  margin: var(--space-1) 0;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.note {
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--edge);
+}
+
+.source {
+  margin: var(--space-2) 0;
+  font-size: var(--text-sm);
+}
+
+.association {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+}
+
+/* ===== Transcript and embeds ===== */
+
+.transcriptChrome {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+}
+
+.playback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.playback p {
+  flex: 1 1 100%;
+  margin: 0;
+}
+
+.video {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 0;
+}
+
+.chapters {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chapters button {
+  padding: var(--space-1) 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chapters button[aria-current] {
+  color: var(--accent);
+  font-weight: var(--weight-semibold);
+}
+
+.seek {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.embed {
+  display: flex;
+  gap: var(--space-3);
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+}
+
+.embed img {
+  width: 6rem;
+  height: auto;
+  margin: 0;
+}
+
+.embed figcaption {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.embed p {
+  margin: 0;
+}
+
+.embedActions {
+  display: flex;
+  gap: var(--space-3);
+}

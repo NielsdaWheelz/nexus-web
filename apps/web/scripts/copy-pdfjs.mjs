@@ -47,15 +47,12 @@ function assertInstalledVersion() {
   }
 }
 
-/** The hosted pdf reader and the shared document reader each load the runtime. */
-const RUNTIME_DECLARERS = [
-  "src/components/pdfReaderRuntime.ts",
-  "src/lib/documentReader/pdf/pdfjs.ts",
-];
+/** The document reader is the one loader of the runtime. */
+const RUNTIME_DECLARERS = ["src/lib/documentReader/pdf/pdfjs.ts"];
 
 /**
  * Every pdf.js path the reader runtime declares, read back from the single
- * declaring owner so the copy list cannot drift from what `PdfReader` requests.
+ * declaring owner so the copy list cannot drift from what the reader requests.
  * `pdfRuntimePath("cmaps/")` style directory declarations become directory
  * requirements; file declarations become file requirements.
  */

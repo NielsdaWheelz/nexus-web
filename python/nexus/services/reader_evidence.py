@@ -11,8 +11,8 @@ from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.schemas.highlights import HIGHLIGHT_COLORS, TypedHighlightOut
-from nexus.schemas.media import DocumentEmbedOut, MediaNavigationOut
+from nexus.schemas.highlights import HIGHLIGHT_COLORS, FragmentAnchorOut, TypedHighlightOut
+from nexus.schemas.media import DocumentEmbedOut
 from nexus.schemas.presence import Presence, absent, present
 from nexus.schemas.reader_apparatus import (
     ReaderApparatusConfidence,
@@ -139,7 +139,6 @@ def build_reader_evidence(
     viewer_id: UUID,
     media_id: UUID,
     media_kind: str,
-    navigation: MediaNavigationOut | None,
     embeds: list[DocumentEmbedOut],
     highlights: list[TypedHighlightOut],
     apparatus: ReaderApparatusResponse,
@@ -181,8 +180,6 @@ def build_reader_evidence(
     ctx.document_items.sort(key=_item_sort_key)
     markers = build_markers(
         media_id=media_id,
-        media_kind=media_kind,
-        navigation=navigation,
         embeds=embeds,
         groups=groups_out,
         fragment_ranges=fragment_ranges,
@@ -238,10 +235,16 @@ def _add_highlight_facts(
             author_user_id=highlight.author_user_id,
             is_owner=highlight.is_owner,
         )
+        # A text highlight whose quote no longer resolves keeps its row, never a wrong place.
+        unresolved = (
+            isinstance(highlight.anchor, FragmentAnchorOut) and highlight.anchor.fragment_id is None
+        )
         _place_item(
             ctx,
             locus_ref,
-            _resolved(
+            ReaderEvidenceUnavailableOut(reason="Stale")
+            if unresolved
+            else _resolved(
                 locator=locator,
                 order_key=order_key_from_locator(locator, ctx.fragment_indexes) or locus_ref,
             ),

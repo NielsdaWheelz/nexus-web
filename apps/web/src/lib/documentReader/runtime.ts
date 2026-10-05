@@ -11,6 +11,7 @@ import {
   type Locator,
   type Placement,
   type ReaderDocument,
+  type ReaderPoint,
   type ReaderTarget,
   type Structure,
   type Viewport,
@@ -21,6 +22,7 @@ import {
   type NavState,
   type Positioner,
 } from "./navigator";
+import type { FindSource } from "@/lib/find/find";
 import type { ReaderHost, ReaderProgressPort, ReaderSource } from "./ports";
 import {
   createProgressSync,
@@ -46,6 +48,8 @@ export interface PdfState {
   readonly pages: number;
   /** null: fitted to the width, wherever the pdf opens next. */
   readonly zoom: number | null;
+  /** The rendered scale, fitted or chosen. */
+  readonly scale: number;
   readonly widthPx: number;
 }
 export interface ReaderState {
@@ -63,6 +67,8 @@ export interface ReaderState {
   readonly pdf: PdfState | null;
   readonly restored: boolean;
   readonly savedSpotUnavailable: boolean;
+  /** The attached surface's find, keyed by the publication it searches. */
+  readonly find: FindSource<unknown> | null;
 }
 export interface Reader {
   getState(): ReaderState;
@@ -81,12 +87,16 @@ export interface Reader {
   install(snapshot: CursorSnapshot): void;
   /** pdf; clamped to PDF_ZOOM. */
   setZoom(zoom: number): void;
+  /** The reader chose to read from a point (a transcript time): it becomes the cursor. */
+  readFrom(point: ReaderPoint): void;
 }
 export interface SurfaceHandle extends Positioner {
+  readonly find: FindSource<unknown>;
   setZoom?(zoom: number): void;
 }
 export interface ReaderRuntime extends Reader {
   readonly source: ReaderSource;
+  readonly host: ReaderHost | undefined;
   /** Loads and runs until the returned unmount; may mount again. */
   mount(): () => void;
   attach(surface: SurfaceHandle): () => void;
@@ -119,6 +129,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     pdf: null,
     restored: false,
     savedSpotUnavailable: false,
+    find: null,
   };
   const listeners = new Set<() => void>();
   let surface: SurfaceHandle | null = null;
@@ -251,6 +262,7 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
 
   return {
     source: options.source,
+    host: options.host,
     getState: () => state,
     subscribe(listener) {
       listeners.add(listener);
@@ -270,9 +282,12 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
     },
     attach(handle) {
       surface = handle;
+      set({ find: handle.find });
       void restoreOnce();
       return () => {
-        if (surface === handle) surface = null;
+        if (surface !== handle) return;
+        surface = null;
+        set({ find: null });
       };
     },
     viewport(measured, pdf) {
@@ -340,5 +355,18 @@ export function createReaderRuntime(options: ReaderOptions): ReaderRuntime {
       void applySnapshot(snapshot);
     },
     setZoom: (zoom) => surface?.setZoom?.(clampZoom(zoom)),
+    readFrom(point) {
+      const doc = ready();
+      if (!doc) return;
+      // Not genuine input: the viewport, wherever it is, must not overwrite this point.
+      inputSinceLoad = true;
+      navigator.continueHere();
+      sync?.report(
+        locatorAt(doc.doc, doc.structure, point, {
+          terminal: false,
+          zoom: null,
+        }),
+      );
+    },
   };
 }
