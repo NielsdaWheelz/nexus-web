@@ -19,12 +19,17 @@ from nexus.schemas.media import (
     ConfirmUploadSessionRequest,
     CreateUploadSessionRequest,
     FromUrlRequest,
+    FromUrlResponse,
     MediaRepairRequest,
+    NeedsAttention,
+    Published,
     RetrySourceRequest,
     RetryUploadSessionRequest,
     SearchRepairRequest,
     SourceRepairRequest,
     SourceRetryAdmission,
+    UploadRequired,
+    UploadSessionResponse,
     UploadTransportFailureRequest,
 )
 from nexus.services import (
@@ -47,10 +52,10 @@ def create_from_url(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
     request: Request,
-) -> dict:
+) -> Data[FromUrlResponse]:
     """Accept a URL source; the service classifies the kind. Clients then poll GET /media/{id}."""
-    return ok(
-        media_source_ingest.accept_url_source(
+    return Data(
+        data=media_source_ingest.accept_url_source(
             db=db,
             viewer_id=viewer.user_id,
             url=request_body.url,
@@ -67,16 +72,15 @@ def create_upload_session(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
     request: Request,
-) -> dict:
-    return ok(
-        media_upload_sessions.create_upload_session(
+) -> Data[UploadSessionResponse]:
+    return Data(
+        data=media_upload_sessions.create_upload_session(
             db=db,
             viewer_id=viewer.user_id,
             request=request_body,
             input_origin=LocalFile(),
             idempotency_key=request.headers.get("Idempotency-Key"),
         ),
-        by_alias=True,
     )
 
 
@@ -103,16 +107,15 @@ def retry_upload_session(
     request_body: RetryUploadSessionRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
-) -> dict:
-    return ok(
-        media_upload_sessions.retry_upload_session(
+) -> Data[UploadRequired | NeedsAttention]:
+    return Data(
+        data=media_upload_sessions.retry_upload_session(
             db=db,
             viewer_id=viewer.user_id,
             origin_kind="LocalFile",
             session_handle=session_handle,
             request=request_body,
         ),
-        by_alias=True,
     )
 
 
@@ -123,9 +126,9 @@ def confirm_upload_session(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
     request: Request,
-) -> dict:
-    return ok(
-        media_upload_sessions.confirm_upload_session(
+) -> Data[Published]:
+    return Data(
+        data=media_upload_sessions.confirm_upload_session(
             db=db,
             viewer_id=viewer.user_id,
             origin_kind="LocalFile",
@@ -133,7 +136,6 @@ def confirm_upload_session(
             generation=request_body.generation,
             request_id=_request_id(request),
         ),
-        by_alias=True,
     )
 
 

@@ -66,7 +66,6 @@ from nexus.schemas.media import (
     SourceRepairAdmission,
     SourceRetryAdmission,
 )
-from nexus.schemas.media_summary import MediaProcessingStatus
 from nexus.schemas.presence import Presence, Present, absent, present
 from nexus.services import library_entries, library_governance
 from nexus.services import media_source_types as source_types
@@ -524,7 +523,7 @@ def _from_url_response(
         source_type=attempt.source_type,
         source_attempt_status=cast(MediaSourceAttemptStatus, attempt.status),
         idempotency_outcome=outcome,
-        processing_status=cast(MediaProcessingStatus, media.processing_status.value),
+        processing_status=media.processing_status,
         ingest_enqueued=(
             attempt.status in {ACCEPTED, QUEUED} if ingest_enqueued is None else ingest_enqueued
         ),

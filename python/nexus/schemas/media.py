@@ -7,7 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, model_validator
 from pydantic.alias_generators import to_camel
 
-from nexus.db.models import MediaKind
+from nexus.db.models import MediaKind, ProcessingStatus
 from nexus.db.models import TranscriptCoverage as MediaTranscriptCoverage
 from nexus.db.models import TranscriptState as MediaTranscriptState
 from nexus.schemas.client_mutation import ClientMutationUuidText
@@ -550,7 +550,7 @@ class FromUrlResponse(BaseModel):
     source_type: str
     source_attempt_status: MediaSourceAttemptStatus
     idempotency_outcome: Literal["created", "reused", "retrying", "refreshed"]
-    processing_status: MediaProcessingStatus
+    processing_status: ProcessingStatus
     ingest_enqueued: bool
 
 

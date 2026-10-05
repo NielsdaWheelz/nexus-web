@@ -1,8 +1,6 @@
-// The upload-session wire contract every direct-upload client decodes: the
-// three enveloped response variants of the one upload lifecycle, the failure a
-// NeedsAttention session carries, and the strict decoder that admits them. It
-// depends on nothing but the validation primitives and the verification
-// vocabulary, so the extension bundle carries it without the web transport.
+// The independently released extension decodes these upload-session envelopes.
+// Keep its wire validation separate from the same-deploy browser's generated
+// API types. This module depends only on validation and verification vocabulary.
 
 import {
   UPLOAD_VERIFICATION_CODES,

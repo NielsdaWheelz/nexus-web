@@ -16,20 +16,6 @@ export const MEDIA_PROCESSING_PROJECTION_STATUSES = [
 export type MediaProcessingProjectionStatus =
   (typeof MEDIA_PROCESSING_PROJECTION_STATUSES)[number];
 
-export function requireDocumentProcessingStatus(
-  status: string,
-): DocumentProcessingStatus {
-  if (
-    status === "pending" ||
-    status === "extracting" ||
-    status === "ready_for_reading" ||
-    status === "failed"
-  ) {
-    return status;
-  }
-  throw new Error(`Unsupported media processing status: ${status}`);
-}
-
 export function isDocumentProcessingTerminal(status: string): boolean {
   return (
     status === "ready_for_reading" ||

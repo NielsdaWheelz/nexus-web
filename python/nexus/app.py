@@ -330,7 +330,7 @@ def create_app() -> FastAPI:
     # Reader-state and reader-profile responses are never cacheable: the
     # cursor is revalidated event-driven and the profile is per-user private
     # state, so a cached snapshot would defeat revision arbitration or leak
-    # across accounts. Registered after the auth, DB-session, and stream-CORS
+    # across accounts. Registered after the auth and stream-CORS
     # middleware so it runs outside them and stamps every matched response,
     # including auth failures, validation errors, and exception-handler output; for a
     # matched path it also owns the raw-500 stamp by delegating once to the

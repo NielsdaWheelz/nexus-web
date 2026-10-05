@@ -3851,6 +3851,19 @@ export interface components {
             /** Can Search */
             can_search: boolean;
         };
+        /** CapabilityExpired */
+        CapabilityExpired: {
+            /**
+             * Expired At
+             * Format: date-time
+             */
+            expired_at: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "CapabilityExpired";
+        };
         /** ChapterOut */
         ChapterOut: {
             endMs: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____-Output"];
@@ -5345,6 +5358,11 @@ export interface components {
             /** Data */
             data: components["schemas"]["LearnDossierOpenedOut"] | components["schemas"]["LearnDossierBuildAcceptedOut"];
         };
+        /** Data[Annotated[Union[UploadRequired, Published, NeedsAttention], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
+        Data_Annotated_Union_UploadRequired__Published__NeedsAttention___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
+            /** Data */
+            data: components["schemas"]["UploadRequired"] | components["schemas"]["Published"] | components["schemas"]["NeedsAttention"];
+        };
         /** Data[AtlasOut] */
         Data_AtlasOut_: {
             data: components["schemas"]["AtlasOut"];
@@ -5428,6 +5446,10 @@ export interface components {
         /** Data[DossierHeadOut] */
         Data_DossierHeadOut_: {
             data: components["schemas"]["DossierHeadOut"];
+        };
+        /** Data[FromUrlResponse] */
+        Data_FromUrlResponse_: {
+            data: components["schemas"]["FromUrlResponse"];
         };
         /** Data[GenerationCatalog] */
         Data_GenerationCatalog_: {
@@ -5577,6 +5599,10 @@ export interface components {
         Data_PublicShareOut_: {
             data: components["schemas"]["PublicShareOut"];
         };
+        /** Data[Published] */
+        Data_Published_: {
+            data: components["schemas"]["Published"];
+        };
         /** Data[QuickReadsOut] */
         Data_QuickReadsOut_: {
             data: components["schemas"]["QuickReadsOut"];
@@ -5632,6 +5658,11 @@ export interface components {
         /** Data[TranscriptRequestOut] */
         Data_TranscriptRequestOut_: {
             data: components["schemas"]["TranscriptRequestOut"];
+        };
+        /** Data[Union[UploadRequired, NeedsAttention]] */
+        Data_Union_UploadRequired__NeedsAttention__: {
+            /** Data */
+            data: components["schemas"]["UploadRequired"] | components["schemas"]["NeedsAttention"];
         };
         /** Data[list[ChatRunResponse]] */
         Data_list_ChatRunResponse__: {
@@ -6568,6 +6599,34 @@ export interface components {
              * @description The URL to ingest. Must be an absolute http/https URL, including PDF, EPUB, article, or video URLs.
              */
             url: string;
+        };
+        /** FromUrlResponse */
+        FromUrlResponse: {
+            /**
+             * Idempotency Outcome
+             * @enum {string}
+             */
+            idempotency_outcome: "created" | "reused" | "retrying" | "refreshed";
+            /** Ingest Enqueued */
+            ingest_enqueued: boolean;
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            processing_status: components["schemas"]["ProcessingStatus"];
+            /**
+             * Source Attempt Id
+             * Format: uuid
+             */
+            source_attempt_id: string;
+            /**
+             * Source Attempt Status
+             * @enum {string}
+             */
+            source_attempt_status: "accepted" | "queued" | "running" | "succeeded" | "failed";
+            /** Source Type */
+            source_type: string;
         };
         /** FullHistoryCoverage */
         FullHistoryCoverage: {
@@ -8878,6 +8937,19 @@ export interface components {
             end: components["schemas"]["NavigationTextPointOut"];
             start: components["schemas"]["NavigationTextPointOut"];
         };
+        /** NeedsAttention */
+        NeedsAttention: {
+            capabilities: components["schemas"]["UploadSessionCapabilities"];
+            /** Failure */
+            failure: components["schemas"]["VerificationFailed"] | components["schemas"]["TransportFailed"] | components["schemas"]["CapabilityExpired"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "NeedsAttention";
+            /** Session Handle */
+            session_handle: string;
+        };
         /** NewAuthorBinding */
         NewAuthorBinding: {
             /** Displayname */
@@ -11038,6 +11110,18 @@ export interface components {
             /** Training */
             training: string;
         };
+        /**
+         * ProcessingStatus
+         * @description Media processing lifecycle states.
+         *
+         *     States:
+         *         pending: Created, waiting for job pickup
+         *         extracting: Extraction requested and in-flight or queued
+         *         ready_for_reading: Minimum readable artifacts exist
+         *         failed: Terminal failure recorded
+         * @enum {string}
+         */
+        ProcessingStatus: "pending" | "extracting" | "ready_for_reading" | "failed";
         /** ProcessorChain */
         ProcessorChain: {
             /** Processors */
@@ -11185,6 +11269,31 @@ export interface components {
             kind: "Transcript";
             /** Segments */
             segments: components["schemas"]["PublicSegmentOut"][];
+        };
+        /** Published */
+        Published: {
+            /**
+             * Idempotency Outcome
+             * @enum {string}
+             */
+            idempotency_outcome: "Created" | "Reused";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Published";
+            /**
+             * Media Id
+             * Format: uuid
+             */
+            media_id: string;
+            /** Session Handle */
+            session_handle: string;
+            /**
+             * Source Attempt Id
+             * Format: uuid
+             */
+            source_attempt_id: string;
         };
         /** PutLinkNoteRequest */
         PutLinkNoteRequest: {
@@ -14170,6 +14279,21 @@ export interface components {
             /** Newowneruserhandle */
             newOwnerUserHandle: string;
         };
+        /** TransportFailed */
+        TransportFailed: {
+            /**
+             * Failed At
+             * Format: date-time
+             */
+            failed_at: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "TransportFailed";
+            /** Reason */
+            reason: components["schemas"]["UploadTransportNetworkFailure"] | components["schemas"]["UploadTransportTimeoutFailure"] | components["schemas"]["UploadTransportHttpRejectedFailure"] | components["schemas"]["UploadTransportAbortedFailure"];
+        };
         /** TrustCitationOut */
         TrustCitationOut: {
             citation: components["schemas"]["CitationOut"];
@@ -14623,6 +14747,49 @@ export interface components {
              */
             kind: "UploadRecoveryAccepted";
         };
+        /** UploadRequired */
+        UploadRequired: {
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Generation */
+            generation: number;
+            /**
+             * Idempotency Outcome
+             * @enum {string}
+             */
+            idempotency_outcome: "Created" | "Reused";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "UploadRequired";
+            /**
+             * Method
+             * @default PUT
+             * @constant
+             */
+            method: "PUT";
+            required_headers: components["schemas"]["UploadRequiredHeaders"];
+            /** Session Handle */
+            session_handle: string;
+            /** Upload Url */
+            upload_url: string;
+        };
+        /** UploadRequiredHeaders */
+        UploadRequiredHeaders: {
+            /** Content-Type */
+            "Content-Type": string;
+        };
+        /** UploadSessionCapabilities */
+        UploadSessionCapabilities: {
+            /** Can Remove */
+            can_remove: boolean;
+            /** Can Retry Upload */
+            can_retry_upload: boolean;
+        };
         /** UploadTimeoutFailureRequest */
         UploadTimeoutFailureRequest: {
             /** Duration Ms */
@@ -14714,6 +14881,24 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /** VerificationFailed */
+        VerificationFailed: {
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "E_SOURCE_INTEGRITY" | "E_INVALID_FILE_TYPE" | "E_FILE_TOO_LARGE" | "E_CAPTURE_TOO_LARGE";
+            /**
+             * Failed At
+             * Format: date-time
+             */
+            failed_at: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "VerificationFailed";
         };
         /** VersionExpectedBody */
         VersionExpectedBody: {
@@ -18288,9 +18473,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_FromUrlResponse_"];
                 };
             };
             /** @description Validation Error */
@@ -18420,9 +18603,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_Annotated_Union_UploadRequired__Published__NeedsAttention___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
                 };
             };
             /** @description Validation Error */
@@ -18486,9 +18667,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_Published_"];
                 };
             };
             /** @description Validation Error */
@@ -18523,9 +18702,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_Union_UploadRequired__NeedsAttention__"];
                 };
             };
             /** @description Validation Error */

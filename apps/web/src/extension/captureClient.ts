@@ -14,7 +14,7 @@ import {
   type PublishedUpload,
   type UploadCapability,
   type UploadResponse,
-} from "@/lib/media/uploadSessionContract";
+} from "@/extension/uploadSessionContract";
 import type { UploadTransportFailure } from "@/lib/media/uploadVerification";
 import { expectPositiveInteger, expectRecord, isRecord } from "@/lib/validation";
 import {
