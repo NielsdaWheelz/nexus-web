@@ -76,24 +76,6 @@ function exportText(name: string, value: string, mime = "text/plain"): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function attachmentErrorMessage(error: unknown): FeedbackContent {
-  if (isApiError(error)) return mediaCaptureErrorMessage(error, "AddAttachment");
-  if (!(error instanceof Error)) throw error;
-  const modeledLocalFailure =
-    error.message === "Select the note body or empty it before attaching a file." ||
-    error.message === "Attach one file at a time here." ||
-    error.message === "Only PDF and EPUB files are supported." ||
-    /^(PDF|EPUB) files must not be empty\.$/.test(error.message) ||
-    /^(PDF|EPUB) files must be \d+ MB or smaller\.$/.test(error.message) ||
-    error.message === "Couldn’t save";
-  if (!modeledLocalFailure) throw error;
-  return {
-    tone: "Danger",
-    title: "Attachment wasn’t added",
-    message: error.message === "Couldn’t save" ? "Check the URL and try again." : error.message,
-  };
-}
-
 export default function HighlightNoteEditor(props: HighlightNoteEditorProps) {
   return <AnnotationEditor key={`${props.target.ownerKey}:${props.target.recoveryOwnerKey ?? ""}`} {...props} />;
 }
@@ -506,11 +488,16 @@ function AnnotationBody({
         onRedoRequest={redo}
         onFlushRequest={session.flush}
         onOpenObject={openObject}
-        onFeedback={(content) => setAttachmentFeedback({ content, announcement: "Polite" })}
+        onFeedback={(content) => setAttachmentFeedback({ content, announcement: content.tone === "Danger" ? "Assertive" : "Polite" })}
         onError={(error) => {
           if (handleUnauthenticatedApiError(error)) return;
-          try { setAttachmentFeedback({ content: attachmentErrorMessage(error), announcement: "Assertive" }); }
-          catch (caughtDefect) { setDefect({ error: caughtDefect }); }
+          if (!isApiError(error)) {
+            setDefect({ error });
+            return;
+          }
+          try {
+            setAttachmentFeedback({ content: mediaCaptureErrorMessage(error, "AddAttachment"), announcement: "Assertive" });
+          } catch (caughtDefect) { setDefect({ error: caughtDefect }); }
         }}
       />
       {editable && (onDone || attachedNote) ? (
