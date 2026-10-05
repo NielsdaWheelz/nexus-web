@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
+from nexus.db.models import MediaKind, TranscriptState
 from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.consumption import PauseShorteningMode, PlaybackRate
 from nexus.schemas.contributor_credit import ContributorCreditOut
@@ -122,7 +123,7 @@ class PodcastSubscribeOut(BaseModel):
 
 
 class PodcastEpisodeFromDiscoveryOut(BaseModel):
-    href: str
+    href: str = Field(min_length=1)
     media_id: UUID
     destination_outcomes: list[PodcastDestinationOutcomeOut]
     collection_revision: CollectionRevision
@@ -225,51 +226,22 @@ class PodcastSubscriptionListItemOut(BaseModel):
     model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
 
-class PodcastEpisodeListCapabilitiesOut(BaseModel):
-    """Only the capability facts consumed by an episode collection row."""
-
-    can_retry: bool
-    can_refresh_source: bool
-    can_retry_metadata: bool
-    can_edit_authors: bool
-    can_delete: bool
-
-    model_config = _SNAKE
-
-
-class PodcastEpisodeListeningStateOut(BaseModel):
-    position_ms: int = Field(ge=0)
-    duration_ms: Presence[int]
-
-    model_config = _SNAKE
-
-
-class PodcastEpisodeListPlayerDescriptorOut(BaseModel):
-    """Chapter/image-free fact used only to gate list-row playback actions."""
-
-    kind: Literal["FooterAudio"] = "FooterAudio"
-    media_id: UUID
-
-    model_config = _CAMEL
-
-
 class PodcastEpisodeListItemOut(BaseModel):
     """Compact row projection for one podcast episode."""
 
     id: UUID
     media_summary: MediaSummaryOut = Field(alias="mediaSummary")
-    canonical_source_url: Presence[str]
-    transcript_state: str
-    transcript_coverage: str
-    listening_state: Presence[PodcastEpisodeListeningStateOut]
-    episode_state: Literal["unplayed", "in_progress", "played"]
-    progress_resettable: bool
-    capabilities: PodcastEpisodeListCapabilitiesOut
-    author_mode: Literal["automatic", "manual"]
+    transcript_state: TranscriptState
     has_show_notes: bool
-    player_descriptor: Presence[PodcastEpisodeListPlayerDescriptorOut] = Field(
-        alias="playerDescriptor"
-    )
+
+    @model_validator(mode="after")
+    def validate_episode_identity(self) -> "PodcastEpisodeListItemOut":
+        if (
+            self.id != self.media_summary.media_id
+            or self.media_summary.media_kind != MediaKind.podcast_episode
+        ):
+            raise ValueError("Podcast episode list media identity mismatch")
+        return self
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -331,7 +303,9 @@ class PodcastUnsubscribedOut(BaseModel):
         alias="libraryEntriesCollectionRevision"
     )
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    model_config = ConfigDict(
+        populate_by_name=True, extra="forbid", json_schema_serialization_defaults_required=True
+    )
 
 
 class PodcastAlreadyUnsubscribedOut(BaseModel):
@@ -342,7 +316,9 @@ class PodcastAlreadyUnsubscribedOut(BaseModel):
         alias="libraryEntriesCollectionRevision"
     )
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    model_config = ConfigDict(
+        populate_by_name=True, extra="forbid", json_schema_serialization_defaults_required=True
+    )
 
 
 PodcastUnsubscribeOut = Annotated[

@@ -4425,6 +4425,14 @@ export interface components {
             items: components["schemas"]["LibraryOut"][];
             nextCursor: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____"];
         };
+        /** CollectionPage[PodcastEpisodeListItemOut] */
+        CollectionPage_PodcastEpisodeListItemOut_: {
+            /** Collectionrevision */
+            collectionRevision: number;
+            /** Items */
+            items: components["schemas"]["PodcastEpisodeListItemOut"][];
+            nextCursor: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____"];
+        };
         /** CollectionPage[PodcastSubscriptionListItemOut] */
         CollectionPage_PodcastSubscriptionListItemOut_: {
             /** Collectionrevision */
@@ -5290,6 +5298,11 @@ export interface components {
             /** Data */
             data: components["schemas"]["LearnDossierOpenedOut"] | components["schemas"]["LearnDossierBuildAcceptedOut"];
         };
+        /** Data[Annotated[Union[PodcastUnsubscribedOut, PodcastAlreadyUnsubscribedOut], FieldInfo(annotation=NoneType, required=True, discriminator='outcome')]] */
+        Data_Annotated_Union_PodcastUnsubscribedOut__PodcastAlreadyUnsubscribedOut___FieldInfo_annotation_NoneType__required_True__discriminator__outcome____: {
+            /** Data */
+            data: components["schemas"]["PodcastUnsubscribedOut"] | components["schemas"]["PodcastAlreadyUnsubscribedOut"];
+        };
         /** Data[Annotated[Union[ReaderTextDocumentOut, ReaderPdfDocumentOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
         Data_Annotated_Union_ReaderTextDocumentOut__ReaderPdfDocumentOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
             /** Data */
@@ -5331,6 +5344,10 @@ export interface components {
         /** Data[CollectionPage[LibraryOut]] */
         Data_CollectionPage_LibraryOut__: {
             data: components["schemas"]["CollectionPage_LibraryOut_"];
+        };
+        /** Data[CollectionPage[PodcastEpisodeListItemOut]] */
+        Data_CollectionPage_PodcastEpisodeListItemOut__: {
+            data: components["schemas"]["CollectionPage_PodcastEpisodeListItemOut_"];
         };
         /** Data[CollectionPage[PodcastSubscriptionListItemOut]] */
         Data_CollectionPage_PodcastSubscriptionListItemOut__: {
@@ -5495,6 +5512,14 @@ export interface components {
         /** Data[PodcastDetailOut] */
         Data_PodcastDetailOut_: {
             data: components["schemas"]["PodcastDetailOut"];
+        };
+        /** Data[PodcastEpisodeFromDiscoveryOut] */
+        Data_PodcastEpisodeFromDiscoveryOut_: {
+            data: components["schemas"]["PodcastEpisodeFromDiscoveryOut"];
+        };
+        /** Data[PodcastEpisodeMarkPlayedOut] */
+        Data_PodcastEpisodeMarkPlayedOut_: {
+            data: components["schemas"]["PodcastEpisodeMarkPlayedOut"];
         };
         /** Data[PodcastEpisodeQueryTranscriptForecastOut] */
         Data_PodcastEpisodeQueryTranscriptForecastOut_: {
@@ -9637,6 +9662,23 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** PodcastAlreadyUnsubscribedOut */
+        PodcastAlreadyUnsubscribedOut: {
+            /** Collectionrevision */
+            collectionRevision: number;
+            /** Libraryentriescollectionrevision */
+            libraryEntriesCollectionRevision: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            outcome: "AlreadyUnsubscribed";
+            /**
+             * Podcast Id
+             * Format: uuid
+             */
+            podcast_id: string;
+        };
         /** PodcastBackfillOut */
         PodcastBackfillOut: {
             /** Addedcount */
@@ -9723,6 +9765,19 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** PodcastDestinationOutcomeOut */
+        PodcastDestinationOutcomeOut: {
+            /**
+             * Libraryid
+             * Format: uuid
+             */
+            libraryId: string;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "Added" | "AlreadyPresent" | "IncludedThroughPodcast";
+        };
         /** PodcastDetailOut */
         PodcastDetailOut: {
             podcast: components["schemas"]["PodcastListItemOut"];
@@ -9753,12 +9808,50 @@ export interface components {
             /** Url */
             url: string | null;
         };
+        /** PodcastEpisodeFromDiscoveryOut */
+        PodcastEpisodeFromDiscoveryOut: {
+            /** Collectionrevision */
+            collectionRevision: number;
+            /** Destinationoutcomes */
+            destinationOutcomes: components["schemas"]["PodcastDestinationOutcomeOut"][];
+            /** Href */
+            href: string;
+            /**
+             * Mediaid
+             * Format: uuid
+             */
+            mediaId: string;
+        };
         /** PodcastEpisodeFromDiscoveryRequest */
         PodcastEpisodeFromDiscoveryRequest: {
             /** Namedlibraryids */
             namedLibraryIds?: string[];
             /** Target */
             target: string;
+        };
+        /**
+         * PodcastEpisodeListItemOut
+         * @description Compact row projection for one podcast episode.
+         */
+        PodcastEpisodeListItemOut: {
+            /** Has Show Notes */
+            has_show_notes: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            mediaSummary: components["schemas"]["MediaSummaryOut"];
+            transcript_state: components["schemas"]["TranscriptState"];
+        };
+        /** PodcastEpisodeMarkPlayedOut */
+        PodcastEpisodeMarkPlayedOut: {
+            /** Changedcount */
+            changedCount: number;
+            /** Collectionrevision */
+            collectionRevision: number;
+            /** Matchedcount */
+            matchedCount: number;
         };
         /** PodcastEpisodeQueryTranscriptForecastOut */
         PodcastEpisodeQueryTranscriptForecastOut: {
@@ -10225,6 +10318,27 @@ export interface components {
         };
         /** @enum {string} */
         PodcastSyncStatus: "Pending" | "Running" | "Complete" | "SourceLimited" | "Failed";
+        /** PodcastUnsubscribedOut */
+        PodcastUnsubscribedOut: {
+            /** Collectionrevision */
+            collectionRevision: number;
+            /** Libraryentriescollectionrevision */
+            libraryEntriesCollectionRevision: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            outcome: "Unsubscribed";
+            /**
+             * Podcast Id
+             * Format: uuid
+             */
+            podcast_id: string;
+            /** Removed Placement Count */
+            removed_placement_count: number;
+            /** Retained Shared Count */
+            retained_shared_count: number;
+        };
         Presence_ActivitySessionOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ActivitySessionOut_"];
         Presence_Annotated_Union_RetryUploadOffer__RetrySourceOffer__RepairSourceOffer__RepairSearchOffer___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_Union_RetryUploadOffer__RetrySourceOffer__RepairSourceOffer__RepairSearchOffer___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
         Presence_Annotated_Union_SourceStageProgress__SourceCountedProgress___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_Union_SourceStageProgress__SourceCountedProgress___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
@@ -20183,9 +20297,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_PodcastEpisodeFromDiscoveryOut_"];
                 };
             };
             /** @description Validation Error */
@@ -20337,9 +20449,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_Annotated_Union_PodcastUnsubscribedOut__PodcastAlreadyUnsubscribedOut___FieldInfo_annotation_NoneType__required_True__discriminator__outcome____"];
                 };
             };
             /** @description Validation Error */
@@ -20469,9 +20579,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_CollectionPage_PodcastEpisodeListItemOut__"];
                 };
             };
             /** @description Validation Error */
@@ -20506,9 +20614,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_PodcastEpisodeMarkPlayedOut_"];
                 };
             };
             /** @description Validation Error */

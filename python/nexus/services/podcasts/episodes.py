@@ -11,14 +11,12 @@ from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
+from nexus.db.models import TranscriptState
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.collection_page import CollectionCursor, CollectionPage, CollectionRevision
 from nexus.schemas.podcast import (
-    PodcastEpisodeListCapabilitiesOut,
-    PodcastEpisodeListeningStateOut,
     PodcastEpisodeListItemOut,
-    PodcastEpisodeListPlayerDescriptorOut,
     PodcastEpisodeMarkPlayedOut,
     PodcastEpisodeSelection,
 )
@@ -268,7 +266,19 @@ def list_podcast_episodes_for_viewer(
         db, viewer_id=viewer_id, media_ids=list(row_by_media_id)
     )
     return CollectionPage(
-        items=[_list_item(episode, row_by_media_id[episode.id]) for episode in episodes],
+        items=[
+            PodcastEpisodeListItemOut(
+                id=episode.id,
+                mediaSummary=episode.summary,
+                transcript_state=TranscriptState(
+                    episode.transcript_state
+                    if episode.transcript_state is not None
+                    else "not_requested"
+                ),
+                has_show_notes=bool(row_by_media_id[episode.id]["has_show_notes"]),
+            )
+            for episode in episodes
+        ],
         collectionRevision=revision,
         nextCursor=(
             present(
@@ -299,50 +309,3 @@ def _episode_plan(sort: PodcastEpisodeSort) -> list[SortKey]:
         SortKey("duration_sort", "asc" if sort == "duration_asc" else "desc", KeysetValueKind.Int),
         *published,
     ]
-
-
-def _list_item(
-    episode: media_service.CollectionMedia, row: RowMapping
-) -> PodcastEpisodeListItemOut:
-    listening = episode.listening_state
-    return PodcastEpisodeListItemOut(
-        id=episode.id,
-        mediaSummary=episode.summary,
-        canonical_source_url=(
-            present(episode.canonical_source_url)
-            if episode.canonical_source_url is not None
-            else absent()
-        ),
-        transcript_state=episode.transcript_state or "not_requested",
-        transcript_coverage=episode.transcript_coverage or "none",
-        listening_state=(
-            present(
-                PodcastEpisodeListeningStateOut(
-                    position_ms=listening.position_ms,
-                    duration_ms=(
-                        present(listening.duration_ms)
-                        if listening.duration_ms is not None
-                        else absent()
-                    ),
-                )
-            )
-            if listening is not None
-            else absent()
-        ),
-        episode_state=row["episode_state"],
-        progress_resettable=episode.progress_resettable,
-        capabilities=PodcastEpisodeListCapabilitiesOut(
-            can_retry=episode.capabilities.can_retry,
-            can_refresh_source=episode.capabilities.can_refresh_source,
-            can_retry_metadata=episode.capabilities.can_retry_metadata,
-            can_edit_authors=episode.capabilities.can_edit_authors,
-            can_delete=episode.capabilities.can_delete,
-        ),
-        author_mode=episode.author_mode,
-        has_show_notes=bool(row["has_show_notes"]),
-        playerDescriptor=(
-            present(PodcastEpisodeListPlayerDescriptorOut(media_id=episode.id))
-            if episode.audio_playable
-            else absent()
-        ),
-    )

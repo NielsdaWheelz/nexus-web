@@ -1,10 +1,10 @@
-import { absent, present, decodePresence, type Presence } from "@/lib/api/presence";
+import { absent, present, type Presence } from "@/lib/api/presence";
 import type { Schema } from "@/lib/api/wire";
 import type {
   NonNegativeMinutes,
   PositiveMinutes,
 } from "@/lib/consumption/activityFacts";
-import { expectExactRecord, expectInteger } from "@/lib/validation";
+import { expectInteger } from "@/lib/validation";
 
 export interface ReadingTimeEstimate {
   totalMinutes: PositiveMinutes;
@@ -19,22 +19,6 @@ function decodeMinutes(raw: unknown, minimum: number, name: string): number {
     throw new TypeError(`${name} must be between ${minimum} and 2147483647`);
   }
   return value;
-}
-
-export function parseReadingTimeEstimateWire(
-  raw: unknown,
-): Schema<"ReadingTimeEstimateOut"> {
-  const value = expectExactRecord(
-    raw,
-    ["totalMinutes", "remainingMinutes"],
-    "readingTimeEstimate.value",
-  );
-  return {
-    totalMinutes: expectInteger(value.totalMinutes, "readingTimeEstimate.value.totalMinutes"),
-    remainingMinutes: decodePresence(value.remainingMinutes, (minutes) =>
-      expectInteger(minutes, "readingTimeEstimate.value.remainingMinutes.value"),
-    ),
-  };
 }
 
 export function readingTimeEstimateFromWire(
@@ -54,8 +38,4 @@ export function readingTimeEstimateFromWire(
         })
       : absent(),
   };
-}
-
-export function decodeReadingTimeEstimate(raw: unknown): ReadingTimeEstimate {
-  return readingTimeEstimateFromWire(parseReadingTimeEstimateWire(raw));
 }
