@@ -156,7 +156,6 @@ def main() -> None:
             lane=lane,
             source_sha=identity.source_sha,
             expected_database_revision=identity.expected_database_revision,
-            expected_oracle_manifest_digest=identity.expected_oracle_manifest_digest,
             readiness_check=lambda: _worker_readiness_check(
                 lane=lane,
                 settings=settings,

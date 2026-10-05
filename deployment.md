@@ -20,8 +20,7 @@ Public hosts are `nexus.nielseriknandal.com` (frontend) and
 `5.78.194.235`.
 
 The release identity is one full lowercase Git `source_sha`. It binds the Vercel
-deployment, the API and worker image digests, the expected Alembic revision, and
-the expected Oracle manifest digest.
+deployment, the API and worker image digests, and the expected Alembic revision.
 
 ## Non-negotiable rules
 
@@ -85,9 +84,8 @@ On every push to `main`, `.github/workflows/backend-images.yml` builds the API
 and worker images once, pushes them to GHCR, proves each image's
 `org.opencontainers.image.revision` label and baked `/app/runtime-identity.json`
 agree with the source SHA, and uploads one artifact
-`nexus-backend-release-<sha>` containing `candidate-manifest.json`: the two
-image digests, the expected Alembic revision and the expected Oracle manifest
-digest.
+`nexus-backend-release-<sha>` containing `candidate-manifest.json` (schema 3):
+the two image digests and the expected Alembic revision.
 
 The release resolves that artifact through `gh`, requires exactly one unexpired
 copy, and requires its workflow run to be a `push` to `main` at that exact SHA

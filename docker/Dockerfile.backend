@@ -29,8 +29,7 @@ FROM python-builder AS release-metadata
 ARG SOURCE_SHA
 
 COPY migrations ./migrations
-COPY scripts/oracle ./scripts/oracle
-RUN chmod -R u=rwX,go=rX /app/migrations /app/scripts/oracle \
+RUN chmod -R u=rwX,go=rX /app/migrations \
     && /app/.venv/bin/python -m nexus.release_artifact write-runtime-identity \
         --repo-root /app \
         --source-sha "$SOURCE_SHA" \
@@ -118,9 +117,8 @@ COPY node/ingest/article_extraction.mjs ./node/ingest/article_extraction.mjs
 COPY node/ingest/accepted_url_egress.mjs ./node/ingest/accepted_url_egress.mjs
 COPY apps/worker ./apps/worker
 COPY apps/codex_agent ./apps/codex_agent
-COPY scripts/oracle ./scripts/oracle
 
-RUN chmod -R u=rwX,go=rX /app/node/ingest /app/apps/worker /app/apps/codex_agent /app/scripts/oracle \
+RUN chmod -R u=rwX,go=rX /app/node/ingest /app/apps/worker /app/apps/codex_agent \
     && node --version
 
 ENV NODE_ENV="production" NODE_INGEST_SCRIPT="/app/node/ingest/ingest.mjs"

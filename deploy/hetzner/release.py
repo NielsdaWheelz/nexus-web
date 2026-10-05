@@ -286,7 +286,6 @@ def pull_image(candidate: CandidateManifest, image: str) -> None:
     if identity != {
         "source_sha": candidate.source_sha,
         "expected_database_revision": candidate.expected_database_revision,
-        "expected_oracle_manifest_digest": candidate.expected_oracle_manifest_digest,
     }:
         raise Failure(f"{image} runtime identity differs from the candidate manifest")
 
@@ -540,7 +539,6 @@ def health(candidate: CandidateManifest) -> None:
     expected = {
         "source_sha": candidate.source_sha,
         "expected_database_revision": candidate.expected_database_revision,
-        "expected_oracle_manifest_digest": candidate.expected_oracle_manifest_digest,
     }
     version = json.loads(inside("api", "curl -fsS http://127.0.0.1:8000/version"))
     if {key: version["data"].get(key) for key in expected} != expected:
