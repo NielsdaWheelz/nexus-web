@@ -7,7 +7,6 @@ explicit Transcribe command.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
 from uuid import UUID
 
 import httpx
@@ -17,7 +16,7 @@ from nexus.config import get_settings
 from nexus.db.models import Media
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.schemas.presence import Present
+from nexus.schemas.presence import Present, present
 from nexus.schemas.publication_dates import normalize_source_publication_date
 from nexus.services.collection_revisions import CollectionFamily, bump_all_collection_families
 from nexus.services.contributor_taxonomy import (
@@ -27,7 +26,7 @@ from nexus.services.contributor_taxonomy import (
     RawIdentityClaim,
     build_observation,
 )
-from nexus.services.media_author_observation_seam import attach_author_observation
+from nexus.services.source_outcome import SourceRunOutcome, source_contributor_observations
 from nexus.services.source_publication import SourcePublicationFence, run_source_publication_phase
 from nexus.services.youtube_identity import YouTubeIdentity
 
@@ -42,7 +41,7 @@ def run_youtube_video_ingest(
     *,
     identity: YouTubeIdentity,
     publication_fence: SourcePublicationFence,
-) -> dict[str, Any]:
+) -> SourceRunOutcome:
     """Fetch metadata outside any transaction, then publish playable media once."""
     metadata = fetch_youtube_metadata(identity.provider_video_id)
 
@@ -71,9 +70,13 @@ def run_youtube_video_ingest(
         actor_user_id=str(actor_user_id),
         request_id=request_id,
     )
-    result: dict[str, Any] = {"status": "success", "metadata_enrichment": metadata is not None}
-    attach_author_observation(result, observation=observation, source="youtube_metadata")
-    return result
+    return SourceRunOutcome(
+        diagnostics={"status": "success"},
+        observations=source_contributor_observations(
+            media_id=media_id, observation=observation, source="youtube_metadata"
+        ),
+        metadata_enrichment=present(metadata is not None),
+    )
 
 
 def fetch_youtube_metadata(provider_video_id: str) -> dict[str, str] | None:

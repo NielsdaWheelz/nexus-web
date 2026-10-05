@@ -36,6 +36,11 @@ again failed on the mac with that error. task-owned cached postgres/minio
 start with `--pull never`; boto3 provisions the isolated bucket. receipt:
 `/tmp/nexus-linear-20261004/stack-feasibility.json`.
 
+the `031c3c95` source-acquisition qualification hit the same init-image refusal
+on the mac. cause remains unqualified; owned postgres/minio start without that
+helper and boto3 creates the bucket. exact images/resources/error:
+`/tmp/nexus-linear-03-20261004/stack-startup-receipt.json`.
+
 prerequisite and fix: establish the registry's supported distribution and access
 contract, then select a supported, pinned, accessible image for the ordinary
 local s3 development owner in a focused change. preserve local bucket setup and
