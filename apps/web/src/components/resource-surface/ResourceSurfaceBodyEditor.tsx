@@ -39,7 +39,7 @@ interface Props {
   onFlush: () => void;
   onActivate: (item: ResourceItem, disposition: WorkspaceTargetDisposition) => void;
   onOpenObject: (objectType: string, objectId: string, disposition: WorkspaceTargetDisposition) => void;
-  onFeedback?: (feedback: FeedbackContent) => void;
+  onFeedback: (feedback: FeedbackContent) => void;
   onError?: (error: unknown) => void;
   inputHandoff?: { noteRef: string; handoff: NoteBodyInputHandoff } | null;
   onInputHandoffClaimed?: (id: string) => void;
@@ -80,11 +80,11 @@ export default function ResourceSurfaceBodyEditor({
   const end: SurfacePosition = lastTopRow ? { kind: "after", linkId: lastTopRow.linkId } : { kind: "start" };
   const report = (failure: unknown) => {
     if (failure instanceof ProtectedSurfaceLinkError) {
-      onFeedback?.({ tone: "Warning", title: "This link has a note", message: "Use link actions to change it." });
+      onFeedback({ tone: "Warning", title: "This link has a note", message: "Use link actions to change it." });
     } else if (failure instanceof TerminalSurfaceLinkError) {
-      onFeedback?.({ tone: "Warning", title: "Already shown above", message: "Edit the earlier appearance." });
+      onFeedback({ tone: "Warning", title: "Already shown above", message: "Edit the earlier appearance." });
     } else if (failure instanceof ClipboardWriteUnavailableError) {
-      onFeedback?.({ tone: "Warning", title: "Copy unavailable", message: "Clipboard access is unavailable." });
+      onFeedback({ tone: "Warning", title: "Copy unavailable", message: "Clipboard access is unavailable." });
     } else onError?.(failure);
   };
   const run = (operation: Promise<void> | void) => { if (operation) void operation.catch(report); };
