@@ -5630,6 +5630,10 @@ export interface components {
             /** Data */
             data: components["schemas"]["UploadRequired"] | components["schemas"]["NeedsAttention"];
         };
+        /** Data[UserProfileOut] */
+        Data_UserProfileOut_: {
+            data: components["schemas"]["UserProfileOut"];
+        };
         /** Data[list[ChatRunResponse]] */
         Data_list_ChatRunResponse__: {
             /** Data */
@@ -14969,6 +14973,30 @@ export interface components {
             /** Userhandle */
             userHandle: string;
         };
+        /**
+         * UserProfileOut
+         * @description Authenticated account profile returned by GET and PATCH /me.
+         */
+        UserProfileOut: {
+            /** Calendar Time Zone */
+            calendar_time_zone: string;
+            /**
+             * Default Library Id
+             * Format: uuid
+             */
+            default_library_id: string;
+            /** Display Name */
+            display_name: string | null;
+            /** Email */
+            email: string | null;
+            /** Email Ingest Address */
+            email_ingest_address: string | null;
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+        };
         /** UserShareOut */
         UserShareOut: {
             /** Handle */
@@ -18239,9 +18267,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_UserProfileOut_"];
                 };
             };
         };
@@ -18265,9 +18291,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_UserProfileOut_"];
                 };
             };
             /** @description Validation Error */

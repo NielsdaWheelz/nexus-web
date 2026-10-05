@@ -31,7 +31,7 @@ class UserSearchOut(BaseModel):
 
 
 class UserProfileOut(BaseModel):
-    """Response schema for user profile from GET /me."""
+    """Authenticated account profile returned by GET and PATCH /me."""
 
     user_id: UUID
     default_library_id: UUID
@@ -40,7 +40,9 @@ class UserProfileOut(BaseModel):
     calendar_time_zone: str
     email_ingest_address: str | None = None
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True, json_schema_serialization_defaults_required=True
+    )
 
 
 class UpdateProfileRequest(BaseModel):
