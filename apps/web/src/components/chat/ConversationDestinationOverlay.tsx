@@ -1,236 +1,106 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
-import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import MobileSheet from "@/components/ui/MobileSheet";
-import type { CollectionCursor, CollectionPage } from "@/lib/api/collectionPage";
 import { conversationsInitialResource } from "@/lib/api/resource";
 import { useResource } from "@/lib/api/useResource";
-import { useCursorPagination } from "@/lib/api/useCursorPagination";
+import {
+  fetchConversationIndex,
+  presentConversationListItem,
+} from "@/lib/chat/conversationIndex";
 import { CANONICAL_UPDATED_TITLE_INDEX_VIEW } from "@/lib/collections/updatedTitleIndexView";
-import { fetchConversationIndex } from "@/lib/conversations/indexApi";
 import { formatDisplayNumber } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import type { ConversationListItem } from "@/lib/conversations/types";
-import { presentConversationListItem } from "@/lib/conversations/presentation";
-import styles from "./ConversationDestinationOverlay.module.css";
+import styles from "./ChatPanels.module.css";
 
-const OVERLAY_TITLE = "Ask in existing chat";
-const PAGE_SIZE = 25;
-const SEARCH_DEBOUNCE_MS = 200;
-
-interface ConversationDestinationOverlayProps {
-  /** Mount-gate; keep the component mounted and drive open/close with this. */
-  open: boolean;
-  /** Escape / backdrop / Back / close button — dismiss, returning focus to the reader. */
-  onClose: () => void;
-  /** A row was picked. The caller navigates to that conversation and claims focus. */
-  onSelectConversation: (conversationId: string) => void;
-}
+const TITLE = "Ask in existing chat";
 
 /**
- * The "Ask in existing chat…" destination picker (reader-highlight-quote-chat
- * cutover §Destination picker). It resolves *which* owned conversation the reader
- * quote should go into — it never creates or mutates a conversation. Desktop rides
- * the shared `Dialog`; mobile the always-mounted `MobileSheet`, chosen by
- * `useIsMobileViewport`. The search field is a combobox over a listbox of recent
- * owned conversations (`GET /api/conversations`, cursor-paginated), following the
- * shared combobox contract cloned from `AuthorSearchField`: `role="combobox"` with
- * `aria-controls`/`aria-activedescendant`, Arrow/Home/End/Enter, non-tabbable rows,
- * and polite result-count announcements.
- *
- * A successful pick closes WITHOUT returning focus to the reader — the destination
- * pane claims it — via the `skipReturnFocus` handoff. Every dismissal path keeps the
- * default return-focus.
+ * "Ask in existing chat…": picks which owned chat a reader quote goes to; it
+ * never creates one. A pick closes without returning focus — the chat claims it.
  */
 export default function ConversationDestinationOverlay({
   open,
   onClose,
   onSelectConversation,
-}: ConversationDestinationOverlayProps) {
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSelectConversation: (conversationId: string) => void;
+}) {
   const isMobile = useIsMobileViewport();
-  // Read at close time: true only for a successful pick, so the picker keeps the
-  // opener's return-focus for Escape/backdrop/Back but yields it on selection.
-  const skipReturnRef = useRef(false);
+  const picked = useRef(false);
   useEffect(() => {
-    if (open) skipReturnRef.current = false;
+    if (open) picked.current = false;
   }, [open]);
-
-  const handleSelect = useCallback(
-    (conversationId: string) => {
-      skipReturnRef.current = true;
-      onSelectConversation(conversationId);
-      onClose();
-    },
-    [onSelectConversation, onClose],
-  );
-
-  const focusSearchField = useCallback(
-    (container: HTMLElement) =>
+  const select = (id: string) => {
+    picked.current = true;
+    onSelectConversation(id);
+    onClose();
+  };
+  const host = {
+    initialFocus: (container: HTMLElement) =>
       container.querySelector<HTMLInputElement>('input[role="combobox"]'),
-    [],
-  );
-
-  const body = <DestinationPicker onSelect={handleSelect} />;
-
-  if (isMobile) {
-    return (
-      <MobileSheet
-        active={open}
-        onDismiss={onClose}
-        ariaLabel={OVERLAY_TITLE}
-        initialFocus={focusSearchField}
-        skipReturnFocus={() => skipReturnRef.current}
-      >
-        <div className={styles.sheetHeader}>
-          <h2 className={styles.sheetTitle}>{OVERLAY_TITLE}</h2>
-        </div>
-        {body}
-      </MobileSheet>
-    );
-  }
-
-  return (
-    <Dialog
-      open={open}
-      onClose={onClose}
-      title={OVERLAY_TITLE}
-      initialFocus={focusSearchField}
-      skipReturnFocus={() => skipReturnRef.current}
-    >
-      {body}
+    skipReturnFocus: () => picked.current,
+  };
+  return isMobile ? (
+    <MobileSheet active={open} onDismiss={onClose} ariaLabel={TITLE} {...host}>
+      <h2 className={styles.sheetTitle}>{TITLE}</h2>
+      <Picker onSelect={select} />
+    </MobileSheet>
+  ) : (
+    <Dialog open={open} onClose={onClose} title={TITLE} {...host}>
+      <Picker onSelect={select} />
     </Dialog>
   );
 }
 
-/**
- * The self-contained search + results body. Mounted only while the overlay is open
- * (both hosts unmount their children on close), so it starts fresh each time.
- */
-function DestinationPicker({ onSelect }: { onSelect: (conversationId: string) => void }) {
+/** A combobox over the 25 newest owned chats, searchable by title; unmounted on close. */
+function Picker({ onSelect }: { onSelect: (conversationId: string) => void }) {
   const env = useRenderEnvironment();
-
   const id = useId();
-  const inputId = `${id}-input`;
-  const listboxId = `${id}-listbox`;
-  const statusId = `${id}-status`;
-  const optionId = (conversationId: string) => `${id}-option-${conversationId}`;
-
   const [query, setQuery] = useState("");
-  const [debouncedQuery, setDebouncedQuery] = useState("");
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [refreshVersion, setRefreshVersion] = useState(0);
-
-  // Debounce the trimmed query. The initial empty query is already committed, so
-  // the recent-conversations page loads immediately; only edits wait out the delay.
+  const [search, setSearch] = useState("");
+  const [active, setActive] = useState<string | null>(null);
   useEffect(() => {
-    const trimmed = query.trim();
-    if (trimmed === debouncedQuery) return;
-    const timer = setTimeout(() => setDebouncedQuery(trimmed), SEARCH_DEBOUNCE_MS);
+    const timer = setTimeout(() => setSearch(query.trim()), 200);
     return () => clearTimeout(timer);
-  }, [query, debouncedQuery]);
-
-  const queryParams = {
+  }, [query]);
+  const params = {
     view: CANONICAL_UPDATED_TITLE_INDEX_VIEW,
-    titleSearch: debouncedQuery,
-    limit: PAGE_SIZE,
+    titleSearch: search,
+    limit: 25,
   };
-  const firstPage = useResource<CollectionPage<ConversationListItem>>({
-    cacheKey: `conversation-destination:${conversationsInitialResource.cacheKey(queryParams)}:${refreshVersion}`,
-    load: (signal) => fetchConversationIndex({ ...queryParams, signal }),
+  const page = useResource({
+    cacheKey: `conversation-destination:${conversationsInitialResource.cacheKey(params)}`,
+    load: (signal) => fetchConversationIndex({ ...params, signal }),
   });
-  const { items, status, error, hasMore, loadingMore, loadMore, retry } =
-    useCursorPagination<ConversationListItem, CollectionCursor>({
-      firstPage,
-      initialMoreError: null,
-      loadMorePage: (cursor, signal) => {
-        if (firstPage.status !== "ready") {
-          throw new Error("Chat destination continuation lost its first page");
-        }
-        return fetchConversationIndex({
-          ...queryParams,
-          cursor,
-          collectionRevision: firstPage.data.collectionRevision,
-          signal,
-        });
-      },
-    });
-  const reloadRequired =
-    error?.code === "E_COLLECTION_CHANGED" || error?.code === "E_INVALID_CURSOR";
-
-  // Effective active row derived during render (never via an effect) so an in-flight
-  // Arrow move is never clobbered: an explicit `activeId` wins while it still points
-  // at a live row, otherwise the first row is active by default.
-  const effectiveActiveId =
-    activeId && items.some((item) => item.id === activeId)
-      ? activeId
-      : (items[0]?.id ?? null);
-
-  const isSearch = debouncedQuery.length > 0;
-  const politeStatus =
-    status === "loading"
-      ? "Searching…"
-      : status === "error"
-        ? ""
-        : items.length === 0
-          ? isSearch
-            ? "No chats match your search"
-            : "No chats yet"
-          : items.length === 1
-            ? "1 chat"
-            : `${formatDisplayNumber(items.length, env)} chats`;
-  const assertiveStatus = status === "error" ? "Couldn't load chats" : "";
-
-  function onKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      if (status === "error") {
-        retry();
-        return;
-      }
-      if (effectiveActiveId) onSelect(effectiveActiveId);
-      return;
-    }
-    if (
-      event.key === "ArrowDown" ||
-      event.key === "ArrowUp" ||
-      event.key === "Home" ||
-      event.key === "End"
-    ) {
-      event.preventDefault();
-      if (items.length === 0) return;
-      const current = items.findIndex((item) => item.id === effectiveActiveId);
-      const start = current >= 0 ? current : 0;
-      const last = items.length - 1;
-      const next =
-        event.key === "Home"
-          ? 0
-          : event.key === "End"
-            ? last
-            : event.key === "ArrowDown"
-              ? Math.min(last, start + 1)
-              : Math.max(0, start - 1);
-      setActiveId(items[next]!.id);
-    }
-  }
-
+  const items = page.status === "ready" ? page.data.items : [];
+  const current = items.some((item) => item.id === active)
+    ? active
+    : (items[0]?.id ?? null);
+  const status =
+    page.status === "error"
+      ? "Couldn’t load chats."
+      : page.status !== "ready"
+        ? "Searching…"
+        : !items.length
+          ? search
+            ? "No chats match your search."
+            : "You have no chats yet."
+          : `${formatDisplayNumber(items.length, env)} ${items.length === 1 ? "chat" : "chats"}`;
   return (
-    <div className={styles.root}>
-      <label className={styles.srOnly} htmlFor={inputId}>
-        Search your chats
-      </label>
+    <div className={styles.destination}>
       <Input
-        id={inputId}
-        className={styles.input}
         role="combobox"
+        aria-label="Search your chats"
         aria-expanded
-        aria-controls={listboxId}
+        aria-controls={`${id}-list`}
         aria-autocomplete="list"
-        aria-activedescendant={effectiveActiveId ? optionId(effectiveActiveId) : undefined}
-        aria-describedby={statusId}
+        aria-activedescendant={current ? `${id}-${current}` : undefined}
         value={query}
         dir="auto"
         placeholder="Search chats by title"
@@ -238,77 +108,57 @@ function DestinationPicker({ onSelect }: { onSelect: (conversationId: string) =>
         autoCorrect="off"
         spellCheck={false}
         onChange={(event) => setQuery(event.target.value)}
-        onKeyDown={onKeyDown}
-      />
-      <div id={statusId} className={styles.srOnly} role="status" aria-live="polite">
-        {politeStatus}
-      </div>
-      <div className={styles.srOnly} role="alert" aria-live="assertive">
-        {assertiveStatus}
-      </div>
-
-      <div id={listboxId} role="listbox" aria-label="Your chats" className={styles.list}>
-        {status === "loading" ? (
-          <div className={styles.status}>Searching…</div>
-        ) : status === "error" ? (
-          <div className={styles.errorRow}>
-            <span className={styles.errorText}>Couldn&rsquo;t load chats</span>
-            <button
-              type="button"
-              className={styles.tryAgain}
-              // Not a listbox tab stop: the combobox owns focus; keyboard retry is
-              // Enter-on-input. The button stays pointer-clickable.
-              tabIndex={-1}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={retry}
-            >
-              Try again
-            </button>
-          </div>
-        ) : items.length === 0 ? (
-          <div className={styles.status}>
-            {isSearch ? "No chats match your search." : "You have no chats yet."}
-          </div>
-        ) : (
-          items.map((item) => {
-            const active = item.id === effectiveActiveId;
-            const presentation = presentConversationListItem(item, env);
-            return (
-              <div
-                key={item.id}
-                id={optionId(item.id)}
-                role="option"
-                aria-selected={active}
-                className={styles.option}
-                data-active={active || undefined}
-                // Rows are roving (aria-activedescendant), never tab stops.
-                onMouseDown={(event) => event.preventDefault()}
-                onMouseMove={() => setActiveId(item.id)}
-                onClick={() => onSelect(item.id)}
-              >
-                <span className={styles.title} dir="auto">
-                  {presentation.title}
-                </span>
-                <span className={styles.meta}>
-                  {presentation.metadata}
-                </span>
-              </div>
+        onKeyDown={(event) => {
+          const at = items.findIndex((item) => item.id === current);
+          const moves: Record<string, number> = {
+            ArrowDown: at + 1,
+            ArrowUp: at - 1,
+            Home: 0,
+            End: items.length - 1,
+          };
+          if (event.key === "Enter") {
+            event.preventDefault();
+            if (page.status === "error") page.retry();
+            else if (current) onSelect(current);
+          } else if (event.key in moves && items.length) {
+            event.preventDefault();
+            const to = Math.min(
+              items.length - 1,
+              Math.max(0, moves[event.key]),
             );
-          })
-        )}
-      </div>
-
-      {status === "ready" && error ? (
-        <div className={styles.footerError}>
-          {reloadRequired ? "This chat page expired. Reload to continue." : "Couldn’t load more chats."}
-        </div>
-      ) : null}
-      <LoadMoreFooter
-        hasMore={hasMore}
-        loading={loadingMore}
-        onLoadMore={reloadRequired ? () => setRefreshVersion((version) => version + 1) : loadMore}
-        label={reloadRequired ? "Reload chats" : "Load more chats"}
+            setActive(items[to].id);
+          }
+        }}
       />
+      <p className={styles.faint} role="status" aria-live="polite">
+        {status}
+      </p>
+      <div
+        id={`${id}-list`}
+        role="listbox"
+        aria-label="Your chats"
+        className={styles.destinationList}
+      >
+        {items.map((item) => {
+          const presentation = presentConversationListItem(item, env);
+          return (
+            <div
+              key={item.id}
+              id={`${id}-${item.id}`}
+              role="option"
+              aria-selected={item.id === current}
+              data-active={item.id === current || undefined}
+              className={styles.destinationOption}
+              onMouseDown={(event) => event.preventDefault()}
+              onMouseMove={() => setActive(item.id)}
+              onClick={() => onSelect(item.id)}
+            >
+              <span dir="auto">{presentation.title}</span>
+              <span className={styles.faint}>{presentation.metadata}</span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

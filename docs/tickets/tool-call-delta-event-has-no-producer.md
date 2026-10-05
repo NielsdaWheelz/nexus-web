@@ -42,3 +42,9 @@ browser path and baseline-schema CHECK remain. no production row count was run;
 this does not establish historical absence; removal and saved-run verification
 still need the stated preflight. retain
 the existing path and this open item until the stated data-owner preflight.
+
+2026-10-04 chat rewrite: the browser path is gone (`lib/chat/runTail.ts` does
+not know the type; the old decoders and `useChatRunTail`/`useChatMessageUpdates`
+were deleted with `stream_state`). only the baseline CHECK
+(`0236_baseline_schema.sql:533`) still names it; the preflight count above
+still decides whether a migration may rebuild that CHECK.

@@ -1,99 +1,280 @@
+/* The conversation pane: transcript, rows, answer cards and trust surfaces. */
+
+.pane,
 .surface {
   flex: 1;
-  min-height: 0;
-  min-width: 0;
   display: flex;
   flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.surface {
   background: var(--surface-canvas);
 }
 
+/* Positioned so message offsetTop is measured within the scrolled content;
+   the pin (useChatScroll) owns anchoring, so native anchoring is off. */
 .scrollport {
+  position: relative;
   flex: 1;
   min-height: 0;
-  min-width: 0;
   overflow-y: auto;
   overscroll-behavior-y: contain;
-  scrollbar-gutter: auto;
-  /* The chat pin (useChatScroll) self-manages anchoring; native scroll
-     anchoring can double-correct during keyboard resizes. */
   overflow-anchor: none;
-}
-
-@media (min-width: 769px) {
-  .scrollport {
-    scrollbar-gutter: stable;
-  }
 }
 
 .transcript {
+  display: flex;
+  flex-direction: column;
   min-height: 100%;
-  min-width: 0;
-  width: 100%;
   max-width: var(--content-max-width);
   margin: 0 auto;
   padding: var(--space-4);
-  display: flex;
-  flex-direction: column;
   line-height: var(--leading-relaxed);
-  overflow-anchor: none;
 }
 
-/* Reserved space so a short turn can still place the question at the top inset. */
 .spacer {
   flex: 0 0 auto;
-  width: 100%;
   pointer-events: none;
 }
 
-/* The ↓ Latest affordance sticks to the bottom of the scrollport viewport. */
-.latestDock {
+.latest {
   position: sticky;
   bottom: var(--space-3);
   display: flex;
   justify-content: flex-end;
   padding: 0 var(--space-4);
-  pointer-events: none;
-}
-
-.latestDock > * {
-  pointer-events: auto;
 }
 
 .composerSlot {
   flex: 0 0 auto;
-  min-width: 0;
   background: color-mix(in srgb, var(--surface-canvas) 96%, transparent);
 }
 
-.emptyState {
-  flex: 1;
-  width: 100%;
-  max-width: var(--content-max-width);
+.message {
+  position: relative;
+  min-width: 0;
+  margin-bottom: 1.5em;
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  line-height: 1.58;
+}
+
+.userPrompt {
+  display: grid;
+  gap: var(--space-2);
+  padding-inline-start: var(--space-3);
+  border-inline-start: 2px solid var(--accent-muted);
+}
+
+.userBody,
+.answer {
+  max-inline-size: 66ch;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.userBody {
+  white-space: pre-wrap;
+}
+
+.actions {
   display: flex;
-  flex-direction: column;
-  justify-content: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .message:not(:hover, :focus-within) :is(.actions, .time) {
+    opacity: 0;
+  }
+}
+
+/* The live answer's gutter pulse. */
+.cue {
+  position: absolute;
+  inset: 0 auto 0 -8px;
+  width: 2px;
+  background: var(--accent-muted);
+  animation: cue 1.4s var(--ease-glide) infinite;
+}
+
+@keyframes cue {
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.time,
+.runStatus,
+.tool,
+.details,
+.sources {
+  display: block;
+  margin: var(--space-1) 0;
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+}
+
+.tool {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.code {
+  display: block;
+  margin: 0;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  overflow-wrap: anywhere;
+}
+
+/* Failure, reconnect and paused cards: quiet, never a loud alert box. */
+.card,
+.notice {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--danger) 6%, transparent);
   color: var(--ink-muted);
+  font-size: var(--text-xs);
+}
+
+.card p,
+.notice p {
+  margin: 0;
+}
+
+.cardTitle {
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.quiet {
+  border-color: color-mix(in srgb, var(--ink-faint) 35%, transparent);
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
+}
+
+.notice {
+  grid-template-columns: auto minmax(0, 1fr);
+  border-color: color-mix(in srgb, var(--warning) 60%, transparent);
+  background: color-mix(in srgb, var(--warning) 7%, transparent);
+}
+
+/* Write trail: type-forward small-caps rows. */
+.write {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding-block: var(--space-1);
+  border-top: var(--stroke-hairline) solid var(--edge-subtle);
+  font-size: var(--text-xs);
+}
+
+.write em {
+  font-style: normal;
+  color: var(--accent);
+}
+
+.kicker {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-faint);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-wider);
+  text-transform: uppercase;
+}
+
+button.kicker:hover:not(:disabled) {
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.sources {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--edge-subtle);
+}
+
+:is(.sources, .details) summary {
+  cursor: pointer;
+}
+
+.sources ol {
+  display: grid;
+  gap: var(--space-1);
+  padding: 0;
+  list-style: none;
+}
+
+.link,
+.inspector button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-muted);
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.inspector {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+}
+
+.inspector :is(p, h2, ol, dl, dd) {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--text-xs);
+}
+
+.inspector ol {
+  padding-left: var(--space-3);
+}
+
+.inspector dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: var(--space-1) var(--space-3);
+}
+
+.inspector dt {
+  color: var(--ink-faint);
 }
 
 @media (max-width: 640px) {
   .transcript {
     padding: var(--space-3);
-    gap: var(--space-3);
   }
-
-  .latestDock {
-    padding: 0 var(--space-3);
-  }
-
 }
 
 @media (max-width: 768px) {
   .surface {
     padding-bottom: var(--mobile-content-bottom-clearance);
   }
-
-  .scrollport {
-    scroll-padding-bottom: var(--mobile-content-bottom-clearance);
-  }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .cue {
+    animation: none;
+  }
+}

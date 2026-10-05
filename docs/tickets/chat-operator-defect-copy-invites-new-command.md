@@ -21,3 +21,9 @@ has not yet been observed.
 pr #412 merged as `27e961be6`. close after a terminal defect on the promoted
 source shows its support reference without inviting another send, while an
 eligible rerun and same-run reconnect still offer their distinct actions.
+
+2026-10-04 chat rewrite: the copy table moved into
+`apps/web/src/components/chat/AssistantMessage.tsx` (`FAILURE`/`DEFECT`); the
+defect copy says the response could not complete and to keep the support
+reference, with no invitation to send again. the promoted-source journey above
+still closes this.

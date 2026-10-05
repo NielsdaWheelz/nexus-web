@@ -213,7 +213,7 @@ on 4/8 loads, repaired at its measurement owner, then absent on 8/8 repeated
 hosted loads.
 
 after rebasing, `npm run build` passed with an unrelated chat alignment warning
-tracked in [its ticket](tickets/chat-generation-picker-flex-end-build-warning.md).
+(its ticket closed when the 2026-10-04 chat rewrite replaced the picker).
 the isolated standalone browser replay at `c1287924` passed article selection,
 epub movement and duplicate-position semantics, empty/single availability, pdf
 page controls, and four clean seven-rail loads. `./scripts/test` passed again on

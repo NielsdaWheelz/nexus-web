@@ -519,9 +519,9 @@ engine, API and `dossier_build` job own the lifecycle; a success swaps the
 revision columns and citation edges and deletes every other build of the head in
 one transaction.
 
-**Conversations / chat** — `conversations`, `messages` (the message tree with
-branch pointers), `conversation_branches`, `conversation_active_paths`
-(per-viewer); plus the **chat-run** machinery: `chat_runs`
+**Conversations / chat** — `conversations` (carries the owner's
+`active_leaf_message_id`), `messages` (the message tree with branch pointers;
+a user turn may carry a `fork_title`); plus the **chat-run** machinery: `chat_runs`
 (carries the exact immutable `generation_spec` and `support_id`;
 authoritative execution provenance lives in its parent `llm_calls` row and
 accepted `llm_model_turns` children),
@@ -533,8 +533,7 @@ transient, in-memory passes over a tool call's results; only the
 selected/included outcome is ever written. Conversation
 context refs are `resource_edges` with `source_scheme='conversation'`. Assistant
 message API responses include a
-`trust_trail` read model assembled from these durable rows; persisted
-`message_document` blocks are text-only.
+`trust_trail` read model assembled from these durable rows.
 
 **Podcasts / playback** — `podcasts`, active-only `podcast_subscriptions`
 (`id` PK, unique viewer/Podcast relationship, live `sync_status`, and
@@ -1286,16 +1285,16 @@ The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
 
 - **Conversation = message tree.** Each "send" creates a user message plus a
   _pending assistant_ message; replying under an existing assistant forks a
-  **branch**. `conversation_active_paths` stores a **per-viewer** selected leaf;
-  history assembly only includes messages on the current path, so sibling branches
+  **branch**. `conversations.active_leaf_message_id` stores the owner's
+  selected leaf (admission moves it to the new answer); history assembly only includes messages on the current path, so sibling branches
   never leak into context.
 - **One send = one immutable admission decision.** HTTP never calls the provider.
   `POST /chat-runs` serializes by viewer and normalized `Idempotency-Key`, then
   replays or commits one `ResourceMutation(scope="chat:admission")` receipt.
   Accepted run/messages/event/job and receipt are atomic; a modeled rejection
   commits only the receipt. The small Accepted receipt names conversation, run,
-  and assistant IDs. The browser persists it before canonical
-  `GET /chat-runs/{id}` hydration. The **worker** executes accepted work: assemble
+  and assistant IDs; the browser keeps the exact command in its draft until a
+  receipt or a definite rejection, then reads `GET /chat-runs/{id}`. The **worker** executes accepted work: assemble
   context → run the exact frozen Codex/API selection and
   tool plan → append route-neutral events → finalize. The client merely
   tails `chat_run_events` over SSE and reconciles through bounded repeatable-read
@@ -1324,10 +1323,12 @@ The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
   new composer but is not a user default. There is no Fast/Balanced/Deep preset,
   preference, AI Settings control, or fallback. See [modules/llms.md](modules/llms.md).
 
-Frontend: `components/chat/*` (`useChatRunTail` is the SSE engine,
-`useChatMessageUpdates` folds events with RAF-batched deltas, `ForkTreeView`/
-`ForkStrip` drive branching). Citations render `[N]` → `ReaderCitation` chips that
-push a reader target (`lib/conversations/*`).
+Frontend: `components/chat/conversationStore.ts` holds one copy of the server
+tree (`GET /conversations/{id}/tree`) and a live overlay per pending answer
+(`lib/chat/runTail.ts`); every view — path, fork strips, the Forks outline, the
+send target — is derived by `lib/chat/tree.ts`; `lib/chat/drafts.ts` keeps one
+durable send per draft. Citations render `[N]` → `ReaderCitation` chips that
+push a reader target (`lib/resourceGraph/*`). See [modules/chat.md](modules/chat.md).
 
 ### 8.4 Oracle
 

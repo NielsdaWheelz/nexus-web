@@ -69,7 +69,7 @@ const runtimeCustomPropertyOwners = new Map([
   ["--font-jetbrains-mono", "src/app/layout.tsx"],
   ["--font-unifraktur", "src/app/layout.tsx"],
   // Component geometry is measured or derived and installed inline at runtime.
-  ["--depth", "src/components/chat/ForkNodeRow.tsx"],
+  ["--depth", "src/components/chat/Forks.tsx"],
   [
     "--floating-action-caret-inline-offset",
     "src/components/ui/FloatingActionSurface.tsx",

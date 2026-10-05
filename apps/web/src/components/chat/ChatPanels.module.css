@@ -1,0 +1,185 @@
+/* Fork strip and outline, the docent HUD, the Context tab and the destination list. */
+
+.faint {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+}
+
+.badge {
+  margin-inline-start: var(--space-1);
+  padding: 0 5px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-xs);
+  color: var(--ink);
+  font-size: var(--text-2xs);
+}
+
+.strip {
+  display: grid;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--edge-subtle);
+}
+
+.stripList {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr));
+  gap: var(--space-1);
+}
+
+.option,
+.outline li {
+  display: grid;
+  min-width: 0;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border: 1px solid var(--edge-subtle);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  color: var(--ink);
+  font-size: var(--text-xs);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.option {
+  cursor: pointer;
+}
+
+.option:hover,
+.option[data-active="true"],
+.outline li[data-active="true"] {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--edge));
+}
+
+.panel,
+.context {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-2);
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+}
+
+.search input {
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+}
+
+.panelEmpty {
+  padding: var(--space-6);
+  color: var(--ink-faint);
+  text-align: center;
+}
+
+.outline {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.outline li {
+  margin-left: calc(var(--depth) * var(--space-3));
+}
+
+.outline blockquote {
+  margin: 0;
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--accent);
+  color: var(--ink-muted);
+}
+
+.outlineTitle {
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-weight: var(--weight-semibold);
+  text-align: left;
+  cursor: pointer;
+}
+
+.actions,
+.docentControls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.docent {
+  position: sticky;
+  bottom: 0;
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-4);
+  border-top: var(--stroke-hairline) solid var(--edge-subtle);
+  background: var(--surface-1);
+}
+
+.kicker {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+}
+
+.sentence {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--ink-muted);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.docentControls {
+  justify-content: flex-end;
+}
+
+.sheetTitle {
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-serif);
+  font-size: var(--text-lg);
+}
+
+.destination {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.destinationList {
+  max-height: min(52vh, 22rem);
+  overflow-y: auto;
+  padding: var(--space-1);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
+.destinationOption {
+  display: grid;
+  min-height: 44px;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-serif);
+  cursor: pointer;
+}
+
+.destinationOption[data-active="true"] {
+  background: var(--accent-muted);
+}

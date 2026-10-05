@@ -47,8 +47,10 @@ import type {
   ContributorDetail,
   ContributorWorkItem,
 } from "@/lib/contributors/types";
-import { conversationIndexPage } from "@/lib/conversations/indexApi";
-import type { ConversationListItem } from "@/lib/conversations/types";
+import {
+  conversationIndexPage,
+  type ConversationListItem,
+} from "@/lib/chat/conversationIndex";
 
 // The author pane's composed first-paint seed: the lightweight contributor
 // detail plus the canonical oldest-first page of distinct works (D-25 cursor

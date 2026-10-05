@@ -1,82 +1,67 @@
 "use client";
 
 import { Plus } from "lucide-react";
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import { isInvalidViewError, type ApiError } from "@/lib/api/client";
-import {
-  type CollectionPage,
-  NO_CURSOR,
-  ZERO_REVISION,
-} from "@/lib/api/collectionPage";
-import { conversationsInitialResource } from "@/lib/api/resource";
-import { useExhaustivePagination } from "@/lib/api/useExhaustivePagination";
-import { useResource } from "@/lib/api/useResource";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import CollectionView from "@/components/collections/CollectionView";
-import {
-  FeedbackNotice,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import SelectField from "@/components/ui/SelectField";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
 import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
+import { NO_CURSOR, ZERO_REVISION } from "@/lib/api/collectionPage";
+import { conversationsInitialResource } from "@/lib/api/resource";
+import { useExhaustivePagination } from "@/lib/api/useExhaustivePagination";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
-import { presentConversation } from "@/lib/collections/presenters/conversation";
-import { fetchConversationIndex } from "@/lib/conversations/indexApi";
-import { useConversationIndexRevision } from "@/lib/conversations/indexRevision";
+import { useResource } from "@/lib/api/useResource";
 import {
-  CANONICAL_UPDATED_TITLE_INDEX_VIEW,
-  UPDATED_TITLE_SORT_OPTION_IDS,
+  fetchConversationIndex,
+  useConversationIndexRevision,
+  type ConversationListItem,
+} from "@/lib/chat/conversationIndex";
+import { presentConversation } from "@/lib/collections/presenters/conversation";
+import {
+  CANONICAL_UPDATED_TITLE_INDEX_VIEW as CANONICAL,
   decodeUpdatedTitleIndexView,
   encodeUpdatedTitleIndexView,
-  type DecodedUpdatedTitleIndexView,
-  type UpdatedTitleIndexView,
-  type UpdatedTitleSortOptionId,
+  UPDATED_TITLE_SORT_OPTION_IDS,
   updatedTitleSortOptionLabel,
   updatedTitleSortOptionOf,
   updatedTitleViewForSortOption,
+  type DecodedUpdatedTitleIndexView,
+  type UpdatedTitleIndexView,
+  type UpdatedTitleSortOptionId,
 } from "@/lib/collections/updatedTitleIndexView";
-import type { ConversationListItem } from "@/lib/conversations/types";
-import usePaneScrollRetention from "@/lib/panes/usePaneScrollRetention";
+import { isAbortError } from "@/lib/errors";
+import type { ConversationsPaneSeed } from "@/lib/panes/paneResourceLoaders";
 import {
   requirePaneRuntime,
   usePaneIsActive,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
+import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
+import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
+import usePaneScrollRetention from "@/lib/panes/usePaneScrollRetention";
+import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
 import {
   definePaneVisitDataKey,
   useClearAllPaneVisitData,
   usePaneReturnReady,
   usePaneVisitData,
 } from "@/lib/workspace/paneReturnMemento";
-import type { ConversationsPaneSeed } from "@/lib/panes/paneResourceLoaders";
-import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
-import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
-import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
-import { isAbortError } from "@/lib/errors";
-import { useRevalidationSettlement } from "@/lib/panes/useRevalidationSettlement";
 
-/** The chats index committed as one exact view: rows, revision, and cursor. */
-interface CommittedChatsView extends ConversationsPaneSeed {
+/** The committed index: one exact view's rows, revision and cursor, per refresh. */
+type Committed = ConversationsPaneSeed & {
   readonly view: UpdatedTitleIndexView;
-}
+  readonly version: number;
+};
 
-const CONVERSATIONS_VISIT_DATA = definePaneVisitDataKey<CommittedChatsView>(
+const VISIT_DATA = definePaneVisitDataKey<Committed>(
   "Conversations.Pagination",
 );
-// Module-level so the published descriptor keeps one identity: the chrome
-// republishes whenever an action's icon element changes.
-const NEW_CHAT_ACTIONS: readonly PaneHeaderAction[] = [
+const NEW_CHAT: readonly PaneHeaderAction[] = [
   {
     kind: "link",
     id: "Conversations.New",
@@ -85,573 +70,327 @@ const NEW_CHAT_ACTIONS: readonly PaneHeaderAction[] = [
     href: "/conversations/new",
   },
 ];
+// The pane URL owns the sort (`?sort=&direction=`); canonical has no keys.
+const VIEW_CODEC = {
+  basePath: "/conversations",
+  decode: decodeUpdatedTitleIndexView,
+  encode: (decoded: DecodedUpdatedTitleIndexView, current: URLSearchParams) =>
+    encodeUpdatedTitleIndexView(
+      decoded.kind === "Valid" ? decoded.view : CANONICAL,
+      current,
+    ),
+  replaceOptions: { viewTransition: { kind: "collection-reflow" as const } },
+};
+const keyOf = (view: UpdatedTitleIndexView) =>
+  conversationsInitialResource.cacheKey({ view });
 
-function conversationsErrorMessage(error: ApiError): FeedbackContent {
-  switch (error.code) {
-    case "E_NETWORK":
-      return {
-        tone: "Danger",
-        requestId: error.requestId,
-        title: "Chats couldn’t be loaded.",
-      };
-    default:
-      throw error;
-  }
-}
-
-function seedFromPage(
-  page: CollectionPage<ConversationListItem>,
-): ConversationsPaneSeed {
-  return {
-    conversations: page.items,
-    collectionRevision: page.collectionRevision,
-    nextCursor: page.nextCursor,
-  };
-}
-
+/** The Chats index in one sortable view: filter, drain every page, count. */
 export default function ConversationsPaneBody() {
   const runtime = requirePaneRuntime(usePaneRuntime(), "ConversationsPaneBody");
   const isPaneActive = usePaneIsActive();
-  const indexChange = useConversationIndexRevision();
-  const observedIndexRevisionRef = useRef(indexChange.revision);
-  const renderEnvironment = useRenderEnvironment();
-  // The pane URL owns the chats view through a strict, total codec; `view` is
-  // null only for an Invalid URL, a terminal, user-recoverable state.
-  const chatsViewCodec = useMemo(
-    () => ({
-      basePath: "/conversations",
-      decode: decodeUpdatedTitleIndexView,
-      encode: (
-        decoded: DecodedUpdatedTitleIndexView,
-        current: URLSearchParams,
-      ): URLSearchParams =>
-        encodeUpdatedTitleIndexView(
-          decoded.kind === "Valid"
-            ? decoded.view
-            : CANONICAL_UPDATED_TITLE_INDEX_VIEW,
-          current,
-        ),
-      replaceOptions: {
-        viewTransition: { kind: "collection-reflow" as const },
-      },
-    }),
-    [],
+  const environment = useRenderEnvironment();
+  const { state: decoded, setState: setDecoded } = usePaneUrlState(VIEW_CODEC);
+  const view = decoded.kind === "Valid" ? decoded.view : CANONICAL;
+  const viewKey = keyOf(view);
+  const invalid = decoded.kind === "Invalid";
+  const sortRef = useRef<HTMLSelectElement | null>(null);
+  const indexRevision = useConversationIndexRevision().revision;
+  const committedRef = useRef<Committed | null>(null);
+  const restored = usePaneVisitData(
+    VISIT_DATA,
+    useCallback(() => committedRef.current, []),
   );
-  const { state: decodedView, setState: setDecodedView } =
-    usePaneUrlState(chatsViewCodec);
-  const view = decodedView.kind === "Valid" ? decodedView.view : null;
-  // Set when the backend rejects the requested view; cleared whenever another
-  // view is requested.
-  const [viewInvalid, setViewInvalid] = useState(false);
-  const invalidView = decodedView.kind === "Invalid" || viewInvalid;
-  const listRegionRef = useRef<HTMLDivElement | null>(null);
-  const committedSnapshotRef = useRef<CommittedChatsView | null>(null);
-  const captureCommitted = useCallback(() => committedSnapshotRef.current, []);
-  const restored = usePaneVisitData(CONVERSATIONS_VISIT_DATA, captureCommitted);
-  const initialRestored = useRef(restored).current;
-  const [firstPageVersion, setFirstPageVersion] = useState(0);
-  const firstPageVersionRef = useRef(0);
-  const revalidation = useRevalidationSettlement();
-  const completedConversationsRevalidationVersionRef = useRef<number | null>(
-    null,
-  );
-  const [chainEpoch, setChainEpoch] = useState(0);
-  const [controller, setController] = useState<CommittedChatsView | null>(
-    initialRestored,
-  );
-  if (
-    committedSnapshotRef.current === null &&
-    initialRestored !== null &&
-    controller === initialRestored
-  ) {
-    committedSnapshotRef.current = initialRestored;
-  }
-  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
-  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(
-    null,
-  );
-  const clearAllVisitData = useClearAllPaneVisitData();
-  const capturePaneScroll = usePaneScrollRetention(listRegionRef, controller);
-  // Set by a refresh so the already-committed view refetches once under a new
-  // request identity; cleared by the commit that answers it. A view change needs
-  // no flag — the requested and committed identities differ on their own.
-  const refreshPendingRef = useRef(false);
-  const sortSelectRef = useRef<HTMLSelectElement | null>(null);
-  const setView = useCallback(
-    (next: UpdatedTitleIndexView) => {
-      capturePaneScroll();
-      setDecodedView({ kind: "Valid", view: next });
-    },
-    [capturePaneScroll, setDecodedView],
-  );
+  const [committed, setCommitted] = useState<Committed | null>(restored);
+  const commit = useCallback((next: Committed) => {
+    committedRef.current = next;
+    setCommitted(next);
+  }, []);
+  const [version, setVersion] = useState(restored?.version ?? 0);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const captureScroll = usePaneScrollRetention(listRef, committed);
+  const clearVisitData = useClearAllPaneVisitData();
+  const stale =
+    committed?.version !== version || keyOf(committed.view) !== viewKey;
 
-  const requestedViewKey =
-    view === null ? null : conversationsInitialResource.cacheKey({ view });
-  const committedViewKey =
-    controller === null
-      ? null
-      : conversationsInitialResource.cacheKey({ view: controller.view });
-  // The canonical first page is the route's server seed; every other exact view
-  // and every refresh owns its own request under its own identity.
-  const requestsFirstPage =
-    view !== null &&
-    !viewInvalid &&
-    (controller === null ||
-      requestedViewKey !== committedViewKey ||
-      refreshPendingRef.current);
-  const firstPageRequestKey =
-    requestsFirstPage && requestedViewKey !== null
-      ? firstPageVersion === 0
-        ? requestedViewKey
-        : `${requestedViewKey}:collection:${firstPageVersion}`
-      : null;
   const firstPage = useResource<ConversationsPaneSeed>({
-    cacheKey: firstPageRequestKey,
+    // the canonical first version reads the route's server seed
+    cacheKey:
+      stale && !invalid ? `${viewKey}${version ? `:${version}` : ""}` : null,
     load: async (signal) => {
-      if (view === null) {
-        // justify-defect: a non-null request key is built from this exact view.
-        throw new Error("Chats index request lost its view identity");
-      }
-      return seedFromPage(await fetchConversationIndex({ view, signal }));
+      const page = await fetchConversationIndex({ view, signal });
+      const { items: conversations, collectionRevision, nextCursor } = page;
+      return { conversations, collectionRevision, nextCursor };
     },
   });
-
-  // Latest-wins atomic commit: the resource reports a result only for the
-  // current request identity, so a superseded view can never install its rows.
+  // a refresh resolves once its first page commits, or fails
+  const settle = useRef<{ resolve(): void; reject(error: unknown): void }>(
+    null,
+  );
   useEffect(() => {
-    if (firstPage.status === "ready" && view !== null) {
-      refreshPendingRef.current = false;
-      const committed: CommittedChatsView = { ...firstPage.data, view };
-      committedSnapshotRef.current = committed;
-      setController(committed);
-      setChainEpoch((epoch) => epoch + 1);
-      setFeedback(null);
-
-      if (revalidation.isPending(firstPageVersion)) {
-        completedConversationsRevalidationVersionRef.current = firstPageVersion;
-      }
-      return;
+    if (firstPage.status === "ready") {
+      commit({ ...firstPage.data, view, version });
+      settle.current?.resolve();
     }
-    if (firstPage.status === "error") {
-      if (isInvalidViewError(firstPage.error)) {
-        setViewInvalid(true);
-      } else {
-        try {
-          setFeedback(conversationsErrorMessage(firstPage.error));
-        } catch (defect) {
-          setAsyncDefect({ error: defect });
-        }
-      }
-
-      if (revalidation.isPending(firstPageVersion)) {
-        completedConversationsRevalidationVersionRef.current = null;
-        revalidation.reject(firstPage.error);
-      }
-    }
-  }, [revalidation, firstPage, firstPageVersion, view]);
-
-  // A newly requested view retires the previous view's rejection.
-  useEffect(() => setViewInvalid(false), [requestedViewKey]);
-
-  useLayoutEffect(() => {
-    committedSnapshotRef.current = requestsFirstPage ? null : controller;
-    const completedVersion = completedConversationsRevalidationVersionRef.current;
-    if (
-      controller === null ||
-      completedVersion === null ||
-      !revalidation.isPending(completedVersion)
-    ) {
-      return;
-    }
-    completedConversationsRevalidationVersionRef.current = null;
-    revalidation.resolve(completedVersion);
-  }, [revalidation, controller, requestsFirstPage]);
-
+    if (firstPage.status === "error") settle.current?.reject(firstPage.error);
+    if (firstPage.status === "ready" || firstPage.status === "error")
+      settle.current = null;
+  }, [firstPage, view, version, commit]);
   usePaneReturnReady(
-    controller !== null || firstPage.status === "error" || invalidView,
+    committed !== null || firstPage.status === "error" || invalid,
+  );
+  const setView = useCallback(
+    (next: UpdatedTitleIndexView) => {
+      captureScroll();
+      setDecoded({ kind: "Valid", view: next });
+    },
+    [captureScroll, setDecoded],
   );
 
-  const rejectPendingConversationsRevalidation = useCallback((error: unknown) => {
-    completedConversationsRevalidationVersionRef.current = null;
-    revalidation.reject(error);
-  }, [revalidation]);
-  const refreshIndex = useCallback(() => {
-    rejectPendingConversationsRevalidation(
-      new DOMException("Conversations refresh was superseded.", "AbortError"),
-    );
-    capturePaneScroll();
-    refreshPendingRef.current = true;
-    clearAllVisitData();
-    setFeedback(null);
-    const version = firstPageVersionRef.current + 1;
-    firstPageVersionRef.current = version;
-    setFirstPageVersion(version);
-  }, [
-    capturePaneScroll,
-    clearAllVisitData,
-    rejectPendingConversationsRevalidation,
-  ]);
+  const refresh = useCallback(() => {
+    captureScroll();
+    clearVisitData();
+    setVersion((value) => value + 1);
+  }, [captureScroll, clearVisitData]);
+  const seenRevision = useRef(indexRevision);
   useEffect(() => {
-    if (indexChange.revision === observedIndexRevisionRef.current) return;
-    observedIndexRevisionRef.current = indexChange.revision;
-    refreshIndex();
-  }, [indexChange.revision, refreshIndex]);
-  const revalidateIndex = useCallback(
-    (signal: AbortSignal): Promise<void> => {
-      if (signal.aborted) {
-        return Promise.reject(
-          signal.reason ??
-            new DOMException(
-              "Conversations refresh was aborted.",
-              "AbortError",
-            ),
-        );
-      }
-      refreshIndex();
-      const version = firstPageVersionRef.current;
-      return revalidation.wait({
-        requestId: version,
-        signal,
-        onAbort: () => {
-          completedConversationsRevalidationVersionRef.current = null;
-        },
-      });
-    },
-    [refreshIndex, revalidation],
-  );
+    if (indexRevision === seenRevision.current) return;
+    seenRevision.current = indexRevision;
+    refresh();
+  }, [indexRevision, refresh]);
 
-  const commitPage = useCallback(
-    (page: CollectionPage<ConversationListItem>): number => {
-      const current = committedSnapshotRef.current;
-      if (
-        current === null ||
-        current.collectionRevision !== page.collectionRevision
-      ) {
-        throw new Error(
-          "Conversation continuation settled for a stale collection",
-        );
-      }
-      const seen = new Set(
-        current.conversations.map((conversation) => conversation.id),
-      );
-      const conversations = [...current.conversations];
-      for (const conversation of page.items) {
-        if (seen.has(conversation.id)) continue;
-        seen.add(conversation.id);
-        conversations.push(conversation);
-      }
-      const next: CommittedChatsView = {
-        ...current,
-        conversations,
-        collectionRevision: page.collectionRevision,
-        nextCursor: page.nextCursor,
-      };
-      committedSnapshotRef.current = next;
-      setController(next);
-      return conversations.length;
-    },
-    [],
-  );
-
-  // Continuation runs only while the committed view is the requested one, and
-  // every page of a chain carries that same view.
   const exhaustion = useExhaustivePagination<ConversationListItem>({
-    active:
-      isPaneActive && !invalidView && view !== null && controller !== null && !requestsFirstPage,
-    chainKey: JSON.stringify([
-      requestedViewKey,
-      committedViewKey,
-      invalidView,
-      firstPageVersion,
-      chainEpoch,
-    ]),
-    cursor: controller?.nextCursor ?? NO_CURSOR,
-    collectionRevision: controller?.collectionRevision ?? ZERO_REVISION,
-    itemCount: controller?.conversations.length ?? 0,
-    loadPage: (cursor, collectionRevision, signal) => {
-      if (controller === null) {
-        // justify-defect: continuation runs only over a committed exact view.
-        throw new Error("Chats continuation lost its committed view");
-      }
-      return fetchConversationIndex({
-        view: controller.view,
+    active: isPaneActive && !stale,
+    chainKey: `${committed?.version}:${committed && keyOf(committed.view)}`,
+    cursor: committed?.nextCursor ?? NO_CURSOR,
+    collectionRevision: committed?.collectionRevision ?? ZERO_REVISION,
+    itemCount: committed?.conversations.length ?? 0,
+    loadPage: (cursor, collectionRevision, signal) =>
+      fetchConversationIndex({
+        view: committed?.view ?? CANONICAL,
         cursor,
         collectionRevision,
         signal,
-      });
+      }),
+    commitPage: (page) => {
+      const current = committedRef.current;
+      if (current?.collectionRevision !== page.collectionRevision)
+        throw new Error(
+          "Conversation continuation settled for a stale collection",
+        );
+      const seen = new Set(current.conversations.map((item) => item.id));
+      const added = page.items.filter((item) => !seen.has(item.id));
+      const conversations = [...current.conversations, ...added];
+      commit({ ...current, conversations, nextCursor: page.nextCursor });
+      return conversations.length;
     },
-    commitPage,
-    refresh: refreshIndex,
+    refresh,
   });
 
   const rows = useMemo(
     () =>
-      (controller?.conversations ?? []).map((conversation) =>
-        presentConversation(conversation, renderEnvironment),
+      (committed?.conversations ?? []).map((item) =>
+        presentConversation(item, environment),
       ),
-    [controller?.conversations, renderEnvironment],
+    [committed?.conversations, environment],
   );
-  const status =
-    controller !== null
-      ? "ready"
-      : firstPage.status === "error"
-        ? "error"
-        : "loading";
-  const finalCount =
-    controller !== null && exhaustion.kind === "Complete"
-      ? exhaustion.itemCount
-      : null;
-  const getFilterStatus = useCallback(
+  const failed = firstPage.status === "error" ? firstPage.error : null;
+  const getRowStatus = useCallback(
     (query: string) => {
       const visibleCount = rows.filter((row) =>
         matchesPaneFilterQuery(query, [row.title.text]),
       ).length;
       const unit = { singular: "chat", plural: "chats" };
-      if (controller !== null && requestsFirstPage) {
+      const counts = { visibleCount, loadedCount: rows.length, unit };
+      const lost =
+        exhaustion.kind === "ResumeFailed" ||
+        exhaustion.kind === "RefreshRequired";
+      if (committed && stale)
         return {
           kind: "Retained" as const,
-          visibleCount,
-          loadedCount: rows.length,
-          unit,
-          cause: feedback === null ? "Updating" as const : "Failed" as const,
+          ...counts,
+          cause: failed ? ("Failed" as const) : ("Updating" as const),
         };
-      }
-      if (
-        (controller === null && firstPage.status === "error") ||
-        exhaustion.kind === "ResumeFailed" ||
-        exhaustion.kind === "RefreshRequired"
-      ) {
-        return { kind: "Failed" as const, visibleCount, loadedCount: rows.length, unit };
-      }
+      if ((!committed && failed) || lost)
+        return { kind: "Failed" as const, ...counts };
       return exhaustion.kind === "Complete"
-        ? {
-            kind: "Complete" as const,
-            visibleCount,
-            totalCount: rows.length,
-            unit,
-          }
-        : {
-            kind: "Partial" as const,
-            visibleCount,
-            loadedCount: rows.length,
-            unit,
-          };
+        ? { kind: "Complete" as const, ...counts, totalCount: rows.length }
+        : { kind: "Partial" as const, ...counts };
     },
-    [controller, exhaustion.kind, feedback, firstPage.status, requestsFirstPage, rows],
+    [committed, exhaustion.kind, failed, rows, stale],
   );
-  const {
-    query: filterQuery,
-    onQueryChange,
-    clearQuery,
-    rowStatus,
-  } = usePaneFilterRows({
+  const { query, onQueryChange, clearQuery, rowStatus } = usePaneFilterRows({
     sourceKey: "Conversations:mine",
-    getRowStatus: getFilterStatus,
+    getRowStatus,
   });
   const { inputRef, focusInput } = usePaneCollectionInput();
-  const resetView = useCallback(() => {
+  const reset = useCallback(() => {
     clearQuery();
-    setView(CANONICAL_UPDATED_TITLE_INDEX_VIEW);
+    setView(CANONICAL);
+    requestAnimationFrame(() =>
+      sortRef.current?.focus({ preventScroll: true }),
+    );
   }, [clearQuery, setView]);
-  const domainFilterControls = useMemo(
-    () =>
-      invalidView || view === null ? undefined : (
-        <>
-          <SelectField
-            layout="Inline"
-            label="Sort chats"
-            size="sm"
-            ref={sortSelectRef}
-            value={updatedTitleSortOptionOf(view)}
-            onChange={(event) => {
-              setView(
-                updatedTitleViewForSortOption(
-                  event.target.value as UpdatedTitleSortOptionId,
-                ),
-              );
-            }}
-          >
-            {UPDATED_TITLE_SORT_OPTION_IDS.map((optionId) => (
-              <option key={optionId} value={optionId}>
-                {updatedTitleSortOptionLabel(optionId)}
-              </option>
-            ))}
-          </SelectField>
-        </>
-      ),
-    [invalidView, setView, view],
-  );
   const collection = useMemo(
     () =>
-      invalidView || view === null
+      invalid
         ? undefined
         : {
             label: "Filter chats",
+            focusInput,
             content: (
               <PaneCollectionBar
                 inputRef={inputRef}
                 inputLabel="Filter chats"
                 placeholder="Filter chats"
-                query={filterQuery}
+                query={query}
                 onQueryChange={onQueryChange}
                 onClearQuery={clearQuery}
                 rowStatus={rowStatus}
-                filters={domainFilterControls}
-                controls={view.kind !== "Canonical" ? (
-                  <Button
-                    variant="ghost"
+                filters={
+                  <SelectField
+                    layout="Inline"
+                    label="Sort chats"
                     size="sm"
-                    onClick={() => {
-                      sortSelectRef.current?.focus({ preventScroll: true });
-                      resetView();
-                    }}
+                    ref={sortRef}
+                    value={updatedTitleSortOptionOf(view)}
+                    onChange={(event) =>
+                      setView(
+                        updatedTitleViewForSortOption(
+                          // justify-type-assertion: the options are exactly the ids
+                          event.target.value as UpdatedTitleSortOptionId,
+                        ),
+                      )
+                    }
                   >
-                    Reset view
-                  </Button>
-                ) : undefined}
+                    {UPDATED_TITLE_SORT_OPTION_IDS.map((id) => (
+                      <option key={id} value={id}>
+                        {updatedTitleSortOptionLabel(id)}
+                      </option>
+                    ))}
+                  </SelectField>
+                }
+                controls={
+                  view.kind === "Canonical" ? undefined : (
+                    <Button variant="ghost" size="sm" onClick={reset}>
+                      Reset view
+                    </Button>
+                  )
+                }
               />
             ),
-            focusInput,
           },
     [
-      resetView,
-      clearQuery,
-      domainFilterControls,
-      filterQuery,
+      invalid,
+      view,
+      setView,
+      reset,
       focusInput,
       inputRef,
-      invalidView,
+      query,
       onQueryChange,
+      clearQuery,
       rowStatus,
-      view,
     ],
   );
-  const filteredRows = useMemo(
-    () =>
-      rows.filter((row) =>
-        matchesPaneFilterQuery(filterQuery, [row.title.text]),
-      ),
-    [filterQuery, rows],
-  );
-  const executeRefresh = useCallback(
+  const execute = useCallback(
     async ({ signal }: { readonly signal: AbortSignal }) => {
+      settle.current?.reject(
+        new DOMException("Refresh superseded.", "AbortError"),
+      );
+      const done = new Promise<void>((resolve, reject) => {
+        settle.current = { resolve, reject };
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      });
+      refresh();
       try {
-        await revalidateIndex(signal);
+        await done;
         return {
           kind: "Complete" as const,
           announcement: "Conversations refreshed",
         };
-      } catch (refreshError: unknown) {
-        if (isAbortError(refreshError)) throw refreshError;
+      } catch (error) {
+        if (isAbortError(error)) throw error;
         return {
           kind: "Failed" as const,
           announcement: "Conversations failed to refresh",
         };
       }
     },
-    [revalidateIndex],
+    [refresh],
   );
   usePanePrimaryChrome({
     collection,
-    refresh: {
-      kind: "Refreshable",
-      sourceKey: "Conversations:mine",
-      execute: executeRefresh,
-    },
-    menuActions: NEW_CHAT_ACTIONS,
+    refresh: { kind: "Refreshable", sourceKey: "Conversations:mine", execute },
+    menuActions: NEW_CHAT,
     header: {
       kind: "Section",
-      meta: invalidView
+      meta: invalid
         ? { kind: "None" }
-        : finalCount === null ||
-            status === "loading" ||
-            requestsFirstPage ||
-            exhaustion.kind !== "Complete"
-          ? { kind: "Pending" }
-          : { kind: "Count", value: finalCount, unit: "chat" },
+        : !stale && exhaustion.kind === "Complete"
+          ? { kind: "Count", value: exhaustion.itemCount, unit: "chat" }
+          : { kind: "Pending" },
     },
   });
 
-  if (asyncDefect !== null) throw asyncDefect.error;
-
-  if (invalidView) {
+  const filtering = query.trim() !== "";
+  const failure = failed ? (
+    <FeedbackNotice
+      content={{
+        tone: "Danger",
+        title: "Chats couldn’t be loaded.",
+        requestId: failed.requestId,
+      }}
+      announcement="Assertive"
+    />
+  ) : undefined;
+  if (invalid)
     return (
       <FeedbackNotice
         content={{ tone: "Danger", title: "Invalid chats view" }}
         announcement="Assertive"
-        actions={[
-          {
-            label: "Reset view",
-            onClick: () => {
-              clearQuery();
-              setDecodedView({
-                kind: "Valid",
-                view: CANONICAL_UPDATED_TITLE_INDEX_VIEW,
-              });
-              requestAnimationFrame(() => sortSelectRef.current?.focus({ preventScroll: true }));
-            },
-          },
-        ]}
+        actions={[{ label: "Reset view", onClick: reset }]}
       />
     );
-  }
-
   return (
-    <div ref={listRegionRef}>
+    <div ref={listRef}>
       <CollectionView
         returnScope="Conversations.Items"
-        rows={filteredRows}
-        status={status}
+        rows={rows.filter((row) =>
+          matchesPaneFilterQuery(query, [row.title.text]),
+        )}
+        status={committed ? "ready" : failed ? "error" : "loading"}
         ariaLabel="Conversations"
         rowChangePresentation={{
           kind: "ImmediateOnKeyChange",
-          key: filterQuery.trim(),
+          key: query.trim(),
         }}
         collectionBusy={exhaustion.kind === "Draining"}
-        notice={
-          controller !== null && feedback ? (
-            <FeedbackNotice content={feedback} announcement="Assertive" />
-          ) : controller === null &&
-            status === "loading" &&
-            filterQuery.trim() ? (
-            <FeedbackNotice
-              content={{
-                tone: "Neutral",
-                title: "No matching chat found so far.",
-              }}
-              announcement="None"
-            />
-          ) : undefined
-        }
-        error={
-          controller === null && feedback ? (
-            <FeedbackNotice content={feedback} announcement="Assertive" />
-          ) : undefined
-        }
+        notice={committed ? failure : undefined}
+        error={committed ? undefined : failure}
         empty={
-          filterQuery.trim() ? (
-            <FeedbackNotice
-              content={{
-                tone: "Neutral",
-                title:
-                  exhaustion.kind === "Complete"
-                    ? "No chats match this filter."
-                    : "No matching chat found so far.",
-              }}
-              announcement="None"
-            />
-          ) : (
-            <FeedbackNotice
-              content={{ tone: "Neutral", title: "No chats yet." }}
-              announcement="None"
-              actions={[
-                {
-                  label: "New chat",
-                  onClick: () => runtime.router.push("/conversations/new"),
-                },
-              ]}
-            />
-          )
+          <FeedbackNotice
+            content={{
+              tone: "Neutral",
+              title: !filtering
+                ? "No chats yet."
+                : exhaustion.kind === "Complete"
+                  ? "No chats match this filter."
+                  : "No matching chat found so far.",
+            }}
+            announcement="None"
+            actions={
+              filtering
+                ? undefined
+                : [
+                    {
+                      label: "New chat",
+                      onClick: () => runtime.router.push("/conversations/new"),
+                    },
+                  ]
+            }
+          />
         }
         footer={<CollectionExhaustionNotice state={exhaustion} />}
       />

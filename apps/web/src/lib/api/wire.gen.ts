@@ -254,8 +254,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Chat Runs */
-        get: operations["list_chat_runs_chat_runs_get"];
+        get?: never;
         put?: never;
         /** Create Chat Run */
         post: operations["create_chat_run_chat_runs_post"];
@@ -475,8 +474,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Conversation */
-        get: operations["get_conversation_conversations__conversation_id__get"];
+        get?: never;
         put?: never;
         post?: never;
         /**
@@ -498,8 +496,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Set Conversation Active Path */
-        post: operations["set_conversation_active_path_conversations__conversation_id__active_path_post"];
+        /** Set Active Path */
+        post: operations["set_active_path_conversations__conversation_id__active_path_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -541,41 +539,6 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
-        trace?: never;
-    };
-    "/conversations/{conversation_id}/forks": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Conversation Forks */
-        get: operations["list_conversation_forks_conversations__conversation_id__forks_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/conversations/{conversation_id}/forks/{branch_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Delete Conversation Fork */
-        delete: operations["delete_conversation_fork_conversations__conversation_id__forks__branch_id__delete"];
-        options?: never;
-        head?: never;
-        /** Rename Conversation Fork */
-        patch: operations["rename_conversation_fork_conversations__conversation_id__forks__branch_id__patch"];
         trace?: never;
     };
     "/conversations/{conversation_id}/tool-calls/{tool_call_id}/undo": {
@@ -2142,6 +2105,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/messages/{message_id}/fork-title": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Rename Fork */
+        patch: operations["rename_fork_messages__message_id__fork_title_patch"];
+        trace?: never;
+    };
     "/notes/blocks/{block_id}": {
         parameters: {
             query?: never;
@@ -3185,6 +3165,29 @@ export interface components {
             invite: components["schemas"]["LibraryInvitationOut"];
             membership: components["schemas"]["InviteAcceptMembershipOut"];
         };
+        /** AcceptedChatAdmission */
+        AcceptedChatAdmission: {
+            /**
+             * Assistant Message Id
+             * Format: uuid
+             */
+            assistant_message_id: string;
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Accepted";
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+        };
         /** ActiveExclusionOut */
         ActiveExclusionOut: {
             device: components["schemas"]["DeviceSummaryOut"];
@@ -3580,81 +3583,6 @@ export interface components {
              */
             reason: "RequiresAdmin" | "RequiresSubscription" | "SystemManaged" | "Inherited";
         };
-        /** BranchGraphEdgeOut */
-        BranchGraphEdgeOut: {
-            /**
-             * From
-             * Format: uuid
-             */
-            from: string;
-            /**
-             * To
-             * Format: uuid
-             */
-            to: string;
-        };
-        /** BranchGraphNodeOut */
-        BranchGraphNodeOut: {
-            /** Active Path */
-            active_path: boolean;
-            /** Branch Anchor Preview */
-            branch_anchor_preview: string | null;
-            /** Child Count */
-            child_count: number;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /** Depth */
-            depth: number;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Leaf */
-            leaf: boolean;
-            /**
-             * Leaf Message Id
-             * Format: uuid
-             */
-            leaf_message_id: string;
-            /** Message Count */
-            message_count: number;
-            /**
-             * Message Id
-             * Format: uuid
-             */
-            message_id: string;
-            /** Parent Message Id */
-            parent_message_id: string | null;
-            /** Preview */
-            preview: string;
-            /**
-             * Role
-             * @enum {string}
-             */
-            role: "user" | "assistant";
-            /** Row */
-            row: number;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "complete" | "pending" | "error" | "cancelled";
-            /** Title */
-            title: string | null;
-        };
-        /** BranchGraphOut */
-        BranchGraphOut: {
-            /** Edges */
-            edges: components["schemas"]["BranchGraphEdgeOut"][];
-            /** Nodes */
-            nodes: components["schemas"]["BranchGraphNodeOut"][];
-            /** Root Message Id */
-            root_message_id: string | null;
-        };
         BrowseCandidate: components["schemas"]["OwnedMediaCandidate"] | components["schemas"]["EpubCandidate"] | components["schemas"]["WebArticleCandidate"] | components["schemas"]["VideoCandidate"] | components["schemas"]["PodcastCandidate"];
         /**
          * BrowseKind
@@ -3801,6 +3729,24 @@ export interface components {
             startMs: number;
             /** Title */
             title: string;
+        };
+        /**
+         * ChatAdmissionReceipt
+         * @description Immutable committed send decision, independent of run presentation.
+         */
+        ChatAdmissionReceipt: {
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Outcome */
+            outcome: components["schemas"]["AcceptedChatAdmission"] | components["schemas"]["RejectedChatAdmission"];
+        };
+        /** ChatAdmissionRejection */
+        ChatAdmissionRejection: {
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "E_MESSAGE_TOO_LONG" | "E_CATALOG_DEFINITION_STALE" | "E_INVALID_GENERATION_SELECTION" | "E_GENERATION_SELECTION_UNAVAILABLE" | "E_INVALID_REQUEST" | "E_BRANCH_PATH_INVALID" | "E_BRANCH_ANCHOR_INVALID" | "E_FORBIDDEN" | "E_NOT_FOUND" | "E_CONVERSATION_NOT_FOUND" | "E_MESSAGE_NOT_FOUND" | "E_READER_SELECTION_STALE" | "E_READER_SELECTION_NOT_FOUND" | "E_READER_SELECTION_FORBIDDEN" | "E_READER_SELECTION_GEOMETRY_ONLY" | "E_READER_SELECTION_TOO_LARGE" | "E_CONVERSATION_NO_LONGER_EMPTY" | "E_GENERATION_CONTEXT_TOO_LARGE";
         };
         /** ChatPublicationWarning */
         ChatPublicationWarning: {
@@ -4045,113 +3991,7 @@ export interface components {
             assistant_message: components["schemas"]["MessageOut"];
             conversation: components["schemas"]["ConversationOut"];
             run: components["schemas"]["ChatRunOut"];
-            stream_state: components["schemas"]["ChatRunStreamStateOut"];
             user_message: components["schemas"]["MessageOut"];
-        };
-        /** ChatRunStreamActivityOut */
-        ChatRunStreamActivityOut: {
-            /** Label */
-            label: string | null;
-            /**
-             * Phase
-             * @enum {string}
-             */
-            phase: "queued" | "thinking" | "writing" | "tool_calling" | "waiting" | "retrying" | "cancelling";
-        };
-        /**
-         * ChatRunStreamStateOut
-         * @description Materialized cursor state for reconnecting a chat stream.
-         */
-        ChatRunStreamStateOut: {
-            activity: components["schemas"]["ChatRunStreamActivityOut"] | null;
-            /** Assistant Current Text */
-            assistant_current_text: string;
-            /** Folded Event Seq */
-            folded_event_seq: number;
-            /** Last Event Seq */
-            last_event_seq: number;
-            /** Reconnectable */
-            reconnectable: boolean;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "queued" | "running" | "complete" | "error" | "cancelled";
-            /** Terminal */
-            terminal: boolean;
-            /** Tool Calls */
-            tool_calls: components["schemas"]["ChatRunStreamToolCallOut"][];
-        };
-        /** ChatRunStreamToolCallOut */
-        ChatRunStreamToolCallOut: {
-            /** Activity Label */
-            activity_label: string;
-            /**
-             * Assistant Message Id
-             * Format: uuid
-             */
-            assistant_message_id: string;
-            /** Canonical Tool Id */
-            canonical_tool_id: string | null;
-            effect: components["schemas"]["ToolEffect"] | null;
-            /**
-             * Error Type
-             * @enum {unknown}
-             */
-            error_type: "BudgetExceeded" | "Conflict" | "DeadlineExceeded" | "InvalidInput" | "InvalidUpstreamResponse" | "InvalidUrl" | "QuoteAmbiguous" | "QuoteNotFound" | "RateLimited" | "ResourceUnavailable" | "TargetAmbiguous" | "TooLarge" | "ToolUnavailable" | "Uninspectable" | "Unreadable" | "UnsafeDestination" | "UnsupportedContent" | "UpstreamUnavailable" | "WriteCapReached" | null;
-            /** Id */
-            id: string | null;
-            /** Input Preview */
-            input_preview: string | null;
-            /** Provider Request Ids */
-            provider_request_ids: string[];
-            /** Provider Wire Name */
-            provider_wire_name: string | null;
-            /**
-             * Record Kind
-             * @enum {string}
-             */
-            record_kind: "attached_context" | "current_execution" | "historical_execution";
-            /** Requested Types */
-            requested_types: string[];
-            /**
-             * Result Count
-             * @default 0
-             */
-            result_count: number;
-            /**
-             * Result Kind
-             * @enum {string}
-             */
-            result_kind: "attached_context" | "mutation" | "navigation" | "retrieval";
-            /** Result Refs */
-            result_refs: {
-                [key: string]: unknown;
-            }[];
-            /** Retrievals */
-            retrievals: components["schemas"]["TrustRetrievalOut"][];
-            /**
-             * Scope
-             * @default provider_tool
-             */
-            scope: string;
-            /** Selected Context Refs */
-            selected_context_refs: {
-                [key: string]: unknown;
-            }[];
-            /**
-             * Selected Count
-             * @default 0
-             */
-            selected_count: number;
-            /**
-             * Status
-             * @default running
-             * @enum {string}
-             */
-            status: "pending" | "running" | "complete" | "error" | "cancelled";
-            /** Tool Call Index */
-            tool_call_index: number;
         };
         /** ChatRunToolCallDoneEventOut */
         ChatRunToolCallDoneEventOut: {
@@ -4440,6 +4280,11 @@ export interface components {
             /** Items */
             items: components["schemas"]["PodcastSubscriptionListItemOut"][];
             nextCursor: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____"];
+        };
+        /** CollectionRevisionOut */
+        CollectionRevisionOut: {
+            /** Collectionrevision */
+            collectionRevision: number;
         };
         /** CompletionStatsSectionOut */
         CompletionStatsSectionOut: {
@@ -5048,22 +4893,16 @@ export interface components {
              */
             type: "conversation";
         };
-        /** ConversationTreeOut */
+        /**
+         * ConversationTreeOut
+         * @description Every user/assistant message once, in seq order, and the active leaf.
+         */
         ConversationTreeOut: {
             /** Active Leaf Message Id */
             active_leaf_message_id: string | null;
-            branch_graph: components["schemas"]["BranchGraphOut"];
             conversation: components["schemas"]["ConversationOut"];
-            /** Fork Options By Parent Id */
-            fork_options_by_parent_id: {
-                [key: string]: components["schemas"]["ForkOptionOut"][];
-            };
-            /** Path Cache By Leaf Id */
-            path_cache_by_leaf_id: {
-                [key: string]: components["schemas"]["MessageOut"][];
-            };
-            /** Selected Path */
-            selected_path: components["schemas"]["MessageOut"][];
+            /** Messages */
+            messages: components["schemas"]["MessageOut"][];
         };
         /** CorrectSourceTypeRecovery */
         CorrectSourceTypeRecovery: {
@@ -5325,6 +5164,10 @@ export interface components {
         Data_BrowsePreview_: {
             data: components["schemas"]["BrowsePreview"];
         };
+        /** Data[ChatAdmissionReceipt] */
+        Data_ChatAdmissionReceipt_: {
+            data: components["schemas"]["ChatAdmissionReceipt"];
+        };
         /** Data[ChatRunResponse] */
         Data_ChatRunResponse_: {
             data: components["schemas"]["ChatRunResponse"];
@@ -5353,6 +5196,10 @@ export interface components {
         Data_CollectionPage_PodcastSubscriptionListItemOut__: {
             data: components["schemas"]["CollectionPage_PodcastSubscriptionListItemOut_"];
         };
+        /** Data[CollectionRevisionOut] */
+        Data_CollectionRevisionOut_: {
+            data: components["schemas"]["CollectionRevisionOut"];
+        };
         /** Data[ConnectionPageOut] */
         Data_ConnectionPageOut_: {
             data: components["schemas"]["ConnectionPageOut"];
@@ -5372,6 +5219,10 @@ export interface components {
         /** Data[ContributorSearchPageOut] */
         Data_ContributorSearchPageOut_: {
             data: components["schemas"]["ContributorSearchPageOut"];
+        };
+        /** Data[ConversationOut] */
+        Data_ConversationOut_: {
+            data: components["schemas"]["ConversationOut"];
         };
         /** Data[ConversationTreeOut] */
         Data_ConversationTreeOut_: {
@@ -5481,6 +5332,10 @@ export interface components {
         Data_MediaOut_: {
             data: components["schemas"]["MediaOut"];
         };
+        /** Data[MessageDeleteOut] */
+        Data_MessageDeleteOut_: {
+            data: components["schemas"]["MessageDeleteOut"];
+        };
         /** Data[MetadataEnrichmentAccepted] */
         Data_MetadataEnrichmentAccepted_: {
             data: components["schemas"]["MetadataEnrichmentAccepted"];
@@ -5573,6 +5428,10 @@ export interface components {
         Data_ReaderProfileOut_: {
             data: components["schemas"]["ReaderProfileOut"];
         };
+        /** Data[ReaderSelectionPreview] */
+        Data_ReaderSelectionPreview_: {
+            data: components["schemas"]["ReaderSelectionPreview"];
+        };
         /** Data[ResourceActionSnapshotResolveResponse] */
         Data_ResourceActionSnapshotResolveResponse_: {
             data: components["schemas"]["ResourceActionSnapshotResolveResponse"];
@@ -5625,6 +5484,10 @@ export interface components {
         Data_TranscriptRequestOut_: {
             data: components["schemas"]["TranscriptRequestOut"];
         };
+        /** Data[TrustToolCallOut] */
+        Data_TrustToolCallOut_: {
+            data: components["schemas"]["TrustToolCallOut"];
+        };
         /** Data[Union[UploadRequired, NeedsAttention]] */
         Data_Union_UploadRequired__NeedsAttention__: {
             /** Data */
@@ -5633,11 +5496,6 @@ export interface components {
         /** Data[UserProfileOut] */
         Data_UserProfileOut_: {
             data: components["schemas"]["UserProfileOut"];
-        };
-        /** Data[list[ChatRunResponse]] */
-        Data_list_ChatRunResponse__: {
-            /** Data */
-            data: components["schemas"]["ChatRunResponse"][];
         };
         /** Data[list[FragmentOut]] */
         Data_list_FragmentOut__: {
@@ -6436,60 +6294,10 @@ export interface components {
             /** Writerevision */
             writeRevision: number;
         };
-        /** ForkOptionOut */
-        ForkOptionOut: {
-            /** Active */
-            active: boolean;
-            /** Assistant Message Id */
-            assistant_message_id: string | null;
-            /**
-             * Branch Anchor Kind
-             * @enum {string}
-             */
-            branch_anchor_kind: "none" | "assistant_message" | "assistant_selection";
-            /** Branch Anchor Preview */
-            branch_anchor_preview: string | null;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /**
-             * Leaf Message Id
-             * Format: uuid
-             */
-            leaf_message_id: string;
-            /** Message Count */
-            message_count: number;
-            /**
-             * Parent Message Id
-             * Format: uuid
-             */
-            parent_message_id: string;
-            /** Preview */
-            preview: string;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "complete" | "pending" | "error" | "cancelled";
+        /** ForkTitleRequest */
+        ForkTitleRequest: {
             /** Title */
-            title: string | null;
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
-            /**
-             * User Message Id
-             * Format: uuid
-             */
-            user_message_id: string;
+            title?: string | null;
         };
         /** FragmentAnchorUpdateRequest */
         FragmentAnchorUpdateRequest: {
@@ -8442,31 +8250,17 @@ export interface components {
             /** Title */
             title: string;
         };
-        /** MessageDocument */
-        MessageDocument: {
-            /** Blocks */
-            blocks: components["schemas"]["MessageDocumentTextBlock"][];
+        /** MessageDeleteOut */
+        MessageDeleteOut: {
+            /** Collectionrevision */
+            collectionRevision: number;
+            /** Conversationdeleted */
+            conversationDeleted: boolean;
             /**
-             * Type
-             * @default message_document
-             * @constant
+             * Conversationid
+             * Format: uuid
              */
-            type: "message_document";
-        };
-        /** MessageDocumentTextBlock */
-        MessageDocumentTextBlock: {
-            /**
-             * Format
-             * @enum {string}
-             */
-            format: "plain" | "markdown";
-            /** Text */
-            text: string;
-            /**
-             * Type
-             * @constant
-             */
-            type: "text";
+            conversationId: string;
         };
         /** MessageOffsetsLocator */
         MessageOffsetsLocator: {
@@ -8486,38 +8280,33 @@ export interface components {
              */
             type: "message_offsets";
         };
-        /** MessageOut */
+        /**
+         * MessageOut
+         * @description One saved message. ``branch_anchor`` is ``{"kind": ..., **anchor}``.
+         */
         MessageOut: {
             /** Branch Anchor */
             branch_anchor: {
                 [key: string]: unknown;
             };
-            /**
-             * Branch Anchor Kind
-             * @default none
-             * @enum {string}
-             */
-            branch_anchor_kind: "none" | "assistant_message" | "assistant_selection";
-            /** Branch Root Message Id */
-            branch_root_message_id: string | null;
-            /**
-             * Can Rerun
-             * @default false
-             */
+            /** Can Rerun */
             can_rerun: boolean;
             /** Citations */
             citations: components["schemas"]["CitationOut"][];
+            /** Content */
+            content: string;
             /**
              * Created At
              * Format: date-time
              */
             created_at: string;
+            /** Fork Title */
+            fork_title: string | null;
             /**
              * Id
              * Format: uuid
              */
             id: string;
-            message_document: components["schemas"]["MessageDocument"];
             /** Parent Message Id */
             parent_message_id: string | null;
             reader_selection: components["schemas"]["Presence_ReaderSelectionOut_"];
@@ -12049,6 +11838,29 @@ export interface components {
              */
             suffix: string;
         };
+        /** ReaderSelectionPreview */
+        ReaderSelectionPreview: {
+            activation: components["schemas"]["ResourceActivationOut"];
+            /** Exact */
+            exact: string;
+            key: components["schemas"]["ReaderSelectionKey"];
+            /** Locator */
+            locator: components["schemas"]["WebTextOffsetsLocator"] | components["schemas"]["EpubFragmentOffsetsLocator"] | components["schemas"]["PdfPageGeometryLocator"] | components["schemas"]["TranscriptTimeRangeLocator"] | components["schemas"]["PlaybackTimeRangeLocator"];
+            /**
+             * Prefix
+             * @default
+             */
+            prefix: string;
+            /** Revision */
+            revision: string;
+            /** Source Label */
+            source_label: string;
+            /**
+             * Suffix
+             * @default
+             */
+            suffix: string;
+        };
         /** ReaderSourceHtmlOut */
         ReaderSourceHtmlOut: {
             /** Html Sanitized */
@@ -12230,6 +12042,15 @@ export interface components {
             /** Offer */
             offer: components["schemas"]["RetrySourceOfferOut"] | components["schemas"]["RepairSourceOfferOut"] | components["schemas"]["RepairSearchOfferOut"];
         };
+        /** RejectedChatAdmission */
+        RejectedChatAdmission: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Rejected";
+            reason: components["schemas"]["ChatAdmissionRejection"];
+        };
         /** RelinkSurfaceCommand */
         RelinkSurfaceCommand: {
             /** Destination Ref */
@@ -12287,11 +12108,6 @@ export interface components {
              * @enum {string}
              */
             kind: "Removed";
-        };
-        /** RenameBranchRequest */
-        RenameBranchRequest: {
-            /** Title */
-            title?: string | null;
         };
         /** RepairSearchOffer */
         RepairSearchOffer: {
@@ -15860,44 +15676,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_chat_runs_chat_runs_get: {
-        parameters: {
-            query: {
-                conversation_id: string;
-                status?: "active" | "queued" | "running" | "complete" | "error" | "cancelled";
-            };
-            header?: {
-                "X-Nexus-Chat-Contract"?: string | null;
-                "X-Nexus-Tool-Projection"?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_list_ChatRunResponse__"];
+                    "application/json": components["schemas"]["Data_ReaderSelectionPreview_"];
                 };
             };
             /** @description Validation Error */
@@ -15934,9 +15713,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ChatAdmissionReceipt_"];
                 };
             };
             /** @description Validation Error */
@@ -16328,42 +16105,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_conversation_conversations__conversation_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                conversation_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ConversationOut_"];
                 };
             };
             /** @description Validation Error */
@@ -16394,9 +16136,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_CollectionRevisionOut_"];
                 };
             };
             /** @description Validation Error */
@@ -16410,7 +16150,7 @@ export interface operations {
             };
         };
     };
-    set_conversation_active_path_conversations__conversation_id__active_path_post: {
+    set_active_path_conversations__conversation_id__active_path_post: {
         parameters: {
             query?: never;
             header?: {
@@ -16429,13 +16169,11 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["Data_ConversationTreeOut_"];
-                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -16511,110 +16249,6 @@ export interface operations {
             };
         };
     };
-    list_conversation_forks_conversations__conversation_id__forks_get: {
-        parameters: {
-            query?: {
-                /** @description Fork search query */
-                search?: string | null;
-            };
-            header?: never;
-            path: {
-                conversation_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_conversation_fork_conversations__conversation_id__forks__branch_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                conversation_id: string;
-                branch_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    rename_conversation_fork_conversations__conversation_id__forks__branch_id__patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                conversation_id: string;
-                branch_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RenameBranchRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     undo_tool_call_conversations__conversation_id__tool_calls__tool_call_id__undo_post: {
         parameters: {
             query?: never;
@@ -16636,9 +16270,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_TrustToolCallOut_"];
                 };
             };
             /** @description Validation Error */
@@ -19848,10 +19480,41 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_MessageDeleteOut_"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_fork_messages__message_id__fork_title_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ForkTitleRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

@@ -47,14 +47,6 @@ TOOL_RESULT_KINDS = Literal[
     "retrieval",
 ]
 CHAT_RUN_STATUSES = Literal["queued", "running", "complete", "error", "cancelled"]
-# Filter vocabulary for GET /chat-runs: the run statuses plus the synthetic
-# "active" (non-terminal) filter. Owned once at the boundary; the service maps it.
-CHAT_RUN_STATUS_FILTER = Literal["active", "queued", "running", "complete", "error", "cancelled"]
-BRANCH_ANCHOR_KINDS = Literal[
-    "none",
-    "assistant_message",
-    "assistant_selection",
-]
 BRANCH_ANCHOR_OFFSET_STATUSES = Literal["mapped", "unmapped"]
 CHAT_RUN_EVENT_TYPES = Literal[
     "meta",
@@ -102,52 +94,34 @@ class ConversationListItemOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class MessageDocumentTextBlock(BaseModel):
-    type: Literal["text"]
-    format: Literal["plain", "markdown"]
-    text: str
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class MessageDocument(BaseModel):
-    type: Literal["message_document"] = "message_document"
-    blocks: list[MessageDocumentTextBlock] = Field(default_factory=list)
-
-    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
-
-
 class MessageOut(BaseModel):
+    """One saved message. ``branch_anchor`` is ``{"kind": ..., **anchor}``."""
+
     id: UUID
     seq: int
     role: Literal["user", "assistant"]
-    message_document: MessageDocument = Field(default_factory=MessageDocument)
-    citations: list[CitationOut] = Field(default_factory=list)
-    trust_trail: AssistantTrustTrailOut | None = None
-    parent_message_id: UUID | None = None
-    branch_root_message_id: UUID | None = None
-    branch_anchor_kind: BRANCH_ANCHOR_KINDS = "none"
-    branch_anchor: dict[str, Any] = Field(default_factory=dict)
+    content: str
     status: Literal["pending", "complete", "error", "cancelled"]
-    can_rerun: bool = False
-    reader_selection: Presence[ReaderSelectionOut] = Field(default_factory=absent)
+    parent_message_id: UUID | None
+    branch_anchor: dict[str, Any]
+    fork_title: str | None
+    reader_selection: Presence[ReaderSelectionOut]
+    citations: list[CitationOut]
+    trust_trail: AssistantTrustTrailOut | None
+    can_rerun: bool
     created_at: datetime
     updated_at: datetime
 
-    model_config = ConfigDict(
-        from_attributes=True,
-        extra="forbid",
-        json_schema_serialization_defaults_required=True,
-    )
+    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
-    def validate_trust_trail_role(self) -> MessageOut:
-        if self.role == "assistant" and self.trust_trail is None:
-            raise ValueError("assistant messages require trust_trail")
-        if self.role != "assistant" and self.trust_trail is not None:
-            raise ValueError("only assistant messages may carry trust_trail")
-        if self.role != "user" and not isinstance(self.reader_selection, Absent):
-            raise ValueError("only user messages may carry a reader_selection")
+    def validate_role_fields(self) -> MessageOut:
+        if (self.role == "assistant") != (self.trust_trail is not None):
+            raise ValueError("exactly the assistant messages carry a trust_trail")
+        if self.role != "user" and (
+            not isinstance(self.reader_selection, Absent) or self.fork_title is not None
+        ):
+            raise ValueError("only user messages carry a reader_selection or fork_title")
         return self
 
 
@@ -682,88 +656,26 @@ BranchAnchorRequest = Annotated[
 ]
 
 
-class ForkOptionOut(BaseModel):
-    id: UUID
-    parent_message_id: UUID
-    user_message_id: UUID
-    assistant_message_id: UUID | None = None
-    leaf_message_id: UUID
-    title: str | None = None
-    preview: str
-    branch_anchor_kind: BRANCH_ANCHOR_KINDS
-    branch_anchor_preview: str | None = None
-    status: Literal["complete", "pending", "error", "cancelled"]
-    message_count: int
-    created_at: datetime
-    updated_at: datetime
-    active: bool
-
-    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
-
-
-class BranchGraphNodeOut(BaseModel):
-    id: UUID
-    message_id: UUID
-    parent_message_id: UUID | None = None
-    leaf_message_id: UUID
-    role: Literal["user", "assistant"]
-    depth: int
-    row: int
-    title: str | None = None
-    preview: str
-    branch_anchor_preview: str | None = None
-    status: Literal["complete", "pending", "error", "cancelled"]
-    message_count: int
-    child_count: int
-    active_path: bool
-    leaf: bool
-    created_at: datetime
-
-    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
-
-
-class BranchGraphEdgeOut(BaseModel):
-    from_message_id: UUID = Field(serialization_alias="from")
-    to: UUID
-
-
-class BranchGraphOut(BaseModel):
-    nodes: list[BranchGraphNodeOut] = Field(default_factory=list)
-    edges: list[BranchGraphEdgeOut] = Field(default_factory=list)
-    root_message_id: UUID | None = None
-
-    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
-
-
 class ConversationTreeOut(BaseModel):
+    """Every user/assistant message once, in seq order, and the active leaf."""
+
     conversation: ConversationOut
-    selected_path: list[MessageOut]
-    active_leaf_message_id: UUID | None = None
-    fork_options_by_parent_id: dict[str, list[ForkOptionOut]] = Field(default_factory=dict)
-    path_cache_by_leaf_id: dict[str, list[MessageOut]] = Field(default_factory=dict)
-    branch_graph: BranchGraphOut = Field(default_factory=BranchGraphOut)
+    messages: list[MessageOut]
+    active_leaf_message_id: UUID | None
 
-    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
-
-
-class ConversationForksOut(BaseModel):
-    forks: list[ForkOptionOut]
+    model_config = ConfigDict(extra="forbid")
 
 
 class SetActivePathRequest(BaseModel):
     active_leaf_message_id: UUID
 
+    model_config = ConfigDict(extra="forbid")
 
-class RenameBranchRequest(BaseModel):
-    title: str | None = Field(default=None, max_length=120)
 
-    model_config = ConfigDict(str_strip_whitespace=True)
+class ForkTitleRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=120)
 
-    @model_validator(mode="after")
-    def validate_title(self) -> RenameBranchRequest:
-        if self.title is not None and not self.title.strip():
-            raise ValueError("title cannot be blank")
-        return self
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 
 # =============================================================================
@@ -936,54 +848,11 @@ class ChatRunOut(BaseModel):
     )
 
 
-class ChatRunStreamActivityOut(BaseModel):
-    phase: Literal[
-        "queued", "thinking", "writing", "tool_calling", "waiting", "retrying", "cancelling"
-    ]
-    label: str | None = None
-
-    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
-
-
-class ChatRunStreamToolCallOut(ToolProjectionOut):
-    id: UUID | None = None
-    assistant_message_id: UUID
-    tool_call_index: int = Field(ge=0)
-    status: MESSAGE_TOOL_STATUSES = "running"
-    scope: str = "provider_tool"
-    requested_types: list[str] = Field(default_factory=list)
-    result_refs: list[dict[str, Any]] = Field(default_factory=list)
-    selected_context_refs: list[dict[str, Any]] = Field(default_factory=list)
-    provider_request_ids: list[str] = Field(default_factory=list)
-    result_count: int = 0
-    selected_count: int = 0
-    retrievals: list[TrustRetrievalOut] = Field(default_factory=list)
-    input_preview: str | None = None
-
-    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
-
-
-class ChatRunStreamStateOut(BaseModel):
-    """Materialized cursor state for reconnecting a chat stream."""
-
-    status: Literal["queued", "running", "complete", "error", "cancelled"]
-    last_event_seq: int = Field(ge=0)
-    folded_event_seq: int = Field(ge=0)
-    assistant_current_text: str
-    tool_calls: list[ChatRunStreamToolCallOut] = Field(default_factory=list)
-    activity: ChatRunStreamActivityOut | None = None
-    reconnectable: bool
-    terminal: bool
-
-    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
-
-
 class ChatRunResponse(BaseModel):
     run: ChatRunOut
     conversation: ConversationOut
     user_message: MessageOut
     assistant_message: MessageOut
-    stream_state: ChatRunStreamStateOut
 
 
 class ChatRunEventOut(BaseModel):

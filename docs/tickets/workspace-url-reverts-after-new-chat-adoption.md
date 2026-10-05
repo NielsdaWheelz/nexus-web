@@ -15,3 +15,7 @@ source witnesses: workspace store `abff5075b716d247a880dd566b18945ac848d4127d90b
 blocker: neither bounded control reproduced the historical overwrite. the source-supported next canonical-url hypothesis remains a hypothesis. no workspace product change was made; stable controls do not resolve this ticket.
 
 resolved when: qualify the historical overwriting call or an equivalent failing ordering, repair its responsible owner, and show the same ordering leaves the active pane, persisted visit and settled address on the admitted target. include copied/reloaded navigation and relevant overlay/history transitions in that repaired case.
+
+2026-10-04 chat rewrite: new-chat adoption still calls the pane router's
+`replace` (`apps/web/src/components/chat/Conversation.tsx`, `onAccepted`), now
+with `{ activate: false }`. the race is not claimed fixed.

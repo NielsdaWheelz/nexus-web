@@ -62,3 +62,7 @@ export function compareStableString(a: string, b: string): number {
   if (a > b) return 1;
   return 0;
 }
+
+export function truncateText(text: string, maxLength: number): string {
+  return text.length <= maxLength ? text : `${text.slice(0, maxLength)}...`;
+}

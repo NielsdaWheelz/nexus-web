@@ -28,3 +28,11 @@ production web and api still served `7dc68929b4d5ddfd77eb1a50228d477fa0148b5d`
 on 2026-09-28. close after the paired release proves new and existing chat
 replies, same-run stream-loss/reload, selected-run stop, draft retention, focus
 and transcript position on the exact promoted source.
+
+2026-10-04 chat rewrite: Stop now belongs to the pending leaf of the active
+path (`lib/chat/tree.ts::chatView.activeRun`), independent of the stream; the row
+and the composer both read stop intent as the saved execution or the live
+advisory (monotonic, so the OR is exact); a
+suspended answer shows `Response paused` / `Stop requested` without the live
+cue. the isolated harness's C5/C10/C23 journeys cover stop, reload mid-run and
+stream loss. the paired production release proof above still closes this.

@@ -8,7 +8,7 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import MachineText from "@/components/ui/MachineText";
 import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
-import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
+import type { ReaderSourceTarget } from "@/lib/resourceGraph/readerTarget";
 import { formatDisplayDate, formatDisplayNumber } from "@/lib/display/format";
 import { useDossier, type Dossier } from "@/lib/dossiers/useDossier";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";

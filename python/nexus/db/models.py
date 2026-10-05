@@ -1528,6 +1528,12 @@ class Conversation(Base):
     )
     title: Mapped[str] = mapped_column(Text, nullable=False, server_default="Chat")
     next_seq: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    # The owner's selected leaf; every admission moves it, deletion nulls it.
+    active_leaf_message_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("messages.id", ondelete="SET NULL", use_alter=True),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -1542,7 +1548,10 @@ class Conversation(Base):
     # Relationships
     owner: Mapped["User"] = relationship("User")
     messages: Mapped[list["Message"]] = relationship(
-        "Message", back_populates="conversation", cascade="all, delete-orphan"
+        "Message",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        foreign_keys="Message.conversation_id",
     )
 
 
@@ -1731,11 +1740,6 @@ class Message(Base):
     seq: Mapped[int] = mapped_column(Integer, nullable=False)
     role: Mapped[Literal["user", "assistant"]] = mapped_column(Text, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    message_document: Mapped[dict[str, object]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("""'{"type":"message_document","blocks":[]}'::jsonb"""),
-    )
     # The immutable per-message reader-quote snapshot (quote-to-chat cutover).
     # Present only on a quoted user message; none_as_null keeps DB NULL (Absent)
     # distinct from a JSON `null` value, which strict decode rejects.
@@ -1750,11 +1754,6 @@ class Message(Base):
         ForeignKey("messages.id"),
         nullable=True,
     )
-    branch_root_message_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("messages.id"),
-        nullable=True,
-    )
     branch_anchor_kind: Mapped[str] = mapped_column(
         Text,
         nullable=False,
@@ -1765,6 +1764,8 @@ class Message(Base):
         nullable=False,
         server_default=text("'{}'::jsonb"),
     )
+    # A user turn's optional fork name (the Forks outline title).
+    fork_title: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -1777,82 +1778,9 @@ class Message(Base):
     )
 
     # Relationships
-    conversation: Mapped["Conversation"] = relationship("Conversation", back_populates="messages")
-
-
-class ConversationActivePath(Base):
-    """Viewer-local selected branch leaf for a conversation."""
-
-    __tablename__ = "conversation_active_paths"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
+    conversation: Mapped["Conversation"] = relationship(
+        "Conversation", back_populates="messages", foreign_keys=[conversation_id]
     )
-    conversation_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("conversations.id"),
-        nullable=False,
-    )
-    viewer_user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
-    active_leaf_message_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("messages.id"),
-        nullable=False,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    conversation: Mapped["Conversation"] = relationship("Conversation")
-    viewer: Mapped["User"] = relationship("User")
-
-
-class ConversationBranch(Base):
-    """Metadata for a user child that starts a branch option."""
-
-    __tablename__ = "conversation_branches"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    conversation_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("conversations.id"),
-        nullable=False,
-    )
-    branch_user_message_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("messages.id"),
-        nullable=False,
-    )
-    title: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    conversation: Mapped["Conversation"] = relationship("Conversation")
 
 
 class MessageToolCall(Base):

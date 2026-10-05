@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import EntryCanvas from "@/components/EntryCanvas";
-import type { GenerationApiProvider } from "@/lib/conversations/generationCatalog";
+import type { Schema } from "@/lib/api/wire";
 import { PRODUCT_NAME } from "@/lib/productIdentity";
 import styles from "../legal.module.css";
 
@@ -11,7 +11,7 @@ const CONFIGURABLE_PROVIDER_PROCESSORS = {
   gemini: "Google",
   deepseek: "DeepSeek",
   xai: "xAI",
-} satisfies Readonly<Record<GenerationApiProvider, string>>;
+} satisfies Readonly<Record<Schema<"GenerationApiProvider">, string>>;
 const CONFIGURABLE_PROCESSOR_NAMES = Object.values(
   CONFIGURABLE_PROVIDER_PROCESSORS,
 );

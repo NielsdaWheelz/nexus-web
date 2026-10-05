@@ -1,159 +1,180 @@
+/* The docked composer, its generation picker, fork header and quote card. */
+
 .composer {
-  position: relative;
-  width: 100%;
   max-width: var(--content-max-width);
   margin: 0 auto;
   padding: var(--space-3) clamp(var(--space-3), 4vw, var(--space-4));
 }
 
-.composerShell {
-  position: relative;
+.shell {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  min-width: 0;
   padding: var(--space-3);
-  background: var(--surface-1);
   border: var(--stroke-hairline) solid var(--edge);
   border-radius: var(--radius-2xl);
+  background: var(--surface-1);
   box-shadow: var(--shadow-2);
-  transition: border-color var(--duration-fast) var(--ease-glide),
-    box-shadow var(--duration-fast) var(--ease-glide);
 }
 
-.composerShell:focus-within {
+.shell:focus-within {
   border-color: var(--edge-strong);
-  box-shadow: var(--shadow-2),
-    0 0 0 var(--focus-ring-width) var(--ring);
 }
 
-.composerError {
+.alert,
+.warning {
+  margin: 0;
   padding: var(--space-2) var(--space-3);
-  overflow-wrap: anywhere;
-  background: var(--surface-2);
-  border: var(--stroke-hairline) solid var(--edge-strong);
   border-inline-start: 3px solid var(--danger);
   border-radius: var(--radius-md);
-  color: var(--ink);
-  font-size: var(--text-xs);
-}
-
-.composerWarning {
-  padding: var(--space-2) var(--space-3);
-  overflow-wrap: anywhere;
-  color: var(--ink);
-  font-size: var(--text-xs);
   background: var(--surface-2);
-  border: var(--stroke-hairline) solid var(--edge);
-  border-inline-start: 3px solid var(--warning);
-  border-radius: var(--radius-md);
-}
-
-.recoveredDrafts {
-  padding: var(--space-2) var(--space-3);
   color: var(--ink);
-  background: var(--surface-2);
-  border: var(--stroke-hairline) solid var(--edge);
-  border-radius: var(--radius-md);
   font-size: var(--text-xs);
 }
 
-.recoveredDrafts summary {
-  cursor: pointer;
-  font-weight: var(--weight-semibold);
+.warning {
+  border-inline-start-color: var(--warning);
 }
 
-.recoveredDrafts ol {
-  display: grid;
-  gap: var(--space-2);
-  padding-inline-start: var(--space-4);
-}
-
-.recoveredDrafts li {
-  min-width: 0;
-}
-
-.recoveredDrafts textarea {
-  width: 100%;
-}
-
-.composerInput {
-  min-width: 0;
+.input {
   min-height: 3em;
   color: var(--ink);
   caret-color: var(--accent);
 }
 
-.composerInput::placeholder {
-  color: var(--ink-muted);
-}
-
-.composerActionRow {
+.row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--size-lg);
   align-items: end;
   gap: var(--space-2);
-  min-width: 0;
-  min-height: var(--size-lg);
 }
 
-.selectionControls {
-  min-width: 0;
-}
-
-.selectionStatus {
-  min-width: 0;
-  overflow-wrap: anywhere;
+.status {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
   color: var(--ink-muted);
   font-size: var(--text-xs);
 }
 
-.selectionStatus button {
-  padding: 0;
-  color: var(--accent);
-  font: inherit;
-  text-decoration: underline;
-  background: transparent;
-  border: 0;
-  cursor: pointer;
-}
-
-.selectionStatus button:focus-visible {
-  outline: var(--focus-ring-width) solid var(--ring);
-  outline-offset: var(--focus-ring-offset);
-}
-
-/* While a send is reconciling, the pending quote card stays visible but cannot
-   be interacted with (Remove/Retry/source are inert) until the replay resolves. */
-.pendingLocked {
-  pointer-events: none;
-  opacity: 0.7;
-}
-
-.composerActionRow .sendButton {
+.send {
   grid-column: 2;
-  grid-row: 1;
-  justify-self: end;
   width: var(--size-lg);
-  min-width: var(--size-lg);
   height: var(--size-lg);
-  padding: 0;
   border-radius: var(--radius-full);
 }
 
+.picker,
+.candidate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.picker > * {
+  flex: 1 1 10rem;
+}
+
+.candidate {
+  flex: 1 1 100%;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.fork {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: start;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--edge));
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface-2));
+  color: var(--accent);
+}
+
+.fork blockquote {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--accent);
+  color: var(--ink);
+  font-size: var(--text-xs);
+}
+
+/* The quoted passage: a serif pull-quote on an accent rail, re-tinted by state. */
+.quote {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+  border-inline-start: 2px solid
+    color-mix(in srgb, var(--accent) 42%, transparent);
+}
+
+.quote[data-state="Failed"] {
+  border-color: var(--danger);
+}
+
+.quote[data-state="unavailable"] {
+  border-color: var(--warning);
+}
+
+.quoteHead,
+.quoteSource {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1);
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+}
+
+.quoteSource {
+  justify-content: flex-start;
+}
+
+.kicker {
+  color: var(--accent);
+  font-variant-caps: all-small-caps;
+  letter-spacing: var(--tracking-wider);
+}
+
+.quoteButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 2rem;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.quoteText {
+  max-height: 12em;
+  margin: 0;
+  overflow-y: auto;
+  font-family: var(--font-serif);
+  font-size: var(--text-base);
+  overflow-wrap: anywhere;
+}
+
 @media (any-pointer: coarse) {
-  .composerInput {
+  .input {
     font-size: var(--text-md);
   }
 
-  .composerActionRow {
+  .row {
     grid-template-columns: minmax(0, 1fr) var(--size-xl);
-    min-height: var(--size-xl);
   }
 
-  .composerActionRow .sendButton {
+  .send {
     width: var(--size-xl);
-    min-width: var(--size-xl);
     height: var(--size-xl);
   }
 }

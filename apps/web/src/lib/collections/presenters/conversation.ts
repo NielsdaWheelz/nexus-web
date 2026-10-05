@@ -2,11 +2,11 @@
 
 import { absent, present } from "@/lib/api/presence";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
-import { presentConversationListItem } from "@/lib/conversations/presentation";
+import {
+  presentConversationListItem,
+  type ConversationListItem,
+} from "@/lib/chat/conversationIndex";
 import type { CollectionRowView } from "@/lib/collections/types";
-import type {
-  ConversationListItem,
-} from "@/lib/conversations/types";
 
 export function presentConversation(
   item: ConversationListItem,
