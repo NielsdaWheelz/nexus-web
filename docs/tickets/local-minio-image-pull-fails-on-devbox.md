@@ -31,6 +31,11 @@ the disposable bucket was provisioned with boto3; the browser → bff → api �
 postgres proof ran, but this workaround does not qualify `make dev` on a fresh
 host.
 
+2026-10-04 add/upload baseline at `f2167baf3`: the same `minio/mc` pin
+again failed on the mac with that error. task-owned cached postgres/minio
+start with `--pull never`; boto3 provisions the isolated bucket. receipt:
+`/tmp/nexus-linear-20261004/stack-feasibility.json`.
+
 prerequisite and fix: establish the registry's supported distribution and access
 contract, then select a supported, pinned, accessible image for the ordinary
 local s3 development owner in a focused change. preserve local bucket setup and

@@ -86,8 +86,8 @@ scaffolding.
                                       ▼                        ▼
                            ┌─────────────────────────────────────────────┐
                            │            FastAPI  (python/nexus)           │
-                           │  middleware: request-id → CORS → db-session  │
-                           │             → auth (JWT→Viewer)              │
+                           │  middleware: request-id → CORS → auth        │
+                           │  dependency: db-session (function scope)     │
                            │  routes (transport-only) → services (logic)  │
                            └───────┬───────────────────────────┬─────────┘
                                    │ sync ORM (threadpool)     │ LISTEN/NOTIFY

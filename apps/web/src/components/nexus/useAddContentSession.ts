@@ -1,12 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { apiTransportFeedback, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { assertNever } from "@/lib/assertNever";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
-import { assertNever } from "@/lib/assertNever";
 import { isAbortError } from "@/lib/errors";
 import { extractUrls } from "@/lib/extractUrls";
 import type { AddSeed } from "@/lib/nexus/model";
@@ -18,46 +18,96 @@ import {
   getFileUploadError,
   getFileUploadKind,
   uploadIngestFile,
+  UploadSessionError,
   type AcceptedIngestResult,
+  type UploadFileKind,
+  type UploadPhase,
 } from "@/lib/media/ingestionClient";
+import { mediaCaptureErrorMessage } from "@/lib/media/captureFeedback";
 import {
   addLibraryPlacement,
   libraryPlacementDestinationKey,
   listLibraryPlacements,
   projectLibraryPlacement,
   removeLibraryPlacement,
+  type LibraryPlacementDestination,
   type LibraryPlacementOption,
 } from "@/lib/libraries/libraryPlacement";
-import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
 import {
-  ADD_SESSION_MAX_ITEMS,
-  acceptanceErrorMessage,
-  acceptanceFailureItem,
-  acceptedMediaIds,
-  createAddSessionState,
-  isAddSessionDirty,
-  reduceAddSession,
-  submitItemIds,
-  type AddItem,
-  type AddSessionAction,
-  type AddSessionState,
-  type FrozenAcceptanceIntent,
-  type PlacementCommand,
-  type PlacementMutationProgress,
-  type PlacementState,
-  type RestingPlacementState,
-  type SessionMutationOperation,
-  type StagedAddItem,
-} from "./addContentSessionModel";
+  IMPORTS_CONFLICT_MESSAGE,
+  UPLOAD_REJECTED_LABEL,
+  uploadVerificationFailureCopy,
+} from "@/lib/status/imports";
 
-const EMPTY_SEED: AddSeed = {
-  kind: "Content",
-  initialFocus: "Url",
-  initialDestinations: [],
-};
-const MUTATION_CONCURRENCY = 2;
+const MAX_ITEMS = 20;
+const EMPTY_SEED: AddSeed = { kind: "Content", initialFocus: "Url", initialDestinations: [] };
 
-type SubmissionItem = Extract<AddItem, { kind: "Draft" }>;
+type AddSource =
+  | { kind: "Url"; url: string }
+  | { kind: "File"; file: File; fileKind: UploadFileKind };
+
+type FileSummary = { kind: "File"; name: string; sizeBytes: number; fileKind: UploadFileKind | "Unsupported" };
+type SourceSummary = Extract<AddSource, { kind: "Url" }> | FileSummary;
+type AcceptanceIntent = Readonly<{
+  source: AddSource;
+  destinations: readonly LibraryDestinationSelection[];
+  idempotencyKey: string;
+}>;
+type FileIntent = AcceptanceIntent & { source: Extract<AddSource, { kind: "File" }> };
+type UrlIntent = AcceptanceIntent & { source: Extract<AddSource, { kind: "Url" }> };
+
+export type AddItem =
+  | { kind: "Invalid"; id: string; source: FileSummary; feedback: FeedbackContent }
+  | { kind: "Draft"; id: string; intent: AcceptanceIntent }
+  | { kind: "Queued"; id: string; intent: AcceptanceIntent }
+  | { kind: "Submitting"; id: string; intent: FileIntent; phase: UploadPhase }
+  | { kind: "Submitting"; id: string; intent: UrlIntent; phase: "Saving" | "Checking" }
+  | { kind: "Rejected"; id: string; intent: AcceptanceIntent; feedback: FeedbackContent }
+  | {
+      kind: "AcceptanceUnresolved";
+      id: string;
+      intent: AcceptanceIntent;
+      reason: "StatusUnknown" | "UploadIncomplete";
+      feedback: FeedbackContent;
+    }
+  | { kind: "Accepted"; id: string; source: SourceSummary; result: AcceptedIngestResult };
+
+export type PlacementCommand = { kind: "Add" | "Remove"; destination: LibraryPlacementDestination };
+type PlacementWork = { libraries: readonly LibraryPlacementOption[]; command: PlacementCommand };
+type RestingPlacement =
+  | { kind: "Ready"; libraries: readonly LibraryPlacementOption[] }
+  | { kind: "LoadFailed"; feedback: FeedbackContent }
+  | { kind: "Unavailable"; feedback: FeedbackContent }
+  | { kind: "Refused"; libraries: readonly LibraryPlacementOption[]; feedback: FeedbackContent }
+  | ({ kind: "Uncertain"; feedback: FeedbackContent } & PlacementWork);
+
+export type PlacementState =
+  | RestingPlacement
+  | { kind: "Loading"; previous: RestingPlacement | null }
+  | { kind: "Queued"; previous: RestingPlacement | null; command: PlacementCommand }
+  | ({ kind: "Updating" } & PlacementWork);
+
+type Mutation =
+  | { kind: "Idle" }
+  | {
+      kind: "Running";
+      operation:
+        | { kind: "Submit"; itemIds: readonly string[] }
+        | { kind: "ReconcileAcceptance"; itemId: string }
+        | { kind: "CreateDestination" }
+        | { kind: "Placement"; mediaIds: readonly string[] };
+    };
+
+export type AddSessionState = Readonly<{
+  sessionId: string;
+  initialFocus: "Url" | "File";
+  urlInput: { text: string; feedback?: FeedbackContent };
+  intakeFeedback?: FeedbackContent;
+  items: readonly AddItem[];
+  defaultDestinations: readonly LibraryDestinationSelection[];
+  placementByMediaId: ReadonlyMap<string, PlacementState>;
+  mutation: Mutation;
+}>;
 
 export interface AddContentSessionController {
   readonly state: AddSessionState;
@@ -68,907 +118,588 @@ export interface AddContentSessionController {
   stageFiles(files: readonly File[]): boolean;
   removeItem(itemId: string): void;
   restageItem(itemId: string): void;
-  setDefaultDestinations(
-    destinations: readonly LibraryDestinationSelection[],
-  ): void;
-  setItemDestinations(
-    itemId: string,
-    destinations: readonly LibraryDestinationSelection[],
-  ): void;
+  setDefaultDestinations(destinations: readonly LibraryDestinationSelection[]): void;
+  setItemDestinations(itemId: string, destinations: readonly LibraryDestinationSelection[]): void;
   submit(): Promise<void>;
   reconcileAcceptance(itemId: string): Promise<void>;
   refreshPlacements(mediaIds: readonly string[]): Promise<void>;
-  runPlacement(input: {
-    mediaIds: readonly string[];
-    command: PlacementCommand;
-  }): Promise<void>;
+  runPlacement(input: { mediaIds: readonly string[]; command: PlacementCommand }): Promise<void>;
+  retryPlacements(mediaIds: readonly string[]): Promise<void>;
   createDestination(name: string): Promise<LibraryDestinationSelection>;
+  createAndPlace(input: { name: string; mediaIds: readonly string[] }): Promise<void>;
   stop(): void;
   discard(): void;
 }
 
-function sourceSummary(intent: FrozenAcceptanceIntent) {
-  return intent.source.kind === "Url"
-    ? { kind: "Url" as const, url: intent.source.url }
-    : {
-        kind: "File" as const,
-        name: intent.source.file.name,
-        sizeBytes: intent.source.file.size,
-        fileKind: intent.source.fileKind,
-      };
+function initialState(seed: AddSeed): AddSessionState {
+  return {
+    sessionId: createRandomId("add-session"),
+    initialFocus: seed.initialFocus,
+    urlInput: { text: seed.initialUrlDraft ?? "" },
+    items: [],
+    defaultDestinations: [...seed.initialDestinations],
+    placementByMediaId: new Map(),
+    mutation: { kind: "Idle" },
+  };
 }
 
-function acceptedItem(
-  id: string,
-  intent: FrozenAcceptanceIntent,
-  result: AcceptedIngestResult,
-): AddItem {
-  return { kind: "Accepted", id, source: sourceSummary(intent), result };
-}
-
-
-function addContentPlacementErrorMessage(
-  error: unknown,
-  title = "Libraries couldn’t be updated",
-): FeedbackContent {
-  return libraryRequestErrorMessage(error, {
-    title,
-    request: "PlacementMutation",
+function acceptanceFailure(error: unknown):
+  | { kind: "Rejected"; feedback: FeedbackContent }
+  | { kind: "AcceptanceUnresolved"; reason: "StatusUnknown" | "UploadIncomplete"; feedback: FeedbackContent }
+  | { kind: "Superseded" } {
+  const rejected = (message: string) => ({
+    kind: "Rejected" as const,
+    feedback: { tone: "Danger" as const, title: "Couldn’t save", message },
   });
-}
-
-/**
- * A write whose transport never settled: the server may or may not have applied
- * it, so only these justify an authoritative re-read before deciding.
- */
-function isPlacementSettlementUnknown(error: unknown): boolean {
-  return (
-    isApiError(error) &&
-    !isSameSystemApiDefect(error) &&
-    (error.code === "E_NETWORK" || error.code === "E_UPSTREAM_TIMEOUT")
-  );
-}
-
-function requireIndexedItem<T>(items: readonly T[], index: number): T {
-  const item = items[index];
-  if (item === undefined) {
-    throw new Error("Bounded task outcome did not match its input item.");
+  const unresolved = (requestId?: string) => ({
+    kind: "AcceptanceUnresolved" as const,
+    reason: "StatusUnknown" as const,
+    feedback: {
+      tone: "Warning" as const,
+      title: "Couldn’t confirm",
+      message: "Nexus could not confirm whether this was saved. Check status to find out.",
+      requestId,
+    },
+  });
+  if (error instanceof UploadSessionError) {
+    switch (error.outcome.kind) {
+      case "NeedsAttention":
+        return {
+          kind: "Rejected",
+          feedback: {
+            tone: "Warning",
+            title: "Upload needs attention",
+            message: "Use Imports for the available next step, or restage this file as a new import.",
+          },
+        };
+      case "VerificationRejected":
+        return {
+          kind: "Rejected",
+          feedback: {
+            tone: "Danger",
+            title: UPLOAD_REJECTED_LABEL,
+            message: uploadVerificationFailureCopy(error.outcome.code),
+          },
+        };
+      case "BytesMissing":
+        return {
+          kind: "AcceptanceUnresolved",
+          reason: "UploadIncomplete",
+          feedback: {
+            tone: "Warning",
+            title: "Upload didn’t complete",
+            message: "Nexus never received this file. Retry the upload, or remove it and start a new import.",
+          },
+        };
+      case "Superseded":
+        return { kind: "Superseded" };
+      case "Conflicted":
+        return rejected(IMPORTS_CONFLICT_MESSAGE);
+      case "Unresolved":
+        return unresolved();
+      case "UnsupportedFileType":
+        return rejected("This file type isn’t supported. Start a new import with a PDF or EPUB.");
+      case "FileTooLarge":
+        return rejected("This file exceeds the import limit. Start a new import with a smaller file.");
+      case "LibraryForbidden":
+        return rejected("You no longer have access to a destination library. Choose different libraries and start a new import.");
+      case "IntentChanged":
+        return rejected("This import changed. Start a new import.");
+      case "FileMismatch":
+        return rejected("That file doesn’t match this import. Choose the same file, or start a new import.");
+      case "IntentMalformed":
+        throw error;
+    }
+    return assertNever(error.outcome, "Unreachable upload outcome");
   }
-  return item;
-}
-
-function restingPlacementSnapshot(
-  placement: PlacementState | undefined,
-): RestingPlacementState | null {
-  if (!placement) return { kind: "Unloaded" };
-  switch (placement.kind) {
-    case "Unloaded":
-    case "Ready":
-    case "LoadFailed":
-    case "CommandFailed":
-      return placement;
-    case "Loading":
-    case "Updating":
-    case "Reconciling":
-      return null;
-  }
+  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+  if (
+    error.status >= 500 || error.code === "E_NETWORK" ||
+    error.code === "E_UPSTREAM" || error.code === "E_UPSTREAM_TIMEOUT"
+  ) return unresolved(error.requestId);
+  return { kind: "Rejected", feedback: mediaCaptureErrorMessage(error, "SaveSource") };
 }
 
 export function useAddContentSession(): AddContentSessionController {
-  const [state, dispatch] = useReducer(
-    reduceAddSession,
-    createAddSessionState({
-      seed: EMPTY_SEED,
-      sessionId: createRandomId("add-session"),
-    }),
-  );
-  const stateRef = useRef(state);
-  const generationRef = useRef(0);
-  const sessionAbortRef = useRef(new AbortController());
-  const startedSubmissionItemIdsRef = useRef(new Set<string>());
-  const placementProgressByMediaIdRef = useRef(
-    new Map<string, PlacementMutationProgress>(),
-  );
-  const destinationCreateIdByNameRef = useRef(new Map<string, string>());
+  const [state, setState] = useState(() => initialState(EMPTY_SEED));
+  const current = useRef(state);
+  const abort = useRef(new AbortController());
+  const createIds = useRef(new Map<string, string>());
 
-  const apply = useCallback((action: AddSessionAction) => {
-    stateRef.current = reduceAddSession(stateRef.current, action);
-    dispatch(action);
-  }, []);
+  function update(change: (snapshot: AddSessionState) => AddSessionState) {
+    current.current = change(current.current);
+    setState(current.current);
+  }
+  function item(next: AddItem) {
+    update((snapshot) => ({
+      ...snapshot,
+      items: snapshot.items.map((row) => row.id === next.id ? next : row),
+    }));
+  }
+  function placement(mediaId: string, next: PlacementState | null) {
+    update((snapshot) => {
+      const placements = new Map(snapshot.placementByMediaId);
+      if (next === null) placements.delete(mediaId);
+      else placements.set(mediaId, next);
+      return { ...snapshot, placementByMediaId: placements };
+    });
+  }
+  function active(signal: AbortSignal) {
+    return signal === abort.current.signal && !signal.aborted;
+  }
+  async function batch<T>(items: readonly T[], signal: AbortSignal, run: (value: T) => Promise<void>) {
+    const outcomes = await runBoundedTasks({
+      items,
+      concurrency: 2,
+      run: async (value) => {
+        signal.throwIfAborted();
+        await run(value);
+      },
+    });
+    if (!active(signal)) return;
+    update((snapshot) => ({ ...snapshot, mutation: { kind: "Idle" } }));
+    const failed = outcomes.find((outcome) => outcome.kind === "Rejected");
+    if (failed?.kind === "Rejected") throw failed.error;
+  }
 
-  useEffect(() => () => sessionAbortRef.current.abort(), []);
-
+  useEffect(() => () => abort.current.abort(), []);
   useEffect(() => {
     if (state.mutation.kind !== "Running") return;
-    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+    const warn = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = "";
     };
-    window.addEventListener("beforeunload", onBeforeUnload);
-    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
   }, [state.mutation.kind]);
 
-  const start = useCallback(
-    (seed: AddSeed) => {
-      sessionAbortRef.current.abort();
-      sessionAbortRef.current = new AbortController();
-      generationRef.current += 1;
-      startedSubmissionItemIdsRef.current.clear();
-      placementProgressByMediaIdRef.current.clear();
-      destinationCreateIdByNameRef.current.clear();
-      const next = createAddSessionState({
-        seed,
-        sessionId: createRandomId("add-session"),
-      });
-      apply({ kind: "Reset", state: next });
-      return next.sessionId;
-    },
-    [apply],
-  );
-
-  const discard = useCallback(() => {
-    start(EMPTY_SEED);
-  }, [start]);
-
-  const stop = useCallback(() => {
-    sessionAbortRef.current.abort();
-    sessionAbortRef.current = new AbortController();
-    generationRef.current += 1;
-    apply({
-      kind: "StopMutation",
-      startedSubmissionItemIds: new Set(startedSubmissionItemIdsRef.current),
-      placementProgressByMediaId: new Map(
-        placementProgressByMediaIdRef.current,
+  function start(seed: AddSeed) {
+    abort.current.abort();
+    abort.current = new AbortController();
+    createIds.current.clear();
+    const next = initialState(seed);
+    update(() => next);
+    return next.sessionId;
+  }
+  function stop() {
+    abort.current.abort();
+    abort.current = new AbortController();
+    update((snapshot) => ({
+      ...snapshot,
+      mutation: { kind: "Idle" },
+      items: snapshot.items.map((row): AddItem => {
+        if (row.kind === "Queued") return { kind: "Draft", id: row.id, intent: row.intent };
+        if (row.kind !== "Submitting") return row;
+        return row.intent.source.kind === "File"
+          ? {
+              kind: "Rejected", id: row.id, intent: row.intent,
+              feedback: {
+                tone: "Warning", title: "Upload stopped",
+                message: "Use Imports to retry or remove any accepted upload, or restage this file as a new import.",
+              },
+            }
+          : {
+              kind: "AcceptanceUnresolved", id: row.id, intent: row.intent, reason: "StatusUnknown",
+              feedback: {
+                tone: "Warning", title: "Stopped · acceptance status unknown",
+                message: "Server changes that already committed may remain.",
+              },
+            };
+      }),
+      placementByMediaId: new Map(
+        [...snapshot.placementByMediaId].flatMap(([mediaId, row]): [string, PlacementState][] => {
+          if (row.kind === "Loading") return row.previous ? [[mediaId, row.previous]] : [];
+          if (row.kind === "Queued") return row.previous ? [[mediaId, row.previous]] : [];
+          if (row.kind !== "Updating") return [[mediaId, row]];
+          return [[mediaId, {
+            kind: "Uncertain", libraries: row.libraries, command: row.command,
+            feedback: {
+              tone: "Warning", title: "Stopped before completion",
+              message: "Server changes that already committed may remain.",
+            },
+          }]];
+        }),
       ),
-      acceptanceFeedback: {
-        tone: "Warning",
-        title: "Stopped · acceptance status unknown",
-        message: "Server changes that already committed may remain.",
-      },
-      uploadFeedback: {
-        tone: "Warning",
-        title: "Upload stopped",
-        message:
-          "Use Imports to retry or remove any accepted upload, or restage this file as a new import.",
-      },
-      operationFeedback: {
-        tone: "Warning",
-        title: "Stopped before completion",
-        message: "Server changes that already committed may remain.",
-      },
-    });
-    startedSubmissionItemIdsRef.current.clear();
-    placementProgressByMediaIdRef.current.clear();
-  }, [apply]);
-
-  const setUrlText = useCallback(
-    (text: string) => {
-      if (stateRef.current.mutation.kind === "Idle")
-        apply({ kind: "SetUrlText", text });
-    },
-    [apply],
-  );
-
-  const reviewUrls = useCallback(() => {
-    const current = stateRef.current;
-    if (current.mutation.kind !== "Idle") return false;
-    const urls = extractUrls(current.urlInput.text);
-    if (urls.length === 0) {
-      apply({
-        kind: "SetUrlFeedback",
-        feedback: {
-          tone: "Danger",
-          title: "Paste one or more http:// or https:// URLs.",
-        },
-      });
+    }));
+  }
+  function setUrlText(text: string) {
+    if (current.current.mutation.kind === "Idle") {
+      update((snapshot) => ({ ...snapshot, urlInput: { text } }));
+    }
+  }
+  function stage(items: readonly AddItem[], source: "Url" | "File") {
+    const snapshot = current.current;
+    if (snapshot.items.length + items.length > MAX_ITEMS) {
+      const feedback: FeedbackContent = { tone: "Danger", title: "Add up to 20 items at a time." };
+      update((next) => source === "Url"
+        ? { ...next, urlInput: { ...next.urlInput, feedback } }
+        : { ...next, intakeFeedback: feedback });
       return false;
     }
-    const items = urls.map(
-      (url): StagedAddItem => ({
-        kind: "Draft",
-        id: createRandomId("add-item"),
+    update((next) => ({
+      ...next,
+      urlInput: source === "Url" ? { text: "" } : next.urlInput,
+      intakeFeedback: undefined,
+      items: [...next.items, ...items],
+    }));
+    return true;
+  }
+  function reviewUrls() {
+    const snapshot = current.current;
+    if (snapshot.mutation.kind !== "Idle") return false;
+    const urls = extractUrls(snapshot.urlInput.text);
+    if (urls.length === 0) {
+      update((next) => ({
+        ...next,
+        urlInput: { ...next.urlInput, feedback: { tone: "Danger", title: "Paste one or more http:// or https:// URLs." } },
+      }));
+      return false;
+    }
+    return stage(urls.map((url) => ({
+      kind: "Draft", id: createRandomId("add-item"),
+      intent: {
         source: { kind: "Url", url },
-        destinations: [...current.defaultDestinations],
+        destinations: [...snapshot.defaultDestinations],
         idempotencyKey: createRandomId("media-url"),
-      }),
-    );
-    apply({ kind: "StageItems", source: "Url", items });
-    return current.items.length + items.length <= ADD_SESSION_MAX_ITEMS;
-  }, [apply]);
-
-  const stageFiles = useCallback(
-    (files: readonly File[]) => {
-      const current = stateRef.current;
-      if (current.mutation.kind !== "Idle" || files.length === 0) return false;
-      const items = files.map((file): StagedAddItem => {
-        const fileKind = getFileUploadKind(file);
-        const error = getFileUploadError(file);
-        if (error || fileKind === null) {
-          return {
-            kind: "Invalid",
-            id: createRandomId("add-item"),
-            source: {
-              kind: "File",
-              name: file.name,
-              sizeBytes: file.size,
-              fileKind: fileKind ?? "Unsupported",
-            },
-            feedback: {
-              tone: "Danger",
-              title: error ?? "Only PDF and EPUB files are supported.",
-            },
-          };
-        }
+      },
+    })), "Url");
+  }
+  function stageFiles(files: readonly File[]) {
+    const snapshot = current.current;
+    if (snapshot.mutation.kind !== "Idle" || files.length === 0) return false;
+    return stage(files.map((file): AddItem => {
+      const fileKind = getFileUploadKind(file);
+      const error = getFileUploadError(file);
+      if (error || fileKind === null) {
         return {
-          kind: "Draft",
-          id: createRandomId("add-item"),
-          source: { kind: "File", file, fileKind },
-          destinations: [...current.defaultDestinations],
-          idempotencyKey: createRandomId("media-upload"),
+          kind: "Invalid", id: createRandomId("add-item"),
+          source: { kind: "File", name: file.name, sizeBytes: file.size, fileKind: fileKind ?? "Unsupported" },
+          feedback: { tone: "Danger", title: error ?? "Only PDF and EPUB files are supported." },
         };
-      });
-      apply({ kind: "StageItems", source: "File", items });
-      return current.items.length + items.length <= ADD_SESSION_MAX_ITEMS;
-    },
-    [apply],
-  );
-
-  const removeItem = useCallback(
-    (itemId: string) => {
-      if (stateRef.current.mutation.kind === "Idle") {
-        apply({ kind: "RemoveItem", itemId });
       }
-    },
-    [apply],
-  );
+      return {
+        kind: "Draft", id: createRandomId("add-item"),
+        intent: {
+          source: { kind: "File", file, fileKind },
+          destinations: [...snapshot.defaultDestinations],
+          idempotencyKey: createRandomId("media-upload"),
+        },
+      };
+    }), "File");
+  }
+  function removeItem(itemId: string) {
+    if (current.current.mutation.kind !== "Idle") return;
+    update((snapshot) => {
+      const items = snapshot.items.filter((row) => row.id !== itemId);
+      const retained = new Set(items.flatMap((row) => row.kind === "Accepted" ? [row.result.mediaId] : []));
+      return {
+        ...snapshot, items,
+        placementByMediaId: new Map([...snapshot.placementByMediaId].filter(([mediaId]) => retained.has(mediaId))),
+      };
+    });
+  }
+  function restageItem(itemId: string) {
+    if (current.current.mutation.kind !== "Idle") return;
+    const row = current.current.items.find((next) => next.id === itemId);
+    if (row?.kind !== "Rejected" && row?.kind !== "AcceptanceUnresolved") return;
+    item({ kind: "Draft", id: row.id, intent: { ...row.intent, idempotencyKey: createRandomId("media-restage") } });
+  }
+  function setDefaultDestinations(destinations: readonly LibraryDestinationSelection[]) {
+    if (current.current.mutation.kind !== "Idle") return;
+    update((snapshot) => ({
+      ...snapshot, defaultDestinations: [...destinations],
+      items: snapshot.items.map((row) => row.kind === "Draft"
+        ? { ...row, intent: { ...row.intent, destinations: [...destinations] } } : row),
+    }));
+  }
+  function setItemDestinations(itemId: string, destinations: readonly LibraryDestinationSelection[]) {
+    if (current.current.mutation.kind !== "Idle") return;
+    const row = current.current.items.find((next) => next.id === itemId);
+    if (row?.kind === "Draft") item({ ...row, intent: { ...row.intent, destinations: [...destinations] } });
+  }
 
-  const restageItem = useCallback(
-    (itemId: string) => {
-      if (stateRef.current.mutation.kind === "Idle") {
-        apply({
-          kind: "RestageItem",
-          itemId,
-          idempotencyKey: createRandomId("media-restage"),
+  async function accept(row: Extract<AddItem, { kind: "Draft" | "AcceptanceUnresolved" }>, signal: AbortSignal) {
+    if (!active(signal)) return;
+    const { id, intent } = row;
+    try {
+      const libraryIds = intent.destinations.map((destination) => destination.id);
+      let result: AcceptedIngestResult;
+      if (intent.source.kind === "Url") {
+        const urlIntent: UrlIntent = { ...intent, source: intent.source };
+        item({ kind: "Submitting", id, intent: urlIntent, phase: row.kind === "AcceptanceUnresolved" ? "Checking" : "Saving" });
+        result = await addMediaFromUrl({
+          url: intent.source.url, libraryIds, idempotencyKey: intent.idempotencyKey, signal,
         });
-      }
-    },
-    [apply],
-  );
-
-  const setDefaultDestinations = useCallback(
-    (destinations: readonly LibraryDestinationSelection[]) => {
-      if (stateRef.current.mutation.kind === "Idle") {
-        apply({ kind: "SetDefaultDestinations", destinations });
-      }
-    },
-    [apply],
-  );
-
-  const setItemDestinations = useCallback(
-    (itemId: string, destinations: readonly LibraryDestinationSelection[]) => {
-      if (stateRef.current.mutation.kind === "Idle") {
-        apply({ kind: "SetItemDestinations", itemId, destinations });
-      }
-    },
-    [apply],
-  );
-
-  const submit = useCallback(async () => {
-    const current = stateRef.current;
-    if (current.mutation.kind !== "Idle") return;
-    const itemIds = submitItemIds(current);
-    if (itemIds.length === 0) return;
-    const selected = new Set(itemIds);
-    const items = current.items.filter(
-      (item): item is SubmissionItem =>
-        item.kind === "Draft" && selected.has(item.id),
-    );
-    const generation = generationRef.current;
-    const signal = sessionAbortRef.current.signal;
-    startedSubmissionItemIdsRef.current.clear();
-    apply({ kind: "StartSubmission", itemIds });
-
-    const outcomes = await runBoundedTasks({
-      items,
-      concurrency: MUTATION_CONCURRENCY,
-      run: async (item) => {
-        signal.throwIfAborted();
-        if (generation === generationRef.current) {
-          startedSubmissionItemIdsRef.current.add(item.id);
-        }
-        const libraryIds = item.destinations.map(
-          (destination) => destination.id,
-        );
-        if (item.source.kind === "Url") {
-          const result = await addMediaFromUrl({
-            url: item.source.url,
-            libraryIds,
-            idempotencyKey: item.idempotencyKey,
-            signal,
-          });
-          if (generation === generationRef.current) {
-            apply({
-              kind: "ResolveItem",
-              item: acceptedItem(item.id, item, result),
-            });
-          }
-          return;
-        }
-        const result = await uploadIngestFile({
-          file: item.source.file,
-          libraryIds,
-          idempotencyKey: item.idempotencyKey,
-          signal,
+      } else {
+        const fileIntent: FileIntent = { ...intent, source: intent.source };
+        item({ kind: "Submitting", id, intent: fileIntent, phase: "Preparing" });
+        result = await uploadIngestFile({
+          file: intent.source.file, libraryIds, idempotencyKey: intent.idempotencyKey, signal,
           onPhaseChange: (phase) => {
-            if (generation === generationRef.current) {
-              apply({ kind: "SetUploadPhase", itemId: item.id, phase });
-            }
+            if (active(signal)) item({ kind: "Submitting", id, intent: fileIntent, phase });
           },
         });
-        if (generation !== generationRef.current) return;
-        apply({
-          kind: "ResolveItem",
-          item: acceptedItem(item.id, item, result),
-        });
-      },
-    });
-    if (generation !== generationRef.current) return;
-
-    const defects: unknown[] = [];
-    outcomes.forEach((outcome, index) => {
-      const item = requireIndexedItem(items, index);
-      if (outcome.kind === "Fulfilled") {
-        // The create-with-placement publish lives in the ingestionClient
-        // creation helper, which fires once per acknowledged create.
-        return;
       }
-      if (signal.aborted || isAbortError(outcome.error)) return;
-      if (handleUnauthenticatedApiError(outcome.error)) {
-        apply({
-          kind: "ResolveItem",
-          item,
-        });
-        return;
-      }
-      const failure = acceptanceErrorMessage(outcome.error);
-      switch (failure.kind) {
-        case "Defect":
-          apply({ kind: "ResolveItem", item });
-          defects.push(failure.error);
-          return;
-        case "Superseded":
-          // The session moved on without this attempt. Imports owns
-          // the truth, so the foreground stops claiming this item at all.
-          apply({ kind: "RemoveItem", itemId: item.id });
-          return;
-        case "Rejected":
-        case "Unresolved":
-          apply({
-            kind: "ResolveItem",
-            item: acceptanceFailureItem(item.id, item, failure),
-          });
-          return;
-        default:
-          return assertNever(failure, "Unreachable acceptance failure");
-      }
-    });
-    startedSubmissionItemIdsRef.current.clear();
-    apply({ kind: "FinishMutation" });
-    if (defects.length > 0) throw defects[0];
-  }, [apply]);
-
-  const reconcileAcceptance = useCallback(
-    async (itemId: string) => {
-      const current = stateRef.current;
-      if (current.mutation.kind !== "Idle") return;
-      const item = current.items.find((candidate) => candidate.id === itemId);
-      if (!item || item.kind !== "AcceptanceUnresolved") {
-        return;
-      }
-      const generation = generationRef.current;
-      const signal = sessionAbortRef.current.signal;
-      const operation: SessionMutationOperation = {
-        kind: "ReconcileAcceptance",
-        itemId,
+      if (!active(signal)) return;
+      const source = intent.source.kind === "Url" ? intent.source : {
+        kind: "File" as const, name: intent.source.file.name, sizeBytes: intent.source.file.size, fileKind: intent.source.fileKind,
       };
-      if (item.intent.source.kind === "File") {
-        apply({ kind: "StartFileReconciliation", itemId });
-      } else {
-        apply({ kind: "StartMutation", operation });
+      item({ kind: "Accepted", id, source, result });
+    } catch (error) {
+      if (!active(signal)) return;
+      const frozen: AddItem = row.kind === "AcceptanceUnresolved" ? row : {
+        kind: "AcceptanceUnresolved", id, intent, reason: "StatusUnknown",
+        feedback: {
+          tone: "Warning", title: "Couldn’t confirm",
+          message: "Nexus could not confirm whether this was saved. Check status to find out.",
+        },
+      };
+      if (isAbortError(error) || handleUnauthenticatedApiError(error)) {
+        item(frozen);
+        return;
       }
-      let defectState: { error: unknown } | null = null;
       try {
-        const libraryIds = item.intent.destinations.map(
-          (destination) => destination.id,
-        );
-        if (item.intent.source.kind === "Url") {
-          const result = await addMediaFromUrl({
-            url: item.intent.source.url,
-            libraryIds,
-            idempotencyKey: item.intent.idempotencyKey,
-            signal,
-          });
-          if (generation === generationRef.current) {
-            apply({
-              kind: "ResolveItem",
-              item: acceptedItem(item.id, item.intent, result),
-            });
-          }
+        const failure = acceptanceFailure(error);
+        if (failure.kind === "Superseded") {
+          update((snapshot) => ({ ...snapshot, items: snapshot.items.filter((next) => next.id !== id) }));
         } else {
-          const result = await uploadIngestFile({
-            file: item.intent.source.file,
-            libraryIds,
-            idempotencyKey: item.intent.idempotencyKey,
-            signal,
-            onPhaseChange: (phase) => {
-              if (generation === generationRef.current) {
-                apply({ kind: "SetUploadPhase", itemId: item.id, phase });
-              }
-            },
-          });
-          if (generation !== generationRef.current) return;
-          apply({
-            kind: "ResolveItem",
-            item: acceptedItem(item.id, item.intent, result),
-          });
+          item({ id, intent, ...failure });
         }
-      } catch (error) {
-        if (
-          generation !== generationRef.current ||
-          signal.aborted ||
-          isAbortError(error)
-        )
-          return;
-        if (handleUnauthenticatedApiError(error)) {
-          return;
-        } else {
-          const failure = acceptanceErrorMessage(error);
-          switch (failure.kind) {
-            case "Defect":
-              defectState = { error: failure.error };
-              break;
-            case "Superseded":
-              apply({ kind: "RemoveItem", itemId: item.id });
-              break;
-            case "Rejected":
-            case "Unresolved":
-              apply({
-                kind: "ResolveItem",
-                item: acceptanceFailureItem(item.id, item.intent, failure),
-              });
-              break;
-            default:
-              assertNever(failure, "Unreachable acceptance failure");
-          }
-        }
-      } finally {
-        if (generation === generationRef.current) {
-          apply({ kind: "FinishMutation" });
-        }
+      } catch (defect) {
+        item(frozen);
+        throw defect;
       }
-      if (defectState !== null) throw defectState.error;
-    },
-    [apply],
-  );
+    }
+  }
+  async function submit() {
+    const snapshot = current.current;
+    if (snapshot.mutation.kind !== "Idle") return;
+    const rows = snapshot.items.filter((row): row is Extract<AddItem, { kind: "Draft" }> => row.kind === "Draft");
+    if (rows.length === 0) return;
+    const ids = new Set(rows.map((row) => row.id));
+    const signal = abort.current.signal;
+    update((next) => ({
+      ...next,
+      mutation: { kind: "Running", operation: { kind: "Submit", itemIds: [...ids] } },
+      items: next.items.map((row) => row.kind === "Draft" && ids.has(row.id) ? { ...row, kind: "Queued" } : row),
+    }));
+    await batch(rows, signal, (row) => accept(row, signal));
+  }
+  async function reconcileAcceptance(itemId: string) {
+    const snapshot = current.current;
+    if (snapshot.mutation.kind !== "Idle") return;
+    const row = snapshot.items.find((next) => next.id === itemId);
+    if (row?.kind !== "AcceptanceUnresolved") return;
+    const signal = abort.current.signal;
+    update((next) => ({ ...next, mutation: { kind: "Running", operation: { kind: "ReconcileAcceptance", itemId } } }));
+    await batch([row], signal, (next) => accept(next, signal));
+  }
 
-  const runPlacement = useCallback(
-    async ({
-      mediaIds,
-      command,
-    }: {
-      mediaIds: readonly string[];
-      command: PlacementCommand;
-    }) => {
-      const current = stateRef.current;
-      if (current.mutation.kind !== "Idle") return;
-      const accepted = new Set(acceptedMediaIds(current));
-      const uniqueMediaIds = [...new Set(mediaIds)].filter((mediaId) =>
-        accepted.has(mediaId),
-      );
-      if (uniqueMediaIds.length === 0) return;
-      const generation = generationRef.current;
-      const signal = sessionAbortRef.current.signal;
-      placementProgressByMediaIdRef.current.clear();
-      apply({
-        kind: "StartMutation",
-        operation: { kind: "Placement", command, mediaIds: uniqueMediaIds },
-      });
-      const defects: unknown[] = [];
-      const loaded = await runBoundedTasks({
-        items: uniqueMediaIds,
-        concurrency: MUTATION_CONCURRENCY,
-        run: (mediaId) => {
-          signal.throwIfAborted();
-          return listLibraryPlacements(
-            { kind: "Media", id: mediaId },
-            { signal },
-          );
-        },
-      });
-      if (generation !== generationRef.current) return;
-
-      const eligible: {
-        mediaId: string;
-        libraries: readonly LibraryPlacementOption[];
-      }[] = [];
-      loaded.forEach((outcome, index) => {
-        const mediaId = requireIndexedItem(uniqueMediaIds, index);
-        if (outcome.kind === "Rejected") {
-          if (!signal.aborted && !isAbortError(outcome.error)) {
-            if (handleUnauthenticatedApiError(outcome.error)) return;
-            try {
-              const feedback = addContentPlacementErrorMessage(
-                outcome.error,
-                "Libraries couldn’t be loaded",
-              );
-              apply({
-                kind: "SetPlacement",
-                mediaId,
-                placement: { kind: "LoadFailed", feedback },
-              });
-            } catch (caughtDefect: unknown) {
-              defects.push(caughtDefect);
-            }
-          }
-          return;
-        }
-        const libraries = outcome.value;
-        apply({
-          kind: "SetPlacement",
-          mediaId,
-          placement: { kind: "Ready", libraries },
-        });
-        const commandKey = libraryPlacementDestinationKey(command.destination);
-        const target = libraries.find(
-          (placement) =>
-            libraryPlacementDestinationKey(placement.destination) === commandKey,
-        );
-        const canRun =
-          command.kind === "Add"
-            ? target?.availability.kind === "Available" &&
-              target.relation.kind === "Absent"
-            : target?.availability.kind === "Available" &&
-              target.relation.kind === "Direct";
-        if (canRun) eligible.push({ mediaId, libraries });
-      });
-
-      for (const work of eligible) {
-        placementProgressByMediaIdRef.current.set(work.mediaId, {
-          phase: "Queued",
-          libraries: work.libraries,
-          command,
-        });
-        apply({
-          kind: "SetPlacement",
-          mediaId: work.mediaId,
-          placement: { kind: "Updating", libraries: work.libraries, command },
-        });
-      }
-      const mutated = await runBoundedTasks({
-        items: eligible,
-        concurrency: MUTATION_CONCURRENCY,
-        run: async ({ mediaId }) => {
-          signal.throwIfAborted();
-          const progress = placementProgressByMediaIdRef.current.get(mediaId);
-          if (generation === generationRef.current && progress) {
-            placementProgressByMediaIdRef.current.set(mediaId, {
-              ...progress,
-              phase: "Started",
-            });
-          }
-          if (command.kind === "Add") {
-            await addLibraryPlacement({
-              target: { kind: "Media", id: mediaId },
-              destination: command.destination,
-              signal,
-            });
-          } else {
-            await removeLibraryPlacement({
-              target: { kind: "Media", id: mediaId },
-              destination: command.destination,
-              signal,
-            });
-          }
-          const started = placementProgressByMediaIdRef.current.get(mediaId);
-          if (generation === generationRef.current && started) {
-            placementProgressByMediaIdRef.current.set(mediaId, {
-              ...started,
-              phase: "Succeeded",
-            });
-          }
-        },
-      });
-      if (generation !== generationRef.current) return;
-
-      // An ambiguous transport failure leaves the placement unknown, so it is
-      // reread; any other rejection fails the command.
-      const failPlacement = (
-        mediaId: string,
-        libraries: readonly LibraryPlacementOption[],
-        error: unknown,
-      ) => {
-        if (handleUnauthenticatedApiError(error)) {
-          apply({
-            kind: "SetPlacement",
-            mediaId,
-            placement: { kind: "Ready", libraries },
-          });
-          return;
-        }
+  async function refreshPlacements(mediaIds: readonly string[]) {
+    const snapshot = current.current;
+    const accepted = new Set(snapshot.items.flatMap((row) => row.kind === "Accepted" ? [row.result.mediaId] : []));
+    const signal = abort.current.signal;
+    const work = [...new Set(mediaIds)].flatMap((mediaId) => {
+      if (!accepted.has(mediaId)) return [];
+      const previous = current.current.placementByMediaId.get(mediaId) ?? null;
+      if (previous?.kind === "Loading" || previous?.kind === "Queued" || previous?.kind === "Updating") return [];
+      // An unresolved command stays available even if this media's inventory can
+      // no longer be read after a successful but unacknowledged removal.
+      if (previous?.kind === "Uncertain" || previous?.kind === "Unavailable") return [];
+      const request: Extract<PlacementState, { kind: "Loading" }> = { kind: "Loading", previous };
+      placement(mediaId, request);
+      return [{ mediaId, request }];
+    });
+    const outcomes = await runBoundedTasks({
+      items: work, concurrency: 2,
+      run: async ({ mediaId, request }) => {
+        signal.throwIfAborted();
+        const ownsRead = () => active(signal) && current.current.placementByMediaId.get(mediaId) === request;
         try {
-          const feedback = addContentPlacementErrorMessage(error);
-          apply({
-            kind: "SetPlacement",
-            mediaId,
-            placement: {
-              kind: "CommandFailed",
-              libraries,
-              command,
-              feedback,
-            },
-          });
-        } catch (caughtDefect: unknown) {
-          apply({
-            kind: "SetPlacement",
-            mediaId,
-            placement: { kind: "Ready", libraries },
-          });
-          defects.push(caughtDefect);
-        }
-      };
-
-      const uncertain: {
-        mediaId: string;
-        libraries: readonly LibraryPlacementOption[];
-        error: unknown;
-      }[] = [];
-      mutated.forEach((outcome, index) => {
-        const work = requireIndexedItem(eligible, index);
-        if (outcome.kind === "Fulfilled") {
-          apply({
-            kind: "SetPlacement",
-            mediaId: work.mediaId,
-            placement: {
-              kind: "Ready",
-              libraries: projectLibraryPlacement(
-                [...work.libraries],
-                command.destination,
-                command.kind === "Add"
-                  ? { kind: "Direct" }
-                  : { kind: "Absent" },
-              ),
-            },
-          });
-        } else if (!signal.aborted && !isAbortError(outcome.error)) {
-          if (!isPlacementSettlementUnknown(outcome.error)) {
-            failPlacement(work.mediaId, work.libraries, outcome.error);
+          const libraries = await listLibraryPlacements({ kind: "Media", id: mediaId }, { signal });
+          if (ownsRead()) placement(mediaId, { kind: "Ready", libraries });
+        } catch (error) {
+          if (!ownsRead()) return;
+          if (isAbortError(error) || handleUnauthenticatedApiError(error)) {
+            placement(mediaId, request.previous);
             return;
           }
-          uncertain.push({ ...work, error: outcome.error });
-          apply({
-            kind: "SetPlacement",
-            mediaId: work.mediaId,
-            placement: {
-              kind: "Reconciling",
-              libraries: work.libraries,
-              command,
-            },
-          });
-        }
-      });
-
-      const reconciled = await runBoundedTasks({
-        items: uncertain,
-        concurrency: MUTATION_CONCURRENCY,
-        run: ({ mediaId }) =>
-          listLibraryPlacements({ kind: "Media", id: mediaId }, { signal }),
-      });
-      if (generation !== generationRef.current) return;
-      reconciled.forEach((outcome, index) => {
-        const work = requireIndexedItem(uncertain, index);
-        if (outcome.kind === "Rejected") {
-          if (!signal.aborted && !isAbortError(outcome.error)) {
-            failPlacement(work.mediaId, work.libraries, outcome.error);
-          }
-          return;
-        }
-        const commandKey = libraryPlacementDestinationKey(command.destination);
-        const target = outcome.value.find(
-          (placement) =>
-            libraryPlacementDestinationKey(placement.destination) === commandKey,
-        );
-        const desired =
-          command.kind === "Add"
-            ? target?.relation.kind === "Direct"
-            : target?.relation.kind === "Absent";
-        if (desired) {
-          // The command failed ambiguously but the authoritative re-read confirms
-          // the intended placement was applied; publish so panes reconcile (the
-          // failed command helper never reached its own success publish).
-          apply({
-            kind: "SetPlacement",
-            mediaId: work.mediaId,
-            placement: { kind: "Ready", libraries: outcome.value },
-          });
-          if (command.destination.kind === "Library") {
-            publishLibraryPlacementChange([command.destination.library.id]);
-          }
           try {
-            addContentPlacementErrorMessage(work.error);
-          } catch (caughtDefect: unknown) {
-            defects.push(caughtDefect);
-          }
-        } else {
-          try {
-            const feedback = addContentPlacementErrorMessage(work.error);
-            apply({
-              kind: "SetPlacement",
-              mediaId: work.mediaId,
-              placement: {
-                kind: "CommandFailed",
-                libraries: outcome.value,
-                command,
-                feedback,
-              },
-            });
-          } catch (caughtDefect: unknown) {
-            apply({
-              kind: "SetPlacement",
-              mediaId: work.mediaId,
-              placement: { kind: "Ready", libraries: outcome.value },
-            });
-            defects.push(caughtDefect);
+            const feedback = libraryRequestErrorMessage(error, { title: "Libraries couldn’t be loaded", request: "EntryRead" });
+            placement(mediaId, isApiError(error) && error.code === "E_MEDIA_NOT_FOUND"
+              ? { kind: "Unavailable", feedback: { ...feedback, message: "This item is no longer available." } }
+              : { kind: "LoadFailed", feedback });
+          } catch (defect) {
+            placement(mediaId, request.previous);
+            throw defect;
           }
         }
+      },
+    });
+    if (!active(signal)) return;
+    const failed = outcomes.find((outcome) => outcome.kind === "Rejected");
+    if (failed?.kind === "Rejected") throw failed.error;
+  }
+  async function writePlacement({
+    mediaId, libraries, command, signal, beforeRetry,
+  }: PlacementWork & {
+    mediaId: string;
+    signal: AbortSignal;
+    beforeRetry?: Extract<RestingPlacement, { kind: "Uncertain" }>;
+  }) {
+    const work = { libraries, command };
+    if (!active(signal)) return;
+    placement(mediaId, { kind: "Updating", ...work });
+    try {
+      const write = work.command.kind === "Add" ? addLibraryPlacement : removeLibraryPlacement;
+      await write({ target: { kind: "Media", id: mediaId }, destination: work.command.destination, signal });
+      if (!active(signal)) return;
+      placement(mediaId, {
+        kind: "Ready",
+        libraries: projectLibraryPlacement(work.libraries, work.command.destination,
+          work.command.kind === "Add" ? { kind: "Direct" } : { kind: "Absent" }),
       });
-      placementProgressByMediaIdRef.current.clear();
-      apply({ kind: "FinishMutation" });
-      if (defects.length > 0) throw defects[0];
-    },
-    [apply],
-  );
-
-  const refreshPlacements = useCallback(
-    async (mediaIds: readonly string[]) => {
-      const current = stateRef.current;
-      const accepted = new Set(acceptedMediaIds(current));
-      const refreshWork: Array<{
-        mediaId: string;
-        previous: RestingPlacementState;
-      }> = [];
-      for (const mediaId of new Set(mediaIds)) {
-        if (!accepted.has(mediaId)) continue;
-        const previous = restingPlacementSnapshot(
-          current.placementByMediaId.get(mediaId),
-        );
-        if (previous) refreshWork.push({ mediaId, previous });
-      }
-      if (refreshWork.length === 0) return;
-      const generation = generationRef.current;
-      const signal = sessionAbortRef.current.signal;
-      for (const { mediaId, previous } of refreshWork) {
-        apply({
-          kind: "SetPlacement",
-          mediaId,
-          placement: { kind: "Loading", previous },
+    } catch (error) {
+      if (!active(signal)) return;
+      if (isAbortError(error)) {
+        placement(mediaId, {
+          kind: "Uncertain", ...work,
+          feedback: { tone: "Warning", title: "Stopped before completion", message: "Server changes that already committed may remain." },
         });
+        return;
       }
-      const outcomes = await runBoundedTasks({
-        items: refreshWork,
-        concurrency: MUTATION_CONCURRENCY,
-        run: ({ mediaId }) => {
-          signal.throwIfAborted();
-          return listLibraryPlacements(
-            { kind: "Media", id: mediaId },
-            { signal },
-          );
-        },
-      });
-      if (generation !== generationRef.current) return;
-
-      const defects: unknown[] = [];
-      outcomes.forEach((outcome, index) => {
-        const { mediaId, previous } = requireIndexedItem(refreshWork, index);
-        if (outcome.kind === "Fulfilled") {
-          apply({
-            kind: "SetPlacement",
-            mediaId,
-            placement: { kind: "Ready", libraries: outcome.value },
-          });
-          return;
-        }
-        if (signal.aborted || isAbortError(outcome.error)) return;
-        if (handleUnauthenticatedApiError(outcome.error)) {
-          apply({
-            kind: "SetPlacement",
-            mediaId,
-            placement: previous,
-          });
+      if (handleUnauthenticatedApiError(error)) {
+        placement(mediaId, beforeRetry ?? { kind: "Ready", libraries: work.libraries });
+        return;
+      }
+      try {
+        const feedback = libraryRequestErrorMessage(error, { title: "Libraries couldn’t be updated", request: "PlacementMutation" });
+        const uncertain = isApiError(error) && !isSameSystemApiDefect(error) &&
+          apiTransportFeedback(error, "Libraries couldn’t be updated") !== null;
+        placement(mediaId, uncertain
+          ? { kind: "Uncertain", ...work, feedback }
+          : isApiError(error) && error.code === "E_MEDIA_NOT_FOUND"
+            ? { kind: "Unavailable", feedback: { ...feedback, message: "This item is no longer available." } }
+            : { kind: "Refused", libraries: work.libraries, feedback });
+      } catch (defect) {
+        placement(mediaId, {
+          kind: "Uncertain", ...work,
+          feedback: {
+            tone: "Warning", title: "Couldn’t confirm the library change",
+            message: "Retry the same change to confirm its result.",
+          },
+        });
+        throw defect;
+      }
+    }
+  }
+  async function runPlacement({ mediaIds, command }: { mediaIds: readonly string[]; command: PlacementCommand }) {
+    const snapshot = current.current;
+    if (snapshot.mutation.kind !== "Idle") return;
+    const accepted = new Set(snapshot.items.flatMap((row) => row.kind === "Accepted" ? [row.result.mediaId] : []));
+    const ids = [...new Set(mediaIds)].filter((mediaId) =>
+      accepted.has(mediaId) && snapshot.placementByMediaId.get(mediaId)?.kind !== "Unavailable");
+    if (ids.length === 0) return;
+    if (ids.some((mediaId) => snapshot.placementByMediaId.get(mediaId)?.kind === "Loading")) return;
+    const signal = abort.current.signal;
+    const work = ids.map((mediaId) => {
+      // justify-type-assertion: Idle excludes queued/sent work; Loading returned
+      // above. TypeScript cannot refine this map lookup from those owner gates.
+      const previous = (snapshot.placementByMediaId.get(mediaId) ?? null) as RestingPlacement | null;
+      const queued: Extract<PlacementState, { kind: "Queued" }> = { kind: "Queued", previous, command };
+      return { mediaId, queued };
+    });
+    update((next) => ({
+      ...next,
+      mutation: { kind: "Running", operation: { kind: "Placement", mediaIds: ids } },
+      placementByMediaId: new Map([...next.placementByMediaId, ...work.map(({ mediaId, queued }) => [mediaId, queued] as const)]),
+    }));
+    await batch(work, signal, async ({ mediaId, queued }) => {
+      const request: Extract<PlacementState, { kind: "Loading" }> = { kind: "Loading", previous: queued.previous };
+      placement(mediaId, request);
+      let libraries: LibraryPlacementOption[];
+      try {
+        libraries = await listLibraryPlacements({ kind: "Media", id: mediaId }, { signal });
+      } catch (error) {
+        if (!active(signal)) return;
+        if (isAbortError(error) || handleUnauthenticatedApiError(error)) {
+          placement(mediaId, request.previous);
           return;
         }
         try {
-          const feedback = addContentPlacementErrorMessage(
-            outcome.error,
-            "Libraries couldn’t be loaded",
-          );
-          apply({
-            kind: "SetPlacement",
-            mediaId,
-            placement: { kind: "LoadFailed", feedback },
-          });
-        } catch (caughtDefect: unknown) {
-          apply({
-            kind: "SetPlacement",
-            mediaId,
-            placement: previous,
-          });
-          defects.push(caughtDefect);
+          const feedback = libraryRequestErrorMessage(error, { title: "Libraries couldn’t be loaded", request: "EntryRead" });
+          if (request.previous?.kind === "Uncertain") {
+            placement(mediaId, request.previous);
+          } else {
+            placement(mediaId, isApiError(error) && error.code === "E_MEDIA_NOT_FOUND"
+              ? { kind: "Unavailable", feedback: { ...feedback, message: "This item is no longer available." } }
+              : { kind: "LoadFailed", feedback });
+          }
+        } catch (defect) {
+          placement(mediaId, request.previous);
+          throw defect;
         }
-      });
-      if (defects.length > 0) throw defects[0];
-    },
-    [apply],
-  );
-
-  const createDestination = useCallback(
-    async (name: string): Promise<LibraryDestinationSelection> => {
-      const current = stateRef.current;
-      if (current.mutation.kind !== "Idle") {
-        throw new Error("Another Add operation is already running.");
+        return;
       }
-      const generation = generationRef.current;
-      const signal = sessionAbortRef.current.signal;
-      const normalizedName = name.trim();
-      const libraryId =
-        destinationCreateIdByNameRef.current.get(normalizedName) ??
-        crypto.randomUUID();
-      destinationCreateIdByNameRef.current.set(normalizedName, libraryId);
-      apply({
-        kind: "StartMutation",
-        operation: { kind: "CreateDestination" },
-      });
-      try {
-        const destination = await createLibrary({
-          libraryId,
-          name: normalizedName,
-          signal,
-        });
-        if (generation !== generationRef.current || signal.aborted) {
-          throw new DOMException(
-            "Destination creation no longer belongs to the active Add session.",
-            "AbortError",
-          );
-        }
-        destinationCreateIdByNameRef.current.delete(normalizedName);
-        return {
-          id: destination.id,
-          name: destination.name,
-        };
-      } finally {
-        if (generation === generationRef.current)
-          apply({ kind: "FinishMutation" });
-      }
-    },
-    [apply],
-  );
+      if (!active(signal)) return;
+      placement(mediaId, { kind: "Ready", libraries });
+      const key = libraryPlacementDestinationKey(command.destination);
+      const target = libraries.find((option) => libraryPlacementDestinationKey(option.destination) === key);
+      if (target?.availability.kind !== "Available" ||
+        target.relation.kind !== (command.kind === "Add" ? "Absent" : "Direct")) return;
+      await writePlacement({ mediaId, libraries, command, signal });
+    });
+  }
+  async function retryPlacements(mediaIds: readonly string[]) {
+    const snapshot = current.current;
+    if (snapshot.mutation.kind !== "Idle") return;
+    const work = [...new Set(mediaIds)].flatMap((mediaId) => {
+      const row = snapshot.placementByMediaId.get(mediaId);
+      return row?.kind === "Uncertain" ? [{ mediaId, previous: row, libraries: row.libraries, command: row.command }] : [];
+    });
+    if (work.length === 0) return;
+    const signal = abort.current.signal;
+    update((next) => ({
+      ...next, mutation: { kind: "Running", operation: { kind: "Placement", mediaIds: work.map((row) => row.mediaId) } },
+      placementByMediaId: new Map([
+        ...next.placementByMediaId,
+        ...work.map((row) => [row.mediaId, { kind: "Queued" as const, previous: row.previous, command: row.command }] as const),
+      ]),
+    }));
+    await batch(work, signal, (row) => writePlacement({
+      mediaId: row.mediaId, libraries: row.libraries, command: row.command, signal, beforeRetry: row.previous,
+    }));
+  }
+  async function createDestination(name: string): Promise<LibraryDestinationSelection> {
+    if (current.current.mutation.kind !== "Idle") throw new Error("Another Add operation is already running.");
+    const signal = abort.current.signal;
+    const normalized = name.trim();
+    const libraryId = createIds.current.get(normalized) ?? crypto.randomUUID();
+    createIds.current.set(normalized, libraryId);
+    update((next) => ({ ...next, mutation: { kind: "Running", operation: { kind: "CreateDestination" } } }));
+    try {
+      const destination = await createLibrary({ libraryId, name: normalized, signal });
+      if (!active(signal)) throw new DOMException("Destination creation no longer belongs to the active Add session.", "AbortError");
+      createIds.current.delete(normalized);
+      return { id: destination.id, name: destination.name };
+    } finally {
+      if (active(signal)) update((next) => ({ ...next, mutation: { kind: "Idle" } }));
+    }
+  }
+  async function createAndPlace({ name, mediaIds }: { name: string; mediaIds: readonly string[] }) {
+    const signal = abort.current.signal;
+    const ids = [...mediaIds];
+    const library = await createDestination(name);
+    if (!active(signal)) throw new DOMException("Add session stopped.", "AbortError");
+    await runPlacement({ mediaIds: ids, command: { kind: "Add", destination: { kind: "Library", library } } });
+  }
 
   return {
     state,
-    dirty: isAddSessionDirty(state),
-    start,
-    setUrlText,
-    reviewUrls,
-    stageFiles,
-    removeItem,
-    restageItem,
-    setDefaultDestinations,
-    setItemDestinations,
-    submit,
-    reconcileAcceptance,
-    refreshPlacements,
-    runPlacement,
-    createDestination,
-    stop,
-    discard,
+    dirty: state.urlInput.text.trim() !== "" || state.items.some((row) => row.kind !== "Accepted"),
+    start, setUrlText, reviewUrls, stageFiles, removeItem, restageItem,
+    setDefaultDestinations, setItemDestinations, submit, reconcileAcceptance,
+    refreshPlacements, runPlacement, retryPlacements, createDestination, createAndPlace, stop,
+    discard: () => { start(EMPTY_SEED); },
   };
 }

@@ -29,7 +29,13 @@ area · opened YYYY-MM-DD by <who> · P2
 ---
 
 ## Open
+- [open] ingest / canonical teardown replay · 2026-10-04 source audit · loser teardown deletes the attempt carrying the original viewer/key, losing admission identity while history survives: [ticket](tickets/canonical-source-teardown-deletes-admission-replay.md).
+- [open] ingest / provider concurrency · 2026-10-04 mounted qualification · concurrent new youtube aliases race canonical media creation; one returns a uniqueness 500 instead of joining: [ticket](tickets/concurrent-provider-admission-collides-on-canonical-media.md).
+- [open] ingest / joined admission replay · 2026-10-04 source audit · joining an in-flight provider attempt forgets the new key; exact replay after settlement creates another terminal receipt: [ticket](tickets/joined-url-admission-does-not-record-its-replay-key.md).
 - [open] workspace / chat · 2026-10-04 mounted old proof · after a new chat is admitted the active persisted visit names its conversation while the address bar returns to `/conversations/new`; qualify the url projection owner and stable target: [ticket](tickets/workspace-url-reverts-after-new-chat-adoption.md).
+- [open] ingest / duplicate feedback · 2026-10-04 source audit · identical command replay is labeled content duplication; qualify the browser marker before changing the public result: [ticket](tickets/source-replay-is-reported-as-content-duplicate.md).
+- [open] ingest / replay authority · 2026-10-04 source audit · replay validates current destination write access before reading the saved admission: [ticket](tickets/url-replay-requires-current-destination-write-access.md).
+- [open] ingest / source adapters · 2026-10-04 simplification audit · the source runner reconstructs five shared result fields from adapter dictionaries: [ticket](tickets/source-adapter-result-has-parallel-dictionary-protocol.md).
 - [open] media upload retry · 2026-10-04 source audit · the fresh and memo retry paths repeat the same capability generation/expiry in a private result: [ticket](tickets/upload-retry-repeats-capability-result.md).
 - [open] ui field controls · 2026-10-04 source audit · input, textarea and select repeat appearance rules; qualify one shared class against caller overrides and focus behavior: [ticket](tickets/ui-field-controls-repeat-appearance-rules.md).
 - [open] epub / navigation · 2026-10-04 source review · a publisher href-based section id may retire when its point becomes note content; qualify the unobserved saved-location case before the rearnote alias release: [ticket](tickets/epub-publisher-href-loc-retirement-on-note-promotion.md).
@@ -43,7 +49,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [deferred] resource sharing / public reader · 2026-09-28 resource-sharing reauthoring · owner call: public PDF bytes keep streaming through the api, or move to signed storage urls: [ticket](tickets/public-pdf-signed-url-decision.md).
 - [open] resource sharing / share overlay web · 2026-09-28 resource-sharing review · the Native and X bearer-link triggers stay enabled while another change is in flight: [ticket](tickets/share-overlay-bearer-warning-triggers-ignore-busy.md).
 - [open] web / python comments · 2026-09-28 pr-06 library placement · 25 code comments cite deleted `docs/cutovers/` files as rule owners: [ticket](tickets/code-comments-cite-deleted-cutovers.md).
-- [open] ingest-imports web · 2026-09-28 pr-06 library placement · Add Content still rereads and decides settlement-unknown placement writes and publishes the bus by hand, where the overlay now resends: [ticket](tickets/add-content-placement-unknown-machine.md).
 - [open] oracle rest · 2026-10-04 pr #499 follow-up · browser bounds count utf-16 units instead of canonical code points: [ticket](tickets/oracle-rest-string-bounds-count-different-units.md).
 - [deferred] oracle rest · 2026-10-04 pr #499 follow-up · outer readers rebuild existing named outputs; all-source gain is unmeasured: [ticket](tickets/oracle-rest-readers-repeat-owned-outputs.md).
 - [open] jobs / documentation · 2026-10-04 backend owner audit · the jobs module still describes retired chat result kinds and a media-unit failed-result declaration absent from the registry: [ticket](tickets/jobs-handler-outcome-docs-stale.md).
@@ -296,7 +301,6 @@ unexpected timeouts. See
 - [open] 2026-09-26 processing review · two stored keats publications need heading normalization before reindex: [ticket](tickets/old-web-publications-lack-index-heading-normalization.md).
 - [open] 2026-09-26 processing review · historical gutenberg epub retry retains the wrong source adapter: [ticket](tickets/gutenberg-failed-import-retains-obsolete-web-adapter.md).
 - [open] 2026-09-26 processing review · two historical note indexes still need owned recovery: [ticket](tickets/historical-note-index-failures-need-owned-recovery.md).
-- [open] 2026-09-26 processing review · source acceptance can commit before runnable work is durable: [ticket](tickets/source-acceptance-can-commit-without-enqueued-work.md).
 - [deferred] ingest reconciliation · 2026-10-03 source recheck · nonterminal semantic jobs can monopolize oldest-25 discovery; prior source/index paths are fixed, runtime NOT_RUN: [ticket](tickets/ingest-reconciler-dead-rows-can-starve-new-work.md).
 - [open] 2026-09-26 processing review · transient storage errors are treated as permanent source loss: [ticket](tickets/storage-outage-is-misclassified-as-lost-source.md).
 - [open] 2026-09-26 processing review · superseded oracle sources retain three unfiled failed media rows: [ticket](tickets/superseded-oracle-seeds-retain-unfiled-failed-media.md).

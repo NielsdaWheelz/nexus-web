@@ -3,36 +3,19 @@
 import {
   apiCommand204,
   apiFetch,
-  decodeApiPayload,
   isApiError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
+import type { ApiJson, Schema } from "@/lib/api/wire";
 import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
 import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
 import { publishImportsInvalidation } from "@/lib/imports/importsClient";
-import {
-  requireDocumentProcessingStatus,
-  type DocumentProcessingStatus,
-} from "@/lib/media/documentReadiness";
-import {
-  decodeUploadResponse,
-  type PublishedUpload,
-  type UploadCapability,
-  type UploadFailure,
-  type UploadResponse,
-} from "@/lib/media/uploadSessionContract";
+import type { DocumentProcessingStatus } from "@/lib/media/documentReadiness";
 import type {
   UploadTransportFailure,
   UploadVerificationCode,
 } from "@/lib/media/uploadVerification";
-import {
-  expectExactRecord,
-  expectNonemptyString,
-  expectOneOf,
-  expectRecord,
-  expectString,
-} from "@/lib/validation";
 
 export type UploadFileKind = "Pdf" | "Epub";
 export type UploadPhase = "Preparing" | "Uploading" | "Verifying";
@@ -41,27 +24,9 @@ export type UploadPhase = "Preparing" | "Uploading" | "Verifying";
 // window that is not strictly longer than this bounded browser PUT horizon.
 const DIRECT_UPLOAD_PUT_TIMEOUT_MS = 240_000;
 
-// Lifecycle vocabularies are declared once as the decoded tuple and the type is
-// derived from it, so a variant can never exist in the union without also being
-// accepted by the decoder that guards it.
-const SOURCE_ATTEMPT_STATUSES = [
-  "accepted",
-  "queued",
-  "running",
-  "succeeded",
-  "failed",
-] as const;
-
-type SourceAttemptStatus = (typeof SOURCE_ATTEMPT_STATUSES)[number];
-
-const SOURCE_IDEMPOTENCY_OUTCOMES = [
-  "created",
-  "reused",
-  "retrying",
-  "refreshed",
-] as const;
-
-type SourceIdempotencyOutcome = (typeof SOURCE_IDEMPOTENCY_OUTCOMES)[number];
+type SourceAttemptStatus = Schema<"FromUrlResponse">["source_attempt_status"];
+type SourceIdempotencyOutcome = Schema<"FromUrlResponse">["idempotency_outcome"];
+type UploadCapability = Schema<"UploadRequired">;
 
 export interface SourceIngestResult {
   kind: "SourceIngest";
@@ -284,27 +249,6 @@ function uploadSessionFailure(
   return new UploadSessionError(outcome, { cause: error });
 }
 
-/** The two variants the retry endpoint declares (contract §4). */
-type RetryResponse = Exclude<UploadResponse, { kind: "Published" }>;
-
-function retryResponse(raw: unknown): RetryResponse {
-  const response = decodeUploadResponse(raw);
-  if (response.kind === "Published") {
-    throw new TypeError(
-      "upload retry must answer UploadRequired or NeedsAttention",
-    );
-  }
-  return response;
-}
-
-function confirmedUpload(raw: unknown): PublishedUpload {
-  const response = decodeUploadResponse(raw);
-  if (response.kind !== "Published") {
-    throw new TypeError("upload confirmation must publish media");
-  }
-  return response;
-}
-
 function contentTypeFor(kind: UploadFileKind): string {
   return kind === "Pdf" ? "application/pdf" : "application/epub+zip";
 }
@@ -328,19 +272,21 @@ export function getFileUploadError(file: File): string | null {
     : null;
 }
 
-function publishedResult(response: PublishedUpload): PublishedUploadResult {
+function publishedResult(response: Schema<"Published">): PublishedUploadResult {
   const idempotencyOutcome =
-    response.idempotencyOutcome === "Created" ? "created" : "reused";
+    response.idempotency_outcome === "Created" ? "created" : "reused";
   return {
     kind: "PublishedUpload",
-    mediaId: response.mediaId,
-    sourceAttemptId: response.sourceAttemptId,
+    mediaId: response.media_id,
+    sourceAttemptId: response.source_attempt_id,
     idempotencyOutcome,
     duplicate: idempotencyOutcome === "reused",
   };
 }
 
-function attentionOutcome(failure: UploadFailure): UploadSessionOutcome {
+function attentionOutcome(
+  failure: Schema<"NeedsAttention">["failure"],
+): UploadSessionOutcome {
   switch (failure.kind) {
     case "VerificationFailed":
       return { kind: "VerificationRejected", code: failure.code };
@@ -354,7 +300,7 @@ function attentionOutcome(failure: UploadFailure): UploadSessionOutcome {
 function putWindowMs(capability: UploadCapability): number {
   return Math.min(
     DIRECT_UPLOAD_PUT_TIMEOUT_MS,
-    Date.parse(capability.expiresAt) - Date.now(),
+    Date.parse(capability.expires_at) - Date.now(),
   );
 }
 
@@ -365,7 +311,7 @@ async function reportTransportFailure(
 ): Promise<void> {
   try {
     await apiCommand204(
-      `/api/media/uploads/${encodeURIComponent(capability.sessionHandle)}/transport-failure`,
+      `/api/media/uploads/${encodeURIComponent(capability.session_handle)}/transport-failure`,
       {
         method: "POST",
         body: JSON.stringify({
@@ -418,9 +364,9 @@ async function putAndConfirm(
 
   let response: Response;
   try {
-    response = await fetch(capability.uploadUrl, {
+    response = await fetch(capability.upload_url, {
       method: "PUT",
-      headers: capability.requiredHeaders,
+      headers: capability.required_headers,
       body: file,
       signal: putController.signal,
     });
@@ -453,20 +399,17 @@ async function putAndConfirm(
 
   onPhaseChange?.("Verifying");
   try {
-    return publishedResult(
-      decodeApiPayload(
-        await apiFetch<unknown>(
-          `/api/media/uploads/${encodeURIComponent(capability.sessionHandle)}/confirm`,
-          {
-            method: "POST",
-            body: JSON.stringify({ generation: capability.generation }),
-            signal,
-          },
-        ),
-        confirmedUpload,
-        "POST /api/media/uploads/:session/confirm",
-      ),
+    const { data } = await apiFetch<
+      ApiJson<"/media/uploads/{session_handle}/confirm", "post">
+    >(
+      `/api/media/uploads/${encodeURIComponent(capability.session_handle)}/confirm`,
+      {
+        method: "POST",
+        body: JSON.stringify({ generation: capability.generation }),
+        signal,
+      },
     );
+    return publishedResult(data);
   } catch (error) {
     throw uploadSessionFailure("Confirm", error);
   }
@@ -491,10 +434,11 @@ export async function uploadIngestFile({
   if (!kind) throw new Error("Only PDF and EPUB files are supported.");
   onPhaseChange?.("Preparing");
 
-  const create = async (): Promise<UploadResponse> => {
+  const create = async (): Promise<ApiJson<"/media/uploads", "post">["data"]> => {
     try {
-      return decodeApiPayload(
-        await apiFetch<unknown>("/api/media/uploads", {
+      const { data } = await apiFetch<ApiJson<"/media/uploads", "post">>(
+        "/api/media/uploads",
+        {
           method: "POST",
           headers: { "Idempotency-Key": idempotencyKey },
           body: JSON.stringify({
@@ -505,10 +449,9 @@ export async function uploadIngestFile({
             library_ids: libraryIds,
           }),
           signal,
-        }),
-        decodeUploadResponse,
-        "POST /api/media/uploads",
+        },
       );
+      return data;
     } catch (error) {
       throw uploadSessionFailure("Create", error);
     }
@@ -562,26 +505,27 @@ export async function retryUploadSession({
   if (!kind || getFileUploadError(file)) {
     throw new UploadSessionError({ kind: "FileMismatch" });
   }
-  const request = async (): Promise<RetryResponse> => {
+  const request = async (): Promise<
+    ApiJson<"/media/uploads/{session_handle}/retry", "post">["data"]
+  > => {
     try {
-      return decodeApiPayload(
-        await apiFetch<unknown>(
-          `/api/media/uploads/${encodeURIComponent(sessionHandle)}/retry`,
-          {
-            method: "POST",
-            body: JSON.stringify({
-              filename: file.name,
-              content_type: contentTypeFor(kind),
-              size_bytes: file.size,
-              client_mutation_id: clientMutationId,
-              expected_generation: expectedGeneration,
-            }),
-            signal,
-          },
-        ),
-        retryResponse,
-        "POST /api/media/uploads/:session/retry",
+      const { data } = await apiFetch<
+        ApiJson<"/media/uploads/{session_handle}/retry", "post">
+      >(
+        `/api/media/uploads/${encodeURIComponent(sessionHandle)}/retry`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            filename: file.name,
+            content_type: contentTypeFor(kind),
+            size_bytes: file.size,
+            client_mutation_id: clientMutationId,
+            expected_generation: expectedGeneration,
+          }),
+          signal,
+        },
       );
+      return data;
     } catch (error) {
       throw uploadSessionFailure("Retry", error);
     }
@@ -643,43 +587,6 @@ export async function removeUploadSession(
   publishImportsInvalidation();
 }
 
-function sourceIngestResult(
-  data: Record<string, unknown>,
-  name: string,
-): SourceIngestResult {
-  const idempotencyOutcome = expectOneOf(
-    data.idempotency_outcome,
-    SOURCE_IDEMPOTENCY_OUTCOMES,
-    `${name}.idempotency_outcome`,
-  );
-  return {
-    kind: "SourceIngest",
-    mediaId: expectNonemptyString(data.media_id, `${name}.media_id`),
-    sourceAttemptId: expectNonemptyString(
-      data.source_attempt_id,
-      `${name}.source_attempt_id`,
-    ),
-    sourceType: expectNonemptyString(data.source_type, `${name}.source_type`),
-    sourceAttemptStatus: expectOneOf(
-      data.source_attempt_status,
-      SOURCE_ATTEMPT_STATUSES,
-      `${name}.source_attempt_status`,
-    ),
-    idempotencyOutcome,
-    duplicate: idempotencyOutcome === "reused",
-    processingStatus: requireDocumentProcessingStatus(
-      expectString(data.processing_status, `${name}.processing_status`),
-    ),
-    ingestEnqueued: data.ingest_enqueued === true,
-  };
-}
-
-function fromUrlResponse(raw: unknown): SourceIngestResult {
-  const name = "URL ingest response";
-  const envelope = expectExactRecord(raw, ["data"], name);
-  return sourceIngestResult(expectRecord(envelope.data, `${name}.data`), name);
-}
-
 export async function addMediaFromUrl({
   url,
   libraryIds,
@@ -691,16 +598,26 @@ export async function addMediaFromUrl({
   idempotencyKey?: string;
   signal?: AbortSignal;
 }): Promise<SourceIngestResult> {
-  const result = decodeApiPayload(
-    await apiFetch<unknown>("/api/media/from-url", {
+  const { data } = await apiFetch<ApiJson<"/media/from_url", "post">>(
+    "/api/media/from-url",
+    {
       method: "POST",
       headers: { "Idempotency-Key": idempotencyKey },
       body: JSON.stringify({ url, library_ids: libraryIds }),
       signal,
-    }),
-    fromUrlResponse,
-    "POST /api/media/from-url",
+    },
   );
+  const result: SourceIngestResult = {
+    kind: "SourceIngest",
+    mediaId: data.media_id,
+    sourceAttemptId: data.source_attempt_id,
+    sourceType: data.source_type,
+    sourceAttemptStatus: data.source_attempt_status,
+    idempotencyOutcome: data.idempotency_outcome,
+    duplicate: data.idempotency_outcome === "reused",
+    processingStatus: data.processing_status,
+    ingestEnqueued: data.ingest_enqueued,
+  };
   publishLibraryPlacementChange([...libraryIds]);
   publishImportsInvalidation();
   return result;
