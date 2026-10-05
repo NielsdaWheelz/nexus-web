@@ -1,63 +1,40 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 
 import { useViewportState } from "@/lib/renderEnvironment/provider";
 import { activityRecorder } from "./activityRecorder";
-import { activityRuntime, useActivityRuntimeSnapshot } from "./activityRuntime";
+import { activityUploader } from "./activityUploader";
 
-/** Capture runs once the account's outbox is open, the viewport hydrated, the tab visible and
- * capture unblocked. */
-const ready = (opened: boolean, hydrated: boolean, capture: string) =>
-  opened &&
-  hydrated &&
-  document.visibilityState === "visible" &&
-  (capture === "Idle" || capture === "Recording");
-
-export default function ActivityCaptureLifecycle({ accountId }: { readonly accountId: string }) {
+/** Capture runs once the viewport is hydrated; the recorder decides what a hidden tab still
+ * counts. Leaving the page closes every span and hands them to the browser. */
+export default function ActivityCaptureLifecycle(): null {
   const hydrated = useViewportState().hydrated;
-  const capture = useActivityRuntimeSnapshot().capture.kind;
-  const [openedAccount, setOpenedAccount] = useState<string>();
-  const opened = openedAccount === accountId;
 
   useEffect(() => {
-    let mounted = true;
-    activityRecorder().setCaptureReady(false);
-    void activityRuntime()
-      .open(accountId)
-      .then(() => mounted && setOpenedAccount(accountId));
+    const recorder = activityRecorder();
+    const uploader = activityUploader();
+    recorder.setCaptureReady(hydrated);
+    if (!hydrated) return;
+    const refresh = () => recorder.refresh();
+    const leave = () => {
+      recorder.closeForLifecycle();
+      uploader.flush({ keepalive: true });
+    };
+    const resume = () => recorder.setCaptureReady(true);
+    const online = () => uploader.flush();
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("pagehide", leave);
+    window.addEventListener("pageshow", resume);
+    window.addEventListener("online", online);
     return () => {
-      mounted = false;
-      activityRecorder().closeForLifecycle();
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("pagehide", leave);
+      window.removeEventListener("pageshow", resume);
+      window.removeEventListener("online", online);
+      recorder.closeForLifecycle();
     };
-  }, [accountId]);
-
-  useEffect(() => {
-    activityRecorder().setCaptureReady(ready(opened, hydrated, capture));
-  }, [opened, hydrated, capture]);
-
-  useEffect(() => {
-    const drain = () => void activityRuntime().drain();
-    const resume = () => {
-      drain();
-      const capture = activityRuntime().snapshot().capture.kind;
-      activityRecorder().setCaptureReady(ready(opened, hydrated, capture));
-    };
-    const close = () => activityRecorder().closeForLifecycle();
-    const onVisibility = () => (document.visibilityState === "hidden" ? close() : resume());
-    const events = [
-      ["pagehide", close],
-      ["focus", resume],
-      ["pageshow", resume],
-      ["online", drain],
-    ] as const;
-    document.addEventListener("visibilitychange", onVisibility);
-    for (const [event, listener] of events) window.addEventListener(event, listener);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibility);
-      for (const [event, listener] of events) window.removeEventListener(event, listener);
-    };
-  }, [opened, hydrated]);
+  }, [hydrated]);
 
   return null;
 }

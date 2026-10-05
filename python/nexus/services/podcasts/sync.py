@@ -16,7 +16,7 @@ from nexus.db.session import transaction
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.jobs.queue import JobExecutionContext, JobRow, lock_and_renew_running_job_claim
 from nexus.logging import get_logger
-from nexus.services.consumption import _lectern_store
+from nexus.services.consumption import lectern
 
 from ._normalize import parse_iso_datetime
 from .feed import fetch_live_feed_snapshot
@@ -249,9 +249,7 @@ def _advance_auto_queue(
         ).scalars()
     ]
     if eligible:
-        _lectern_store.ensure_missing_in_txn(
-            db, viewer_id=epoch.user_id, media_ids=eligible, source="AutoSubscription"
-        )
+        lectern.ensure_missing_in_txn(db, viewer_id=epoch.user_id, media_ids=eligible)
     db.execute(
         text(
             """

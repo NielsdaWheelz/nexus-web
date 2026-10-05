@@ -1,10 +1,12 @@
 "use client";
 
 import { Play } from "lucide-react";
-import { useCallback, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import QuickReadsSection from "@/components/collections/QuickReadsSection";
-import ReadingSlateSection from "@/components/collections/ReadingSlateSection";
+import ReadingSlateSection, {
+  type SlateAccept,
+} from "@/components/collections/ReadingSlateSection";
 import {
   FeedbackNotice,
   type FeedbackContent,
@@ -16,20 +18,21 @@ import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
 import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
 import {
-  ApiError,
+  apiTransportFeedback,
   isApiError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { playbackVerb, presentLecternItem } from "@/lib/collections/presenters/lectern";
-import type {
-  ConsumptionInfo,
-  LecternItem,
-  LecternItemId,
-  LecternSnapshot,
+import {
+  playbackVerb,
+  presentLecternItem,
+} from "@/lib/collections/presenters/lectern";
+import {
+  assumeMediaId,
+  parseLecternItemId,
+  type LecternItem,
 } from "@/lib/lectern/contract";
-import { assumeMediaId } from "@/lib/lectern/contract";
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import {
   CANONICAL_LECTERN_VIEW,
@@ -43,270 +46,111 @@ import {
   type DecodedLecternView,
   type LecternSortOptionId,
 } from "@/lib/lectern/view";
-import { descriptorFromLecternItem } from "@/lib/player/playerSession";
 import { usePlayerCommands } from "@/lib/player/playerRuntime";
-import {
-  usePaneIsActive,
-  usePaneRuntime,
-} from "@/lib/panes/paneRuntime";
-import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
+import { usePaneIsActive, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
-import type { PaneFilterRowsStatus } from "@/lib/panes/paneFilterRows";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import { slateTargetId } from "@/lib/resonance";
-import type { SlateAccept } from "@/components/collections/ReadingSlateSection";
+import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "./LecternPaneBody.module.css";
 
-const LECTERN_FILTER_UNIT = { singular: "item", plural: "items" };
+const UNIT = { singular: "item", plural: "items" };
 
-/** The presented row text the local Filter matches: title and podcast show. */
-function lecternFilterFields(item: LecternItem): string[] {
-  return item.playerDisplay.kind === "Present" && item.playerDisplay.value.subtitle.kind === "Present"
-    ? [item.mediaSummary.title, item.playerDisplay.value.subtitle.value]
+/** What the local filter matches: the title and, for an episode, its show. */
+function filterFields(item: LecternItem): string[] {
+  const subtitle =
+    item.activation.kind === "FooterAudio"
+      ? item.activation.descriptor.subtitle
+      : null;
+  return subtitle?.kind === "Present"
+    ? [item.mediaSummary.title, subtitle.value]
     : [item.mediaSummary.title];
 }
 
-function PlaybackButton({
-  title,
-  consumption,
-  onPlay,
-}: {
-  title: string;
-  consumption: ConsumptionInfo;
-  onPlay: () => void;
-}) {
-  const verb = playbackVerb(consumption);
-  return (
-    <Button
-      variant="secondary"
-      size="sm"
-      className={styles.rowAction}
-      aria-label={`${verb} ${title}`}
-      leadingIcon={<Play size={14} aria-hidden="true" />}
-      onClick={onPlay}
-    >
-      {verb}
-    </Button>
-  );
-}
-
-function snapshotItems(
-  resourceData: LecternSnapshot | undefined,
-  pendingSnapshot: LecternSnapshot | undefined,
-): LecternItem[] {
-  if (pendingSnapshot) return pendingSnapshot.items;
-  return resourceData ? resourceData.items : [];
-}
-
-type LecternErrorOperation = "Load" | "Reorder";
-
-/** Exhaustive copy adapter for the Lectern pane's modeled error channel. */
-function lecternErrorMessage(
-  error: unknown,
-  operation: LecternErrorOperation,
-): FeedbackContent {
+/** Modeled failures become notices; anything else is a defect for the error boundary. */
+function failureNotice(error: unknown, title: string): FeedbackContent {
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-
-  const requestId = error.requestId;
-  const title =
-    operation === "Load"
-      ? "Lectern couldn’t be loaded"
-      : "Lectern wasn’t reordered";
-  switch (error.code) {
-    case "E_NETWORK":
-      return {
-        tone: "Danger",
-        title,
-        message: "Check your connection and retry.",
-        requestId,
-      };
-    case "E_TIMEOUT":
-    case "E_UPSTREAM_TIMEOUT":
-      return {
-        tone: "Danger",
-        title,
-        message: "The server took too long to respond. Retry the change.",
-        requestId,
-      };
-    case "E_RATE_LIMITED":
-      return {
-        tone: "Danger",
-        title,
-        message: "Wait a moment, then retry.",
-        requestId,
-      };
-    case "E_INVALID_REQUEST":
-      if (operation === "Reorder") {
-        return {
-          tone: "Danger",
-          title,
-          message: "Lectern changed while you were reordering. Review the current order and try again.",
-          requestId,
-        };
-      }
-      throw error;
-    default:
-      throw error;
+  if (
+    error.code === "E_INVALID_REQUEST" &&
+    title === "Lectern wasn’t reordered"
+  ) {
+    return {
+      tone: "Danger",
+      title,
+      message:
+        "Lectern changed while you were reordering. Review the order and try again.",
+      requestId: error.requestId,
+    };
   }
+  const content = apiTransportFeedback(error, title);
+  if (content === null) throw error;
+  return content;
 }
+
+const VIEW_CODEC = {
+  basePath: "/lectern",
+  decode: decodeLecternView,
+  encode: (decoded: DecodedLecternView, current: URLSearchParams) =>
+    encodeLecternView(
+      decoded.kind === "Valid" ? decoded.view : CANONICAL_LECTERN_VIEW,
+      current,
+    ),
+  replaceOptions: { viewTransition: { kind: "collection-reflow" as const } },
+};
 
 export default function LecternPaneBody() {
-  const {
-    resource,
-    mutation,
-    placeItems,
-    setOrder,
-  } = useLectern();
+  const { resource, busy, placeItems, setOrder } = useLectern();
   const { playAudio } = usePlayerCommands();
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const queueSectionId = useId();
-  const paneRuntime = usePaneRuntime();
+  const paneId = usePaneRuntime()?.paneId ?? "lectern";
   const isPaneActive = usePaneIsActive();
-  const paneId = paneRuntime?.paneId ?? "lectern";
-
-  // A leaf never holds a snapshot cache: it renders the provider's optimistic
-  // `presentedSnapshot` while a mutation is Pending, otherwise canonical data.
-  const pendingSnapshot =
-    mutation.kind === "Pending" ? mutation.presentedSnapshot : undefined;
-  const items = snapshotItems(
-    resource.status === "ready" ? resource.data : undefined,
-    pendingSnapshot,
+  const items = useMemo(
+    () => (resource.status === "ready" ? resource.data.items : []),
+    [resource],
   );
-  const queueStatus: "loading" | "error" | "ready" =
-    resource.status === "ready"
-      ? "ready"
-      : resource.status === "error"
-        ? "error"
-        : "loading";
-  usePaneReturnReady(queueStatus !== "loading");
+  const status =
+    resource.status === "ready" || resource.status === "error"
+      ? resource.status
+      : "loading";
+  usePaneReturnReady(status !== "loading");
 
-  // Lectern view state is pane-URL state that never reaches the API: the whole
-  // snapshot already arrived, so a sort is a pure projection over a copy of it.
-  const lecternViewCodec = useMemo(
-    () => ({
-      basePath: "/lectern",
-      decode: decodeLecternView,
-      encode: (decoded: DecodedLecternView, current: URLSearchParams) =>
-        encodeLecternView(
-          decoded.kind === "Valid" ? decoded.view : CANONICAL_LECTERN_VIEW,
-          current,
-        ),
-      replaceOptions: { viewTransition: { kind: "collection-reflow" as const } },
-    }),
-    [],
-  );
   const { state: decodedView, setState: setDecodedView } =
-    usePaneUrlState(lecternViewCodec);
+    usePaneUrlState(VIEW_CODEC);
   const view = decodedView.kind === "Valid" ? decodedView.view : null;
-  const orderedItems = useMemo(
+  const ordered = useMemo(
     () => (view === null ? [] : orderLecternItems(view, items)),
     [items, view],
   );
   const sortSelectRef = useRef<HTMLSelectElement | null>(null);
-  const presentFailure = useCallback(
-    (error: unknown, operation: LecternErrorOperation) => {
-      try {
-        setFeedback(lecternErrorMessage(error, operation));
-      } catch (caughtDefect) {
-        setDefect({ error: caughtDefect });
-      }
-    },
-    [],
-  );
 
-  const handleReorder = useCallback(
-    (itemIds: LecternItemId[]) => {
-      setFeedback(null);
-      void setOrder(itemIds).catch((err) => {
-        if (handleUnauthenticatedApiError(err)) return;
-        presentFailure(err, "Reorder");
-      });
-    },
-    [presentFailure, setOrder],
-  );
-
-  const acceptSlateTarget = useCallback<SlateAccept>(
-    async (target) => {
-      // The provider treats a command before its first read as a defect.
-      if (resource.status !== "ready")
-        throw new ApiError(409, "E_LECTERN_NOT_READY", "The Lectern is still loading.");
-      await placeItems({
-        mediaIds: [assumeMediaId(slateTargetId(target))],
-        placement: { kind: "Last" },
-      });
-    },
-    [placeItems, resource.status],
-  );
-
-  const domainFilterControls = useMemo(
-    () =>
-      view === null ? undefined : (
-        <>
-          <SelectField
-            layout="Inline"
-            label="Sort Lectern items"
-            size="sm"
-            ref={sortSelectRef}
-            value={lecternSortOptionOf(view)}
-            onChange={(event) =>
-              setDecodedView({
-                kind: "Valid",
-                view: lecternViewForSortOption(
-                  event.target.value as LecternSortOptionId,
-                ),
-              })
-            }
-          >
-            {LECTERN_SORT_OPTION_IDS.map((optionId) => (
-              <option key={optionId} value={optionId}>
-                {lecternSortOptionLabel(optionId)}
-              </option>
-            ))}
-          </SelectField>
-        </>
-      ),
-    [setDecodedView, view],
-  );
-  const getFilterStatus = useCallback(
-    (query: string): PaneFilterRowsStatus => {
-      const visibleCount = orderedItems.filter((item) =>
-        matchesPaneFilterQuery(query, lecternFilterFields(item)),
+  const getRowStatus = useCallback(
+    (query: string) => {
+      const visibleCount = ordered.filter((item) =>
+        matchesPaneFilterQuery(query, filterFields(item)),
       ).length;
-      if (queueStatus === "error") {
+      const loadedCount = ordered.length;
+      if (status === "ready")
         return {
-          kind: "Failed",
+          kind: "Complete" as const,
           visibleCount,
-          loadedCount: orderedItems.length,
-          unit: LECTERN_FILTER_UNIT,
+          totalCount: loadedCount,
+          unit: UNIT,
         };
-      }
-      return queueStatus === "ready"
-        ? {
-            kind: "Complete",
-            visibleCount,
-            totalCount: orderedItems.length,
-            unit: LECTERN_FILTER_UNIT,
-          }
-        : {
-            kind: "Partial",
-            visibleCount,
-            loadedCount: orderedItems.length,
-            unit: LECTERN_FILTER_UNIT,
-          };
+      return {
+        kind: status === "error" ? ("Failed" as const) : ("Partial" as const),
+        visibleCount,
+        loadedCount,
+        unit: UNIT,
+      };
     },
-    [orderedItems, queueStatus],
+    [ordered, status],
   );
-  const {
-    query: filterQuery,
-    onQueryChange,
-    clearQuery,
-    rowStatus,
-  } = usePaneFilterRows({
+  const { query, onQueryChange, clearQuery, rowStatus } = usePaneFilterRows({
     sourceKey: "Lectern.Items",
-    getRowStatus: getFilterStatus,
+    getRowStatus,
   });
-  const resetToCanonicalView = useCallback(() => {
+  const resetView = useCallback(() => {
     clearQuery();
     setDecodedView({ kind: "Valid", view: CANONICAL_LECTERN_VIEW });
   }, [clearQuery, setDecodedView]);
@@ -317,94 +161,119 @@ export default function LecternPaneBody() {
         ? undefined
         : {
             label: "Filter Lectern",
+            focusInput,
             content: (
               <PaneCollectionBar
                 inputRef={inputRef}
                 inputLabel="Filter Lectern"
                 placeholder="Filter items"
-                query={filterQuery}
+                query={query}
                 onQueryChange={onQueryChange}
                 onClearQuery={clearQuery}
                 rowStatus={rowStatus}
-                filters={domainFilterControls}
-                controls={view.kind !== "Custom" ? (
-                  <Button
-                    variant="ghost"
+                filters={
+                  <SelectField
+                    layout="Inline"
+                    label="Sort Lectern items"
                     size="sm"
-                    onClick={() => {
-                      sortSelectRef.current?.focus({ preventScroll: true });
-                      resetToCanonicalView();
-                    }}
+                    ref={sortSelectRef}
+                    value={lecternSortOptionOf(view)}
+                    onChange={(event) =>
+                      setDecodedView({
+                        kind: "Valid",
+                        view: lecternViewForSortOption(
+                          event.target.value as LecternSortOptionId,
+                        ),
+                      })
+                    }
                   >
-                    Reset view
-                  </Button>
-                ) : undefined}
+                    {LECTERN_SORT_OPTION_IDS.map((id) => (
+                      <option key={id} value={id}>
+                        {lecternSortOptionLabel(id)}
+                      </option>
+                    ))}
+                  </SelectField>
+                }
+                controls={
+                  view.kind === "Custom" ? undefined : (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        sortSelectRef.current?.focus({ preventScroll: true });
+                        resetView();
+                      }}
+                    >
+                      Reset view
+                    </Button>
+                  )
+                }
               />
             ),
-            focusInput,
           },
     [
       clearQuery,
-      domainFilterControls,
-      filterQuery,
       focusInput,
       inputRef,
       onQueryChange,
-      resetToCanonicalView,
+      query,
+      resetView,
       rowStatus,
+      setDecodedView,
       view,
     ],
   );
-  const effectiveQuery = filterQuery.trim();
-  const visibleItems = useMemo(
-    () =>
-      orderedItems.filter((item) =>
-        matchesPaneFilterQuery(filterQuery, lecternFilterFields(item)),
-      ),
-    [filterQuery, orderedItems],
-  );
-
   usePanePrimaryChrome({
     collection,
+    // The count is the whole Lectern, never the filtered subset.
     header: {
       kind: "Section",
-      // The metadata describes the exhaustive Lectern, never the local subset.
       meta:
-        queueStatus === "loading"
+        status === "loading"
           ? { kind: "Pending" }
           : { kind: "Count", value: items.length, unit: "item" },
     },
   });
 
-  const queueRows = visibleItems.map(presentLecternItem);
-  const queueControls = Object.fromEntries(
-    visibleItems.flatMap((item) => {
-      if (item.activation.kind !== "FooterAudio") return [];
+  const acceptSlateTarget = useCallback<SlateAccept>(
+    async (target) => {
+      await placeItems({
+        mediaIds: [assumeMediaId(slateTargetId(target))],
+        placement: { kind: "Last" },
+      });
+    },
+    [placeItems],
+  );
+
+  const visible = ordered.filter((item) =>
+    matchesPaneFilterQuery(query, filterFields(item)),
+  );
+  const filtering = query.trim().length > 0;
+  const controls = Object.fromEntries(
+    visible.flatMap((item) => {
+      const activation = item.activation;
+      if (activation.kind !== "FooterAudio") return [];
+      const verb = playbackVerb(item.consumption);
       return [
         [
           item.itemId,
-          <PlaybackButton
+          <Button
             key="play"
-            title={item.mediaSummary.title}
-            consumption={item.consumption}
-            onPlay={() => playAudio(descriptorFromLecternItem(item))}
-          />,
+            variant="secondary"
+            size="sm"
+            className={styles.rowAction}
+            aria-label={`${verb} ${item.mediaSummary.title}`}
+            leadingIcon={<Play size={14} aria-hidden="true" />}
+            onClick={() => playAudio(activation.descriptor)}
+          >
+            {verb}
+          </Button>,
         ],
       ];
     }),
   );
 
-  const queueError =
-    resource.status === "error" ? (
-      <FeedbackNotice
-        content={lecternErrorMessage(resource.error, "Load")}
-        announcement="Assertive"
-        actions={[{ label: "Retry", onClick: resource.retry }]}
-      />
-    ) : undefined;
-
   if (defect) throw defect.error;
-
   return (
     <PaneSurface
       state={
@@ -413,58 +282,73 @@ export default function LecternPaneBody() {
         ) : undefined
       }
     >
-      <section
-        id={queueSectionId}
-        aria-label="On the lectern"
-        tabIndex={-1}
-      >
+      <section aria-label="On the lectern" tabIndex={-1}>
         {view === null ? (
           <FeedbackNotice
             content={{ tone: "Danger", title: "Invalid Lectern view" }}
             announcement="Assertive"
-            actions={[{ label: "Reset view", onClick: () => {
-              resetToCanonicalView();
-              requestAnimationFrame(() => sortSelectRef.current?.focus({ preventScroll: true }));
-            } }]}
+            actions={[
+              {
+                label: "Reset view",
+                onClick: () => {
+                  resetView();
+                  requestAnimationFrame(() =>
+                    sortSelectRef.current?.focus({ preventScroll: true }),
+                  );
+                },
+              },
+            ]}
           />
         ) : (
           <CollectionView
             returnScope="Lectern.Items"
-            rows={queueRows}
-            status={queueStatus}
+            rows={visible.map(presentLecternItem)}
+            status={status}
             ariaLabel="On the lectern"
-            error={queueError}
+            error={
+              resource.status === "error" ? (
+                <FeedbackNotice
+                  content={failureNotice(
+                    resource.error,
+                    "Lectern couldn’t be loaded",
+                  )}
+                  announcement="Assertive"
+                  actions={[{ label: "Retry", onClick: resource.retry }]}
+                />
+              ) : undefined
+            }
             empty={
               <p className={styles.emptyState}>
-                {effectiveQuery.length === 0
-                  ? "Nothing on the lectern yet."
-                  : "No items match this filter."}
+                {filtering
+                  ? "No items match this filter."
+                  : "Nothing on the lectern yet."}
               </p>
             }
-            rowControls={queueControls}
+            rowControls={controls}
             surface={false}
             rowChangePresentation={{
               kind: "ImmediateOnKeyChange",
-              key: effectiveQuery,
+              key: query.trim(),
             }}
-            // The server accepts only the exact visible permutation, so drag
-            // reorder exists only over the whole authored order.
+            // The server takes only the exact visible permutation: drag only the whole order.
             sortable={
-              view.kind === "Custom" && effectiveQuery.length === 0
+              view.kind === "Custom" && !filtering
                 ? {
-                    disabled: mutation.kind === "Pending",
-                    onReorder: (nextRows) => {
-                      const byRowId = new Map(
-                        items.map((item) => [item.itemId as string, item]),
-                      );
-                      const nextItems = nextRows
-                        .map((row) => byRowId.get(row.id))
-                        .filter(
-                          (item): item is LecternItem => item !== undefined,
-                        );
-                      if (nextItems.length === items.length) {
-                        handleReorder(nextItems.map((item) => item.itemId));
-                      }
+                    disabled: busy,
+                    onReorder: (rows) => {
+                      setFeedback(null);
+                      void setOrder(
+                        rows.map((row) => parseLecternItemId(row.id)),
+                      ).catch((error) => {
+                        if (handleUnauthenticatedApiError(error)) return;
+                        try {
+                          setFeedback(
+                            failureNotice(error, "Lectern wasn’t reordered"),
+                          );
+                        } catch (caught) {
+                          setDefect({ error: caught });
+                        }
+                      });
                     },
                   }
                 : undefined

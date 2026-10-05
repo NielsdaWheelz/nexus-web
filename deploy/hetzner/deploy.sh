@@ -91,18 +91,14 @@ deployment_url="$(jq -r .url <<<"$deployment")"
 [[ "$deployment_url" =~ ^[a-z0-9][a-z0-9.-]*\.vercel\.app$ ]] || \
   die "the Vercel candidate URL is malformed"
 
-# The published player-protocol contract is the web/native compatibility
-# identity; the staged frontend must already serve this tree's copy.
-player_protocol="$(jq -c . "${ROOT_DIR}/contracts/android-player-protocol.json")"
 require_version() {
   local origin="$1" label="$2" body="${TEMPORARY}/${2}.json" headers="${TEMPORARY}/${2}.headers"
   curl --fail --silent --show-error --max-time 10 --max-filesize 65536 \
     --dump-header "$headers" --output "$body" "https://${origin}/version" || \
     die "${label} /version did not return HTTP 200"
-  jq -e --arg sha "$SOURCE_SHA" --argjson protocol "$player_protocol" '
-    keys == ["player_protocol", "source_sha"]
-    and .source_sha == $sha and .player_protocol == $protocol
-  ' "$body" >/dev/null || die "${label} does not serve this SHA and player protocol"
+  jq -e --arg sha "$SOURCE_SHA" '
+    keys == ["source_sha"] and .source_sha == $sha
+  ' "$body" >/dev/null || die "${label} does not serve this SHA"
   grep -Fiqx 'cache-control: no-store' <(tr -d '\r' <"$headers") || \
     die "${label} /version is cacheable"
 }

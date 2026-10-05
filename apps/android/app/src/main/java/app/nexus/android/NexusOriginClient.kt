@@ -26,23 +26,13 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 internal const val NEXUS_ORIGIN_CALL_DEADLINE_MS = 20_000L
-private const val MAX_ORIGIN_RESPONSE_BYTES = 128 * 1024L
+// a settle answer carries the whole lectern (at most 2,000 rows)
+private const val MAX_ORIGIN_RESPONSE_BYTES = 4 * 1024 * 1024L
 
-internal data class NexusOriginResponse(
+private class NexusOriginResponse(
     val status: Int,
     val body: String,
 )
-
-internal interface NexusOriginTransport {
-    suspend fun getListeningState(mediaId: UUID): NexusOriginResponse
-
-    suspend fun putListeningState(
-        mediaId: UUID,
-        jsonBody: String,
-    ): NexusOriginResponse
-
-    suspend fun postListeningActivity(jsonBody: String): NexusOriginResponse
-}
 
 internal interface NexusCookieStore {
     fun cookiesFor(url: String): String?
@@ -88,8 +78,12 @@ private class WebViewCookieStore : NexusCookieStore {
     }
 }
 
-/** A non-2xx answer from the origin, with its envelope error code when it has one. */
-internal class NexusOriginError(val status: Int, val code: String?) : Exception("origin $status $code")
+/** A non-2xx answer from the origin, with its envelope error code and details when it has them. */
+internal class NexusOriginError(
+    val status: Int,
+    val code: String?,
+    val details: JSONObject? = null,
+) : Exception("origin $status $code")
 
 /**
  * The only authenticated native HTTP boundary. Callers choose among fixed BFF
@@ -100,7 +94,7 @@ internal class NexusOriginClient(
     baseUrl: String = BuildConfig.NEXUS_BASE_URL,
     private val cookies: NexusCookieStore = WebViewCookieStore(),
     http: OkHttpClient = OkHttpClient(),
-) : NexusOriginTransport {
+) {
     private val base: HttpUrl = baseUrl.toHttpUrl()
     private val origin = base.newBuilder()
         .encodedPath("/")
@@ -141,65 +135,51 @@ internal class NexusOriginClient(
                 .put(body.toString().toRequestBody(JSON)),
         )
 
+    /** The episode's player descriptor now: where a play starts, its reset epoch and override revision. */
+    suspend fun player(mediaId: UUID): JSONObject =
+        data(Request.Builder().url(api("media", mediaId.toString(), "player")).get())
+
+    /** The newest listening sample of an episode; 204, or 409 with `details.current` for a stale reset epoch. */
+    suspend fun putListening(mediaId: UUID, body: JSONObject) {
+        val url = api("media", mediaId.toString(), "listening-state")
+        call(Request.Builder().url(url).put(body.toString().toRequestBody(JSON)))
+    }
+
+    /** One batch of activity spans; 204. The BFF adds the device id. */
+    suspend fun postActivity(body: JSONObject) {
+        call(Request.Builder().url(api("consumption", "activity")).post(body.toString().toRequestBody(JSON)))
+    }
+
+    /** A consumption command (the player sends only `SettleNaturalEnd`); the result. */
+    suspend fun consumptionCommand(body: JSONObject): JSONObject =
+        data(Request.Builder().url(api("consumption", "commands")).post(body.toString().toRequestBody(JSON)))
+
     private fun api(vararg segments: String): HttpUrl =
         base.newBuilder().addPathSegment("api").apply { segments.forEach { addPathSegment(it) } }.build()
 
-    private suspend fun data(request: Request.Builder): JSONObject {
+    private suspend fun data(request: Request.Builder): JSONObject =
+        call(request) ?: throw IOException("origin answered without data")
+
+    /** The envelope's `data`, or null for an empty 2xx; any other status throws [NexusOriginError]. */
+    private suspend fun call(request: Request.Builder): JSONObject? {
         val response = execute(request)
         try {
             if (response.status !in 200..299) {
-                val code = try {
-                    JSONObject(response.body).getJSONObject("error").getString("code")
+                val error = try {
+                    JSONObject(response.body).getJSONObject("error")
                 } catch (_: JSONException) {
                     // justify-ignore-error: a body that is not the error envelope
                     // (a proxy page) still carries its status.
                     null
                 }
-                throw NexusOriginError(response.status, code)
+                val code = error?.optString("code")?.ifEmpty { null }
+                throw NexusOriginError(response.status, code, error?.optJSONObject("details"))
             }
-            return JSONObject(response.body).getJSONObject("data")
+            return if (response.body.isEmpty()) null else JSONObject(response.body).getJSONObject("data")
         } catch (error: JSONException) {
             throw IOException("origin answered a malformed body", error)
         }
     }
-
-    override suspend fun getListeningState(mediaId: UUID): NexusOriginResponse =
-        execute(
-            Request.Builder()
-                .url(listeningStateUrl(mediaId))
-                .get(),
-        )
-
-    override suspend fun putListeningState(
-        mediaId: UUID,
-        jsonBody: String,
-    ): NexusOriginResponse =
-        execute(
-            Request.Builder()
-                .url(listeningStateUrl(mediaId))
-                .put(jsonBody.toRequestBody(JSON)),
-        )
-
-    override suspend fun postListeningActivity(jsonBody: String): NexusOriginResponse =
-        execute(
-            Request.Builder()
-                .url(
-                    base.newBuilder()
-                        .addPathSegment("api")
-                        .addPathSegment("consumption")
-                        .addPathSegment("activity")
-                        .build()
-                )
-                .post(jsonBody.toRequestBody(JSON)),
-        )
-
-    private fun listeningStateUrl(mediaId: UUID): HttpUrl =
-        base.newBuilder()
-            .addPathSegment("api")
-            .addPathSegment("media")
-            .addPathSegment(mediaId.toString())
-            .addPathSegment("listening-state")
-            .build()
 
     private suspend fun execute(
         requestBuilder: Request.Builder,

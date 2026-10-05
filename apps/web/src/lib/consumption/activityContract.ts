@@ -5,10 +5,10 @@ export type MediaRef = string & { readonly __mediaRef: unique symbol };
 export type ActivityModality = "Reading" | "Listening" | "Viewing";
 export type ActivityDeviceClass = "Desktop" | "Mobile";
 
-/** The frozen capture body the web outbox and the Android app post; the BFF adds `deviceId`. */
+/** The capture body the web uploader and the Android app post; the BFF adds `deviceId`. */
 export type ActivityRequest = Omit<Schema<"ActivityRecordIn">, "deviceId">;
 
-/** One span body per modality, as the capture body and the v1 outbox rows carry it. */
+/** One span body per modality, as the capture body carries it. */
 export interface ActivitySpanBodies {
   Reading: Omit<Schema<"ReadingActivitySpanIn">, "captureKey">;
   Listening: Omit<Schema<"ListeningActivitySpanIn">, "captureKey">;

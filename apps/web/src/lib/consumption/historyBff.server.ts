@@ -7,8 +7,8 @@ import { proxyToFastAPI } from "@/lib/api/proxy";
 import { readDeviceId } from "@/lib/auth/deviceCookie";
 
 // Device identity is server-owned: only this BFF names the device, from the httpOnly nx_device
-// cookie, overwriting anything the client sent. FastAPI is the sole validator of the frozen
-// capture body.
+// cookie, overwriting anything the client sent. FastAPI is the sole validator of the capture
+// body.
 
 const failure = (status: number, code: string, message: string) =>
   privateNoStoreResponse(NextResponse.json({ error: { code, message } }, { status }));

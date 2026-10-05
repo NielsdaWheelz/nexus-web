@@ -33,7 +33,7 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.notes import DailyCaptureRequest
 from nexus.schemas.resource_items import AbsentExpectedBody
 from nexus.services import highlights, library_entries, note_bodies, notes, text_quote, users
-from nexus.services.consumption import _lectern_store
+from nexus.services.consumption import lectern
 from nexus.services.consumption import service as consumption_service
 from nexus.services.passage_anchors import normalize_quote_text
 from nexus.services.resource_graph.edges import create_edge, delete_edge
@@ -382,7 +382,7 @@ def add_to_queue(db: Session, viewer_id: UUID, value: QueueAddInput) -> WriteEff
         viewer_id=viewer_id,
         media_ids=[media_ref.id],
     )
-    resolved = _lectern_store.find_item_for_media(db, viewer_id=viewer_id, media_id=media_ref.id)
+    resolved = lectern.find_item_for_media(db, viewer_id=viewer_id, media_id=media_ref.id)
     if resolved is None:
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     item_id, title = resolved

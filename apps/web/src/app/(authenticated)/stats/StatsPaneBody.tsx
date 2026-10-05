@@ -30,7 +30,6 @@ import {
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import { useHydratedBrowserTimeZone } from "@/lib/time/browserTimeZone";
-import ActivityHealth from "./ActivityHealth";
 import { browserToday, periodStart, shiftAnchor, statsQuery, statsUrlCodec } from "./statsPeriod";
 import type { FilterKey, StatsPeriod, StatsUrlState } from "./statsPeriod";
 import styles from "./StatsPaneBody.module.css";
@@ -880,7 +879,6 @@ export default function StatsPaneBody() {
         </div>
         <Controls state={state} update={update} onFilter={setFilter} chipLabel={chipLabel} />
       </header>
-      <ActivityHealth />
       {updating ? (
         <p className={styles.busy} role="status">
           Updating {periodName(state)}. Showing the prior {periodName(committed!.state)} result

@@ -191,7 +191,6 @@ class DocumentEmbedOut(BaseModel):
 class ListeningStateOut(BaseModel):
     position_ms: int = Field(ge=0)
     duration_ms: int | None = Field(ge=0)
-    is_completed: bool = False
 
 
 class PodcastEpisodeChapterOut(BaseModel):

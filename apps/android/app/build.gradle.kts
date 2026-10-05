@@ -1,4 +1,3 @@
-import groovy.json.JsonSlurper
 import java.net.URI
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.tasks.OutputDirectory
@@ -43,17 +42,6 @@ val debugUri = URI(debugBaseUrl)
 val releaseUri = URI(releaseBaseUrl)
 val assetLinksText = rootProject.file("../web/public/.well-known/assetlinks.json").readText()
 val assetLinksTextForFingerprintMatch = assetLinksText.replace(":", "").uppercase()
-val playerProtocolContract = JsonSlurper().parse(
-    rootProject.file("../../contracts/android-player-protocol.json"),
-) as Map<*, *>
-require(playerProtocolContract.keys == setOf("version", "contract_sha256") && playerProtocolContract["version"] == 2) {
-    "Android player protocol contract version is unsupported."
-}
-val playerProtocolVersion = 2
-val playerProtocolContractSha256 = playerProtocolContract["contract_sha256"] as String
-require(playerProtocolContractSha256.matches(Regex("[0-9a-f]{64}"))) {
-    "Android player protocol contract identity is invalid."
-}
 
 require(debugUri.host == debugOwnedHost) {
     "nexusAndroidDebugBaseUrl host must match nexusAndroidDebugOwnedHost."
@@ -142,14 +130,6 @@ android {
         targetSdk = 36
         versionCode = versionCodeProperty?.toIntOrNull() ?: 1
         versionName = versionNameProperty ?: "1.0"
-        buildConfigField("int", "PLAYER_PROTOCOL_VERSION", playerProtocolVersion.toString())
-        buildConfigField(
-            "String",
-            "PLAYER_PROTOCOL_CONTRACT_SHA256",
-            "\"$playerProtocolContractSha256\"",
-        )
-        manifestPlaceholders["playerProtocolVersion"] = playerProtocolVersion.toString()
-        manifestPlaceholders["playerProtocolContractSha256"] = playerProtocolContractSha256
     }
 
     buildFeatures {
@@ -250,7 +230,6 @@ dependencies {
     implementation("androidx.media3:media3-session:1.10.1")
     implementation("androidx.webkit:webkit:1.14.0")
     implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
-    implementation("com.squareup.moshi:moshi:1.15.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 }

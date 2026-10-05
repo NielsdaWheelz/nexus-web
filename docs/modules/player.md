@@ -2,335 +2,190 @@
 
 ## Scope
 
-The player module owns two related but distinct concerns: the **Lectern** (one
-ordered, mixed-media list of outstanding intentions) and **Now Playing** (one
-device-local audio session, not a second durable list). Podcast, video, reader,
-agent, and Nexus actions address the ordered list. The Resonance subsystem's
-read-only **Quick reads** and **At hand** projections are adjacent to the
-Lectern; neither becomes another queue or acquires mutation ownership. The
-player is the consumer of podcast episodes (and YouTube videos) for playback; the
-[Browse capability](../cutovers/browse-discovery-preview-acquisition-hard-cutover.md)
-owns external discovery and Preview, while the [podcast module](podcast.md)
-owns acquisition, sync/backfill, and explicit transcription.
+The player owns three independent concepts and three synchronizations between
+them.
 
-Full behavioral contracts, wire shapes, and acceptance criteria:
-`docs/cutovers/lectern-player-lifecycle-hard-cutover.md` and
-`docs/cutovers/resonance-reading-slate-hard-cutover.md`. Android playback and
-pause shortening are specified by
-`docs/cutovers/android-native-player-pause-shortening-hard-cutover.md`; the
-current signed-web/native compatibility and release contract is
-`docs/cutovers/android-player-protocol-release-hard-cutover.md`.
-Observed activity and Stats are a separate Consumption capability; see
-[consumption-activity.md](consumption-activity.md).
-The final pane-body presentation contract is
-[Lectern editorial surface](../cutovers/lectern-editorial-surface-hard-cutover.md).
-Android offline downloads are adjacent but are not player state; see
-[offline](offline.md).
+- **Lectern** — the viewer's ordered list of intentions: place, remove, order.
+- **Consumption state** — where the viewer stands with a media: an explicit
+  override (`finished` / `unread`), else the podcast listening ladder (≥ 95 %
+  of the duration is finished, > 0 in progress), else reader engagement, else
+  unread; plus the first-completion fact and the listening position under its
+  reset epoch.
+- **Audio session** — what one device is playing, owned by exactly one engine
+  per device: an `<audio>` element in the browser, the media3 service in the
+  Android shell.
 
-## Backend Owners
+The synchronizations: **done** (finish + leave the Lectern + next readable),
+**natural end** (fenced finish + leave the Lectern + next audio, settled by
+whichever engine heard the end) and **resume** (the server decides where a
+play starts; the client asks it at play time). The server picks successors,
+decides origin (a media with a visible Lectern row advances at its end, one
+off the Lectern stops) and owns the "finished means start over" rule.
 
-`python/nexus/services/consumption/` is the sole backend consumption owner,
-split by storage and query concern:
+The Resonance subsystem's **Quick reads** and **At hand** sit beside the
+Lectern without owning queue state. Browse owns discovery and Preview; the
+[podcast module](podcast.md) owns acquisition and sync. Observed activity and
+Stats are [Consumption Activity](consumption-activity.md). Android offline
+downloads are adjacent, not player state ([offline](offline.md)).
 
-- `service.py` — the public boundary. Two command facades
-  (`run_lectern_command` / `run_consumption_command`) each open a fresh
-  session and own one `retry_serializable` transaction: viewer lock -> replay
-  claim -> validation -> domain writes -> semantic memo -> snapshot read. Read
-  facades (`get_lectern` / `get_listening_state` / `get_reader_cursor`) run on
-  the request-scoped session; `put_reader_cursor` owns one transaction for the
-  cursor CAS, engagement projection, and completion transition. Resonance reads
-  the Lectern capacity predicate `lectern_has_capacity` here; the policy-neutral
-  engagement, recent-anchor, and complete-membership relations it composes come
-  from `projection` directly. One narrow in-transaction exception composes here
-  rather than going through a command: `delete_media_consumption_state_in_txn`
-  (media teardown; only caller is `services/media_deletion.py`). The
-  auto-subscription watermark step calls `_lectern_store.ensure_missing_in_txn`
-  directly from the fenced finalization path in `services/podcasts/sync.py`.
-- `_lectern_store.py` — sole DML owner of `consumption_queue_items` (Lectern
-  membership/order). Builds the canonical `LecternSnapshot`.
-- `service.py` — also the sole DML owner of `consumption_overrides` (explicit
-  `Unread`/`Finished` state plus the completion-only revision that fences a
-  delayed natural-end receipt), of `reader_engagement_states` and of
+## Invariants
+
+1. Every write is serializable under the viewer row lock
+   (`services/consumption/__init__.py: viewer_txn`).
+2. Commands replay by `clientMutationId` (`replayed_command`, memo in
+   `resource_mutations`).
+3. Listening writes are fenced by `reset_epoch` alone: last writer wins within
+   an epoch, a reset wins across epochs. `ResetProgress` bumps the epoch.
+4. A natural end settles only if the override revision captured at load is
+   unchanged.
+5. One audio owner per device: the Android shell plays natively (or shows
+   "Update Nexus for Android"), everything else plays in the browser.
+6. Raw device ids never leave the BFF; only sealed `ncd1.` handles do.
+7. A Lectern holds at most 2000 rows; media teardown removes every consumption
+   row of the media.
+8. The server owns successor choice, origin and the resume point.
+
+## Backend owners
+
+`python/nexus/services/consumption/`:
+
+- `lectern.py` — sole DML owner of `consumption_queue_items`. Positions are
+  dense over visible and hidden rows (a row is hidden while its media is not
+  visible to the viewer or is being torn down; hidden rows keep their slots).
+  `place` puts a block at the visible boundary or after a visible anchor;
+  `set_order` takes the exact visible permutation; `remove_media` returns the
+  visible index the row had (where the successor search starts); `restore`
+  puts back a removed row with its id and `added_at` (undo only).
+- `listening.py` — sole DML owner of `podcast_listening_states` (position,
+  duration, nullable episode rate, reset epoch, `last_engaged_at`). A write is
+  `UPDATE … WHERE reset_epoch = :epoch`, else an insert when the epoch is 0;
+  positions are clamped to the duration; an absent rate or duration keeps the
+  stored one. `install_preview` writes only when there is no progress.
+- `projection.py` — the read model other slices compose: the one read-state
+  ladder in SQL (`engagement_fact_rows_sql`, `episode_state_*_sql`), read
+  states, recency and anchors, `player_descriptors` and `lectern_snapshot`.
+  A descriptor's `positionMs` is 0 when the episode is finished by override or
+  its stored position is in the finished zone; `playbackRate` is the episode
+  rate ?? the subscription default ?? 1; `podcastId` is present iff the viewer
+  subscribes.
+- `service.py` — the public facade: `get_lectern`, `get_player`, the Lectern and
+  consumption commands, `record_listening`, `install_preview_position`, the
+  reader cursor composition, the podcast batch state used by the podcasts
+  route, assistant ensure/remove and media teardown. It is the sole DML owner of
+  `consumption_overrides`, `reader_engagement_states` and
   `consumption_completion_facts`.
-- `_listening_store.py` — sole DML owner of `podcast_listening_states`
-  (position/duration/nullable established episode rate, completion flag, and
-  the heartbeat fencing tokens `write_revision`/`reset_epoch`).
-  `last_engaged_at` is advanced by successful
-  heartbeats and by the one post-acquisition Preview-position transfer. The
-  transfer installs only when no owned progress exists and never overwrites a
-  listening position or completion. The separate operational `updated_at`
-  still advances for
-  manual Finished and `ResetProgress`; Finished preserves `last_engaged_at`,
-  Reset clears it, and a new manual-Finished row starts with it absent.
-  Migration 0186 seeds the new clock from operational `updated_at` only when
-  post-fencing state proves the latest mutation was a heartbeat: revision is
-  positive, completion is false, and either position is positive or no reset
-  has occurred. Pre-fencing, completed, and post-reset zero-position rows remain
-  absent because their timestamp is ambiguous.
-- `reader_cursor.py` — sole DML owner of `reader_media_state`: one
-  revision-fenced `Empty` or `Positioned` cursor per viewer/media. A persisted
-  `Empty` tombstone fences stale pre-reset saves without exposing a null-clear
-  reader-state API.
-  `reader_engagement_states` holds
-  one current-state row per (viewer, media) carrying `last_engaged_at`
-  recency and, for non-PDF locators, a monotonic `max_total_progression`
-  (`GREATEST(existing, new)` on every save). It is current resume/engagement
-  state, not activity history — a save is a plain idempotent
-  `INSERT ... ON CONFLICT (user_id, media_id) DO UPDATE`, with no fencing
-  token, committed atomically with the successful/idempotent cursor write (see
-  [reader-implementation.md](reader-implementation.md)).
-- `activity.py` — sole DML owner of `consumption_activity_spans` and
-  `consumption_activity_exclusions`; `stats.py` owns their factual aggregation
-  and derived sessions. Neither changes the reader cursor or the listening
-  heartbeat.
-- `projection.py` — the combined explicit-override + reader-engagement read
-  model (`Unread`/`InProgress`/`Finished` + progress fraction), plus batched
-  `PlayerDescriptor`s for podcast-episode media. Both descriptor paths reuse
-  `services/playback_source.derive_playback_source` and the one playback-rate
-  resolver over nullable episode rate plus the active subscription preference.
-  They also project the active subscription pause-shortening override and
-  current Consumption override revision through required `Presence` fields.
-  `services/media.py`,
-  `services/library_entries.py`, and `services/podcasts/{episodes,
-  subscriptions_query}.py` adopt this projection; no other module reads
-  `consumption_overrides`/`podcast_listening_states`/`reader_media_state`/
-  `reader_engagement_states` directly except the one documented exception in
-  `services/media.py`
-  (catalog hydration only; canonical playback state comes from the player
-  descriptor).
+- `activity.py` (span ingest), `exclusions.py`, `stats.py`, `handles.py`,
+  `reader_cursor.py` — see [consumption-activity.md](consumption-activity.md)
+  and [reader-implementation.md](reader-implementation.md).
 
-`python/nexus/services/resonance.py` owns deterministic quick reads and reading
-slates. at hand combines continuity, arrival, graph, contributor and calibrated
-semantic evidence, returning at most ten unfinished placeable media outside the
-complete queue. a full queue suppresses at hand.
-
-`GET /lectern/quick-reads` accepts no query parameters and returns at most five
-unfinished documents with `0 < remaining_seconds < 600`. it includes queued
-media and works at full capacity. visibility, document quote-readiness and raw
-duration eligibility apply before every candidate cap; ranking and diversity
-reuse the existing lectern policy. there is no fallback family, so fewer than
-five may qualify even when other short works exist. both reads use one
-repeatable-read, read-only snapshot without model or provider calls.
-
-`services/reading_time.py` owns duration from stored canonical word counts and
-the current durable reader cursor; see
-[library duration](library.md#reading-time-projection-and-ordering).
-media slate targets carry the same `MediaSummaryOut` as lectern and library
-rows. it contains original publication, ordered credits, processing state, and
-modality-specific duration; ranking reasons and anchors remain internal.
-podcast containers retain their separate target contract. `presentMedia`
-projects all stored-media occurrences, while the player retains its separate
-bounded descriptor for playback and native transport.
-
-Media teardown (`docs/cutovers/lectern-player-lifecycle-hard-cutover.md` §3.1;
-see also [storage.md](storage.md)) composes one consumption call,
-`consumption_service.delete_media_consumption_state_in_txn` (all users'
-Lectern/override/listening/reader-cursor/reader-engagement/activity/completion
-rows), inside the deletion transaction — `services/media_deletion.py` never
-writes those tables directly.
-
-`python/nexus/services/playback_source.py` resolves the playable source for a
-media item (`derive_playback_source`); it is shared by the projection, the
-media/podcast DTOs, and the Lectern snapshot so activation derivation
-(`FooterAudio` / `Readable` / `OpenPane`) is identical everywhere.
-
-## Command and Heartbeat Ports
+## Wire
 
 ```http
-GET  /lectern
-GET  /lectern/slate
-GET  /lectern/quick-reads
-POST /lectern/commands
-POST /consumption/commands
-GET  /media/{id}/listening-state
-PUT  /media/{id}/listening-state
-POST /media/{id}/preview-position
+GET  /lectern                       -> LecternSnapshot
+POST /lectern/commands              PlaceItems | RemoveItem | SetOrder
+POST /consumption/commands          EnsureMediaFinished | Done | SetUnread | ResetProgress
+                                    | UndoFinish | SettleNaturalEnd
+GET  /media/{id}/player             -> PlayerDescriptor (404 when not playable)
+PUT  /media/{id}/listening-state    {positionMs, durationMs, episodePlaybackRate, expectedResetEpoch} -> 204
+POST /media/{id}/preview-position   {positionMs, durationMs} -> 204
+POST /consumption/activity          {mediaRef, deviceClass, batch} -> 204 (the BFF adds deviceId)
+GET  /lectern/slate, /lectern/quick-reads   (Resonance)
 ```
 
-`python/nexus/api/routes/lectern.py` owns the Lectern reads and two
-transport-only command ports; `python/nexus/api/routes/listening_state.py`
-owns the singular heartbeat GET/PUT (no batch endpoint). The two POST ports
-are bounded aggregate command ports, not a generic command bus: `Lectern`
-commands (`PlaceItems`/`RemoveItem`/`SetOrder`) and `Consumption` commands
-(`EnsureMediaFinished`/`FinishLecternItem`/`SetUnread`/`UndoCompletion`/
-`SetBatchState`/`ResetProgress`/`SettleNaturalEnd`) each
-share one transaction/replay scope (`Lectern.Commands` /
-`Consumption.Commands`) and one canonical response. POST is
-semantic-idempotent through a client-generated `clientMutationId`, keyed by
-`(viewerId, mutationScope, clientMutationId)` through the shared
-`services/resource_mutation_replay.py` ledger. The listening-state PUT is a
-separate, unreplayable CAS mutation fenced by `write_revision`/`reset_epoch`
-(§5.4) — it never memoizes and never reuses the command replay ledger. It
-writes position/duration plus an owned-absence episode rate; `Absent` preserves
-an existing nullable rate and does not establish one on insert. The heartbeat
-carries no client-supplied elapsed-time delta or client-supplied device
-identifier, and piggybacks no other table's write. Reader cursor and engagement
-writes share their own
-atomic Consumption transaction (see
-[reader-implementation.md](reader-implementation.md)), independent of the
-listening heartbeat.
+`api/routes/lectern.py` owns the Lectern reads and the two command ports;
+`api/routes/playback.py` owns the player read, the listening write, the preview
+hand-off and activity capture (registered before the `media` router).
 
-`SettleNaturalEnd` is the only canonical natural-end command. It compares the
-captured listening fences and exact Consumption override revision before any
-write, installs the terminal source-time observation with zero dwell, and
-completes in the same transaction. Exact Lectern origin may advance; Direct or
-stale origin completes state only. Replay returns a fresh canonical projection
-from the recorded terminal outcome without repeating domain writes.
+A stale-epoch listening write answers 409 `E_STALE_LISTENING_REVISION` with
+`error.details.current = {positionMs, resetEpoch}`; the writer adopts it with no
+read. A consumption command answers `ConsumptionResult {outcome: Done |
+Superseded | Gone, lectern, nextItem, finishId, progressState,
+libraryEntriesCollectionRevision}`; `finishId` (the command's own
+`clientMutationId`) is present after EnsureMediaFinished and Done. `nextItem` is present only for `Done` (the
+first visible Readable row after the removed one) and `SettleNaturalEnd` (the
+first visible FooterAudio row after it), no wrap. `Superseded`: the override
+revision or the reset epoch moved. `Gone`: the media is no longer readable.
 
-The Preview-position POST is a post-acquisition command. It accepts only an
-owned Podcast-episode Media, clamps the observed position to a present
-duration, and installs it only when no positive listening position or
-completion exists. It is the sole permitted bridge from ephemeral Browse
-playback into owned progress.
+`UndoFinish {mediaId, finishId, restore?}` is atomic and applies only while the
+override is still the one that finish wrote: the finish's replay memo records
+the override it replaced (absent, or its status and revision) and the
+first-completion fact it created, and the undo puts back exactly that override
+(a finish never moves progress, so this is the prior state) and deletes that
+fact; after a Done it re-inserts the row with its id and `addedAt` after its
+nearest surviving predecessor (first when that is gone). "Mark as played"
+changes state only; the row stays where it is.
 
-`SetUnread` and batch Unread change only explicit status. `ResetProgress` is
-the sole progress-clearing command: it clears the override, writes a revisioned
-Empty reader cursor, deletes current reader engagement, and resets/fences
-podcast listening state when applicable. It preserves Lectern membership,
-activity/completion history, notes, and annotations.
+## Frontend owners
 
-Owned-absence fields on every wire shape use `Presence<T>` from
-`nexus/schemas/presence.py` / `apps/web/src/lib/api/presence.ts`
-([rules/boundaries.md](../rules/boundaries.md)) — never `null` or omission.
+`AuthenticatedShell` mounts `LecternProvider` above `GlobalPlayerProvider`,
+which wraps the workspace and `GlobalPlayerSurfaces`.
 
-## Frontend Owners
+- `lib/lectern/contract.ts` — branded ids and the wire projected once into
+  domain values. `LecternProvider.tsx` — the snapshot resource and every
+  Lectern/consumption command on one promise chain (installs never
+  interleave), refetch-then-rethrow on failure, the `progressState` event after
+  ResetProgress, and pre-reset hooks readers use to drain. `useCompletionUndo.ts`
+  — the ten-second "Marked as finished" HUD. `view.ts` — the url-only sort.
+- `app/(authenticated)/lectern/LecternPaneBody.tsx` — **On the lectern** (play
+  rows, sort, filter, drag reorder in Custom view), Quick reads, At hand.
+- `lib/player/playerRuntime.tsx` — `GlobalPlayerProvider`: engine choice, the
+  state/timeline context split, device history (previous restarts after 3 s,
+  else pops back; next pops forward, else the next Lectern audio row), the fresh
+  `GET /api/media/{id}/player` before a play of another media (2 s bound, else
+  the descriptor it was given), serialized loads with the latest request
+  winning, remember-rate, adoption of a reset elsewhere, keyboard shortcuts.
+  Every play of the loaded episode (bar, page, keyboard, transcript) goes to
+  its engine, which owns where a resume starts.
+- Both engines resume alike. While the device holds a listening sample the
+  server may not have ("news": playing, seeking, a write in flight or failed)
+  a play resumes in place. Otherwise it asks `GET /media/{id}/player` (2 s;
+  unanswered, the page's descriptor stands in when it knows a newer reset
+  epoch, else the session itself). An answer that moved the session (another
+  position or epoch, or the session ended) is loaded, so a paused episode
+  picks up another device's position or reset and the replay of an ended one
+  starts at 0 under the fence the end left; otherwise the session resumes in
+  place under the answer's override revision. The same holds for the OS
+  controls: the Media Session in the browser, the notification and media
+  buttons on Android.
+- `lib/player/browserEngine.ts` — the `<audio>` engine: listening writes (one
+  flight, newest sample; at once on pause, seek and rate; every 15 s while
+  playing; `keepalive` on pagehide only with news), the recorder observer, the
+  Media Session and the natural-end settle (one id, retried on network or 5xx).
+  Only the attached episode samples the shared element: a load detaches the
+  outgoing episode after taking its last sample, and its late writes send that. The episode rate
+  is sent only after the listener sets one; until then the stored value stands.
+- `lib/player/nativeEngine.ts` — the Android engine, a thin client of
+  `window.nexusAudio` (below); a reply missing for 5 s shows "Player
+  unavailable" until the next frame arrives.
+- `components/player/` — the desktop bar, the mobile mini bar and sheet, and
+  `PlayerPanel` (speed, remember for this podcast, pause shortening on Android,
+  chapters).
 
-`AuthenticatedShell.tsx` mounts `LecternProvider` (one `AsyncResource` + one
-mutation FIFO that owns every Lectern/consumption mutation and reconciliation
-GET) above `GlobalPlayerProvider` (one `PlayerSession`), which wraps
-`WorkspaceHost` and `GlobalPlayerSurfaces`. The latter is the shell-resident
-presentation owner: desktop Listening Shelf, mobile MiniPlayer, and mobile
-full-screen Now Playing. Exactly one active `region` is labelled **Media
-player**. It persists across pane navigation and is never an editor (the
-Lectern pane is the sole full-list editor).
+## The Android bridge
 
-- `apps/web/src/lib/lectern/` — the Lectern capability: `contract.ts` (the one
-  transport-free, isomorphic owner of every Lectern/consumption wire type and
-  strict decoder), `client.ts` (HTTP calls only), `LecternProvider.tsx` (the
-  FIFO + optimistic-mutation owner), and `useCompletionUndo.ts` (the ten-second
-  Undo toast after explicit exact completion). Server pane seeding imports the
-  pure contract directly and never imports the browser transport facade.
-- `Reset progress` is one catalog-owned resource operation exposed by Library,
-  Podcast episode, Lectern, and Media surfaces only when the canonical
-  projection says `progressResettable`. `LecternProvider` emits the singular
-  returned `progressState`; the active player installs its listening tokens and
-  pauses, while the mounted reader installs the returned cursor snapshot. A
-  Podcast episode collection immediately projects that returned canonical
-  zero-position state as Unplayed and no longer resettable, then reconciles its
-  full row from the owning Podcast read; it does not leave the pre-reset action
-  capability interactive while that read is pending.
-- `apps/web/src/app/(authenticated)/lectern/LecternPaneBody.tsx` renders the
-  canonical **On the lectern** collection, **Quick reads**, then **At hand**.
-  At hand consumes an optional server first-paint seed, otherwise
-  queries on first active mount and every inactive-to-active transition,
-  delegates Add to `LecternProvider.placeItems`, and never owns a second
-  mutation lane. After success it preserves the exact surviving rows and
-  appends at most one novel canonical replacement. `LecternMutationNotice`
-  remains the sole assertive owner and Retry surface for an unknown Lectern
-  command outcome.
-- `components/collections/QuickReadsSection.tsx` is an independent client read
-  through `useResource`: first active mount, reactivation and active consumption
-  or placement revision changes refetch with existing abort/retry handling. it
-  uses the shared slate presenter and collection rows, distinguishes empty from
-  error, and has no dedicated add button or controls. opening navigates without
-  enqueueing; standard resource menus remain available. if refresh removes its
-  focused row, the active section receives orphaned focus; deliberate focus
-  moves and inactive panes are left alone.
-- `apps/web/src/lib/resonance.ts` (the generated-wire slate read and row
-  presenter) and `components/collections/ReadingSlateSection.tsx` (keyed by
-  destination: read, Add through the destination's `accept`, one-item refill,
-  focus, and quiet read recovery) serve at hand and library suggestions. they
-  do not own queue state or write commands. collection rows no longer expose relation
-  explanations or inline related expansion; opened-resource connections remain.
-- `apps/web/src/lib/player/` — the audio session: `playerSession.ts` (pure
-  session/origin/history/resume state machine, zero React/I-O),
-  `browserPlayerRuntime.ts` (the non-Android `<audio>` element, output-effects
-  graph, browser Media Session, heartbeat, and activity adaptation),
-  `androidPlayerRuntime.ts` plus `androidPlayerClient.ts` (the exact
-  `nexusPlayer` protocol and native snapshot/command adaptation),
-  `playerChromeModel.ts` (the exhaustive pure semantic projection),
-  `outputEffects.ts`, `pauseShortening.ts`, `chapters.ts`, `mediaSession.ts`,
-  `playbackRate.ts`, `usePlayerKeyboardShortcuts.ts`, and
-  `playerRuntime.tsx` (the shared capability/context contract, canonical-session
-  selector and 15/30-second skip constants), and `globalPlayer.tsx` (only the
-  platform-runtime chooser). consumers import the contract owner directly.
-  each runtime publishes stable Commands and
-  cadence-separated Session/Settings/Timeline capabilities. `playbackRate.ts`
-  is the one owner of product bounds, steps, presets, parsing, formatting, and
-  adjusted remaining time.
-- Both selected runtimes implement the exhaustive `PreviewAudio` session
-  variant. It has no Media ID, Lectern
-  origin/history, heartbeat, completion command, activity observation, queue,
-  podcast preference, pause-shortening preference, or previous/next
-  capability. Preview starts at `1x`; natural end is local
-  `PreviewAudioAtEnd`.
-  Stopping Preview returns one in-memory position snapshot and clears OS Media
-  Session position state.
-- Android selects one service-owned Media3 runtime. The WebView mounts no audio
-  element, Web Audio graph, browser Media Session, heartbeat, or listening
-  recorder. The native service records original-source position and Listening
-  activity while the browser runtime retains those owners on non-Android. A
-  replacement native controller re-handshakes the account and pushes one
-  authoritative full snapshot plus pending-receipt Presence; stale web state
-  never drives the replacement service.
-- every android player command, reply, and event carries protocol v2 plus the
-  explicit compatibility identity in `contracts/android-player-protocol.json`.
-  web and native decode the body only after exact identity match. update that
-  shared identity when the wire contract changes. Skew is a non-retryable **Update Nexus
-  for Android** state; matching-identity corruption remains a defect. The
-  signed APK embeds the same identity, and production release fails before
-  mutation unless the latest stable signed manifest matches it.
-- `lib/player/nativeOperationPump.ts` is the web's pure native operation pump.
-  One `SessionIntent` is in flight; later session intents queue FIFO. `Dismiss`,
-  `PodcastSettings`, and `ListeningProjection` are latest-wins keys (`Dismiss`
-  is barrier-exempt, as native). A `NaturalEndPending` rejection parks the
-  operation on the current receipt and replays it once that receipt is
-  acknowledged; a superseded or cleared receipt releases it. A transport
-  failure freezes the operation and the shell's Retry is derived from that
-  frozen state, so nothing else can clear it; Retry replays the frozen
-  operation. `androidPlayerRuntime.tsx` owns the single exhaustive failure
-  classifier (skew, retryable transport, barrier, cancellation, defect) that
-  feeds the pump.
-- The service derives each Media3 controller's available player commands from
-  the current natural-end and persistence lifecycle barriers and updates them
-  synchronously whenever those barriers change. Controller seeks checkpoint
-  against Media3's authoritative pre-discontinuity position; no deprecated
-  command-interception callback owns policy or accounting.
-- Canonical natural end first persists one account/session-fenced native
-  receipt. `LecternProvider.settleNaturalEnd` enters the existing FIFO without
-  a live player session, installs the canonical result, and acknowledges only
-  the exact recorded outcome. Session match gates presentation and successor
-  start, not settlement.
-- On canonical `LoadCanonical`, `NexusPlaybackService` resolves the source once:
-  a Ready download is leased (`OfflineStore.open`) and played from its
-  `file://`, released when the source is; every other state streams the
-  canonical remote source through the same `DefaultDataSource`. A file
-  corrupted on disk shows as a player error, and later download-state changes
-  never switch the active source. Removing a leased episode marks it Removing
-  until playback releases it.
-- Reading copies and offline positions never enter `PlayerSession`, Media3,
-  listening heartbeats, Media Session, or natural-end settlement; see
-  [offline](offline.md).
-- `apps/web/src/components/player/` — the Listening Shelf, MiniPlayer, full-
-  screen Now Playing, and shared cadence-scoped controls. The surfaces share
-  one provider-lifetime live region. They do not
-  mount media elements, mirror session state, or own queue/chapter data.
-  Contents and Lectern affordances use canonical workspace activation. For
-  `PreviewAudio`, every surface omits canonical history, Contents,
-  completion, and durable-status actions.
-- `dismiss()` is a device-local teardown, not completion: it samples and
-  flushes progress/activity before unloading audio, clears player history and
-  OS controls, resets transient persistence state, and preserves all durable
-  Consumption/Lectern facts. It remains available during completion. Pause
-  never dismisses; mobile Back/Escape/Collapse never changes playback.
+`window.nexusAudio` carries trusted json frames in the grammar of
+`window.nexusOffline`: `{id, op, ...args}` → `{id, ok: true, snapshot?}` |
+`{id, ok: false, error}`, and pushed `{snapshot}` on every change and each
+second while playing. Ops: `hello{accountId}`, `load{descriptor}`,
+`preview{descriptor}`, `play{key, descriptor?}` (the page's descriptor, for
+an unanswered resume), `pause{key}`, `seek{key, positionMs}`,
+`skip{key, deltaMs}`, `rate{key, value}`, `adopt{key, positionMs, resetEpoch}`,
+`volume{value}`, `shortenPauses{on}` (device default),
+`sessionShortenPauses{key, on|null}` (this session's override), `dismiss{}`.
+The object's name is the compatibility identity: an incompatible change renames
+it, and an app without it renders "Update Nexus for Android". There is no
+protocol version or hash.
 
-## Boundary With Podcast Sync
+The native service owns ExoPlayer and the media session (notification and lock
+screen), listening writes, activity spans in a durable outbox, and natural ends:
+it posts `SettleNaturalEnd` itself with the webview's cookies and plays the
+returned `nextItem`, so an episode advances with the webview gone. A downloaded
+episode plays from its `OfflineStore` lease. Pause shortening is
+`skipSilenceEnabled`: this session's override ?? the podcast's mode ?? the
+device default, with the time it saved on this device.
 
-Playback never fetches feeds or writes transcripts. Live sync and historical
-backfill may both persist episode metadata plus `external_playback_url`, but
-neither fetches or publishes a transcript. Live sync alone may compose the
-auto-queue watermark step; backlog does not enqueue historical episodes.
-Canonical playback resolves and streams the owned source, and the listening
-heartbeat records position. A transcript appears only after explicit Transcribe
-and is rendered from current media fragments; the player never owns transcript
-state.
+## Boundary with podcast sync
+
+Playback never fetches feeds or writes transcripts. Live sync may append
+auto-queue episodes through `lectern.ensure_missing_in_txn`; backfill never
+enqueues.

@@ -1,4 +1,4 @@
-"""Sealed outward handles for completion facts, activity exclusions and devices.
+"""Sealed outward handles for activity exclusions and devices.
 
 A handle is ``<prefix>.<id>.<tag>`` in canonical base64url, the tag an HMAC
 under a per-kind key derived from ``STREAM_TOKEN_SIGNING_KEY``. A device handle
@@ -23,7 +23,6 @@ class HandleKind(NamedTuple):
     domain: bytes
 
 
-COMPLETION = HandleKind("ncc1", "completion", b"consumption-completion\0v1")
 EXCLUSION = HandleKind("nce1", "activity exclusion", b"consumption-activity-exclusion\0v1")
 DEVICE = HandleKind("ncd1", "device", b"consumption-device\0v1")
 

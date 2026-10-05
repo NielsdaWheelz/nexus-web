@@ -7,7 +7,7 @@
     "build": "node scripts/copy-pdfjs.mjs && next build",
     "start": "next start",
     "lint:css-tokens": "node scripts/check-css-tokens.mjs",
-    "lint": "eslint src/ androidPlayerProtocolContract.ts --max-warnings 0",
+    "lint": "eslint src/ --max-warnings 0",
     "typecheck": "rm -rf .next/types && next typegen && tsc --noEmit && tsc -p src/extension/tsconfig.json --noEmit",
     "build:shelf": "vite build --config vite.shelf.config.ts",
     "build:extension": "node scripts/build-extension.mjs",

@@ -198,7 +198,6 @@ _SELECT_EXPRESSIONS: dict[str, str] = {
     "listening_position_ms": "pls.position_ms",
     "listening_duration_ms": "pls.duration_ms",
     "feed_duration_seconds": "pe.duration_seconds",
-    "listening_is_completed": "pls.is_completed",
 }
 
 _MEDIA_OUT_ALIASES = tuple(_SELECT_EXPRESSIONS)
@@ -429,7 +428,6 @@ def _listening_state(row: RowMapping) -> ListeningStateOut | None:
     return ListeningStateOut(
         position_ms=int(position_ms),
         duration_ms=int(duration_ms) if duration_ms is not None else None,
-        is_completed=bool(row["listening_is_completed"]),
     )
 
 

@@ -529,9 +529,9 @@ message API responses include a
 durable history-traversal fence), `podcast_episodes` (PK = `media_id`),
 `podcast_episode_identities` (stable PodcastIndex/RSS aliases),
 `podcast_episode_chapters`,
-`podcast_listening_states` (position/duration/nullable established episode rate +
-`write_revision`/`reset_epoch` heartbeat fencing plus heartbeat-only
-`last_engaged_at`; operational `updated_at` is not engagement),
+`podcast_listening_states` (position clamped to duration, nullable established
+episode rate, the `reset_epoch` that alone fences listening writes, and
+write-only `last_engaged_at`; operational `updated_at` is not engagement),
 `podcast_transcription_jobs`, `podcast_transcript_segments`. Named
 Podcast placement is only `library_entries(podcast_id)`; Default/All is virtual
 and stores no Podcast entry.
@@ -1066,9 +1066,9 @@ capability-owned:
   attempts.
 - `epub_assets.py`: private EPUB resource asset authorization and byte-size
   checked reads.
-- `api/routes/listening_state.py`: the singular listening-heartbeat route
-  (GET/PUT, no batch endpoint); position/duration/nullable episode-rate DML is owned by
-  `services/consumption/_listening_store.py` (§8.8).
+- `api/routes/playback.py`: the player read (`GET /media/{id}/player`), the
+  epoch-fenced listening write, the preview hand-off and activity capture;
+  listening DML is owned by `services/consumption/listening.py` (§8.8).
 - `media_file_access.py`: signed original-file download URLs.
 - `media_processing_state.py`: in-process queued, extraction-start, readiness,
   failure, and warning transitions. Source retry policy remains singular in
@@ -1094,7 +1094,7 @@ session-scoped `GET`/`confirm`/`retry`/`transport-failure`/`DELETE` routes
 (`api/routes/extension_captures.py`, owned by the same upload-session service).
 Routes are transport adapters; they call exactly one service owner. (The media routers are split per capability:
 `media.py` catalog, `media_ingest.py` ingest, `media_assets.py` image/EPUB-asset
-serving, `reader.py` reader read-model, `listening_state.py`, and
+serving, `reader.py` reader read-model, `playback.py`, and
 `podcast_transcripts.py` — each importing only the services it delegates to.)
 Ingest `library_ids` are writable non-default destinations; media services
 validate them through library governance and assign default plus selected
@@ -1643,22 +1643,22 @@ The **Lectern** is the one ordered, mixed-media list of outstanding intentions
 (podcast, video, reader, agent, and Nexus actions all address it); **Now
 Playing** is one device-local audio session, not a second durable list.
 `services/consumption/` is the sole backend consumption owner, split by table:
-`_lectern_store.py` (`consumption_queue_items` membership/order + the
-canonical `LecternSnapshot`), `service.py` (the command facades and the DML of
+`lectern.py` (`consumption_queue_items` membership/order), `service.py` (the
+command facades and the DML of
 `consumption_overrides` explicit `Unread`/`Finished` plus the natural-end
 override revision, `consumption_completion_facts`, and
 `reader_engagement_states` current-state reader recency — `last_engaged_at`
 plus, for non-PDF locators, a monotonic `max_total_progression`),
-`_listening_store.py` (`podcast_listening_states`
-position/duration/nullable established episode rate + heartbeat fencing tokens
-`write_revision`/`reset_epoch`), `reader_cursor.py`
+`listening.py` (`podcast_listening_states` position/duration/nullable episode
+rate under the `reset_epoch` fence), `reader_cursor.py`
 (`reader_media_state` revisioned
 `Empty`/`Positioned` cursor CAS), `activity.py`
-(`consumption_activity_spans` ingest and exclusion writes), `stats.py`
+(`consumption_activity_spans` ingest), `exclusions.py`, `stats.py`
 (read-time aggregation, sessionization and the Stats and Sessions payloads),
 and `projection.py` (the combined
-explicit-override + reader-engagement read model, plus batched
-`PlayerDescriptor`s reusing `derive_playback_source`). Consumption exposes
+explicit-override + reader-engagement read model, the Lectern snapshot, and
+batched `PlayerDescriptor`s reusing `derive_playback_source`; the server owns
+the resume point, so a finished episode's descriptor starts at 0). Consumption exposes
 policy-neutral engagement and complete queue-membership reads to Resonance; it
 does not own a second public Recent product. `GET /lectern/slate` builds the
 on-demand **At hand** projection from Continuity, Arrival, and factual graph,
@@ -1671,12 +1671,12 @@ before every acquisition cap. it reuses existing qualification/ranking without
 a fallback family, accepts no query parameters and performs no model calls.
 Two bounded aggregate command ports — `POST /lectern/commands`
 (`PlaceItems`/`RemoveItem`/`SetOrder`) and `POST /consumption/commands`
-(`EnsureMediaFinished`/`FinishLecternItem`/`SetUnread`/`UndoCompletion`/
-`SetBatchState`/`ResetProgress`/`SettleNaturalEnd`) — each
-share one `retry_serializable` transaction, one canonical response, and
-`clientMutationId` replay through `services/resource_mutation_replay.py`;
-`GET /lectern` and the retained `GET`/`PUT /media/{id}/listening-state`
-heartbeat sit outside that replay ledger. Owned-absence fields on every wire
+(`EnsureMediaFinished`/`Done`/`SetUnread`/`ResetProgress`/`UndoFinish`/
+`SettleNaturalEnd`) — each share one `retry_serializable` transaction, one
+canonical response, and `clientMutationId` replay through
+`services/resource_mutation_replay.py`; `GET /lectern`, `GET /media/{id}/player`
+and the epoch-fenced `PUT /media/{id}/listening-state` sit outside that replay
+ledger. Owned-absence fields on every wire
 shape use `Presence<T>` ([`rules/boundaries.md`](rules/boundaries.md)), never
 `null` or omission.
 
@@ -1687,23 +1687,19 @@ activity/completion rows), inside the
 deletion transaction — `media_deletion.py` never writes those tables
 directly.
 
-Frontend: `AuthenticatedShell` mounts `LecternProvider` (one `AsyncResource` +
-one mutation FIFO, `lib/lectern/`) above `GlobalPlayerProvider` (one
-`PlayerSession`, `lib/player/`), which wraps `WorkspaceHost` and
-`GlobalPlayerSurfaces`. The latter projects one shell-owned **Media player**
-landmark as the desktop Listening Shelf or mobile MiniPlayer/full-screen Now
-Playing; it persists across pane navigation and is never an editor. Session
-presence, playback phase, and mobile presentation mode are independent: Pause
-retains the surface, Back/Collapse retains playback, and Close stops and
-dismisses the device-local session. The provider selects exactly one runtime:
-non-Android uses one browser-owned `<audio>` element, transparent output-effects
-graph, browser Media Session, heartbeat, and listening recorder; the Android
-shell uses the service-owned Media3 player through the exact `nexusPlayer`
-WebKit protocol and mounts none of those browser owners. The provider exposes
-stable Commands plus cadence-separated Session, Settings, and Timeline
-capabilities. Canonical natural end is one receipt-backed
-`SettleNaturalEnd` mutation; settlement does not require the ended session to
-still exist. See
+Frontend: `AuthenticatedShell` mounts `LecternProvider` (the snapshot resource
+and every command on one promise chain, `lib/lectern/`) above
+`GlobalPlayerProvider` (`lib/player/playerRuntime.tsx`), which wraps
+`WorkspaceHost` and `GlobalPlayerSurfaces`. The latter projects one shell-owned
+**Media player** landmark as the desktop bar or the mobile mini bar and sheet;
+it persists across pane navigation and is never an editor. The provider selects
+exactly one engine: non-Android uses one browser-owned `<audio>` element with its
+listening writer, Media Session and activity observer (`browserEngine.ts`); the
+Android shell uses the service-owned Media3 player through `window.nexusAudio`
+(`nativeEngine.ts`) and mounts none of those browser owners. The provider
+exposes stable Commands plus separate Session and Timeline contexts. A natural
+end is one `SettleNaturalEnd` sent by the engine that heard it; the server
+picks the next audio row. See
 [`modules/player.md`](modules/player.md) and
 [`modules/consumption-activity.md`](modules/consumption-activity.md) for the
 full file map. The shared player also owns an exhaustive ephemeral
@@ -2072,8 +2068,8 @@ they open over Resume and never become panes.
 hardened WebView and `ShareActivity` for system-share capture. The WebView has
 no `addJavascriptInterface`, file/content access, third-party cookies, or
 off-origin in-WebView navigation. Two AndroidX WebKit listeners are confined to
-their owned main-frame origins: `nexusPlayer` carries service-player
-commands/snapshots, and `nexusOffline` carries the offline commands/snapshots
+their owned main-frame origins: `nexusAudio` carries service-player
+ops/snapshots, and `nexusOffline` carries the offline commands/snapshots
 for the hosted origin and the packaged shelf.
 
 Offline ([module](modules/offline.md)) is one store (`OfflineStore`: one json

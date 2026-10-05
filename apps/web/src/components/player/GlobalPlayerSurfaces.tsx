@@ -1,250 +1,313 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import Dialog from "@/components/ui/Dialog";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
+import * as Icon from "lucide-react";
 import Button from "@/components/ui/Button";
-import { presenceValueOr } from "@/lib/api/presence";
+import Dialog from "@/components/ui/Dialog";
+import MediaImage from "@/components/ui/MediaImage";
+import MobileSheet from "@/components/ui/MobileSheet";
+import { formatClock } from "@/lib/formatClock";
+import {
+  useMobileViewport,
+  useRootTextEntryFocused,
+} from "@/lib/mobileViewport/MobileViewportProvider";
+import { formatPlaybackRate } from "@/lib/player/playbackRate";
+import * as Player from "@/lib/player/playerRuntime";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import {
-  usePlayerCommands,
-  usePlayerSession,
-  usePlayerSettings,
-} from "@/lib/player/playerRuntime";
-import { projectPlayerChrome } from "@/lib/player/playerChromeModel";
 import { useWorkspaceStore } from "@/lib/workspace/store";
-import {
-  findPaneChromeFocusTarget,
-  findPaneLandmarkFocusTarget,
-} from "@/lib/workspace/paneDom";
-import { usePaneChromeFocusReturn } from "@/lib/workspace/mobileChrome";
-import DesktopListeningShelf from "./DesktopListeningShelf";
-import MobileMiniPlayer from "./MobileMiniPlayer";
-import MobileNowPlaying from "./MobileNowPlaying";
-import PlayerContentsSheet from "./PlayerContentsSheet";
-import {
-  PlayerPlaybackPanel,
-  PlayerPlaybackSheet,
-} from "./PlayerPlaybackControls";
-import {
-  playerChapters,
-  playerSessionIdentity,
-  playerTargetHref,
-  playerTitle,
-  presentPlayerChrome,
-  type PresentPlayerChrome,
-} from "./PlayerControls";
-import styles from "./GlobalPlayerSurfaces.module.css";
+import { PlayerPanel, VolumeControl } from "./PlayerPlaybackControls";
+import styles from "./Player.module.css";
 
-function playerAnnouncement(model: PresentPlayerChrome): string | null {
-  if (
-    model.state.kind === "PlaybackFailed" ||
-    model.state.kind === "PreviewAudioFailed"
-  ) {
-    return model.state.error.message;
-  }
-  if (model.state.kind === "CompletionFailed") {
-    return "Progress not saved";
-  }
-  if (model.kind === "Canonical" && model.persistence.kind === "Suspended") {
-    return "Progress sync paused";
-  }
-  return null;
+type Loaded = Extract<Player.PlayerState, { kind: "Loaded" }>;
+
+const clock = (ms: number) => formatClock(ms / 1000);
+const percent = (part: number, whole: number) =>
+  `${whole > 0 ? (Math.min(part, whole) / whole) * 100 : 0}%`;
+
+function IconButton(props: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: ReactNode;
+}) {
+  const { label, onClick, disabled, children } = props;
+  return (
+    <Button
+      variant="ghost"
+      size="lg"
+      iconOnly
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+    >
+      {children}
+    </Button>
+  );
+}
+
+/** Artwork, title and subtitle as one button. */
+function Identity({
+  state,
+  size,
+  label,
+  onOpen,
+}: {
+  state: Loaded;
+  size: number;
+  label: string;
+  onOpen: () => void;
+}) {
+  const { kind, descriptor } = state.source;
+  const box = { alt: "", width: size, height: size, className: styles.artwork };
+  const image =
+    kind === "Episode"
+      ? descriptor.artworkUrl.kind === "Present" && (
+          <MediaImage
+            kind="proxied"
+            remoteUrl={descriptor.artworkUrl.value}
+            {...box}
+          />
+        )
+      : descriptor.imageUrl.kind === "Present" && (
+          <MediaImage
+            kind="proxy-src"
+            src={descriptor.imageUrl.value}
+            {...box}
+          />
+        );
+  const subtitle =
+    kind === "Preview"
+      ? `Preview from ${descriptor.source}`
+      : descriptor.subtitle.kind === "Present"
+        ? descriptor.subtitle.value
+        : null;
+  return (
+    <Button
+      variant="ghost"
+      className={styles.identity}
+      onClick={onOpen}
+      aria-label={label}
+    >
+      {image || (
+        <span
+          className={styles.placeholder}
+          style={{ width: size, height: size }}
+          aria-hidden="true"
+        >
+          {descriptor.title.trim().charAt(0).toLocaleUpperCase() || "N"}
+        </span>
+      )}
+      <span className={styles.identityCopy}>
+        <span className={styles.title}>{descriptor.title}</span>
+        {subtitle ? <span className={styles.subtitle}>{subtitle}</span> : null}
+      </span>
+    </Button>
+  );
+}
+
+function Transport({
+  state,
+  compact = false,
+}: {
+  state: Loaded;
+  compact?: boolean;
+}) {
+  const commands = Player.usePlayerCommands();
+  const { nextUp } = Player.usePlayerSession();
+  const playing = state.phase === "Playing" || state.phase === "Buffering";
+  const episode = !compact && state.source.kind === "Episode";
+  return (
+    <div
+      className={styles.transport}
+      role="group"
+      aria-label="Media player controls"
+    >
+      {episode ? (
+        <IconButton label="Previous" onClick={commands.previous}>
+          <Icon.SkipBack />
+        </IconButton>
+      ) : null}
+      {compact ? null : (
+        <IconButton
+          label="Back 15 seconds"
+          onClick={() => commands.skipBy(-Player.PLAYER_SKIP_BACK_MS)}
+        >
+          <Icon.RotateCcw />
+        </IconButton>
+      )}
+      <Button
+        variant="primary"
+        size="lg"
+        iconOnly
+        className={styles.playPause}
+        onClick={playing ? commands.pause : commands.resume}
+        aria-label={playing ? "Pause media player" : "Play media player"}
+      >
+        {playing ? (
+          <Icon.Pause fill="currentColor" />
+        ) : (
+          <Icon.Play fill="currentColor" />
+        )}
+      </Button>
+      <IconButton
+        label="Forward 30 seconds"
+        onClick={() => commands.skipBy(Player.PLAYER_SKIP_FORWARD_MS)}
+      >
+        <Icon.RotateCw />
+      </IconButton>
+      {episode ? (
+        <IconButton
+          label="Next"
+          onClick={commands.next}
+          disabled={nextUp === null}
+        >
+          <Icon.SkipForward />
+        </IconButton>
+      ) : null}
+    </div>
+  );
+}
+
+/** Seek range over a painted track; a pointer scrub seeks once, on release. */
+function Seek() {
+  const { positionMs, durationMs, bufferedMs, chapter } =
+    Player.usePlayerTimeline();
+  const commands = Player.usePlayerCommands();
+  const scrubbing = useRef(false);
+  const [draft, setDraft] = useState<number | null>(null);
+  const shown = Math.min(draft ?? positionMs, durationMs);
+  const commit = () => {
+    scrubbing.current = false;
+    if (draft !== null) commands.seekTo(draft);
+    setDraft(null);
+  };
+  const track = {
+    "--progress": percent(shown, durationMs),
+    "--buffered": percent(Math.max(shown, bufferedMs), durationMs),
+  } as CSSProperties;
+  return (
+    <div className={styles.seekField}>
+      <div className={styles.seek} style={track}>
+        <span className={styles.time}>{clock(shown)}</span>
+        <span className={styles.track} aria-hidden="true" />
+        <input
+          type="range"
+          className={styles.seekInput}
+          min={0}
+          max={durationMs}
+          step={1000}
+          value={shown}
+          disabled={durationMs <= 0}
+          aria-label="Seek playback position"
+          aria-valuetext={`${clock(shown)} of ${clock(durationMs)}`}
+          onPointerDown={() => (scrubbing.current = true)}
+          onPointerUp={commit}
+          onPointerCancel={commit}
+          onChange={(event) => {
+            const value = Number(event.currentTarget.value);
+            if (scrubbing.current) setDraft(value);
+            else commands.seekTo(value);
+          }}
+        />
+        <span className={styles.time}>{clock(durationMs)}</span>
+      </div>
+      {chapter ? (
+        <span className={styles.subtitle} aria-label="Current chapter">
+          {chapter.title}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function statusOf(state: Loaded): string | null {
+  return (
+    state.error ??
+    (state.phase === "Buffering"
+      ? "Buffering"
+      : state.synced
+        ? null
+        : "Progress sync paused")
+  );
+}
+
+function Status({ state }: { state: Loaded }) {
+  const commands = Player.usePlayerCommands();
+  const message = statusOf(state);
+  return message === null ? null : (
+    <div className={styles.status} aria-label="Player status">
+      <span className={styles.statusDot} aria-hidden="true" />
+      {message}
+      {state.error ? (
+        <Button variant="ghost" size="sm" onClick={commands.resume}>
+          Retry
+        </Button>
+      ) : null}
+    </div>
+  );
 }
 
 export default function GlobalPlayerSurfaces() {
-  const session = usePlayerSession();
-  const settings = usePlayerSettings();
-  const commands = usePlayerCommands();
+  const { state, nextUp } = Player.usePlayerSession();
+  const commands = Player.usePlayerCommands();
   const workspace = useWorkspaceStore();
-  const { focus: returnPaneChromeFocus } = usePaneChromeFocusReturn();
   const isMobile = useIsMobileViewport();
-  const model = projectPlayerChrome(session);
-  const miniPlayerButtonRef = useRef<HTMLButtonElement>(null);
-  const playbackButtonRef = useRef<HTMLButtonElement>(null);
-  const playbackReturnFocusRef = useRef<HTMLElement | null>(null);
-  const announcedIdentityRef = useRef<string | null>(null);
-  const activeSessionIdentityRef = useRef<string | null>(null);
-  const previousIsMobileRef = useRef(isMobile);
-  const rememberAnnouncementRef = useRef("Unavailable");
-  const pauseAnnouncementRef = useRef("Unavailable");
-  const [nowPlayingOpen, setNowPlayingOpen] = useState(false);
-  const [playbackOpen, setPlaybackOpen] = useState(false);
-  const [contentsOpen, setContentsOpen] = useState(false);
+  const mobileViewport = useMobileViewport();
+  const textEntryFocused = useRootTextEntryFocused();
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [announcement, setAnnouncement] = useState("");
+  const miniRef = useRef<HTMLElement>(null);
+  const rateRef = useRef<HTMLButtonElement>(null);
+  const openerRef = useRef<HTMLButtonElement>(null);
+  const loaded = state.kind === "Loaded" ? state : null;
+  const identity =
+    loaded &&
+    (loaded.source.kind === "Episode"
+      ? loaded.source.descriptor.mediaId
+      : loaded.source.descriptor.target);
+  const title = loaded?.source.descriptor.title;
+  const status = loaded && statusOf(loaded);
 
-  const closeSubordinates = useCallback(() => {
-    setPlaybackOpen(false);
-    setContentsOpen(false);
-  }, []);
-
-  const collapse = useCallback(() => {
-    closeSubordinates();
-    setNowPlayingOpen(false);
-  }, [closeSubordinates]);
-
-  const dismiss = useCallback(() => {
-    const activePaneId = workspace.state.activePrimaryPaneId;
-    setPlaybackOpen(false);
-    setContentsOpen(false);
-    setNowPlayingOpen(false);
-    setAnnouncement("Player closed");
-    commands.dismiss();
-    if (isMobile) {
-      void returnPaneChromeFocus(activePaneId);
-      return;
-    }
-    requestAnimationFrame(() =>
-      findPaneChromeFocusTarget(activePaneId)?.focus(),
+  // Polite announcements: what starts playing, when the player closes, and status changes.
+  const announced = useRef<string | null>(null);
+  useEffect(() => {
+    if (identity === announced.current) return;
+    setAnnouncement(
+      title
+        ? `Now playing: ${title}`
+        : announced.current
+          ? "Player closed"
+          : "",
     );
-  }, [
-    commands,
-    isMobile,
-    returnPaneChromeFocus,
-    workspace.state.activePrimaryPaneId,
-  ]);
-
+    if (identity === null) {
+      setSheetOpen(false);
+      setPanelOpen(false);
+    }
+    announced.current = identity;
+  }, [identity, title]);
   useEffect(() => {
-    const viewportChanged = previousIsMobileRef.current !== isMobile;
-    previousIsMobileRef.current = isMobile;
-    const identity = playerSessionIdentity(model);
-    if (
-      activeSessionIdentityRef.current !== null &&
-      activeSessionIdentityRef.current !== identity
-    ) {
-      setPlaybackOpen(false);
-      setContentsOpen(false);
-      if (identity === null) setAnnouncement("Player closed");
-    }
-    activeSessionIdentityRef.current = identity;
+    if (status && status !== "Buffering") setAnnouncement(status);
+  }, [status]);
 
-    if (viewportChanged || presentPlayerChrome(model) === null) {
-      setNowPlayingOpen(false);
-      setPlaybackOpen(false);
-      setContentsOpen(false);
-    } else if (!isMobile) {
-      setNowPlayingOpen(false);
-      setContentsOpen(false);
-    }
-  }, [isMobile, model]);
+  const miniHidden =
+    !isMobile || loaded === null || sheetOpen || textEntryFocused;
+  useLayoutEffect(() => {
+    if (miniHidden || miniRef.current === null) return;
+    return mobileViewport.registerBottomSurface("Player", miniRef.current);
+  }, [miniHidden, mobileViewport]);
 
-  useEffect(() => {
-    if (model.kind === "Absent") {
-      announcedIdentityRef.current = null;
-      return;
-    }
-    if (model.kind === "UpdateRequired") {
-      announcedIdentityRef.current = null;
-      setAnnouncement("Update Nexus for Android");
-      return;
-    }
-    if (model.kind === "RuntimeFailure") {
-      announcedIdentityRef.current = null;
-      setAnnouncement(model.state.error.message);
-      return;
-    }
-    const identity = playerSessionIdentity(model);
-    if (identity !== announcedIdentityRef.current) {
-      announcedIdentityRef.current = identity;
-      setAnnouncement(`Now playing: ${playerTitle(model)}`);
-      return;
-    }
-    const status = playerAnnouncement(model);
-    if (status !== null) setAnnouncement(status);
-  }, [model]);
-
-  useEffect(() => {
-    const remember = settings.playbackRate.remember;
-    const signature =
-      remember.kind === "Failed"
-        ? `${remember.kind}:${remember.error.title}:${remember.error.message ?? ""}`
-        : remember.kind;
-    const previous = rememberAnnouncementRef.current;
-    if (signature === previous) return;
-    rememberAnnouncementRef.current = signature;
-    if (remember.kind === "Pending") {
-      setAnnouncement("Remembering playback speed for this podcast");
-    } else if (remember.kind === "Failed") {
-      setAnnouncement(
-        [remember.error.title, remember.error.message]
-          .filter(Boolean)
-          .join(". "),
-      );
-    } else if (remember.kind === "Ready" && previous === "Pending") {
-      setAnnouncement("Podcast playback speed remembered");
-    }
-  }, [settings.playbackRate.remember]);
-
-  useEffect(() => {
-    const pause = settings.pauseShortening;
-    if (pause.kind === "Unavailable") {
-      pauseAnnouncementRef.current = "Unavailable";
-      return;
-    }
-    const mutation = pause.mutation;
-    const signature =
-      mutation.kind === "Failed"
-        ? `${mutation.kind}:${mutation.scope}:${mutation.error.title}:${mutation.error.message ?? ""}`
-        : mutation.kind === "Pending"
-          ? `${mutation.kind}:${mutation.scope}`
-          : mutation.kind;
-    const previous = pauseAnnouncementRef.current;
-    if (signature === previous) return;
-    pauseAnnouncementRef.current = signature;
-    if (mutation.kind === "Pending") {
-      setAnnouncement(
-        mutation.scope === "Podcast"
-          ? "Remembering pause shortening for this podcast"
-          : "Updating the device pause-shortening default",
-      );
-    } else if (mutation.kind === "Failed") {
-      setAnnouncement(
-        [mutation.error.title, mutation.error.message]
-          .filter(Boolean)
-          .join(". "),
-      );
-    } else if (previous === "Pending:Podcast") {
-      setAnnouncement("Podcast pause-shortening setting remembered");
-    } else if (previous === "Pending:Device") {
-      setAnnouncement("Device pause-shortening default updated");
-    }
-  }, [settings.pauseShortening]);
-
-  const activateTarget = useCallback(
-    (target: { readonly href: string; readonly labelHint: string }) => {
-      workspace.activateWorkspaceTarget({
-        originPaneId: workspace.state.activePrimaryPaneId,
-        target,
-        disposition: { kind: "Follow" },
-        modality: "Programmatic",
-      });
-    },
-    [workspace],
-  );
-
-  const openPlayerTarget = useCallback(() => {
-    const present = presentPlayerChrome(model);
-    if (present === null) return;
-    collapse();
-    activateTarget({
-      href: playerTargetHref(present),
-      labelHint: playerTitle(present),
-    });
-  }, [activateTarget, collapse, model]);
-
-  const openLectern = useCallback(() => {
-    collapse();
-    activateTarget({ href: "/lectern", labelHint: "Lectern" });
-  }, [activateTarget, collapse]);
-
-  const openPlayback = useCallback((returnFocusTo: HTMLElement | null) => {
-    playbackReturnFocusRef.current = returnFocusTo;
-    setPlaybackOpen(true);
-  }, []);
-
-  const liveRegion = (
+  const live = (
     <span
-      className={styles.liveRegion}
+      className={styles.srOnly}
       role="status"
       aria-live="polite"
       aria-atomic="true"
@@ -252,134 +315,161 @@ export default function GlobalPlayerSurfaces() {
       {announcement}
     </span>
   );
-
-  if (model.kind === "Absent") return liveRegion;
-  if (model.kind === "UpdateRequired") {
+  if (state.kind === "Unavailable") {
+    const update = state.reason === "UpdateRequired";
     return (
-      <>
-        {liveRegion}
-        <section
-          className={styles.runtimeFailure}
-          role="region"
-          aria-label="Media player"
-        >
-          <div>
-            <strong>Update Nexus for Android</strong>
-            <p>This app version no longer matches the Nexus player.</p>
-          </div>
+      <section
+        className={styles.unavailable}
+        role="region"
+        aria-label="Media player"
+      >
+        <strong>
+          {update ? "Update Nexus for Android" : "Player unavailable"}
+        </strong>
+        {update ? (
           <Button asChild variant="secondary" size="sm">
             <Link href="/android">Update</Link>
           </Button>
-        </section>
-      </>
+        ) : null}
+      </section>
     );
   }
-  if (model.kind === "RuntimeFailure") {
+  if (loaded === null) return live;
+
+  const source = loaded.source;
+  const openTarget = () => {
+    setSheetOpen(false);
+    workspace.activateWorkspaceTarget({
+      originPaneId: workspace.state.activePrimaryPaneId,
+      target: {
+        href:
+          source.kind === "Episode"
+            ? `/media/${source.descriptor.mediaId}`
+            : source.descriptor.previewHref,
+        labelHint: source.descriptor.title,
+      },
+      disposition: { kind: "Follow" },
+      modality: "Programmatic",
+    });
+  };
+  const identityButton = (
+    <Identity
+      state={loaded}
+      size={48}
+      label={`Open ${source.descriptor.title}`}
+      onOpen={openTarget}
+    />
+  );
+  const next = nextUp ? (
+    <span className={styles.subtitle}>Next: {nextUp.title}</span>
+  ) : null;
+  const close = (
+    <IconButton label="Close player" onClick={commands.dismiss}>
+      <Icon.X />
+    </IconButton>
+  );
+
+  if (!isMobile) {
     return (
       <>
-        {liveRegion}
-        <section
-          className={styles.runtimeFailure}
+        {live}
+        <footer
+          className={styles.bar}
           role="region"
           aria-label="Media player"
+          inert={panelOpen}
         >
-          <div>
-            <strong>Player unavailable</strong>
-            <p>{model.state.error.message}</p>
+          <div className={styles.column}>
+            {identityButton}
+            {next}
           </div>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={model.state.retry}
-          >
-            Retry
-          </Button>
-        </section>
+          <div className={styles.listening}>
+            <Transport state={loaded} />
+            <Seek />
+            <Status state={loaded} />
+          </div>
+          <div className={styles.row}>
+            <Button
+              ref={rateRef}
+              variant="ghost"
+              size="lg"
+              leadingIcon={<Icon.Gauge />}
+              aria-label={`Playback speed, ${loaded.rate === 1 ? "normal" : `${formatPlaybackRate(loaded.rate).slice(0, -1)} times`}`}
+              onClick={() => setPanelOpen(true)}
+            >
+              {formatPlaybackRate(loaded.rate)}
+            </Button>
+            <VolumeControl state={loaded} />
+            {close}
+          </div>
+        </footer>
+        <Dialog
+          open={panelOpen}
+          onClose={() => setPanelOpen(false)}
+          title="Playback"
+          returnFocusTo={() => rateRef.current}
+        >
+          <PlayerPanel />
+        </Dialog>
       </>
     );
   }
-
-  const chapters = playerChapters(model);
-  const podcastTitle =
-    model.kind === "Canonical"
-      ? presenceValueOr(model.state.session.descriptor.subtitle, null)
-      : null;
-  const modalActive = nowPlayingOpen || playbackOpen || contentsOpen;
-  const subordinateActive = playbackOpen || contentsOpen;
-
   return (
     <>
-      {liveRegion}
-      {isMobile ? (
-        <>
-          <MobileMiniPlayer
-            model={model}
-            suspended={modalActive}
-            openerRef={miniPlayerButtonRef}
-            onOpenNowPlaying={() => setNowPlayingOpen(true)}
-            onOpenTarget={openPlayerTarget}
-            onOpenPlayback={openPlayback}
-            onOpenContents={() => setContentsOpen(true)}
-            onOpenLectern={openLectern}
-            onDismiss={dismiss}
+      {live}
+      <footer
+        ref={miniRef}
+        className={styles.mini}
+        role="region"
+        aria-label="Media player"
+        data-hidden={miniHidden || undefined}
+        inert={miniHidden}
+      >
+        <MiniProgress />
+        <div className={styles.row}>
+          <Identity
+            state={loaded}
+            size={44}
+            label={`Open Now Playing: ${source.descriptor.title}`}
+            onOpen={() => setSheetOpen(true)}
           />
-          <MobileNowPlaying
-            active={nowPlayingOpen}
-            model={model}
-            suspended={subordinateActive}
-            miniPlayerButtonRef={miniPlayerButtonRef}
-            playbackButtonRef={playbackButtonRef}
-            returnFocusFallback={() =>
-              findPaneLandmarkFocusTarget(workspace.state.activePrimaryPaneId)
-            }
-            onOpenPlayback={() => openPlayback(playbackButtonRef.current)}
-            onOpenContents={() => setContentsOpen(true)}
-            onCollapse={collapse}
-            onOpenTarget={openPlayerTarget}
-            onOpenLectern={openLectern}
-            onDismiss={dismiss}
-          />
-          <PlayerPlaybackSheet
-            active={playbackOpen}
-            podcastTitle={podcastTitle}
-            onDismiss={() => setPlaybackOpen(false)}
-            returnFocusTo={() =>
-              playbackReturnFocusRef.current ??
-              playbackButtonRef.current ??
-              miniPlayerButtonRef.current
-            }
-          />
-          <PlayerContentsSheet
-            active={contentsOpen}
-            chapters={chapters}
-            onDismiss={() => setContentsOpen(false)}
-          />
-        </>
-      ) : (
-        <>
-          <DesktopListeningShelf
-            model={model}
-            onOpenTarget={openPlayerTarget}
-            onOpenLectern={openLectern}
-            onOpenPlayback={() => openPlayback(playbackButtonRef.current)}
-            onDismiss={dismiss}
-            suspended={playbackOpen}
-            playbackButtonRef={playbackButtonRef}
-          />
-          <Dialog
-            open={playbackOpen}
-            onClose={() => setPlaybackOpen(false)}
-            title="Playback"
-            returnFocusTo={() =>
-              playbackReturnFocusRef.current ?? playbackButtonRef.current
-            }
-          >
-            <div role="region" aria-label="Media player">
-              <PlayerPlaybackPanel podcastTitle={podcastTitle} />
-            </div>
-          </Dialog>
-        </>
-      )}
+          <Transport state={loaded} compact />
+        </div>
+        <Status state={loaded} />
+      </footer>
+      <MobileSheet
+        active={sheetOpen}
+        onDismiss={() => setSheetOpen(false)}
+        ariaLabel="Now Playing"
+        returnFocusTo={() => openerRef.current}
+      >
+        <div className={styles.column} role="region" aria-label="Media player">
+          <div className={styles.row}>
+            <IconButton
+              label="Collapse player"
+              onClick={() => setSheetOpen(false)}
+            >
+              <Icon.ChevronDown />
+            </IconButton>
+            {close}
+          </div>
+          {identityButton}
+          {next}
+          <Seek />
+          <Transport state={loaded} />
+          <Status state={loaded} />
+          <PlayerPanel />
+        </div>
+      </MobileSheet>
     </>
+  );
+}
+
+function MiniProgress() {
+  const { positionMs, durationMs } = Player.usePlayerTimeline();
+  return (
+    <span className={styles.miniProgress} aria-hidden="true">
+      <span style={{ width: percent(positionMs, durationMs) }} />
+    </span>
   );
 }

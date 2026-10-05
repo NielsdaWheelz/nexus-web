@@ -1,11 +1,7 @@
-// The Lectern view: the closed sort type, a strict total
-// URLSearchParams <-> LecternView codec, the exact `Sort by` inventory, and the
-// client order over the complete bounded snapshot. Lectern view state is pane
-// URL state and never reaches the API, so this module has no query builder. See
-// docs/cutovers/collection-refinement-capability-hard-cutover.md.
+// The Lectern view: pane url state (`sort` + `direction`) that never reaches the API. The
+// whole bounded snapshot is already here, so a sort is a pure projection over a copy of it.
 
 import type { LecternItem } from "@/lib/lectern/contract";
-import { assertNever } from "@/lib/assertNever";
 
 type Direction = "asc" | "desc";
 
@@ -14,44 +10,34 @@ export type LecternView =
   | { kind: "Added"; direction: Direction }
   | { kind: "Title"; direction: Direction };
 
-/** Custom order: the authored snapshot order and the sole view with no owned keys. */
+/** The authored order: the one view with no url keys. */
 export const CANONICAL_LECTERN_VIEW: LecternView = { kind: "Custom" };
 
 export type DecodedLecternView =
-  | { kind: "Valid"; view: LecternView }
-  | { kind: "Invalid" };
+  { kind: "Valid"; view: LecternView } | { kind: "Invalid" };
 
-/**
- * Strict, total decode of the view-owned `sort`/`direction` keys. A partial,
- * duplicated, or unknown pair is Invalid rather than normalized, so the pane
- * never renders an order its URL does not name. Both `added` directions are
- * addressable: the canonical view is `Custom`, not an `added` sort.
- */
+/** Strict: a partial, repeated or unknown pair is Invalid, never normalized. */
 export function decodeLecternView(params: URLSearchParams): DecodedLecternView {
   const sorts = params.getAll("sort");
   const directions = params.getAll("direction");
-  if (sorts.length > 1 || directions.length > 1) {
+  if (sorts.length === 0 && directions.length === 0)
+    return { kind: "Valid", view: CANONICAL_LECTERN_VIEW };
+  const [sort, direction] = [sorts[0], directions[0]];
+  if (
+    sorts.length !== 1 ||
+    directions.length !== 1 ||
+    (direction !== "asc" && direction !== "desc")
+  ) {
     return { kind: "Invalid" };
   }
-  const sort = sorts[0];
-  const direction = directions[0];
-  if (sort === undefined && direction === undefined) {
-    return { kind: "Valid", view: { kind: "Custom" } };
-  }
-  if (sort === undefined || (direction !== "asc" && direction !== "desc")) {
-    return { kind: "Invalid" };
-  }
-  switch (sort) {
-    case "added":
-      return { kind: "Valid", view: { kind: "Added", direction } };
-    case "title":
-      return { kind: "Valid", view: { kind: "Title", direction } };
-    default:
-      return { kind: "Invalid" };
-  }
+  if (sort === "added")
+    return { kind: "Valid", view: { kind: "Added", direction } };
+  if (sort === "title")
+    return { kind: "Valid", view: { kind: "Title", direction } };
+  return { kind: "Invalid" };
 }
 
-/** Replaces the view-owned keys and preserves unrelated pane keys. */
+/** Replaces the view's keys and keeps every other pane key. */
 export function encodeLecternView(
   view: LecternView,
   current: URLSearchParams,
@@ -59,131 +45,76 @@ export function encodeLecternView(
   const next = new URLSearchParams(current);
   next.delete("sort");
   next.delete("direction");
-  switch (view.kind) {
-    case "Custom":
-      break;
-    case "Added":
-      next.set("sort", "added");
-      next.set("direction", view.direction);
-      break;
-    case "Title":
-      next.set("sort", "title");
-      next.set("direction", view.direction);
-      break;
-    default:
-      assertNever(view);
+  if (view.kind !== "Custom") {
+    next.set("sort", view.kind === "Added" ? "added" : "title");
+    next.set("direction", view.direction);
   }
   return next;
 }
 
-export const LECTERN_SORT_OPTION_IDS = [
-  "custom",
-  "added-newest",
-  "added-oldest",
-  "title-asc",
-  "title-desc",
-] as const;
+const SORT_OPTIONS = {
+  custom: { label: "Custom order", view: { kind: "Custom" } },
+  "added-newest": {
+    label: "Newest added",
+    view: { kind: "Added", direction: "desc" },
+  },
+  "added-oldest": {
+    label: "Oldest added",
+    view: { kind: "Added", direction: "asc" },
+  },
+  "title-asc": {
+    label: "Title A–Z",
+    view: { kind: "Title", direction: "asc" },
+  },
+  "title-desc": {
+    label: "Title Z–A",
+    view: { kind: "Title", direction: "desc" },
+  },
+} as const satisfies Record<string, { label: string; view: LecternView }>;
 
-export type LecternSortOptionId = (typeof LECTERN_SORT_OPTION_IDS)[number];
+export type LecternSortOptionId = keyof typeof SORT_OPTIONS;
+
+export const LECTERN_SORT_OPTION_IDS = Object.keys(
+  SORT_OPTIONS,
+) as LecternSortOptionId[];
 
 export function lecternSortOptionLabel(id: LecternSortOptionId): string {
-  switch (id) {
-    case "custom":
-      return "Custom order";
-    case "added-newest":
-      return "Newest added";
-    case "added-oldest":
-      return "Oldest added";
-    case "title-asc":
-      return "Title A–Z";
-    case "title-desc":
-      return "Title Z–A";
-    default:
-      return assertNever(id);
-  }
-}
-
-export function lecternSortOptionOf(view: LecternView): LecternSortOptionId {
-  switch (view.kind) {
-    case "Custom":
-      return "custom";
-    case "Added":
-      return view.direction === "desc" ? "added-newest" : "added-oldest";
-    case "Title":
-      return view.direction === "asc" ? "title-asc" : "title-desc";
-    default:
-      return assertNever(view);
-  }
+  return SORT_OPTIONS[id].label;
 }
 
 export function lecternViewForSortOption(id: LecternSortOptionId): LecternView {
-  switch (id) {
-    case "custom":
-      return { kind: "Custom" };
-    case "added-newest":
-      return { kind: "Added", direction: "desc" };
-    case "added-oldest":
-      return { kind: "Added", direction: "asc" };
-    case "title-asc":
-      return { kind: "Title", direction: "asc" };
-    case "title-desc":
-      return { kind: "Title", direction: "desc" };
-    default:
-      return assertNever(id);
-  }
+  return SORT_OPTIONS[id].view;
 }
 
-function signOf(direction: Direction): number {
-  return direction === "asc" ? 1 : -1;
+export function lecternSortOptionOf(view: LecternView): LecternSortOptionId {
+  if (view.kind === "Custom") return "custom";
+  if (view.kind === "Added")
+    return view.direction === "desc" ? "added-newest" : "added-oldest";
+  return view.direction === "asc" ? "title-asc" : "title-desc";
 }
 
-/**
- * Code-unit order, never `localeCompare`/`Intl.Collator`: collation depends on
- * the runtime's ICU data, and this order must be reproducible everywhere it is
- * computed.
- */
-function compareText(a: string, b: string): number {
-  if (a < b) return -1;
-  if (a > b) return 1;
-  return 0;
-}
+// Code-unit order, never localeCompare: collation depends on the runtime's ICU data.
+const compareText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+const titleKey = (title: string) => title.trim().normalize("NFC").toLowerCase();
 
-function titleKey(title: string): string {
-  return title.trim().normalize("NFC").toLowerCase();
-}
-
-/**
- * The total order the Lectern pane renders over its complete bounded snapshot.
- * `itemId` breaks every remaining tie ascending, in both directions, so the
- * order is stable across renders. Returns a new array; never reorders in place.
- */
+/** The total order the pane renders; `itemId` breaks remaining ties ascending. */
 export function orderLecternItems(
   view: LecternView,
   items: readonly LecternItem[],
 ): readonly LecternItem[] {
-  switch (view.kind) {
-    case "Custom":
-      return items;
-    case "Added": {
-      const sign = signOf(view.direction);
-      // Instants, not their text: the wire spells the same instant as `Z` or
-      // `+00:00`, with or without fractional seconds.
-      return [...items].sort(
-        (a, b) =>
-          sign * (Date.parse(a.addedAt) - Date.parse(b.addedAt)) ||
-          compareText(a.itemId, b.itemId),
-      );
-    }
-    case "Title": {
-      const sign = signOf(view.direction);
-      return [...items].sort(
-        (a, b) =>
-          sign * compareText(titleKey(a.mediaSummary.title), titleKey(b.mediaSummary.title)) ||
-          sign * compareText(a.mediaSummary.title, b.mediaSummary.title) ||
-          compareText(a.itemId, b.itemId),
-      );
-    }
-    default:
-      return assertNever(view);
-  }
+  if (view.kind === "Custom") return items;
+  const sign = view.direction === "asc" ? 1 : -1;
+  return [...items].sort((a, b) =>
+    view.kind === "Added"
+      ? // Instants, not text: the wire spells one instant several ways.
+        sign * (Date.parse(a.addedAt) - Date.parse(b.addedAt)) ||
+        compareText(a.itemId, b.itemId)
+      : sign *
+          compareText(
+            titleKey(a.mediaSummary.title),
+            titleKey(b.mediaSummary.title),
+          ) ||
+        sign * compareText(a.mediaSummary.title, b.mediaSummary.title) ||
+        compareText(a.itemId, b.itemId),
+  );
 }

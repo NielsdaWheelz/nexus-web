@@ -8,7 +8,7 @@ import {
 } from "@/lib/api/collectionPage";
 import type { Presence } from "@/lib/api/presence";
 import type { ApiJson } from "@/lib/api/wire";
-import type { PauseShorteningMode } from "@/lib/player/pauseShortening";
+import type { PauseShorteningMode } from "@/lib/player/playbackRate";
 
 export type PodcastSubscriptionSettingsPatch = {
   defaultPlaybackSpeed?: Presence<number>;
