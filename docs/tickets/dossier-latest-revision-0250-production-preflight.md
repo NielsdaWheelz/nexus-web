@@ -1,23 +1,28 @@
 # 0250 needs a read-only production preflight before deploy
 
-status: open · origin: 2026-09-28 cleanup pr-08 (cleanup/dossier-latest-revision) · area: dossiers / typed wire / production migration
+status: open · origin: 2026-09-28 cleanup pr-08; 2026-10-05 established-findings audit · area: dossiers / typed wire / production migration
 
 `migrations/alembic/versions/0250_dossier_latest_revision_only.py` irreversibly
 deletes every non-current dossier revision with its build, events, queue row and
 edges, drops `artifact_revisions.promoted_at` and the three `artifact_learn_*`
-tables. nobody has counted what that loses in production.
+tables. record what those operations lose in production before release.
 
-the same PR drops the `None` defaults and list factories from the models that
-load stored json on read: dossier manifests (head read), the chat
-`context_ref_added` activation (`services/message_trust_trails.py:145`) and the
-oracle `passage` citation (`schemas/oracle.py` `OracleReadingEventOut`). 0250's
-`upgrade()` refuses, before any change, while a stored row lacks one of those
-keys. run that guard's query read-only first, so the release does not stop
-halfway: if it returns rows, add a backfill `UPDATE` per case to 0250 (key as
-`[]` or `null`); do not restore the defaults.
+that release removed defaults from stored-json read models for dossier
+manifests, chat `context_ref_added` activation and oracle `passage` citation.
+these describe the historical 0250 boundary, not today's retired oracle event
+output model. 0250 checks those facts before deleting revisions, but its guard
+is incomplete. at `fc47d05a8754060181246f97f4d6935b744f10b8`,
+`migrations/alembic/versions/0250_dossier_latest_revision_only.py:73–77` uses a
+null-propagating `NOT` predicate: an otherwise complete citation without
+`activation` produces sql null and escapes `WHERE`; line 69 has the same hole
+for chat activation. this is source-qualified; production occurrence is
+uninspected.
 
-prerequisite: read access to the production database. run, read-only, the guard
-query in `upgrade()` (must return no rows) and the loss counts:
+prerequisite: correct required-key predicates, including absent parents, with
+`IS NOT TRUE` completeness checks before relying on this preflight. with read
+access to production, count/report missing facts read-only and define any
+backfill from actual stored meaning; do not invent activation or restore output
+defaults. the corrected guard must return no rows. also record the loss counts:
 
 ```sql
 SELECT a.subject_scheme, count(*) FROM artifact_revisions r
@@ -45,8 +50,12 @@ the pre-0250 backend cannot run on the migrated schema, so a backend rollback
 means restoring the previous application and the backup together, losing every
 write since.
 
-acceptance: recorded loss counts and an empty guard query, then 0250 applies and
-each head has at most one revision. delete this ticket after.
+acceptance: on a restored pre-0250 backup, missing-parent and incomplete chat
+and citation activation controls refuse before mutation; complete controls,
+including valid nullable members, stay valid. record actual missing-fact and
+loss counts, verify the backup, and apply the corrected full chain. each head
+has at most one revision after 0250, before later schema removals. delete this
+ticket after.
 
 main now follows `0250` with irreversible migration `0251`; its separate
 production loss inventory is tracked in
