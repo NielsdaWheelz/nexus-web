@@ -15,10 +15,6 @@
 !migrations/
 !migrations/**
 
-!scripts/
-!scripts/oracle/
-!scripts/oracle/**
-
 !node/
 !node/ingest/
 !node/ingest/package.json

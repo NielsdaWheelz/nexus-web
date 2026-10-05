@@ -132,5 +132,4 @@ file with `deploy/cloudflare/apply-r2-lifecycle.sh`.
 ## Deployment
 
 Object-storage preconditions that migrations depend on are established by deploy
-or operator code, not app startup. Application release records the expected
-Oracle manifest digest but does not read or mutate Oracle.
+or operator code, not app startup.

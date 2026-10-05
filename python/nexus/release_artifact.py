@@ -12,29 +12,12 @@ from typing import Any
 
 _SOURCE_SHA = re.compile(r"[0-9a-f]{40}")
 _DATABASE_REVISION = re.compile(r"[0-9a-z][0-9a-z_]{0,63}")
-_ORACLE_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 _API_IMAGE = re.compile(r"ghcr\.io/nielsdawheelz/nexus-api@sha256:[0-9a-f]{64}")
 _WORKER_IMAGE = re.compile(r"ghcr\.io/nielsdawheelz/nexus-worker@sha256:[0-9a-f]{64}")
-_RUNTIME_IDENTITY_KEYS = frozenset(
-    {"source_sha", "expected_database_revision", "expected_oracle_manifest_digest"}
-)
+_RUNTIME_IDENTITY_KEYS = frozenset({"source_sha", "expected_database_revision"})
 _CANDIDATE_MANIFEST_KEYS = frozenset(
-    {
-        "schema_version",
-        "source_sha",
-        "repository",
-        "images",
-        "expected_database_revision",
-        "expected_oracle_manifest_digest",
-    }
+    {"schema_version", "source_sha", "repository", "images", "expected_database_revision"}
 )
-_LEGACY_CANDIDATE_MANIFEST_KEYS = _CANDIDATE_MANIFEST_KEYS | {
-    "source_ci_run_id",
-    "source_ci_run_attempt",
-    "source_ci_workflow_id",
-    "publisher_run_id",
-    "publisher_run_attempt",
-}
 _REPOSITORY = "NielsdaWheelz/nexus-web"
 _RUNTIME_IDENTITY_PATH = Path("/app/runtime-identity.json")
 
@@ -48,7 +31,6 @@ class BackendArtifactDefect(RuntimeError):
 class RuntimeIdentity:
     source_sha: str
     expected_database_revision: str
-    expected_oracle_manifest_digest: str
 
     def __post_init__(self) -> None:
         _require_match("source_sha", self.source_sha, _SOURCE_SHA)
@@ -57,17 +39,11 @@ class RuntimeIdentity:
             self.expected_database_revision,
             _DATABASE_REVISION,
         )
-        _require_match(
-            "expected_oracle_manifest_digest",
-            self.expected_oracle_manifest_digest,
-            _ORACLE_DIGEST,
-        )
 
     def as_json(self) -> dict[str, object]:
         return {
             "source_sha": self.source_sha,
             "expected_database_revision": self.expected_database_revision,
-            "expected_oracle_manifest_digest": self.expected_oracle_manifest_digest,
         }
 
 
@@ -91,11 +67,10 @@ class CandidateManifest:
     repository: str
     images: CandidateImages
     expected_database_revision: str
-    expected_oracle_manifest_digest: str
 
     def __post_init__(self) -> None:
-        if type(self.schema_version) is not int or self.schema_version != 2:
-            raise BackendArtifactDefect("candidate manifest schema_version must be 2")
+        if type(self.schema_version) is not int or self.schema_version != 3:
+            raise BackendArtifactDefect("candidate manifest schema_version must be 3")
         _require_match("source_sha", self.source_sha, _SOURCE_SHA)
         if self.repository != _REPOSITORY:
             raise BackendArtifactDefect("candidate manifest repository is malformed")
@@ -106,11 +81,6 @@ class CandidateManifest:
             self.expected_database_revision,
             _DATABASE_REVISION,
         )
-        _require_match(
-            "expected_oracle_manifest_digest",
-            self.expected_oracle_manifest_digest,
-            _ORACLE_DIGEST,
-        )
 
     def as_json(self) -> dict[str, object]:
         return {
@@ -119,7 +89,6 @@ class CandidateManifest:
             "repository": self.repository,
             "images": self.images.as_json(),
             "expected_database_revision": self.expected_database_revision,
-            "expected_oracle_manifest_digest": self.expected_oracle_manifest_digest,
         }
 
 
@@ -128,20 +97,13 @@ def build_runtime_identity(repo_root: Path, source_sha: str) -> RuntimeIdentity:
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
-    from nexus.oracle.manifest import load_oracle_manifest
-
     _require_match("source_sha", source_sha, _SOURCE_SHA)
     migration_config = Config(str(repo_root / "migrations/alembic.ini"))
     migration_config.set_main_option("script_location", str(repo_root / "migrations/alembic"))
     heads = ScriptDirectory.from_config(migration_config).get_heads()
     if len(heads) != 1:
         raise BackendArtifactDefect(f"expected one Alembic head, found {heads!r}")
-    oracle_manifest = load_oracle_manifest(repo_root / "scripts/oracle")
-    return RuntimeIdentity(
-        source_sha=source_sha,
-        expected_database_revision=heads[0],
-        expected_oracle_manifest_digest=oracle_manifest.manifest_digest,
-    )
+    return RuntimeIdentity(source_sha=source_sha, expected_database_revision=heads[0])
 
 
 def write_runtime_identity(repo_root: Path, source_sha: str, output_path: Path) -> None:
@@ -159,7 +121,6 @@ def load_runtime_identity(path: Path) -> RuntimeIdentity:
     identity = RuntimeIdentity(
         source_sha=_require_string(value, "source_sha"),
         expected_database_revision=_require_string(value, "expected_database_revision"),
-        expected_oracle_manifest_digest=_require_string(value, "expected_oracle_manifest_digest"),
     )
     if encoded != _canonical_json_bytes(identity.as_json()):
         raise BackendArtifactDefect("runtime identity is not canonical JSON")
@@ -168,23 +129,15 @@ def load_runtime_identity(path: Path) -> RuntimeIdentity:
 
 def load_candidate_manifest(path: Path) -> CandidateManifest:
     value, encoded = _load_closed_json(path)
-    if not isinstance(value, dict):
+    if not isinstance(value, dict) or value.keys() != _CANDIDATE_MANIFEST_KEYS:
         raise BackendArtifactDefect("candidate manifest fields are unsupported")
-    schema_version = value.get("schema_version")
-    if type(schema_version) is not int or schema_version not in (1, 2):
+    if value["schema_version"] != 3:
         raise BackendArtifactDefect("candidate manifest schema_version is unsupported")
-    expected_keys = (
-        _LEGACY_CANDIDATE_MANIFEST_KEYS if schema_version == 1 else _CANDIDATE_MANIFEST_KEYS
-    )
-    if value.keys() != expected_keys:
-        raise BackendArtifactDefect("candidate manifest fields are unsupported")
-    if schema_version == 1:
-        _validate_legacy_candidate_receipts(value)
     images = value["images"]
     if not isinstance(images, dict) or images.keys() != {"api", "worker"}:
         raise BackendArtifactDefect("candidate manifest image fields are unsupported")
     candidate = CandidateManifest(
-        schema_version=2,
+        schema_version=value["schema_version"],
         source_sha=_require_string(value, "source_sha"),
         repository=_require_string(value, "repository"),
         images=CandidateImages(
@@ -192,23 +145,10 @@ def load_candidate_manifest(path: Path) -> CandidateManifest:
             worker=_require_string(images, "worker"),
         ),
         expected_database_revision=_require_string(value, "expected_database_revision"),
-        expected_oracle_manifest_digest=_require_string(value, "expected_oracle_manifest_digest"),
     )
-    canonical = value if schema_version == 1 else candidate.as_json()
-    if encoded != _canonical_json_bytes(canonical):
+    if encoded != _canonical_json_bytes(candidate.as_json()):
         raise BackendArtifactDefect("candidate manifest is not canonical JSON")
     return candidate
-
-
-def _validate_legacy_candidate_receipts(value: dict[str, Any]) -> None:
-    for key in ("source_ci_run_id", "source_ci_workflow_id", "publisher_run_id"):
-        if type(value[key]) is not int or value[key] < 1:
-            raise BackendArtifactDefect(f"legacy candidate manifest {key} must be positive")
-    for key in ("source_ci_run_attempt", "publisher_run_attempt"):
-        if type(value[key]) is not int or value[key] != 1:
-            raise BackendArtifactDefect(f"legacy candidate manifest {key} must be 1")
-    if value["publisher_run_id"] == value["source_ci_run_id"]:
-        raise BackendArtifactDefect("legacy source CI and publisher run IDs must differ")
 
 
 def write_candidate_manifest(
@@ -231,12 +171,11 @@ def write_candidate_manifest(
         raise BackendArtifactDefect("runtime identity does not match the source SHA")
 
     manifest = CandidateManifest(
-        schema_version=2,
+        schema_version=3,
         source_sha=source_sha,
         repository=_REPOSITORY,
         images=images,
         expected_database_revision=api_identity.expected_database_revision,
-        expected_oracle_manifest_digest=api_identity.expected_oracle_manifest_digest,
     )
     output_path.write_bytes(_canonical_json_bytes(manifest.as_json()))
 

@@ -156,8 +156,8 @@ Key topology facts (details: [`deployment.md`](../deployment.md),
 - Default request path is **Browser → Next.js BFF → FastAPI → Postgres**.
   SSE is the documented exception (**Browser → FastAPI `/stream/*`**).
 - One full Git SHA identifies a release vector. Each `main` push publishes one
-  strict manifest containing immutable API/worker image digests, expected
-  schema, and expected Oracle manifest. The host pulls those digests; it never
+  strict manifest (schema 3) containing immutable API/worker image digests and
+  the expected schema. The host pulls those digests; it never
   builds application images.
 - `deploy/hetzner/deploy.sh <source-sha>` is the sole application release
   entrypoint. It runs `deploy/hetzner/release.py`, one linear idempotent pass

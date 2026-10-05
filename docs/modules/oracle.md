@@ -107,7 +107,8 @@ After a release that changes `corpus.json` (or to heal failed anchors), run
 `python -m nexus.services.oracle.corpus seed --owner-user <uuid>` once inside the
 running background worker, with the production owner's user id
 ([deployment.md](../../deployment.md#oracle-corpus-seed) has the host command).
-It is idempotent and safe while every writer runs; it prints its counts.
+It is idempotent and safe while every writer runs; it prints its counts. The
+release identity carries no corpus digest (candidate manifest schema 3).
 
 ## Assumptions
 
