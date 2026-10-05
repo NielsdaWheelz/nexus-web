@@ -71,6 +71,29 @@ re-resolves provider truth before a first write, and is replayable through the
 required `Idempotency-Key`. Named Library inputs are additive. Selecting or
 opening a discovery result never auto-subscribes.
 
+## episode success contracts
+
+the episode list, discovery acquisition, unsubscribe and mark played routes
+declare their complete `Data` success models; web requests use generated wire
+types. the list carries only `id`, `mediaSummary`, `transcript_state` and
+`has_show_notes`. native output requires the existing transcript enum, a matching
+summary media id and `podcast_episode` kind. the web retains shared publication
+date, duration, collection cursor and revision conversions.
+
+the list no longer sends `canonical_source_url`, `transcript_coverage`,
+`playerDescriptor`, `listening_state`, `episode_state`, `progress_resettable`,
+`capabilities` or `author_mode`. canonical resource actions resolve their own
+capability snapshot; row rendering uses the summary and canonical resource
+reference. shared playback, consumption and transcript request contracts remain
+owned by their existing modules. this is a same-deploy native/web cut.
+
+acquisition output requires a nonempty destination href. named library ids are
+ordered and unique; duplicates are rejected before a replay receipt is written.
+unsubscribe always serializes its outcome discriminator, including constructor
+defaults. replay bodies, placement publication and listener ordering are
+unchanged. invalid browser business projections retain `E_INVALID_RESPONSE`
+with the request context in their message.
+
 ## One Owner Per Concern
 
 This subsystem was consolidated so each piece of state has exactly one owner. The rules

@@ -8,12 +8,15 @@ from fastapi import APIRouter, Depends, Header, Request
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.responses import Data, ok
+from nexus.responses import Data
 from nexus.schemas.collection_page import CollectionPage, parse_collection_query
 from nexus.schemas.podcast import (
     PodcastBackfillRetryOut,
     PodcastDetailOut,
+    PodcastEpisodeFromDiscoveryOut,
     PodcastEpisodeFromDiscoveryRequest,
+    PodcastEpisodeListItemOut,
+    PodcastEpisodeMarkPlayedOut,
     PodcastEpisodeSelection,
     PodcastRefreshAcceptedOut,
     PodcastRefreshManualScope,
@@ -23,6 +26,7 @@ from nexus.schemas.podcast import (
     PodcastSubscriptionSettingsOut,
     PodcastSubscriptionSettingsPatchRequest,
     PodcastSubscriptionStatusOut,
+    PodcastUnsubscribeOut,
 )
 from nexus.services.podcasts import episode_acquisition as podcast_episode_acquisition_service
 from nexus.services.podcasts import episodes as podcast_episodes_service
@@ -62,13 +66,12 @@ def acquire_podcast_episode(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
     idempotency_key: IdempotencyKey,
-) -> dict:
+) -> Data[PodcastEpisodeFromDiscoveryOut]:
     """Acquire one discovered episode without subscribing to its show."""
-    return ok(
-        podcast_episode_acquisition_service.acquire_episode_from_discovery(
+    return Data(
+        data=podcast_episode_acquisition_service.acquire_episode_from_discovery(
             db, viewer_id=viewer.user_id, body=body, idempotency_key=idempotency_key
         ),
-        by_alias=True,
     )
 
 
@@ -174,13 +177,12 @@ def unsubscribe_from_podcast(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
     idempotency_key: IdempotencyKey,
-) -> dict:
+) -> Data[PodcastUnsubscribeOut]:
     """Unsubscribe the viewer and remove the placements they own."""
-    return ok(
-        podcast_subscription_service.unsubscribe_from_podcast(
+    return Data(
+        data=podcast_subscription_service.unsubscribe_from_podcast(
             db, viewer.user_id, podcast_id, idempotency_key=idempotency_key
         ),
-        by_alias=True,
     )
 
 
@@ -204,7 +206,7 @@ def list_podcast_episodes(
     request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: RepeatableReadDbSession,
-) -> dict:
+) -> Data[CollectionPage[PodcastEpisodeListItemOut]]:
     """List viewer-visible episodes for one podcast."""
     parsed = parse_collection_query(
         request.query_params.multi_items(), domain_keys=frozenset({"state", "sort"})
@@ -229,7 +231,7 @@ def list_podcast_episodes(
         state=state,  # type: ignore[arg-type]
         sort=sort,  # type: ignore[arg-type]
     )
-    return ok(page, by_alias=True)
+    return Data(data=page)
 
 
 @router.post("/podcasts/{podcast_id}/episodes/mark-played")
@@ -238,11 +240,10 @@ def mark_podcast_episode_selection_played(
     body: PodcastEpisodeSelection,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
-) -> dict:
+) -> Data[PodcastEpisodeMarkPlayedOut]:
     """Mark every episode in the named state finished."""
-    return ok(
-        podcast_episodes_service.mark_episode_selection_played(
+    return Data(
+        data=podcast_episodes_service.mark_episode_selection_played(
             db, viewer_id=viewer.user_id, podcast_id=podcast_id, selection=body
         ),
-        by_alias=True,
     )

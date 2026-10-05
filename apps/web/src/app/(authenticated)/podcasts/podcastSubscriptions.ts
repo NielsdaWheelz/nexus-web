@@ -65,10 +65,13 @@ export async function retryPodcastSubscriptionBackfill(
 
 export async function unsubscribeFromPodcast(podcastId: string): Promise<void> {
   return runPodcastSubscriptionSettingsMutation(async () => {
-    await apiFetch<unknown>(`/api/podcasts/subscriptions/${podcastId}`, {
-      method: "DELETE",
-      headers: { "Idempotency-Key": crypto.randomUUID() },
-    });
+    await apiFetch<ApiJson<"/podcasts/subscriptions/{podcast_id}", "delete">>(
+      `/api/podcasts/subscriptions/${podcastId}`,
+      {
+        method: "DELETE",
+        headers: { "Idempotency-Key": crypto.randomUUID() },
+      },
+    );
     publishLibraryPlacementChange("Unknown");
     await publishPodcastSubscriptionUnsubscribed(podcastId);
   });

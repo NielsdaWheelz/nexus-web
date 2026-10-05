@@ -227,7 +227,6 @@ export function useEpisodeTranscriptController({
               ? {
                   ...episode,
                   transcript_state: payload.transcript_state,
-                  transcript_coverage: payload.transcript_coverage,
                 }
               : episode,
           ),

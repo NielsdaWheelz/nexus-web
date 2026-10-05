@@ -1,4 +1,3 @@
-import { expectExactRecord, expectRecord } from "@/lib/validation";
 import { apiFetch } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import {
@@ -18,41 +17,12 @@ import {
   type DiscoveryTargetHandle,
 } from "./contract";
 
-export interface EpisodeAcquisitionResult {
-  readonly href: string;
-  readonly mediaId: string;
-  readonly destinationOutcomes: readonly {
-    readonly libraryId: string;
-    readonly outcome:
-      | "Added"
-      | "AlreadyPresent"
-      | "IncludedThroughPodcast";
-  }[];
+export type EpisodeAcquisitionResult = Omit<
+  ApiJson<"/podcast-episodes/from-discovery", "post">["data"],
+  "collectionRevision"
+> & {
   readonly collectionRevision: CollectionRevision;
-}
-
-function nonempty(raw: unknown, context: string): string {
-  if (typeof raw !== "string" || raw.length === 0) {
-    throw new TypeError(`${context} must be a non-empty string`);
-  }
-  return raw;
-}
-
-function oneOf<T extends string>(
-  raw: unknown,
-  values: readonly T[],
-  context: string,
-): T {
-  if (typeof raw !== "string" || !values.includes(raw as T)) {
-    throw new TypeError(`${context} has an unsupported value`);
-  }
-  return raw as T;
-}
-
-function envelopeData(raw: unknown, context: string): Record<string, unknown> {
-  const envelope = expectExactRecord(raw, ["data"], `${context} envelope`);
-  return expectRecord(envelope.data, context);
-}
+};
 
 interface BrowsePageIdentity {
   readonly query: string;
@@ -147,49 +117,20 @@ export async function addEpisodeFromDiscovery(input: {
   namedLibraryIds: readonly string[];
   idempotencyKey: string;
 }): Promise<EpisodeAcquisitionResult> {
-  const value = envelopeData(
-    await apiFetch<unknown>("/api/podcast-episodes/from-discovery", {
+  const response = await apiFetch<ApiJson<"/podcast-episodes/from-discovery", "post">>(
+    "/api/podcast-episodes/from-discovery",
+    {
       method: "POST",
       headers: { "Idempotency-Key": input.idempotencyKey },
       body: JSON.stringify({
         target: input.target,
         namedLibraryIds: input.namedLibraryIds,
       }),
-    }),
-    "EpisodeAcquisitionResult",
+    },
   );
-  expectExactRecord(
-    value,
-    ["href", "mediaId", "destinationOutcomes", "collectionRevision"],
-    "EpisodeAcquisitionResult",
-  );
-  if (!Array.isArray(value.destinationOutcomes)) {
-    throw new TypeError(
-      "EpisodeAcquisitionResult.destinationOutcomes must be an array",
-    );
-  }
   const result = {
-    href: nonempty(value.href, "EpisodeAcquisitionResult.href"),
-    mediaId: nonempty(value.mediaId, "EpisodeAcquisitionResult.mediaId"),
-    destinationOutcomes: value.destinationOutcomes.map((raw, index) => {
-      const outcome = expectExactRecord(
-        raw,
-        ["libraryId", "outcome"],
-        `EpisodeAcquisitionResult.destinationOutcomes[${index}]`,
-      );
-      return {
-        libraryId: nonempty(
-          outcome.libraryId,
-          `EpisodeAcquisitionResult.destinationOutcomes[${index}].libraryId`,
-        ),
-        outcome: oneOf(
-          outcome.outcome,
-          ["Added", "AlreadyPresent", "IncludedThroughPodcast"] as const,
-          `EpisodeAcquisitionResult.destinationOutcomes[${index}].outcome`,
-        ),
-      };
-    }),
-    collectionRevision: decodeCollectionRevision(value.collectionRevision),
+    ...response.data,
+    collectionRevision: decodeCollectionRevision(response.data.collectionRevision),
   };
   publishLibraryPlacementChange([...input.namedLibraryIds]);
   return result;

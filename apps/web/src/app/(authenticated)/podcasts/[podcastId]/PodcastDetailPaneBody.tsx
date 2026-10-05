@@ -14,7 +14,6 @@ import Link from "next/link";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { ApiJson } from "@/lib/api/wire";
 import {
-  decodeCollectionPage,
   type CollectionCursor,
   type CollectionPage,
   type CollectionRevision,
@@ -83,7 +82,7 @@ import { useEpisodeTranscriptController } from "./useEpisodeTranscriptController
 import { subscribePodcastSubscriptionSettingsInstalls } from "@/lib/podcasts/subscriptionSettings";
 import {
   EPISODE_WIDE_COMMAND_LABELS,
-  decodePodcastEpisodeMedia,
+  podcastEpisodePageFromWire,
   type PodcastEpisodeMedia,
 } from "./episodeTranscript";
 import styles from "./page.module.css";
@@ -507,7 +506,7 @@ export default function PodcastDetailPaneBody() {
         }
         const decodedDetail = detailResp.data;
         const [episodesResp, podcastLibraries] = await Promise.all([
-          apiFetch<unknown>(
+          apiFetch<ApiJson<"/podcasts/{podcast_id}/episodes", "get">>(
             `/api/podcasts/${podcastId}/episodes?${episodeParams}`,
             fetchOptions,
           ),
@@ -523,7 +522,7 @@ export default function PodcastDetailPaneBody() {
         }
         return {
           detail: decodedDetail,
-          episodes: decodeCollectionPage(episodesResp, decodePodcastEpisodeMedia),
+          episodes: podcastEpisodePageFromWire(episodesResp.data),
           podcastLibraries,
         };
       } catch (loadError) {
@@ -861,11 +860,11 @@ export default function PodcastDetailPaneBody() {
       episodeParams.set("limit", String(EPISODES_PAGE_SIZE));
       episodeParams.set("cursor", cursor);
       episodeParams.set("collection_revision", String(revision));
-      const response = await apiFetch<unknown>(
+      const response = await apiFetch<ApiJson<"/podcasts/{podcast_id}/episodes", "get">>(
         `/api/podcasts/${podcastId}/episodes?${episodeParams}`,
         { signal },
       );
-      return decodeCollectionPage(response, decodePodcastEpisodeMedia);
+      return podcastEpisodePageFromWire(response.data);
     },
     [podcastId, view],
   );
@@ -1191,10 +1190,13 @@ export default function PodcastDetailPaneBody() {
     setMarkAllAsPlayedBusy(true);
     setError(null);
     try {
-      await apiFetch(`/api/podcasts/${podcastId}/episodes/mark-played`, {
-        method: "POST",
-        body: JSON.stringify({ state: view.state }),
-      });
+      await apiFetch<ApiJson<"/podcasts/{podcast_id}/episodes/mark-played", "post">>(
+        `/api/podcasts/${podcastId}/episodes/mark-played`,
+        {
+          method: "POST",
+          body: JSON.stringify({ state: view.state }),
+        },
+      );
       reload();
     } catch (markError) {
       if (handleUnauthenticatedApiError(markError)) return;
