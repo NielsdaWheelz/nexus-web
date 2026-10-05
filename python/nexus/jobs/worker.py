@@ -43,7 +43,6 @@ from nexus.jobs.queue import (
     RescheduleSchedule,
     ScheduleAfter,
     TerminalJobFailure,
-    claim_job,
     claim_next_job,
     complete_job,
     dead_letter_expired_job,
@@ -176,24 +175,6 @@ class JobWorker:
             db.commit()
         if claimed is None:
             return False
-        self._execute_claimed(claimed)
-        return True
-
-    def run_exact(self, job_id: UUID) -> bool | None:
-        """Claim and execute only one exact due job, with no scan or scheduling."""
-        with self.session_factory() as db:
-            claimed = claim_job(
-                db,
-                job_id=job_id,
-                worker_id=self.worker_id,
-                lease_seconds=self.default_lease_seconds,
-                heavy_kinds=self.heavy_kinds,
-                allowed_kinds=self.allowed_kinds,
-            )
-            self._record_reclaim(db, claimed)
-            db.commit()
-        if claimed is None:
-            return None
         self._execute_claimed(claimed)
         return True
 

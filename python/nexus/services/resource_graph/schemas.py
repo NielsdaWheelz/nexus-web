@@ -117,12 +117,6 @@ class CitationInput:
 
 
 @dataclass(frozen=True, slots=True)
-class ConcordantSource:
-    source: ResourceRef
-    shared_target_count: int
-
-
-@dataclass(frozen=True, slots=True)
 class CitationTargetProjection:
     ordinal: int
     role: EdgeKind

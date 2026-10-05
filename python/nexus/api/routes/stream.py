@@ -1,10 +1,9 @@
 """SSE replay/tail routes for durable runs and media processing status.
 
 every browser-callable stream lives under ``/stream/`` (auth via stream-token
-bearer; see ``stream_paths.is_stream_path``). Chat runs and oracle readings are
-append-cursor durable-run streams that share one generic factory; dossier builds,
-media processing, metadata and podcast subscription lifecycles use snapshot/diff
-streams.
+bearer; see ``stream_paths.is_stream_path``). Chat runs are append-cursor durable-run
+streams; dossier builds, oracle readings, media processing, metadata and podcast
+subscription lifecycles use snapshot/diff streams.
 
 Push-driven: an AFTER trigger ``pg_notify``s the per-entity channel on each new
 event/state change; the tail uses the shared stream LISTEN resource and re-reads
@@ -41,9 +40,9 @@ from nexus.schemas.execution import EXECUTION_ADVISORY_EVENT_TYPE, ChatRunExecut
 from nexus.services import chat_runs as chat_runs_service
 from nexus.services import media as media_service
 from nexus.services import metadata_operations, run_kit
-from nexus.services import oracle as oracle_service
 from nexus.services.chat_run_execution import chat_run_execution
 from nexus.services.dossier import engine as dossier_engine
+from nexus.services.oracle import readings as oracle_readings
 from nexus.services.podcasts import subscriptions as podcast_subscription_service
 
 router = APIRouter(tags=["streaming"])
@@ -78,16 +77,6 @@ _CHAT_RUN_KIND = CursorStreamKind(
         db, run_kit.RunStreamKind.ChatRun, run_id, after
     ),
     read_advisory=lambda db, viewer_id, run_id: chat_run_execution(db, run_id=run_id),
-)
-
-_ORACLE_READING_KIND = CursorStreamKind(
-    run_kind=run_kit.RunStreamKind.OracleReading,
-    assert_viewer=lambda db, viewer_id, reading_id: oracle_service.assert_reading_owner(
-        db, viewer_id=viewer_id, reading_id=reading_id
-    ),
-    read_after=lambda db, viewer_id, reading_id, after: run_kit.get_run_events(
-        db, run_kit.RunStreamKind.OracleReading, reading_id, after
-    ),
 )
 
 
@@ -169,16 +158,21 @@ async def stream_oracle_reading_events(
     request: Request,
     reading_id: UUID,
     viewer_id: Annotated[UUID, Depends(get_stream_viewer)],
-    after: int | None = Query(default=None, ge=0),
-    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
 ) -> StreamingResponse:
-    cursor = after if after is not None else _parse_last_event_id(last_event_id)
-    return await make_cursor_stream_response(
-        _ORACLE_READING_KIND,
-        request=request,
-        entity_id=reading_id,
-        viewer_id=viewer_id,
-        after=cursor,
+    """The reading's ``OracleReadingOut`` on each change; ``done`` once it is complete or failed."""
+
+    def read_snapshot() -> tuple[dict[str, Any], bool]:
+        with get_session_factory()() as db:
+            get_repeatable_read_db(db)
+            reading = oracle_readings.get_reading(db, viewer_id=viewer_id, reading_id=reading_id)
+        return reading.model_dump(mode="json"), reading.status in ("complete", "failed")
+
+    await run_in_threadpool(read_snapshot)
+    listener = await open_sse_listener("oracle_readings", str(reading_id))
+    return StreamingResponse(
+        tail_snapshot_stream(request=request, listener=listener, read_snapshot=read_snapshot),
+        media_type="text/event-stream; charset=utf-8",
+        headers=_SSE_HEADERS,
     )
 
 

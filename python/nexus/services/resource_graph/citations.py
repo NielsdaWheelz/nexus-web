@@ -9,7 +9,7 @@ the in-reader jump is reconstructed on read from the target's own anchoring.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import cast
 from uuid import UUID
@@ -28,16 +28,18 @@ from nexus.schemas.citation import (
 from nexus.schemas.citation import CitationSnapshot as CitationSnapshotOut
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import RetrievalLocator
-from nexus.services.media_intelligence import MediaProjection, read_batch
+from nexus.services.media_intelligence import read_batch
 from nexus.services.resource_graph.edges import create_edge, replace_edges_for_origin
-from nexus.services.resource_graph.reader_targets import reader_target_for_citation_target
+from nexus.services.resource_graph.reader_targets import (
+    ReaderTarget,
+    reader_target_for_citation_target,
+)
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.resolve import resolve_refs
 from nexus.services.resource_graph.schemas import (
     CitationInput,
     CitationSnapshot,
     CitationTargetProjection,
-    ConcordantSource,
     EdgeCreate,
     EdgeKind,
     EdgeOut,
@@ -203,15 +205,63 @@ def build_citation_outs_for_sources(
         },
     )
     for row in rows:
+        projection = projections[row.id]
+        # Only media-scheme targets carry the summary abstract; a chunk or span whose
+        # parent happens to be media is a finer grain and does not.
+        media_projection = summaries.get(row.target_id) if row.target_scheme == "media" else None
         out.setdefault(f"{row.source_scheme}:{row.source_id}", []).append(
             _citation_out(
-                row=row,
-                projection=projections[row.id],
+                target=ResourceRef(
+                    scheme=cast("ResourceScheme", row.target_scheme), id=row.target_id
+                ),
+                ordinal=projection.ordinal,
+                role=cast("CitationRole", projection.role),
+                reader_target=(projection.media_id, projection.locator),
                 activation=activations[f"{row.target_scheme}:{row.target_id}"],
-                summaries=summaries,
+                deep_link=projection.snapshot.deep_link,
+                snapshot=CitationSnapshotOut(
+                    title=projection.snapshot.title,
+                    excerpt=projection.snapshot.excerpt,
+                    section_label=projection.snapshot.section_label,
+                    result_type=projection.snapshot.result_type,
+                    summary_md=None if media_projection is None else media_projection.summary_md,
+                ),
             )
         )
     return out
+
+
+def hydrate_citation(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    target: ResourceRef,
+    ordinal: int,
+    role: CitationRole,
+    deep_link: str | None,
+    snapshot: CitationSnapshotOut | None,
+) -> CitationOut:
+    """Current visibility and navigation for a saved citation target; writes no edge."""
+    missing = (
+        {target.uri} if resolve_refs(db, viewer_id=viewer_id, refs=[target])[0].missing else set()
+    )
+    activation = resource_activations_for_refs(
+        db, viewer_id=viewer_id, refs=[target], missing_ref_uris=missing
+    )[target.uri]
+    reader_target = (
+        (None, None)
+        if missing
+        else reader_target_for_citation_target(db, viewer_id=viewer_id, target=target)
+    )
+    return _citation_out(
+        target=target,
+        ordinal=ordinal,
+        role=role,
+        reader_target=reader_target,
+        activation=activation,
+        deep_link=deep_link,
+        snapshot=snapshot,
+    )
 
 
 def citation_counts_for_sources(
@@ -298,84 +348,24 @@ def citation_reader_targets_for_edges(
     return out
 
 
-def concordant_sources(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    source: ResourceRef,
-    source_scheme: ResourceScheme,
-) -> list[ConcordantSource]:
-    """Other ``source_scheme`` outputs citing a target this source also cites.
-
-    Concordance is identity equality on ``(target_scheme, target_id)``; locators and
-    snapshots are deliberately out of the key.
-    """
-    rows = db.execute(
-        text(
-            """
-            SELECT e2.source_id,
-                   COUNT(DISTINCT (e2.target_scheme, e2.target_id)) AS shared_targets
-            FROM resource_edges e1
-            JOIN resource_edges e2
-              ON e2.target_scheme = e1.target_scheme
-             AND e2.target_id = e1.target_id
-            WHERE e1.user_id = :viewer_id
-              AND e1.source_scheme = :source_scheme
-              AND e1.source_id = :source_id
-              AND e1.origin = 'citation'
-              AND e1.ordinal IS NOT NULL
-              AND e2.user_id = :viewer_id
-              AND e2.source_scheme = :other_source_scheme
-              AND e2.origin = 'citation'
-              AND e2.ordinal IS NOT NULL
-              AND NOT (
-                  e2.source_scheme = :source_scheme AND e2.source_id = :source_id
-              )
-            GROUP BY e2.source_id
-            ORDER BY shared_targets DESC, e2.source_id ASC
-            """
-        ),
-        {
-            "viewer_id": viewer_id,
-            "source_scheme": source.scheme,
-            "source_id": source.id,
-            "other_source_scheme": source_scheme,
-        },
-    ).fetchall()
-    return [
-        ConcordantSource(
-            source=ResourceRef(scheme=source_scheme, id=row[0]), shared_target_count=int(row[1])
-        )
-        for row in rows
-    ]
-
-
 def _citation_out(
     *,
-    row: ResourceEdge,
-    projection: CitationTargetProjection,
+    target: ResourceRef,
+    ordinal: int,
+    role: CitationRole,
+    reader_target: ReaderTarget,
     activation: ResourceActivationOut,
-    summaries: Mapping[UUID, MediaProjection],
+    deep_link: str | None,
+    snapshot: CitationSnapshotOut | None,
 ) -> CitationOut:
-    # Only media-scheme targets carry the summary abstract; a chunk or span whose parent
-    # happens to be media is a finer grain and does not.
-    media_projection = summaries.get(row.target_id) if row.target_scheme == "media" else None
     return CitationOut(
-        ordinal=projection.ordinal,
-        role=cast("CitationRole", projection.role),
-        target_ref=CitationTargetRef(
-            type=cast("CitationTargetType", row.target_scheme), id=row.target_id
-        ),
+        ordinal=ordinal,
+        role=role,
+        target_ref=CitationTargetRef(type=cast("CitationTargetType", target.scheme), id=target.id),
         activation=activation,
-        media_id=projection.media_id,
+        media_id=reader_target[0],
         # Pydantic coerces the validated locator JSON into the RetrievalLocator union.
-        locator=cast("RetrievalLocator | None", projection.locator),
-        deep_link=projection.snapshot.deep_link,
-        snapshot=CitationSnapshotOut(
-            title=projection.snapshot.title,
-            excerpt=projection.snapshot.excerpt,
-            section_label=projection.snapshot.section_label,
-            result_type=projection.snapshot.result_type,
-            summary_md=media_projection.summary_md if media_projection is not None else None,
-        ),
+        locator=cast("RetrievalLocator | None", reader_target[1]),
+        deep_link=deep_link,
+        snapshot=snapshot,
     )

@@ -364,6 +364,20 @@ def ensure_system_library(db: Session, *, system_key: str, name: str, owner_user
         return library_id
 
 
+def join_system_library(db: Session, *, system_key: str, user_id: UUID) -> None:
+    """Make the user a member of an existing system library; flush only, no-op if already."""
+    joined = db.execute(
+        text("""
+            INSERT INTO memberships (library_id, user_id, role)
+            SELECT id, :user_id, 'member' FROM libraries WHERE system_key = :system_key
+            ON CONFLICT DO NOTHING RETURNING library_id
+        """),
+        {"system_key": system_key, "user_id": user_id},
+    ).first()
+    if joined is not None:
+        bump_library_index(db, [user_id])
+
+
 def rename_library(db: Session, viewer_id: UUID, library_id: UUID, name: str) -> LibraryRenameOut:
     """Rename a mutable library. Admin-only."""
     name = _validate_library_name(name)

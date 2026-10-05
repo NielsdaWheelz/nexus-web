@@ -1,269 +1,89 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   FeedbackNotice,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import MediaImage from "@/components/ui/MediaImage";
 import ReaderCitation from "@/components/ui/ReaderCitation";
-import {
-  apiFetch,
-  isApiError,
-  isSameSystemApiDefect,
-} from "@/lib/api/client";
+import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import { apiFetch } from "@/lib/api/client";
+import { useResource } from "@/lib/api/useResource";
+import type { ApiJson, Schema } from "@/lib/api/wire";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { useGenerationRun } from "@/lib/api/useGenerationRun";
-import { toReaderCitationData } from "@/lib/resourceGraph/citations";
-import type { ReaderSourceTarget } from "@/lib/resourceGraph/readerTarget";
-import { dispatchReaderSourceActivation } from "@/lib/resourceGraph/readerSourceActivation";
+import {
+  createReading,
+  failureCopy,
+  platePath,
+  watchReading,
+  type OracleReading,
+} from "@/lib/oracle/oracle";
+import {
+  requirePaneRuntime,
+  usePaneParam,
+  usePaneRuntime,
+  useSetPaneLabel,
+} from "@/lib/panes/paneRuntime";
+import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import {
   activateResource,
   type ResourceActivation,
 } from "@/lib/resources/activation";
-import { createRandomId } from "@/lib/createRandomId";
-import { toRoman } from "@/lib/toRoman";
-import { useResource } from "@/lib/api/useResource";
-import {
-  decodeOracleCreateResponse,
-  decodeOracleReadingDetailResponse,
-  decodeOracleStreamEvent,
-  type OracleImagePayload,
-  type OraclePassagePayload,
-  type OracleReadingDetail,
-  type OracleReadingEvent,
-  type OracleReadingPhase,
-  type OracleReadingFailureCode,
-} from "@/lib/oracle/oracleReadingWire";
-import {
-  usePaneParam,
-  requirePaneRuntime,
-  usePaneRuntime,
-  useSetPaneLabel,
-} from "@/lib/panes/paneRuntime";
-import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
-import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
-import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import { toReaderCitationData } from "@/lib/resourceGraph/citations";
+import { dispatchReaderSourceActivation } from "@/lib/resourceGraph/readerSourceActivation";
+import type { ReaderSourceTarget } from "@/lib/resourceGraph/readerTarget";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
-import BorderFrame from "../BorderFrame";
-import IlluminatedCapital from "../IlluminatedCapital";
-import OracleConcordance, { FleuronBreak } from "../OracleConcordance";
-import OracleThemeWrapper from "../OracleThemeWrapper";
-import Sidenote from "./Sidenote";
+import { toRoman } from "@/lib/toRoman";
+import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
+import {
+  BorderFrame,
+  FleuronBreak,
+  IlluminatedCapital,
+  OracleTheme,
+  Sidenote,
+} from "../ornaments";
 import styles from "../oracle.module.css";
 
-type Phase = OracleReadingPhase;
-
-const PHASE_ORDER: readonly Phase[] = ["descent", "ordeal", "ascent"] as const;
-
-const PHASE_LABEL: Record<Phase, string> = {
+const PHASE_LABEL = {
   descent: "I. The Descent",
   ordeal: "II. The Ordeal",
   ascent: "III. The Ascent",
+} as const;
+
+const RETRY_LATER = "Please try again later.";
+const START_AGAIN = "Please start a new reading.";
+const FAILURE_COPY: Record<Schema<"OracleFailureCode">, string> = {
+  auth: `The reading service could not authenticate. ${RETRY_LATER}`,
+  quota: `The reading service has reached its usage limit. ${RETRY_LATER}`,
+  timeout: `The reading took too long to complete. ${START_AGAIN}`,
+  output_limit: `The reading was too long to complete. ${START_AGAIN}`,
+  invalid_output: `The reading could not be completed. ${START_AGAIN}`,
+  policy_violation: `The reading could not be completed. ${START_AGAIN}`,
+  runtime_unavailable: `The reading service is temporarily unavailable. ${RETRY_LATER}`,
+  capacity_unavailable:
+    "The reading service is busy. Please try again shortly.",
+  context_too_large:
+    "The reading could not be completed. Start a new reading with a simpler question.",
+  cancelled: "Start a new reading when you’re ready.",
+  E_ORACLE_CORPUS_NOT_READY:
+    "The oracle’s source material is not ready. Start a new reading later.",
+  E_APP_SEARCH_FAILED:
+    "The oracle’s source material is not ready. Start a new reading later.",
+  E_GENERATION_SOURCE_CHANGED: "Start a new reading from the current material.",
 };
 
-type PassagePayload = OraclePassagePayload;
-
-interface ReadingState {
-  question: string;
-  folioNumber: number | null;
-  folioMotto: string | null;
-  folioMottoGloss: string | null;
-  folioTheme: string | null;
-  argument: string | null;
-  createdAt: string | null;
-  status: "pending" | "streaming" | "complete" | "failed";
-  image: OracleImagePayload | null;
-  passages: PassagePayload[];
-  delta: string;
-  omens: string[];
-  errorCode: OracleReadingFailureCode | null;
-  cursor: number;
+function failureFeedback(code: Schema<"OracleFailureCode">): FeedbackContent {
+  const title =
+    code === "cancelled"
+      ? "The reading was cancelled."
+      : code === "E_GENERATION_SOURCE_CHANGED"
+        ? "The source material changed."
+        : "The reading could not finish.";
+  return { tone: "Danger", title, message: FAILURE_COPY[code] };
 }
 
-type OracleStreamEvent = OracleReadingEvent;
-
-const ORACLE_RECONNECT_MAX_ATTEMPTS = 3;
-const STREAM_ERROR_MESSAGE =
-  "The reading stream could not reconnect. Please retry.";
-
-function oracleDetailErrorMessage(error: unknown): FeedbackContent {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  switch (error.code) {
-    case "E_NOT_FOUND":
-      return {
-        tone: "Danger",
-        title: "The reading was interrupted",
-        message: "This reading is no longer available.",
-        requestId: error.requestId,
-      };
-    case "E_NETWORK":
-      return {
-        tone: "Danger",
-        title: "The reading was interrupted",
-        message: "Check your connection and retry.",
-        requestId: error.requestId,
-      };
-    default:
-      throw error;
-  }
-}
-
-function oracleRetryErrorMessage(error: unknown): FeedbackContent {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  switch (error.code) {
-    case "E_NETWORK":
-      return {
-        tone: "Danger",
-        title: "The retry couldn’t begin",
-        message: "Check your connection and retry.",
-        requestId: error.requestId,
-      };
-    case "E_RATE_LIMITED":
-      return {
-        tone: "Danger",
-        title: "The oracle is busy",
-        message: "Wait a moment, then retry.",
-        requestId: error.requestId,
-      };
-    default:
-      throw error;
-  }
-}
-
-const initialState = (): ReadingState => ({
-  question: "",
-  folioNumber: null,
-  folioMotto: null,
-  folioMottoGloss: null,
-  folioTheme: null,
-  argument: null,
-  createdAt: null,
-  status: "pending",
-  image: null,
-  passages: [],
-  delta: "",
-  omens: [],
-  errorCode: null,
-  cursor: 0,
-});
-
-function stateFromDetail(detail: OracleReadingDetail): ReadingState {
-  let next: ReadingState = {
-    ...initialState(),
-    question: detail.question_text,
-    folioNumber: detail.folio_number,
-    folioMotto: detail.folio_motto,
-    folioMottoGloss: detail.folio_motto_gloss,
-    folioTheme: detail.folio_theme,
-    argument: detail.argument_text,
-    createdAt: detail.created_at,
-    status: detail.status,
-    image: detail.image,
-    passages: [...detail.passages].sort(
-      (a, b) => PHASE_ORDER.indexOf(a.phase) - PHASE_ORDER.indexOf(b.phase),
-    ),
-    errorCode: detail.error_code,
-  };
-  for (const event of detail.events) {
-    next = applyEvent(next, event);
-  }
-  return next;
-}
-
-function applyEvent(
-  state: ReadingState,
-  event: OracleStreamEvent,
-): ReadingState {
-  if (event.seq !== state.cursor + 1) {
-    throw new Error(
-      `Invalid SSE payload for Oracle reading: expected event ${state.cursor + 1}, received ${event.seq}`,
-    );
-  }
-  const cursor = event.seq;
-  switch (event.event_type) {
-    case "meta": {
-      return {
-        ...state,
-        cursor,
-        question: event.payload.question,
-        folioNumber: event.payload.folio_number,
-        status: "streaming",
-      };
-    }
-    case "bind":
-      return {
-        ...state,
-        cursor,
-        folioMotto: event.payload.folio_motto,
-        folioMottoGloss: event.payload.folio_motto_gloss,
-        folioTheme: event.payload.folio_theme,
-      };
-    case "argument":
-      return { ...state, cursor, argument: event.payload.text };
-    case "plate": {
-      return {
-        ...state,
-        cursor,
-        image: event.payload,
-      };
-    }
-    case "passage": {
-      const incoming = event.payload;
-      const next = state.passages
-        .filter((p) => p.phase !== incoming.phase)
-        .concat(incoming);
-      next.sort(
-        (a, b) => PHASE_ORDER.indexOf(a.phase) - PHASE_ORDER.indexOf(b.phase),
-      );
-      return { ...state, cursor, passages: next };
-    }
-    case "delta":
-      return { ...state, cursor, delta: event.payload.text };
-    case "omens":
-      return { ...state, cursor, omens: [...event.payload.lines] };
-    case "done": {
-      if (event.payload.status === "failed") {
-        return {
-          ...state,
-          cursor,
-          status: "failed",
-          errorCode: event.payload.error_code,
-        };
-      }
-      return { ...state, cursor, status: "complete" };
-    }
-  }
-}
-
-async function loadReadingDetail(
-  readingId: string,
-  signal: AbortSignal,
-): Promise<OracleReadingDetail> {
-  const detail = await apiFetch<unknown>(
-    `/api/oracle/readings/${readingId}`,
-    { signal },
-  );
-  return decodeOracleReadingDetailResponse(detail);
-}
-
-const MONTHS = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
-
-const ORDINAL_ONES = [
-  "zeroth",
+const ORDINALS = [
   "first",
   "second",
   "third",
@@ -273,9 +93,6 @@ const ORDINAL_ONES = [
   "seventh",
   "eighth",
   "ninth",
-];
-
-const ORDINAL_TEENS = [
   "tenth",
   "eleventh",
   "twelfth",
@@ -288,355 +105,199 @@ const ORDINAL_TEENS = [
   "nineteenth",
 ];
 
-function ordinalEnglish(day: number): string {
-  if (day < 10) return ORDINAL_ONES[day]!;
-  if (day < 20) return ORDINAL_TEENS[day - 10]!;
-  if (day === 20) return "twentieth";
-  if (day === 30) return "thirtieth";
+/** "twenty-first of March, MMXXVI" */
+function colophonDate(iso: string): string {
+  const date = new Date(iso);
+  const day = date.getUTCDate();
   const tens = day < 30 ? "twenty" : "thirty";
-  return `${tens}-${ORDINAL_ONES[day % 10]!}`;
-}
-
-function oracleFailureFeedback(
-  errorCode: OracleReadingFailureCode | null,
-): FeedbackContent {
-  if (errorCode === null) {
-    throw new Error("Failed Oracle reading has no terminal error code");
-  }
-  switch (errorCode) {
-    case "auth":
-      return {
-        tone: "Danger",
-        title: "The reading could not finish.",
-        message: "The reading service could not authenticate. Please try again later.",
-      };
-    case "quota":
-      return {
-        tone: "Danger",
-        title: "The reading could not finish.",
-        message: "The reading service has reached its usage limit. Please try again later.",
-      };
-    case "timeout":
-      return {
-        tone: "Danger",
-        title: "The reading could not finish.",
-        message: "The reading took too long to complete. Please start a new reading.",
-      };
-    case "output_limit":
-      return {
-        tone: "Danger",
-        title: "The reading could not finish.",
-        message: "The reading was too long to complete. Please start a new reading.",
-      };
-    case "invalid_output":
-    case "policy_violation":
-      return {
-        tone: "Danger",
-        title: "The reading could not finish.",
-        message: "The reading could not be completed. Please start a new reading.",
-      };
-    case "runtime_unavailable":
-      return {
-        tone: "Danger",
-        title: "The reading could not finish.",
-        message: "The reading service is temporarily unavailable. Please try again later.",
-      };
-    case "capacity_unavailable":
-      return {
-        tone: "Danger",
-        title: "The reading could not finish.",
-        message: "The reading service is busy. Please try again shortly.",
-      };
-    case "context_too_large":
-      return {
-        tone: "Danger",
-        title: "The reading could not finish.",
-        message:
-          "The reading could not be completed. Start a new reading with a simpler question.",
-      };
-    case "cancelled":
-      return {
-        tone: "Danger",
-        title: "The reading was cancelled.",
-        message: "Start a new reading when you’re ready.",
-      };
-    case "E_ORACLE_CORPUS_NOT_READY":
-    case "E_APP_SEARCH_FAILED":
-      return {
-        tone: "Danger",
-        title: "The reading could not finish.",
-        message: "The oracle’s source material is not ready. Start a new reading later.",
-      };
-    case "E_RATE_LIMITED":
-      return {
-        tone: "Danger",
-        title: "The oracle is busy.",
-        message: "Wait a moment, then start a new reading.",
-      };
-    case "E_GENERATION_SOURCE_CHANGED":
-      return {
-        tone: "Danger",
-        title: "The source material changed.",
-        message: "Start a new reading from the current material.",
-      };
-    default: {
-      const exhaustive: never = errorCode;
-      throw new Error(`Unsupported Oracle terminal error code: ${exhaustive}`);
-    }
-  }
+  const ordinal =
+    day < 20
+      ? ORDINALS[day - 1]
+      : day % 10 === 0
+        ? `${tens.slice(0, -1)}ieth`
+        : `${tens}-${ORDINALS[(day % 10) - 1]}`;
+  const month = date.toLocaleString("en-US", {
+    month: "long",
+    timeZone: "UTC",
+  });
+  return `${ordinal} of ${month}, ${toRoman(date.getUTCFullYear())}`;
 }
 
 export default function OracleReadingPaneBody() {
   const readingId = usePaneParam("readingId");
-  const paneRuntime = requirePaneRuntime(
-    usePaneRuntime(),
-    "OracleReadingPaneBody",
-  );
   if (!readingId)
-    throw new Error("OracleReadingPaneBody: readingId param is required");
-
-  const [state, setState] = useState<ReadingState>(initialState);
-  const [loadError, setLoadError] = useState<FeedbackContent | null>(null);
+    throw new Error("OracleReadingPaneBody: readingId is required");
+  const pane = requirePaneRuntime(usePaneRuntime(), "OracleReadingPaneBody");
+  const [loads, setLoads] = useState(0);
+  // Stream frames replace the loaded reading; each frame is the whole reading.
+  const [streamed, setStreamed] = useState<OracleReading | null>(null);
+  const [lost, setLost] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<FeedbackContent | null>(null);
-  const [committedReadingId, setCommittedReadingId] = useState<string | null>(
-    null,
-  );
-  const [retryingReading, setRetryingReading] = useState(false);
-  const [retryNonce, setRetryNonce] = useState(0);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const streamCursorRef = useRef({ readingId, cursor: 0 });
-  const detailResource = useResource<OracleReadingDetail>({
-    cacheKey: `${readingId}:${retryNonce}`,
-    load: (signal) => loadReadingDetail(readingId, signal),
+  const detail = useResource<OracleReading>({
+    cacheKey: `${readingId}:${loads}`,
+    load: async (signal) =>
+      (
+        await apiFetch<ApiJson<"/oracle/readings/{reading_id}", "get">>(
+          `/api/oracle/readings/${readingId}`,
+          { signal },
+        )
+      ).data,
   });
-  const streamSeed = useMemo(() => {
-    if (
-      detailResource.status === "ready" &&
-      detailResource.data.id === readingId
-    ) {
-      return stateFromDetail(detailResource.data);
-    }
-    return null;
-  }, [detailResource, readingId]);
-  usePaneReturnReady(committedReadingId === readingId || loadError !== null);
-  // The question is the reading's exact identity. A failed load never resolves
-  // one, so the terminal state falls back to the route label rather than
-  // leaving the pane's title pending forever.
-  useSetPaneLabel(state.question || (loadError === null ? null : "Reading"));
-
-  const retryLoad = useCallback(() => {
-    setLoadError(null);
-    setCommittedReadingId(null);
-    setRetryNonce((current) => current + 1);
-  }, []);
-
-  const retryFailedReading = useCallback(async () => {
-    const question = state.question.trim();
-    if (!question || retryingReading) return;
-    setRetryingReading(true);
-    setRetryError(null);
-    try {
-      const raw = await apiFetch<unknown>(
-        "/api/oracle/readings",
-        {
-          method: "POST",
-          headers: { "Idempotency-Key": createRandomId("oracle-read") },
-          body: JSON.stringify({ question }),
-        },
-      );
-      const body = decodeOracleCreateResponse(raw);
-      paneRuntime.activateTarget({
-        target: { href: `/oracle/${body.reading_id}` },
-        disposition: { kind: "Follow" },
-      });
-    } catch (error) {
-      if (handleUnauthenticatedApiError(error)) return;
-      try {
-        setRetryError(oracleRetryErrorMessage(error));
-      } catch (caughtDefect) {
-        setDefect({ error: caughtDefect });
-      }
-      setRetryingReading(false);
-    }
-  }, [paneRuntime, retryingReading, state.question]);
+  const loaded =
+    detail.status === "ready" && detail.data.id === readingId
+      ? detail.data
+      : null;
+  const reading = streamed?.id === readingId ? streamed : loaded;
+  const unfinishedId =
+    reading?.status === "pending" || reading?.status === "streaming"
+      ? reading.id
+      : null;
 
   useEffect(() => {
-    setState(initialState());
-    setLoadError(null);
-    setRetryError(null);
-    setRetryingReading(false);
-  }, [readingId, retryNonce]);
-
-  useEffect(() => {
-    if (
-      detailResource.status === "idle" ||
-      detailResource.status === "loading"
-    ) {
-      return;
-    }
-    if (detailResource.status === "error") {
-      try {
-        setLoadError(oracleDetailErrorMessage(detailResource.error));
-      } catch (caughtDefect) {
-        setDefect({ error: caughtDefect });
-      }
-      return;
-    }
-    if (detailResource.data.id !== readingId) {
-      return;
-    }
-    setLoadError(null);
-    setState(stateFromDetail(detailResource.data));
-    setCommittedReadingId(readingId);
-  }, [detailResource, readingId]);
-
-  const shouldStream =
-    streamSeed !== null &&
-    (streamSeed.status === "pending" || streamSeed.status === "streaming");
-
-  useEffect(() => {
-    streamCursorRef.current = {
-      readingId,
-      cursor: streamSeed?.cursor ?? 0,
+    if (unfinishedId === null) return;
+    let live = true;
+    const stop = watchReading(
+      unfinishedId,
+      (next) => live && setStreamed(next),
+      () => live && setLost(true),
+    );
+    return () => {
+      live = false;
+      stop();
     };
-  }, [readingId, streamSeed]);
+  }, [unfinishedId]);
 
-  const onStreamEvent = useCallback(
-    (event: OracleStreamEvent) => {
-      const cursor = streamCursorRef.current;
-      if (cursor.readingId !== readingId || event.seq !== cursor.cursor + 1) {
-        throw new Error(
-          `Invalid SSE payload for Oracle reading: expected event ${cursor.cursor + 1}, received ${event.seq}`,
-        );
-      }
-      cursor.cursor = event.seq;
-      setState((current) => applyEvent(current, event));
-    },
-    [readingId],
-  );
-
-  const { phase: streamPhase } = useGenerationRun<OracleStreamEvent>({
-    kind: "oracle-readings",
-    id: shouldStream ? readingId : null,
-    decode: decodeOracleStreamEvent,
-    isTerminal: (event) => event.event_type === "done",
-    onEvent: onStreamEvent,
-    resume: shouldStream
-      ? {
-          lastEventId:
-            streamSeed.cursor > 0 ? String(streamSeed.cursor) : undefined,
-        }
-      : undefined,
-    reconnect: { max: ORACLE_RECONNECT_MAX_ATTEMPTS },
+  const concordance = useResource<
+    ApiJson<"/oracle/readings/{reading_id}/concordance", "get">
+  >({
+    cacheKey:
+      reading?.status === "complete" ? `concordance:${reading.id}` : null,
+    path: () => `/api/oracle/readings/${readingId}/concordance`,
   });
 
-  useEffect(() => {
-    if (streamPhase === "failed") {
-      setLoadError({ tone: "Danger", title: STREAM_ERROR_MESSAGE });
-    }
-  }, [streamPhase]);
-
-  const activateCitation = useCallback(
-    (
-      activation: ResourceActivation,
-      target: ReaderSourceTarget | null,
-      event?: React.MouseEvent,
-    ) => {
-      if (target) dispatchReaderSourceActivation(target);
-      if (event?.defaultPrevented) return;
-      const activated = activateResource(activation, {
-        labelHint: target?.label,
-        activateTarget: paneRuntime.activateTarget,
-        disposition: event
-          ? workspaceTargetClickIntent(event).disposition
-          : { kind: "Follow" },
-      });
-      if (activated) event?.preventDefault();
-    },
-    [paneRuntime],
+  const loadError: FeedbackContent | null =
+    detail.status === "error"
+      ? failureCopy(detail.error, "The reading was interrupted")
+      : lost
+        ? {
+            tone: "Danger",
+            title: "The reading stream could not reconnect. Please retry.",
+          }
+        : null;
+  usePaneReturnReady(reading !== null || loadError !== null);
+  // A failed load never names the reading, so the label falls back to the route's.
+  useSetPaneLabel(
+    reading?.question_text ?? (loadError === null ? null : "Reading"),
   );
-
   usePanePrimaryChrome({
     actionSubject:
-      (detailResource.status === "ready" &&
-        detailResource.data.id === readingId) ||
-      committedReadingId === readingId
-        ? {
+      reading === null
+        ? undefined
+        : {
             ref: canonicalResourceRef({
               scheme: "oracle_reading",
               id: readingId,
             }),
-          }
-        : undefined,
+          },
   });
-
-  const showSkeletons =
-    state.status === "pending" ||
-    (state.status === "streaming" && state.passages.length === 0);
-
-  const interpretationParagraphs =
-    state.delta.length > 0 ? state.delta.split(/\n\n+/) : [];
-
-  const created = state.createdAt !== null ? new Date(state.createdAt) : null;
-  const colophonDate =
-    created !== null
-      ? `${ordinalEnglish(created.getUTCDate())} of ${MONTHS[created.getUTCMonth()]!}, ${toRoman(created.getUTCFullYear())}`
-      : null;
-
   if (defect) throw defect.error;
 
+  const reload = () => {
+    setStreamed(null);
+    setLost(false);
+    setLoads((count) => count + 1);
+  };
+  const retryReading = async () => {
+    if (reading === null) return;
+    setRetrying(true);
+    setRetryError(null);
+    try {
+      const next = await createReading(reading.question_text);
+      pane.activateTarget({
+        target: { href: `/oracle/${next}` },
+        disposition: { kind: "Follow" },
+      });
+    } catch (error) {
+      setRetrying(false);
+      if (handleUnauthenticatedApiError(error)) return;
+      try {
+        setRetryError(failureCopy(error, "The retry couldn’t begin"));
+      } catch (caught) {
+        setDefect({ error: caught });
+      }
+    }
+  };
+  const activateCitation = (
+    activation: ResourceActivation,
+    target: ReaderSourceTarget | null,
+    event?: React.MouseEvent,
+  ) => {
+    if (target) dispatchReaderSourceActivation(target);
+    if (event?.defaultPrevented) return;
+    const activated = activateResource(activation, {
+      labelHint: target?.label,
+      activateTarget: pane.activateTarget,
+      disposition: event
+        ? workspaceTargetClickIntent(event).disposition
+        : { kind: "Follow" },
+    });
+    if (activated) event?.preventDefault();
+  };
+
+  const paragraphs = reading?.interpretation_text?.split(/\n\n+/) ?? [];
+  const peers = concordance.status === "ready" ? concordance.data.data : [];
   return (
-    <OracleThemeWrapper>
+    <OracleTheme>
       <div className={styles.surface}>
         <article className={styles.reading}>
           <BorderFrame />
-
           <header className={styles.readingHeader}>
-            <div className={styles.foliumHeader}>
-              <span className={styles.foliumNumber}>
-                {state.folioNumber !== null
-                  ? `Folio ${toRoman(state.folioNumber)}`
-                  : "Folio"}
+            <div className={styles.folioLine}>
+              <span className={styles.folioNumber}>
+                {reading ? `Folio ${toRoman(reading.folio_number)}` : "Folio"}
               </span>
-              <span className={styles.foliumDot}>·</span>
-              <span className={styles.foliumTheme}>
-                {state.folioTheme ?? ""}
+              <span className={styles.gold}>·</span>
+              <span className={styles.folioTheme}>
+                {reading?.folio_theme ?? ""}
               </span>
             </div>
-            {state.folioMotto !== null && (
-              <div className={styles.foliumMotto}>{state.folioMotto}</div>
+            {reading?.folio_motto && (
+              <div className={styles.motto}>{reading.folio_motto}</div>
             )}
-            {state.folioMottoGloss !== null && (
-              <div className={styles.foliumGloss}>{state.folioMottoGloss}</div>
+            {reading?.folio_motto_gloss && (
+              <div className={styles.gloss}>{reading.folio_motto_gloss}</div>
             )}
-            {/* The question the reader asked is the folium's authored subject:
-                the argument answers it and a shared reading must stay
-                self-contained. Route identity is the chrome title above. */}
-            <h2 className={styles.readingQuestion}>{state.question || "…"}</h2>
-            {state.argument !== null && state.argument.length > 0 && (
-              <p className={styles.argument}>{state.argument}</p>
+            {/* The question is the folio's subject; the argument answers it. */}
+            <h2 className={styles.question}>{reading?.question_text ?? "…"}</h2>
+            {reading?.argument_text && (
+              <p className={styles.argument}>{reading.argument_text}</p>
             )}
           </header>
 
-          {state.image !== null && (
+          {reading?.plate && (
             <figure className={styles.plate}>
               <MediaImage
-                kind="owned"
-                src={state.image.url}
-                alt={`${state.image.artist}, ${state.image.work_title}`}
-                width={state.image.width}
-                height={state.image.height}
+                kind="static"
+                src={platePath(reading.plate)}
+                alt={`${reading.plate.artist}, ${reading.plate.work_title}`}
+                width={reading.plate.width}
+                height={reading.plate.height}
                 className={styles.plateImage}
                 priority
                 sizes="(min-width: 768px) 36rem, 100vw"
               />
-              <figcaption className={styles.plateCaption}>
-                {state.image.attribution_text}
+              <figcaption className={styles.caption}>
+                {reading.plate.attribution}
               </figcaption>
             </figure>
           )}
 
-          {showSkeletons && (
+          {/* streaming is history: skeletons until a passage */}
+          {(reading?.status === "pending" ||
+            (reading?.status === "streaming" &&
+              reading.passages.length === 0)) && (
             <div className={styles.skeletons} aria-hidden="true">
               <div className={styles.skeletonPlate} />
               <div className={styles.skeletonLine} />
@@ -645,24 +306,24 @@ export default function OracleReadingPaneBody() {
             </div>
           )}
 
-          {state.passages.map((passage, index) => (
+          {reading?.passages.map((passage, index) => (
             <div key={passage.phase}>
               {index > 0 && <FleuronBreak />}
-              <section className={styles.passageBlock}>
-                <p className={styles.passagePhase}>
+              <section className={styles.phase}>
+                <p className={styles.phaseLabel}>
                   {PHASE_LABEL[passage.phase]}
                 </p>
                 <div className={styles.passage}>
                   <blockquote className={styles.quote}>
-                    <p>{passage.exact_snippet}</p>
+                    <p>{passage.quote}</p>
                   </blockquote>
                   <p className={styles.attribution}>
-                    {passage.attribution_text}{" "}
+                    {passage.attribution}{" "}
                     <span className={styles.locator}>
                       {passage.locator_label}
                     </span>
                     {passage.citation !== null && (
-                      <span className={styles.passageCitation}>
+                      <span className={styles.citation}>
                         <ReaderCitation
                           {...toReaderCitationData(passage.citation)}
                           onActivate={activateCitation}
@@ -671,23 +332,23 @@ export default function OracleReadingPaneBody() {
                     )}
                   </p>
                   <Sidenote>
-                    <p>{passage.marginalia_text}</p>
+                    <p>{passage.marginalia}</p>
                   </Sidenote>
                 </div>
               </section>
             </div>
           ))}
 
-          {interpretationParagraphs.length > 0 && (
+          {paragraphs.length > 0 && (
             <>
               <FleuronBreak />
               <section className={styles.interpretation}>
-                {interpretationParagraphs.map((paragraph, index) =>
-                  index === 0 && paragraph.length > 0 ? (
+                {paragraphs.map((paragraph, index) =>
+                  index === 0 ? (
                     <p key={index}>
                       <IlluminatedCapital
                         letter={paragraph.charAt(0)}
-                        seed={state.question}
+                        seed={reading?.question_text ?? ""}
                       />
                       {paragraph.slice(1)}
                     </p>
@@ -699,75 +360,103 @@ export default function OracleReadingPaneBody() {
             </>
           )}
 
-          {state.omens.length > 0 && (
+          {reading !== null && reading.omens.length > 0 && (
             <>
               <FleuronBreak />
               <section className={styles.omens}>
-                <p className={styles.omensLabel}>Omens</p>
+                <p className={styles.smallCaps}>Omens</p>
                 <ul>
-                  {state.omens.map((line, index) => (
-                    <li key={index}>{line}</li>
+                  {reading.omens.map((line) => (
+                    <li key={line}>{line}</li>
                   ))}
                 </ul>
               </section>
             </>
           )}
 
-          {state.status === "complete" && (
-            <OracleConcordance readingId={readingId} status={state.status} />
+          {peers.length > 0 && (
+            <>
+              <FleuronBreak />
+              <aside className={styles.concordance}>
+                <p className={styles.smallCaps}>Concordance</p>
+                <ul>
+                  {peers.map((peer) => (
+                    <li key={peer.id}>
+                      <button
+                        type="button"
+                        className={styles.concordanceItem}
+                        onClick={(event) =>
+                          pane.activateTarget({
+                            target: { href: `/oracle/${peer.id}` },
+                            disposition:
+                              workspaceTargetClickIntent(event).disposition,
+                          })
+                        }
+                      >
+                        <span>
+                          Folio {toRoman(peer.folio_number)} ·{" "}
+                          {peer.folio_theme}
+                        </span>
+                        <span>{peer.folio_motto}</span>
+                        <span className={styles.shareReason}>
+                          {[
+                            peer.shared_plate && "shared plate",
+                            peer.shared_theme && "shared theme",
+                            peer.shared_passage_count > 0 &&
+                              `${peer.shared_passage_count} shared passage${peer.shared_passage_count === 1 ? "" : "s"}`,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </aside>
+            </>
           )}
 
-          {colophonDate !== null && state.status === "complete" && (
+          {reading?.status === "complete" && (
             <>
               <FleuronBreak />
               <p className={styles.colophon}>
-                Composed on the {colophonDate}.
-                {state.image !== null && ` Plate after ${state.image.artist}.`}{" "}
-                Set in EB Garamond, IM Fell English, and UnifrakturMaguntia.
+                Composed on the {colophonDate(reading.created_at)}.
+                {reading.plate && ` Plate after ${reading.plate.artist}.`} Set
+                in EB Garamond, IM Fell English, and UnifrakturMaguntia.
               </p>
             </>
           )}
 
-          {state.status === "failed" && (
+          {reading?.status === "failed" && reading.error_code !== null && (
             <section className={styles.errorPanel}>
               <FeedbackNotice
-                content={oracleFailureFeedback(state.errorCode)}
+                content={failureFeedback(reading.error_code)}
                 announcement="Assertive"
               />
               {retryError !== null && (
-                <FeedbackNotice
-                  content={retryError}
-                  announcement="Assertive"
-                />
+                <FeedbackNotice content={retryError} announcement="Assertive" />
               )}
               <button
                 type="button"
-                className={styles.errorAction}
-                onClick={retryFailedReading}
-                disabled={retryingReading}
+                className={styles.button}
+                onClick={retryReading}
+                disabled={retrying}
               >
-                {retryingReading ? "Retrying…" : "Retry reading"}
+                {retrying ? "Retrying…" : "Retry reading"}
               </button>
             </section>
           )}
 
-          {loadError !== null && state.status !== "complete" && (
+          {loadError !== null && reading?.status !== "complete" && (
             <section className={styles.errorPanel}>
-              <FeedbackNotice
-                content={loadError}
-                announcement="Assertive"
-              />
-              <button
-                type="button"
-                className={styles.errorAction}
-                onClick={retryLoad}
-              >
+              <FeedbackNotice content={loadError} announcement="Assertive" />
+              <button type="button" className={styles.button} onClick={reload}>
                 Retry
               </button>
             </section>
           )}
         </article>
       </div>
-    </OracleThemeWrapper>
+    </OracleTheme>
   );
 }

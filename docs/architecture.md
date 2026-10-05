@@ -117,9 +117,8 @@ scaffolding.
 **The one rule that explains the shape:** the browser holds no tokens and never
 calls FastAPI directly for product data. Product data calls same-origin Next.js
 `/api/*` routes, which proxy to FastAPI with a server-attached bearer and the
-internal secret. Public owned assets also use the BFF, but as a separate
-cookie-free lane: `/api/oracle/plates/[id]` strips browser credentials and sends
-only the internal secret to FastAPI `/oracle/plates/{id}`. The **only** direct
+internal secret. Public static assets (the Oracle plates under
+`/oracle-plates/`) are Next.js files, not API data. The **only** direct
 browser-to-FastAPI exception is Server-Sent Events: the browser streams from
 FastAPI `/stream/*` using a short-lived stream token minted through
 the BFF. Android's offline reading-copy download uses the same lane: native
@@ -167,8 +166,8 @@ Key topology facts (details: [`deployment.md`](../deployment.md),
   pointer), then promotes the exact staged Vercel deployment. There is no
   attempt state and no resume mode: rerun the same command.
 - VPS and Vercel config publication are explicit prepare-only operations, never
-  implicit release steps. Oracle reconcile is a separate current-release
-  operation; application release never reads or mutates Oracle.
+  implicit release steps. The Oracle corpus seed is a separate idempotent
+  operator command, safe while the app runs; application release never runs it.
 - Supabase owns Auth only. Hetzner Postgres and Cloudflare R2 own product data.
 - Both worker lanes use a bounded 300-second database statement timeout. The
   API keeps its tighter role-scoped timeout.
@@ -307,23 +306,12 @@ Errors become HTTP via three exception handlers (`responses.py`): `ApiError`
 carries an `ApiErrorCode` enum mapped to a status; unhandled exceptions become a
 detail-free `500 E_INTERNAL` (with special logging for DB pool exhaustion).
 
-### 5.2 A public owned asset request
+### 5.2 A public static asset
 
-Oracle plate images are public owned assets, not product data:
-
-1. The UI renders backend-provided Oracle plate URLs through the typed
-   `OraclePlateImageSrc` contract and `MediaImage kind="owned"`.
-2. Next Image may optimize `/api/oracle/plates/**`; `/api/media/image` is not in
-   `images.localPatterns`.
-3. The route handler calls `proxyPublicToFastAPI(req, "/oracle/plates/{id}")`.
-   It strips browser cookies and authorization headers, forwards cache validators
-   and `X-Request-ID`, and attaches `X-Nexus-Internal`.
-4. FastAPI admits `/oracle/plates/{id}` only after internal-header verification;
-   there is no viewer context and no bearer auth.
-5. `services/oracle_plates.py` resolves current DB-owned plate metadata,
-   validates the stable storage-key contract, returns `304` from route metadata
-   when the ETag matches, and reads storage with byte-size verification for
-   `200`.
+Oracle plate images are static web assets, `apps/web/public/oracle-plates/<key>.jpg`,
+named by the plate key the reading carries (`MediaImage kind="static"`). Next Image
+may optimize `/oracle-plates/**`; `/api/media/image` is not in
+`images.localPatterns`. A plate's bytes never change under its key.
 
 ### 5.3 The SSE exception (streaming)
 
@@ -491,8 +479,8 @@ backlinks are `resource_edges`, below — notes own no link table.
 endpoints with no endpoint FKs, optional ordered-adjacency keys, citation
 `ordinal`+`snapshot`, and synapse rationale snapshots),
 `resource_external_snapshots` (stable targets for public web-search citations),
-and `oracle_reading_folios` (oracle-owned generated folio content referencing its
-citation edge). This subgraph is the single durable positive connection
+and the oracle reading's three citation edges (ordinal = phase). This subgraph is
+the single durable positive connection
 contract. **Link** is the one durable relationship-authoring primitive:
 exactly one neutral `origin='user', kind='context'` edge exists per user and
 canonical unordered endpoint pair (`min(A,B) → max(A,B)`, ordered by
@@ -575,22 +563,14 @@ in-flight counter participates in admission or execution.
 **Oracle** — the public-domain corpus is a real `libraries` row
 (`system_key = 'oracle_corpus'`) of ordinary `media`; its text and embeddings live
 in the shared content index (`content_chunks`/`content_embeddings`), not an
-Oracle-owned vector store. `oracle_corpus_sources` maps each curated `work_key` to
-its current `media_id`; manifest source changes are hard cut over by accepting new
-system media and removing the old media from the Oracle Corpus library.
-`oracle_passage_anchors` is stable curation identity (selector + tags + phase
-hints, plus cache pointers to current `evidence_span`/`content_chunk`) that
-doubles as the `oracle_passage_anchor:<id>` citation target; resolution normalizes
-quote text against active ready chunks, then applies a bounded token-window match
-for small same-passage source-edition spelling/punctuation variants. It still
-fails closed when the mapped media is the wrong source or lacks the target text.
-`oracle_plates`
-(public owned plate object metadata; **no embeddings** — selection is
-deterministic over tags/phase hints), `oracle_readings`, `oracle_reading_folios`
-(the per-phase generated folio, referencing its citation `resource_edge`),
-`oracle_reading_events`. `oracle_corpus_publications` is the singleton `current`
-publication marker: it binds the reviewed manifest digest and active embedding
-provider/model after exact DB/selector/R2 support proof.
+Oracle-owned vector store. `services/oracle/corpus.json` is the corpus's truth;
+`oracle_corpus_sources` maps each `work_key` to its current `media_id`, and
+`oracle_passage_anchors` holds each passage (label, curated quote, tags) with
+FK-free cache pointers to its current `evidence_span`/`content_chunk`, re-resolved
+lazily by the reading job. The anchor doubles as the `oracle_passage_anchor:<id>`
+citation target. `oracle_readings` is the whole reading: pending until one
+transaction completes it (folio fields, omens, plate key, jsonb passages) or fails
+it; migration 0262 folded the retired event log's display into the same row.
 
 > `models.py` maps only the tables the code queries through the ORM; the
 > raw-SQL tables (`background_jobs` and roughly thirty others) never appear
@@ -641,7 +621,7 @@ keepalive, never drops it.
 | Channel                 | Producer                          | Consumer         |
 | ----------------------- | --------------------------------- | ---------------- |
 | `chat_run_events`       | insert on `chat_run_events`       | chat SSE tail    |
-| `oracle_reading_events` | insert on `oracle_reading_events` | oracle SSE tail  |
+| `oracle_readings`       | status change on `oracle_readings` | oracle SSE tail  |
 | `artifact_builds`       | insert, status change, delete     | Dossier SSE tail |
 | `media_events`          | update on `media`                 | media-status SSE |
 | `nexus_background_jobs` | enqueue in `jobs/queue.py`        | worker wake-up   |
@@ -1335,36 +1315,17 @@ push a reader target (`lib/resourceGraph/*`). See [modules/chat.md](modules/chat
 An agentic "reading" feature over one current curated **public-domain literary
 corpus**, which is a real Nexus library (`system_key = 'oracle_corpus'`) of
 ordinary indexed media — not an Oracle-owned text/vector store.
-`services/oracle.py` owns reading generation: question validation, corpus/personal
-retrieval, plate selection, LLM prompt/call, parse, persistence, and SSE event
-emission. A short question → retrieve candidates and pick a plate image → one LLM
-call produces a structured three-phase interpretation → stream + persist as
-`oracle_reading_events` + citation "folios". It has its **own**
-prompt/persistence and resolves `NoModelTools`, but
-it **reuses the SSE transport**. Retrieval consumes the shared search substrate:
-`services/search/embedding.build_query_embedding` (one active-model embedding for
-both lanes) feeds `search/content_chunk_candidates.retrieve_content_chunk_candidates`,
-scoped to the Oracle Corpus library for public-domain candidates (mapped to
-resolved `oracle_passage_anchors`, cited as `oracle_passage_anchor:<id>`) and to
-the viewer's visible media/notes — excluding the corpus — for personal candidates
-(cited `evidence_span`/`content_chunk`). The quiesced Oracle operator proves
-exact manifest metadata, `media.processing_status`, `content_index_states`,
-anchor resolution, plate metadata, and R2 objects before publishing. Bounded
-runtime DB readiness also requires the sole `current` marker to match the baked
-manifest digest and active embedding provider/model; the generation worker
-otherwise fails typed `E_ORACLE_CORPUS_NOT_READY`. Anchor identity is stable
-across reindex; opening an anchor citation routes to its current evidence/media
-target.
-
-Oracle plate bytes and URLs are separate owned assets. `services/oracle_plates.py`
-owns `oracle_plate_url`, DB metadata lookup, stable DB-owned plate storage-key
-validation, image-id ETag metadata, and byte-size-checked storage reads. The
-public image route is `/api/oracle/plates/[id]` in Next.js →
-`/oracle/plates/{id}` in FastAPI. It is cookie-free, internal-header-protected,
-and safe for Next Image optimization. The LLM emits only integer candidate
-indices + prose; all citation text comes from the retrieved candidates (output
-that leaks source text fails the parse). Frontend lives in the separate
-`app/(oracle)/` route group (outside the pane system).
+`services/oracle/` owns it ([modules/oracle.md](modules/oracle.md)): `corpus.py`
+(the corpus file, seeding, lazy anchor resolution, passage ranking, plates),
+`synthesis.py` (the llm contract and every reading rule) and `readings.py` (create,
+read, concordance, the generation job). One active-model query embedding feeds two
+lanes: the corpus's resolved anchors scored by `search/chunks.score_content_chunks`
+(cited `oracle_passage_anchor:<id>`, quoting the curated passage) and the viewer's
+visible media and notes with the corpus excluded in SQL (cited
+`evidence_span`/`content_chunk`). Fewer than three rankable corpus passages fails
+typed `E_ORACLE_CORPUS_NOT_READY`. The LLM emits only candidate indices + prose;
+output that leaks a passage fails `invalid_output`. One transaction publishes the
+reading; a status-snapshot SSE follows it. Plates are static web assets.
 
 ### 8.5 Libraries, sharing & the default library's virtual read surface
 
@@ -2180,7 +2141,7 @@ candidate manifest. Vercel builds the exact SHA as an unaliased
 production-target candidate. `deploy/hetzner/deploy.sh <source-sha>` resolves
 that manifest from the first CI run, converges the backend in one linear
 idempotent pass, then promotes the bound frontend deployment. Config
-publication and Oracle reconcile are separate explicit operations. Env
+publication and the Oracle corpus seed are separate explicit operations. Env
 contracts live in `deploy/env/*` (real values untracked, `.example` tracked).
 Permanent R2 policy is applied via `deploy/cloudflare/*`.
 
@@ -2235,10 +2196,9 @@ The things most likely to bite you, distilled:
    dependency before body transfer; don't touch the borrowed session while streaming.
 2. **The browser holds no tokens.** Product data goes through `/api/*`; only SSE
    talks to FastAPI directly, with a short-lived stream token minted per connect.
-3. **Private and public asset lanes are different.** `/api/media/image` and EPUB
-   assets are viewer-authenticated and unoptimized; `/api/oracle/plates/[id]` is
-   cookie-free, internal-header-protected, DB-owned by stable storage key, and
-   optimizable.
+3. **Private assets and static assets are different.** `/api/media/image` and EPUB
+   assets are viewer-authenticated and unoptimized; the Oracle plates are static
+   files under `/oracle-plates/`, named by key, and optimizable.
 4. **`services/media.py` is catalog/hydration, not an ingest catch-all.** URL
    ingest, X, YouTube, remote files, EPUB assets, listening state, file access,
    and processing transitions have named owners.
@@ -2290,7 +2250,7 @@ The things most likely to bite you, distilled:
 | Imports workspace (query owner, history, pane)                    | `python/nexus/services/{imports,import_history}.py`, `python/nexus/api/routes/imports.py`, `apps/web/src/lib/imports/`, `apps/web/src/components/imports/`, `apps/web/src/app/(authenticated)/imports/`                                              |
 | Reader/highlights backend                                         | `python/nexus/services/{reader_profile,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote}.py`                                                                        |
 | Chat / conversations                                              | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py`                                                                                                        |
-| Oracle                                                            | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_corpus.py`, `python/nexus/services/oracle_plates.py`                                                                                  |
+| Oracle                                                            | `python/nexus/services/oracle/` (`corpus.py`, `corpus.json`, `synthesis.py`, `readings.py`), `python/nexus/services/atlas.py`                                                                          |
 | Search / retrieval / indexing / resource target/openable search   | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation}.py`, `python/nexus/services/search/candidates.py`, `python/nexus/services/resource_items/{targets,openables}.py`   |
 | Resource graph (edges, refs, citations, connections, Link/stance) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `connections`, `context`, `citations`, `cleanup`, `user_relations`, `policy`)                                                     |
 | Universal Dossiers / Media Intelligence                           | `python/nexus/services/dossier/`, `python/nexus/services/media_intelligence.py`, `python/nexus/api/routes/dossiers.py`                                                                               |

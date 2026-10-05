@@ -28,8 +28,7 @@ STREAM_IDLE_TTL_SECONDS = 45.0
 KEEPALIVE_INTERVAL_SECONDS = STREAM_IDLE_TTL_SECONDS / 3.0
 
 # Error codes meaning "the streamed resource is gone" → clean terminal close,
-# not a 500. Owned here so chat-run and media share one policy. (Oracle signals
-# gone by returning terminal=True instead — see run_kit.is_run_terminal.)
+# not a 500. Owned here so every stream shares one policy.
 STREAM_GONE_CODES = frozenset(
     {
         ApiErrorCode.E_NOT_FOUND,

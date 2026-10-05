@@ -102,10 +102,9 @@ not an applied production migration.
 3. after separate authorization, run `deploy/hetzner/deploy.sh <target sha> --model-cutover-snapshot <reviewed-json>` from a clean checkout. no clone fixture or preliminary live archive qualifies that input.
 4. after release, complete [saved-epub contributor repair](epub-contributors-production-repair-pending.md)
    and [saved lewis date repair](metadata-book-date-counts-serialization.md), with live verification.
-   run the three processing repairs and then land #387 ([processing-repairs-await-release-then-387](processing-repairs-await-release-then-387.md)), and finish [billing-0252-release-steps](billing-0252-release-steps.md). the remaining
-   [web rate-limit copy cleanup](web-rate-limit-copy-outlives-limiter.md) can land
-   before release because web and backend release together; the make-current and
-   failed-quota source arms are already removed.
+   run the three processing repairs and then land #387 ([processing-repairs-await-release-then-387](processing-repairs-await-release-then-387.md)), and finish [billing-0252-release-steps](billing-0252-release-steps.md). the chat and
+   oracle rate-limit arms and the make-current and failed-quota source arms are
+   already removed.
 5. open tabs still running the old web may fail dossier and chat reads and transcript requests until reloaded. there is nothing to do beyond reloading.
 
 ## done when

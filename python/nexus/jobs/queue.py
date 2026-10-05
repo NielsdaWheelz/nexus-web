@@ -317,35 +317,6 @@ def claim_next_job(
     return _claim_locked_job(db, candidate, worker_id, lease_seconds, frozenset(heavy_kinds))
 
 
-def claim_job(
-    db: Session,
-    *,
-    job_id: UUID,
-    worker_id: str,
-    lease_seconds: int,
-    heavy_kinds: Sequence[str],
-    allowed_kinds: Sequence[str],
-) -> ClaimedJob | None:
-    """Claim one exact due job so unrelated due work is never claimed as a side effect."""
-    candidate = (
-        db.execute(
-            text(
-                f"""
-                SELECT * FROM background_jobs
-                WHERE id = :job_id AND kind = ANY(CAST(:allowed_kinds AS text[])) AND ({_DUE_SQL})
-                FOR UPDATE
-                """
-            ),
-            {"job_id": job_id, "allowed_kinds": list(allowed_kinds)},
-        )
-        .mappings()
-        .first()
-    )
-    if candidate is None:
-        return None
-    return _claim_locked_job(db, candidate, worker_id, lease_seconds, frozenset(heavy_kinds))
-
-
 def _claim_locked_job(
     db: Session,
     candidate: Mapping[Any, Any],

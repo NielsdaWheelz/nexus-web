@@ -399,9 +399,9 @@ def _run_purge_expired_auth_handoff_codes(*, payload: Payload, context: Context)
 
 
 def _run_oracle_reading_generate(*, payload: Payload, context: Context) -> JobResult:
-    from nexus.tasks.oracle_reading import oracle_reading_generate
+    from nexus.services.oracle.readings import run_reading_job
 
-    return oracle_reading_generate(reading_id=UUID(str(payload["reading_id"])), context=context)
+    return run_reading_job(reading_id=UUID(str(payload["reading_id"])), context=context)
 
 
 def _run_media_unit_build(*, payload: Payload, context: Context) -> JobResult:
@@ -421,9 +421,9 @@ def _run_synapse_scan(*, payload: Payload, context: Context) -> JobResult:
 
 
 def _run_atlas_project(*, payload: Payload, context: Context) -> JobResult:
-    from nexus.tasks.atlas_project import atlas_project
+    from nexus.services.atlas import atlas_project_job
 
-    return atlas_project(payload=payload)
+    return atlas_project_job()
 
 
 def _run_media_teardown(*, payload: Payload, context: Context) -> JobResult:

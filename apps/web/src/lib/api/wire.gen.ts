@@ -111,10 +111,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * Read Atlas
-         * @description return the scoped atlas; its tag identifies the exact rendered representation.
-         */
+        /** Read Atlas */
         get: operations["read_atlas_atlas_get"];
         put?: never;
         post?: never;
@@ -2210,23 +2207,6 @@ export interface paths {
         patch: operations["update_page_notes_pages__page_id__patch"];
         trace?: never;
     };
-    "/oracle/plates/{image_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Oracle Plate */
-        get: operations["get_oracle_plate_oracle_plates__image_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/oracle/readings": {
         parameters: {
             query?: never;
@@ -2269,8 +2249,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Oracle Reading Concordance */
-        get: operations["get_oracle_reading_concordance_oracle_readings__reading_id__concordance_get"];
+        /** Get Oracle Concordance */
+        get: operations["get_oracle_concordance_oracle_readings__reading_id__concordance_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2988,7 +2968,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Stream Oracle Reading Events */
+        /**
+         * Stream Oracle Reading Events
+         * @description The reading's ``OracleReadingOut`` on each change; ``done`` once it is complete or failed.
+         */
         get: operations["stream_oracle_reading_events_stream_oracle_readings__reading_id__events_get"];
         put?: never;
         post?: never;
@@ -5360,6 +5343,14 @@ export interface components {
         Data_NotePagesOut_: {
             data: components["schemas"]["NotePagesOut"];
         };
+        /** Data[OracleReadingCreatedOut] */
+        Data_OracleReadingCreatedOut_: {
+            data: components["schemas"]["OracleReadingCreatedOut"];
+        };
+        /** Data[OracleReadingOut] */
+        Data_OracleReadingOut_: {
+            data: components["schemas"]["OracleReadingOut"];
+        };
         /** Data[PodcastBackfillRetryOut] */
         Data_PodcastBackfillRetryOut_: {
             data: components["schemas"]["PodcastBackfillRetryOut"];
@@ -5506,6 +5497,16 @@ export interface components {
         Data_list_LibraryPlacementOptionOut__: {
             /** Data */
             data: components["schemas"]["LibraryPlacementOptionOut"][];
+        };
+        /** Data[list[OracleConcordanceOut]] */
+        Data_list_OracleConcordanceOut__: {
+            /** Data */
+            data: components["schemas"]["OracleConcordanceOut"][];
+        };
+        /** Data[list[OracleReadingSummaryOut]] */
+        Data_list_OracleReadingSummaryOut__: {
+            /** Data */
+            data: components["schemas"]["OracleReadingSummaryOut"][];
         };
         /** Data[list[ViewerLibraryInvitationOut]] */
         Data_list_ViewerLibraryInvitationOut__: {
@@ -9015,80 +9016,62 @@ export interface components {
              */
             code: "operator_defect";
         };
-        /** OracleBindEventPayload */
-        OracleBindEventPayload: {
+        /** OracleConcordanceOut */
+        OracleConcordanceOut: {
             /** Folio Motto */
             folio_motto: string;
-            /** Folio Motto Gloss */
-            folio_motto_gloss: string | null;
-            folio_theme: components["schemas"]["OracleFolioTheme"];
-        };
-        /**
-         * OracleCompleteDoneEventPayload
-         * @description Successful terminal payload; success never carries an error code.
-         */
-        OracleCompleteDoneEventPayload: {
-            /** Error Code */
-            error_code: null;
-            /**
-             * Status
-             * @constant
-             */
-            status: "complete";
-        };
-        /**
-         * OracleFailedDoneEventPayload
-         * @description Expected product terminal payload; defects have no variant.
-         */
-        OracleFailedDoneEventPayload: {
-            error_code: components["schemas"]["OracleReadingFailureCode"];
-            /**
-             * Status
-             * @constant
-             */
-            status: "failed";
-        };
-        /** @enum {string} */
-        OracleFolioTheme: "Of Time" | "Of Death" | "Of the Threshold" | "Of Vanity" | "Of Solitude" | "Of Love" | "Of Fortune" | "Of Memory" | "Of the Self" | "Of the Other" | "Of Fear" | "Of Courage" | "Of Faith" | "Of Doubt" | "Of Power" | "Of Wisdom" | "Of the Body" | "Of the Soul" | "Of Origins" | "Of Endings" | "Of Silence" | "Of the Word" | "Of Justice" | "Of Mercy";
-        /** OracleMetaEventPayload */
-        OracleMetaEventPayload: {
             /** Folio Number */
             folio_number: number;
-            /** Question */
-            question: string;
-        };
-        /** OracleOmensEventPayload */
-        OracleOmensEventPayload: {
-            /** Lines */
-            lines: [
-                string,
-                string,
-                string
-            ];
-        };
-        /**
-         * OracleReadingCreateRequest
-         * @description User-submitted divination question.
-         */
-        OracleReadingCreateRequest: {
-            /** Question */
-            question: string;
+            /** Folio Theme */
+            folio_theme: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Shared Passage Count */
+            shared_passage_count: number;
+            /** Shared Plate */
+            shared_plate: boolean;
+            /** Shared Theme */
+            shared_theme: boolean;
         };
         /** @enum {string} */
-        OracleReadingFailureCode: "auth" | "quota" | "timeout" | "output_limit" | "invalid_output" | "policy_violation" | "runtime_unavailable" | "capacity_unavailable" | "context_too_large" | "cancelled" | "E_ORACLE_CORPUS_NOT_READY" | "E_APP_SEARCH_FAILED" | "E_GENERATION_SOURCE_CHANGED" | "E_RATE_LIMITED";
+        OracleFailureCode: "auth" | "quota" | "timeout" | "output_limit" | "invalid_output" | "policy_violation" | "runtime_unavailable" | "capacity_unavailable" | "context_too_large" | "cancelled" | "E_ORACLE_CORPUS_NOT_READY" | "E_APP_SEARCH_FAILED" | "E_GENERATION_SOURCE_CHANGED";
         /**
-         * OracleReadingImageOut
-         * @description Plate displayed atop a reading.
+         * OraclePassageOut
+         * @description One phase's passage; ``citation`` is its current navigation, null when the
+         *     target is unavailable (typography).
          */
-        OracleReadingImageOut: {
+        OraclePassageOut: {
+            /** Attribution */
+            attribution: string;
+            citation: components["schemas"]["CitationOut"] | null;
+            /** Locator Label */
+            locator_label: string | null;
+            /** Marginalia */
+            marginalia: string;
+            phase: components["schemas"]["OraclePhase"];
+            /** Quote */
+            quote: string;
+            source_kind: components["schemas"]["OracleSourceKind"];
+        };
+        /** @enum {string} */
+        OraclePhase: "descent" | "ordeal" | "ascent";
+        /**
+         * OraclePlateOut
+         * @description A plate; its image is the static asset ``/oracle-plates/{key}.jpg``. Also the
+         *     shape of ``oracle_readings.plate``, the display publication (or history) captured.
+         */
+        OraclePlateOut: {
             /** Artist */
             artist: string;
-            /** Attribution Text */
-            attribution_text: string;
+            /** Attribution */
+            attribution: string;
             /** Height */
             height: number;
-            /** Url */
-            url: string;
+            /** Key */
+            key: string;
             /** Width */
             width: number;
             /** Work Title */
@@ -9096,39 +9079,76 @@ export interface components {
             /** Year */
             year: string | null;
         };
+        /** OracleReadingCreateRequest */
+        OracleReadingCreateRequest: {
+            /** Question */
+            question: string;
+        };
+        /** OracleReadingCreatedOut */
+        OracleReadingCreatedOut: {
+            /**
+             * Reading Id
+             * Format: uuid
+             */
+            reading_id: string;
+        };
         /**
-         * OracleReadingPassageOut
-         * @description One persisted citation in a reading.
-         *
-         *     ``citation`` is the read-model CitationOut when the persisted citation edge
-         *     resolves to a live shared reader/note locator. Resolved public-domain anchors
-         *     render the same chip path as user content; unresolved or span-less targets
-         *     carry ``None`` and remain typographic only.
+         * OracleReadingOut
+         * @description The reading: every fact it has; a pending one has none, history may be partial.
          */
-        OracleReadingPassageOut: {
-            /** Attribution Text */
-            attribution_text: string;
-            citation: components["schemas"]["CitationOut"] | null;
-            /** Deep Link */
-            deep_link: string | null;
-            /** Exact Snippet */
-            exact_snippet: string;
-            /** Locator Label */
-            locator_label: string;
-            /** Marginalia Text */
-            marginalia_text: string;
-            phase: components["schemas"]["OracleReadingPhase"];
-            source_kind: components["schemas"]["OracleReadingSourceKind"];
+        OracleReadingOut: {
+            /** Argument Text */
+            argument_text: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            error_code: components["schemas"]["OracleFailureCode"] | null;
+            /** Folio Motto */
+            folio_motto: string | null;
+            /** Folio Motto Gloss */
+            folio_motto_gloss: string | null;
+            /** Folio Number */
+            folio_number: number;
+            /** Folio Theme */
+            folio_theme: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Interpretation Text */
+            interpretation_text: string | null;
+            /** Omens */
+            omens: string[];
+            /** Passages */
+            passages: components["schemas"]["OraclePassageOut"][];
+            plate: components["schemas"]["OraclePlateOut"] | null;
+            /** Question Text */
+            question_text: string;
+            status: components["schemas"]["OracleReadingStatus"];
         };
         /** @enum {string} */
-        OracleReadingPhase: "descent" | "ordeal" | "ascent";
-        /** @enum {string} */
-        OracleReadingSourceKind: "user_media" | "public_domain";
-        /** OracleTextEventPayload */
-        OracleTextEventPayload: {
-            /** Text */
-            text: string;
+        OracleReadingStatus: "pending" | "streaming" | "complete" | "failed";
+        /** OracleReadingSummaryOut */
+        OracleReadingSummaryOut: {
+            /** Folio Motto */
+            folio_motto: string | null;
+            /** Folio Number */
+            folio_number: number;
+            /** Folio Theme */
+            folio_theme: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            plate: components["schemas"]["OraclePlateOut"] | null;
+            status: components["schemas"]["OracleReadingStatus"];
         };
+        /** @enum {string} */
+        OracleSourceKind: "public_domain" | "user_media";
         /** OrderedOutcome */
         OrderedOutcome: {
             /**
@@ -15449,9 +15469,7 @@ export interface operations {
     read_atlas_atlas_get: {
         parameters: {
             query?: never;
-            header?: {
-                "If-None-Match"?: string | null;
-            };
+            header?: never;
             path?: never;
             cookie?: never;
         };
@@ -15464,22 +15482,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_AtlasOut_"];
-                };
-            };
-            /** @description not modified */
-            304: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -19772,37 +19774,6 @@ export interface operations {
             };
         };
     };
-    get_oracle_plate_oracle_plates__image_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                image_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_oracle_readings_oracle_readings_get: {
         parameters: {
             query?: never;
@@ -19818,9 +19789,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_list_OracleReadingSummaryOut__"];
                 };
             };
         };
@@ -19828,8 +19797,8 @@ export interface operations {
     create_oracle_reading_oracle_readings_post: {
         parameters: {
             query?: never;
-            header?: {
-                "Idempotency-Key"?: string | null;
+            header: {
+                "Idempotency-Key": string;
             };
             path?: never;
             cookie?: never;
@@ -19846,9 +19815,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_OracleReadingCreatedOut_"];
                 };
             };
             /** @description Validation Error */
@@ -19879,9 +19846,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_OracleReadingOut_"];
                 };
             };
             /** @description Validation Error */
@@ -19895,7 +19860,7 @@ export interface operations {
             };
         };
     };
-    get_oracle_reading_concordance_oracle_readings__reading_id__concordance_get: {
+    get_oracle_concordance_oracle_readings__reading_id__concordance_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -19912,9 +19877,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_list_OracleConcordanceOut__"];
                 };
             };
             /** @description Validation Error */
@@ -21292,12 +21255,8 @@ export interface operations {
     };
     stream_oracle_reading_events_stream_oracle_readings__reading_id__events_get: {
         parameters: {
-            query?: {
-                after?: number | null;
-            };
-            header?: {
-                "Last-Event-ID"?: string | null;
-            };
+            query?: never;
+            header?: never;
             path: {
                 reading_id: string;
             };

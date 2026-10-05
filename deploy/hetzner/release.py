@@ -25,6 +25,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -59,6 +60,7 @@ CODEX_PRIVATE_NETWORK = "nexus_codex_private"
 CODEX_PRIVATE_BRIDGE_IP = "172.30.0.1"
 BACKUP_STATE_ROOT = "/var/backups/nexus/r2"
 PRE_MODEL_HISTORY_CUTOVER_REVISIONS = frozenset(f"{number:04d}" for number in range(236, 246))
+PRE_ORACLE_ONE_ROW_REVISIONS = frozenset(f"{number:04d}" for number in range(236, 262))
 
 # Declared host inputs: the isolation contract lives in these files, and the
 # release installs them before it converges anything.
@@ -665,6 +667,24 @@ def release(source_sha: str, workspace: Path, model_cutover_snapshot: Path | Non
         prove_model_cutover_snapshot(candidate, reviewed)
     elif reviewed is not None:
         raise Failure("--model-cutover-snapshot applies only when crossing 0246")
+    if starting_revision in PRE_ORACLE_ONE_ROW_REVISIONS:
+        # 0262 refuses unfinished oracle work the new worker cannot own, so the old
+        # workers finish every oracle job first, with no api left to enqueue another.
+        note("0262: stopping the api; the old workers finish every oracle job")
+        compose(candidate, "stop --timeout 30 api", timeout=120)
+        unfinished = ""
+        for _ in range(120):
+            unfinished = psql(
+                "SELECT count(*) FROM background_jobs WHERE kind = 'oracle_reading_generate'"
+                " AND status IN ('pending', 'running', 'failed')"
+            )
+            if unfinished == "0":
+                break
+            time.sleep(10)
+        else:
+            raise Failure(
+                f"0262 blocked: {unfinished} oracle jobs still unfinished after 20 minutes"
+            )
     note(
         f"stopping the writers at revision {starting_revision or '(none)'};"
         " the API is down from here until `up` succeeds"

@@ -1,20 +1,51 @@
+/* The oracle's manuscript register: tokens are the [data-theme="oracle"] scope. */
+
 .surface {
   background: var(--oracle-bg);
   color: var(--oracle-fg);
   min-height: 100%;
   padding: clamp(1.5rem, 4vw, 3rem) clamp(0.875rem, 3vw, 1.5rem);
-  font-family: var(--font-oracle-body);
-}
-
-.surface :where(*) {
-  box-sizing: border-box;
+  font-family: var(--font-oracle-display);
 }
 
 .surface :where(p, blockquote, h1, h2, h3, ul, ol, li, figure) {
   margin: 0;
 }
 
-/* ---- landing -------------------------------------------------------------- */
+.omens ul,
+.concordance ul {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* IM Fell sets the folio; Garamond the reading text; Fraktur the titles. */
+.askInput,
+.quote,
+.interpretation {
+  font-family: var(--font-oracle-body);
+}
+
+.epigraph,
+.question,
+.phaseLabel {
+  font-family: var(--font-oracle-fraktur);
+  text-wrap: balance;
+}
+
+.gold {
+  color: var(--oracle-gold);
+}
+
+.smallCaps {
+  text-transform: uppercase;
+  letter-spacing: 0.25em;
+  font-size: 0.85rem;
+  color: var(--oracle-gold);
+}
+
+/* ---- landing ---------------------------------------------------------------- */
 
 .landing {
   max-width: 38rem;
@@ -25,17 +56,14 @@
 }
 
 .epigraph {
-  font-family: var(--font-oracle-fraktur);
   font-size: clamp(2.25rem, 6vw, 3.25rem);
   text-align: center;
   color: var(--oracle-cream);
   letter-spacing: 0.02em;
   line-height: 1.1;
-  text-wrap: balance;
 }
 
 .epigraphSub {
-  font-family: var(--font-oracle-display);
   text-align: center;
   font-style: italic;
   color: var(--oracle-fg-muted);
@@ -57,7 +85,6 @@
   border: 1px solid var(--oracle-rule);
   color: var(--oracle-cream);
   padding: 0.75rem 1rem;
-  font-family: var(--font-oracle-body);
   font-size: 1.125rem;
   line-height: 1.5;
 }
@@ -81,38 +108,29 @@
   color: var(--oracle-fg-muted);
 }
 
-.askSubmit {
+.askCount {
+  font-style: italic;
+}
+
+.button {
   background: transparent;
   color: var(--oracle-gold);
   border: 1px solid var(--oracle-gold);
   padding: 0.5rem 1.25rem;
-  font-family: var(--font-oracle-display);
   font-size: 1rem;
   letter-spacing: 0.05em;
   cursor: pointer;
-  transition: background-color 200ms ease, color 200ms ease;
+  transition:
+    background-color 200ms ease,
+    color 200ms ease;
 }
 
-@media (hover: hover) and (pointer: fine) {
-  .askSubmit:hover:not(:disabled) {
-    background: var(--oracle-gold);
-    color: var(--oracle-bg);
-  }
-}
-
-.askSubmit:disabled {
+.button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
 
-.askCount {
-  font-family: var(--font-oracle-display);
-  font-style: italic;
-}
-
-/* ---- aleph grid ----------------------------------------------------------- */
-
-.alephGrid {
+.aleph {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 0.75rem;
@@ -127,104 +145,69 @@
   border: 1px solid var(--oracle-rule);
   padding: 0;
   display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  transition: transform 150ms ease, border-color 150ms ease;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .alephCell:hover:not(:disabled) {
-    transform: translateY(-2px);
-    border-color: var(--oracle-gold);
-  }
-}
-
-.alephCellFailed {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.alephCellPending {
   justify-content: center;
   align-items: center;
-  gap: 0.5rem;
+  transition:
+    transform 150ms ease,
+    border-color 150ms ease;
+}
+
+.alephCell[data-status="failed"] {
+  opacity: 0.4;
 }
 
 .alephThumbnail {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
   object-fit: cover;
   filter: sepia(0.2) brightness(0.75);
 }
 
-.alephCellNumber {
+.alephNumber,
+.alephMotto {
   position: absolute;
-  bottom: 0.35rem;
   left: 0.4rem;
-  font-family: var(--font-oracle-display);
-  text-transform: uppercase;
-  letter-spacing: 0.15em;
-  font-size: 0.65rem;
-  color: var(--oracle-gold);
   z-index: 1;
+  text-transform: uppercase;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
 }
 
-.alephCellMotto {
-  position: absolute;
+.alephNumber {
+  bottom: 0.35rem;
+  letter-spacing: 0.15em;
+  font-size: 0.65rem;
+  color: var(--oracle-gold);
+}
+
+.alephMotto {
   top: 0.3rem;
-  left: 0.4rem;
   right: 0.4rem;
-  font-family: var(--font-oracle-display);
-  text-transform: uppercase;
   letter-spacing: 0.04em;
   font-size: 0.6rem;
   color: var(--oracle-cream);
-  z-index: 1;
+  text-align: left;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
-  text-wrap: balance;
 }
 
-.alephCellPendingGlyph {
+.alephGlyph {
   font-size: 1.75rem;
   color: var(--oracle-gold);
   opacity: 0.6;
 }
 
-/* A small, quiet doorway from the Aleph (the index) to the Atlas (the sky). */
-.atlasLink {
+/* A quiet doorway from the Aleph (the index) to the Atlas (the sky). */
+.skyLink {
   align-self: center;
-  font-family: var(--font-oracle-display);
   font-style: italic;
   font-size: 0.9rem;
   color: var(--oracle-marginalia-fg);
   text-decoration: none;
   letter-spacing: 0.06em;
   padding: 0.5rem 1rem;
-  transition: color 200ms ease;
 }
 
-@media (hover: hover) and (pointer: fine) {
-  .atlasLink:hover {
-    color: var(--oracle-gold);
-  }
-}
-
-@media (any-pointer: coarse) {
-  .atlasLink {
-    min-height: 44px;
-    display: inline-flex;
-    align-items: center;
-  }
-}
-
-/* ---- reading ------------------------------------------------------------- */
+/* ---- the folio ---------------------------------------------------------------- */
 
 .reading {
   position: relative;
@@ -238,7 +221,38 @@
   outline: 1px solid var(--oracle-rule);
   outline-offset: 4px;
   container: oraclereading / inline-size;
-  font-optical-sizing: auto;
+}
+
+.borderFrame {
+  position: absolute;
+  inset: -1px;
+  pointer-events: none;
+}
+
+.borderFrame svg {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 32px;
+  height: 32px;
+  stroke: var(--oracle-gold);
+  stroke-width: 1.4;
+  fill: none;
+  stroke-linecap: round;
+}
+
+.borderFrame svg:nth-child(2) {
+  inset: 0 0 auto auto;
+  transform: scaleX(-1);
+}
+
+.borderFrame svg:nth-child(3) {
+  inset: auto auto 0 0;
+  transform: scaleY(-1);
+}
+
+.borderFrame svg:nth-child(4) {
+  inset: auto 0 0 auto;
+  transform: scale(-1);
 }
 
 .readingHeader {
@@ -246,10 +260,9 @@
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  padding-bottom: 0.5rem;
 }
 
-.foliumHeader {
+.folioLine {
   display: flex;
   gap: 0.6rem;
   align-items: baseline;
@@ -257,67 +270,58 @@
   flex-wrap: wrap;
 }
 
-.foliumNumber {
-  font-family: var(--font-oracle-display);
+.folioNumber {
   text-transform: uppercase;
   letter-spacing: 0.2em;
   font-size: 0.8rem;
   color: var(--oracle-marginalia-fg);
 }
 
-.foliumDot {
-  color: var(--oracle-gold);
-}
-
-.foliumTheme {
-  font-family: var(--font-oracle-display);
+.folioTheme,
+.gloss,
+.argument,
+.caption,
+.colophon {
   font-style: italic;
-  font-size: 0.8rem;
   color: var(--oracle-fg-muted);
-  letter-spacing: 0.06em;
   text-wrap: balance;
 }
 
-.foliumMotto {
-  font-family: var(--font-oracle-display);
+.folioTheme {
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+}
+
+.motto {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--oracle-gold);
   font-size: 1.1rem;
-  text-align: center;
-  font-feature-settings: "smcp";
   text-wrap: balance;
 }
 
-.foliumGloss {
-  font-style: italic;
-  color: var(--oracle-fg-muted);
-  text-align: center;
+.gloss {
   font-size: 0.92rem;
-  font-family: var(--font-oracle-display);
-  text-wrap: balance;
 }
 
-.argument {
-  text-align: center;
-  font-family: var(--font-oracle-display);
-  font-style: italic;
-  font-size: 1.05rem;
-  color: var(--oracle-fg-muted);
-  letter-spacing: 0.03em;
-  max-width: 36rem;
-  margin: 0 auto;
-  line-height: 1.6;
-  text-wrap: pretty;
-}
-
-.readingQuestion {
-  margin: 0;
-  font-family: var(--font-oracle-fraktur);
+.question {
   font-size: clamp(1.75rem, 4vw, 2.5rem);
   color: var(--oracle-cream);
   line-height: 1.2;
-  text-wrap: balance;
+}
+
+.argument,
+.plate,
+.caption,
+.colophon {
+  max-width: 36rem;
+  margin: 0 auto;
+}
+
+.argument {
+  font-size: 1.05rem;
+  letter-spacing: 0.03em;
+  line-height: 1.6;
 }
 
 .plate {
@@ -325,68 +329,74 @@
   flex-direction: column;
   align-items: center;
   gap: 0.5rem;
-  margin: 0 auto;
-  animation: oracle-fade-in 1200ms ease forwards;
+  width: 100%;
 }
 
 .plateImage {
-  max-width: 100%;
-  height: auto;
   width: 100%;
+  height: auto;
   border: 1px solid var(--oracle-rule);
   filter: sepia(0.15) brightness(0.92);
 }
 
-.plate {
-  width: 100%;
-  max-width: 36rem;
-}
-
-.plateCaption {
-  font-family: var(--font-oracle-display);
-  font-style: italic;
-  color: var(--oracle-fg-muted);
+.caption,
+.colophon {
   font-size: 0.85rem;
   text-align: center;
-  max-width: 36rem;
+  line-height: 1.7;
 }
 
-.passageBlock {
+.colophon {
+  color: var(--oracle-marginalia-fg);
+}
+
+.skeletons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 2rem 0;
+}
+
+.skeletonPlate,
+.skeletonLine {
+  height: 1rem;
+  background: var(--oracle-bg-elevated);
+  border: 1px solid var(--oracle-rule);
+  animation: oracle-pulse 1800ms ease-in-out infinite;
+}
+
+.skeletonPlate {
+  height: 18rem;
+}
+
+.phase {
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
-  animation: oracle-fade-in 900ms ease forwards;
 }
 
-.passagePhase {
+.phaseLabel {
   text-align: center;
-  font-family: var(--font-oracle-fraktur);
-  font-size: 1rem;
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--oracle-gold);
 }
 
 .passage {
-  position: relative;
   display: grid;
   gap: 0.5rem;
   padding: 0.25rem 0 0.75rem;
 }
 
 .quote {
-  font-family: var(--font-oracle-body);
   color: var(--oracle-cream);
   font-size: 1.25rem;
   line-height: 1.6;
   font-style: italic;
   white-space: pre-wrap;
+  text-wrap: pretty;
   border-left: 2px solid var(--oracle-gold);
   padding-left: 1.25rem;
-}
-
-.quote p {
-  text-wrap: pretty;
 }
 
 .quote p::first-letter {
@@ -397,7 +407,6 @@
 }
 
 .attribution {
-  font-family: var(--font-oracle-display);
   color: var(--oracle-fg-muted);
   font-size: 0.95rem;
   font-style: italic;
@@ -413,14 +422,22 @@
   margin-left: 0.5rem;
 }
 
-.passageCitation {
+.citation {
   margin-left: 0.4rem;
   font-style: normal;
-  vertical-align: baseline;
+}
+
+.sidenoteToggle {
+  background: transparent;
+  border: none;
+  color: var(--oracle-gold);
+  font-size: 1.1rem;
+  width: 2.75rem;
+  height: 2.75rem;
+  cursor: pointer;
 }
 
 .marginalia {
-  font-family: var(--font-oracle-display);
   color: var(--oracle-marginalia-fg);
   font-size: 0.9rem;
   line-height: 1.5;
@@ -434,6 +451,7 @@
   display: none;
 }
 
+/* A wide folio sets the note in the margin and needs no toggle. */
 @container oraclereading (min-width: 56rem) {
   .passage {
     grid-template-columns: minmax(0, 1fr) 14rem;
@@ -448,16 +466,13 @@
   .attribution {
     grid-area: attribution;
   }
-  .marginalia {
+  .marginalia,
+  .marginalia[data-open="false"] {
     grid-area: marginalia;
+    display: block;
     margin-left: 0;
-    border-left: 1px dashed var(--oracle-rule);
     padding-left: 1.25rem;
     align-self: start;
-    display: block;
-  }
-  .marginalia[data-open="false"] {
-    display: block;
   }
   .sidenoteToggle {
     display: none;
@@ -467,18 +482,20 @@
   }
 }
 
+.fleuron {
+  text-align: center;
+  color: var(--oracle-gold);
+  font-size: 1.25rem;
+  line-height: 1;
+  margin: 0.5rem 0;
+}
+
 .interpretation {
   display: flex;
   flex-direction: column;
   gap: 1rem;
   font-size: 1.125rem;
   line-height: 1.7;
-  color: var(--oracle-fg);
-  font-family: var(--font-oracle-body);
-  animation: oracle-fade-in 1500ms ease forwards;
-}
-
-.interpretation p {
   text-wrap: pretty;
 }
 
@@ -486,28 +503,52 @@
   display: flow-root;
 }
 
-.omens {
+.capital {
+  float: left;
+  width: clamp(2.75em, 5vw + 1em, 4.5em);
+  height: clamp(2.75em, 5vw + 1em, 4.5em);
+  margin-right: 0.5em;
+}
+
+.capital svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.capitalMotif {
+  stroke: var(--oracle-gold);
+  stroke-width: 1.4;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.capitalMotif path {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: oracle-draw 1800ms ease-out forwards;
+}
+
+.capitalLetter {
+  fill: var(--oracle-gold);
+  font-family: var(--font-oracle-fraktur);
+  font-size: 64px;
+}
+
+.omens,
+.concordance {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  animation: oracle-fade-in 1800ms ease forwards;
 }
 
-.omensLabel {
-  font-family: var(--font-oracle-display);
-  text-transform: uppercase;
-  letter-spacing: 0.25em;
-  font-size: 0.85rem;
-  color: var(--oracle-gold);
+.concordance ul {
+  gap: 0.25rem;
 }
 
 .omens ul {
-  list-style: none;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
   gap: 0.4rem;
-  font-family: var(--font-oracle-display);
   font-style: italic;
   color: var(--oracle-cream);
   font-size: 1.05rem;
@@ -516,230 +557,6 @@
 .omens li::before {
   content: "❧ ";
   color: var(--oracle-gold);
-  margin-right: 0.4rem;
-}
-
-.skeletons {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  padding: 2rem 0;
-}
-
-.skeletonPlate {
-  height: 18rem;
-  background: var(--oracle-bg-elevated);
-  border: 1px solid var(--oracle-rule);
-  animation: oracle-pulse 1800ms ease-in-out infinite;
-}
-
-.skeletonLine {
-  height: 1rem;
-  background: var(--oracle-bg-elevated);
-  border: 1px solid var(--oracle-rule);
-  animation: oracle-pulse 1800ms ease-in-out infinite;
-}
-
-.errorPanel {
-  border: 1px solid var(--oracle-maroon);
-  background: rgba(107, 42, 42, 0.15);
-  padding: 1rem 1.25rem;
-  font-family: var(--font-oracle-display);
-}
-
-.errorAction {
-  margin-top: 0.75rem;
-  background: transparent;
-  color: var(--oracle-gold);
-  border: 1px solid var(--oracle-gold);
-  padding: 0.45rem 1rem;
-  font-family: var(--font-oracle-display);
-  font-size: 0.95rem;
-  cursor: pointer;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .errorAction:hover {
-    background: var(--oracle-gold);
-    color: var(--oracle-bg);
-  }
-}
-
-.errorAction:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-@keyframes oracle-fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(0.5rem);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes oracle-pulse {
-  0%, 100% {
-    opacity: 0.4;
-  }
-  50% {
-    opacity: 0.7;
-  }
-}
-
-@keyframes oracle-illumination-draw {
-  to {
-    stroke-dashoffset: 0;
-  }
-}
-
-.fleuronBreak {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  margin: 0.5rem 0;
-}
-
-.fleuronBreakGlyph {
-  color: var(--oracle-gold);
-  font-size: 1.25rem;
-  line-height: 1;
-}
-
-.illuminatedCapital {
-  float: left;
-  width: clamp(2.75em, 5vw + 1em, 4.5em);
-  height: clamp(2.75em, 5vw + 1em, 4.5em);
-  margin: 0 0.5em 0 0;
-  shape-outside: margin-box;
-}
-
-.illuminatedCapitalSvg {
-  width: 100%;
-  height: 100%;
-  display: block;
-  overflow: visible;
-}
-
-.illuminatedCapitalMotif {
-  stroke: var(--oracle-gold);
-  stroke-width: 1.4;
-  fill: none;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.illuminatedCapitalMotif path {
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
-  animation: oracle-illumination-draw 1800ms ease-out forwards;
-}
-
-.illuminatedCapitalLetter {
-  fill: var(--oracle-gold);
-  font-family: var(--font-oracle-fraktur);
-  font-size: 64px;
-  font-weight: 400;
-}
-
-.borderFrame {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.borderFrameCorner {
-  position: absolute;
-  width: 32px;
-  height: 32px;
-  stroke: var(--oracle-gold);
-  stroke-width: 1.4;
-  fill: none;
-  stroke-linecap: round;
-}
-
-.borderFrameCorner_tl {
-  top: -1px;
-  left: -1px;
-}
-
-.borderFrameCorner_tr {
-  top: -1px;
-  right: -1px;
-  transform: scaleX(-1);
-}
-
-.borderFrameCorner_bl {
-  bottom: -1px;
-  left: -1px;
-  transform: scaleY(-1);
-}
-
-.borderFrameCorner_br {
-  bottom: -1px;
-  right: -1px;
-  transform: scale(-1);
-}
-
-.colophon {
-  text-align: center;
-  font-family: var(--font-oracle-display);
-  font-style: italic;
-  font-size: 0.85rem;
-  color: var(--oracle-marginalia-fg);
-  line-height: 1.7;
-  max-width: 36rem;
-  margin: 0 auto;
-}
-
-.sidenoteToggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: none;
-  color: var(--oracle-gold);
-  font-size: 1.1rem;
-  padding: 0.5rem;
-  width: 2.75rem;
-  height: 2.75rem;
-  cursor: pointer;
-}
-
-@media (any-pointer: coarse) {
-  .alephCell {
-    min-height: 44px;
-  }
-  .concordanceItem {
-    min-height: 44px;
-  }
-  .sidenoteToggle {
-    min-height: 44px;
-    min-width: 44px;
-  }
-  .askSubmit {
-    min-height: 44px;
-  }
-}
-
-/* ---- concordance ---------------------------------------------------------- */
-
-.concordance {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  animation: oracle-fade-in 900ms ease forwards;
-}
-
-.concordanceList {
-  list-style: none;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
 }
 
 .concordanceItem {
@@ -749,7 +566,6 @@
   border: none;
   color: var(--oracle-fg);
   padding: 0.35rem 0;
-  font-family: var(--font-oracle-display);
   font-size: 0.95rem;
   cursor: pointer;
   display: flex;
@@ -757,36 +573,86 @@
   gap: 0.1rem;
 }
 
-@media (hover: hover) and (pointer: fine) {
-  .concordanceItem:hover {
-    color: var(--oracle-gold);
-    text-decoration: underline;
-    text-decoration-color: var(--oracle-gold);
-  }
-}
-
-.concordanceMotto {
-  word-break: break-word;
-  text-wrap: pretty;
-}
-
-.concordanceShareReason {
+.shareReason {
   font-style: italic;
   font-size: 0.82rem;
   color: var(--oracle-marginalia-fg);
 }
 
+.errorPanel {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.75rem;
+  border: 1px solid var(--oracle-maroon);
+  background: rgba(107, 42, 42, 0.15);
+  padding: 1rem 1.25rem;
+}
+
+/* The folio arrives whole: each part fades in. */
+.plate,
+.phase,
+.interpretation,
+.omens,
+.concordance {
+  animation: oracle-fade-in 1200ms ease forwards;
+}
+
+@keyframes oracle-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+}
+
+@keyframes oracle-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+@keyframes oracle-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .button:hover:not(:disabled) {
+    background: var(--oracle-gold);
+    color: var(--oracle-bg);
+  }
+  .alephCell:hover {
+    transform: translateY(-2px);
+    border-color: var(--oracle-gold);
+  }
+  .skyLink:hover,
+  .concordanceItem:hover {
+    color: var(--oracle-gold);
+  }
+}
+
+@media (any-pointer: coarse) {
+  .button,
+  .skyLink,
+  .concordanceItem {
+    min-height: 44px;
+  }
+  .skyLink {
+    display: inline-flex;
+    align-items: center;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .plate,
-  .passageBlock,
-  .interpretation,
-  .omens,
-  .skeletonPlate,
-  .skeletonLine {
+  .surface * {
     animation: none !important;
   }
-  .illuminatedCapitalMotif path {
-    animation: none !important;
+  .capitalMotif path {
     stroke-dashoffset: 0;
   }
 }
