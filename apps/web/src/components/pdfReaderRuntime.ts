@@ -172,10 +172,10 @@ export interface PdfJsViewerLike {
 
 /**
  * Build-environment-injected pdf.js runtime asset root. The hosted app serves
- * the vendored runtime from `/pdfjs`; a non-hosted shell (the Android offline
- * bundle) injects its own root through its bundler `define`
- * (`vite.offline-reading.config.ts`). The shared runtime never sniffs its host
- * — composition/environment supplies the root.
+ * the vendored runtime from `/pdfjs`; a non-hosted shell (the Android shelf)
+ * injects its own root through its bundler `define` (`vite.shelf.config.ts`).
+ * The shared runtime never sniffs its host — composition/environment supplies
+ * the root.
  */
 declare const __NEXUS_PDF_RUNTIME_ROOT__: string | undefined;
 

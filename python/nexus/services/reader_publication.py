@@ -5,20 +5,17 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Literal, cast
 from urllib.parse import urlsplit
 from uuid import UUID
 
 from lxml.html import Element, HtmlElement, fragment_fromstring
 from sqlalchemy import select, text
-from sqlalchemy.orm import Session, defer, sessionmaker
+from sqlalchemy.orm import Session, defer
 
 from nexus.db.models import Media, MediaFile, ProcessingStatus, ReaderPublication
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.ids import new_uuid7
-from nexus.schemas.media import MediaNavigationOut
-from nexus.schemas.presence import Presence, absent, present
 from nexus.schemas.source_issues import (
     MAX_SOURCE_ISSUES,
     SOURCE_ISSUES,
@@ -27,21 +24,9 @@ from nexus.schemas.source_issues import (
     UnresolvedNavigationTarget,
     source_issues_payload,
 )
-from nexus.storage.client import StorageError
 
 ReaderDocumentKind = Literal["pdf", "epub", "web_article"]
 _ELIGIBLE_KINDS = frozenset({"pdf", "epub", "web_article"})
-_MISSING_OBJECT_CODE = "E_STORAGE_MISSING"
-
-
-@dataclass(frozen=True)
-class ReaderPublicationObjectReference:
-    role: Literal["source", "epub_asset"]
-    storage_path: str
-    content_type: str
-    size_bytes: int
-    asset_key: str | None = None
-    package_href: str | None = None
 
 
 @dataclass(frozen=True)
@@ -50,38 +35,6 @@ class ReaderPublicationSourceFile:
     content_type: str
     size_bytes: int
     source_sha256: str
-
-
-@dataclass(frozen=True)
-class ReaderPublicationFragment:
-    fragment_id: UUID
-    idx: int
-    canonical_text: str
-    html_sanitized: str
-    word_count: int
-    created_at: datetime
-
-
-@dataclass(frozen=True)
-class ReaderPublicationEpubFragmentSource:
-    fragment_idx: int
-    package_href: str
-
-
-@dataclass(frozen=True)
-class ReaderPublicationProjection:
-    media_id: UUID
-    generation: int
-    changed_at: datetime
-    kind: ReaderDocumentKind
-    title: str
-    page_count: int | None
-    plain_text: str | None
-    navigation: Presence[MediaNavigationOut]
-    fragments: tuple[ReaderPublicationFragment, ...]
-    epub_fragment_sources: tuple[ReaderPublicationEpubFragmentSource, ...]
-    object_references: tuple[ReaderPublicationObjectReference, ...]
-    source_issues: tuple[SourceIssue, ...]
 
 
 @dataclass(frozen=True)
@@ -102,13 +55,6 @@ class ReconcileNavigationSourceIssues:
 type SourceIssueIntent = (
     PreserveSourceIssues | ReplaceSourceIssues | ReconcileNavigationSourceIssues
 )
-
-
-@dataclass(frozen=True)
-class CapturedReaderPublication[T]:
-    generation: int
-    projection: ReaderPublicationProjection
-    value: T
 
 
 def read_publication_generation(db: Session, *, media_id: UUID) -> int | None:
@@ -449,113 +395,6 @@ def normalize_stored_web_publication(
     return expected_generation + 1
 
 
-def capture_current[T](
-    session_factory: sessionmaker[Session],
-    *,
-    media_id: UUID,
-    assemble: Callable[[ReaderPublicationProjection], T],
-) -> CapturedReaderPublication[T]:
-    """Capture one coherent projection; the seqlock allows exactly one restart.
-
-    A storage object that vanished because the generation moved restarts the capture.
-    """
-    for _attempt in range(2):
-        projection = _read_projection(session_factory, media_id=media_id)
-        try:
-            value = assemble(projection)
-        except StorageError as exc:
-            if exc.code != _MISSING_OBJECT_CODE:
-                raise
-            if _current_generation(session_factory, media_id) == projection.generation:
-                raise
-            continue
-        if _current_generation(session_factory, media_id) == projection.generation:
-            return CapturedReaderPublication(projection.generation, projection, value)
-    raise ApiError(
-        ApiErrorCode.E_READER_PUBLICATION_BUSY,
-        "Reader publication is changing; retry the request.",
-    )
-
-
-def _read_projection(
-    session_factory: sessionmaker[Session], *, media_id: UUID
-) -> ReaderPublicationProjection:
-    from nexus.services.reader_navigation import read_media_navigation
-
-    with session_factory() as db:
-        db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
-        db.execute(text("SET TRANSACTION READ ONLY"))
-        row = db.execute(
-            text(
-                "SELECT rp.generation, rp.changed_at, rp.source_issues, m.kind, m.title, m.page_count,"
-                " m.plain_text, m.processing_status"
-                " FROM reader_publications rp JOIN media m ON m.id = rp.media_id"
-                " WHERE rp.media_id = :media_id"
-            ),
-            {"media_id": media_id},
-        ).first()
-        if row is None:
-            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        if str(row.processing_status) != "ready_for_reading":
-            raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
-        kind = cast(ReaderDocumentKind, str(row.kind))
-        generation = int(row.generation)
-        fragments = tuple(
-            ReaderPublicationFragment(*fragment)
-            for fragment in db.execute(
-                text(
-                    "SELECT id, idx, canonical_text, html_sanitized, canonical_text_word_count,"
-                    " created_at FROM fragments WHERE media_id = :media_id ORDER BY idx"
-                ),
-                {"media_id": media_id},
-            )
-        )
-        epub_fragment_sources = tuple(
-            ReaderPublicationEpubFragmentSource(*source)
-            for source in db.execute(
-                text(
-                    "SELECT f.idx, efs.package_href"
-                    " FROM epub_fragment_sources efs JOIN fragments f ON f.id = efs.fragment_id"
-                    " WHERE efs.media_id = :media_id ORDER BY f.idx"
-                ),
-                {"media_id": media_id},
-            )
-        )
-        object_references = tuple(
-            ReaderPublicationObjectReference(*reference)
-            for reference in db.execute(
-                text(
-                    "SELECT 'source' AS role, storage_path, content_type, size_bytes,"
-                    " NULL::text AS asset_key, NULL::text AS package_href"
-                    " FROM media_file WHERE media_id = :media_id"
-                    " UNION ALL"
-                    " SELECT 'epub_asset', storage_path, content_type, size_bytes,"
-                    " asset_key, package_href FROM epub_resources WHERE media_id = :media_id"
-                    " ORDER BY role, storage_path"
-                ),
-                {"media_id": media_id},
-            )
-        )
-        return ReaderPublicationProjection(
-            media_id=media_id,
-            generation=generation,
-            changed_at=row.changed_at,
-            kind=kind,
-            title=str(row.title),
-            page_count=row.page_count,
-            plain_text=row.plain_text,
-            navigation=present(
-                read_media_navigation(db, media_id=media_id, kind=kind, generation=generation)
-            )
-            if kind in ("epub", "web_article")
-            else absent(),
-            fragments=fragments,
-            epub_fragment_sources=epub_fragment_sources,
-            object_references=object_references,
-            source_issues=tuple(SOURCE_ISSUES.validate_python(row.source_issues)),
-        )
-
-
 def _validate_source_issues(
     db: Session, *, media_id: UUID, issues: tuple[SourceIssue, ...]
 ) -> None:
@@ -623,17 +462,3 @@ def _validate_source_issues(
     }
     if issue_nodes != unresolved_nodes:
         raise ValueError("unresolved navigation target has no source issue")
-
-
-def _current_generation(session_factory: sessionmaker[Session], media_id: UUID) -> int:
-    with session_factory() as db:
-        generation = db.scalar(
-            text(
-                "SELECT rp.generation FROM media m"
-                " LEFT JOIN reader_publications rp ON rp.media_id = m.id WHERE m.id = :media_id"
-            ),
-            {"media_id": media_id},
-        )
-    if generation is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    return int(generation)

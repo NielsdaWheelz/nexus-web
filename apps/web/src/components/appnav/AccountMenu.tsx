@@ -5,15 +5,11 @@ import { Download, LogOut } from "lucide-react";
 import Link from "next/link";
 import ImportsBadge from "@/components/imports/ImportsBadge";
 import ActionMenu from "@/components/ui/ActionMenu";
-import { requestDownloadsOpen } from "@/components/offlineMedia/downloadsSurfaceIngress";
-import { useOfflineMediaCapability } from "@/lib/offlineMedia/OfflineMediaProvider";
-import { useOfflineReadingCapability } from "@/lib/offlineReading/OfflineReadingProvider";
-import { useAndroidShell } from "@/lib/renderEnvironment/provider";
+import { offlineAvailable, offlineCall } from "@/lib/offline/bridge";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { NAV_ACCOUNT, NAV_IMPORTS, type NavItem } from "./navModel";
 import styles from "./AppNav.module.css";
-import { accountSignOutOwner } from "./accountSignOut";
 
 export default function AccountMenu({
   activeId,
@@ -37,12 +33,7 @@ export default function AccountMenu({
   const { stats, settings } = NAV_ACCOUNT;
   const StatsIcon = stats.icon;
   const SettingsIcon = settings.icon;
-  const offlineMedia = useOfflineMediaCapability();
-  const offlineReading = useOfflineReadingCapability();
-  const androidShell = useAndroidShell();
-  const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
-  const signOutOwner = accountSignOutOwner(androidShell, offlineReading.kind);
   const ImportsIcon = NAV_IMPORTS.icon;
   const options: ActionDescriptor[] = [
     {
@@ -90,9 +81,8 @@ export default function AccountMenu({
       ),
     },
   ];
-  // The single Downloads surface lists both capabilities, so its entry point
-  // appears whenever either one is connected.
-  if (offlineMedia.kind === "Ready" || offlineReading.kind === "Ready") {
+  // Downloads is Android's packaged shelf; the bridge loads it in place of the workspace.
+  if (offlineAvailable) {
     options.push({
       kind: "custom",
       id: "downloads",
@@ -104,7 +94,7 @@ export default function AccountMenu({
           className={styles.menuItem}
           onClick={() => {
             closeMenu();
-            requestDownloadsOpen();
+            void offlineCall("showDownloads");
           }}
         >
           <Download size={16} aria-hidden="true" />
@@ -141,27 +131,23 @@ export default function AccountMenu({
       id: "signout",
       label: "Sign Out",
       separatorBefore: true,
-      render: ({ closeMenuWithoutFocus }) => signOutOwner === "Native" && offlineReading.kind === "Ready" ? (
-        <button
-          type="button"
-          role="menuitem"
-          className={`${styles.menuItem} ${styles.menuItemDanger}`}
-          disabled={signingOut}
-          onClick={() => {
-            closeMenuWithoutFocus();
-            setSigningOut(true);
+      // On Android the device's offline data goes first; the web post then
+      // revokes the session. Without the bridge it is the plain web post.
+      render: () => (
+        <form
+          action="/auth/signout"
+          method="post"
+          className={styles.menuForm}
+          onSubmit={offlineAvailable ? (event) => {
+            event.preventDefault();
+            const form = event.currentTarget;
             setSignOutError(null);
-            void offlineReading.controller.logoutAndPurge().catch(() => {
-              setSigningOut(false);
-              setSignOutError("Sign out could not safely remove offline data. Try again.");
-            });
-          }}
+            void offlineCall("purge").then(
+              () => form.submit(),
+              () => setSignOutError("Sign out could not remove offline data. Try again."),
+            );
+          } : undefined}
         >
-          <LogOut size={16} aria-hidden="true" />
-          Sign Out
-        </button>
-      ) : signOutOwner === "WebPost" ? (
-        <form action="/auth/signout" method="post" className={styles.menuForm}>
           <button
             type="submit"
             role="menuitem"
@@ -171,16 +157,6 @@ export default function AccountMenu({
             Sign Out
           </button>
         </form>
-      ) : (
-        <button
-          type="button"
-          role="menuitem"
-          className={`${styles.menuItem} ${styles.menuItemDanger}`}
-          disabled
-        >
-          <LogOut size={16} aria-hidden="true" />
-          Sign Out temporarily unavailable
-        </button>
       ),
     },
   );

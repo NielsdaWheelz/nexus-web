@@ -7,8 +7,7 @@
 // Both roots that must carry these bytes call `copyPdfJsRuntime`:
 //   - the hosted app's `public/pdfjs` (this module's CLI entry, run by
 //     `bun run dev` / `bun run build`);
-//   - the packaged APK shelf's `nexus-offline/pdfjs`
-//     (scripts/build-offline-reading.mjs).
+//   - the packaged APK shelf's `shelf/pdfjs` (vite.shelf.config.ts).
 // There is no second copy list.
 import {
   copyFileSync,

@@ -43,7 +43,6 @@ export function presentContributorWork(work: ContributorWorkItem): CollectionRow
       : present({ kind: "Text", text: context }),
     activity: absent(),
     exceptionalStatus: absent(),
-    localAvailability: absent(),
     actionSubject: work.actionSubject,
     selected: false,
   };

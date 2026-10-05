@@ -19,7 +19,6 @@ export function presentNote(item: NotePageSummary): CollectionRowView {
     context: absent(),
     activity: absent(),
     exceptionalStatus: absent(),
-    localAvailability: absent(),
     actionSubject: item.actionSubject,
     selected: false,
   };

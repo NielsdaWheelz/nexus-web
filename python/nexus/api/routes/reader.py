@@ -1,17 +1,21 @@
-"""Reader routes: evidence, EPUB fragments, navigation, map, state, file."""
+"""Reader routes: evidence, EPUB fragments, navigation, map, state, file, reading copy."""
 
+import os
+import tempfile
+from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import FileResponse, JSONResponse
+from starlette.background import BackgroundTask
 
+from nexus.api.deps import get_stream_viewer
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.responses import Data, ok, success_response
 from nexus.schemas.media import MediaEvidenceResponse, MediaNavigationOut
-from nexus.schemas.offline_reader_progress import OfflineReaderWrite
 from nexus.schemas.reader import CursorWrite
 from nexus.schemas.reader_document_map import ReaderDocumentMapOut
 from nexus.services import (
@@ -20,8 +24,8 @@ from nexus.services import (
     media_file_access,
     reader_document_map,
     reader_navigation,
+    reading_copy,
 )
-from nexus.services.consumption import offline_reader_progress
 from nexus.services.consumption import service as consumption_service
 
 router = APIRouter(tags=["media"])
@@ -101,48 +105,6 @@ def put_reader_state(
     return JSONResponse(content=ok(snapshot))
 
 
-@router.get("/media/{media_id}/offline-reader-state")
-def get_offline_reader_state(
-    media_id: UUID,
-    response: Response,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: RepeatableReadDbSession,
-    expected_account_id: Annotated[UUID, Header(alias="X-Nexus-Expected-Account-Id")],
-) -> dict:
-    """The cursor and the publication generation it belongs to, from one snapshot."""
-    state = offline_reader_progress.get(
-        db,
-        viewer_id=viewer.user_id,
-        expected_account_id=expected_account_id,
-        media_id=media_id,
-    )
-    response.headers["Nexus-Account-Id"] = str(state.account_id)
-    response.headers["Nexus-Reader-Generation"] = str(state.reader_generation)
-    return ok(state, by_alias=True)
-
-
-@router.put("/media/{media_id}/offline-reader-state")
-def put_offline_reader_state(
-    media_id: UUID,
-    payload: OfflineReaderWrite,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    expected_account_id: Annotated[UUID, Header(alias="X-Nexus-Expected-Account-Id")],
-) -> JSONResponse:
-    state = offline_reader_progress.put(
-        viewer_id=viewer.user_id,
-        expected_account_id=expected_account_id,
-        media_id=media_id,
-        write=payload,
-    )
-    return JSONResponse(
-        content=ok(state, by_alias=True),
-        headers={
-            "Nexus-Account-Id": str(state.account_id),
-            "Nexus-Reader-Generation": str(state.reader_generation),
-        },
-    )
-
-
 @router.get("/media/{media_id}/file")
 def get_media_file(
     media_id: UUID,
@@ -154,4 +116,28 @@ def get_media_file(
         media_file_access.get_signed_download_url(
             db=db, viewer_id=viewer.user_id, media_id=media_id
         )
+    )
+
+
+@router.get("/stream/media/{media_id}/reading-copy")
+def get_reading_copy(
+    media_id: UUID,
+    viewer_id: Annotated[UUID, Depends(get_stream_viewer)],
+    db: RepeatableReadDbSession,
+) -> FileResponse:
+    """The offline reading copy, built synchronously into a temp file that leaves with the response."""
+    descriptor, name = tempfile.mkstemp(prefix="nexus-reading-copy-", suffix=".zip")
+    os.close(descriptor)
+    try:
+        generation = reading_copy.build_reading_copy(
+            db, viewer_id=viewer_id, media_id=media_id, path=Path(name)
+        )
+    except BaseException:
+        os.unlink(name)
+        raise
+    return FileResponse(
+        name,
+        media_type="application/zip",
+        headers={"Cache-Control": "private, no-store", "Nexus-Reader-Generation": str(generation)},
+        background=BackgroundTask(os.unlink, name),
     )

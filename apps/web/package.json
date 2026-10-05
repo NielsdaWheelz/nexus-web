@@ -9,7 +9,7 @@
     "lint:css-tokens": "node scripts/check-css-tokens.mjs",
     "lint": "eslint src/ androidPlayerProtocolContract.ts --max-warnings 0",
     "typecheck": "rm -rf .next/types && next typegen && tsc --noEmit && tsc -p src/extension/tsconfig.json --noEmit",
-    "build:offline-reading": "node scripts/build-offline-reading.mjs",
+    "build:shelf": "vite build --config vite.shelf.config.ts",
     "build:extension": "node scripts/build-extension.mjs",
     "gen:wire": "node scripts/gen-wire.mjs"
   },

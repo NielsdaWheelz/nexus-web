@@ -40,7 +40,6 @@ export function presentLibrary(
     }),
     activity: absent(),
     exceptionalStatus: absent(),
-    localAvailability: absent(),
     actionSubject: {
       ref: canonicalResourceRef({ scheme: "library", id: item.id }),
     },

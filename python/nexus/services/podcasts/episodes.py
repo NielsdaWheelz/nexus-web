@@ -313,7 +313,6 @@ def _list_item(
             if episode.canonical_source_url is not None
             else absent()
         ),
-        offline_download_eligible=episode.offline_download_eligible,
         transcript_state=episode.transcript_state or "not_requested",
         transcript_coverage=episode.transcript_coverage or "none",
         listening_state=(

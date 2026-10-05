@@ -65,7 +65,6 @@ export interface PodcastEpisodeMedia {
   id: string;
   mediaSummary: MediaSummary;
   canonical_source_url: string | null;
-  offline_download_eligible: boolean;
   transcript_state: TranscriptState;
   transcript_coverage: TranscriptCoverage;
   /**
@@ -95,7 +94,6 @@ export function decodePodcastEpisodeMedia(raw: unknown): PodcastEpisodeMedia {
       "id",
       "mediaSummary",
       "canonical_source_url",
-      "offline_download_eligible",
       "transcript_state",
       "transcript_coverage",
       "listening_state",
@@ -152,10 +150,6 @@ export function decodePodcastEpisodeMedia(raw: unknown): PodcastEpisodeMedia {
     mediaSummary,
     canonical_source_url:
       canonicalSourceUrl.kind === "Present" ? canonicalSourceUrl.value : null,
-    offline_download_eligible: expectBoolean(
-      item.offline_download_eligible,
-      "offline_download_eligible",
-    ),
     transcript_state: expectOneOf(
       item.transcript_state,
       [

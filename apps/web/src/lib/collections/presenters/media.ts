@@ -43,7 +43,6 @@ export function presentMedia(
     exceptionalStatus: summary.processingStatus === "failed"
       ? present({ kind: "MediaProcessing", status: "failed" })
       : absent(),
-    localAvailability: absent(),
     actionSubject: occurrence.actionSubject,
     selected: occurrence.selected,
   };

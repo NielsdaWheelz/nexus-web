@@ -17,17 +17,12 @@ import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useFeedback } from "@/components/feedback/Feedback";
 import { useConnectivity } from "@/lib/renderEnvironment/connectivity";
-import { useAndroidShell } from "@/lib/renderEnvironment/provider";
 import {
   resourceActionDescriptors,
   type ResourceActionCommand,
   type ResourceActionPorts,
 } from "@/lib/actions/resourceActionMenu";
-import {
-  offlineMediaByRefFromInventory,
-  type ResourceActionEnvironment,
-  type ResourceActionOfflineReadingAvailability,
-} from "@/lib/actions/resourceActionEnvironment";
+import type { ResourceActionEnvironment } from "@/lib/actions/resourceActionEnvironment";
 import type { ResourceActionId } from "@/lib/actions/resourceActions";
 import {
   adaptResourceActionSnapshotResolveResponse,
@@ -46,9 +41,7 @@ import {
   useCompletionUndo,
   type CompletionUndoInput,
 } from "@/lib/lectern/useCompletionUndo";
-import { useOfflineMediaCapability } from "@/lib/offlineMedia/OfflineMediaProvider";
-import type { OfflineMediaInventoryItem } from "@/lib/offlineMedia/clientStore";
-import { useOfflineReadingCapability } from "@/lib/offlineReading/OfflineReadingProvider";
+import { offlineAvailable, useOfflineSnapshot } from "@/lib/offline/bridge";
 import { IMPORTS_CONFLICT_NOTICE } from "@/lib/status/imports";
 import { useShareController } from "@/lib/sharing/controller";
 import { useLibraryPlacementController } from "@/lib/libraries/placementController";
@@ -125,7 +118,6 @@ const EnvironmentContext = createContext<ResourceActionEnvironment | null>(
   null,
 );
 const EMPTY_BUSY_KEYS: ReadonlySet<string> = new Set();
-const EMPTY_INVENTORY: readonly OfflineMediaInventoryItem[] = [];
 
 export interface ResourceActionMenuModel {
   readonly status: "Loading" | "Ready" | "Error";
@@ -185,8 +177,6 @@ export function ResourceActionRuntimeProvider({
   const lectern = useLectern();
   const playerCommands = usePlayerCommands();
   const playerSession = usePlayerSession();
-  const offlineCapability = useOfflineMediaCapability();
-  const offlineReadingCapability = useOfflineReadingCapability();
   const feedback = useFeedback();
   const submitMetadata = useCallback(async function submit(
     mediaId: string,
@@ -324,8 +314,6 @@ export function ResourceActionRuntimeProvider({
     lectern,
     playerCommands,
     playerSession,
-    offlineCapability,
-    offlineReadingCapability,
     feedback,
     offerCompletionUndo,
   };
@@ -400,66 +388,17 @@ export function ResourceActionRuntimeProvider({
   );
 
   const connectivity = useConnectivity();
-  const androidShell = useAndroidShell();
-  const store =
-    offlineCapability.kind === "Ready" ? offlineCapability.store : null;
-  const subscribeInventory = useCallback(
-    (listener: () => void) =>
-      store ? store.subscribeInventory(listener) : () => {},
-    [store],
+  const offlineSnapshot = useOfflineSnapshot();
+  const offlineByRef = useMemo(
+    () =>
+      new Map(
+        (offlineSnapshot?.items ?? []).map((item) => [
+          canonicalResourceRef({ scheme: "media", id: item.mediaId }),
+          item,
+        ]),
+      ),
+    [offlineSnapshot],
   );
-  const getInventory = useCallback(
-    () => (store ? store.getInventory() : EMPTY_INVENTORY),
-    [store],
-  );
-  const inventory = useSyncExternalStore(
-    subscribeInventory,
-    getInventory,
-    () => EMPTY_INVENTORY,
-  );
-  const readingController =
-    offlineReadingCapability.kind === "Ready"
-      ? offlineReadingCapability.controller
-      : null;
-  const readingSnapshot = useSyncExternalStore(
-    readingController?.subscribe ?? (() => () => undefined),
-    readingController?.getSnapshot ?? (() => null),
-    () => null,
-  );
-  const readingByRef = useMemo(() => {
-    const byRef = new Map<
-      CanonicalResourceRef,
-      ResourceActionOfflineReadingAvailability
-    >();
-    for (const item of readingSnapshot?.items ?? []) {
-      const state = item.availability;
-      let projected: ResourceActionOfflineReadingAvailability;
-      switch (state.kind) {
-        case "Preparing":
-        case "Authorizing":
-        case "Verifying":
-          projected = { kind: "Resolving" };
-          break;
-        case "Ready":
-          projected = {
-            kind: "Ready",
-            hasDevicePosition: state.progress.kind !== "Canonical",
-          };
-          break;
-        case "Queued":
-        case "Downloading":
-        case "Restarting":
-        case "Failed":
-        case "Removing":
-          projected = { kind: state.kind };
-          break;
-        default:
-          return assertNever(state, "offline reading availability");
-      }
-      byRef.set(`media:${item.mediaId}` as CanonicalResourceRef, projected);
-    }
-    return byRef;
-  }, [readingSnapshot]);
   const playbackByRef = useMemo(() => {
     const byRef = new Map<CanonicalResourceRef, "Idle" | "Paused" | "Ended">();
     const session = canonicalSessionOfGlobalState(playerSession.state);
@@ -489,26 +428,12 @@ export function ResourceActionRuntimeProvider({
   }, [playerSession.state]);
   const environment = useMemo<ResourceActionEnvironment>(
     () => ({
-      platform: androidShell ? "Android" : "Web",
       connectivity,
-      offline:
-        offlineCapability.kind === "Ready"
-          ? { kind: "Ready", byRef: offlineMediaByRefFromInventory(inventory) }
-          : {
-              kind:
-                offlineCapability.kind === "Connecting"
-                  ? "Loading"
-                  : "Unavailable",
-            },
-      offlineReading:
-        offlineReadingCapability.kind === "Ready"
-          ? { kind: "Ready", byRef: readingByRef }
-          : {
-              kind:
-                offlineReadingCapability.kind === "Connecting"
-                  ? "Loading"
-                  : "Unavailable",
-            },
+      offline: !offlineAvailable
+        ? { kind: "Unavailable" }
+        : offlineSnapshot === null
+          ? { kind: "Loading" }
+          : { kind: "Ready", byRef: offlineByRef },
       lectern:
         lectern.resource.status === "ready"
           ? {
@@ -522,14 +447,11 @@ export function ResourceActionRuntimeProvider({
       pendingMetadataRequests,
     }),
     [
-      androidShell,
       connectivity,
-      inventory,
       lectern.mutation.kind,
       lectern.resource,
-      offlineCapability.kind,
-      offlineReadingCapability.kind,
-      readingByRef,
+      offlineSnapshot,
+      offlineByRef,
       playbackByRef,
       pendingMetadataRequests,
     ],

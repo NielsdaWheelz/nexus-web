@@ -259,7 +259,6 @@ class PodcastEpisodeListItemOut(BaseModel):
     id: UUID
     media_summary: MediaSummaryOut = Field(alias="mediaSummary")
     canonical_source_url: Presence[str]
-    offline_download_eligible: bool
     transcript_state: str
     transcript_coverage: str
     listening_state: Presence[PodcastEpisodeListeningStateOut]

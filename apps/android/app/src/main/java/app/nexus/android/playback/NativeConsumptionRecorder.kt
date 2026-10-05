@@ -6,6 +6,8 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.SystemClock
+import app.nexus.android.NexusOriginResponse
+import app.nexus.android.NexusOriginTransport
 import app.nexus.android.R
 import app.nexus.android.RetryPolicies
 import app.nexus.android.webkit.requireCanonicalUuid

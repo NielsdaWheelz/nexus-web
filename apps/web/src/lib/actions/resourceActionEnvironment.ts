@@ -1,6 +1,4 @@
-import type { OfflineMediaInventoryItem } from "@/lib/offlineMedia/clientStore";
-import type { LocalAvailability } from "@/lib/offlineMedia/contract";
-import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
+import type { OfflineItem } from "@/lib/offline/bridge";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 
 export type ResourceActionLecternState =
@@ -19,57 +17,27 @@ export type ResourceActionLecternState =
  */
 export type ResourceActionPlaybackState = "Idle" | "Paused" | "Ended";
 
+/** Android's offline store, as seen through `window.nexusOffline`. */
 export type ResourceActionOfflineState =
   | { readonly kind: "Loading" }
   | { readonly kind: "Unavailable" }
   | {
       readonly kind: "Ready";
-      readonly byRef: ReadonlyMap<CanonicalResourceRef, LocalAvailability>;
-    };
-
-export type ResourceActionOfflineReadingAvailability =
-  | { readonly kind: Exclude<LocalAvailability["kind"], "Ready"> }
-  | { readonly kind: "Ready"; readonly hasDevicePosition: boolean };
-
-export type ResourceActionOfflineReadingState =
-  | { readonly kind: "Loading" }
-  | { readonly kind: "Unavailable" }
-  | {
-      readonly kind: "Ready";
-      readonly byRef: ReadonlyMap<
-        CanonicalResourceRef,
-        ResourceActionOfflineReadingAvailability
-      >;
+      readonly byRef: ReadonlyMap<CanonicalResourceRef, OfflineItem>;
     };
 
 /**
  * Client-wide facts the pure planner reads to resolve resource actions. Composed
- * once by the runtime provider from the platform, connectivity, and offline-media
- * owners; every surface reads the same instance (never via presenter callbacks).
+ * once by the runtime provider from connectivity, the offline bridge, Lectern and
+ * the player; every surface reads the same instance (never via presenter callbacks).
  */
 export interface ResourceActionEnvironment {
   readonly pendingMetadataRequests: ReadonlySet<CanonicalResourceRef>;
-  readonly platform: "Web" | "Android";
   readonly connectivity: "Online" | "Offline";
   readonly offline: ResourceActionOfflineState;
-  readonly offlineReading: ResourceActionOfflineReadingState;
   readonly lectern: ResourceActionLecternState;
   readonly playbackByRef: ReadonlyMap<
     CanonicalResourceRef,
     ResourceActionPlaybackState
   >;
-}
-
-/**
- * Project the offline-media inventory (keyed by bare mediaId) onto the canonical
- * resource ref `media:${mediaId}` the planner looks up. Pure.
- */
-export function offlineMediaByRefFromInventory(
-  inventory: readonly OfflineMediaInventoryItem[],
-): ReadonlyMap<CanonicalResourceRef, LocalAvailability> {
-  const byRef = new Map<CanonicalResourceRef, LocalAvailability>();
-  for (const item of inventory) {
-    byRef.set(assumeCanonicalResourceRef(`media:${item.mediaId}`), item.state);
-  }
-  return byRef;
 }

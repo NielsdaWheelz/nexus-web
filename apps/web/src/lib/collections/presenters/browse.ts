@@ -106,7 +106,6 @@ export function presentBrowseCandidate(
     context: present({ kind: "Text", text: context }),
     activity: absent(),
     exceptionalStatus: absent(),
-    localAvailability: absent(),
     actionSubject:
       candidate.resolution.kind === "InNexusPodcast"
         ? decodeResourceActionSubject({ ref: candidate.resolution.actionSubjectRef })
@@ -135,7 +134,6 @@ export function presentPreviewEpisode(
     }),
     activity: absent(),
     exceptionalStatus: absent(),
-    localAvailability: absent(),
     actionSubject: null,
     selected: false,
   };

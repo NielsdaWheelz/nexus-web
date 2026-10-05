@@ -72,8 +72,8 @@ next-env.d.ts
 !apps/web/src/extension/articleExtraction.d.ts
 # pdf.js runtime assets copied from node_modules at build time, not source
 /apps/web/public/pdfjs/
-# Android offline reader shelf built by `bun run build:offline-reading` at gradle time
-/apps/android/app/src/main/assets/nexus-offline/
+# Android shelf (the Downloads screen) built by `bun run build:shelf` at gradle time
+/apps/android/app/src/main/assets/shelf/
 # Firefox extension package built by `bun run build:extension`
 /apps/extension/dist/
 

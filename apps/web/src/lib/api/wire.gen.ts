@@ -915,46 +915,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/internal/media/{media_id}/offline-reading-token": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Create Offline Reading Token
-         * @description Authorize current visibility/generation before minting one narrow token.
-         */
-        post: operations["create_offline_reading_token_internal_media__media_id__offline_reading_token_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/internal/offline-reading/account-binding": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Offline Reading Account Binding
-         * @description Attest the authenticated viewer; renderer input never supplies identity.
-         */
-        get: operations["get_offline_reading_account_binding_internal_offline_reading_account_binding_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/internal/stream-tokens": {
         parameters: {
             query?: never;
@@ -1957,44 +1917,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/media/{media_id}/offline-download-spec": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Offline Download Spec */
-        get: operations["get_offline_download_spec_media__media_id__offline_download_spec_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/media/{media_id}/offline-reader-state": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Offline Reader State
-         * @description The cursor and the publication generation it belongs to, from one snapshot.
-         */
-        get: operations["get_offline_reader_state_media__media_id__offline_reader_state_get"];
-        /** Put Offline Reader State */
-        put: operations["put_offline_reader_state_media__media_id__offline_reader_state_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/media/{media_id}/pdf-highlights": {
         parameters: {
             query?: never;
@@ -2286,29 +2208,6 @@ export interface paths {
         head?: never;
         /** Update Page */
         patch: operations["update_page_notes_pages__page_id__patch"];
-        trace?: never;
-    };
-    "/offline-reading/packages/{media_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Offline Reading Package
-         * @description Verify one package token and transfer one verified immutable ZIP.
-         *
-         *     The handler is async so the request can observe its own client disconnect
-         *     while assembly runs; every blocking database call stays on a worker thread.
-         */
-        get: operations["get_offline_reading_package_offline_reading_packages__media_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
         trace?: never;
     };
     "/oracle/plates/{image_id}": {
@@ -3054,6 +2953,26 @@ export interface paths {
         };
         /** Stream Metadata Events */
         get: operations["stream_metadata_events_stream_media__media_id__metadata_events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stream/media/{media_id}/reading-copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Reading Copy
+         * @description The offline reading copy, built synchronously into a temp file that leaves with the response.
+         */
+        get: operations["get_reading_copy_stream_media__media_id__reading_copy_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5271,6 +5190,8 @@ export interface components {
         CursorWrite: {
             /** Base Revision */
             base_revision: number;
+            /** Expected Reader Generation */
+            expected_reader_generation?: number | null;
             /** Locator */
             locator: components["schemas"]["PdfReaderResumeState"] | components["schemas"]["WebReaderResumeState"] | components["schemas"]["TranscriptReaderResumeState"] | components["schemas"]["EpubReaderResumeState-Input"];
         };
@@ -5979,6 +5900,28 @@ export interface components {
             /** Stale */
             stale: boolean;
             total_tokens: components["schemas"]["Presence_int_"];
+        };
+        /**
+         * DownloadResourceActionCapabilityOut
+         * @description What Android needs to keep this media offline: an episode's audio or a reading copy.
+         */
+        DownloadResourceActionCapabilityOut: {
+            /** Audiourl */
+            audioUrl: string | null;
+            /** Availability */
+            availability: components["schemas"]["ServerActionAvailabilityAvailableOut"] | components["schemas"]["ServerActionAvailabilityBlockedOut"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Download";
+            /**
+             * Mediakind
+             * @enum {string}
+             */
+            mediaKind: "podcast_episode" | "pdf" | "epub" | "web_article";
+            /** Title */
+            title: string;
         };
         /**
          * DurableExecutionPhase
@@ -9178,32 +9121,6 @@ export interface components {
             /** Pages */
             pages: components["schemas"]["NotePageSummaryOut"][];
         };
-        /** OfflineReaderWrite */
-        OfflineReaderWrite: {
-            /** Baserevision */
-            baseRevision: number;
-            /** Expectedreadergeneration */
-            expectedReaderGeneration: number;
-            /** Locator */
-            locator: components["schemas"]["PdfReaderResumeState"] | components["schemas"]["WebReaderResumeState"] | components["schemas"]["TranscriptReaderResumeState"] | components["schemas"]["EpubReaderResumeState-Input"];
-        };
-        /** OfflineReadingResourceActionCapabilityOut */
-        OfflineReadingResourceActionCapabilityOut: {
-            /** Availability */
-            availability: components["schemas"]["ServerActionAvailabilityAvailableOut"] | components["schemas"]["ServerActionAvailabilityBlockedOut"];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "OfflineReading";
-            /**
-             * Mediakind
-             * @enum {string}
-             */
-            mediaKind: "web_article" | "epub" | "pdf";
-            /** Requestedtitle */
-            requestedTitle: string;
-        };
         /** OpenPaneActivation */
         OpenPaneActivation: {
             /**
@@ -12342,7 +12259,7 @@ export interface components {
         ResourceActionSnapshotOut: {
             activation: components["schemas"]["ResourceActivationOut"];
             /** Capabilities */
-            capabilities: (components["schemas"]["SimpleResourceActionCapabilityOut"] | components["schemas"]["RetryMetadataResourceActionCapabilityOut"] | components["schemas"]["RecoveryResourceActionCapabilityOut"] | components["schemas"]["OfflineReadingResourceActionCapabilityOut"] | components["schemas"]["OpenSourceResourceActionCapabilityOut"] | components["schemas"]["PlaybackResourceActionCapabilityOut"] | components["schemas"]["ConsumptionResourceActionCapabilityOut"] | components["schemas"]["EpisodeConsumptionResourceActionCapabilityOut"] | components["schemas"]["PodcastSubscriptionResourceActionCapabilityOut"] | components["schemas"]["TranscriptResourceActionCapabilityOut"] | components["schemas"]["LecternMembershipResourceActionCapabilityOut"] | components["schemas"]["HighlightNoteResourceActionCapabilityOut"])[];
+            capabilities: (components["schemas"]["SimpleResourceActionCapabilityOut"] | components["schemas"]["RetryMetadataResourceActionCapabilityOut"] | components["schemas"]["RecoveryResourceActionCapabilityOut"] | components["schemas"]["DownloadResourceActionCapabilityOut"] | components["schemas"]["OpenSourceResourceActionCapabilityOut"] | components["schemas"]["PlaybackResourceActionCapabilityOut"] | components["schemas"]["ConsumptionResourceActionCapabilityOut"] | components["schemas"]["EpisodeConsumptionResourceActionCapabilityOut"] | components["schemas"]["PodcastSubscriptionResourceActionCapabilityOut"] | components["schemas"]["TranscriptResourceActionCapabilityOut"] | components["schemas"]["LecternMembershipResourceActionCapabilityOut"] | components["schemas"]["HighlightNoteResourceActionCapabilityOut"])[];
             /** Missing */
             missing: boolean;
             /** Ref */
@@ -13717,7 +13634,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditAuthors" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "LearnHighlight" | "LibraryPlacement" | "LibrarySettings" | "LinkHighlight" | "MediaMetadata" | "OfflineAudio" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastSettings" | "RefreshPodcast" | "RefreshSource" | "RegenerateArtifact" | "RegenerateMessage" | "RemoveMedia" | "RerunMessage" | "ResetProgress" | "RetryPodcastBackfill" | "Share" | "WalkMessageSources";
+            kind: "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditAuthors" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "LearnHighlight" | "LibraryPlacement" | "LibrarySettings" | "LinkHighlight" | "MediaMetadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastSettings" | "RefreshPodcast" | "RefreshSource" | "RegenerateArtifact" | "RegenerateMessage" | "RemoveMedia" | "RerunMessage" | "ResetProgress" | "RetryPodcastBackfill" | "Share" | "WalkMessageSources";
         };
         /** SlateItemOut */
         SlateItemOut: {
@@ -17276,61 +17193,6 @@ export interface operations {
             };
         };
     };
-    create_offline_reading_token_internal_media__media_id__offline_reading_token_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_offline_reading_account_binding_internal_offline_reading_account_binding_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
     create_stream_token_internal_stream_tokens_post: {
         parameters: {
             query?: never;
@@ -19271,111 +19133,6 @@ export interface operations {
             };
         };
     };
-    get_offline_download_spec_media__media_id__offline_download_spec_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_offline_reader_state_media__media_id__offline_reader_state_get: {
-        parameters: {
-            query?: never;
-            header: {
-                "X-Nexus-Expected-Account-Id": string;
-            };
-            path: {
-                media_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    put_offline_reader_state_media__media_id__offline_reader_state_put: {
-        parameters: {
-            query?: never;
-            header: {
-                "X-Nexus-Expected-Account-Id": string;
-            };
-            path: {
-                media_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["OfflineReaderWrite"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_pdf_highlights_media__media_id__pdf_highlights_get: {
         parameters: {
             query: {
@@ -20094,37 +19851,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Data_NotePageOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_offline_reading_package_offline_reading_packages__media_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -21605,6 +21331,37 @@ export interface operations {
         };
     };
     stream_metadata_events_stream_media__media_id__metadata_events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_reading_copy_stream_media__media_id__reading_copy_get: {
         parameters: {
             query?: never;
             header?: never;

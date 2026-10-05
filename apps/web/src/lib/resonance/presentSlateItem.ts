@@ -25,7 +25,6 @@ export function presentSlateItem(item: SlateItem): CollectionRowView {
       : absent(),
     activity: absent(),
     exceptionalStatus: absent(),
-    localAvailability: absent(),
     actionSubject: target.actionSubject,
     selected: false,
   };

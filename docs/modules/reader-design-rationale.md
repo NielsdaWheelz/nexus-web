@@ -217,41 +217,38 @@ sync hook would blur.
 - the shipped contract is discriminated by `kind` and rejects removed flat
   locator bags
 
-### offline reading is a verified local replica, not a second Nexus
+### offline reading is a local copy, not a second Nexus
 
-Offline reading preserves the document and latest pending position needed to
+Offline reading keeps the document and the latest pending position needed to
 read; it does not reproduce the workspace, annotations, search, AI, or server
-authorization database. This keeps the authority split legible:
+authorization. The authority split stays legible:
 
-- the server owns visibility, one document publication generation, canonical
-  package projection, direct-token scope, and the canonical cursor
-- native owns verified bytes, account binding, transfer/removal lifecycle,
-  leases, baseline, and one latest pending locator
+- the server owns visibility, one document publication generation, the hosted
+  reader payloads a copy is made of, and the canonical cursor
+- the device owns the copy's files, account binding, transfer and removal,
+  leases, the baseline, and one latest pending locator
 - the shared web reader owns presentation through the same
-  `DocumentReaderSession`; hosted and local sources differ at explicit source
-  and progress ports rather than inside format leaves
+  `DocumentReaderSession`; hosted and local differ only at the source and
+  progress ports, and a copy is parsed by the hosted parsers
 
-Online open chooses the current hosted publication. Local content is selected
-only when connectivity is absent or the user explicitly opens the downloaded
-copy. That prevents a successful download from silently turning into a stale
-online cache policy.
+A copy is the hosted reader's own payloads, zipped, so there is no second
+projection to keep faithful and nothing to re-verify: integrity is TLS, length
+and zip CRC, and the shelf's CSP keeps even a hostile copy off the network.
+Online open chooses the current hosted publication; the copy opens only from
+Downloads or when connectivity is absent, so a download never becomes a stale
+online cache.
 
-Publication generation is separate from cursor revision. Generation says
-which immutable document projection a package and locator belong to; cursor
-revision arbitrates same-publication progress. A generation mismatch therefore
-never reanchors or writes into the new publication. A same-generation cursor
-conflict keeps both Canonical and Device choices and asks the user; timestamps
-and furthest-wins heuristics cannot decide intent.
+Publication generation is separate from cursor revision. Generation says which
+publication a copy and its locator belong to; cursor revision arbitrates
+same-publication progress. A generation mismatch never reanchors or writes
+into the new publication. A same-generation conflict keeps both Canonical and
+Device choices and asks the user; timestamps and furthest-wins heuristics
+cannot decide intent.
 
-Article packages deliberately omit images and embeds and say so before
-download and while reading. EPUBs contain preprocessed canonical sections and
-only declared local assets; device code does not parse raw EPUB. PDFs use the
-packaged PDF.js runtime and native bounded range serving. These format-specific
-package shapes share integrity rules, not a generic offline resource loader.
-
-Audio downloads remain a separate Media3 state machine. Sharing the persisted
-network preference and Downloads presentation does not justify merging package
-identity, cache authority, playback, reading progress, or removal semantics.
+Web article copies omit images and say so before download and while reading.
+Episode audio and reading copies share one store, one transfer job and one
+network policy; they differ only in what a transfer fetches. See
+[offline](offline.md).
 
 ### reader-to-chat quote selection
 

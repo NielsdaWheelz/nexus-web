@@ -22,11 +22,11 @@ const allowedFiles = new Set([
 // are always the current ones.
 const packagedBundles = [
   {
-    name: "the packaged offline shelf",
-    label: "assets/nexus-offline/assets",
-    cssDir: join(webDir, "../android/app/src/main/assets/nexus-offline/assets"),
-    build: "bun run build:offline-reading",
-    owner: "src/offline-reading/offlineReading.module.css",
+    name: "the android shelf",
+    label: "assets/shelf/assets",
+    cssDir: join(webDir, "../android/app/src/main/assets/shelf/assets"),
+    build: "bun run build:shelf",
+    owner: "src/shelf/shelf.module.css",
   },
   {
     name: "the Firefox extension popup",

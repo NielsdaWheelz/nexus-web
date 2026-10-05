@@ -6,7 +6,6 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { CheckCircle2 } from "lucide-react";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import type { SortableActivatorProps } from "@/components/sortable/SortableList";
 import EmphasisSegments from "@/components/ui/EmphasisSegments";
@@ -20,8 +19,6 @@ import type {
   CollectionRowView,
   ExceptionalStatus,
 } from "@/lib/collections/types";
-import type { LocalAvailability } from "@/lib/offlineMedia/contract";
-import { formatByteCount } from "@/lib/text/formatByteCount";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import {
   collectionActivityText,
@@ -63,73 +60,6 @@ function renderExceptionalStatus(status: ExceptionalStatus): ReactNode {
       }
     default:
       return assertNever(status, "Unsupported exceptional status");
-  }
-}
-
-function localAvailabilityStatus(
-  availability: LocalAvailability,
-): { readonly visible: string; readonly accessible: string } | null {
-  switch (availability.kind) {
-    case "Resolving":
-      return {
-        visible: "Preparing download…",
-        accessible: "Preparing episode download",
-      };
-    case "Queued":
-      switch (availability.reason) {
-        case "Capacity":
-          return {
-            visible: "Download queued",
-            accessible: "Episode download queued",
-          };
-        case "WaitingForNetwork":
-          return {
-            visible: "Waiting for network",
-            accessible: "Episode download waiting for network",
-          };
-        case "WaitingForUnmetered":
-          return {
-            visible: "Waiting for Wi-Fi",
-            accessible: "Episode download waiting for Wi-Fi",
-          };
-        case "SystemLimit":
-          return {
-            visible: "Download paused by Android",
-            accessible: "Episode download paused by Android",
-          };
-      }
-    case "Downloading": {
-      const visible =
-        availability.totalBytes.kind === "Present" &&
-        availability.totalBytes.value > 0
-          ? `Downloading · ${Math.floor(
-              (Math.min(
-                availability.bytesDownloaded,
-                availability.totalBytes.value,
-              ) /
-                availability.totalBytes.value) *
-                100,
-            )}%`
-          : `Downloading · ${formatByteCount(availability.bytesDownloaded)}`;
-      return { visible, accessible: "Downloading episode" };
-    }
-    case "Restarting":
-      return {
-        visible: "Restarting download…",
-        accessible: "Restarting episode download",
-      };
-    case "Ready":
-      return null;
-    case "Failed":
-      return {
-        visible: "Download failed",
-        accessible: "Episode download failed",
-      };
-    case "Removing":
-      return {
-        visible: "Removing download…",
-        accessible: "Removing episode download",
-      };
   }
 }
 
@@ -317,44 +247,17 @@ export default function CollectionRow({
     row.exceptionalStatus.kind === "Present"
       ? renderExceptionalStatus(row.exceptionalStatus.value)
       : undefined;
-  const offlineStatus =
-    row.localAvailability.kind === "Present"
-      ? localAvailabilityStatus(row.localAvailability.value)
-      : null;
-  const downloaded =
-    row.localAvailability.kind === "Present" &&
-    row.localAvailability.value.kind === "Ready";
-  const baseStatus = offlineStatus ? (
-    <span
-      className={styles.activity}
-    >
-      <span aria-hidden="true">{offlineStatus.visible}</span>
-      <span className="sr-only">{offlineStatus.accessible}</span>
-    </span>
-  ) : (
-    (exceptionalStatus ??
-      (activity ? (
-        <span className={styles.activity}>
-          <span aria-hidden="true">{activity.visible}</span>
-          <span className="sr-only">{activity.accessible}</span>
-        </span>
-      ) : undefined))
-  );
-  const status =
-    baseStatus || downloaded ? (
-      <span className={styles.status}>
-        {baseStatus}
-        {downloaded ? (
-          <span
-            className={styles.downloaded}
-            title="Downloaded for offline"
-          >
-            <CheckCircle2 size={15} aria-hidden="true" />
-            <span className="sr-only">Downloaded for offline</span>
-          </span>
-        ) : null}
+  const baseStatus =
+    exceptionalStatus ??
+    (activity ? (
+      <span className={styles.activity}>
+        <span aria-hidden="true">{activity.visible}</span>
+        <span className="sr-only">{activity.accessible}</span>
       </span>
-    ) : undefined;
+    ) : undefined);
+  const status = baseStatus ? (
+    <span className={styles.status}>{baseStatus}</span>
+  ) : undefined;
 
   const menuLabel = `${row.mediaIdentity ? "more" : "More"} actions for ${row.title.text}`;
   const occurrenceActions: ActionDescriptor[] = [];

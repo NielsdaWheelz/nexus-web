@@ -32,16 +32,15 @@ from sqlalchemy.orm import Session
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
 from nexus.schemas.metadata_enrichment import MetadataRetryAllowed
-from nexus.schemas.offline_reading_package import OFFLINE_READING_MAX_TITLE_CODEPOINTS
 from nexus.schemas.presence import Present
 from nexus.schemas.resource_action_snapshots import (
     ConsumptionResourceActionCapabilityOut,
+    DownloadResourceActionCapabilityOut,
     EpisodeConsumptionResourceActionCapabilityOut,
     HighlightNoteAbsentOut,
     HighlightNotePresentOut,
     LecternMembershipAbsentOut,
     LecternMembershipPresentOut,
-    OfflineReadingResourceActionCapabilityOut,
     OpenSourceResourceActionCapabilityOut,
     PlaybackResourceActionCapabilityOut,
     PodcastSubscriptionResourceActionCapabilityOut,
@@ -636,21 +635,19 @@ def _extend_media(
 
     if capability.library_placement == "ManageEntries":
         capabilities.append(_simple("LibraryPlacement"))
-    if media.offline_download_eligible:
-        capabilities.append(_simple("OfflineAudio"))
-    if (
+    if media.audio_url is not None or (
         media.summary.media_kind in ("web_article", "epub", "pdf")
         and media.summary.processing_status == "ready_for_reading"
-        and 1 <= len(media.summary.title) <= OFFLINE_READING_MAX_TITLE_CODEPOINTS
-        and not media.summary.title.isspace()
     ):
         capabilities.append(
-            OfflineReadingResourceActionCapabilityOut(
+            DownloadResourceActionCapabilityOut(
                 availability=_available(),
                 media_kind=cast(
-                    Literal["web_article", "epub", "pdf"], media.summary.media_kind.value
+                    Literal["podcast_episode", "pdf", "epub", "web_article"],
+                    media.summary.media_kind.value,
                 ),
-                requested_title=media.summary.title,
+                title=media.summary.title,
+                audio_url=media.audio_url,
             )
         )
 

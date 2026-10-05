@@ -19,8 +19,8 @@ Nexus is a reading and notes platform with a Next.js frontend, a first-party And
 - Node.js 22+
 - Bun
 - Android Studio + Android SDK (only if working in `apps/android/`). The
-  Gradle build regenerates the packaged offline reader shelf by running
-  `bun run build:offline-reading` in `apps/web`, so Bun and a completed
+  Gradle build regenerates the packaged shelf (the Downloads screen) by running
+  `bun run build:shelf` in `apps/web`, so Bun and a completed
   `bun install` in `apps/web` are required on any machine that builds the APK.
   Gradle invokes `bun` from its own `PATH`, so launch Android Studio from a
   shell that has Bun on `PATH` (or set it in the IDE's environment).
@@ -116,22 +116,23 @@ does not cache mutable release facts in page copy:
 
 Build the signed APK with `make build-android-release`, record its SHA-256, and
 install that exact APK on a physical device. The release machine needs Bun and
-a completed `bun install` in `apps/web`: the offline reader shelf is built from
-source during the Gradle build rather than committed. Verify App Links and
+a completed `bun install` in `apps/web`: the shelf is built from source during
+the Gradle build rather than committed. Verify App Links and
 login before manually creating the `android-v*` GitHub release and attaching
 stable and versioned asset names. There is no automated Android release gate.
 
 the release operator owns compatibility between the hosted app and the
-published apk. before changing the player protocol or offline reader contract,
-compare the latest published apk with the candidate server: player protocol
-version and hash, and offline reading protocol, package schema, reader contract,
-and reader bundle versions must agree. verify account binding and an offline
-shelf-to-online reconnect on the signed apk. publish the compatible apk as part
-of the cutover; a backend deployment does not update the apk behind `/android`.
+published apk. before changing the player protocol, compare the latest
+published apk with the candidate server: player protocol version and hash must
+agree. the offline bridge has no version: its object name `nexusOffline` is its
+identity, and an incompatible change renames it (the hosted app then reads
+"not supported on this device"). verify an offline shelf-to-online reconnect on
+the signed apk. publish the compatible apk as part of the cutover; a backend
+deployment does not update the apk behind `/android`.
 
 ## Repository Map
 
-- `apps/android/` -> Android shell app. Building it runs `bun run build:offline-reading` in `apps/web` to regenerate the git-ignored packaged offline reader shelf. Debug builds default to `http://10.0.2.2:3000`; native auth uses the environment-agnostic `nexus://auth/handoff` flow plus native Google bootstrap. Release APKs require explicit hosted and direct-API origins, version, release keystore, and release certificate fingerprint inputs. `NEXUS_ANDROID_RELEASE_API_ORIGIN` must exactly equal the backend `STREAM_BASE_URL` origin. App links require updating `apps/web/public/.well-known/assetlinks.json` with the release APK signing certificate fingerprint.
+- `apps/android/` -> Android shell app. Building it runs `bun run build:shelf` in `apps/web` to regenerate the git-ignored packaged shelf (Downloads, see `docs/modules/offline.md`). Debug builds default to `http://10.0.2.2:3000`; native auth uses the environment-agnostic `nexus://auth/handoff` flow plus native Google bootstrap. Release APKs require an explicit hosted origin, version, release keystore, and release certificate fingerprint inputs. App links require updating `apps/web/public/.well-known/assetlinks.json` with the release APK signing certificate fingerprint.
 - `apps/web/` -> frontend + BFF: see `apps/web/README.md`
 - `apps/extension/` -> Firefox capture extension (manifest, icons; bundles built into the git-ignored `dist/` by `bun run build:extension` from `apps/web/src/extension/`): saves the current article or a linked PDF/EPUB into chosen libraries. See `docs/modules/extension.md`.
 - `python/` -> backend package: see `python/README.md`
