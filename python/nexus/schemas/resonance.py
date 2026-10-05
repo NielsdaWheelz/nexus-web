@@ -5,8 +5,7 @@ from typing import Annotated, Literal
 
 from pydantic import ConfigDict, Field
 
-from nexus.schemas.consumption import ConsumptionOut
-from nexus.schemas.consumption_activity import CamelOut
+from nexus.schemas.consumption import CamelOut, ConsumptionOut
 from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.presence import Presence
 

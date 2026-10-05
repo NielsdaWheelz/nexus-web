@@ -1,20 +1,17 @@
-"""Wire contracts for activity capture, exclusions and personal statistics.
-
-The capture body is frozen: the web outbox and the Android app both post it. Raw device ids
-arrive only through the BFF; only sealed handles go out.
+"""Wire contracts for activity exclusions and personal statistics; capture-in lives in
+:mod:`nexus.schemas.consumption`. Only sealed handles go out.
 """
 
 from __future__ import annotations
 
 import re
 from datetime import date, datetime
-from typing import Annotated, Literal, Self
-from uuid import UUID
+from typing import Annotated, Literal
 
-from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, model_validator
-from pydantic.alias_generators import to_camel
+from pydantic import AwareDatetime, BeforeValidator, ConfigDict, Field
 
-from nexus.schemas.presence import Absent, Presence
+from nexus.schemas.consumption import ActivityModality, CamelOut, CommandIn
+from nexus.schemas.presence import Presence
 
 
 def _civil_date(value: object) -> str:
@@ -26,108 +23,16 @@ def _civil_date(value: object) -> str:
 ConsumptionDate = Annotated[date, BeforeValidator(_civil_date)]
 
 
-ActivityModality = Literal["Reading", "Listening", "Viewing"]
-ActivityDeviceClass = Literal["Desktop", "Mobile"]
-_Position = Annotated[int, Field(ge=0, le=9_223_372_036_854_775_807)]
-_Progress = Annotated[float, Field(ge=0, le=1)]
-CompletionHandle = Annotated[str, Field(pattern=r"^ncc1\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{22}$")]
 DeviceHandle = Annotated[str, Field(pattern=r"^ncd1\.[A-Za-z0-9_-]{22}$")]
 ActivityExclusionHandle = Annotated[
     str, Field(pattern=r"^nce1\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{22}$")
 ]
 
 
-class CamelIn(BaseModel):
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=False, extra="forbid")
-
-
-class CamelOut(BaseModel):
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
-
-
-class CommandIn(CamelIn):
-    """A write that replays by its ``clientMutationId``."""
-
-    client_mutation_id: UUID
-
-
 class _Row(CamelOut):
     """Validated from a query row whose columns carry its field names; other columns are ignored."""
 
     model_config = ConfigDict(extra="ignore")
-
-
-class _SpanIn(CamelIn):
-    capture_key: UUID
-    occurred_at: AwareDatetime
-    duration_ms: int = Field(gt=0, le=30_000)
-
-    @model_validator(mode="after")
-    def _paired(self) -> Self:
-        """Each ``*_start`` measurement is present exactly when its ``*_end`` is."""
-        for start in (name for name in type(self).model_fields if "_start" in name):
-            end = start.replace("_start", "_end")
-            if isinstance(getattr(self, start), Absent) != isinstance(getattr(self, end), Absent):
-                raise ValueError(
-                    f"{to_camel(start)} and {to_camel(end)} must have the same presence"
-                )
-        return self
-
-
-class ViewingActivitySpanIn(_SpanIn):
-    pass
-
-
-class ReadingActivitySpanIn(_SpanIn):
-    progress_start: Presence[_Progress]
-    progress_end: Presence[_Progress]
-    word_start: Presence[_Position]
-    word_end: Presence[_Position]
-
-
-class ListeningActivitySpanIn(_SpanIn):
-    progress_start: Presence[_Progress]
-    progress_end: Presence[_Progress]
-    media_position_start_ms: Presence[_Position]
-    media_position_end_ms: Presence[_Position]
-
-
-class ReadingActivityBatchIn(CamelIn):
-    modality: Literal["Reading"]
-    spans: list[ReadingActivitySpanIn] = Field(min_length=1, max_length=120)
-
-
-class ListeningActivityBatchIn(CamelIn):
-    modality: Literal["Listening"]
-    spans: list[ListeningActivitySpanIn] = Field(min_length=1, max_length=120)
-
-
-class ViewingActivityBatchIn(CamelIn):
-    modality: Literal["Viewing"]
-    spans: list[ViewingActivitySpanIn] = Field(min_length=1, max_length=120)
-
-
-ActivityBatchIn = Annotated[
-    ReadingActivityBatchIn | ListeningActivityBatchIn | ViewingActivityBatchIn,
-    Field(discriminator="modality"),
-]
-
-
-class ActivityRecordIn(CamelIn):
-    """``clientMutationId`` is accepted and ignored: the shipped Android app still sends it."""
-
-    client_mutation_id: UUID
-    media_ref: str = Field(min_length=1, max_length=100)
-    device_id: str = Field(min_length=1, max_length=200)
-    device_class: ActivityDeviceClass
-    batch: ActivityBatchIn
-
-    @model_validator(mode="after")
-    def _distinct_capture_keys(self) -> Self:
-        keys = [span.capture_key for span in self.batch.spans]
-        if len(keys) != len(set(keys)):
-            raise ValueError("captureKey must be unique within one activity batch")
-        return self
 
 
 class ExcludeActivityIn(CommandIn):

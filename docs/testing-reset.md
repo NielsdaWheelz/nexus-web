@@ -20,14 +20,13 @@ retired infrastructure follow-ups: oi-088 (deleted setup action), oi-114 and
 oi-120 (removed capacity qualification), and oi-117 (removed auth smoke).
 
 unconfirmed product concerns from old runs remain as manual investigations:
-durable activity storage, mobile reader navigation, and supervisor import
+mobile reader navigation and supervisor import
 memory. actual defects and unreviewed product surfaces stay in the
 [outstanding-work register](outstanding-issues.md).
 
-the android player compatibility identity remains a runtime contract in
-`contracts/android-player-protocol.json`; removing the corpus does not change
-the identity accepted by installed clients. synthetic deployment auth smoke
-and capacity canaries are removed too.
+the android player's compatibility identity is the name of its bridge object
+(`window.nexusAudio`); there is no protocol file or hash. synthetic deployment
+auth smoke and capacity canaries are removed too.
 runtime health, readiness, identity, resource limits, and migration backups
 remain deployment invariants.
 

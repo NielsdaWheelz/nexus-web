@@ -3,9 +3,9 @@
 ## Scope
 
 Consumption Activity is Nexus's personal observed-history capability. It owns
-bounded reading, listening, and video-pane spans; durable client delivery;
-exact-session exclusion and restore; first observed canonical completion facts;
-capture/sync health; and the factual `/stats` and session reads. It does not own
+bounded reading, listening, and video-pane spans; client delivery;
+exact-session exclusion and restore; first observed canonical completion facts; and the factual `/stats` and
+session reads. It does not own
 the reader cursor, current reader engagement, audio heartbeat state, explicit
 consumption state, or user-authored time. The implementing cutover is
 [`observed-consumption-activity-hard-cutover.md`](../cutovers/observed-consumption-activity-hard-cutover.md).
@@ -22,10 +22,11 @@ consumption state, or user-authored time. The implementing cutover is
   `Finished` transition for one viewer/media. Exact completion Undo may remove
   the fact it created; ordinary later Unread and `ResetProgress` do not rewrite
   history.
-- Reading requires the eligible focused reader/input state. Listening follows
-  the sole platform audio owner: the global browser audio element off Android
-  and the native Media3 service in the Android shell. Viewing is focused,
-  visible video-pane time, not verified provider playback.
+- Reading requires the eligible focused reader/input state in a visible tab.
+  Listening follows the sole platform audio owner (the global browser audio
+  element off Android, the native Media3 service in the Android shell) and
+  counts while audio plays, hidden tab or not: audio is the evidence, not focus.
+  Viewing is focused, visible video-pane time, not verified provider playback.
 - Sessions are read-time projections over spans, never stored rows or browser
   identities. Forward word/media-position change is a cursor delta, not unique
   consumption.
@@ -48,22 +49,23 @@ All breakdowns, sessions, streaks, and Year presentation derive from effective
 | Concern | Owner |
 | --- | --- |
 | Viewer-locked write transactions and replayed commands | `python/nexus/services/consumption/__init__.py` |
-| Span ingest and exclusion writes | `python/nexus/services/consumption/activity.py` |
+| Span ingest | `python/nexus/services/consumption/activity.py` (route: `api/routes/playback.py`) |
+| Exclusion writes | `python/nexus/services/consumption/exclusions.py` |
 | Current state writes, completion facts and public reads | `python/nexus/services/consumption/service.py` |
 | Aggregation, filtering, sessions and the Stats and Sessions payloads | `python/nexus/services/consumption/stats.py` |
 | The read-state derivation | `python/nexus/services/consumption/projection.py` |
-| Strict transport shapes | `python/nexus/schemas/consumption_activity.py`; the web reads them as generated wire types |
+| Strict transport shapes | capture in `python/nexus/schemas/consumption.py`, stats and exclusions in `consumption_activity.py`; the web reads them as generated wire types |
 | Browser capture | `apps/web/src/lib/consumption/activityRecorder.ts` |
-| Browser durability and health | `activityOutbox.ts` and `activityRuntime.ts` |
-| Android listening capture | `NativeConsumptionRecorder.kt` |
-| Android listening durability | `NativeActivityOutbox.kt` |
+| Browser delivery | `activityUploader.ts` (in memory) |
+| Android listening capture | `playback/ListeningRecorder.kt` |
+| Android listening durability | `playback/ActivityOutbox.kt` |
 | Presentation | authenticated Stats pane; shared manual continuation lifecycle in `apps/web/src/lib/api/useCursorPagination.ts` |
 
 ## Boundaries
 
 `POST /consumption/activity` is the observation endpoint. The browser BFF
 alone injects the private `nx_device`, overwriting any client value, and bounds a
-batch at 48,000 bytes; FastAPI is the sole validator of the frozen body. Each
+batch at 48,000 bytes; FastAPI is the sole validator of the body. Each
 span's `captureKey` provides fact identity, so a retried batch inserts nothing
 and a reused key with different facts conflicts.
 
@@ -102,11 +104,13 @@ pagination adapter unwraps it.
 
 The browser recorder has one tab-local owner. Reader, non-Android global-audio,
 and visible-video adapters publish observations to it; none persists, retries,
-or sends its own request. Closed spans commit to an account-scoped IndexedDB
-outbox before delivery. Android listening commits to the service-owned SQLite
-outbox. Both retain Pending or Failed rows across restart, enforce the same
-bounded capacity, and expose one merged health vocabulary. Neither has a memory
-fallback.
+or sends its own request. Closed spans go to an in-tab uploader that batches by
+(media, modality, device class) in occurrence order (≤ 120 spans, ≤ 40 kB),
+retries network, 408, 429 and 5xx failures with backoff, drops a batch any other
+refusal answers, and hands what it holds to the browser with `keepalive` on
+pagehide. Spans of a tab closed while offline are lost; capture cannot be
+paused. Android listening is durable: the service writes spans to a json outbox
+file and uploads them oldest first when the network returns.
 
 Current state remains separate: `reader_media_state`,
 `reader_engagement_states`, and `podcast_listening_states` serve resume,

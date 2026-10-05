@@ -407,9 +407,10 @@ export async function apiCommand204(
 export async function apiKeepaliveJson(
   path: ApiPath,
   body: unknown,
+  method: "PUT" | "POST" = "PUT",
 ): Promise<void> {
   const response = await fetchApiResponse(path, {
-    method: "PUT",
+    method,
     keepalive: true,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

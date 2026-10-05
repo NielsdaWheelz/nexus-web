@@ -61,7 +61,7 @@ from nexus.schemas.resource_action_snapshots import (
 )
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services import conversations, highlights, library_governance, reader_apparatus
-from nexus.services.consumption import _lectern_store, projection
+from nexus.services.consumption import lectern, projection
 from nexus.services.dossier import engine as dossier_engine
 from nexus.services.media import (
     CollectionMedia,
@@ -345,7 +345,7 @@ class _ResolvedFacts:
             player_descriptors=projection.player_descriptors(
                 db, viewer_id=viewer_id, media_ids=media_ids
             ),
-            lectern_item_ids=_lectern_store.item_ids_for_media(
+            lectern_item_ids=lectern.item_ids_for_media(
                 db, viewer_id=viewer_id, media_ids=media_ids
             ),
             library=library,

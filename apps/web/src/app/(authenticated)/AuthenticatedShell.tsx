@@ -5,13 +5,11 @@ import AppNav from "@/components/appnav/AppNav";
 import Nexus from "@/components/nexus/Nexus";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
-import LecternMutationNotice from "@/components/LecternMutationNotice";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
-import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
+import { GlobalPlayerProvider } from "@/lib/player/playerRuntime";
 import { connectOffline } from "@/lib/offline/bridge";
 import { ImportsProvider } from "@/lib/imports/ImportsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
-import { CompletionUndoFeedbackOwner } from "@/lib/lectern/useCompletionUndo";
 import { ReaderProvider, type ReaderProfile } from "@/lib/reader/ReaderContext";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
@@ -59,7 +57,7 @@ export default function AuthenticatedShell({
     <AuthenticatedAccountProvider account={account}>
       <RenderEnvironmentProvider value={renderEnvironment}>
         <UnauthenticatedApiBoundary>
-          <ActivityCaptureLifecycle accountId={account.accountId} />
+          <ActivityCaptureLifecycle />
           <ResourceCacheProvider value={resources}>
             <KeybindingsProvider>
               <ReaderProvider initialProfile={readerProfile}>
@@ -137,7 +135,6 @@ function AuthenticatedWorkspace({
                   runtime: LecternProvider -> GlobalPlayerProvider -> workspace
                   + the shell-owned player surfaces. */}
               <LecternProvider>
-                <CompletionUndoFeedbackOwner />
                 <LibraryPlacementControllerProvider>
                   <ShareControllerProvider>
                     {/* The resource-action runtime reads Lectern, offline
@@ -162,7 +159,6 @@ function AuthenticatedWorkspace({
                               <AppNav />
                               <main className={styles.main}>
                                 <WorkspaceHost />
-                                <LecternMutationNotice />
                                 <GlobalPlayerSurfaces />
                               </main>
                             </div>

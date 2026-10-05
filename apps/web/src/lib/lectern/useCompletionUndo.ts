@@ -1,348 +1,138 @@
 "use client";
 
 /**
- * Completion Undo (spec `docs/cutovers/lectern-player-lifecycle-hard-cutover.md`
- * §6 "Explicit exact completion offers a ten-second Undo HUD").
- *
- * A USER-invoked exact completion (Done / Mark finished — NOT a natural end)
- * offers a 10-second Undo. When that action created the first-completion fact,
- * Undo consumes its sealed handle through `UndoCompletion`; otherwise it uses
- * ordinary `SetUnread`. It then restores the Lectern row after the nearest
- * surviving pre-completion predecessor (else `First`). The FIFO promise contract
- * makes the awaited commands exact: partial failure truthfully retains Unread
- * and exposes only the remaining restore step.
+ * The ten-second "Marked as finished" HUD with Undo, offered after a user's own finish (mark as
+ * played, or done). Undo is one atomic command naming that finish: the server puts back the
+ * override and completion it replaced, and after a done the row with its id and added time
+ * behind its nearest surviving predecessor.
  */
 
-import { useCallback, useEffect, useState } from "react";
-import type { ResourceActionReconciliationScope } from "@/lib/actions/resourceActionSnapshotCache";
+import { useCallback, useState } from "react";
 import {
   useFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import {
+  apiTransportFeedback,
   isApiError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
+import { absent, present, type Presence } from "@/lib/api/presence";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { useLectern } from "@/lib/lectern/LecternProvider";
 import type {
-  LecternItemId,
+  FinishId,
   LecternSnapshot,
   MediaId,
-  Placement,
-  CompletionHandle,
+  UndoRestore,
 } from "@/lib/lectern/contract";
-import { parseMediaId } from "@/lib/lectern/contract";
-import type { Presence } from "@/lib/api/presence";
-import { canonicalResourceRef } from "@/lib/sharing/targets";
+import { useLectern } from "@/lib/lectern/LecternProvider";
 
-type CompletionUndoFailureStage = "MarkUnread" | "Restore";
-
-export function completionUndoRestoreFeedbackKey(mediaId: MediaId): string {
-  return `completion-undo-restore:${mediaId}`;
+export interface CompletionUndoInput {
+  mediaId: MediaId;
+  /** The Lectern before the finish. */
+  before: LecternSnapshot;
+  /** The finish's `finishId`; without one there is nothing to undo. */
+  finishId: Presence<FinishId>;
+  /** The finish was a done, which removed the row. */
+  done: boolean;
 }
 
-export function CompletionUndoFeedbackOwner() {
-  const { resource, onCanonicalInstall } = useLectern();
-  const { resolve } = useFeedback();
-
-  useEffect(() => {
-    if (resource.status !== "ready") return;
-    for (const item of resource.data.items) {
-      resolve(completionUndoRestoreFeedbackKey(parseMediaId(item.mediaSummary.mediaId)));
-    }
-  }, [resolve, resource]);
-
-  useEffect(
-    () =>
-      onCanonicalInstall((event) => {
-        if (event.kind !== "snapshot") return;
-        for (const item of event.snapshot.items) {
-          resolve(completionUndoRestoreFeedbackKey(parseMediaId(item.mediaSummary.mediaId)));
-        }
-      }),
-    [onCanonicalInstall, resolve],
-  );
-
-  return null;
-}
-
-/** Exhaustive projection of the modeled failures owned by completion Undo. */
-function completionUndoErrorMessage(
-  error: unknown,
-  stage: CompletionUndoFailureStage,
-): FeedbackContent {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-
-  const requestId = error.requestId;
+function undoFailure(error: unknown): FeedbackContent | null {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) return null;
+  const title = "Couldn’t undo";
   switch (error.code) {
-    case "E_NETWORK":
+    case "E_INVALID_REQUEST":
       return {
-        tone: stage === "Restore" ? "Warning" : "Danger",
-        title:
-          stage === "Restore"
-            ? "Marked unread; Lectern wasn’t restored"
-            : "Couldn’t mark this item unread",
-        message: "A network problem interrupted the change. Try again from the item controls.",
-        requestId,
+        tone: "Danger",
+        title: "Undo is no longer available",
+        requestId: error.requestId,
       };
-    case "E_TIMEOUT":
-    case "E_UPSTREAM_TIMEOUT":
+    case "E_LIMIT":
       return {
-        tone: stage === "Restore" ? "Warning" : "Danger",
-        title:
-          stage === "Restore"
-            ? "Marked unread; Lectern wasn’t restored"
-            : "Couldn’t mark this item unread",
-        message: "The change timed out. Try again from the item controls.",
-        requestId,
+        tone: "Danger",
+        title,
+        message: "Lectern is full.",
+        requestId: error.requestId,
       };
     case "E_NOT_FOUND":
     case "E_MEDIA_NOT_FOUND":
       return {
-        tone: stage === "Restore" ? "Warning" : "Danger",
-        title:
-          stage === "Restore"
-            ? "Marked unread; Lectern wasn’t restored"
-            : "Couldn’t mark this item unread",
-        message: "This item is no longer available.",
-        requestId,
-      };
-    case "E_MEDIA_DELETING":
-      return {
-        tone: stage === "Restore" ? "Warning" : "Danger",
-        title:
-          stage === "Restore"
-            ? "Marked unread; Lectern wasn’t restored"
-            : "Couldn’t mark this item unread",
-        message: "This item is being removed and can’t be changed.",
-        requestId,
-      };
-    case "E_LIMIT":
-      if (stage !== "Restore") throw error;
-      return {
-        tone: "Warning",
-        title: "Marked unread; Lectern wasn’t restored",
-        message: "Lectern is full. Remove an item, then restore this one from its controls.",
-        requestId,
-      };
-    case "E_INVALID_REQUEST":
-      if (stage !== "MarkUnread") throw error;
-      return {
         tone: "Danger",
-        title: "Undo is no longer available",
-        message: "Mark this item unread from its item controls.",
-        requestId,
+        title,
+        message: "This item is no longer available.",
       };
     default:
-      throw error;
+      return apiTransportFeedback(error, title);
   }
-}
-
-/** Placement restoring `mediaId` after the nearest pre-completion predecessor
- * that still exists in the current canonical snapshot; else `First`. */
-function computeRestorePlacement(
-  preCompletionSnapshot: LecternSnapshot,
-  completedItemId: LecternItemId | null,
-  currentSnapshot: LecternSnapshot,
-): Placement {
-  if (completedItemId !== null) {
-    const currentIds = new Set<string>(currentSnapshot.items.map((item) => item.itemId));
-    const index = preCompletionSnapshot.items.findIndex((item) => item.itemId === completedItemId);
-    if (index >= 0) {
-      for (let predecessor = index - 1; predecessor >= 0; predecessor -= 1) {
-        const candidate = preCompletionSnapshot.items[predecessor].itemId;
-        if (currentIds.has(candidate)) {
-          return { kind: "After", itemId: candidate };
-        }
-      }
-    }
-  }
-  return { kind: "First" };
-}
-
-export interface CompletionUndoInput {
-  mediaId: MediaId;
-  /** The Lectern snapshot BEFORE the completion removed the row. */
-  preCompletionSnapshot: LecternSnapshot;
-  /** The exact item that was completed, or null when the media had no Lectern row. */
-  completedItemId: LecternItemId | null;
-  completionHandle: Presence<CompletionHandle>;
-}
-
-export type CompletionUndoReconcile = (
-  scope: ResourceActionReconciliationScope,
-) => Promise<void>;
-
-export type CompletionUndoCommitBarrierOutcome =
-  | { readonly kind: "Ready" }
-  | { readonly kind: "MutationFailed"; readonly error: unknown }
-  | { readonly kind: "ReconciliationFailed"; readonly error: unknown };
-
-/**
- * One authoritative mutation barrier. A later command may run only after both
- * the domain mutation and its canonical action-snapshot reconciliation settle.
- */
-export async function commitCompletionUndoStep(input: {
-  readonly mutate: () => Promise<unknown>;
-  readonly reconcile: () => Promise<void>;
-}): Promise<CompletionUndoCommitBarrierOutcome> {
-  try {
-    await input.mutate();
-  } catch (error) {
-    return { kind: "MutationFailed", error };
-  }
-  try {
-    await input.reconcile();
-  } catch (error) {
-    return { kind: "ReconciliationFailed", error };
-  }
-  return { kind: "Ready" };
 }
 
 export function useCompletionUndo(
-  reconcileResourceActions: CompletionUndoReconcile,
+  reconcile: (mediaId: MediaId) => void,
 ): (input: CompletionUndoInput) => void {
-  const { setUnread, undoCompletion, placeItems, getCanonicalSnapshot } = useLectern();
-  const { publish, resolve } = useFeedback();
+  const { undoFinish, getCanonicalSnapshot } = useLectern();
+  const { publish } = useFeedback();
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
 
-  // Read the freshest canonical snapshot at Undo/Restore time, not at offer time —
-  // and source it from the provider (a live FIFO read) rather than a per-pane ref,
-  // so it stays correct even if the offering pane unmounts during the 10s HUD.
-  const currentSnapshot = useCallback(
-    (): LecternSnapshot => getCanonicalSnapshot() ?? { items: [] },
-    [getCanonicalSnapshot],
-  );
-
-  const reconcileMediaActions = useCallback(
-    (mediaId: MediaId) =>
-      reconcileResourceActions({
-        kind: "Subjects",
-        refs: [canonicalResourceRef({ scheme: "media", id: mediaId })],
-      }),
-    [reconcileResourceActions],
-  );
-
-  const runRestore = useCallback(
-    async (input: CompletionUndoInput, placement: Placement) => {
-      const feedbackKey = completionUndoRestoreFeedbackKey(input.mediaId);
-      const outcome = await commitCompletionUndoStep({
-        mutate: () => placeItems({ mediaIds: [input.mediaId], placement }),
-        reconcile: () => reconcileMediaActions(input.mediaId),
-      });
-      if (outcome.kind === "Ready") {
-        resolve(feedbackKey);
-        return;
-      }
-      if (outcome.kind === "ReconciliationFailed") {
-        setDefect({ error: outcome.error });
-        return;
-      }
-      const error = outcome.error;
-      try {
-        if (handleUnauthenticatedApiError(error)) return;
-        let content: FeedbackContent;
-        try {
-          content = completionUndoErrorMessage(error, "Restore");
-        } catch (caughtDefect) {
-          setDefect({ error: caughtDefect });
-          return;
-        }
-        // Definitive place failure after a committed Unread: truthfully retain
-        // Unread and offer only the remaining restore step (freshly resolved).
-        publish({
-          kind: "Persistent",
-          key: feedbackKey,
-          content,
-          // Polite: Unread is already committed (no data loss) and reading is
-          // not blocked; the torn state persists on the rail with its Restore
-          // step until resolved.
-          announcement: "Polite",
-          actions: [
-            {
-              label: "Restore",
-              onClick: () => {
-                const fresh = computeRestorePlacement(
-                  input.preCompletionSnapshot,
-                  input.completedItemId,
-                  currentSnapshot(),
-                );
-                void runRestore(input, fresh);
-              },
-            },
-          ],
-        });
-      } catch (caughtDefect) {
-        setDefect({ error: caughtDefect });
-      }
-    },
-    [currentSnapshot, placeItems, publish, reconcileMediaActions, resolve],
-  );
-
-  const runUndo = useCallback(
-    async (input: CompletionUndoInput) => {
-      const outcome = await commitCompletionUndoStep({
-        mutate: () =>
-          input.completionHandle.kind === "Present"
-            ? undoCompletion(input.completionHandle.value, {
-                unreadMediaId: input.mediaId,
-              })
-            : setUnread(input.mediaId),
-        reconcile: () => reconcileMediaActions(input.mediaId),
-      });
-      if (outcome.kind === "ReconciliationFailed") {
-        setDefect({ error: outcome.error });
-        return;
-      }
-      if (outcome.kind === "MutationFailed") {
-        const error = outcome.error;
-        if (handleUnauthenticatedApiError(error)) return;
-        let content: FeedbackContent;
-        try {
-          content = completionUndoErrorMessage(error, "MarkUnread");
-        } catch (caughtDefect) {
-          setDefect({ error: caughtDefect });
-          return;
-        }
-        publish({
-          kind: "Hud",
-          key: `completion-undo-failed:${input.mediaId}`,
-          content,
-        });
-        return;
-      }
-      const placement = computeRestorePlacement(
-        input.preCompletionSnapshot,
-        input.completedItemId,
-        currentSnapshot(),
+  const undo = useCallback(
+    async (input: CompletionUndoInput, finishId: FinishId) => {
+      let restore: Presence<UndoRestore> = absent();
+      const index = input.before.items.findIndex(
+        (item) => item.mediaSummary.mediaId === input.mediaId,
       );
-      await runRestore(input, placement);
+      if (input.done && index >= 0) {
+        const now = new Set(
+          getCanonicalSnapshot()?.items.map((item) => item.itemId),
+        );
+        const after = input.before.items
+          .slice(0, index)
+          .reverse()
+          .find((item) => now.has(item.itemId));
+        const { itemId, addedAt } = input.before.items[index];
+        restore = present({
+          itemId,
+          addedAt,
+          after: after ? present(after.itemId) : absent(),
+        });
+      }
+      try {
+        await undoFinish({
+          mediaId: input.mediaId,
+          finishId,
+          restore,
+        });
+      } catch (error) {
+        if (handleUnauthenticatedApiError(error)) return;
+        const content = undoFailure(error);
+        if (content === null) setDefect({ error });
+        else
+          publish({
+            kind: "Hud",
+            key: `completion-undo-failed:${input.mediaId}`,
+            content,
+          });
+        return;
+      }
+      reconcile(input.mediaId);
     },
-    [
-      currentSnapshot,
-      publish,
-      reconcileMediaActions,
-      runRestore,
-      setUnread,
-      undoCompletion,
-    ],
+    [getCanonicalSnapshot, publish, reconcile, undoFinish],
   );
 
-  const offerUndo = useCallback(
+  const offer = useCallback(
     (input: CompletionUndoInput) => {
+      const { finishId } = input;
+      const action = finishId.kind === "Present" && {
+        label: "Undo",
+        onClick: () => void undo(input, finishId.value),
+      };
       publish({
         kind: "Hud",
         key: `completion-undo:${input.mediaId}`,
-        content: {
-          tone: "Success",
-          title: "Marked as finished",
-        },
-        actions: [{ label: "Undo", onClick: () => void runUndo(input) }],
+        content: { tone: "Success", title: "Marked as finished" },
+        actions: action ? [action] : undefined,
       });
     },
-    [publish, runUndo],
+    [publish, undo],
   );
   if (defect) throw defect.error;
-  return offerUndo;
+  return offer;
 }

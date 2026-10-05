@@ -6,19 +6,12 @@ import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
-import com.squareup.moshi.JsonReader
-import okio.Buffer
-import org.json.JSONArray
-import org.json.JSONException
-import org.json.JSONObject
 import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.util.IdentityHashMap
-import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 
 internal const val OWNED_WEB_MESSAGE_LIMIT_BYTES = 64 * 1024
-private const val MAX_JSON_DEPTH = 16
 
 internal data class OwnedWebMessage(
     val data: String,
@@ -158,121 +151,3 @@ internal class OwnedOriginWebMessage(
         installed = false
     }
 }
-
-internal fun strictJsonObject(raw: String): JSONObject {
-    require(raw.toByteArray(StandardCharsets.UTF_8).size <= OWNED_WEB_MESSAGE_LIMIT_BYTES)
-    try {
-        JsonReader.of(Buffer().writeUtf8(raw)).use { reader ->
-            reader.isLenient = false
-            require(reader.peek() == JsonReader.Token.BEGIN_OBJECT)
-            validateStrictJsonValue(reader, 0)
-            require(reader.peek() == JsonReader.Token.END_DOCUMENT)
-        }
-    } catch (error: Exception) {
-        throw IllegalArgumentException("invalid strict JSON", error)
-    }
-    return try {
-        JSONObject(raw)
-    } catch (error: JSONException) {
-        throw IllegalArgumentException("invalid JSON object", error)
-    }
-}
-
-private fun validateStrictJsonValue(reader: JsonReader, depth: Int) {
-    require(depth <= MAX_JSON_DEPTH)
-    when (reader.peek()) {
-        JsonReader.Token.BEGIN_OBJECT -> {
-            reader.beginObject()
-            val keys = mutableSetOf<String>()
-            while (reader.hasNext()) {
-                require(keys.add(reader.nextName()))
-                validateStrictJsonValue(reader, depth + 1)
-            }
-            reader.endObject()
-        }
-        JsonReader.Token.BEGIN_ARRAY -> {
-            reader.beginArray()
-            while (reader.hasNext()) {
-                validateStrictJsonValue(reader, depth + 1)
-            }
-            reader.endArray()
-        }
-        JsonReader.Token.STRING, JsonReader.Token.NUMBER -> reader.nextString()
-        JsonReader.Token.BOOLEAN -> reader.nextBoolean()
-        JsonReader.Token.NULL -> reader.nextNull<Unit>()
-        JsonReader.Token.END_ARRAY,
-        JsonReader.Token.END_OBJECT,
-        JsonReader.Token.NAME,
-        JsonReader.Token.END_DOCUMENT,
-        -> error("invalid JSON value")
-    }
-}
-
-internal fun JSONObject.requireExactKeys(vararg expected: String) {
-    val actual = keys().asSequence().toSet()
-    require(actual == expected.toSet()) {
-        "expected keys ${expected.toSet()}, found $actual"
-    }
-}
-
-// Android's org.json.JSONException is a checked Exception (the JVM test
-// artifact's is a RuntimeException). Every strict accessor therefore reads
-// through `opt`, which never throws, so a missing key is always the owned
-// IllegalStateException and a RuntimeException catch is sound on both runtimes.
-private fun JSONObject.present(key: String): Any = opt(key) ?: error("$key is absent")
-
-internal fun JSONObject.requireObject(key: String): JSONObject =
-    present(key) as? JSONObject ?: error("$key must be an object")
-
-internal fun JSONObject.requireArray(key: String, maximum: Int): JSONArray {
-    val value = present(key) as? JSONArray ?: error("$key must be an array")
-    require(value.length() <= maximum)
-    return value
-}
-
-internal fun JSONObject.requireBoundedString(
-    key: String,
-    minimum: Int,
-    maximum: Int,
-): String {
-    val value = present(key) as? String ?: error("$key must be a string")
-    require(value.codePointCount(0, value.length) in minimum..maximum)
-    return value
-}
-
-internal fun JSONObject.requireCanonicalUuid(key: String): UUID {
-    val raw = requireBoundedString(key, 36, 36)
-    val parsed = UUID.fromString(raw)
-    require(
-        parsed.toString() == raw &&
-            parsed.variant() == 2 &&
-            parsed.version() in 1..8
-    )
-    return parsed
-}
-
-internal fun JSONObject.requireLong(key: String, minimum: Long, maximum: Long): Long {
-    val value = when (val raw = present(key)) {
-        is Int -> raw.toLong()
-        is Long -> raw
-        else -> error("$key must be an integer")
-    }
-    require(value in minimum..maximum)
-    return value
-}
-
-internal fun JSONObject.requireFiniteDouble(
-    key: String,
-    minimum: Double,
-    maximum: Double,
-): Double {
-    val value = when (val raw = present(key)) {
-        is Number -> raw.toDouble()
-        else -> error("$key must be a number")
-    }
-    require(value.isFinite() && value in minimum..maximum)
-    return value
-}
-
-internal fun JSONObject.requireBoolean(key: String): Boolean =
-    present(key) as? Boolean ?: error("$key must be a boolean")

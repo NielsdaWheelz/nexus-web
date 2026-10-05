@@ -61,7 +61,7 @@ import {
   unsubscribeFromPodcast,
 } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
 import {
-  canonicalSessionOfGlobalState,
+  playingEpisode,
   type usePlayerCommands,
   type usePlayerSession,
 } from "@/lib/player/playerRuntime";
@@ -179,7 +179,7 @@ function lecternReady(
   let title: string | undefined;
   if (ports.lectern.resource.status !== "ready")
     title = "Lectern is still loading";
-  else if (ports.lectern.mutation.kind !== "Idle")
+  else if (ports.lectern.busy)
     title = "Another Lectern change is still finishing";
   else if (
     capacityMatters &&
@@ -503,29 +503,8 @@ export function resourceActionDescriptors({
         return make(
           capability,
           "ResourceOperation.Media.Playback",
-          (ports) => {
-            if (!lecternReady(ports, false)) return;
-            const session = canonicalSessionOfGlobalState(
-              ports.playerSession.state,
-            );
-            const sameMedia =
-              session?.descriptor.mediaId ===
-              capability.playerDescriptor.mediaId;
-            if (playback === "Paused" && sameMedia) {
-              ports.playerCommands.resume();
-              return;
-            }
-            if (
-              playback === "Idle" &&
-              sameMedia &&
-              ports.playerSession.state.kind === "Active"
-            ) {
-              if (ports.playerSession.state.phase === "Paused")
-                ports.playerCommands.resume();
-              return;
-            }
-            ports.playerCommands.playAudio(capability.playerDescriptor);
-          },
+          // playAudio resumes the loaded episode, or starts it from the server's resume point.
+          (ports) => ports.playerCommands.playAudio(capability.playerDescriptor),
           {
             ...RESOURCE_ACTION_CATALOG["ResourceOperation.Media.Playback"]
               .states[playback],
@@ -539,15 +518,20 @@ export function resourceActionDescriptors({
           "ResourceOperation.Media.PlayNext",
           async (ports) => {
             if (!lecternReady(ports, true)) return;
-            const session = canonicalSessionOfGlobalState(
-              ports.playerSession.state,
-            );
+            // After the playing episode's row when it has one (and is not this media), else first.
+            const playing = playingEpisode(ports.playerSession.state);
+            const row = ports.lectern
+              .getCanonicalSnapshot()
+              ?.items.find(
+                (item) =>
+                  item.mediaSummary.mediaId === playing?.mediaId &&
+                  item.mediaSummary.mediaId !== id(),
+              );
             await ports.lectern.placeItems({
               mediaIds: [assumeMediaId(id())],
-              placement:
-                session?.origin.kind === "Lectern"
-                  ? { kind: "After", itemId: session.origin.itemId }
-                  : { kind: "First" },
+              placement: row
+                ? { kind: "After", itemId: row.itemId }
+                : { kind: "First" },
             });
           },
           { blocked: lecternBlocked(true), reconcile: subjectScope },
@@ -572,18 +556,13 @@ export function resourceActionDescriptors({
               await ports.lectern.setUnread(mediaId);
               return;
             }
-            const preCompletionSnapshot =
-              ports.lectern.getCanonicalSnapshot() ?? { items: [] };
-            const completedItemId =
-              preCompletionSnapshot.items.find(
-                (item) => item.mediaSummary.mediaId === mediaId,
-              )?.itemId ?? null;
+            const before = ports.lectern.getCanonicalSnapshot() ?? { items: [] };
             const result = await ports.lectern.ensureMediaFinished(mediaId);
             ports.offerCompletionUndo({
               mediaId,
-              preCompletionSnapshot,
-              completedItemId,
-              completionHandle: result.completionHandle,
+              before,
+              finishId: result.finishId,
+              done: false,
             });
           },
           {

@@ -1,372 +1,513 @@
 "use client";
 
+/**
+ * The global player: one audio engine per device (the browser's `<audio>`, or the Android
+ * service behind `window.nexusAudio`), rendered from one `EngineState`, plus what only the web
+ * shell knows: device history (previous/next), what plays next, and where a play starts.
+ *
+ * Every play starts from the server's resume point: another media loads its fresh descriptor,
+ * and the loaded one resumes through its engine, which asks the server unless it holds a newer
+ * sample itself. Loads run one at a time, last request winning, so a replay never reads a
+ * position older than this device's own last write. The engine that hears an end settles it;
+ * the server picks the next.
+ */
+
 import {
   createContext,
+  useCallback,
   useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
-import type { FeedbackContent } from "@/components/feedback/Feedback";
-import { assertNever } from "@/lib/assertNever";
-import {
-  isApiError,
-  isSameSystemApiDefect,
-  type ApiError,
-} from "@/lib/api/client";
-import type { Presence } from "@/lib/api/presence";
+import { apiFetch, decodeApiPayload } from "@/lib/api/client";
+import { absent, present, type Presence } from "@/lib/api/presence";
+import type { ApiJson } from "@/lib/api/wire";
 import type {
   DiscoveryTargetHandle,
   PreviewAudioDescriptor,
 } from "@/lib/browse/contract";
-import type {
-  ChapterOut,
-  MediaId,
-  PlayerDescriptor,
+import {
+  playerDescriptorFromWire,
+  type ChapterOut,
+  type LecternItem,
+  type MediaId,
+  type PlayerDescriptor,
 } from "@/lib/lectern/contract";
-import type { OutputEffectsState } from "@/lib/player/outputEffects";
-import type {
-  PauseShorteningMode,
-  PauseShorteningMutation,
-  PauseShorteningProvenance,
-} from "@/lib/player/pauseShortening";
-import type {
-  AudioSession,
-  CompletionAttempt,
-  NextPreview,
-  PlaybackPhase,
-  PlayerError,
-} from "@/lib/player/playerSession";
+import { useLectern } from "@/lib/lectern/LecternProvider";
+import { createBrowserEngine } from "@/lib/player/browserEngine";
+import {
+  createNativeEngine,
+  nativePlayerAvailable,
+} from "@/lib/player/nativeEngine";
+import { savePodcastSubscriptionSettings } from "@/lib/podcasts/subscriptionSettings";
+import {
+  useAndroidShell,
+  useViewportState,
+} from "@/lib/renderEnvironment/provider";
+import { isInteractiveTarget } from "@/lib/ui/interactiveTarget";
+import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 
-export const PLAYER_SKIP_BACK_SECONDS = 15;
-export const PLAYER_SKIP_FORWARD_SECONDS = 30;
+export type PlayerSource =
+  | { readonly kind: "Episode"; readonly descriptor: PlayerDescriptor }
+  | { readonly kind: "Preview"; readonly descriptor: PreviewAudioDescriptor };
+export type PlayerPhase = "Buffering" | "Playing" | "Paused" | "Ended";
 
-export type GlobalPlayerState =
-  | { kind: "Absent" }
-  | { kind: "UpdateRequired" }
-  | {
-      kind: "RuntimeFailed";
-      error: PlayerError;
-      retry: () => void;
-    }
-  | { kind: "Active"; session: AudioSession; phase: PlaybackPhase }
-  | { kind: "Completing"; session: AudioSession; attempt: CompletionAttempt }
-  | {
-      kind: "CompletionFailed";
-      session: AudioSession;
-      attempt: CompletionAttempt;
-      error: ApiError;
-      retry: () => void;
-    }
-  | {
-      kind: "PlaybackFailed";
-      session: AudioSession;
-      error: PlayerError;
-      retry: () => void;
-    }
-  | { kind: "PausedAtEnd"; session: AudioSession }
-  | {
-      kind: "PreviewAudio";
-      session: PreviewAudioSession;
-      phase: PlaybackPhase;
-    }
-  | {
-      kind: "PreviewAudioFailed";
-      session: PreviewAudioSession;
-      error: PlayerError;
-      retry: () => void;
-    }
-  | { kind: "PreviewAudioAtEnd"; session: PreviewAudioSession };
-
-export interface PreviewAudioSession {
-  descriptor: PreviewAudioDescriptor;
+/** What an engine reports; on Android it is the native snapshot as pushed. */
+export interface EngineState {
+  readonly source: PlayerSource | null;
+  readonly phase: PlayerPhase;
+  readonly positionMs: number;
+  readonly durationMs: number; // 0 until known
+  readonly bufferedMs: number;
+  readonly rate: number;
+  readonly volume: number;
+  /** Pause shortening (Android only; null: unsupported): effective, this session's override,
+   * the device default, and the time it has saved on this device. */
+  readonly shortenPauses: boolean | null;
+  readonly shortenPausesSession: boolean | null;
+  readonly shortenPausesDefault: boolean | null;
+  readonly shortenPausesSavedMs: number;
+  readonly error: string | null; // playback failure
+  readonly synced: boolean; // the newest listening sample is stored
 }
 
-export function canonicalSessionOfGlobalState(
-  state: GlobalPlayerState,
-): AudioSession | null {
-  switch (state.kind) {
-    case "Absent":
-    case "UpdateRequired":
-    case "RuntimeFailed":
-    case "PreviewAudio":
-    case "PreviewAudioFailed":
-    case "PreviewAudioAtEnd":
-      return null;
-    case "Active":
-    case "Completing":
-    case "CompletionFailed":
-    case "PlaybackFailed":
-    case "PausedAtEnd":
-      return state.session;
-    default:
-      return assertNever(state);
-  }
+export const IDLE_ENGINE_STATE: EngineState = {
+  source: null,
+  phase: "Paused",
+  positionMs: 0,
+  durationMs: 0,
+  bufferedMs: 0,
+  rate: 1,
+  volume: 1,
+  shortenPauses: null,
+  shortenPausesSession: null,
+  shortenPausesDefault: null,
+  shortenPausesSavedMs: 0,
+  error: null,
+  synced: true,
+};
+
+export interface Engine {
+  state(): EngineState;
+  subscribe(listener: () => void): () => void;
+  /** Resolves after the outgoing session's last write (bounded at 2 s). */
+  load(descriptor: PlayerDescriptor): Promise<void>;
+  preview(descriptor: PreviewAudioDescriptor): Promise<void>;
+  /** A resume asks the server unless this device holds a newer sample; `given` (the page's
+   * descriptor) stands in for an unanswered ask when it knows a reset the session has not. */
+  play(given?: PlayerDescriptor): void;
+  pause(): void;
+  seekTo(positionMs: number): void;
+  skipBy(deltaMs: number): void;
+  /** Pins the episode rate. */
+  setRate(rate: number): void;
+  setVolume(volume: number): void;
+  /** This session's override; null returns to the podcast's or the device's setting. */
+  setShortenPauses(on: boolean | null): void;
+  setShortenPausesDefault(on: boolean): void;
+  adopt(mediaId: MediaId, positionMs: number, resetEpoch: number): void;
+  dismiss(): Promise<void>;
+  close(): void;
 }
 
+export type PlayerState =
+  | { readonly kind: "Absent" }
+  | {
+      readonly kind: "Unavailable";
+      readonly reason: "UpdateRequired" | "NotResponding";
+    }
+  | ({ readonly kind: "Loaded"; readonly source: PlayerSource } & Omit<
+      EngineState,
+      "source" | "positionMs" | "durationMs" | "bufferedMs"
+    >);
+export interface PlayerSession {
+  readonly state: PlayerState;
+  readonly nextUp: PlayerDescriptor | null;
+}
+export interface PlayerTimeline {
+  readonly positionMs: number;
+  readonly durationMs: number;
+  readonly bufferedMs: number;
+  readonly chapter: ChapterOut | null;
+}
 export interface PreviewAudioPosition {
-  positionMs: number;
-  durationMs: Presence<number>;
+  readonly positionMs: number;
+  readonly durationMs: Presence<number>;
 }
-
-export type PlayerPersistence =
-  | { kind: "Ready" }
-  | {
-      kind: "Suspended";
-      mediaId: MediaId;
-      error: ApiError;
-      retryGet: () => void;
-    };
-
-export interface PlayerTimelineCapability {
-  positionMs: number;
-  durationMs: number;
-  bufferedMs: number;
-  currentChapter: Presence<ChapterOut>;
-  pauseShorteningSavedOnDeviceMs: Presence<number>;
-}
-
-export type PlayerPauseShorteningCapability =
-  | { kind: "Unavailable"; reason: "RuntimeUnsupported" }
-  | {
-      kind: "Available";
-      deviceDefaultMode: PauseShorteningMode;
-      podcastOverride: Presence<PauseShorteningMode>;
-      sessionOverride: Presence<PauseShorteningMode>;
-      effectiveMode: PauseShorteningMode;
-      provenance: PauseShorteningProvenance;
-      mutation: PauseShorteningMutation;
-    };
-
-export interface PlayerSettingsCapability {
-  volume: number;
-  playbackRate: PlayerPlaybackRateCapability;
-  outputEffects: OutputEffectsState;
-  outputEffectsAvailable: boolean;
-  pauseShortening: PlayerPauseShorteningCapability;
-}
-
-export type PlayerPlaybackRateScope =
-  | {
-      kind: "Canonical";
-      episodeRate: Presence<number>;
-      podcastPreference: Presence<{
-        podcastId: string;
-        value: Presence<number>;
-      }>;
-    }
-  | { kind: "Preview" };
-
-export type PlayerPlaybackRateRemember =
-  | { kind: "Unavailable" }
-  | { kind: "Ready" }
-  | { kind: "Pending" }
-  | {
-      kind: "Failed";
-      error: FeedbackContent;
-      retryable: boolean;
-      attemptedRate?: number;
-      retry?: () => void;
-    };
-
-export type PlayerPreferenceOperation =
-  | "RememberPlaybackRate"
-  | "RememberPauseShortening";
-
-function playerPreferenceFailureTitle(
-  operation: PlayerPreferenceOperation,
-): string {
-  switch (operation) {
-    case "RememberPlaybackRate":
-      return "Playback speed wasn’t saved";
-    case "RememberPauseShortening":
-      return "Pause shortening wasn’t saved";
-  }
-}
-
-/** Finite product-copy adapter for podcast player preference mutations. */
-export function playerPreferenceErrorMessage(
-  error: unknown,
-  operation: PlayerPreferenceOperation,
-): FeedbackContent {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-
-  const requestId = error.requestId;
-  const title = playerPreferenceFailureTitle(operation);
-  switch (error.code) {
-    case "E_NETWORK":
-      return {
-        tone: "Danger",
-        title,
-        message: "Check your connection and retry.",
-        requestId,
-      };
-    case "E_UPSTREAM":
-      return {
-        tone: "Danger",
-        title,
-        message: "The podcast service is unavailable. Retry in a moment.",
-        requestId,
-      };
-    case "E_UPSTREAM_TIMEOUT":
-      return {
-        tone: "Danger",
-        title,
-        message: "The server took too long to respond. Retry the save.",
-        requestId,
-      };
-    case "E_RATE_LIMITED":
-      return {
-        tone: "Danger",
-        title,
-        message: "Wait a moment, then retry.",
-        requestId,
-      };
-    case "E_NOT_FOUND":
-    case "E_PODCAST_NOT_FOUND":
-      return {
-        tone: "Danger",
-        title: "Podcast subscription no longer exists.",
-        requestId,
-      };
-    case "E_CONFLICT":
-      return {
-        tone: "Danger",
-        title,
-        message: "The subscription changed. Refresh the podcast, then retry.",
-        requestId,
-      };
-    case "E_FORBIDDEN":
-      return {
-        tone: "Danger",
-        title,
-        message: "This account can’t change that podcast preference.",
-        requestId,
-      };
-    case "E_INVALID_REQUEST":
-      return {
-        tone: "Danger",
-        title,
-        message: "That podcast preference isn’t valid. Choose another value.",
-        requestId,
-      };
-    default:
-      throw error;
-  }
-}
-
-export interface PlayerPlaybackRateCapability {
-  scope: PlayerPlaybackRateScope;
-  preferred: number;
-  temporaryNormal: boolean;
-  base: number;
-  observed: number;
-  remember: PlayerPlaybackRateRemember;
-}
-
-export interface PlayerSessionCapability {
-  state: GlobalPlayerState;
-  persistence: PlayerPersistence;
-  nextPreview: NextPreview;
-}
-
-export interface PlayerCommandsCapability {
-  playAudio(input: PlayerDescriptor): void;
-  playPreviewAudio(input: PreviewAudioDescriptor): void;
+export interface PlayerCommands {
+  playAudio(descriptor: PlayerDescriptor): void;
+  playPreviewAudio(descriptor: PreviewAudioDescriptor): void;
   stopPreviewAudio(target: DiscoveryTargetHandle): PreviewAudioPosition | null;
-  dismiss(): void;
   resume(): void;
   pause(): void;
   seekTo(positionMs: number): void;
   skipBy(deltaMs: number): void;
   previous(): void;
   next(): void;
-  setVolume(volume: number): void;
   setPlaybackRate(rate: number): void;
-  toggleTemporaryNormalRate(): void;
-  useInheritedPlaybackRate(): void;
-  rememberPlaybackRateForPodcast(): void;
-  setOutputEffects(patch: Partial<OutputEffectsState>): void;
-  setSessionPauseShorteningMode(mode: PauseShorteningMode): void;
-  clearSessionPauseShorteningMode(): void;
-  rememberPauseShorteningForPodcast(): void;
-  setDeviceDefaultPauseShorteningMode(mode: PauseShorteningMode): void;
+  rememberPlaybackRateForPodcast(): Promise<void>;
+  setVolume(volume: number): void;
+  setShortenPauses(on: boolean | null): void;
+  setShortenPausesDefault(on: boolean): void;
+  dismiss(): void;
 }
 
-export interface PlayerRuntimeCapabilities {
-  commands: PlayerCommandsCapability;
-  session: PlayerSessionCapability;
-  settings: PlayerSettingsCapability;
-  timeline: PlayerTimelineCapability;
+export const PLAYER_SKIP_BACK_MS = 15_000;
+export const PLAYER_SKIP_FORWARD_MS = 30_000;
+const FRESH_DESCRIPTOR_BOUND_MS = 2_000;
+const RESTART_AFTER_MS = 3_000;
+
+const SessionContext = createContext<PlayerSession | null>(null);
+const TimelineContext = createContext<PlayerTimeline | null>(null);
+const CommandsContext = createContext<PlayerCommands | null>(null);
+
+export function playingEpisode(state: PlayerState): PlayerDescriptor | null {
+  return state.kind === "Loaded" && state.source.kind === "Episode"
+    ? state.source.descriptor
+    : null;
 }
 
-const PlayerCommandsContext = createContext<PlayerCommandsCapability | null>(
-  null,
-);
-const PlayerSessionContext = createContext<PlayerSessionCapability | null>(
-  null,
-);
-const PlayerSettingsContext = createContext<PlayerSettingsCapability | null>(
-  null,
-);
-const PlayerTimelineContext = createContext<PlayerTimelineCapability | null>(
-  null,
-);
+/** The server's current descriptor; null when the server is slow or unreachable. */
+async function freshDescriptor(
+  mediaId: MediaId,
+): Promise<PlayerDescriptor | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FRESH_DESCRIPTOR_BOUND_MS);
+  try {
+    const body = await apiFetch<ApiJson<"/media/{media_id}/player", "get">>(
+      `/api/media/${mediaId}/player`,
+      { signal: controller.signal, cache: "no-store" },
+    );
+    return decodeApiPayload(
+      body,
+      ({ data }) => playerDescriptorFromWire(data),
+      "GET player",
+    );
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
-export function PlayerCapabilityProviders({
-  capabilities,
+/** The first audio row after the current media's row (from the head when it has none). */
+function lecternNext(
+  items: readonly LecternItem[],
+  current: PlayerDescriptor | null,
+) {
+  const at = items.findIndex(
+    (item) => item.mediaSummary.mediaId === current?.mediaId,
+  );
+  for (const item of items.slice(at + 1)) {
+    if (
+      item.activation.kind === "FooterAudio" &&
+      item.mediaSummary.mediaId !== current?.mediaId
+    ) {
+      return item.activation.descriptor;
+    }
+  }
+  return null;
+}
+
+export function GlobalPlayerProvider({
+  accountId,
   children,
 }: {
-  capabilities: PlayerRuntimeCapabilities;
+  accountId: string;
   children: ReactNode;
 }) {
+  const androidShell = useAndroidShell();
+  const viewport = useViewportState();
+  const lectern = useLectern();
+  const lecternRef = useRef(lectern);
+  lecternRef.current = lectern;
+  const mobileRef = useRef(viewport.isMobile);
+  mobileRef.current = viewport.isMobile;
+  const navigation = useRef({ previous: () => {}, next: () => {} });
+  const [engine, setEngine] = useState<Engine | null>(null);
+  // Commands read the engine through a ref: a click can land before the render carrying it commits.
+  const engineRef = useRef<Engine | null>(null);
+  const [responding, setResponding] = useState(true);
+
+  useEffect(() => {
+    if (androidShell && !nativePlayerAvailable) return;
+    const created = androidShell
+      ? createNativeEngine(accountId, setResponding)
+      : createBrowserEngine({
+          settle: (input) => lecternRef.current.settleNaturalEnd(input),
+          fresh: freshDescriptor,
+          deviceClass: () => (mobileRef.current ? "Mobile" : "Desktop"),
+          onPrevious: () => navigation.current.previous(),
+          onNext: () => navigation.current.next(),
+        });
+    engineRef.current = created;
+    setEngine(created);
+    return () => {
+      engineRef.current = null;
+      created.close();
+    };
+  }, [accountId, androidShell]);
+
+  const subscribe = useCallback(
+    (listener: () => void) => engine?.subscribe(listener) ?? (() => {}),
+    [engine],
+  );
+  const s = useSyncExternalStore(
+    subscribe,
+    () => engine?.state() ?? IDLE_ENGINE_STATE,
+    () => IDLE_ENGINE_STATE,
+  );
+  const episode = s.source?.kind === "Episode" ? s.source.descriptor : null;
+
+  // ---- device history ----
+  const back = useRef<PlayerDescriptor[]>([]);
+  const forward = useRef<PlayerDescriptor[]>([]);
+  const navigatingTo = useRef<MediaId | null>(null);
+  const requested = useRef<MediaId | null>(null);
+  const shown = useRef<PlayerDescriptor | null>(null);
+  useEffect(() => {
+    const before = shown.current;
+    shown.current = episode;
+    if (before === null || before.mediaId === episode?.mediaId) return;
+    if (episode !== null && episode.mediaId === navigatingTo.current) {
+      navigatingTo.current = null;
+      return;
+    }
+    back.current.push(before);
+    forward.current = [];
+    // The native service advances on its own; the web's Lectern then needs the server's view.
+    if (
+      androidShell &&
+      episode !== null &&
+      episode.mediaId !== requested.current
+    ) {
+      lecternRef.current.revalidate();
+    }
+  }, [androidShell, episode]);
+  useEffect(() => {
+    if (androidShell && s.phase === "Ended") lecternRef.current.revalidate();
+  }, [androidShell, s.phase]);
+
+  const lecternItems =
+    lectern.resource.status === "ready" ? lectern.resource.data.items : null;
+  // Forward history changes only with a source change, so `episode` covers it.
+  const nextUp = useMemo(
+    () => forward.current.at(-1) ?? lecternNext(lecternItems ?? [], episode),
+    [episode, lecternItems],
+  );
+
+  // ---- loads: one at a time, the latest request wins ----
+  const loads = useRef<Promise<void>>(Promise.resolve());
+  const latest = useRef(0);
+  const enqueue = useCallback((work: () => Promise<void>) => {
+    const mine = ++latest.current;
+    loads.current = loads.current.then(async () => {
+      if (mine !== latest.current) return;
+      await work().catch((error: unknown) =>
+        console.warn("player_load_failed", error),
+      );
+    });
+  }, []);
+  const play = useCallback(
+    (descriptor: PlayerDescriptor) => {
+      const target = engineRef.current;
+      if (target === null) return;
+      requested.current = descriptor.mediaId;
+      const mine = latest.current + 1;
+      enqueue(async () => {
+        const fresh = await freshDescriptor(descriptor.mediaId);
+        if (mine === latest.current) await target.load(fresh ?? descriptor);
+      });
+    },
+    [enqueue],
+  );
+
+  const commands = useMemo<PlayerCommands>(() => {
+    const live = () => engineRef.current;
+    const current = () => live()?.state() ?? IDLE_ENGINE_STATE;
+    const playing = () => {
+      const source = current().source;
+      return source?.kind === "Episode" ? source.descriptor : null;
+    };
+    const navigate = (target: PlayerDescriptor) => {
+      navigatingTo.current = target.mediaId;
+      play(target);
+    };
+    return {
+      playAudio(descriptor) {
+        // The loaded episode resumes through its engine, which owns where a resume starts.
+        if (playing()?.mediaId === descriptor.mediaId) live()?.play(descriptor);
+        else play(descriptor);
+      },
+      playPreviewAudio(descriptor) {
+        const target = live();
+        if (target !== null) enqueue(() => target.preview(descriptor));
+      },
+      stopPreviewAudio(target) {
+        const state = current();
+        if (
+          state.source?.kind !== "Preview" ||
+          state.source.descriptor.target !== target
+        )
+          return null;
+        void live()?.dismiss();
+        return {
+          positionMs: state.positionMs,
+          durationMs:
+            state.durationMs > 0 ? present(state.durationMs) : absent(),
+        };
+      },
+      resume: () => live()?.play(),
+      pause: () => live()?.pause(),
+      seekTo: (positionMs) => live()?.seekTo(positionMs),
+      skipBy: (deltaMs) => live()?.skipBy(deltaMs),
+      previous() {
+        const now = playing();
+        const target = back.current.at(-1);
+        if (now === null) return;
+        if (current().positionMs > RESTART_AFTER_MS || target === undefined) {
+          live()?.seekTo(0);
+          return;
+        }
+        back.current.pop();
+        forward.current.push(now);
+        navigate(target);
+      },
+      next() {
+        const now = playing();
+        const target = forward.current.pop();
+        if (target !== undefined) {
+          if (now !== null) back.current.push(now);
+          navigate(target);
+          return;
+        }
+        const lecternTarget = lecternNext(
+          lecternRef.current.getCanonicalSnapshot()?.items ?? [],
+          now,
+        );
+        if (lecternTarget !== null) play(lecternTarget);
+      },
+      setPlaybackRate: (rate) => live()?.setRate(rate),
+      async rememberPlaybackRateForPodcast() {
+        const now = playing();
+        if (now?.podcastId.kind !== "Present") return;
+        await savePodcastSubscriptionSettings(now.podcastId.value, {
+          defaultPlaybackSpeed: present(current().rate),
+        });
+      },
+      setVolume: (volume) => live()?.setVolume(volume),
+      setShortenPauses: (on) => live()?.setShortenPauses(on),
+      setShortenPausesDefault: (on) => live()?.setShortenPausesDefault(on),
+      dismiss: () => void live()?.dismiss(),
+    };
+  }, [enqueue, play]);
+  navigation.current = commands;
+
+  // A reset elsewhere arrives with the Lectern's progressState: the loaded episode adopts it.
+  useEffect(
+    () =>
+      lecternRef.current.onCanonicalInstall(({ state }) => {
+        if (state.listeningState.kind !== "Present") return;
+        const { positionMs, resetEpoch } = state.listeningState.value;
+        engine?.adopt(state.mediaId, positionMs, resetEpoch);
+      }),
+    [engine],
+  );
+
+  // Space plays/pauses, ←/→ skip, shift+←/→ previous/next; never inside controls or text.
+  const keyed = useRef({ commands, playing: false, loaded: false });
+  keyed.current = {
+    commands,
+    playing: s.phase === "Playing",
+    loaded: s.source !== null,
+  };
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const { commands: c, playing, loaded } = keyed.current;
+      const target = event.target;
+      if (!loaded || event.defaultPrevented || event.isComposing) return;
+      if (
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        isEditableTarget(target)
+      )
+        return;
+      if (
+        target instanceof Element &&
+        (target.closest("[data-player-shortcuts-disabled]") ||
+          isInteractiveTarget(target))
+      ) {
+        return;
+      }
+      const shortcut = `${event.shiftKey ? "Shift+" : ""}${event.code === "Space" ? "Space" : event.key}`;
+      const action = {
+        Space: playing ? c.pause : c.resume,
+        ArrowLeft: () => c.skipBy(-PLAYER_SKIP_BACK_MS),
+        ArrowRight: () => c.skipBy(PLAYER_SKIP_FORWARD_MS),
+        "Shift+ArrowLeft": c.previous,
+        "Shift+ArrowRight": c.next,
+      }[shortcut];
+      if (action === undefined) return;
+      event.preventDefault();
+      action();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  // Session readers re-render on what they show, never on the clock.
+  const { positionMs, durationMs, bufferedMs, source, ...display } = s;
+  const derived: PlayerState =
+    androidShell && (!nativePlayerAvailable || !responding)
+      ? {
+          kind: "Unavailable",
+          reason: nativePlayerAvailable ? "NotResponding" : "UpdateRequired",
+        }
+      : source === null
+        ? { kind: "Absent" }
+        : { kind: "Loaded", source, ...display };
+  const stable = useRef<PlayerState>(derived);
+  const before: Record<string, unknown> = stable.current;
+  if (Object.entries(derived).some(([key, value]) => before[key] !== value)) {
+    stable.current = derived;
+  }
+  const state = stable.current;
+  const session = useMemo(() => ({ state, nextUp }), [state, nextUp]);
+  const chapters = episode?.chapters;
+  const timeline = useMemo<PlayerTimeline>(
+    () => ({
+      positionMs,
+      durationMs,
+      bufferedMs,
+      chapter: chapters?.findLast((c) => c.startMs <= positionMs) ?? null,
+    }),
+    [chapters, positionMs, durationMs, bufferedMs],
+  );
+
   return (
-    <PlayerCommandsContext.Provider value={capabilities.commands}>
-      <PlayerSessionContext.Provider value={capabilities.session}>
-        <PlayerSettingsContext.Provider value={capabilities.settings}>
-          <PlayerTimelineContext.Provider value={capabilities.timeline}>
-            {children}
-          </PlayerTimelineContext.Provider>
-        </PlayerSettingsContext.Provider>
-      </PlayerSessionContext.Provider>
-    </PlayerCommandsContext.Provider>
+    <CommandsContext.Provider value={commands}>
+      <SessionContext.Provider value={session}>
+        <TimelineContext.Provider value={timeline}>
+          {children}
+        </TimelineContext.Provider>
+      </SessionContext.Provider>
+    </CommandsContext.Provider>
   );
 }
 
-export function usePlayerCommands(): PlayerCommandsCapability {
-  const value = useContext(PlayerCommandsContext);
-  if (value === null) {
-    throw new Error(
-      "usePlayerCommands must be used inside GlobalPlayerProvider",
-    );
-  }
+function required<T>(value: T | null, hook: string): T {
+  if (value === null)
+    throw new Error(`${hook} must be used inside GlobalPlayerProvider`);
   return value;
 }
-
-export function usePlayerSession(): PlayerSessionCapability {
-  const value = useContext(PlayerSessionContext);
-  if (value === null) {
-    throw new Error(
-      "usePlayerSession must be used inside GlobalPlayerProvider",
-    );
-  }
-  return value;
-}
-
-export function usePlayerSettings(): PlayerSettingsCapability {
-  const value = useContext(PlayerSettingsContext);
-  if (value === null) {
-    throw new Error(
-      "usePlayerSettings must be used inside GlobalPlayerProvider",
-    );
-  }
-  return value;
-}
-
-export function usePlayerTimeline(): PlayerTimelineCapability {
-  const value = useContext(PlayerTimelineContext);
-  if (value === null) {
-    throw new Error(
-      "usePlayerTimeline must be used inside GlobalPlayerProvider",
-    );
-  }
-  return value;
-}
+export const usePlayerCommands = () =>
+  required(useContext(CommandsContext), "usePlayerCommands");
+export const usePlayerSession = () =>
+  required(useContext(SessionContext), "usePlayerSession");
+export const usePlayerTimeline = () =>
+  required(useContext(TimelineContext), "usePlayerTimeline");

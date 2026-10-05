@@ -277,8 +277,6 @@ import TextDocumentReader, {
 import type { TrustedScrollDirection } from "@/lib/reader/readerScrollInput";
 import TranscriptPlaybackPanel from "./TranscriptPlaybackPanel";
 import { useReaderActivityAdapter } from "./ReaderActivityAdapter";
-import { useActivityRuntimeSnapshot } from "@/lib/consumption/activityRuntime";
-import { activityStatus } from "@/lib/consumption/activityStatus";
 import {
   epubUnits,
   textFindSource,
@@ -478,8 +476,6 @@ type HostedNavigationPlacement =
     };
 
 export default function MediaPaneBody() {
-  const activitySnapshot = useActivityRuntimeSnapshot();
-  const consumptionActivityStatus = activityStatus(activitySnapshot);
   const paneRuntime = requirePaneRuntime(usePaneRuntime(), "MediaPaneBody");
   const isPaneActive = usePaneIsActive();
   const isPaneVisible = usePaneIsVisible();
@@ -625,34 +621,19 @@ export default function MediaPaneBody() {
   // returned next entry, and offer Undo. No successor → no navigation.
   const handleOpenNextReadable = useCallback(async () => {
     const snapshot = lecternSnapshotRef.current;
-    const row = snapshot.items.find((item) => item.mediaSummary.mediaId === id);
     try {
-      if (row) {
-        const result = await lectern.finishLecternItem({
-          mediaId: parseMediaId(id),
-          itemId: row.itemId,
-          nextCapability: "Readable",
-        });
-        offerCompletionUndo({
-          mediaId: parseMediaId(id),
-          preCompletionSnapshot: snapshot,
-          completedItemId: row.itemId,
-          completionHandle: result.completionHandle,
-        });
-        if (result.nextItem.kind === "Present") {
-          activateForkTarget(
-            result.nextItem.value.href,
-            result.nextItem.value.mediaSummary.title,
-          );
-        }
-      } else {
-        const result = await lectern.ensureMediaFinished(parseMediaId(id));
-        offerCompletionUndo({
-          mediaId: parseMediaId(id),
-          preCompletionSnapshot: snapshot,
-          completedItemId: null,
-          completionHandle: result.completionHandle,
-        });
+      const result = await lectern.done(parseMediaId(id));
+      offerCompletionUndo({
+        mediaId: parseMediaId(id),
+        before: snapshot,
+        finishId: result.finishId,
+        done: true,
+      });
+      if (result.nextItem.kind === "Present") {
+        activateForkTarget(
+          result.nextItem.value.href,
+          result.nextItem.value.mediaSummary.title,
+        );
       }
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
@@ -6540,14 +6521,11 @@ export default function MediaPaneBody() {
     () => ({
       kind: "link",
       id: "consumption-activity",
-      label: `Activity: ${consumptionActivityStatus.label}`,
+      label: "Activity",
       icon: <Activity size={16} aria-hidden="true" />,
       href: "/stats",
-      ...(consumptionActivityStatus.marked
-        ? { indicator: { kind: "Status" as const } }
-        : {}),
     }),
-    [consumptionActivityStatus.label, consumptionActivityStatus.marked],
+    [],
   );
   const primaryChromePublication = useMemo<PanePrimaryChromePublication>(
     () => ({
@@ -6902,9 +6880,9 @@ export default function MediaPaneBody() {
               spec={{
                 icon: mediaKindIcon(media.kind),
                 remoteUrl:
-                  mediaPlayerDescriptor?.activation.artworkUrl.kind ===
+                  mediaPlayerDescriptor?.artworkUrl.kind ===
                   "Present"
-                    ? mediaPlayerDescriptor.activation.artworkUrl.value
+                    ? mediaPlayerDescriptor.artworkUrl.value
                     : undefined,
               }}
               alt=""

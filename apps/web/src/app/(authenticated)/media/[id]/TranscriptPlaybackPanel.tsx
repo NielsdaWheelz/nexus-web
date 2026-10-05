@@ -8,7 +8,7 @@ import YouTubeEmbedFrame, {
   isAllowedYoutubeEmbedUrl,
 } from "@/components/media/YouTubeEmbedFrame";
 import {
-  canonicalSessionOfGlobalState,
+  playingEpisode,
   usePlayerCommands,
   usePlayerSession,
   usePlayerTimeline,
@@ -223,22 +223,23 @@ export default function TranscriptPlaybackPanel({
   // affordances are disabled until then.
   const lecternReady = resource.status === "ready";
 
-  // "Play next": After the active exact Lectern origin, else First; a no-op when
-  // it would target the current origin's own media.
-  const activeSession = canonicalSessionOfGlobalState(state);
-  const activeOrigin = activeSession?.origin ?? null;
-  const activeMediaId = activeSession?.descriptor.mediaId ?? null;
+  // "Play next": After the playing episode's Lectern row, else First; a no-op when
+  // it would target the playing row's own media.
+  const activeMediaId = playingEpisode(state)?.mediaId ?? null;
+  const activeRow =
+    resource.status === "ready"
+      ? resource.data.items.find((item) => item.mediaSummary.mediaId === activeMediaId)
+      : undefined;
   const playNextDisabled =
-    !lecternReady ||
-    (activeOrigin?.kind === "Lectern" && activeMediaId === mediaId);
+    !lecternReady || (activeRow !== undefined && activeMediaId === mediaId);
   const onLectern =
     resource.status === "ready" &&
     resource.data.items.some((item) => item.mediaSummary.mediaId === mediaId);
 
   const handlePlayNext = () => {
     const placement =
-      activeOrigin?.kind === "Lectern"
-        ? ({ kind: "After", itemId: activeOrigin.itemId } as const)
+      activeRow !== undefined
+        ? ({ kind: "After", itemId: activeRow.itemId } as const)
         : ({ kind: "First" } as const);
     void placeItems({ mediaIds: [parseMediaId(mediaId)], placement });
   };

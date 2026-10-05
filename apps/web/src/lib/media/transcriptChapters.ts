@@ -3,8 +3,7 @@
  *
  * These operate on the media DTO's rich transcript-chapter metadata (title,
  * image, external URL) — distinct from the player descriptor's `ChapterOut`
- * (title/startMs/endMs), which drives the footer seek-track ticks. Kept separate
- * from `lib/player/chapters.ts` because the two carry different fields.
+ * (title/startMs/endMs), which drives the player's chapter list.
  */
 
 import { absent, present, type Presence } from "@/lib/api/presence";

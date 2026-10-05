@@ -1826,15 +1826,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * Get Listening State
-         * @description Get per-media listening state for the authenticated viewer.
-         */
-        get: operations["get_listening_state_media__media_id__listening_state_get"];
-        /**
-         * Put Listening State
-         * @description Record one revision-fenced listening heartbeat (position).
-         */
+        get?: never;
+        /** Put Listening State */
         put: operations["put_listening_state_media__media_id__listening_state_put"];
         post?: never;
         delete?: never;
@@ -1895,6 +1888,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/media/{media_id}/player": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Player */
+        get: operations["get_player_media__media_id__player_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/media/{media_id}/preview-position": {
         parameters: {
             query?: never;
@@ -1904,10 +1914,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Install Preview Position
-         * @description Transfer one ephemeral Preview position after Media acquisition.
-         */
+        /** Install Preview Position */
         post: operations["install_preview_position_media__media_id__preview_position_post"];
         delete?: never;
         options?: never;
@@ -3201,18 +3208,10 @@ export interface components {
              */
             outcome: "Excluded" | "Restored";
         };
-        /**
-         * ActivityRecordIn
-         * @description ``clientMutationId`` is accepted and ignored: the shipped Android app still sends it.
-         */
+        /** ActivityRecordIn */
         ActivityRecordIn: {
             /** Batch */
             batch: components["schemas"]["ReadingActivityBatchIn"] | components["schemas"]["ListeningActivityBatchIn"] | components["schemas"]["ViewingActivityBatchIn"];
-            /**
-             * Clientmutationid
-             * Format: uuid
-             */
-            clientMutationId: string;
             /**
              * Deviceclass
              * @enum {string}
@@ -4470,20 +4469,6 @@ export interface components {
              */
             state: "Unread" | "InProgress" | "Finished";
         };
-        /** ConsumptionRemovedOutcome */
-        ConsumptionRemovedOutcome: {
-            /**
-             * Itemid
-             * Format: uuid
-             */
-            itemId: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Removed";
-            nextItemId: components["schemas"]["Presence_UUID_-Output"];
-        };
         /** ConsumptionResourceActionCapabilityOut */
         ConsumptionResourceActionCapabilityOut: {
             /** Availability */
@@ -4501,22 +4486,17 @@ export interface components {
         };
         /** ConsumptionResult */
         ConsumptionResult: {
-            completionHandle: components["schemas"]["Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata___PydanticGeneralMetadata_pattern___ncc1_____A-Za-z0-9_-__22______A-Za-z0-9_-__22________"];
+            finishId: components["schemas"]["Presence_UUID_-Output"];
             lectern: components["schemas"]["LecternSnapshot"];
             /** Libraryentriescollectionrevision */
             libraryEntriesCollectionRevision: number;
             nextItem: components["schemas"]["Presence_LecternItemOut_"];
-            /** Outcome */
-            outcome: components["schemas"]["ConsumptionStateOutcome"] | components["schemas"]["ConsumptionRemovedOutcome"];
-            progressState: components["schemas"]["Presence_MediaProgressState_"];
-        };
-        /** ConsumptionStateOutcome */
-        ConsumptionStateOutcome: {
             /**
-             * @description discriminator enum property added by openapi-typescript
+             * Outcome
              * @enum {string}
              */
-            kind: "Completed" | "CompletedWithoutAdvance" | "StateOnly" | "Superseded" | "TargetGone";
+            outcome: "Done" | "Superseded" | "Gone";
+            progressState: components["schemas"]["Presence_MediaProgressState_"];
         };
         /** ConsumptionStatsOut */
         ConsumptionStatsOut: {
@@ -5299,14 +5279,6 @@ export interface components {
         Data_LinkedNoteBlockRef_: {
             data: components["schemas"]["LinkedNoteBlockRef"];
         };
-        /** Data[ListeningHeartbeatResult] */
-        Data_ListeningHeartbeatResult_: {
-            data: components["schemas"]["ListeningHeartbeatResult"];
-        };
-        /** Data[ListeningStateOut] */
-        Data_ListeningStateOut_: {
-            data: components["schemas"]["nexus__schemas__consumption__ListeningStateOut"];
-        };
         /** Data[MediaNavigationOut] */
         Data_MediaNavigationOut_: {
             data: components["schemas"]["MediaNavigationOut"];
@@ -5350,6 +5322,10 @@ export interface components {
         /** Data[OracleReadingOut] */
         Data_OracleReadingOut_: {
             data: components["schemas"]["OracleReadingOut"];
+        };
+        /** Data[PlayerDescriptor] */
+        Data_PlayerDescriptor_: {
+            data: components["schemas"]["PlayerDescriptor"];
         };
         /** Data[PodcastBackfillRetryOut] */
         Data_PodcastBackfillRetryOut_: {
@@ -5545,14 +5521,6 @@ export interface components {
              */
             kind: "Direct";
         };
-        /** DirectNaturalEndOrigin */
-        DirectNaturalEndOrigin: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Direct";
-        };
         /** DocumentEmbedDisplayActionOut */
         DocumentEmbedDisplayActionOut: {
             /**
@@ -5726,6 +5694,27 @@ export interface components {
             status: "present" | "malformed" | "absent";
             /** Value */
             value: string | null;
+        };
+        /**
+         * DoneCommand
+         * @description Finish, leave the Lectern and name the next readable row.
+         */
+        DoneCommand: {
+            /**
+             * Clientmutationid
+             * Format: uuid
+             */
+            clientMutationId: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Done";
+            /**
+             * Mediaid
+             * Format: uuid
+             */
+            mediaId: string;
         };
         /** DossierBuildCreatedOut */
         DossierBuildCreatedOut: {
@@ -6234,34 +6223,6 @@ export interface components {
              */
             kind: "Failed";
         };
-        /** FinishLecternItemCommand */
-        FinishLecternItemCommand: {
-            /**
-             * Clientmutationid
-             * Format: uuid
-             */
-            clientMutationId: string;
-            /**
-             * Itemid
-             * Format: uuid
-             */
-            itemId: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "FinishLecternItem";
-            /**
-             * Mediaid
-             * Format: uuid
-             */
-            mediaId: string;
-            /**
-             * Nextcapability
-             * @enum {string}
-             */
-            nextCapability: "Stop" | "FooterAudio" | "Readable";
-        };
         /** FirstPlacement */
         FirstPlacement: {
             /**
@@ -6272,28 +6233,12 @@ export interface components {
         };
         /** FooterAudioActivation */
         FooterAudioActivation: {
-            artworkUrl: components["schemas"]["Presence_str_-Output"];
-            /** Chapters */
-            chapters: components["schemas"]["ChapterOut"][];
-            consumptionOverrideRevision: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____-Output"];
-            durationMs: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____-Output"];
+            descriptor: components["schemas"]["PlayerDescriptor"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             kind: "FooterAudio";
-            pauseShorteningMode: components["schemas"]["Presence_Literal__Off____Natural___-Output"];
-            playbackRate: components["schemas"]["PlaybackRateResolution"];
-            /** Positionms */
-            positionMs: number;
-            /** Resetepoch */
-            resetEpoch: number;
-            /** Sourceurl */
-            sourceUrl: string;
-            /** Streamurl */
-            streamUrl: string;
-            /** Writerevision */
-            writeRevision: number;
         };
         /** ForkTitleRequest */
         ForkTitleRequest: {
@@ -7120,7 +7065,6 @@ export interface components {
              */
             itemId: string;
             mediaSummary: components["schemas"]["MediaSummaryOut"];
-            playerDisplay: components["schemas"]["Presence_PlayerDisplay_"];
         };
         /** LecternMembershipAbsentOut */
         LecternMembershipAbsentOut: {
@@ -7160,19 +7104,6 @@ export interface components {
             state: "Present";
         };
         LecternMembershipResourceActionCapabilityOut: components["schemas"]["LecternMembershipAbsentOut"] | components["schemas"]["LecternMembershipPresentOut"];
-        /** LecternNaturalEndOrigin */
-        LecternNaturalEndOrigin: {
-            /**
-             * Itemid
-             * Format: uuid
-             */
-            itemId: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Lectern";
-        };
         /** LecternResult */
         LecternResult: {
             lectern: components["schemas"]["LecternSnapshot"];
@@ -7661,34 +7592,32 @@ export interface components {
             progressEnd: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____-Input"];
             progressStart: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1_____-Input"];
         };
-        /** ListeningHeartbeatIn */
-        ListeningHeartbeatIn: {
+        /**
+         * ListeningIn
+         * @description One listening sample. An absent rate keeps the stored episode rate; an absent duration
+         *     keeps the stored duration.
+         */
+        ListeningIn: {
             durationMs: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____-Input"];
             episodePlaybackRate: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____-Input"];
             /** Expectedresetepoch */
             expectedResetEpoch: number;
-            /** Expectedwriterevision */
-            expectedWriteRevision: number;
-            /**
-             * Heartbeatgeneration
-             * Format: uuid
-             */
-            heartbeatGeneration: string;
-            /** Heartbeatsequence */
-            heartbeatSequence: number;
             /** Positionms */
             positionMs: number;
         };
-        /** ListeningHeartbeatResult */
-        ListeningHeartbeatResult: {
-            /**
-             * Heartbeatgeneration
-             * Format: uuid
-             */
-            heartbeatGeneration: string;
-            /** Heartbeatsequence */
-            heartbeatSequence: number;
-            listeningState: components["schemas"]["nexus__schemas__consumption__ListeningStateOut"];
+        /** ListeningPositionOut */
+        ListeningPositionOut: {
+            /** Positionms */
+            positionMs: number;
+            /** Resetepoch */
+            resetEpoch: number;
+        };
+        /** ListeningStateOut */
+        ListeningStateOut: {
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Position Ms */
+            position_ms: number;
         };
         /** LocalDayOut */
         LocalDayOut: {
@@ -8101,7 +8030,7 @@ export interface components {
             last_engaged_at: string | null;
             /** Last Error Code */
             last_error_code: string | null;
-            listening_state: components["schemas"]["nexus__schemas__media__ListeningStateOut"] | null;
+            listening_state: components["schemas"]["ListeningStateOut"] | null;
             /** Metadata Enriched At */
             metadata_enriched_at: string | null;
             metadata_enrichment: components["schemas"]["MetadataEnrichmentView"];
@@ -8167,7 +8096,7 @@ export interface components {
         };
         /** MediaProgressState */
         MediaProgressState: {
-            listeningState: components["schemas"]["Presence_ListeningStateOut_"];
+            listeningState: components["schemas"]["Presence_ListeningPositionOut_"];
             /**
              * Mediaid
              * Format: uuid
@@ -9401,17 +9330,6 @@ export interface components {
              */
             kind: "Placed";
         };
-        /** PlaybackRateResolution */
-        PlaybackRateResolution: {
-            podcastPreference: components["schemas"]["Presence_PodcastPlaybackPreference_"];
-            /**
-             * Source
-             * @enum {string}
-             */
-            source: "Episode" | "Podcast" | "Product";
-            /** Value */
-            value: number;
-        };
         /** PlaybackResourceActionCapabilityOut */
         PlaybackResourceActionCapabilityOut: {
             /** Availability */
@@ -9457,20 +9375,31 @@ export interface components {
              */
             type: "audio_time_range" | "video_time_range";
         };
-        /** PlayerDescriptor */
+        /**
+         * PlayerDescriptor
+         * @description What a device needs to play one episode; ``position_ms`` is the server's resume point.
+         */
         PlayerDescriptor: {
-            activation: components["schemas"]["FooterAudioActivation"];
+            artworkUrl: components["schemas"]["Presence_str_-Output"];
+            /** Chapters */
+            chapters: components["schemas"]["ChapterOut"][];
+            consumptionOverrideRevision: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____-Output"];
+            durationMs: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____-Output"];
             /**
              * Mediaid
              * Format: uuid
              */
             mediaId: string;
-            subtitle: components["schemas"]["Presence_str_-Output"];
-            /** Title */
-            title: string;
-        };
-        /** PlayerDisplay */
-        PlayerDisplay: {
+            pauseShorteningMode: components["schemas"]["Presence_Literal__Off____Natural___-Output"];
+            /** Playbackrate */
+            playbackRate: number;
+            podcastId: components["schemas"]["Presence_UUID_-Output"];
+            /** Positionms */
+            positionMs: number;
+            /** Resetepoch */
+            resetEpoch: number;
+            /** Streamurl */
+            streamUrl: string;
             subtitle: components["schemas"]["Presence_str_-Output"];
             /** Title */
             title: string;
@@ -9776,15 +9705,6 @@ export interface components {
              * @enum {string}
              */
             outcome: "Removed" | "AlreadyAbsent";
-        };
-        /** PodcastPlaybackPreference */
-        PodcastPlaybackPreference: {
-            /**
-             * Podcastid
-             * Format: uuid
-             */
-            podcastId: string;
-            value: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____-Output"];
         };
         /** PodcastPreview */
         PodcastPreview: {
@@ -10174,7 +10094,6 @@ export interface components {
         "Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__-Input": components["schemas"]["Absent-Input"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__-Input"];
         "Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__-Output": components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__MinLen_min_length_1_____AfterValidator__-Output"];
         Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True___MinLen_min_length_1_____"];
-        "Presence_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata___PydanticGeneralMetadata_pattern___ncc1_____A-Za-z0-9_-__22______A-Za-z0-9_-__22________": components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata___PydanticGeneralMetadata_pattern___ncc1_____A-Za-z0-9_-__22______A-Za-z0-9_-__22________"];
         Presence_Annotated_str__StringConstraints__AfterValidator__: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Annotated_str__StringConstraints__AfterValidator__"];
         Presence_AwareDatetime_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_AwareDatetime_"];
         Presence_BrowseSort_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_BrowseSort_"];
@@ -10191,7 +10110,7 @@ export interface components {
         Presence_LecternItemOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_LecternItemOut_"];
         Presence_LibraryEntryPlacementOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_LibraryEntryPlacementOut_"];
         Presence_LibraryEntryPodcastSubscriptionOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_LibraryEntryPodcastSubscriptionOut_"];
-        Presence_ListeningStateOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ListeningStateOut_"];
+        Presence_ListeningPositionOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_ListeningPositionOut_"];
         Presence_Literal__NotOwner____SameSourceTerminal____SourceNotReacquirable____UploadRejected___: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Literal__NotOwner____SameSourceTerminal____SourceNotReacquirable____UploadRejected___"];
         "Presence_Literal__Off____Natural___-Input": components["schemas"]["Absent-Input"] | components["schemas"]["Present_Literal__Off____Natural___-Input"];
         "Presence_Literal__Off____Natural___-Output": components["schemas"]["Absent-Output"] | components["schemas"]["Present_Literal__Off____Natural___-Output"];
@@ -10207,8 +10126,6 @@ export interface components {
         Presence_NavigationTextPointOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_NavigationTextPointOut_"];
         Presence_NavigationTextRangeOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_NavigationTextRangeOut_"];
         Presence_PlayerDescriptor_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_PlayerDescriptor_"];
-        Presence_PlayerDisplay_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_PlayerDisplay_"];
-        Presence_PodcastPlaybackPreference_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_PodcastPlaybackPreference_"];
         Presence_PodcastReplacementConfirmation_: components["schemas"]["Absent-Input"] | components["schemas"]["Present_PodcastReplacementConfirmation_"];
         Presence_PublicHighlightOut_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_PublicHighlightOut_"];
         Presence_ReaderSelectionInput_: components["schemas"]["Absent-Input"] | components["schemas"]["Present_ReaderSelectionInput_"];
@@ -10220,6 +10137,7 @@ export interface components {
         Presence_SourceFailureProgress_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_SourceFailureProgress_"];
         "Presence_UUID_-Input": components["schemas"]["Absent-Input"] | components["schemas"]["Present_UUID_-Input"];
         "Presence_UUID_-Output": components["schemas"]["Absent-Output"] | components["schemas"]["Present_UUID_-Output"];
+        Presence_UndoRestoreIn_: components["schemas"]["Absent-Input"] | components["schemas"]["Present_UndoRestoreIn_"];
         Presence_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_BILLING_REQUIRED____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_LLM_BAD_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_PODCAST_QUOTA_EXCEEDED____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_NOT_READABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____: components["schemas"]["Absent-Output"] | components["schemas"]["Present_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_BILLING_REQUIRED____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_LLM_BAD_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_PODCAST_QUOTA_EXCEEDED____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_NOT_READABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____"];
         Presence_datetime_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_datetime_"];
         Presence_int_: components["schemas"]["Absent-Output"] | components["schemas"]["Present_int_"];
@@ -10444,16 +10362,6 @@ export interface components {
             /** Value */
             value: string;
         };
-        /** Present[Annotated[str, FieldInfo(annotation=NoneType, required=True, metadata=[_PydanticGeneralMetadata(pattern='^ncc1\\.[A-Za-z0-9_-]{22}\\.[A-Za-z0-9_-]{22}$')])]] */
-        "Present_Annotated_str__FieldInfo_annotation_NoneType__required_True__metadata___PydanticGeneralMetadata_pattern___ncc1_____A-Za-z0-9_-__22______A-Za-z0-9_-__22________": {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Present";
-            /** Value */
-            value: string;
-        };
         /** Present[Annotated[str, StringConstraints, AfterValidator]] */
         Present_Annotated_str__StringConstraints__AfterValidator__: {
             /**
@@ -10603,14 +10511,14 @@ export interface components {
             kind: "Present";
             value: components["schemas"]["LibraryEntryPodcastSubscriptionOut"];
         };
-        /** Present[ListeningStateOut] */
-        Present_ListeningStateOut_: {
+        /** Present[ListeningPositionOut] */
+        Present_ListeningPositionOut_: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             kind: "Present";
-            value: components["schemas"]["nexus__schemas__consumption__ListeningStateOut"];
+            value: components["schemas"]["ListeningPositionOut"];
         };
         /** Present[Literal['NotOwner', 'SameSourceTerminal', 'SourceNotReacquirable', 'UploadRejected']] */
         Present_Literal__NotOwner____SameSourceTerminal____SourceNotReacquirable____UploadRejected___: {
@@ -10771,24 +10679,6 @@ export interface components {
             kind: "Present";
             value: components["schemas"]["PlayerDescriptor"];
         };
-        /** Present[PlayerDisplay] */
-        Present_PlayerDisplay_: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Present";
-            value: components["schemas"]["PlayerDisplay"];
-        };
-        /** Present[PodcastPlaybackPreference] */
-        Present_PodcastPlaybackPreference_: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Present";
-            value: components["schemas"]["PodcastPlaybackPreference"];
-        };
         /** Present[PodcastReplacementConfirmation] */
         Present_PodcastReplacementConfirmation_: {
             /**
@@ -10895,6 +10785,15 @@ export interface components {
              * Format: uuid
              */
             value: string;
+        };
+        /** Present[UndoRestoreIn] */
+        Present_UndoRestoreIn_: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Present";
+            value: components["schemas"]["UndoRestoreIn"];
         };
         /** Present[Union[Literal['E_SOURCE_INTEGRITY', 'E_INVALID_FILE_TYPE', 'E_FILE_TOO_LARGE', 'E_CAPTURE_TOO_LARGE'], Literal['E_ARCHIVE_UNSAFE', 'E_BILLING_REQUIRED', 'E_CAPTURE_TOO_LARGE', 'E_FORBIDDEN', 'E_IDEMPOTENCY_KEY_REPLAY_MISMATCH', 'E_INGEST_FAILED', 'E_INGEST_TIMEOUT', 'E_INTERNAL', 'E_INVALID_CONTENT_TYPE', 'E_INVALID_KIND', 'E_INVALID_REQUEST', 'E_LLM_BAD_REQUEST', 'E_MEDIA_NOT_FOUND', 'E_MEDIA_NOT_READY', 'E_OWNER_REQUIRED', 'E_PDF_PASSWORD_REQUIRED', 'E_PDF_TEXT_UNAVAILABLE', 'E_PODCAST_PROVIDER_UNAVAILABLE', 'E_PODCAST_QUOTA_EXCEEDED', 'E_REPAIR_NOT_ALLOWED', 'E_RESOURCE_CONFLICT', 'E_RESOURCE_LIMIT', 'E_RETRY_INVALID_STATE', 'E_RETRY_NOT_ALLOWED', 'E_SANITIZATION_FAILED', 'E_SELECTION_CHANGED', 'E_SIGN_UPLOAD_FAILED', 'E_SOURCE_ACCESS_DENIED', 'E_SOURCE_FETCH_FAILED', 'E_SOURCE_NOT_READABLE', 'E_SOURCE_TOO_LARGE', 'E_SSRF_BLOCKED', 'E_STORAGE_ERROR', 'E_STORAGE_MISSING', 'E_TRANSCRIPTION_FAILED', 'E_TRANSCRIPTION_TIMEOUT', 'E_TRANSCRIPT_UNAVAILABLE', 'E_UPLOAD_CAPABILITY_EXPIRED', 'E_UPLOAD_TRANSPORT_FAILED', 'E_WORKER_HANDLER_FAILED', 'E_WORKER_INTERRUPTED', 'E_X_POST_UNAVAILABLE', 'E_X_PROVIDER_AUTH_REJECTED', 'E_X_PROVIDER_CREDITS_DEPLETED', 'E_X_PROVIDER_RATE_LIMITED', 'E_X_PROVIDER_TIMEOUT', 'E_X_PROVIDER_UNAVAILABLE']]] */
         Present_Union_Literal__E_SOURCE_INTEGRITY____E_INVALID_FILE_TYPE____E_FILE_TOO_LARGE____E_CAPTURE_TOO_LARGE____Literal__E_ARCHIVE_UNSAFE____E_BILLING_REQUIRED____E_CAPTURE_TOO_LARGE____E_FORBIDDEN____E_IDEMPOTENCY_KEY_REPLAY_MISMATCH____E_INGEST_FAILED____E_INGEST_TIMEOUT____E_INTERNAL____E_INVALID_CONTENT_TYPE____E_INVALID_KIND____E_INVALID_REQUEST____E_LLM_BAD_REQUEST____E_MEDIA_NOT_FOUND____E_MEDIA_NOT_READY____E_OWNER_REQUIRED____E_PDF_PASSWORD_REQUIRED____E_PDF_TEXT_UNAVAILABLE____E_PODCAST_PROVIDER_UNAVAILABLE____E_PODCAST_QUOTA_EXCEEDED____E_REPAIR_NOT_ALLOWED____E_RESOURCE_CONFLICT____E_RESOURCE_LIMIT____E_RETRY_INVALID_STATE____E_RETRY_NOT_ALLOWED____E_SANITIZATION_FAILED____E_SELECTION_CHANGED____E_SIGN_UPLOAD_FAILED____E_SOURCE_ACCESS_DENIED____E_SOURCE_FETCH_FAILED____E_SOURCE_NOT_READABLE____E_SOURCE_TOO_LARGE____E_SSRF_BLOCKED____E_STORAGE_ERROR____E_STORAGE_MISSING____E_TRANSCRIPTION_FAILED____E_TRANSCRIPTION_TIMEOUT____E_TRANSCRIPT_UNAVAILABLE____E_UPLOAD_CAPABILITY_EXPIRED____E_UPLOAD_TRANSPORT_FAILED____E_WORKER_HANDLER_FAILED____E_WORKER_INTERRUPTED____E_X_POST_UNAVAILABLE____E_X_PROVIDER_AUTH_REJECTED____E_X_PROVIDER_CREDITS_DEPLETED____E_X_PROVIDER_RATE_LIMITED____E_X_PROVIDER_TIMEOUT____E_X_PROVIDER_UNAVAILABLE____: {
@@ -13544,26 +13443,6 @@ export interface components {
              */
             active_leaf_message_id: string;
         };
-        /** SetBatchStateCommand */
-        SetBatchStateCommand: {
-            /**
-             * Clientmutationid
-             * Format: uuid
-             */
-            clientMutationId: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "SetBatchState";
-            /** Mediaids */
-            mediaIds: string[];
-            /**
-             * State
-             * @enum {string}
-             */
-            state: "Finished" | "Unread";
-        };
         /** SetHighlightNoteRequest */
         SetHighlightNoteRequest: {
             /** Body Pm Json */
@@ -13613,7 +13492,10 @@ export interface components {
              */
             mediaId: string;
         };
-        /** SettleNaturalEndCommand */
+        /**
+         * SettleNaturalEndCommand
+         * @description Fenced finish of an episode the device heard end; names the next audio row.
+         */
         SettleNaturalEndCommand: {
             /**
              * Clientmutationid
@@ -13631,14 +13513,7 @@ export interface components {
              * Format: uuid
              */
             mediaId: string;
-            /**
-             * Nextcapability
-             * @constant
-             */
-            nextCapability: "FooterAudio";
-            /** Origin */
-            origin: components["schemas"]["DirectNaturalEndOrigin"] | components["schemas"]["LecternNaturalEndOrigin"];
-            terminalListening: components["schemas"]["TerminalListeningIn"];
+            terminalListening: components["schemas"]["ListeningIn"];
         };
         /** ShareMembersOut */
         ShareMembersOut: {
@@ -14086,17 +13961,6 @@ export interface components {
              */
             last_checked: string;
         };
-        /** TerminalListeningIn */
-        TerminalListeningIn: {
-            durationMs: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____-Input"];
-            episodePlaybackRate: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____-Input"];
-            /** Expectedresetepoch */
-            expectedResetEpoch: number;
-            /** Expectedwriterevision */
-            expectedWriteRevision: number;
-            /** Positionms */
-            positionMs: number;
-        };
         /** _TextQuoteGrammar */
         TextQuoteSelector: {
             /** Exact */
@@ -14505,20 +14369,50 @@ export interface components {
              */
             updated_at: string;
         };
-        /** UndoCompletionCommand */
-        UndoCompletionCommand: {
+        /**
+         * UndoFinishCommand
+         * @description Undo the finish ``finish_id`` names (its ``finishId``): the override it replaced and the
+         *     first-completion fact it recorded, as the server stored them, and the row a Done removed.
+         */
+        UndoFinishCommand: {
             /**
              * Clientmutationid
              * Format: uuid
              */
             clientMutationId: string;
-            /** Completionhandle */
-            completionHandle: string;
+            /**
+             * Finishid
+             * Format: uuid
+             */
+            finishId: string;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "UndoCompletion";
+            kind: "UndoFinish";
+            /**
+             * Mediaid
+             * Format: uuid
+             */
+            mediaId: string;
+            restore: components["schemas"]["Presence_UndoRestoreIn_"];
+        };
+        /**
+         * UndoRestoreIn
+         * @description The Lectern row a Done removed: put back with its id and added time.
+         */
+        UndoRestoreIn: {
+            /**
+             * Addedat
+             * Format: date-time
+             */
+            addedAt: string;
+            after: components["schemas"]["Presence_UUID_-Input"];
+            /**
+             * Itemid
+             * Format: uuid
+             */
+            itemId: string;
         };
         /** UnresolvedNavigationTarget */
         UnresolvedNavigationTarget: {
@@ -15232,29 +15126,6 @@ export interface components {
                 [key: string]: unknown;
             };
         };
-        /** ListeningStateOut */
-        nexus__schemas__consumption__ListeningStateOut: {
-            durationMs: components["schemas"]["Presence_Annotated_int__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_2147483647_____-Output"];
-            episodePlaybackRate: components["schemas"]["Presence_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Strict_strict_True__5___Le_le_3_____-Output"];
-            /** Positionms */
-            positionMs: number;
-            /** Resetepoch */
-            resetEpoch: number;
-            /** Writerevision */
-            writeRevision: number;
-        };
-        /** ListeningStateOut */
-        nexus__schemas__media__ListeningStateOut: {
-            /** Duration Ms */
-            duration_ms: number | null;
-            /**
-             * Is Completed
-             * @default false
-             */
-            is_completed: boolean;
-            /** Position Ms */
-            position_ms: number;
-        };
     };
     responses: never;
     parameters: never;
@@ -15870,7 +15741,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["EnsureMediaFinishedCommand"] | components["schemas"]["FinishLecternItemCommand"] | components["schemas"]["SetUnreadCommand"] | components["schemas"]["ResetProgressCommand"] | components["schemas"]["UndoCompletionCommand"] | components["schemas"]["SetBatchStateCommand"] | components["schemas"]["SettleNaturalEndCommand"];
+                "application/json": components["schemas"]["EnsureMediaFinishedCommand"] | components["schemas"]["DoneCommand"] | components["schemas"]["SetUnreadCommand"] | components["schemas"]["ResetProgressCommand"] | components["schemas"]["UndoFinishCommand"] | components["schemas"]["SettleNaturalEndCommand"];
             };
         };
         responses: {
@@ -18849,37 +18720,6 @@ export interface operations {
             };
         };
     };
-    get_listening_state_media__media_id__listening_state_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                media_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_ListeningStateOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     put_listening_state_media__media_id__listening_state_put: {
         parameters: {
             query?: never;
@@ -18891,18 +18731,16 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ListeningHeartbeatIn"];
+                "application/json": components["schemas"]["ListeningIn"];
             };
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["Data_ListeningHeartbeatResult_"];
-                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -19042,6 +18880,37 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_player_media__media_id__player_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_PlayerDescriptor_"];
                 };
             };
             /** @description Validation Error */

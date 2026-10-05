@@ -3,7 +3,4 @@
     <string name="downloads_channel_name">Downloads</string>
     <string name="downloads_notification_title">Downloading for offline</string>
     <string name="player_source_failure">Audio could not be played.</string>
-    <string name="player_pause_shortening_failure">Pause shortening could not be applied.</string>
-    <string name="player_progress_sync_network">Listening progress will sync when the network recovers.</string>
-    <string name="player_progress_sync_auth">Sign in again to sync listening progress.</string>
 </resources>

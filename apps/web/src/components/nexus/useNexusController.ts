@@ -36,7 +36,7 @@ import { DailyDraftStorageError, readDailyDraft, subscribeDailyDraft } from "@/l
 import { resolveDailyLocalDate, useOpenDailyPage } from "@/lib/notes/openDailyPage";
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { usePaneWarm } from "@/lib/panes/paneWarm";
-import { usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
+import { playingEpisode, usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
 import { useViewportState } from "@/lib/renderEnvironment/provider";
 import { dailyDraftAcceptsText } from "@/lib/resourceSurface/dailySurfacePersistence";
 import type { DismissDecision } from "@/lib/ui/useHistoryDismiss";
@@ -158,7 +158,7 @@ export function useNexusController() {
     navigationBaseline.current = navigationToken;
   }, [navigationToken, open]);
 
-  const playback = player.state.kind === "Active" && player.state.phase === "Paused" ? player.state.session.descriptor : null;
+  const playback = player.state.kind === "Loaded" && player.state.phase === "Paused" ? playingEpisode(player.state) : null;
   const groups = nexusGroups({
     desktop: !viewport.isMobile,
     query: parsed,

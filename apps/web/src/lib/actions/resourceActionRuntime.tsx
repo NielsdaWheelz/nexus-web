@@ -48,14 +48,9 @@ import { useLibraryPlacementController } from "@/lib/libraries/placementControll
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { useResourceOverlaysController } from "@/lib/resources/resourceOverlaysController";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
-import {
-  canonicalSessionOfGlobalState,
-  usePlayerCommands,
-  usePlayerSession,
-} from "@/lib/player/playerRuntime";
+import { usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import { assertNever } from "@/lib/assertNever";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { createMutationIntent, type MutationIntent } from "@/lib/contributors/mutationIntent";
 import { submitMetadataEnrichment, subscribeMetadataOperationChanges } from "@/lib/media/mediaMetadataOperations";
@@ -244,27 +239,32 @@ export function ResourceActionRuntimeProvider({
   useEffect(() => subscribeMetadataOperationChanges((mediaId) => {
     void cache.reconcile({ kind: "Subjects", refs: [canonicalResourceRef({ scheme: "media", id: mediaId })] }).catch((error) => setDefect({ error }));
   }), [cache]);
-  const offerCompletionUndo = useCompletionUndo(cache.reconcile);
-  const { getCanonicalSnapshot, onCanonicalInstall } = lectern;
+  const reconcileMedia = useCallback(
+    (mediaId: string) =>
+      void cache
+        .reconcile({ kind: "Subjects", refs: [canonicalResourceRef({ scheme: "media", id: mediaId })] })
+        .catch((error) => setDefect({ error })),
+    [cache],
+  );
+  const offerCompletionUndo = useCompletionUndo(reconcileMedia);
+  // Lectern membership is part of every media's actions: reconcile the media whose rows came or went.
+  const lecternMembers = useRef<Set<string> | null>(null);
   useEffect(() => {
-    let previous = new Set(
-      getCanonicalSnapshot()?.items.map((item) => item.mediaSummary.mediaId) ?? [],
-    );
-    return onCanonicalInstall((event) => {
-      if (event.kind !== "snapshot") return;
-      const current = new Set(event.snapshot.items.map((item) => item.mediaSummary.mediaId));
-      const changed = [
-        ...[...previous].filter((id) => !current.has(id)),
-        ...[...current].filter((id) => !previous.has(id)),
-      ];
-      previous = current;
-      if (changed.length === 0) return;
-      void cache.reconcile({
-        kind: "Subjects",
-        refs: changed.map((id) => canonicalResourceRef({ scheme: "media", id })),
-      }).catch((error) => setDefect({ error }));
-    });
-  }, [cache, getCanonicalSnapshot, onCanonicalInstall]);
+    if (lectern.resource.status !== "ready") return;
+    const current = new Set(lectern.resource.data.items.map((item) => item.mediaSummary.mediaId));
+    const previous = lecternMembers.current;
+    lecternMembers.current = current;
+    if (previous === null) return;
+    const changed = [
+      ...[...previous].filter((id) => !current.has(id)),
+      ...[...current].filter((id) => !previous.has(id)),
+    ];
+    if (changed.length === 0) return;
+    void cache.reconcile({
+      kind: "Subjects",
+      refs: changed.map((id) => canonicalResourceRef({ scheme: "media", id })),
+    }).catch((error) => setDefect({ error }));
+  }, [cache, lectern.resource]);
   const createOverlayMutationBoundary = useCallback(
     (ref: CanonicalResourceRef, actionId: ResourceActionId) => {
       const key = `${ref}|${actionId}`;
@@ -401,29 +401,10 @@ export function ResourceActionRuntimeProvider({
   );
   const playbackByRef = useMemo(() => {
     const byRef = new Map<CanonicalResourceRef, "Idle" | "Paused" | "Ended">();
-    const session = canonicalSessionOfGlobalState(playerSession.state);
-    if (!session) return byRef;
-    const ref = `media:${session.descriptor.mediaId}` as CanonicalResourceRef;
-    switch (playerSession.state.kind) {
-      case "PausedAtEnd":
-      case "Completing":
-      case "CompletionFailed":
-        byRef.set(ref, "Ended");
-        break;
-      case "Active":
-        if (playerSession.state.phase === "Paused") byRef.set(ref, "Paused");
-        break;
-      case "Absent":
-      case "UpdateRequired":
-      case "RuntimeFailed":
-      case "PlaybackFailed":
-      case "PreviewAudio":
-      case "PreviewAudioFailed":
-      case "PreviewAudioAtEnd":
-        break;
-      default:
-        assertNever(playerSession.state, "global player state");
-    }
+    const state = playerSession.state;
+    if (state.kind !== "Loaded" || state.source.kind !== "Episode") return byRef;
+    const ref = canonicalResourceRef({ scheme: "media", id: state.source.descriptor.mediaId });
+    if (state.phase === "Ended" || state.phase === "Paused") byRef.set(ref, state.phase);
     return byRef;
   }, [playerSession.state]);
   const environment = useMemo<ResourceActionEnvironment>(
@@ -440,7 +421,7 @@ export function ResourceActionRuntimeProvider({
               kind: "Ready",
               atCapacity:
                 lectern.resource.data.items.length >= LECTERN_MAX_ITEMS,
-              mutation: lectern.mutation.kind === "Idle" ? "Idle" : "Busy",
+              mutation: lectern.busy ? "Busy" : "Idle",
             }
           : { kind: lectern.resource.status === "error" ? "Error" : "Loading" },
       playbackByRef,
@@ -448,7 +429,7 @@ export function ResourceActionRuntimeProvider({
     }),
     [
       connectivity,
-      lectern.mutation.kind,
+      lectern.busy,
       lectern.resource,
       offlineSnapshot,
       offlineByRef,

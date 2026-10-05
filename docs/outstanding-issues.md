@@ -77,6 +77,9 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] collection controls / live verification · 2026-09-25 pane-controls implementation · 26/30 live checks pass; search/podcast prerequisites and device/accessibility cases remain blocked or not run: [ticket](tickets/pane-controls-live-proof-blocked.md).
 - [open] podcast publisher transcript · 2026-09-26 reader acceptance · configured discovery through publisher transcript read/find remains unqualified: [ticket](tickets/podcast-publisher-transcript-journey-unqualified.md).
 - [open] android offline reading · 2026-09-26 source-note implementation · authored note links work, but downloaded readers lack aligned evidence inspection: [ticket](tickets/offline-reader-lacks-source-apparatus-inspection.md).
+- [open] player / release · 2026-10-05 player re-author · web, api and a signed apk ship together after old activity outboxes drain: [ticket](tickets/player-cutover-release-steps.md).
+- [open] reader / player · 2026-10-05 player re-author · whichever of reader pr2 and the player re-author merges second re-applies the other's pane edits: [ticket](tickets/reader-pr2-must-carry-player-consumer-edits.md).
+- [open] player / budget · 2026-10-05 player re-author · 7,202 in-budget lines against the 5,700 gate (full scope 8,545 against 7,000); owner accepts or orders cuts: [ticket](tickets/player-over-line-budget.md).
 - [open] reader / web · 2026-10-04 reader rewrite pr1 · the whole-document mount is unmeasured on a large book and on the phone (risk r1): [ticket](tickets/reader-whole-mount-large-book-unmeasured.md).
 - [open] reader / web · 2026-10-04 reader rewrite pr1 · focus mode, reader theme, pulse, pdf mark hover, find sources and the import boundary of the shared reader core wait for the hosted cutover: [ticket](tickets/reader-core-pr2-surface-gaps.md).
 - [open] reader / web · 2026-10-04 cleanup campaign · the hosted media pane still runs the old reader; pr2 replaces it on the shared core under the owner's css-highlight conditions: [ticket](tickets/reader-pr2-replace-hosted-pane.md).
@@ -86,14 +89,6 @@ area · opened YYYY-MM-DD by <who> · P2
 - [open] reader / transcript · 2026-10-04 cleanup campaign · a segment click saves nothing; reload reopens at segment 1: [ticket](tickets/transcript-segment-click-does-not-save-position.md).
 - [open] reader / progress · 2026-10-04 cleanup campaign · a cursor save the server accepted logs a network error: [ticket](tickets/reader-cursor-save-logs-false-network-error.md).
 - [open] reader / navigation · 2026-10-04 cleanup campaign · a jump in a never-read article saves position 0: [ticket](tickets/reader-jump-saves-position-without-reading.md).
-- [deferred] player · 2026-10-04 cleanup campaign · the player slice is specified, designed and harnessed but not implemented; owner questions block it: [ticket](tickets/player-reauthor-ready.md).
-- [open] player · 2026-10-04 cleanup campaign · replaying a finished episode starts at its end and re-completes: [ticket](tickets/player-replay-finished-episode-starts-at-end.md).
-- [open] player / activity · 2026-10-04 cleanup campaign · desktop listening in a hidden tab records no activity: [ticket](tickets/desktop-hidden-tab-listening-records-no-activity.md).
-- [open] player / lectern · 2026-10-04 cleanup campaign · desktop natural end skips the override fence: [ticket](tickets/desktop-natural-end-skips-override-fence.md).
-- [open] player / listening · 2026-10-04 cleanup campaign · per-episode playback rate differs between desktop and android: [ticket](tickets/episode-playback-rate-differs-by-device.md).
-- [open] player / lectern · 2026-10-04 cleanup campaign · "Mark as played" keeps the lectern row and undo moves it: [ticket](tickets/mark-as-played-keeps-lectern-row.md).
-- [open] player / listening · 2026-10-04 cleanup campaign · the unload keepalive can lose the last position: [ticket](tickets/listening-unload-keepalive-can-lose-position.md).
-- [open] player / listening · 2026-10-04 cleanup campaign · natural end stores a position past the duration: [ticket](tickets/natural-end-position-exceeds-duration.md).
 - [open] owner review · 2026-10-04 cleanup campaign · reversible defaults taken without an explicit owner decision (oracle plates/seed/corpus access/plate metadata, connections attach): [ticket](tickets/cleanup-campaign-defaults-await-owner-review.md).
 - [open] oracle · 2026-10-04 cleanup campaign · the readings list can order readings against their folio numbers: [ticket](tickets/oracle-readings-list-order-can-invert-folios.md).
 - [open] reader / inspector · 2026-09-24 reader-inspector-controls · reload open on Contents briefly shows Evidence: [ticket](tickets/reader-contents-publishes-after-navigation.md).
@@ -217,13 +212,6 @@ measure 4.20:1 to 4.47:1 on their worst ground — under WCAG AA for `--text-sm`
 body copy. Sibling of OI-047, which owns the two remaining `Pill` tones. See
 [docs/tickets/tone-text-on-its-own-tint-fails-aa-outside-pill.md](tickets/tone-text-on-its-own-tint-fails-aa-outside-pill.md).
 
-### [OPEN] OI-053 — durable activity storage needs a browser check
-frontend · opened 2026-09-10 by Claude (imports cutover, Phase 7 chain Z2) · P2
-the removed browser suite observed missing durable writes in its linux
-container. manually distinguish a product storage defect from a runner-only
-capability problem. See
-[docs/tickets/durable-activity-outbox-suite-fails-in-the-imports-runner.md](tickets/durable-activity-outbox-suite-fails-in-the-imports-runner.md).
-
 ### [OPEN] OI-054 — Docker Desktop VM crashes block trustworthy database/process verification
 infrastructure · opened 2026-09-09 by Claude (shared-kernel worktree) · P1
 Docker Desktop's Apple Virtualization VM stops with `VZErrorInternal` during
@@ -304,7 +292,6 @@ unexpected timeouts. See
 - [open] oi-161 · web panes · 2026-09-17 slop sweep · p3 · four pane bodies are oversized with no split that does not invent abstractions; re-measure after the dedupes land: [ticket](tickets/oversized-pane-bodies-have-no-obvious-split.md).
 - [open] pdf passage positioning · 2026-09-17 passage cleanup · p2 · actual viewport verification is blocked by standalone renderer bootstrap: [ticket](tickets/pdf-passage-positioning-needs-browser-verification.md).
 - [open] oi-167 · pdf highlights · 2026-09-17 typecheck cleanup · p2 · write-time matching combines cached text with current publication spans: [ticket](tickets/pdf-highlight-matching-mixes-publication-snapshots.md).
-- [open] oi-170 · consumption activity · 2026-09-17 slop sweep · p3 · `clientMutationId` on activity uploads is a wire no-op held by the shipped android client: [ticket](tickets/activity-upload-client-mutation-id-is-a-wire-no-op.md).
 - [open] oi-171 · appearance · 2026-09-18 owner decisions · p3 · Press and Study declare no color-scheme, so native controls and UA scrollbars follow the browser default: [ticket](tickets/press-and-study-leave-native-controls-on-the-ua-scheme.md).
 - [open] secret scanning · 2026-09-18 pr #334 · gitguardian repeats an operator-classified false positive on a compose variable reference: [ticket](tickets/gitguardian-repeats-classified-variable-reference.md).
 - [open] oi-175 · chat tool runtime · 2026-09-21 reauthoring · p3 · `tool_call_delta` is absent from current Python vocabulary but remains in the CHECK and browser path; removal needs one production owner preflight count: [ticket](tickets/tool-call-delta-event-has-no-producer.md).
@@ -360,7 +347,6 @@ unexpected timeouts. See
 - [deferred] consumption / schema · 2026-09-28 consumption-stats reauthoring · four consumption state timestamps are written by nothing and read by nothing; drop them one release later: [ticket](tickets/drop-write-only-consumption-timestamps.md).
 - [open] consumption / stats contracts · 2026-09-28 reauthoring, qualified 2026-10-03 · unproduced `Week` remains; retain read `recordedActiveMs` pending precision/conservation proof: [ticket](tickets/consumption-stats-over-its-line-target.md).
 - [open] consumption / stats pane · 2026-09-28 consumption-stats reauthoring · p3 · timeline modalities all paint `CanvasText` in forced colors: [ticket](tickets/stats-timeline-modalities-merge-in-forced-colors.md).
-- [open] consumption activity / web outbox · 2026-09-28 consumption-stats reauthoring · p3 · batches follow creation order, so two tabs on one work can fail a whole batch as out of order: [ticket](tickets/activity-outbox-batches-rows-in-creation-order.md).
 - author non-media work dates have no producer: [ticket](tickets/author-nonmedia-work-dates-have-no-producer.md).
 
 
@@ -374,7 +360,6 @@ unexpected timeouts. See
 - [open] atlas / production migration · 2026-10-04 current-main composition · bcb86e actual0241→0257 retains all atlas identities/non-timestamp fields; 502 timestamp losses still need approval and final backup/restore: [ticket](tickets/atlas-0254-production-timestamp-loss.md).
 - [open] native llm tool storage · 2026-10-04 source audit · nullable replay pointer has no current application reader or writer; qualify retained data before dropping it: [ticket](tickets/llm-tool-position-unused-replay-pointer.md).
 - [deferred] resource activation / native output · 2026-10-04 chat read review · shared output validates href relation but not canonical resource_ref; retain browser leaf validation until the native owner does: [ticket](tickets/resource-activation-output-canonical-ref-contract.md).
-- [deferred] consumption / result projection · 2026-10-04 source audit · a qualifying next item is projected once alone and again in the full lectern snapshot: [ticket](tickets/consumption-result-builds-next-item-twice.md).
 - [open] library members / confirmation focus · 2026-10-04 mounted controls · canceling a revoke confirmation focuses an adjacent row while the target row still exists; qualify keyboard behavior: [ticket](tickets/library-confirmation-cancel-focuses-adjacent-row.md).
 - [open] web / unused output contracts · 2026-10-04 simplification audit · unused media capability alias remains for a later scoped deletion: [ticket](tickets/unused-client-output-contracts.md).
 - [open] jobs / registry · 2026-10-04 simplification audit · six adapters forward unchanged arguments to concrete handlers: [ticket](tickets/jobs-registry-has-pure-forwarding-adapters.md).
@@ -382,9 +367,6 @@ unexpected timeouts. See
 - [open] web / library focus · 2026-10-04 presentation audit · row-removal traversal is promised by a comment but absent from the current implementation: [ticket](tickets/library-row-removal-focus-contract-unimplemented.md).
 - [open] web / library write uncertainty · 2026-10-04 snapshot-owner audit · reorder transport rejection restores rows without proving authoritative order: [ticket](tickets/library-reorder-acknowledgement-loss-leaves-uncertain-order.md).
 - [open] reader / typed wire · 2026-10-04 original reader proof · media file-access success has no native output contract: [ticket](tickets/media-file-access-success-untyped.md).
-- [open] native player / chapters · 2026-10-04 source audit · android rejects equal-end chapters accepted by native storage/model/web: [ticket](tickets/android-rejects-zero-length-chapters.md).
-- [open] web / lectern mutations · 2026-10-04 source audit · unexpected defects become ordinary retryable mutation or reconciliation recovery: [ticket](tickets/lectern-mutation-masks-unexpected-defects.md).
-- [open] player / completion · 2026-10-04 source audit · unexpected completion and installation failures become ordinary paused-at-end state: [ticket](tickets/player-completion-masks-unexpected-defects.md).
 - [open] oracle / job recovery · 2026-10-04 source audit, restated by the oracle rewrite · a dead generation job leaves its reading pending forever, and a stored streaming reading has no owner; pruning deletes its journal: [ticket](tickets/oracle-dead-jobs-can-lose-publication-replay.md).
 - [open] oracle / storage · 2026-10-04 oracle rewrite · 36 plate objects under `oracle/plates/` lost their owner when plates became static assets: [ticket](tickets/oracle-plates-orphaned-r2-objects.md).
 - [open] atlas / projection · 2026-10-04 oracle rewrite · one global sweep over every active-model embedding is untimed at production scale: [ticket](tickets/atlas-global-projection-cost-unmeasured.md).

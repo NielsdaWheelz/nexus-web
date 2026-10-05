@@ -14,14 +14,12 @@ import type { ResourceActionMutationBoundary } from "@/lib/actions/resourceActio
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { absent, presenceValueOr, present } from "@/lib/api/presence";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { usePlayerSettings } from "@/lib/player/playerRuntime";
 import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import {
   fetchPodcastSubscriptionSettingsSource,
   savePodcastSubscriptionSettings,
   type PodcastSubscriptionSettingsSource,
 } from "@/lib/podcasts/subscriptionSettings";
-import { useAndroidShell } from "@/lib/renderEnvironment/provider";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
 import {
@@ -85,18 +83,6 @@ function podcastSettingsSaveErrorContent(error: unknown): FeedbackContent {
   }
 }
 
-function AndroidDeviceDefaultPauseOption() {
-  const playerSettings = usePlayerSettings();
-  return (
-    <option value="Device">
-      Use device default
-      {playerSettings.pauseShortening.kind === "Available"
-        ? ` (currently ${playerSettings.pauseShortening.deviceDefaultMode})`
-        : ""}
-    </option>
-  );
-}
-
 function LoadedPodcastSettingsOverlay({
   podcastId,
   source,
@@ -108,7 +94,6 @@ function LoadedPodcastSettingsOverlay({
   mutation: ResourceActionMutationBoundary;
   onClose: () => void;
 }) {
-  const androidShell = useAndroidShell();
   const [defaultPlaybackSpeed, setDefaultPlaybackSpeed] =
     useState(source.default_playback_speed);
   const [pauseShorteningMode, setPauseShorteningMode] = useState(
@@ -233,11 +218,7 @@ function LoadedPodcastSettingsOverlay({
                 );
               }}
             >
-              {androidShell ? (
-                <AndroidDeviceDefaultPauseOption />
-              ) : (
-                <option value="Device">Use device default</option>
-              )}
+              <option value="Device">Use device default</option>
               <option value="Off">Off</option>
               <option value="Natural">Natural</option>
             </Select>

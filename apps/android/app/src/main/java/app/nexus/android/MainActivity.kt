@@ -38,7 +38,6 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.Lifecycle
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
@@ -52,7 +51,7 @@ import app.nexus.android.offline.SHELF_HOST
 import app.nexus.android.offline.SHELF_URL
 import app.nexus.android.offline.ShelfRouter
 import app.nexus.android.playback.NexusPlaybackService
-import app.nexus.android.playback.NexusPlayerBridge
+import app.nexus.android.playback.PlayerBridge
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
@@ -185,7 +184,7 @@ class MainActivity : AppCompatActivity() {
     private var playerController: MediaController? = null
     private var playerControllerFuture: ListenableFuture<MediaController>? = null
     private var playerLifecycleClosing = false
-    private lateinit var playerBridge: NexusPlayerBridge
+    private lateinit var playerBridge: PlayerBridge
 
     private val fileChooserLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -241,7 +240,7 @@ class MainActivity : AppCompatActivity() {
                 },
             ).also { it.install() }
         }
-        playerBridge = NexusPlayerBridge(webView) {
+        playerBridge = PlayerBridge(webView) {
             if (playerController == null) {
                 connectPlayerController()
             }
@@ -566,14 +565,19 @@ class MainActivity : AppCompatActivity() {
         uri.scheme == "nexus" && uri.host == "auth"
 
     override fun onPause() {
-        playerBridge.onPause()
         CookieManager.getInstance().flush()
         webView.onPause()
         webView.pauseTimers()
         super.onPause()
     }
 
+    override fun onStart() {
+        super.onStart()
+        playerBridge.setForeground(true)
+    }
+
     override fun onStop() {
+        playerBridge.setForeground(false)
         // leaving the app: a sync pass adopts what was read online here as the
         // copies' baseline before the device can go offline (A2)
         if (Build.VERSION.SDK_INT >= 34) OfflineJobs.scheduleSync(this, 0)
@@ -588,7 +592,6 @@ class MainActivity : AppCompatActivity() {
         }
         webView.onResume()
         webView.resumeTimers()
-        playerBridge.onResume()
     }
 
     private fun showRedirectLoopTerminal() {
@@ -720,8 +723,8 @@ class MainActivity : AppCompatActivity() {
                         args: Bundle,
                     ): ListenableFuture<SessionResult> {
                         if (command.customAction == NexusPlaybackService.ACTION_EVENT) {
-                            args.getString(NexusPlaybackService.ARG_REPLY_JSON)
-                                ?.let(playerBridge::onControllerEvent)
+                            args.getString(NexusPlaybackService.ARG_JSON)
+                                ?.let(playerBridge::onEvent)
                             return Futures.immediateFuture(
                                 SessionResult(SessionResult.RESULT_SUCCESS)
                             )
@@ -740,7 +743,6 @@ class MainActivity : AppCompatActivity() {
                             ) {
                                 return@runOnUiThread
                             }
-                            playerBridge.onControllerDisconnected()
                             playerController = null
                             connectPlayerController()
                         }
@@ -776,10 +778,7 @@ class MainActivity : AppCompatActivity() {
                         return@runOnUiThread
                     }
                     playerController = connected
-                    playerBridge.onControllerConnected(connected)
-                    if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
-                        playerBridge.onResume()
-                    }
+                    playerBridge.onControllerConnected()
                 }
             },
             MoreExecutors.directExecutor(),

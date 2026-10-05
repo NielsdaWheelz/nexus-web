@@ -45,12 +45,13 @@ technology-ownership, import, and module-boundary model.
 - `apps/android/app/src/main/java/.../playback/NexusPlaybackService.kt` owns the
   Android Media3 player, Media Session, native Consumption recording, and
   player notification lifecycle.
-- `apps/android/app/src/main/java/.../playback/NexusPlayerBridge.kt` owns the
-  exact, main-frame, owned-origin `nexusPlayer` WebKit protocol and adapts it to
-  the service-owned MediaController.
+- `apps/android/app/src/main/java/.../playback/PlayerBridge.kt` owns the
+  main-frame, owned-origin `nexusAudio` WebKit bridge and adapts it to the
+  service-owned MediaController.
 - `apps/android/app/src/main/java/.../NexusOriginClient.kt` is the one
   authorized native product API client, shared by the player and offline. It
-  may call only its fixed listening-state, Consumption-activity, `me`,
+  may call only its fixed listening-state, consumption-command,
+  Consumption-activity, `me`,
   stream-token and reader-state BFF paths with WebView cookies and the exact
   owned Origin; it accepts no arbitrary URL, path, headers, or credentials.
 - `apps/android/app/src/main/java/.../offline/` owns offline
@@ -69,7 +70,7 @@ technology-ownership, import, and module-boundary model.
   `GoogleSignInController` may make the auth-bootstrap
   `POST /auth/native/google`; `NexusOriginClient` may call only its fixed
   paths above; offline may make only the two direct calls above; and AndroidX
-  WebKit may expose the main-frame `nexusPlayer` listener on the owned origin
+  WebKit may expose the main-frame `nexusAudio` listener on the owned origin
   and the main-frame `nexusOffline` listener on the owned and shelf origins.
   Android code must not add other product or Supabase clients, OAuth/PKCE
   exchange logic, upload clients, `addJavascriptInterface`, or generic bridges.
