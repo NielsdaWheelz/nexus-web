@@ -7,7 +7,8 @@ from fastapi import APIRouter, Depends
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession
-from nexus.responses import ok
+from nexus.responses import Data
+from nexus.schemas.conversation import MessageDeleteOut
 from nexus.services import conversations as conversations_service
 
 router = APIRouter(tags=["messages"])
@@ -18,14 +19,13 @@ def delete_message(
     message_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
-) -> dict:
+) -> Data[MessageDeleteOut]:
     """Delete a message; the conversation too when it was the last one."""
 
-    return ok(
-        conversations_service.delete_message(
+    return Data(
+        data=conversations_service.delete_message(
             db=db,
             viewer_id=viewer.user_id,
             message_id=message_id,
-        ),
-        by_alias=True,
+        )
     )

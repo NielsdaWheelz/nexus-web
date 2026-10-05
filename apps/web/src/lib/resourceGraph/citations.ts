@@ -8,10 +8,10 @@
  */
 
 import { isRetrievalLocator } from "@/lib/api/sse/locators";
-import type { CitationOut } from "@/lib/conversations/citationOut";
+import type { CitationOut } from "@/lib/resourceGraph/citationOut";
 import { hrefForResourceActivation } from "@/lib/resources/activation";
-import type { ReaderCitationData } from "@/lib/conversations/readerCitation";
-import { type ReaderSourceTarget } from "@/lib/conversations/readerTarget";
+import type { ReaderCitationData } from "@/lib/resourceGraph/readerCitation";
+import { type ReaderSourceTarget } from "@/lib/resourceGraph/readerTarget";
 
 function readerTargetForCitation(c: CitationOut): ReaderSourceTarget | null {
   if (!isRetrievalLocator(c.locator)) {

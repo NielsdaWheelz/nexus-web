@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { CHAT_CONTRACT_HEADER, CHAT_CONTRACT_REVISION, TOOL_PROJECTION_HEADER } from "./client";
-import { TOOL_PROJECTION_REVISION } from "@/lib/conversations/toolContractProjection";
+import { TOOL_PROJECTION_REVISION } from "@/lib/chat/toolContractProjection";
 import {
   sseClientDirect,
   type SseBackoffConfig,

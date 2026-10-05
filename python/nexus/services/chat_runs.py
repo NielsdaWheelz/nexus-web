@@ -20,13 +20,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
-from nexus.db.models import (
-    ChatRun,
-    ChatRunTurnContext,
-    Conversation,
-    ConversationActivePath,
-    Message,
-)
+from nexus.db.models import ChatRun, ChatRunTurnContext, Conversation, Message
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.jobs.queue import (
@@ -36,7 +30,6 @@ from nexus.jobs.queue import (
 )
 from nexus.schemas.chat_reader_selection import ReaderSelectionInput
 from nexus.schemas.conversation import (
-    CHAT_RUN_STATUS_FILTER,
     MAX_MESSAGE_CONTENT_LENGTH,
     AcceptedChatAdmission,
     BranchAnchorRequest,
@@ -87,16 +80,8 @@ from nexus.services.context_assembler import (
     chat_prompt_payload_ref,
     persist_prompt_assembly,
 )
-from nexus.services.conversation_branches import (
-    branch_anchor_for_message,
-    ensure_branch_metadata,
-    persist_active_leaf,
-)
-from nexus.services.conversations import (
-    DEFAULT_CONVERSATION_TITLE,
-    derive_conversation_title,
-    message_document,
-)
+from nexus.services.conversation_branches import branch_anchor_for_message, set_active_leaf
+from nexus.services.conversations import DEFAULT_CONVERSATION_TITLE, derive_conversation_title
 from nexus.services.generation_admission import GenerationOperationUnavailable
 from nexus.services.generation_catalog import (
     CatalogDefinitionStaleError,
@@ -545,11 +530,9 @@ def _admit_send(
 
     user_message, assistant_message = _insert_message_pair(
         db,
-        viewer_id=viewer_id,
         conversation_id=conversation.id,
         content=content,
         parent_message_id=parent_message.id if parent_message is not None else None,
-        branch_root_message_id=parent_message.id if parent_message is not None else None,
         branch_anchor_kind=branch_anchor_kind,
         branch_anchor=branch_anchor_payload,
         reader_selection_snapshot=snapshot_json,
@@ -619,12 +602,7 @@ def _resolve_destination(
     if db.scalar(
         select(func.count()).select_from(Message).where(Message.conversation_id == conversation_id)
     ):
-        active_leaf = db.scalar(
-            select(ConversationActivePath.active_leaf_message_id).where(
-                ConversationActivePath.conversation_id == conversation_id,
-                ConversationActivePath.viewer_user_id == viewer_id,
-            )
-        )
+        active_leaf = conversation.active_leaf_message_id
         raise ApiError(
             ApiErrorCode.E_CONVERSATION_NO_LONGER_EMPTY,
             "Conversation is no longer empty; resend as a reply to its active leaf",
@@ -686,11 +664,9 @@ def _admit_repeat(
 
     user_message, assistant_message = _insert_message_pair(
         db,
-        viewer_id=viewer_id,
         conversation_id=source_run.conversation_id,
         content=source_user.content,
         parent_message_id=source_user.parent_message_id,
-        branch_root_message_id=source_user.branch_root_message_id,
         branch_anchor_kind=source_user.branch_anchor_kind,
         branch_anchor=dict(source_user.branch_anchor or {}),
         reader_selection_snapshot=(
@@ -753,11 +729,9 @@ def _assert_repeat_eligible(
 def _insert_message_pair(
     db: Session,
     *,
-    viewer_id: UUID,
     conversation_id: UUID,
     content: str,
     parent_message_id: UUID | None,
-    branch_root_message_id: UUID | None,
     branch_anchor_kind: str,
     branch_anchor: dict[str, object],
     reader_selection_snapshot: dict[str, object] | None,
@@ -769,42 +743,27 @@ def _insert_message_pair(
         seq=assign_next_message_seq(db, conversation_id),
         role="user",
         content=content,
-        message_document=message_document("user", content),
         reader_selection_snapshot=reader_selection_snapshot,
         status="complete",
         parent_message_id=parent_message_id,
-        branch_root_message_id=branch_root_message_id,
         branch_anchor_kind=branch_anchor_kind,
         branch_anchor=branch_anchor,
     )
     db.add(user_message)
     db.flush()
-    if parent_message_id is not None:
-        ensure_branch_metadata(
-            db,
-            conversation_id=conversation_id,
-            branch_user_message_id=user_message.id,
-        )
     assistant_message = Message(
         conversation_id=conversation_id,
         seq=assign_next_message_seq(db, conversation_id),
         role="assistant",
         content="",
-        message_document=message_document("assistant", ""),
         status="pending",
         parent_message_id=user_message.id,
-        branch_root_message_id=branch_root_message_id,
         branch_anchor_kind="none",
         branch_anchor={},
     )
     db.add(assistant_message)
     db.flush()
-    persist_active_leaf(
-        db,
-        viewer_id=viewer_id,
-        conversation_id=conversation_id,
-        active_leaf_message_id=assistant_message.id,
-    )
+    set_active_leaf(db, conversation_id=conversation_id, leaf_message_id=assistant_message.id)
     bump_all_collection_revisions(db, family=CollectionFamily.ConversationIndex)
     return user_message, assistant_message
 
@@ -966,42 +925,6 @@ def get_chat_run(
         run,
         run_selection=run_selection_out(run),
     )
-
-
-def list_chat_runs_for_conversation(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    conversation_id: UUID,
-    status: CHAT_RUN_STATUS_FILTER,
-) -> list[ChatRunResponse]:
-    conversation = db.get(Conversation, conversation_id)
-    if conversation is None or conversation.owner_user_id != viewer_id:
-        raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
-    # "active" means non-terminal; every other value is an exact status match.
-    status_filter = (
-        ChatRun.status.notin_(TERMINAL_RUN_STATUSES)
-        if status == "active"
-        else ChatRun.status == status
-    )
-    runs = db.scalars(
-        select(ChatRun)
-        .where(
-            ChatRun.owner_user_id == viewer_id,
-            ChatRun.conversation_id == conversation_id,
-            status_filter,
-        )
-        .order_by(ChatRun.created_at.asc(), ChatRun.id.asc())
-    ).all()
-    return [
-        build_chat_run_response(
-            db,
-            viewer_id,
-            run,
-            run_selection=run_selection_out(run),
-        )
-        for run in runs
-    ]
 
 
 def cancel_chat_run(

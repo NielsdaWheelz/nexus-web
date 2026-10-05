@@ -15,8 +15,8 @@ import {
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useGenerationRun } from "@/lib/api/useGenerationRun";
 import { toReaderCitationData } from "@/lib/resourceGraph/citations";
-import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
-import { dispatchReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
+import type { ReaderSourceTarget } from "@/lib/resourceGraph/readerTarget";
+import { dispatchReaderSourceActivation } from "@/lib/resourceGraph/readerSourceActivation";
 import {
   activateResource,
   type ResourceActivation,

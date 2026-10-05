@@ -1,116 +1,53 @@
-"""Conversation branch routes: the tree, the active path, and fork editing."""
+"""Conversation tree routes: the tree, the active leaf, and fork titles."""
 
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Response
 
 from nexus.api.deps import require_chat_contract_revision, require_tool_projection_revision
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import DbSession, RepeatableReadDbSession, get_repeatable_read_db
-from nexus.responses import Data, ok
-from nexus.schemas.conversation import (
-    ConversationTreeOut,
-    RenameBranchRequest,
-    SetActivePathRequest,
-)
-from nexus.services import conversation_branches as conversation_branches_service
+from nexus.db.session import DbSession, RepeatableReadDbSession
+from nexus.responses import Data
+from nexus.schemas.conversation import ConversationTreeOut, ForkTitleRequest, SetActivePathRequest
+from nexus.services import conversation_branches as service
 
 router = APIRouter(tags=["conversation-branches"])
+_CHAT_CONTRACT = [
+    Depends(require_chat_contract_revision),
+    Depends(require_tool_projection_revision),
+]
+ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 
 
-@router.get(
-    "/conversations/{conversation_id}/tree",
-    dependencies=[
-        Depends(require_chat_contract_revision),
-        Depends(require_tool_projection_revision),
-    ],
-)
-async def get_conversation_tree(
-    conversation_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
+@router.get("/conversations/{conversation_id}/tree", dependencies=_CHAT_CONTRACT)
+def get_conversation_tree(
+    conversation_id: UUID, viewer: ViewerDep, db: RepeatableReadDbSession
 ) -> Data[ConversationTreeOut]:
-    get_repeatable_read_db(db)
-    return Data(
-        data=conversation_branches_service.get_conversation_tree(
-            db=db,
-            viewer_id=viewer.user_id,
-            conversation_id=conversation_id,
-        )
+    tree = service.get_conversation_tree(
+        db, viewer_id=viewer.user_id, conversation_id=conversation_id
     )
+    return Data(data=tree)
 
 
 @router.post(
-    "/conversations/{conversation_id}/active-path",
-    dependencies=[
-        Depends(require_chat_contract_revision),
-        Depends(require_tool_projection_revision),
-    ],
+    "/conversations/{conversation_id}/active-path", status_code=204, dependencies=_CHAT_CONTRACT
 )
-async def set_conversation_active_path(
-    conversation_id: UUID,
-    body: SetActivePathRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-) -> Data[ConversationTreeOut]:
-    return Data(
-        data=conversation_branches_service.set_active_path(
-            db=db,
-            viewer_id=viewer.user_id,
-            conversation_id=conversation_id,
-            active_leaf_message_id=body.active_leaf_message_id,
-        )
-    )
-
-
-@router.get("/conversations/{conversation_id}/forks")
-def list_conversation_forks(
-    conversation_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: RepeatableReadDbSession,
-    search: str | None = Query(default=None, description="Fork search query"),
-) -> dict:
-    return ok(
-        conversation_branches_service.list_forks(
-            db=db,
-            viewer_id=viewer.user_id,
-            conversation_id=conversation_id,
-            search=search,
-        )
-    )
-
-
-@router.patch("/conversations/{conversation_id}/forks/{branch_id}")
-def rename_conversation_fork(
-    conversation_id: UUID,
-    branch_id: UUID,
-    body: RenameBranchRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-) -> dict:
-    return ok(
-        conversation_branches_service.rename_branch(
-            db=db,
-            viewer_id=viewer.user_id,
-            conversation_id=conversation_id,
-            branch_id=branch_id,
-            title=body.title,
-        )
-    )
-
-
-@router.delete("/conversations/{conversation_id}/forks/{branch_id}", status_code=204)
-def delete_conversation_fork(
-    conversation_id: UUID,
-    branch_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
+def set_active_path(
+    conversation_id: UUID, body: SetActivePathRequest, viewer: ViewerDep, db: DbSession
 ) -> Response:
-    conversation_branches_service.delete_branch(
-        db=db,
+    service.select_active_leaf(
+        db,
         viewer_id=viewer.user_id,
         conversation_id=conversation_id,
-        branch_id=branch_id,
+        leaf_message_id=body.active_leaf_message_id,
     )
+    return Response(status_code=204)
+
+
+@router.patch("/messages/{message_id}/fork-title", status_code=204)
+def rename_fork(
+    message_id: UUID, body: ForkTitleRequest, viewer: ViewerDep, db: DbSession
+) -> Response:
+    service.rename_fork(db, viewer_id=viewer.user_id, message_id=message_id, title=body.title)
     return Response(status_code=204)

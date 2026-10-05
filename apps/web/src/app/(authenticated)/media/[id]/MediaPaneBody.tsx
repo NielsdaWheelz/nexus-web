@@ -20,10 +20,10 @@ import {
 import { executeResourceChat } from "@/lib/resources/resourceActionExecution";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
 import {
+  assumeReaderSelectionKey,
   readerHighlightChatIntent,
   readerHighlightChatIntentHref,
-} from "@/lib/conversations/readerHighlightChatIntent";
-import { assumeReaderSelectionKey } from "@/lib/conversations/readerSelectionKey";
+} from "@/lib/chat/readerIntent";
 import EvidencePaneSurface, {
   type EvidencePaneProjection,
 } from "@/components/reader/document-map/EvidencePaneSurface";

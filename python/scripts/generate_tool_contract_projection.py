@@ -18,7 +18,7 @@ from nexus.services.tool_runtime.declarations import (
     BROWSER_TOOL_PROJECTION_REVISION,
 )
 
-PROJECTION_RELATIVE_PATH = "apps/web/src/lib/conversations/toolContractProjection.ts"
+PROJECTION_RELATIVE_PATH = "apps/web/src/lib/chat/toolContractProjection.ts"
 
 
 def render_projection() -> str:

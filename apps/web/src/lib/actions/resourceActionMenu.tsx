@@ -55,7 +55,7 @@ import {
 } from "@/lib/media/ingestionClient";
 import { METADATA_RETRY_BLOCKED_COPY } from "@/lib/media/mediaMetadataOperations";
 import { deleteMedia } from "@/lib/media/mediaLibraries";
-import { deleteConversation } from "@/lib/conversations/indexMutation";
+import { deleteConversation } from "@/lib/chat/conversationIndex";
 import {
   retryPodcastSubscriptionBackfill,
   unsubscribeFromPodcast,

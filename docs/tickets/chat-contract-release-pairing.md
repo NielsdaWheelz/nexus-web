@@ -48,3 +48,13 @@ custom-domain web, at the baked database head; authenticated new and saved chat
 reads, send, same-run stream recovery and stop succeed after promotion. if an
 early promotion occurs, restore the previous compatible web alias until the
 backend can be released.
+
+2026-10-04 chat rewrite: the chat contract revision is now "2" and migration
+`0261_chat_tree_owner` drops `conversation_branches`,
+`conversation_active_paths`, `messages.message_document` and
+`messages.branch_root_message_id`. an old api's message inserts fail against the
+migrated schema and the old web reads `GET /conversations/{id}/tree` in the old
+shape, so the same one-vector rule applies: stop the writers, migrate and prove
+backend health, then promote the same web sha.
+open tabs at deploy get `409 E_CHAT_CONTRACT_RELOAD_REQUIRED` and the reload
+notice; their `nx_chat_draft.v5` drafts are not read.

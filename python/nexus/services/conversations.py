@@ -30,12 +30,10 @@ from nexus.schemas.collection_page import (
     parse_collection_query,
 )
 from nexus.schemas.conversation import (
-    BRANCH_ANCHOR_KINDS,
     AssistantTrustTrailOut,
     ConversationListItemOut,
     ConversationOut,
     MessageDeleteOut,
-    MessageDocument,
     MessageOut,
     PageInfo,
 )
@@ -90,23 +88,6 @@ def derive_conversation_title(content: str | None) -> str:
     if not normalized:
         return DEFAULT_CONVERSATION_TITLE
     return normalized[:MAX_CONVERSATION_TITLE_LENGTH].rstrip()
-
-
-def message_document(role: str, content: str) -> dict[str, object]:
-    """The rendered-text document; the only text the reader renders."""
-
-    return {
-        "type": "message_document",
-        "blocks": []
-        if not content.strip()
-        else [
-            {
-                "type": "text",
-                "format": "markdown" if role == "assistant" else "plain",
-                "text": content,
-            }
-        ],
-    }
 
 
 def get_conversation_for_visible_read_or_404(
@@ -183,16 +164,15 @@ def message_to_out(
         id=message.id,
         seq=message.seq,
         role=message.role,
-        message_document=MessageDocument.model_validate(message.message_document),
+        content=message.content,
+        status=message.status,
+        parent_message_id=message.parent_message_id,
+        branch_anchor={"kind": message.branch_anchor_kind, **(message.branch_anchor or {})},
+        fork_title=message.fork_title,
+        reader_selection=reader_selection,
         citations=citations or [],
         trust_trail=trust_trail,
-        parent_message_id=message.parent_message_id,
-        branch_root_message_id=message.branch_root_message_id,
-        branch_anchor_kind=cast(BRANCH_ANCHOR_KINDS, message.branch_anchor_kind),
-        branch_anchor={"kind": message.branch_anchor_kind, **(message.branch_anchor or {})},
-        status=message.status,
         can_rerun=can_rerun,
-        reader_selection=reader_selection,
         created_at=message.created_at,
         updated_at=message.updated_at,
     )
@@ -264,16 +244,6 @@ def create_conversation(
     bump_collection_revision(db, viewer_id=viewer_id, family=CollectionFamily.ConversationIndex)
     db.commit()
     return result
-
-
-def get_conversation(db: Session, viewer_id: UUID, conversation_id: UUID) -> ConversationOut:
-    conversation = get_conversation_for_visible_read_or_404(db, viewer_id, conversation_id)
-    return conversation_to_out(
-        db,
-        conversation,
-        get_message_count(db, conversation_id),
-        viewer_id=viewer_id,
-    )
 
 
 # =============================================================================
@@ -781,14 +751,6 @@ def delete_conversation_rows_without_commit(db: Session, conversation_id: UUID) 
 
     dossier_engine.on_subject_deleted(db, conversation_ref)
 
-    db.execute(
-        text("DELETE FROM conversation_active_paths WHERE conversation_id = :conversation_id"),
-        {"conversation_id": conversation_id},
-    )
-    db.execute(
-        text("DELETE FROM conversation_branches WHERE conversation_id = :conversation_id"),
-        {"conversation_id": conversation_id},
-    )
     db.execute(delete(Conversation).where(Conversation.id == conversation_id))
     db.flush()
 
@@ -797,17 +759,6 @@ def delete_message_rows_without_commit(db: Session, message_ids: Sequence[UUID])
     if not message_ids:
         return
     ids = list(message_ids)
-    db.execute(
-        text(
-            "DELETE FROM conversation_active_paths WHERE active_leaf_message_id = ANY(:message_ids)"
-        ),
-        {"message_ids": ids},
-    )
-    db.execute(
-        text("DELETE FROM conversation_branches WHERE branch_user_message_id = ANY(:message_ids)"),
-        {"message_ids": ids},
-    )
-
     chat_run_ids = _message_ids(
         db,
         """

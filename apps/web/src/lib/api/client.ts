@@ -9,12 +9,12 @@ import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { isAbortError } from "@/lib/errors";
 import { compareStableString } from "@/lib/display/format";
 import { isRecord } from "@/lib/validation";
-import { TOOL_PROJECTION_REVISION } from "@/lib/conversations/toolContractProjection";
+import { TOOL_PROJECTION_REVISION } from "@/lib/chat/toolContractProjection";
 
 export type ApiPath = `/api/${string}`;
 export const TOOL_PROJECTION_HEADER = "X-Nexus-Tool-Projection";
 export const CHAT_CONTRACT_HEADER = "X-Nexus-Chat-Contract";
-export const CHAT_CONTRACT_REVISION = "1";
+export const CHAT_CONTRACT_REVISION = "2";
 export const TOOL_PROJECTION_RELOAD_REQUIRED_CODE =
   "E_TOOL_PROJECTION_RELOAD_REQUIRED";
 

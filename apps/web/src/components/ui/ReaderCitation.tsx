@@ -4,9 +4,9 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import HoverPreview, {
   HOVER_PREVIEW_DELAY_MS,
 } from "@/components/ui/HoverPreview";
-import { truncateText } from "@/lib/conversations/display";
-import type { ReaderCitationPreview } from "@/lib/conversations/readerCitation";
-import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
+import { truncateText } from "@/lib/display/format";
+import type { ReaderCitationPreview } from "@/lib/resourceGraph/readerCitation";
+import type { ReaderSourceTarget } from "@/lib/resourceGraph/readerTarget";
 import {
   hrefForResourceActivation,
   type ResourceActivation,

@@ -5,7 +5,7 @@ import type {
   ChatReadingPosition,
   ChatScrollHandle,
 } from "@/components/chat/useChatScroll";
-import type { ConversationMessage } from "@/lib/conversations/types";
+import type { Message } from "@/lib/chat/wire";
 import {
   findInUnits,
   highlightPainter,
@@ -23,7 +23,7 @@ import { resolveDomTextRanges } from "@/lib/highlights/domTextRanges";
 export function useConversationFindSource(input: {
   readonly conversationId: string | null;
   readonly activeLeafMessageId: string | null;
-  readonly messages: readonly ConversationMessage[];
+  readonly messages: readonly Message[];
   readonly scroll: RefObject<ChatScrollHandle | null>;
 }): FindSource<readonly Range[]> | null {
   const { conversationId, scroll } = input;

@@ -27,3 +27,9 @@ ignored it) and pr-09 (cleanup/prune-write-only-schema) deleted it along with
 
 acceptance: a 65th concurrent stream in one process reconnects after backoff
 instead of erroring.
+
+2026-10-04 chat rewrite: chat now recovers from this 429. a refused tail is an
+ordinary lost stream: the run is read once, the answer shows Connection lost,
+and Reconnect (or the browser's `online` event) tails the same run again. the
+misnamed code and the transport's fatal treatment remain for the other
+streams.

@@ -12,7 +12,7 @@ from collections.abc import Callable
 from typing import Any, Literal
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun, Message
@@ -23,7 +23,6 @@ from nexus.schemas.conversation import (
 )
 from nexus.schemas.presence import presence_from_nullable
 from nexus.services import run_kit
-from nexus.services.conversations import message_document
 
 TERMINAL_RUN_STATUSES = run_kit.terminal_statuses(run_kit.RunStreamKind.ChatRun)
 
@@ -191,7 +190,9 @@ def finalize_run(
     """Write the run's terminal status, the final assistant text, and ``done``.
 
     The sole terminal fold: it no-ops on an already-terminal run, so ``done`` is
-    appended exactly once. It never commits — the worker owns that boundary.
+    appended exactly once, and it settles every tool call still open (a call the
+    route rejected never reports a result). It never commits — the worker owns
+    that boundary.
     """
 
     run = lock_chat_run_for_update(db, run_id)
@@ -203,7 +204,17 @@ def finalize_run(
         assistant_message.content = assistant_content
         assistant_message.status = status
         assistant_message.updated_at = func.now()
-        assistant_message.message_document = message_document("assistant", assistant_content)
+    db.execute(
+        text(
+            "UPDATE message_tool_calls SET status = :status, updated_at = now() "
+            "WHERE assistant_message_id = :assistant_message_id "
+            "AND status IN ('pending', 'running')"
+        ),
+        {
+            "status": "cancelled" if status == "cancelled" else "error",
+            "assistant_message_id": run.assistant_message_id,
+        },
+    )
 
     run.support_id = support_id
     run.publication_warning_code = publication_warning_code

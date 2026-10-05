@@ -1,4 +1,5 @@
 import { apiFetch } from "@/lib/api/client";
+import type { ApiJson } from "@/lib/api/wire";
 
 /**
  * The generic resource-context chat creator: creates a conversation seeded with
@@ -12,7 +13,7 @@ export async function startResourceContextChat(
   subjectRef: string,
   companionRefs: string[] = [],
 ): Promise<string> {
-  const response = await apiFetch<{ data: { id: string } }>("/api/conversations", {
+  const response = await apiFetch<ApiJson<"/conversations", "post">>("/api/conversations", {
     method: "POST",
     body: JSON.stringify({
       initial_context_refs: [subjectRef, ...companionRefs],

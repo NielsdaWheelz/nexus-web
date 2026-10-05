@@ -8,7 +8,7 @@ event loop.
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi import APIRouter, Depends, Header, Request
 from starlette.concurrency import run_in_threadpool
 
 from nexus.api.deps import (
@@ -18,9 +18,9 @@ from nexus.api.deps import (
 )
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_repeatable_read_db, get_session_factory
-from nexus.responses import Data, ok
+from nexus.responses import Data
 from nexus.schemas.conversation import (
-    CHAT_RUN_STATUS_FILTER,
+    ChatAdmissionReceipt,
     ChatRunCreateRequest,
     ChatRunRepeatRequest,
     ChatRunResponse,
@@ -53,8 +53,8 @@ async def create_chat_run(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     catalog: Annotated[GenerationCatalogService, Depends(get_generation_catalog_service)],
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-) -> dict:
-    result = await chat_runs_service.create_chat_run(
+) -> Data[ChatAdmissionReceipt]:
+    receipt = await chat_runs_service.create_chat_run(
         viewer_id=viewer.user_id,
         destination=body.destination,
         reader_selection=(
@@ -67,26 +67,7 @@ async def create_chat_run(
         catalog=catalog,
         tool_runtime=_tool_runtime(request),
     )
-    return ok(result)
-
-
-@router.get("/chat-runs")
-async def list_chat_runs(
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    conversation_id: Annotated[UUID, Query()],
-    status: Annotated[CHAT_RUN_STATUS_FILTER, Query()] = "active",
-) -> Data[list[ChatRunResponse]]:
-    def read() -> list[ChatRunResponse]:
-        with get_session_factory()() as db:
-            get_repeatable_read_db(db)
-            return chat_runs_service.list_chat_runs_for_conversation(
-                db=db,
-                viewer_id=viewer.user_id,
-                conversation_id=conversation_id,
-                status=status,
-            )
-
-    return Data(data=await run_in_threadpool(read))
+    return Data(data=receipt)
 
 
 @router.get("/chat-runs/{run_id}")

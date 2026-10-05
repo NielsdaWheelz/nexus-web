@@ -1,4 +1,4 @@
-"""Conversation API routes: index, create, get, undo tool call, delete."""
+"""Conversation API routes: index, create, undo tool call, delete."""
 
 from typing import Annotated
 from uuid import UUID
@@ -10,9 +10,18 @@ from nexus.api.deps import require_chat_contract_revision, require_tool_projecti
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.responses import Data, DataPage, ok
-from nexus.schemas.collection_page import CollectionPage, parse_manual_page_query
-from nexus.schemas.conversation import ConversationListItemOut, ConversationOut, PageInfo
+from nexus.responses import Data, DataPage
+from nexus.schemas.collection_page import (
+    CollectionPage,
+    CollectionRevisionOut,
+    parse_manual_page_query,
+)
+from nexus.schemas.conversation import (
+    ConversationListItemOut,
+    ConversationOut,
+    PageInfo,
+    TrustToolCallOut,
+)
 from nexus.services import conversations as conversations_service
 from nexus.services.agent_tools.writes import undo_tool_call as revert_tool_call
 from nexus.services.message_trust_trails import build_assistant_trust_trail
@@ -81,29 +90,14 @@ def create_conversation(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
     body: Annotated[CreateConversationRequest | None, Body()] = None,
-) -> dict:
+) -> Data[ConversationOut]:
     """Create an empty private conversation, with its initial context refs."""
 
-    return ok(
-        conversations_service.create_conversation(
+    return Data(
+        data=conversations_service.create_conversation(
             db=db,
             viewer_id=viewer.user_id,
             initial_context_refs=body.initial_context_refs if body is not None else None,
-        )
-    )
-
-
-@router.get("/conversations/{conversation_id}")
-def get_conversation(
-    conversation_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: RepeatableReadDbSession,
-) -> dict:
-    return ok(
-        conversations_service.get_conversation(
-            db=db,
-            viewer_id=viewer.user_id,
-            conversation_id=conversation_id,
         )
     )
 
@@ -120,7 +114,7 @@ async def undo_tool_call(
     tool_call_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
-) -> dict:
+) -> Data[TrustToolCallOut]:
     """Revert one assistant write tool call's created refs. Idempotent."""
 
     assistant_message_id = revert_tool_call(
@@ -142,7 +136,7 @@ async def undo_tool_call(
     tool_call = next((call for call in trail.tool_calls if call.id == tool_call_id), None)
     if tool_call is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Write tool call not found")
-    return ok(tool_call)
+    return Data(data=tool_call)
 
 
 @router.delete("/conversations/{conversation_id}")
@@ -150,14 +144,13 @@ def delete_conversation(
     conversation_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
-) -> dict:
+) -> Data[CollectionRevisionOut]:
     """Delete a conversation and every row it owns; return the index revision."""
 
-    return ok(
-        conversations_service.delete_conversation(
+    return Data(
+        data=conversations_service.delete_conversation(
             db=db,
             viewer_id=viewer.user_id,
             conversation_id=conversation_id,
-        ),
-        by_alias=True,
+        )
     )

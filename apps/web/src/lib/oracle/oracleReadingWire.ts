@@ -8,7 +8,7 @@
  */
 
 import type { Schema } from "@/lib/api/wire";
-import { decodeCitationOut, type CitationOut } from "@/lib/conversations/citationOut";
+import { decodeCitationOut, type CitationOut } from "@/lib/resourceGraph/citationOut";
 import {
   requireOraclePlateImageSrc,
   type OraclePlateImageSrc,

@@ -1,266 +1,152 @@
 "use client";
 
 import {
-  useCallback,
   useLayoutEffect,
-  useRef,
   useState,
   type RefObject,
   type WheelEvent,
 } from "react";
-import type { ConversationMessage } from "@/lib/conversations/types";
 import { preferredScrollBehavior } from "@/lib/preferredScrollBehavior";
 
-/**
- * The small imperative surface the conversation adapter drives on the scroll
- * owner. Everything else (pin, release, ↓Latest, spacer) is internal to
- * {@link useChatScroll} and the view it backs.
- */
-export interface ChatScrollHandle {
-  /**
-   * Snapshot the current eye-line (first-visible message offset + this
-   * activation anchor + a raw scrollTop fallback). The owner restores it ONCE on
-   * the next messages-driven layout, then clears it. Call synchronously BEFORE
-   * the messages state change (branch switch / load-older).
-   */
-  captureAnchor: (activationAnchorMessageId?: string | null) => void;
-  /** Scroll the scoped transcript to a rendered message. */
-  scrollToMessage: (messageId: string) => void;
-  /** Find's way back: the transcript's scroll offset and whether it was following. */
-  captureReadingPosition: () => ChatReadingPosition | null;
-  restoreReadingPosition: (position: ChatReadingPosition) => void;
-  /** The committed transcript root Find projects. */
-  getTranscriptElement: () => HTMLDivElement | null;
-  /** Release the pin and bring a Find match to the top inset (and into its code block's horizontal view). */
-  revealRange: (range: Range) => void;
-}
+// The one transcript scroll owner. A new question pins to the top inset
+// ("top") until its answer overflows the fold, then follows the newest text
+// ("bottom"); a user gesture releases it. A spacer under the newest question
+// lets a short turn reach the top inset. Growth is read from a ResizeObserver,
+// so live text and markdown reflow hold the pin without any plumbing.
 
+type PinMode = "top" | "bottom" | "released";
 export interface ChatReadingPosition {
   readonly scrollTop: number;
   readonly pinMode: PinMode;
 }
-
-/** The eye-line snapshot used for branch-switch and load-older restores. */
-interface ChatScrollAnchor {
-  anchorMessageId: string | null;
-  anchorOffsetTop: number;
-  activationAnchorMessageId: string | null;
-  activationAnchorOffsetTop: number | null;
-  scrollTop: number;
+export interface ChatScrollHandle {
+  scrollToMessage(id: string): void;
+  /** Hold this message's eye-line across the next path change (wins over the new-turn pin). */
+  keepAnchor(id: string | null): void;
+  captureReadingPosition(): ChatReadingPosition | null;
+  restoreReadingPosition(position: ChatReadingPosition): void;
+  getTranscriptElement(): HTMLDivElement | null;
+  revealRange(range: Range): void;
 }
 
-// Hybrid transcript anchoring (docs/cutovers/chat-scroll-anchoring-hard-cutover.md):
-// `top` holds the new question at the top inset; `bottom` follows the newest
-// streamed text at the bottom edge; `released` leaves the viewport where a user
-// gesture put it. `top` hands off to `bottom` once the answer overflows the fold.
-type PinMode = "top" | "bottom" | "released";
-
-// Re-engage following when a genuine scroll lands within this many px of the
-// bottom (reference: use-stick-to-bottom STICK_TO_BOTTOM_OFFSET_PX).
 const NEAR_BOTTOM_PX = 72;
 
-/** The view's wiring, plus the methods exposed to the engine via ChatSurface's ref. */
-interface UseChatScroll extends ChatScrollHandle {
-  /** Reserved spacer height (px) rendered as the last child of the transcript. */
-  spacerHeight: number;
-  /** True when the newest message bottom sits below the fold (drives ↓ Latest). */
-  isLatestBelowFold: boolean;
-  /** Jump to the newest user turn (or the bottom if that turn exceeds the fold). */
-  scrollToLatest: () => void;
-  /** Forwards a wheel gesture over the fixed composer dock to the transcript. */
-  onComposerWheel: (event: WheelEvent<HTMLElement>) => void;
-  /** Scroll handler the view wires onto the scrollport; owns pin-mode + ↓ Latest. */
-  onScroll: () => void;
-  /** A user scroll gesture (wheel/touch/key); yields the next scroll to onScroll. */
-  beginUserScroll: () => void;
-}
+function createScrollOwner(
+  scrollport: RefObject<HTMLDivElement | null>,
+  transcript: RefObject<HTMLDivElement | null>,
+  setSpacer: (px: number) => void,
+  setLatestBelow: (below: boolean) => void,
+) {
+  let mode: PinMode = "released";
+  let anchorId: string | null = null;
+  let spacer = 0;
+  let settling: number | null = null; // a programmatic scroll's target
+  let kept: { id: string; offset: number } | null = null;
+  let previousUserId: string | null = null;
+  let laidOut = false;
+  let sawEmptyReady = false;
 
-function findMessage(scrollport: HTMLElement, messageId: string) {
-  return scrollport.querySelector<HTMLElement>(
-    `[data-message-id="${CSS.escape(messageId)}"]`,
-  );
-}
-
-function lastUserMessageId(messages: ConversationMessage[]): string | null {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index].role === "user") return messages[index].id;
-  }
-  return null;
-}
-
-function clampScrollTop(scrollport: HTMLElement, top: number): number {
-  const maxScrollTop = Math.max(0, scrollport.scrollHeight - scrollport.clientHeight);
-  return Math.min(Math.max(0, top), maxScrollTop);
-}
-
-export function useChatScroll(
-  scrollportRef: RefObject<HTMLDivElement | null>,
-  transcriptRef: RefObject<HTMLDivElement | null>,
-  messages: ConversationMessage[],
-  historyLoading = false,
-): UseChatScroll {
-  const [spacerHeight, setSpacerHeight] = useState(0);
-  const [isLatestBelowFold, setIsLatestBelowFold] = useState(false);
-
-  // Current pin anchor (latest user message), the active pin mode, the live
-  // spacer height, the pending eye-line snapshot, and first-layout tracking.
-  const anchorMessageIdRef = useRef<string | null>(null);
-  const pinModeRef = useRef<PinMode>("released");
-  const spacerHeightRef = useRef(0);
-  const pendingAnchorRef = useRef<ChatScrollAnchor | null>(null);
-  const didFirstLayoutRef = useRef(false);
-  const sawEmptyReadyStateRef = useRef(false);
-  const prevUserIdRef = useRef<string | null>(null);
-  // The scrollTop a programmatic scroll is settling toward. `onScroll` skips the
-  // mode change while a scroll lands on this target, then clears it; a scroll with
-  // no target pending is a genuine user gesture (wheel, touch, key, or scrollbar
-  // drag) and re-engages or releases following (see onScroll).
-  const programmaticTargetRef = useRef<number | null>(null);
-
-  const topInset = useCallback(() => {
-    const transcript = transcriptRef.current;
-    if (!transcript) return 0;
-    return parseFloat(getComputedStyle(transcript).paddingTop) || 0;
-  }, [transcriptRef]);
-
-  const measureSpacer = useCallback(() => {
-    const scrollport = scrollportRef.current;
-    const transcript = transcriptRef.current;
-    if (!scrollport || !transcript) return;
-    const anchorId = anchorMessageIdRef.current;
-    const anchor = anchorId ? findMessage(scrollport, anchorId) : null;
-    let next = 0;
-    if (anchor) {
-      const contentBelowAnchorTop =
-        transcript.scrollHeight - anchor.offsetTop - spacerHeightRef.current;
-      next = Math.max(
-        0,
-        scrollport.clientHeight - topInset() - contentBelowAnchorTop,
-      );
-    }
-    if (next !== spacerHeightRef.current) {
-      spacerHeightRef.current = next;
-      setSpacerHeight(next);
-    }
-  }, [scrollportRef, transcriptRef, topInset]);
-
-  // True when the newest content would fall below the fold with the transcript
-  // pinned so its top sits at `target` scrollTop. The single overflow predicate
-  // behind the top→bottom handoff (holdPin), the ↓ Latest mode pick
-  // (scrollToLatest), and the below-fold flag — measured identically so the three
-  // can never disagree (a `1px` tolerance absorbs sub-pixel rounding).
-  const overflowsBelow = useCallback(
-    (target: number) => {
-      const scrollport = scrollportRef.current;
-      const transcript = transcriptRef.current;
-      if (!scrollport || !transcript) return false;
-      const newestBottom = transcript.scrollHeight - spacerHeightRef.current;
-      return newestBottom > target + scrollport.clientHeight + 1;
-    },
-    [scrollportRef, transcriptRef],
-  );
-
-  const measureLatestBelowFold = useCallback(() => {
-    const scrollport = scrollportRef.current;
-    if (!scrollport) return;
-    setIsLatestBelowFold(overflowsBelow(scrollport.scrollTop));
-  }, [scrollportRef, overflowsBelow]);
-
-  // A discrete one-shot jump (new-turn / first-load top pins, ↓ Latest, scroll-to-
-  // message). Honors reduced-motion. The per-frame streaming follow never routes
-  // here — it writes scrollTop directly (see holdPin) because smooth can never
-  // catch content that grows every frame.
-  const scrollTo = useCallback(
-    (top: number) => {
-      const scrollport = scrollportRef.current;
-      if (!scrollport) return;
-      const target = clampScrollTop(scrollport, top);
-      programmaticTargetRef.current = target;
-      scrollport.scrollTo({ top: target, behavior: preferredScrollBehavior() });
-    },
-    [scrollportRef],
-  );
-
-  // Re-assert the active pin as content reflows during streaming. `top` holds the
-  // question at the top inset until the answer would fall below the fold, then
-  // hands off — one-way for the turn — to `bottom`, which follows the newest text.
-  // Both write scrollTop directly: smooth can never catch content that grows every
-  // frame. `released` is left untouched (a user gesture owns the viewport).
-  const holdPin = useCallback(() => {
-    const scrollport = scrollportRef.current;
-    if (!scrollport) return;
-
-    if (pinModeRef.current === "top") {
-      const anchorId = anchorMessageIdRef.current;
-      const anchor = anchorId ? findMessage(scrollport, anchorId) : null;
-      if (!anchor) return;
-      const target = clampScrollTop(scrollport, anchor.offsetTop - topInset());
-      if (!overflowsBelow(target)) {
-        if (Math.abs(scrollport.scrollTop - target) > 1) {
-          programmaticTargetRef.current = target;
-          scrollport.scrollTop = target;
-        }
+  const message = (id: string | null) =>
+    id
+      ? (scrollport.current?.querySelector<HTMLElement>(
+          `[data-message-id="${CSS.escape(id)}"]`,
+        ) ?? null)
+      : null;
+  const inset = () =>
+    transcript.current
+      ? parseFloat(getComputedStyle(transcript.current).paddingTop) || 0
+      : 0;
+  const clamp = (port: HTMLElement, top: number) =>
+    Math.min(
+      Math.max(0, top),
+      Math.max(0, port.scrollHeight - port.clientHeight),
+    );
+  /** Would the newest content end below the fold with the transcript scrolled to `top`? */
+  const overflows = (top: number) => {
+    const port = scrollport.current;
+    const content = transcript.current;
+    return (
+      !!port &&
+      !!content &&
+      content.scrollHeight - spacer > top + port.clientHeight + 1
+    );
+  };
+  const jump = (top: number, smooth: boolean) => {
+    const port = scrollport.current;
+    if (!port) return;
+    settling = clamp(port, top);
+    if (smooth)
+      port.scrollTo({ top: settling, behavior: preferredScrollBehavior() });
+    else port.scrollTop = settling;
+  };
+  const measure = () => {
+    const port = scrollport.current;
+    const content = transcript.current;
+    const anchor = message(anchorId);
+    if (!port || !content) return;
+    const below = anchor ? content.scrollHeight - anchor.offsetTop - spacer : 0;
+    const next = anchor ? Math.max(0, port.clientHeight - inset() - below) : 0;
+    if (next !== spacer) setSpacer((spacer = next));
+    setLatestBelow(overflows(port.scrollTop));
+  };
+  const hold = () => {
+    const port = scrollport.current;
+    const anchor = message(anchorId);
+    if (!port) return;
+    if (mode === "top" && anchor) {
+      const top = clamp(port, anchor.offsetTop - inset());
+      if (!overflows(top)) {
+        if (Math.abs(port.scrollTop - top) > 1) jump(top, false);
         return;
       }
-      pinModeRef.current = "bottom";
+      mode = "bottom";
     }
+    if (
+      mode === "bottom" &&
+      Math.abs(port.scrollTop - clamp(port, port.scrollHeight)) > 1
+    )
+      jump(port.scrollHeight, false);
+  };
+  const pinTop = (id: string, smooth: boolean) => {
+    mode = "top";
+    const anchor = message(id);
+    if (anchor) jump(anchor.offsetTop - inset(), smooth);
+  };
 
-    if (pinModeRef.current === "bottom") {
-      const target = clampScrollTop(scrollport, scrollport.scrollHeight);
-      if (Math.abs(scrollport.scrollTop - target) > 1) {
-        programmaticTargetRef.current = target;
-        scrollport.scrollTop = target;
-      }
-    }
-  }, [scrollportRef, topInset, overflowsBelow]);
-
-  const scrollToLatest = useCallback(() => {
-    const scrollport = scrollportRef.current;
-    if (!scrollport) return;
-    const anchorId = anchorMessageIdRef.current;
-    const anchor = anchorId ? findMessage(scrollport, anchorId) : null;
-    const inset = topInset();
-    if (anchor && !overflowsBelow(anchor.offsetTop - inset)) {
-      pinModeRef.current = "top";
-      scrollTo(anchor.offsetTop - inset);
-    } else {
-      pinModeRef.current = "bottom";
-      scrollTo(scrollport.scrollHeight);
-    }
-  }, [scrollportRef, scrollTo, topInset, overflowsBelow]);
-
-  const scrollToMessage = useCallback<ChatScrollHandle["scrollToMessage"]>(
-    (messageId) => {
-      const scrollport = scrollportRef.current;
-      if (!scrollport) return;
-      const target = findMessage(scrollport, messageId);
+  const handle: ChatScrollHandle = {
+    scrollToMessage(id) {
+      const target = message(id);
       if (!target) return;
-      pinModeRef.current = "released";
-      scrollTo(target.offsetTop - topInset());
+      mode = "released";
+      jump(target.offsetTop - inset(), true);
     },
-    [scrollportRef, scrollTo, topInset],
-  );
-
-  const captureReadingPosition = useCallback<
-    ChatScrollHandle["captureReadingPosition"]
-  >(() => {
-    const scrollport = scrollportRef.current;
-    return (
-      scrollport && {
-        scrollTop: scrollport.scrollTop,
-        pinMode: pinModeRef.current,
-      }
-    );
-  }, [scrollportRef]);
-
-  const getTranscriptElement = useCallback(
-    () => transcriptRef.current,
-    [transcriptRef],
-  );
-
-  const revealRange = useCallback<ChatScrollHandle["revealRange"]>(
-    (range) => {
-      const scrollport = scrollportRef.current;
+    keepAnchor(id) {
+      const port = scrollport.current;
+      if (!port) return;
+      const visible = Array.from(
+        port.querySelectorAll<HTMLElement>("[data-message-id]"),
+      ).find(
+        (element) => element.offsetTop + element.offsetHeight > port.scrollTop,
+      );
+      const anchor = message(id) ?? visible;
+      kept = anchor
+        ? {
+            id: anchor.dataset.messageId ?? "",
+            offset: anchor.offsetTop - port.scrollTop,
+          }
+        : null;
+    },
+    captureReadingPosition: () => {
+      const port = scrollport.current;
+      return port && { scrollTop: port.scrollTop, pinMode: mode };
+    },
+    restoreReadingPosition(position) {
+      mode = position.pinMode;
+      jump(position.scrollTop, true);
+    },
+    getTranscriptElement: () => transcript.current,
+    revealRange(range) {
+      const port = scrollport.current;
       const code = range.startContainer.parentElement?.closest<HTMLElement>(
         "[data-pane-find-code-scroll]",
       );
@@ -271,283 +157,120 @@ export function useChatScroll(
           rect.left < box.left
             ? rect.left - box.left
             : Math.max(0, rect.right - box.right);
-      if (!scrollport) return;
-      pinModeRef.current = "released";
-      scrollTo(
-        scrollport.scrollTop +
-          range.getBoundingClientRect().top -
-          scrollport.getBoundingClientRect().top -
-          topInset(),
+      if (!port) return;
+      mode = "released";
+      jump(
+        port.scrollTop + rect.top - port.getBoundingClientRect().top - inset(),
+        true,
       );
     },
-    [scrollTo, scrollportRef, topInset],
-  );
-
-  const restoreReadingPosition = useCallback<
-    ChatScrollHandle["restoreReadingPosition"]
-  >(
-    (position) => {
-      pinModeRef.current = position.pinMode;
-      scrollTo(position.scrollTop);
-    },
-    [scrollTo],
-  );
-
-  const captureAnchor = useCallback<ChatScrollHandle["captureAnchor"]>(
-    (activationAnchorMessageId = null) => {
-      const scrollport = scrollportRef.current;
-      if (!scrollport) return;
-      const scrollTopNow = scrollport.scrollTop;
-      const viewportBottom = scrollTopNow + scrollport.clientHeight;
-      let anchorMessageId: string | null = null;
-      let anchorOffsetTop = 0;
-      let activationAnchorOffsetTop: number | null = null;
-
-      for (const element of scrollport.querySelectorAll<HTMLElement>(
-        "[data-message-id]",
-      )) {
-        const messageId = element.dataset.messageId ?? null;
-        if (!messageId) continue;
-        const offsetTop = element.offsetTop - scrollTopNow;
-        if (messageId === activationAnchorMessageId) {
-          activationAnchorOffsetTop = offsetTop;
-        }
-        if (element.offsetTop + element.offsetHeight <= scrollTopNow) continue;
-        if (element.offsetTop >= viewportBottom) continue;
-        if (!anchorMessageId || (anchorOffsetTop < 0 && offsetTop >= 0)) {
-          anchorMessageId = messageId;
-          anchorOffsetTop = offsetTop;
-        }
-      }
-
-      pendingAnchorRef.current = {
-        anchorMessageId,
-        anchorOffsetTop,
-        activationAnchorMessageId: activationAnchorMessageId ?? null,
-        activationAnchorOffsetTop,
-        scrollTop: scrollTopNow,
-      };
-    },
-    [scrollportRef],
-  );
-
-  const restorePendingAnchor = useCallback(
-    (snapshot: ChatScrollAnchor) => {
-      const scrollport = scrollportRef.current;
-      if (!scrollport) return;
-      const restoreOffset = (messageId: string, offsetTop: number) => {
-        const target = findMessage(scrollport, messageId);
-        if (!target) return false;
-        const nextScrollTop = clampScrollTop(scrollport, target.offsetTop - offsetTop);
-        scrollport.scrollTop = nextScrollTop;
-        programmaticTargetRef.current = nextScrollTop;
-        return true;
-      };
-      if (
-        snapshot.anchorMessageId &&
-        restoreOffset(snapshot.anchorMessageId, snapshot.anchorOffsetTop)
-      ) {
-        return;
-      }
-      if (
-        snapshot.activationAnchorMessageId &&
-        snapshot.activationAnchorOffsetTop !== null &&
-        restoreOffset(
-          snapshot.activationAnchorMessageId,
-          snapshot.activationAnchorOffsetTop,
-        )
-      ) {
-        return;
-      }
-      const nextScrollTop = clampScrollTop(scrollport, snapshot.scrollTop);
-      scrollport.scrollTop = nextScrollTop;
-      programmaticTargetRef.current = nextScrollTop;
-    },
-    [scrollportRef],
-  );
-
-  // Single messages-driven layout pass. Priority: restore a pending eye-line
-  // snapshot (branch switch / load-older) → first load settles at the bottom →
-  // a new trailing user turn pins to the top inset (smooth). Always re-sizes the
-  // spacer and recomputes the below-fold flag afterwards. All derived turn state
-  // (next user id, is-new-turn) is computed and recorded HERE, in the committed
-  // effect — never during render — so a React StrictMode / concurrent
-  // double-render cannot mis-read the trailing turn and drop the pin.
-  useLayoutEffect(() => {
-    const scrollport = scrollportRef.current;
-    if (!scrollport) return;
-    const nextUserId = lastUserMessageId(messages);
-    anchorMessageIdRef.current = nextUserId;
-
-    if (pendingAnchorRef.current) {
-      const snapshot = pendingAnchorRef.current;
-      pendingAnchorRef.current = null;
-      pinModeRef.current = "released";
-      measureSpacer();
-      restorePendingAnchor(snapshot);
-      measureLatestBelowFold();
-      didFirstLayoutRef.current = true;
-      prevUserIdRef.current = nextUserId;
-      return;
-    }
-
-    if (!didFirstLayoutRef.current) {
-      measureSpacer();
-      // The engine renders empty while loading; wait for the first real (non-empty)
-      // layout so an existing conversation opens at the bottom. If the empty
-      // surface was already ready (new chat, or an existing empty conversation),
-      // its first user turn is a send and should enter the pin cycle.
-      if (messages.length === 0) {
-        if (!historyLoading) sawEmptyReadyStateRef.current = true;
-        return;
-      }
-      didFirstLayoutRef.current = true;
-      prevUserIdRef.current = nextUserId;
-      if (sawEmptyReadyStateRef.current && nextUserId) {
-        pinModeRef.current = "top";
-        const anchor = findMessage(scrollport, nextUserId);
-        if (anchor) scrollTo(anchor.offsetTop - topInset());
-        measureLatestBelowFold();
-        return;
-      }
-      // Open an existing conversation at its newest message in bottom-follow, so
-      // a resumed in-flight run keeps streaming into view; a user scroll-up
-      // releases it. (Identical position to "released" for a finished transcript.)
-      pinModeRef.current = "bottom";
-      const bottom = clampScrollTop(scrollport, scrollport.scrollHeight);
-      scrollport.scrollTop = bottom;
-      programmaticTargetRef.current = bottom;
-      measureLatestBelowFold();
-      return;
-    }
-
-    measureSpacer();
-    const isNewTurn = nextUserId !== null && nextUserId !== prevUserIdRef.current;
-    prevUserIdRef.current = nextUserId;
-    if (isNewTurn) {
-      pinModeRef.current = "top";
-      const anchor = nextUserId ? findMessage(scrollport, nextUserId) : null;
-      if (anchor) scrollTo(anchor.offsetTop - topInset());
-    } else if (pinModeRef.current !== "released") {
-      holdPin();
-    }
-    measureLatestBelowFold();
-  }, [
-    messages,
-    historyLoading,
-    scrollportRef,
-    measureSpacer,
-    restorePendingAnchor,
-    measureLatestBelowFold,
-    holdPin,
-    scrollTo,
-    topInset,
-  ]);
-
-  // One observer recomputes the spacer + below-fold and (while pinned) re-asserts
-  // the anchor or follows the bottom as content grows during streaming.
-  useLayoutEffect(() => {
-    const scrollport = scrollportRef.current;
-    const transcript = transcriptRef.current;
-    if (!scrollport || !transcript) return;
-    const observer = new ResizeObserver(() => {
-      measureSpacer();
-      holdPin();
-      measureLatestBelowFold();
-    });
-    observer.observe(scrollport);
-    observer.observe(transcript);
-    return () => observer.disconnect();
-  }, [
-    scrollportRef,
-    transcriptRef,
-    measureSpacer,
-    measureLatestBelowFold,
-    holdPin,
-  ]);
-
-  // The single pin-mode authority (§6.2/§10). A programmatic scroll records the
-  // scrollTop it is settling toward (`programmaticTargetRef`); while a scroll lands
-  // on that target we skip mode changes and clear the marker once it arrives. Any
-  // scroll with no marker pending — wheel, touch, keyboard, OR a scrollbar drag —
-  // is a genuine user gesture: it re-engages following inside the near-bottom band
-  // and otherwise releases until the next send.
-  const onScroll = useCallback(() => {
-    const scrollport = scrollportRef.current;
-    if (scrollport && programmaticTargetRef.current !== null) {
-      if (
-        Math.abs(scrollport.scrollTop - programmaticTargetRef.current) <= 1.5
-      ) {
-        programmaticTargetRef.current = null;
-      }
-    } else if (scrollport) {
-      const maxScrollTop = Math.max(
-        0,
-        scrollport.scrollHeight - scrollport.clientHeight,
-      );
-      pinModeRef.current =
-        maxScrollTop - scrollport.scrollTop <= NEAR_BOTTOM_PX
-          ? "bottom"
-          : "released";
-    }
-    measureLatestBelowFold();
-  }, [scrollportRef, measureLatestBelowFold]);
-
-  // A user input gesture (wheel / touch / key) is taking over the viewport. Drop
-  // the programmatic-settle marker so the resulting scroll is read by `onScroll`
-  // as a genuine gesture — re-engaging or releasing follow from the final
-  // position — not as the hook's own write landing on its target. The mode is
-  // decided only by `onScroll`, never eagerly here: a gesture that moves nothing
-  // (e.g. a wheel at the bottom) must not drop an active follow.
-  const beginUserScroll = useCallback(() => {
-    programmaticTargetRef.current = null;
-  }, []);
-
-  const onComposerWheel = useCallback(
-    (event: WheelEvent<HTMLElement>) => {
-      if (event.defaultPrevented || event.deltaY === 0) return;
-      let target = event.target instanceof Element ? event.target : null;
-      while (target && target !== event.currentTarget) {
-        if (
-          target instanceof HTMLElement &&
-          target.scrollHeight > target.clientHeight &&
-          ((event.deltaY < 0 && target.scrollTop > 0) ||
-            (event.deltaY > 0 &&
-              target.scrollTop + target.clientHeight < target.scrollHeight))
-        ) {
-          return;
-        }
-        target = target.parentElement;
-      }
-      const scrollport = scrollportRef.current;
-      if (!scrollport) return;
-      if (
-        (event.deltaY < 0 && scrollport.scrollTop <= 0) ||
-        (event.deltaY > 0 &&
-          scrollport.scrollTop + scrollport.clientHeight >=
-            scrollport.scrollHeight)
-      ) {
-        return;
-      }
-      programmaticTargetRef.current = null;
-      scrollport.scrollTop += event.deltaY;
-      event.preventDefault();
-    },
-    [scrollportRef],
-  );
+  };
 
   return {
-    spacerHeight,
-    isLatestBelowFold,
-    scrollToLatest,
-    onComposerWheel,
-    onScroll,
-    beginUserScroll,
-    captureAnchor,
-    scrollToMessage,
-    captureReadingPosition,
-    restoreReadingPosition,
-    getTranscriptElement,
-    revealRange,
+    handle,
+    /** After each commit that may change the newest question or the loaded state. */
+    turn(userId: string | null, ready: boolean) {
+      const port = scrollport.current;
+      if (!port) return;
+      anchorId = userId;
+      measure();
+      const restore = kept && message(kept.id);
+      if (kept && restore) {
+        mode = "released";
+        jump(restore.offsetTop - kept.offset, false);
+      } else if (!laidOut) {
+        if (userId === null) sawEmptyReady ||= ready;
+        else if (sawEmptyReady) pinTop(userId, true);
+        else {
+          mode = "bottom"; // an opened chat starts at its newest message, following a live answer
+          jump(port.scrollHeight, false);
+        }
+        laidOut = userId !== null;
+      } else if (userId !== null && userId !== previousUserId)
+        pinTop(userId, true);
+      else hold();
+      kept = null;
+      previousUserId = userId;
+      measure();
+    },
+    observe() {
+      const observer = new ResizeObserver(() => {
+        measure();
+        hold();
+      });
+      if (scrollport.current) observer.observe(scrollport.current);
+      if (transcript.current) observer.observe(transcript.current);
+      return () => observer.disconnect();
+    },
+    toLatest() {
+      const port = scrollport.current;
+      const anchor = message(anchorId);
+      if (!port) return;
+      if (anchor && !overflows(anchor.offsetTop - inset()))
+        pinTop(anchorId ?? "", true);
+      else {
+        mode = "bottom";
+        jump(port.scrollHeight, true);
+      }
+    },
+    onScroll() {
+      const port = scrollport.current;
+      if (!port) return;
+      if (settling !== null) {
+        if (Math.abs(port.scrollTop - settling) <= 1.5) settling = null;
+      } else {
+        const remaining =
+          port.scrollHeight - port.clientHeight - port.scrollTop;
+        mode = remaining <= NEAR_BOTTOM_PX ? "bottom" : "released";
+      }
+      setLatestBelow(overflows(port.scrollTop));
+    },
+    /** A wheel, touch or key gesture: the scroll it causes is the user's. */
+    onUserScroll() {
+      settling = null;
+    },
+    /** A wheel over the docked composer scrolls the transcript, unless something inside can scroll. */
+    onComposerWheel(event: WheelEvent<HTMLElement>) {
+      const port = scrollport.current;
+      if (!port || event.defaultPrevented || event.deltaY === 0) return;
+      for (
+        let node = event.target instanceof HTMLElement ? event.target : null;
+        node && node !== event.currentTarget;
+        node = node.parentElement
+      ) {
+        const canScroll =
+          event.deltaY < 0
+            ? node.scrollTop > 0
+            : node.scrollTop + node.clientHeight < node.scrollHeight;
+        if (node.scrollHeight > node.clientHeight && canScroll) return;
+      }
+      const atEdge =
+        event.deltaY < 0
+          ? port.scrollTop <= 0
+          : port.scrollTop + port.clientHeight >= port.scrollHeight;
+      if (atEdge) return;
+      settling = null;
+      port.scrollTop += event.deltaY;
+      event.preventDefault();
+    },
   };
+}
+
+export function useChatScroll(
+  scrollport: RefObject<HTMLDivElement | null>,
+  transcript: RefObject<HTMLDivElement | null>,
+  lastUserId: string | null,
+  ready: boolean,
+) {
+  const [spacer, setSpacer] = useState(0);
+  const [latestBelow, setLatestBelow] = useState(false);
+  const [owner] = useState(() =>
+    createScrollOwner(scrollport, transcript, setSpacer, setLatestBelow),
+  );
+  useLayoutEffect(
+    () => owner.turn(lastUserId, ready),
+    [owner, lastUserId, ready],
+  );
+  useLayoutEffect(() => owner.observe(), [owner]);
+  return { ...owner, spacer, latestBelow };
 }
