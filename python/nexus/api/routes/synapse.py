@@ -1,83 +1,53 @@
-"""Synapse scan routes: enqueue a scan, read its state, dismiss one edge.
-
-Transport only — dedupe, dossier, judgment and suppression live in
-``nexus.services.synapse``.
-"""
+"""Synapse routes: queue a scan, read its state, dismiss a proposal."""
 
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.responses import ok
-from nexus.schemas.synapse import SynapseScanOut, SynapseScanRequest, SynapseScanStatusOut
-from nexus.services import synapse as synapse_service
-from nexus.services.resource_graph import resolve as resolve_service
-from nexus.services.resource_graph.refs import (
-    ResourceRef,
-    ResourceRefParseFailure,
-    parse_resource_ref,
-)
+from nexus.responses import Data
+from nexus.schemas.synapse import SynapseScanOut, SynapseScanRequest
+from nexus.services import synapse
+from nexus.services.resource_graph.refs import ResourceRef, parse_resource_ref
+from nexus.services.resource_graph.resolve import assert_ref_visible
 from nexus.services.resource_graph.schemas import SYNAPSE_SOURCE_SCHEMES
 
 router = APIRouter(prefix="/synapse", tags=["synapse"])
+ViewerDep = Annotated[Viewer, Depends(get_viewer)]
 
 
-def _parse_scannable_ref(raw: str) -> ResourceRef:
-    parsed = parse_resource_ref(raw)
-    if isinstance(parsed, ResourceRefParseFailure):
+def _scannable(raw: str) -> ResourceRef:
+    ref = parse_resource_ref(raw)
+    if not isinstance(ref, ResourceRef) or ref.scheme not in SYNAPSE_SOURCE_SCHEMES:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
-            f"Invalid resource ref: {raw!r}. Expected '<scheme>:<uuid>'.",
+            f"Expected '<scheme>:<uuid>' with a scheme in {', '.join(SYNAPSE_SOURCE_SCHEMES)}.",
         )
-    if parsed.scheme not in SYNAPSE_SOURCE_SCHEMES:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            f"Unscannable scheme: {parsed.scheme!r}. Expected one of "
-            f"{', '.join(SYNAPSE_SOURCE_SCHEMES)}.",
-        )
-    return parsed
+    return ref
 
 
 @router.post("/scans", status_code=202)
 def request_scan(
-    body: SynapseScanRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-) -> dict:
-    """Queue a manual scan. 404 when the object is not visible."""
-    ref = _parse_scannable_ref(body.ref)
-    resolve_service.assert_ref_visible(db, viewer_id=viewer.user_id, ref=ref)
-    queued = synapse_service.queue_synapse_scan(
-        db, user_id=viewer.user_id, ref=ref, reason="manual"
-    )
-    status = synapse_service.scan_status(db, user_id=viewer.user_id, ref=ref)
+    body: SynapseScanRequest, viewer: ViewerDep, db: DbSession
+) -> Data[SynapseScanOut]:
+    ref = _scannable(body.ref)
+    assert_ref_visible(db, viewer_id=viewer.user_id, ref=ref)
+    synapse.queue_synapse_scan(db, user_id=viewer.user_id, ref=ref, reason="manual")
+    status = synapse.scan_status(db, user_id=viewer.user_id, ref=ref)
     db.commit()
-    return ok(SynapseScanOut(queued=queued, status=status))
+    return Data(data=SynapseScanOut(status=status))
 
 
 @router.get("/scans")
-def read_scan_status(
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-    ref: Annotated[str, Query(description="Source object ref, e.g. 'highlight:<uuid>'")],
-) -> dict:
-    """Scan state for ``ref``: idle, pending, or running."""
-    parsed = _parse_scannable_ref(ref)
-    status = synapse_service.scan_status(db, user_id=viewer.user_id, ref=parsed)
-    return ok(SynapseScanStatusOut(status=status))
+def read_scan(ref: str, viewer: ViewerDep, db: DbSession) -> Data[SynapseScanOut]:
+    status = synapse.scan_status(db, user_id=viewer.user_id, ref=_scannable(ref))
+    return Data(data=SynapseScanOut(status=status))
 
 
 @router.post("/edges/{edge_id}/dismiss", status_code=204)
-def dismiss_edge(
-    edge_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-) -> Response:
-    """Suppress the edge's pair forever, then delete the edge. 409 off-origin."""
-    synapse_service.dismiss_synapse_edge(db, viewer_id=viewer.user_id, edge_id=edge_id)
-    db.commit()
+def dismiss_edge(edge_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
+    synapse.dismiss_synapse_edge(db, viewer_id=viewer.user_id, edge_id=edge_id)
     return Response(status_code=204)

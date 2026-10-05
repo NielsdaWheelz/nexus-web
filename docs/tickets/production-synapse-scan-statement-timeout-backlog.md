@@ -33,3 +33,13 @@ Restored search does limit ranking before expensive snippets and contributor
 enrichment, but the observed sql prefix does not identify the failing retriever.
 This is a relevant mitigation, not proof of resolution. No production queue
 rows were changed. Keep this item open through the post-release observation.
+
+## 2026-10-04 synapse reauthor
+
+The rewrite removes one source of churn on this queue: a scan whose candidate
+set was empty used to raise `ReadOnlySqlTransaction` three times (60/300/900 s)
+and dead-letter, holding a background slot each time (harness baseline: four
+such jobs per fresh stack before any journey). It now ends its read snapshot
+and publishes the empty set as `ok`. Migration `0260` drops unfinished scans
+that a previous release admitted. Neither is proof against statement timeouts;
+the post-deployment observation above remains the acceptance.

@@ -130,7 +130,7 @@ def _validate_rationale_edge(edge: EdgeCreate) -> None:
         if edge.source.scheme not in SYNAPSE_SOURCE_SCHEMES:
             _invalid("Synapse edges must start from media, page, note_block, or highlight")
         if edge.target.scheme not in SYNAPSE_TARGET_SCHEMES:
-            _invalid("Synapse edges must target media or note_block")
+            _invalid("Synapse edges must target media, note_block, or evidence_span")
     else:
         if (
             edge.source.scheme not in ASSISTANT_EDGE_SCHEMES

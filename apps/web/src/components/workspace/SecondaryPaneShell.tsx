@@ -114,10 +114,16 @@ export default function SecondaryPaneShell({
       }}
       aria-label={activeSurfaceDefinition.title}
       onKeyDown={(event) => {
-        // Escape closes the Inspector only while focus is inside it: a keydown
-        // reaches this <aside> only by bubbling from a focused descendant.
-        // Defer to inner controls that already consumed the key (preventDefault).
-        if (event.key !== "Escape" || event.defaultPrevented) {
+        // Escape closes the Inspector only while focus is inside it. React
+        // also bubbles a portaled overlay's keydown (a dialog, a menu opened
+        // from here) through this <aside>; that Escape belongs to the overlay,
+        // so only DOM descendants count. Defer to inner controls that already
+        // consumed the key (preventDefault).
+        if (
+          event.key !== "Escape" ||
+          event.defaultPrevented ||
+          !event.currentTarget.contains(event.target as Node)
+        ) {
           return;
         }
         event.preventDefault();

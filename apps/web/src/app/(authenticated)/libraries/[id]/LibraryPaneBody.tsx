@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { requestNexusOpen } from "@/lib/nexus/events";
-import { isApiError, isInvalidViewError } from "@/lib/api/client";
+import { isInvalidViewError } from "@/lib/api/client";
 import { libraryEntriesResource } from "@/lib/api/resource";
 import { present } from "@/lib/api/presence";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -13,9 +13,6 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import {
-  useConnectionsComposerController,
-} from "@/components/connections/connectionsComposerController";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
 import { addLibraryPlacement } from "@/lib/libraries/libraryPlacement";
@@ -40,7 +37,6 @@ import {
   usePaneIsActive,
   usePaneIsVisible,
   usePaneRuntime,
-  requirePaneRuntime,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { useLibraryMembers } from "@/lib/libraries/useLibraryMembers";
@@ -82,8 +78,7 @@ import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { isAbortError } from "@/lib/errors";
 import { podcastRefreshRequestAnnouncement, requestPodcastRefresh } from "@/lib/podcasts/refresh";
 import type { LibraryEntryListItem } from "@/lib/libraries/entryListItem";
-import { slateTargetId } from "@/lib/resonance/contract";
-import type { ReadingSlateAccept } from "@/lib/resonance/useReadingSlate";
+import { slateTargetId } from "@/lib/resonance";
 import styles from "./LibraryPaneBody.module.css";
 
 type LibraryEntry = LibraryEntryListItem;
@@ -126,7 +121,6 @@ export default function LibraryPaneBody() {
   const id = usePaneParam("id");
   if (!id) throw new Error("library route requires an id");
   const paneRuntime = usePaneRuntime();
-  const activateTarget = requirePaneRuntime(paneRuntime, "LibraryPaneBody").activateTarget;
   const isPaneActive = usePaneIsActive();
   const isPaneVisible = usePaneIsVisible();
   const paneId = paneRuntime?.paneId ?? `library-${id}`;
@@ -213,105 +207,6 @@ export default function LibraryPaneBody() {
       .find(candidate => candidate.textContent?.trim() === "Refresh list");
     button?.focus();
   }, [owner.reconciliation?.recovery, owner.reconciliation?.error]);
-  const acceptSlateTarget = useCallback<ReadingSlateAccept>(
-    (target, options) => {
-      if (!viewIsCommitted || committedView === null) {
-        return Promise.resolve({ kind: "Abandoned" });
-      }
-      if (currentLibrary === null) {
-        return Promise.resolve({ kind: "Abandoned" });
-      }
-      const targetId = slateTargetId(target);
-      const frozenAttempt = () =>
-        addLibraryPlacement({
-          target: { kind: target.kind, id: targetId },
-          destination: {
-            kind: "Library",
-            library: {
-              id: currentLibrary.id,
-              name: currentLibrary.name,
-            },
-          },
-        });
-
-      return new Promise((resolve) => {
-        let observing = true;
-        let inFlight = false;
-        const abandon = () => {
-          if (!observing) return;
-          observing = false;
-          resolve({ kind: "Abandoned" });
-        };
-        const runAttempt = () => {
-          if (!observing || inFlight) return;
-          inFlight = true;
-          void frozenAttempt().then(
-            () => {
-              inFlight = false;
-              if (!observing) return;
-              observing = false;
-              options.signal.removeEventListener("abort", abandon);
-              // The placement writer already published to the placement
-              // revision store; that revision reconciles the committed view.
-              resolve({ kind: "Accepted" });
-            },
-            (error: unknown) => {
-              inFlight = false;
-              if (!observing) return;
-              if (handleUnauthenticatedApiError(error)) {
-                observing = false;
-                options.signal.removeEventListener("abort", abandon);
-                resolve({ kind: "Abandoned" });
-                return;
-              }
-              if (!isApiError(error)) {
-                observing = false;
-                options.signal.removeEventListener("abort", abandon);
-                setDefect({ error });
-                resolve({ kind: "Abandoned" });
-                return;
-              }
-              const apiError = error;
-              try {
-                libraryRequestErrorMessage(
-                  apiError,
-                  {
-                    title: "Item wasn’t added",
-                    request: "PlacementMutation",
-                  },
-                );
-              } catch (caughtDefect) {
-                observing = false;
-                options.signal.removeEventListener("abort", abandon);
-                setDefect({ error: caughtDefect });
-                resolve({ kind: "Abandoned" });
-                return;
-              }
-              if (apiError.status >= 400 && apiError.status < 500) {
-                observing = false;
-                options.signal.removeEventListener("abort", abandon);
-                resolve({ kind: "Rejected", error: apiError });
-                return;
-              }
-              options.onUnknown({
-                error: apiError,
-                recovery: { kind: "Local", retry: runAttempt },
-              });
-            },
-          );
-        };
-
-        if (options.signal.aborted) {
-          abandon();
-          return;
-        }
-        options.signal.addEventListener("abort", abandon, { once: true });
-        runAttempt();
-      });
-    },
-    [committedView, currentLibrary, viewIsCommitted],
-  );
-
   const handleReorderEntries = (nextEntries: readonly LibraryEntry[]) => {
     setError(null);
     void owner.reorder(nextEntries).catch((requestError: unknown) =>
@@ -605,19 +500,13 @@ export default function LibraryPaneBody() {
     loading || !entryCollectionComplete
       ? { kind: "Pending" }
       : { kind: "Count", value: visibleEntries.length, unit: "entry" };
-  const connectionsComposerController = useConnectionsComposerController({
-    scheme: "library",
-    id,
-  });
   const connectionsBody = useMemo(
     () => (
       <ConnectionsSurface
         resourceRef={{ scheme: "library", id }}
-        composerController={connectionsComposerController}
-        activateTarget={activateTarget}
       />
     ),
-    [activateTarget, connectionsComposerController, id],
+    [id],
   );
   const membersBody = useMemo(
     () =>
@@ -1033,6 +922,7 @@ export default function LibraryPaneBody() {
           committed?.nextCursor.kind === "Absent" &&
           entryExhaustion.kind === "Complete" ? (
           <ReadingSlateSection
+            key={currentLibrary.id}
             returnScope="Library.ReadingSlate"
             destination={{
               kind: "Library",
@@ -1041,7 +931,15 @@ export default function LibraryPaneBody() {
             }}
             paneId={paneId}
             isActive={isPaneActive}
-            accept={acceptSlateTarget}
+            accept={async (target) => {
+              await addLibraryPlacement({
+                target: { kind: target.kind, id: slateTargetId(target) },
+                destination: {
+                  kind: "Library",
+                  library: { id: currentLibrary.id, name: currentLibrary.name },
+                },
+              });
+            }}
           />
         ) : null}
       </PaneSurface>

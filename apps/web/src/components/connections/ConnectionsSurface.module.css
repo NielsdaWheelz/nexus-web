@@ -1,4 +1,4 @@
-.backlinks {
+.section {
   border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
   margin-top: var(--space-6);
   padding-top: var(--space-4);
@@ -7,186 +7,37 @@
 .header {
   align-items: center;
   display: flex;
-  gap: var(--space-2);
-  justify-content: space-between;
+  gap: var(--space-1);
   margin-bottom: var(--space-2);
 }
 
-.headerActions {
-  align-items: center;
-  display: flex;
-  gap: var(--space-1);
+.title {
+  flex: 1;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  margin: 0;
 }
 
-.composerToggle {
+.add {
+  align-items: center;
   background: none;
   border: 0;
   color: var(--ink-muted);
   cursor: pointer;
+  display: inline-flex;
   font-size: var(--text-xs);
   font-weight: var(--weight-medium);
+  gap: 2px;
   padding: 0;
 }
 
-.composerToggle:hover {
+.add:hover {
   color: var(--ink);
 }
 
+.voice,
 .empty {
   color: var(--ink-faint);
   font-size: var(--text-xs);
-  margin: 0;
-}
-
-.title {
-  font-size: var(--text-sm);
-  font-weight: var(--weight-bold);
   margin: 0 0 var(--space-2);
-}
-
-/* Inside the flex header the title's own bottom margin would skew centering. */
-.header .title {
-  margin-bottom: 0;
-}
-
-.scanVoice {
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
-  margin: 0 0 var(--space-2);
-}
-
-.composer {
-  display: grid;
-  gap: var(--space-2);
-  margin-bottom: var(--space-3);
-}
-
-.composerControls {
-  align-items: start;
-  display: grid;
-  gap: var(--space-2);
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
-}
-
-.searchWrap {
-  position: relative;
-}
-
-.autocomplete {
-  background: var(--surface-canvas);
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-3);
-  left: 0;
-  position: absolute;
-  top: calc(100% + 4px);
-  width: min(320px, 100%);
-  z-index: 4;
-}
-
-.list {
-  display: grid;
-  gap: var(--space-1);
-}
-
-.linkRow {
-  align-items: center;
-  background: color-mix(in srgb, currentColor 2%, transparent);
-  border: 1px solid color-mix(in srgb, currentColor 10%, transparent);
-  border-radius: var(--radius-lg);
-  color: inherit;
-  display: grid;
-  gap: var(--space-2);
-  grid-template-columns: minmax(0, 1fr) auto;
-  min-height: 36px;
-  padding: var(--space-1);
-  text-align: left;
-  text-decoration: none;
-}
-
-.linkRow:hover {
-  background: color-mix(in srgb, currentColor 6%, transparent);
-}
-
-.linkButton {
-  align-items: center;
-  background: none;
-  border: 0;
-  color: inherit;
-  cursor: pointer;
-  display: grid;
-  gap: var(--space-2);
-  grid-template-columns: auto minmax(0, 1fr);
-  min-height: 28px;
-  min-width: 0;
-  padding: 0 var(--space-1);
-  text-align: left;
-}
-
-.linkButton:disabled {
-  cursor: default;
-}
-
-.connectionText {
-  display: grid;
-  gap: 1px;
-  min-width: 0;
-}
-
-.connectionText > span:first-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.connectionMeta {
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
-}
-
-/* Synapse rationale — inline machine fragment; keep the compact measure and let
-   MachineText own the face + ink (no color here so the machine ink flows). */
-.rationale {
-  font-size: var(--text-xs);
-}
-
-.fileInput {
-  height: 1px;
-  opacity: 0;
-  overflow: hidden;
-  position: absolute;
-  width: 1px;
-}
-
-.pendingAttachments {
-  display: grid;
-  gap: var(--space-2);
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.pendingAttachment {
-  align-items: center;
-  display: flex;
-  gap: var(--space-2);
-  justify-content: space-between;
-}
-
-.synapseMarker {
-  margin-right: var(--space-1);
-}
-
-.missing {
-  opacity: 0.55;
-}
-
-@media (max-width: 640px) {
-  .composerControls {
-    grid-template-columns: 1fr;
-  }
-
-  .autocomplete {
-    width: 100%;
-  }
 }

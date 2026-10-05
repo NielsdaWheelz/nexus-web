@@ -99,7 +99,7 @@ split by storage and query concern:
   (catalog hydration only; canonical playback state comes from the player
   descriptor).
 
-`python/nexus/services/resonance/` owns deterministic quick reads and reading
+`python/nexus/services/resonance.py` owns deterministic quick reads and reading
 slates. at hand combines continuity, arrival, graph, contributor and calibrated
 semantic evidence, returning at most ten unfinished placeable media outside the
 complete queue. a full queue suppresses at hand.
@@ -236,11 +236,11 @@ Lectern pane is the sole full-list editor).
   enqueueing; standard resource menus remain available. if refresh removes its
   focused row, the active section receives orphaned focus; deliberate focus
   moves and inactive panes are left alone.
-- `apps/web/src/lib/resonance/` and
-  `components/collections/ReadingSlateSection.tsx` own strict Slate transport,
-  presentation, the destination-keyed read/add/refill state machine, focus,
-  and quiet read recovery for at hand and library suggestions. they do not own
-  queue state or write commands. collection rows no longer expose relation
+- `apps/web/src/lib/resonance.ts` (the generated-wire slate read and row
+  presenter) and `components/collections/ReadingSlateSection.tsx` (keyed by
+  destination: read, Add through the destination's `accept`, one-item refill,
+  focus, and quiet read recovery) serve at hand and library suggestions. they
+  do not own queue state or write commands. collection rows no longer expose relation
   explanations or inline related expansion; opened-resource connections remain.
 - `apps/web/src/lib/player/` — the audio session: `playerSession.ts` (pure
   session/origin/history/resume state machine, zero React/I-O),

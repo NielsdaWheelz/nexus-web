@@ -53,8 +53,8 @@ import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import type { PaneFilterRowsStatus } from "@/lib/panes/paneFilterRows";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
-import { slateTargetId } from "@/lib/resonance/contract";
-import type { ReadingSlateAccept } from "@/lib/resonance/useReadingSlate";
+import { slateTargetId } from "@/lib/resonance";
+import type { SlateAccept } from "@/components/collections/ReadingSlateSection";
 import styles from "./LecternPaneBody.module.css";
 
 const LECTERN_FILTER_UNIT = { singular: "item", plural: "items" };
@@ -226,89 +226,14 @@ export default function LecternPaneBody() {
     [presentFailure, setOrder],
   );
 
-  const acceptSlateTarget = useCallback<ReadingSlateAccept>(
-    (target, options) => {
-      if (target.kind !== "Media") {
-        return Promise.resolve({
-          kind: "Rejected",
-          error: new ApiError(
-            400,
-            "E_INVALID_TARGET",
-            "Only media can be placed on the Lectern",
-          ),
-        });
-      }
-      if (resource.status !== "ready") {
-        return Promise.resolve({
-          kind: "Rejected",
-          error: new ApiError(
-            409,
-            "E_LECTERN_NOT_READY",
-            "The Lectern is still loading.",
-          ),
-        });
-      }
-      let underlying: ReturnType<typeof placeItems>;
-      try {
-        underlying = placeItems({
-          mediaIds: [assumeMediaId(slateTargetId(target))],
-          placement: { kind: "Last" },
-          unknownObservation: {
-            signal: options.signal,
-            onUnknown: (error) =>
-              options.onUnknown({
-                error,
-                recovery: {
-                  kind: "External",
-                  owner: "LecternMutationNotice",
-                },
-              }),
-          },
-        });
-      } catch (error) {
-        if (!isApiError(error) || isSameSystemApiDefect(error)) {
-          setDefect({ error });
-          return Promise.resolve({ kind: "Abandoned" });
-        }
-        return Promise.resolve({
-          kind: "Rejected",
-          error,
-        });
-      }
-      return new Promise((resolve) => {
-        let observing = true;
-        const abandon = () => {
-          if (!observing) return;
-          observing = false;
-          resolve({ kind: "Abandoned" });
-        };
-        options.signal.addEventListener("abort", abandon, { once: true });
-        underlying.then(
-          () => {
-            if (!observing) return;
-            observing = false;
-            options.signal.removeEventListener("abort", abandon);
-            resolve({ kind: "Accepted" });
-          },
-          (error: unknown) => {
-            if (!observing) return;
-            observing = false;
-            options.signal.removeEventListener("abort", abandon);
-            if (handleUnauthenticatedApiError(error)) {
-              resolve({ kind: "Abandoned" });
-              return;
-            }
-            if (!isApiError(error) || isSameSystemApiDefect(error)) {
-              setDefect({ error });
-              resolve({ kind: "Abandoned" });
-              return;
-            }
-            resolve({
-              kind: "Rejected",
-              error,
-            });
-          },
-        );
+  const acceptSlateTarget = useCallback<SlateAccept>(
+    async (target) => {
+      // The provider treats a command before its first read as a defect.
+      if (resource.status !== "ready")
+        throw new ApiError(409, "E_LECTERN_NOT_READY", "The Lectern is still loading.");
+      await placeItems({
+        mediaIds: [assumeMediaId(slateTargetId(target))],
+        placement: { kind: "Last" },
       });
     },
     [placeItems, resource.status],

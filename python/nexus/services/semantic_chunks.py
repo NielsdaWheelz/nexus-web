@@ -150,9 +150,10 @@ def media_neighbor_rows_sql(eligible_media_relation: str) -> str:
 
     ``eligible_media_relation`` must be a checked-in composable relation with a
     ``media_id`` and non-null ``candidate_partition`` column; it is never request
-    text. The returned SQL binds
-    ``:anchor_media_id``, ``:embedding_dimensions``, and ``:candidate_limit``
-    plus any binds owned by the supplied relation. It returns
+    text. The returned SQL binds ``:anchor_media_id``, the caller's calibrated
+    ``:embedding_provider``, ``:embedding_model`` and ``:embedding_dimensions``
+    (an anchor under another active identity has no neighbours), and
+    ``:candidate_limit``, plus any binds owned by the supplied relation. It returns
     ``peer_media_id``, minimum cosine ``distance``, ``embedding_provider``,
     ``embedding_model``, ``embedding_dimensions``, and ``candidate_partition``.
 
@@ -182,8 +183,8 @@ def media_neighbor_rows_sql(eligible_media_relation: str) -> str:
             WHERE cis.owner_kind = 'media'
               AND cis.owner_id = :anchor_media_id
               AND cis.status = 'ready'
-              AND cis.active_embedding_provider IS NOT NULL
-              AND cis.active_embedding_model IS NOT NULL
+              AND cis.active_embedding_provider = :embedding_provider
+              AND cis.active_embedding_model = :embedding_model
         ),
         anchor_vector AS (
             SELECT

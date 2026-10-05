@@ -322,23 +322,6 @@ class CollectionMedia:
     created_at: datetime
 
 
-def media_candidate_rows_sql() -> str:
-    """Policy-neutral media candidate facts.
-
-    Columns: ``media_id``, ``media_kind``, canonical ``created_at``, and the raw
-    partial-date ``original_published_date``. Visibility, teardown, destination
-    eligibility and exact-date interpretation belong to the composing query.
-    """
-    return """
-        SELECT
-            m.id AS media_id,
-            m.kind AS media_kind,
-            m.created_at,
-            m.original_published_date
-        FROM media m
-    """
-
-
 def hydrate_compact_media_targets(
     db: Session, *, viewer_id: UUID, media_ids: list[UUID]
 ) -> dict[UUID, CompactMediaTarget]:

@@ -91,13 +91,6 @@ export interface ResourceCapabilityProjection {
   adjacencyTarget: boolean;
 }
 
-export const SYNAPSE_SOURCE_SCHEMES = [
-  "media",
-  "page",
-  "note_block",
-  "highlight",
-] as const satisfies readonly ResourceScheme[];
-
 export const RESOURCE_CAPABILITIES = {
   media: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },

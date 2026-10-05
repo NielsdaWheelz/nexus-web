@@ -402,7 +402,8 @@ See
 
 ## Resonance and Reading Slate
 
-`python/nexus/services/resonance/` is the sole relevance-policy owner. It
+`python/nexus/services/resonance.py` is the sole relevance-policy owner (see
+[synapse.md](synapse.md) for its invariants). It
 composes public, policy-neutral read ports from `library_entries`, consumption,
 the resource graph, contributor credits, media/podcasts, and the semantic index;
 those modules retain their tables and mutations.

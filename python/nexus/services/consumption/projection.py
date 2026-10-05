@@ -235,6 +235,24 @@ def media_read_states(
     }
 
 
+def consumption_for_media(
+    db: Session, *, viewer_id: UUID, media_ids: list[UUID]
+) -> dict[UUID, Present[ConsumptionOut]]:
+    """Wire consumption for every requested media; media with no rows are unread."""
+    states = _read_states(db, viewer_id, media_ids)
+    return {
+        media_id: present(
+            ConsumptionOut(
+                state=state,
+                progress=presence_from_nullable(progress),
+                progress_resettable=resettable,
+            )
+        )
+        for media_id in media_ids
+        for state, progress, resettable in [states.get(media_id, ("Unread", None, False))]
+    }
+
+
 def build_snapshot(
     db: Session, *, viewer_id: UUID, rows: list[LecternRow], summaries: dict[UUID, MediaSummaryOut]
 ) -> LecternSnapshot:

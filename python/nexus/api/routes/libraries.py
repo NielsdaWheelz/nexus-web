@@ -45,7 +45,7 @@ from nexus.services import (
     library_governance,
     library_sharing,
 )
-from nexus.services.resonance import service as resonance_service
+from nexus.services import resonance as resonance_service
 from nexus.services.sealed_handles import InvalidSealedHandle, unseal_user
 
 router = APIRouter(tags=["libraries"])
