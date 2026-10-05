@@ -4,6 +4,7 @@ import { cookies, headers } from "next/headers";
 import { callFastAPI } from "@/lib/api/server";
 import { serverResourceFetcher } from "@/lib/api/resourceTransport.server";
 import type { DehydratedResources } from "@/lib/api/resourceCache";
+import type { ApiJson } from "@/lib/api/wire";
 import {
   decodeAuthenticatedAccount,
   type AuthenticatedAccount,
@@ -14,8 +15,7 @@ import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
 import { decodeAuthorWorksView } from "@/lib/contributors/workView";
-import { parseReaderProfile } from "@/lib/reader/readerProfileSync";
-import type { ReaderProfile } from "@/lib/reader/types";
+import type { ReaderProfile } from "@/lib/reader/ReaderContext";
 import { expectExactRecord, expectString } from "@/lib/validation";
 import { estimatePrimaryWidthPx } from "@/lib/workspace/paneSizing";
 import {
@@ -92,8 +92,8 @@ async function seedPane(href: string): Promise<{ cacheKey: string; data: unknown
 // a failure or malformed payload rejects the whole bootstrap into the workspace error
 // boundary — never a fabricated default.
 async function loadReaderProfile(): Promise<ReaderProfile> {
-  const res = await callFastAPI<{ data: unknown }>("/me/reader-profile");
-  return parseReaderProfile(res.data);
+  const res = await callFastAPI<ApiJson<"/me/reader-profile", "get">>("/me/reader-profile");
+  return res.data;
 }
 
 async function loadAuthenticatedAccount(): Promise<AuthenticatedAccount> {

@@ -47,6 +47,12 @@ function assertInstalledVersion() {
   }
 }
 
+/** The hosted pdf reader and the shared document reader each load the runtime. */
+const RUNTIME_DECLARERS = [
+  "src/components/pdfReaderRuntime.ts",
+  "src/lib/documentReader/pdf/pdfjs.ts",
+];
+
 /**
  * Every pdf.js path the reader runtime declares, read back from the single
  * declaring owner so the copy list cannot drift from what `PdfReader` requests.
@@ -54,16 +60,16 @@ function assertInstalledVersion() {
  * requirements; file declarations become file requirements.
  */
 export function declaredPdfJsRuntimePaths() {
-  const runtimeSource = readFileSync(
-    join(webDir, "src/components/pdfReaderRuntime.ts"),
-    "utf8",
-  );
-  const declared = [
-    ...runtimeSource.matchAll(/pdfRuntimePath\(\s*"([^"]+)"/gu),
-  ].map((match) => match[1]);
-  if (declared.length === 0) {
-    throw new Error("pdfReaderRuntime.ts declares no pdf.js runtime paths");
-  }
+  const declared = RUNTIME_DECLARERS.flatMap((file) => {
+    const runtimeSource = readFileSync(join(webDir, file), "utf8");
+    const paths = [
+      ...runtimeSource.matchAll(/pdfRuntimePath\(\s*"([^"]+)"/gu),
+    ].map((match) => match[1]);
+    if (paths.length === 0) {
+      throw new Error(`${file} declares no pdf.js runtime paths`);
+    }
+    return paths;
+  });
   return [...new Set(declared)].sort();
 }
 

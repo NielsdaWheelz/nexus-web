@@ -1,12 +1,6 @@
 "use client";
 
-import { useReaderContext } from "@/lib/reader/ReaderContext";
-import {
-  isReaderFocusMode,
-  isReaderFontFamily,
-  isReaderTheme,
-  type ReaderFocusMode,
-} from "@/lib/reader/types";
+import { useReaderContext, type ReaderProfile } from "@/lib/reader/ReaderContext";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import Select from "@/components/ui/Select";
@@ -15,7 +9,7 @@ import Toggle from "@/components/ui/Toggle";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "./page.module.css";
 
-const FOCUS_MODE_OPTIONS: ReadonlyArray<{ value: ReaderFocusMode; label: string }> = [
+const FOCUS_MODE_OPTIONS: ReadonlyArray<{ value: ReaderProfile["focus_mode"]; label: string }> = [
   { value: "off", label: "Off" },
   { value: "distraction_free", label: "Distraction-free" },
   { value: "paragraph", label: "Paragraph" },
@@ -49,7 +43,7 @@ export default function SettingsReaderPaneBody() {
               id="theme"
               value={p.theme}
               onChange={(e) => {
-                if (isReaderTheme(e.target.value)) setTheme(e.target.value);
+                setTheme(e.target.value === "dark" ? "dark" : "light");
               }}
             >
               <option value="light">Light</option>
@@ -65,9 +59,7 @@ export default function SettingsReaderPaneBody() {
               id="fontFamily"
               value={p.font_family}
               onChange={(e) => {
-                if (isReaderFontFamily(e.target.value)) {
-                  setFontFamily(e.target.value);
-                }
+                setFontFamily(e.target.value === "sans" ? "sans" : "serif");
               }}
             >
               <option value="serif">Serif</option>
@@ -134,7 +126,8 @@ export default function SettingsReaderPaneBody() {
             <Tabs
               value={p.focus_mode}
               onValueChange={(next) => {
-                if (isReaderFocusMode(next)) setFocusMode(next);
+                const option = FOCUS_MODE_OPTIONS.find(({ value }) => value === next);
+                if (option) setFocusMode(option.value);
               }}
               variant="segmented"
             >

@@ -1955,6 +1955,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/media/{media_id}/reader": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Reader Document
+         * @description The whole publication the reader mounts, from one snapshot.
+         */
+        get: operations["get_reader_document_media__media_id__reader_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/media/{media_id}/reader-state": {
         parameters: {
             query?: never;
@@ -2538,6 +2558,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/public/resource-share/document": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Public Resource Share Document */
+        get: operations["get_public_resource_share_document_public_resource_share_document_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/public/resource-share/file": {
         parameters: {
             query?: never;
@@ -2547,23 +2584,6 @@ export interface paths {
         };
         /** Get Public Resource Share File */
         get: operations["get_public_resource_share_file_public_resource_share_file_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/public/resource-share/sections/{section_handle}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Public Resource Share Section */
-        get: operations["get_public_resource_share_section_public_resource_share_sections__section_handle__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5270,6 +5290,11 @@ export interface components {
             /** Data */
             data: components["schemas"]["LearnDossierOpenedOut"] | components["schemas"]["LearnDossierBuildAcceptedOut"];
         };
+        /** Data[Annotated[Union[ReaderTextDocumentOut, ReaderPdfDocumentOut], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
+        Data_Annotated_Union_ReaderTextDocumentOut__ReaderPdfDocumentOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
+            /** Data */
+            data: components["schemas"]["ReaderTextDocumentOut"] | components["schemas"]["ReaderPdfDocumentOut"];
+        };
         /** Data[Annotated[Union[UploadRequired, Published, NeedsAttention], FieldInfo(annotation=NoneType, required=True, discriminator='kind')]] */
         Data_Annotated_Union_UploadRequired__Published__NeedsAttention___FieldInfo_annotation_NoneType__required_True__discriminator__kind____: {
             /** Data */
@@ -5503,10 +5528,6 @@ export interface components {
         Data_PodcastSubscriptionStatusOut_: {
             data: components["schemas"]["PodcastSubscriptionStatusOut"];
         };
-        /** Data[PublicSectionOut] */
-        Data_PublicSectionOut_: {
-            data: components["schemas"]["PublicSectionOut"];
-        };
         /** Data[PublicShareOut] */
         Data_PublicShareOut_: {
             data: components["schemas"]["PublicShareOut"];
@@ -5522,6 +5543,10 @@ export interface components {
         /** Data[ReaderDocumentMapOut] */
         Data_ReaderDocumentMapOut_: {
             data: components["schemas"]["ReaderDocumentMapOut"];
+        };
+        /** Data[ReaderProfileOut] */
+        Data_ReaderProfileOut_: {
+            data: components["schemas"]["ReaderProfileOut"];
         };
         /** Data[ResourceActionSnapshotResolveResponse] */
         Data_ResourceActionSnapshotResolveResponse_: {
@@ -11060,35 +11085,6 @@ export interface components {
              */
             route: "ProviderApi";
         };
-        /** PublicArticleReaderOut */
-        PublicArticleReaderOut: {
-            /** Fragments */
-            fragments: components["schemas"]["PublicFragmentOut"][];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Article";
-        };
-        /** PublicEpubReaderOut */
-        PublicEpubReaderOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Epub";
-            /** Sections */
-            sections: components["schemas"]["PublicSectionEntryOut"][];
-        };
-        /** PublicFragmentOut */
-        PublicFragmentOut: {
-            /** Canonical Text */
-            canonical_text: string;
-            /** Html Sanitized */
-            html_sanitized: string;
-            /** Ordinal */
-            ordinal: number;
-        };
         /** PublicHighlightOut */
         PublicHighlightOut: {
             /** Anchor */
@@ -11112,48 +11108,11 @@ export interface components {
             /** Quads */
             quads: components["schemas"]["HighlightTargetPdfQuadOut"][];
         };
-        /** PublicPdfReaderOut */
-        PublicPdfReaderOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Pdf";
-        };
-        /** PublicSectionEntryOut */
-        PublicSectionEntryOut: {
-            /** Depth */
-            depth: number;
-            /** Label */
-            label: string;
-            /** Ordinal */
-            ordinal: number;
-            /** Section Handle */
-            section_handle: string;
-        };
-        /** PublicSectionOut */
-        PublicSectionOut: {
-            /** Canonical Text */
-            canonical_text: string;
-            /** Html Sanitized */
-            html_sanitized: string;
-        };
-        /** PublicSegmentOut */
-        PublicSegmentOut: {
-            /** Canonical Text */
-            canonical_text: string;
-            /** Ordinal */
-            ordinal: number;
-            speaker: components["schemas"]["Presence_str_-Output"];
-            start_ms: components["schemas"]["Presence_int_"];
-        };
         /** PublicShareOut */
         PublicShareOut: {
             /** Bylines */
             bylines: string[];
             highlight: components["schemas"]["Presence_PublicHighlightOut_"];
-            /** Reader */
-            reader: components["schemas"]["PublicArticleReaderOut"] | components["schemas"]["PublicTranscriptReaderOut"] | components["schemas"]["PublicEpubReaderOut"] | components["schemas"]["PublicPdfReaderOut"];
             source_url: components["schemas"]["Presence_str_-Output"];
             /** Title */
             title: string;
@@ -11171,16 +11130,6 @@ export interface components {
             ordinal: number;
             /** Start Offset */
             start_offset: number;
-        };
-        /** PublicTranscriptReaderOut */
-        PublicTranscriptReaderOut: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Transcript";
-            /** Segments */
-            segments: components["schemas"]["PublicSegmentOut"][];
         };
         /** Published */
         Published: {
@@ -11821,6 +11770,28 @@ export interface components {
             section_id: components["schemas"]["Presence_str_-Output"];
             target: components["schemas"]["Presence_NavigationTextPointOut_"];
         };
+        /** ReaderPdfDocumentOut */
+        ReaderPdfDocumentOut: {
+            file: components["schemas"]["ReaderPdfFileOut"];
+            /** Identity */
+            identity: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "pdf";
+            /** Page Count */
+            page_count: number | null;
+            /** Title */
+            title: string;
+        };
+        /** ReaderPdfFileOut */
+        ReaderPdfFileOut: {
+            /** Expires At */
+            expires_at: string | null;
+            /** Url */
+            url: string;
+        };
         /** ReaderPdfPageLocatorOut */
         ReaderPdfPageLocatorOut: {
             /**
@@ -11836,6 +11807,45 @@ export interface components {
              * @constant
              */
             type: "pdf_page";
+        };
+        /** ReaderPointOut */
+        ReaderPointOut: {
+            /** Offset */
+            offset: number;
+            /** Unit Id */
+            unit_id: string;
+        };
+        /**
+         * ReaderProfileOut
+         * @description Exactly the seven preference fields; ``created_at`` never appears here.
+         */
+        ReaderProfileOut: {
+            /** Column Width Ch */
+            column_width_ch: number;
+            /**
+             * Focus Mode
+             * @enum {string}
+             */
+            focus_mode: "off" | "distraction_free" | "paragraph" | "sentence";
+            /**
+             * Font Family
+             * @enum {string}
+             */
+            font_family: "serif" | "sans";
+            /** Font Size Px */
+            font_size_px: number;
+            /**
+             * Hyphenation
+             * @enum {string}
+             */
+            hyphenation: "auto" | "off";
+            /** Line Height */
+            line_height: number;
+            /**
+             * Theme
+             * @enum {string}
+             */
+            theme: "light" | "dark";
         };
         /**
          * ReaderProfilePatch
@@ -11865,6 +11875,18 @@ export interface components {
             quote_prefix: string | null;
             /** Quote Suffix */
             quote_suffix: string | null;
+        };
+        /** ReaderSectionOut */
+        ReaderSectionOut: {
+            /** Anchor Id */
+            anchor_id: string | null;
+            at: components["schemas"]["ReaderPointOut"];
+            /** Depth */
+            depth: number;
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
         };
         /**
          * ReaderSelectionInput
@@ -11939,6 +11961,28 @@ export interface components {
              */
             kind: "Unavailable";
         };
+        /** ReaderTextDocumentOut */
+        ReaderTextDocumentOut: {
+            /** Embeds */
+            embeds: components["schemas"]["DocumentEmbedOut"][];
+            /** Identity */
+            identity: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "epub" | "transcript" | "web_article";
+            /** Sections */
+            sections: components["schemas"]["ReaderSectionOut"][];
+            /** Source Issues */
+            source_issues: (components["schemas"]["MissingImage"] | components["schemas"]["UnresolvedNavigationTarget"])[];
+            /** Title */
+            title: string;
+            /** Toc Nodes */
+            toc_nodes: components["schemas"]["ReaderTocNodeOut"][];
+            /** Units */
+            units: components["schemas"]["ReaderUnitOut"][];
+        };
         /** ReaderTextLocations */
         ReaderTextLocations: {
             /** Position */
@@ -11956,6 +12000,39 @@ export interface components {
             end_ms: number;
             /** Start Ms */
             start_ms: number;
+        };
+        /** ReaderTocNodeOut */
+        ReaderTocNodeOut: {
+            at: components["schemas"]["ReaderPointOut"] | null;
+            /** Children */
+            children: components["schemas"]["ReaderTocNodeOut"][];
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Section Id */
+            section_id: string | null;
+        };
+        /** ReaderUnitOut */
+        ReaderUnitOut: {
+            /** Canonical Text */
+            canonical_text: string;
+            /** Char Count */
+            char_count: number;
+            /** Href Path */
+            href_path: string | null;
+            /** Html Sanitized */
+            html_sanitized: string;
+            /** Id */
+            id: string;
+            /** Idx */
+            idx: number;
+            /** Speaker Label */
+            speaker_label: string | null;
+            /** T End Ms */
+            t_end_ms: number | null;
+            /** T Start Ms */
+            t_start_ms: number | null;
         };
         /** ReadingActivityBatchIn */
         ReadingActivityBatchIn: {
@@ -18169,9 +18246,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ReaderProfileOut_"];
                 };
             };
         };
@@ -18195,9 +18270,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ReaderProfileOut_"];
                 };
             };
             /** @description Validation Error */
@@ -19231,6 +19304,37 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_reader_document_media__media_id__reader_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_Annotated_Union_ReaderTextDocumentOut__ReaderPdfDocumentOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -20513,6 +20617,37 @@ export interface operations {
             };
         };
     };
+    get_public_resource_share_document_public_resource_share_document_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Nexus-Share-Token"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_Annotated_Union_ReaderTextDocumentOut__ReaderPdfDocumentOut___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_public_resource_share_file_public_resource_share_file_get: {
         parameters: {
             query?: never;
@@ -20532,39 +20667,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_public_resource_share_section_public_resource_share_sections__section_handle__get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Nexus-Share-Token"?: string;
-            };
-            path: {
-                section_handle: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_PublicSectionOut_"];
                 };
             };
             /** @description Validation Error */

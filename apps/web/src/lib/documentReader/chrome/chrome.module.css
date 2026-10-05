@@ -1,0 +1,200 @@
+/* Reader chrome: the overview rail, the phone ribbon, contents and the
+ * source-issues notice. */
+
+.rail {
+  position: relative;
+  display: flex;
+  flex: 0 0 32px;
+  flex-direction: column;
+  width: 32px;
+  min-height: 0;
+  background: var(--surface-2);
+}
+
+.track {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-block: var(--space-2);
+}
+
+.track::before {
+  position: absolute;
+  inset-block: 0;
+  left: 15.5px;
+  width: 1px;
+  background: var(--edge);
+  content: "";
+}
+
+.band {
+  position: absolute;
+  left: 10px;
+  width: 12px;
+  min-height: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  opacity: 0.18;
+  pointer-events: none;
+}
+
+.tick {
+  position: absolute;
+  left: 4px;
+  width: 24px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  background: none;
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+
+.tick::after {
+  position: absolute;
+  inset-block-start: 7.5px;
+  left: 5px;
+  width: 14px;
+  height: 1px;
+  background: var(--ink-muted);
+  content: "";
+}
+
+.tick[data-kind="group"]::after {
+  height: 3px;
+  inset-block-start: 6.5px;
+}
+
+.tick[data-kind="highlight"]::after {
+  background: var(--highlight-yellow);
+  height: 5px;
+  inset-block-start: 5.5px;
+}
+
+.tick[data-kind="warning"]::after {
+  background: var(--danger);
+}
+
+.tick:hover::after,
+.tick:focus-visible::after {
+  background: var(--accent);
+}
+
+.current {
+  position: absolute;
+  left: 9px;
+  width: 14px;
+  height: 2px;
+  background: var(--accent);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.chooser {
+  position: absolute;
+  z-index: var(--z-raised);
+  top: var(--space-2);
+  right: 100%;
+  display: flex;
+  flex-direction: column;
+  min-width: 12rem;
+  max-height: 60vh;
+  overflow: auto;
+  padding: var(--space-1);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-2);
+}
+
+.chooser button,
+.toc button {
+  display: block;
+  width: 100%;
+  min-height: 24px;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--reader-accent, var(--accent));
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.chooser button:hover,
+.toc button:hover {
+  background: var(--surface-hover);
+}
+
+.ribbon {
+  position: absolute;
+  z-index: 2;
+  inset-inline: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--edge-subtle);
+  pointer-events: none;
+}
+
+.ribbonBand {
+  position: absolute;
+  inset-block: 0;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+
+.contents {
+  overflow: auto;
+}
+
+.toc {
+  margin: 0;
+  padding: var(--space-2);
+  list-style: none;
+}
+
+.toc .toc {
+  padding: 0 0 0 var(--space-3);
+}
+
+.toc span {
+  display: block;
+  padding: var(--space-1) var(--space-2);
+  color: var(--reader-text-muted, var(--ink-faint));
+  font-size: var(--text-sm);
+}
+
+.toc button[aria-current] {
+  background: var(--reader-bg-secondary, var(--surface-2));
+  color: var(--reader-text, var(--ink));
+  font-weight: var(--weight-semibold);
+}
+
+.issues {
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  border-left: 2px solid var(--warning);
+  background: var(--reader-bg-secondary, var(--surface-2));
+  font-size: var(--text-sm);
+}
+
+.issues p {
+  margin: var(--space-1) 0;
+}
+
+.issues code {
+  overflow-wrap: anywhere;
+}
+
+@media (forced-colors: active) {
+  .ribbon {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
+
+  .ribbonBand,
+  .current {
+    background: Highlight;
+  }
+}

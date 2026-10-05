@@ -39,8 +39,8 @@ A link is `{APP_PUBLIC_URL}/s#share=nxshr1_<43>`. The token lives in the URL
 fragment and is stored raw; resolution is equality on that column and depends
 on no key. `/s` sends it only in the `X-Nexus-Share-Token` header of
 credential-free, uncached fetches to `/api/public/resource-share`, whose one
-catch-all BFF route forwards four closed shapes (document, `file`,
-`sections/nxps1_…`, `assets/nxpa1_…`) and 404s anything else.
+catch-all BFF route forwards four closed shapes (the share, `document`, `file`,
+`assets/nxpa1_…`) and 404s anything else.
 
 `services/public_resource_sharing.py` resolves the token, then gates the
 subject. The gate is the same predicate link creation uses and may only
@@ -56,21 +56,24 @@ ignored.
 a read locks the media `FOR SHARE`, then reads its facts in a fresh statement.
 article and transcript publication takes a conflicting parent `FOR NO KEY UPDATE`
 or `FOR UPDATE` lock. an article or transcript highlight must resolve to a current same-media
-fragment, and the response emits the complete fragment list with its ordinals;
-a stale anchor fails upstream with the same masked 404. the document is one
-response: title, bylines, disclosable source
-URL, the shared highlight (quote, color, and a text anchor naming a
-fragment/segment/section ordinal or a PDF page and quads), and the reader
-(article fragments, transcript segments, EPUB contents, or PDF). EPUB sections
-and images are fetched by handles sealed to (grant, media, content revision):
-HMAC under `STREAM_TOKEN_SIGNING_KEY`, byte-stable across releases, so a
-content change fails old handles closed. PDF bytes stream through FastAPI with
+fragment; a stale anchor fails upstream with the same masked 404. the share
+is one response: title, bylines, disclosable source URL and the shared
+highlight (quote, color, and a text anchor naming a fragment/segment ordinal or
+a PDF page and quads). `document` is the reader document the signed-in reader
+mounts (`GET /media/{id}/reader`, `services/reader_document.py`) projected
+through the public allowlist: unit ids are ordinals, html passes `public_html`,
+no embeds and no source issues; a PDF's file is `/api/public/resource-share/file`.
+`/s` mounts it in the shared reader (`lib/documentReader`) read-only, opened at
+the shared highlight. EPUB images are fetched by handles sealed to (grant,
+media, content revision): HMAC under `STREAM_TOKEN_SIGNING_KEY`, byte-stable
+across releases, so a content change fails old handles closed. PDF bytes stream through FastAPI with
 the token reauthorized on every range request; there are no signed storage
 URLs, and uvicorn aborts a body that disagrees with its Content-Length.
 
 `public_html.py` is the closed HTML policy: tag and attribute allowlist,
 script-like subtrees dropped, links forced external and referrer-free, every
-image source removed and EPUB assets rewritten to handles.
+image source removed and EPUB assets rewritten to handles (the reader fetches
+them with the token as units near the viewport).
 `public_source_urls.py` decides the disclosable URL: a generic web URL (ingest
 already validated and normalized it) minus params, query and fragment; X,
 YouTube and arXiv only when every identity of the attempt agrees; nothing else.
@@ -90,7 +93,8 @@ share and X behind bearer warnings, turn off), and library People. Route
 targets copy the pane's address without a request. The wire types of every
 route here come from `lib/api/wire.gen.ts`.
 
-`app/s/PublicShareReader.tsx` renders the document with the reader's own
-primitives: `HtmlRenderer`, `applyHighlightsToHtml` and the global `hl-*`
-colors, `formatClock`; `PublicPdf.tsx` uses the pdf.js runtime and the reader's
-PDF coordinate transforms.
+`app/s/PublicShareReader.tsx` renders the document in the shared reader
+(`lib/documentReader`'s `DocumentReaderView`) over `publicSource.ts`
+(`document`, token-authorised epub images as units near the viewport, the pdf
+file with the token header), read-only: no progress, no selection, the shared
+highlight as its one mark (global `hl-*` colors) and its entry target.

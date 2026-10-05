@@ -45,6 +45,12 @@ do not install the new apk before step 2.
 
 ## on-device data
 
+- reading copies made before the shared reader core (pr1 of the reader
+  rewrite: `reader.json` became `{media, document}`) no longer open in the new
+  shelf. the shelf says so and offers *Remove downloaded copy*; re-download
+  them. the server and the apk's shelf bundle change format together, so ship
+  that release's web+api and apk together as in steps 2–3.
+
 - there is no migration code. without *Clear storage*,
   `databases/offline_reading.db`, `files/offline-reading/`,
   `files/offline-media/` (possibly gigabytes of audio) and

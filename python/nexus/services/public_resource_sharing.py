@@ -2,10 +2,12 @@
 
 A link resolves to its grant by equality on the stored raw token, and the grant's subject
 passes one readiness gate, the one link creation uses. The gate may only loosen: tightening
-it would break links already handed out. A passing share is one allowlisted document, EPUB
-sections and images fetched by handles sealed to (grant, media, content revision), and the
-PDF's bytes; anything else is one masked 404. The media row is locked FOR SHARE before its
-facts are read, so teardown and dedupe serialize with a read and no read mixes generations.
+it would break links already handed out. A passing share is its summary, the whole reader
+document projected through the public allowlist (ordinal unit ids, sanitized html, no
+embeds or source issues), EPUB images fetched by handles sealed to (grant, media, content
+revision), and the PDF's bytes; anything else is one masked 404. The media row is locked
+FOR SHARE before its facts are read, so teardown and dedupe serialize with a read and no
+read mixes generations.
 """
 
 from __future__ import annotations
@@ -22,23 +24,24 @@ from sqlalchemy import RowMapping, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ResourceGrant
-from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.presence import presence_from_nullable
 from nexus.schemas.public_resource_sharing import (
-    PublicArticleReaderOut,
-    PublicEpubReaderOut,
-    PublicFragmentOut,
     PublicHighlightOut,
     PublicPdfAnchorOut,
-    PublicPdfReaderOut,
-    PublicSectionEntryOut,
-    PublicSectionOut,
-    PublicSegmentOut,
     PublicShareOut,
     PublicTextAnchorOut,
-    PublicTranscriptReaderOut,
 )
 from nexus.schemas.reader import PdfPageGeometryTargetOut
+from nexus.schemas.reader_document import (
+    ReaderPdfDocumentOut,
+    ReaderPdfFileOut,
+    ReaderPointOut,
+    ReaderSectionOut,
+    ReaderTextDocumentOut,
+    ReaderTocNodeOut,
+    ReaderUnitOut,
+)
 from nexus.services import resource_grants
 from nexus.services.capabilities import is_text_document_ready
 from nexus.services.contributor_credits import load_current_source_author_bylines
@@ -48,13 +51,14 @@ from nexus.services.locator_resolver import resolve_highlight_reader_target
 from nexus.services.media_file_access import MediaFileSource, get_media_file_source
 from nexus.services.public_html import sanitize_public_html
 from nexus.services.public_source_urls import public_source_url
+from nexus.services.reader_document import build_reader_document
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.sealed_handles import derive_handle_key
 from nexus.storage.client import StorageError, get_storage_client, read_object_checked
 
 Readiness = Literal["ProjectionNotReady", "ProjectionUnsupported"]
-_HandleDomain = Literal["section", "asset"]
-_HANDLE_PREFIX: dict[_HandleDomain, str] = {"section": "nxps1_", "asset": "nxpa1_"}
+_HandleDomain = Literal["asset"]
+_HANDLE_PREFIX: dict[_HandleDomain, str] = {"asset": "nxpa1_"}
 _UNSUPPORTED: Readiness = "ProjectionUnsupported"
 
 _FACTS_SQL = """
@@ -86,8 +90,6 @@ class _Share:
     title: str
     source_url: str | None
     highlight: PublicHighlightOut | None
-    fragments: list[RowMapping]
-    sections: list[EpubFragmentSourceContent]
     assets: list[EpubAssetSource]
     epub_digest: bytes
     pdf: MediaFileSource | None
@@ -123,7 +125,7 @@ def _load(db: Session, scheme: str, subject_id: UUID) -> _Share | Readiness:
     ):
         return _UNSUPPORTED
 
-    fragments, sections, assets, epub_digest, pdf = [], [], [], b"", None
+    assets, epub_digest, pdf = [], b"", None
     if kind == "epub":
         sections = list_epub_fragment_sources(db, media_id=media_id, limit=2**31 - 1)
         if facts["epub_attempt_id"] is None or not sections:
@@ -134,18 +136,11 @@ def _load(db: Session, scheme: str, subject_id: UUID) -> _Share | Readiness:
         pdf = get_media_file_source(db, media_id=media_id)
         if pdf is None or pdf.content_type != "application/pdf" or pdf.size_bytes < 1:
             return _UNSUPPORTED
-    else:
-        fragments = list(
-            db.execute(
-                text(
-                    "SELECT idx, html_sanitized, canonical_text, t_start_ms, speaker_label"
-                    " FROM fragments WHERE media_id = :media_id ORDER BY idx"
-                ),
-                {"media_id": media_id},
-            ).mappings()
-        )
-        if not fragments:
-            return _UNSUPPORTED
+    elif not db.scalar(
+        text("SELECT EXISTS (SELECT 1 FROM fragments WHERE media_id = :media_id)"),
+        {"media_id": media_id},
+    ):
+        return _UNSUPPORTED
     highlight = _highlight(db, subject_id) if scheme == "highlight" else None
     if scheme == "highlight" and highlight is None:
         return _UNSUPPORTED
@@ -155,8 +150,6 @@ def _load(db: Session, scheme: str, subject_id: UUID) -> _Share | Readiness:
         title=facts["title"],
         source_url=source_url,
         highlight=highlight,
-        fragments=fragments,
-        sections=sections,
         assets=assets,
         epub_digest=epub_digest,
         pdf=pdf,
@@ -249,61 +242,84 @@ def link_readiness(db: Session, subject: ResourceRef) -> Readiness | None:
 
 
 def read_share(db: Session, token: str) -> PublicShareOut:
-    grant, share = _open(db, token)
-    if share.kind == "web_article":
-        reader = PublicArticleReaderOut(
-            fragments=[
-                PublicFragmentOut(
-                    ordinal=row["idx"],
-                    html_sanitized=sanitize_public_html(row["html_sanitized"]),
-                    canonical_text=row["canonical_text"],
-                )
-                for row in share.fragments
-            ]
-        )
-    elif share.kind == "epub":
-        reader = PublicEpubReaderOut(
-            sections=[
-                PublicSectionEntryOut(
-                    ordinal=s.ordinal,
-                    label=s.label,
-                    depth=s.depth,
-                    section_handle=_seal("section", grant, share, s.ordinal),
-                )
-                for s in share.sections
-            ]
-        )
-    elif share.kind == "pdf":
-        reader = PublicPdfReaderOut()
-    else:
-        reader = PublicTranscriptReaderOut(
-            segments=[
-                PublicSegmentOut(
-                    ordinal=row["idx"],
-                    canonical_text=row["canonical_text"],
-                    start_ms=presence_from_nullable(row["t_start_ms"]),
-                    speaker=presence_from_nullable(row["speaker_label"]),
-                )
-                for row in share.fragments
-            ]
-        )
+    _, share = _open(db, token)
     return PublicShareOut(
         title=share.title,
         bylines=load_current_source_author_bylines(db, media_id=share.media_id),
         source_url=presence_from_nullable(share.source_url),
         highlight=presence_from_nullable(share.highlight),
-        reader=reader,
     )
 
 
-def read_section(db: Session, token: str, handle: str) -> PublicSectionOut:
+def read_document(db: Session, token: str) -> ReaderTextDocumentOut | ReaderPdfDocumentOut:
+    """The shared media's reader document, built field by field: units are addressed by
+    ordinal, html passes the public policy, and nothing else of the private read crosses."""
     grant, share = _open(db, token)
-    ordinal = _unseal("section", grant, share, handle)
-    section = next(s for s in share.sections if s.ordinal == ordinal)
-    asset_handles = {a.asset_key: _seal("asset", grant, share, a.ordinal) for a in share.assets}
-    return PublicSectionOut(
-        html_sanitized=sanitize_public_html(section.html_sanitized, asset_handles.get),
-        canonical_text=section.canonical_text,
+    try:
+        document = build_reader_document(
+            db,
+            media_id=share.media_id,
+            viewer_id=None,
+            pdf_file=lambda: ReaderPdfFileOut(
+                url="/api/public/resource-share/file", expires_at=None
+            ),
+        )
+    except ApiError:
+        _gone()
+    if isinstance(document, ReaderPdfDocumentOut):
+        return ReaderPdfDocumentOut(
+            kind="pdf",
+            identity=document.identity,
+            title=document.title,
+            page_count=document.page_count,
+            file=document.file,
+        )
+    handles = {a.asset_key: _seal("asset", grant, share, a.ordinal) for a in share.assets}
+    ordinals = {unit.id: str(unit.idx) for unit in document.units}
+
+    def point(at: ReaderPointOut) -> ReaderPointOut:
+        return ReaderPointOut(unit_id=ordinals[at.unit_id], offset=at.offset)
+
+    def node(toc: ReaderTocNodeOut) -> ReaderTocNodeOut:
+        return ReaderTocNodeOut(
+            id=toc.id,
+            label=toc.label,
+            at=None if toc.at is None else point(toc.at),
+            section_id=toc.section_id,
+            children=[node(child) for child in toc.children],
+        )
+
+    return ReaderTextDocumentOut(
+        kind=document.kind,
+        identity=document.identity,
+        title=document.title,
+        units=[
+            ReaderUnitOut(
+                id=ordinals[unit.id],
+                idx=unit.idx,
+                html_sanitized=sanitize_public_html(unit.html_sanitized, handles.get),
+                canonical_text=unit.canonical_text,
+                char_count=unit.char_count,
+                href_path=None,
+                t_start_ms=unit.t_start_ms,
+                t_end_ms=unit.t_end_ms,
+                speaker_label=unit.speaker_label,
+            )
+            for unit in document.units
+        ],
+        sections=[
+            ReaderSectionOut(
+                id=section.id,
+                label=section.label,
+                depth=section.depth,
+                at=point(section.at),
+                anchor_id=section.anchor_id,
+            )
+            for section in document.sections
+        ],
+        toc_nodes=[node(toc) for toc in document.toc_nodes],
+        source_issues=[],
+        embeds=[],
     )
 
 

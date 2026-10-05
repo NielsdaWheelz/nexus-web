@@ -1,10 +1,12 @@
-# Are nxps1_/nxpa1_ handles durable, or scoped to one open tab
+# Are nxpa1_ asset handles durable, or scoped to one open tab
 
 status: deferred · awaiting owner decision · origin: 2026-09-28 resource-sharing reauthoring (size/resource-sharing, finding F38) · area: resource sharing / sealed handles
 
-EPUB section and image handles (`nxps1_…`, `nxpa1_…`) are minted inside the one
-`GET /api/public/resource-share` document and used only by the tab that loaded
-it; unlike `/s#share=nxshr1_…` links they are never handed out. the reauthoring
+EPUB image handles (`nxpa1_…`) are minted inside the one
+`GET /api/public/resource-share/document` read and used only by the tab that loaded
+it; unlike `/s#share=nxshr1_…` links they are never handed out. (section
+handles, `nxps1_…`, went with `/sections/{handle}` when the public reader moved
+to the whole-document read, 2026-10-04.) the reauthoring
 kept their codec byte-identical anyway (the slice's hazard list names them
 live): a double-sha256 EPUB revision digest over the attempt and resource rows
 plus a per-grant HMAC (`services/public_resource_sharing.py:_epub_digest`,

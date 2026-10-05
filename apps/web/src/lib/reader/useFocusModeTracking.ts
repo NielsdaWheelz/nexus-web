@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type RefObject } from "react";
-import type { ReaderFocusMode } from "@/lib/reader/types";
+import type { ReaderProfile } from "@/lib/reader/ReaderContext";
 
 const CHROME_REVEAL_TIMEOUT_MS = 3000;
 
@@ -16,7 +16,7 @@ const CHROME_REVEAL_TIMEOUT_MS = 3000;
  * (paragraph DOM) changes identity.
  */
 export function useFocusModeTracking(
-  focusMode: ReaderFocusMode,
+  focusMode: ReaderProfile["focus_mode"],
   readerRootRef: RefObject<HTMLElement | null>,
   renderedHtmlSignal: string,
 ): { chromeRevealed: boolean } {

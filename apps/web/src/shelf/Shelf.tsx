@@ -10,7 +10,7 @@ import {
   type OfflineItem,
   type OfflineSnapshot,
 } from "@/lib/offline/bridge";
-import type { ReaderProgressView } from "@/lib/reader/ReaderProgressPort";
+import type { ProgressView } from "@/lib/documentReader/ports";
 import { formatByteCount } from "@/lib/text/formatByteCount";
 import ShelfReader from "./ShelfReader";
 import styles from "./shelf.module.css";
@@ -40,7 +40,7 @@ const KIND_COPY: Record<OfflineItem["kind"], string> = {
   web_article: "Web article",
 };
 
-const POSITION_COPY: Record<ReaderProgressView["kind"], string> = {
+const POSITION_COPY: Record<ProgressView["kind"], string> = {
   Canonical: "Position synced",
   Pending: "Position saved on this device",
   Conflict: "Position needs your choice",

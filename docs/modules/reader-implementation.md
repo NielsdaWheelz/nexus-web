@@ -53,11 +53,35 @@ the initial fragment. explicit fragment reads and pdf access refreshes always
 call the source; the session keeps no second consumable copy of initial content.
 
 Hosted media composition installs the current BFF/API source and canonical
-online cursor port. The Android shelf installs a source over a downloaded
-copy's `reader.json` and a device progress port. `TextDocumentReader` and `PdfReader`
-render resolved inputs and do not fetch media, signed URLs, highlights, or
-progress. Hosted decorations remain a layer over canonical content; offline
-copies contain undecorated canonical inputs.
+online cursor port. `TextDocumentReader` and `PdfReader` render resolved inputs
+and do not fetch media, signed URLs, highlights, or progress. Hosted
+decorations remain a layer over canonical content.
+
+### shared document reader (public reader and shelf)
+
+`lib/documentReader` is the reader primitive the public `/s` reader and the
+Android shelf use (the hosted pane moves onto it in the hosted cutover). A host
+supplies a `ReaderSource` (`load` one immutable `ReaderDocument`, refresh a pdf
+file, optional per-unit hydration), an optional `ReaderProgressPort` (load;
+save, which a cursor service may refuse as `Stale` when canonical moved past
+the base and a device store keeps as `Device`; resolve a device store's
+`Conflict`) and an entry (fresh target, cold target); `useDocumentReader`
+returns a `Reader` and `DocumentReaderView` renders it with the host's
+`Decorations` and callbacks. Every text unit of a web article, epub or
+transcript mounts in one scroll (`content-visibility` skips off-screen units);
+positions are `(unit, codepoint offset)` or `(page, y)`. The runtime restores
+once (fresh target, else saved cursor, else cold target, else the start;
+genuine input first skips it), keeps reading vs exploring with the first held
+spot, saves only reader-intent viewports (500 ms idle, 5 s max, one in flight),
+and adopts a newer cursor silently only when the window was away and idle. A
+newer cursor while the reader is present, or a refused save, becomes *newer
+reading spot available* and movement waits for the choice; a device store's
+conflict shows the same choice while reading keeps moving its device side, and
+*keep my reading spot* keeps the latest one. A cursor that cannot be read opens
+the document anyway (*reading position unavailable*, nothing saves). A pdf
+position at page width saves zoom `null`, so it fits wherever it reopens.
+Public marks paint as `<mark data-reader-mark class="hl-<colour>">` and pdf
+overlay rects; the paint mechanism is internal to the surfaces.
 
 `MediaPaneBody` remains the cohesive hosted composition owner. one
 publication-bound evidence index serves lookup, marker and stance projections
@@ -620,42 +644,22 @@ separate from source-authored apparatus.
 
 ### reader profile write coordinator
 
-- `readerProfileSync.ts` is the one pure reducer: strict wire decode, per-field
-  patch merge/equality, and the `acknowledged`/`local`
-  (`Clean | Deferred | Saving | SaveFailed`) state machine.
-  `useReaderProfile.ts` is the one impure coordinator: timers, fetches, the
-  attempt watchdog, lifecycle listeners, and revalidation generations.
-  Together they are the only client write owner — there is no other save
-  path, no frontend default, and no no-op.
-- one logical PATCH is in flight at a time, with one latest-merged queue
-  behind it. Discrete fields (`theme`, `font_family`, `focus_mode`,
-  `hyphenation`) send immediately when idle; continuous fields
-  (`font_size_px`, `line_height`, `column_width_ch`) debounce 400 ms idle
-  within a 5 s maximum, measured from the first unflushed input. Every PATCH
-  sets `keepalive: true` and is awaited.
-- a `Saving` attempt carries a 35 s wall-clock watchdog (the BFF's 30 s
-  deadline plus margin); expiry invalidates then aborts the attempt and
-  converts it to `SaveFailed(AttemptDeadlineExceeded)`, ignoring late
-  settlement. Restore never auto-starts a replacement PATCH.
-- hidden `visibilitychange`, `pagehide`, and provider teardown flush deferred
-  or `SaveFailed` work only when no logical PATCH is in flight, and
-  `beforeunload`/`unload` are not used.
-- clean-tab resume (`visibilitychange`, `focus`, `pageshow`, `online`)
-  coalesces to one no-store GET, only from `Clean`, and adopts the response
-  only if an `intentGeneration` captured at request time is still
-  unchanged — any intervening local intent outranks the background read.
-- `ReaderProvider`/`useReaderContext` expose the public capability: `profile`
-  (the optimistic desired projection), `persistence`
-  (`Clean | Pending | SaveFailed`), semantic setters
-  (`setTheme`, `setFontFamily`, `setFocusMode`, `setHyphenation`,
-  `setFontSize`, `setLineHeight`, `setColumnWidth`), and `retrySave()`. There
-  is no generic `save(Partial<ReaderProfile>)`; calling `useReaderContext`
-  outside its provider throws rather than returning a no-op default.
-- controls stay interactive in `Pending` and `SaveFailed`.
-- one keyed Feedback presentation (`reader-profile-save`, owned by
-  `ReaderProfileSaveFeedback.tsx`) is the save-failure UX: a persistent global
-  toast with Retry for `SaveFailed`. It is the only presentation — the Settings
-  reader pane renders no inline copy of it.
+- `ReaderProvider` (`lib/reader/ReaderContext.tsx`) is the one client write
+  owner. A setter applies at once and merges into one unsent patch; 300 ms
+  after the last change one `PATCH /me/reader-profile` (`keepalive`) sends it,
+  one request in flight, changes made meanwhile follow in the next request
+  (latest wins). The response is server truth for the fields it carried.
+  `pagehide` flushes unsent changes. There is no watchdog, queue or
+  revalidation: the profile is re-read at the next bootstrap.
+- `ReaderProvider`/`useReaderContext` expose `profile`, `persistence`
+  (`Clean | Pending | SaveFailed`), the semantic setters (`setTheme`,
+  `setFontFamily`, `setFocusMode`, `setHyphenation`, `setFontSize`,
+  `setLineHeight`, `setColumnWidth`) and `retrySave()`; `ReaderProfile` is
+  the generated `Schema<"ReaderProfileOut">` (the route is typed). Calling
+  `useReaderContext` outside its provider throws.
+- controls stay interactive in `Pending` and `SaveFailed`. A failed save keeps
+  the change and publishes one keyed persistent Feedback (`reader-profile-save`)
+  with Retry, from inside the provider; leaving failure resolves it.
 
 ### reader profile backend contract
 
@@ -978,20 +982,22 @@ of its location-target writes uses.
 
 `reader_publications` is the sole generation owner for ready PDF, EPUB, and web
 article reader inputs. A reading copy (`services/reading_copy.py`, served at
-`GET /stream/media/{id}/reading-copy` with a stream token) reads the hosted
-navigation, web fragments or EPUB fragments in one repeatable-read snapshot,
-serializes each exactly as its hosted route does, releases the snapshot, and
-zips them as `reader.json` with `document.pdf` or every `assets/{asset_key}`.
-It records the generation it read (`Nexus-Reader-Generation`); an object that
-vanished meanwhile is `E_READER_CONTENT_CHANGED`. Web article images become
-text placeholders; EPUB html is untouched, and the shelf rewrites its
-`/api/media/{id}/assets/` prefix to the copy's own files.
+`GET /stream/media/{id}/reading-copy` with a stream token) builds the reader
+document (`services/reader_document.py`, the same build as
+`GET /media/{id}/reader`) in one repeatable-read snapshot, releases it, and zips
+`reader.json` = `{media, document}` with `document.pdf` or every
+`assets/{asset_key}`. A pdf's `file.url` is `document.pdf`; web article images
+become text placeholders; EPUB html keeps its `/api/media/{id}/assets/` paths,
+which the shelf rewrites to the copy's own files. It records the generation it
+read (`Nexus-Reader-Generation`); an object that vanished meanwhile is
+`E_READER_CONTENT_CHANGED`.
 
-The shelf (`apps/web/src/shelf/`) feeds `reader.json` to the hosted parsers
-through `ReaderDocumentSource` and renders with the shared core. It is a build
-output, not a committed tree: gradle runs `bun run build:shelf` in `apps/web`
-before merging assets, and `./scripts/test` runs the same build. Its CSP and
-the native router keep it off the network. See [offline](offline.md).
+The shelf (`apps/web/src/shelf/`) maps `reader.json`'s document with
+`readerDocument()` and renders it in the shared document reader with a device
+progress port over the bridge. It is a build output, not a committed tree:
+gradle runs `bun run build:shelf` in `apps/web` before merging assets, and
+`./scripts/test` runs the same build. Its CSP and the native router keep it off
+the network. See [offline](offline.md).
 
 ### reader theme quick-switch
 

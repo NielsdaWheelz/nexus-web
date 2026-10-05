@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import type { ReaderProfile } from "@/lib/reader/types";
+import type { ReaderProfile } from "@/lib/reader/ReaderContext";
 
 export function buildReaderSurfaceStyle(profile: ReaderProfile): CSSProperties {
   const readerFontFamily =

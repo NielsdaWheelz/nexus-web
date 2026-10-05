@@ -277,7 +277,7 @@ body {
 .textWithMap {
   display: grid;
   flex: 5.5 1 0;
-  grid-template-columns: minmax(0, 1fr) 52px;
+  grid-template-columns: minmax(0, 1fr) auto;
   min-height: 0;
 }
 
