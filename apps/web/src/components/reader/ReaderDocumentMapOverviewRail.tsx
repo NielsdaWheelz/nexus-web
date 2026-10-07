@@ -642,7 +642,7 @@ function markerShapeClass(marker: ReaderDocumentMapMarker): string {
     case "SourceReference":
     case "GeneratedCitation": return styles.markerCitation;
     case "Link":
-    case "Synapse": return styles.markerConnection;
+    case "MachineLink": return styles.markerConnection;
   }
 }
 
@@ -651,7 +651,7 @@ function markerColor(marker: ReaderDocumentMapMarker): string {
     case "Highlight": return "var(--highlight-yellow)";
     case "Citation": return "var(--highlight-purple)";
     case "Link": return "var(--highlight-blue)";
-    case "Synapse": return "var(--highlight-green)";
+    case "MachineLink": return "var(--highlight-green)";
     case "Warning": return "var(--highlight-pink)";
     case "Neutral": return "var(--edge-strong)";
   }

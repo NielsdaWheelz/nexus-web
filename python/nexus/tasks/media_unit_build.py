@@ -33,6 +33,7 @@ from nexus.services import durable_step_journal as step_journal
 from nexus.services import generation_policy
 from nexus.services.atlas_projection import try_enqueue_atlas_project
 from nexus.services.codex_generation_contract import GenerationTerminal
+from nexus.services.connection_discovery import queue_connection_discovery_scan
 from nexus.services.generation_spec import ImmutablePromptPayloadRef, generation_fact_digest
 from nexus.services.llm_execution import (
     AcceptedGenerationFailure,
@@ -66,7 +67,6 @@ from nexus.services.structured_synthesis import (
     ground_indices,
     outcome_failure_facts,
 )
-from nexus.services.synapse import queue_synapse_scan
 from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
 _STEP_PATH = "synthesis"
@@ -437,7 +437,7 @@ def _apply(
         ):
             db.rollback()
             return
-        queue_synapse_scan(
+        queue_connection_discovery_scan(
             db,
             user_id=owner_user_id,
             ref=ResourceRef(scheme="media", id=head.media_id),

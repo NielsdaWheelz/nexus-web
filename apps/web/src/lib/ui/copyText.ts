@@ -14,7 +14,9 @@ export class ClipboardWriteUnavailableError extends Error {
   }
 }
 
-function fallbackCopyText(value: string): void {
+export const RESOURCE_CLIPBOARD_TYPE = "application/x-nexus-reference+json";
+
+function fallbackCopyText(value: string, resourceRef?: string): void {
   if (typeof document === "undefined") {
     throw new ClipboardWriteUnavailableError();
   }
@@ -25,13 +27,28 @@ function fallbackCopyText(value: string): void {
   textArea.style.top = "-1000px";
   document.body.appendChild(textArea);
   textArea.select();
+  let identityWritten = false;
+  const writeIdentity = (event: ClipboardEvent) => {
+    if (!event.clipboardData || resourceRef === undefined) return;
+    event.clipboardData.setData("text/plain", value);
+    event.clipboardData.setData(RESOURCE_CLIPBOARD_TYPE, JSON.stringify({ ref: resourceRef }));
+    event.preventDefault();
+    identityWritten = true;
+  };
+  if (resourceRef !== undefined) document.addEventListener("copy", writeIdentity);
   try {
-    if (!document.execCommand("copy")) {
+    if (!document.execCommand("copy") || (resourceRef !== undefined && !identityWritten)) {
       throw new ClipboardWriteUnavailableError();
     }
   } finally {
+    document.removeEventListener("copy", writeIdentity);
     document.body.removeChild(textArea);
   }
+}
+
+/** Copy a navigable address and the identity used by outline link paste. */
+export async function copyResourceLink(href: string, ref: string): Promise<void> {
+  fallbackCopyText(href, ref);
 }
 
 function isClipboardPermissionDenied(error: unknown): boolean {

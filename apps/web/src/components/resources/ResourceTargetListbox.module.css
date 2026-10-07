@@ -57,7 +57,10 @@
 }
 
 .meta mark {
+  border-radius: var(--radius-xs);
+  background: var(--accent-muted);
   color: var(--ink);
+  padding: 0 2px;
   font-weight: var(--weight-medium);
 }
 

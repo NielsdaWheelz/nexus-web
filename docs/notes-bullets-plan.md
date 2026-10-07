@@ -1,5 +1,8 @@
 # roam-style bullets over shared links
 
+subsequent target: [connections cutover](connections-plan.md) retires inline
+references and user stances while retaining this shared-outline behavior.
+
 status: implemented candidate; stacked pr 2 of 2
 date: 2026-09-25; baseline: pr 1, [writing and saving](notes-writing-plan.md)
 evidence: [roam reference](research/notes-roam-reference.md), [current owners](research/notes-current-system.md)
@@ -12,10 +15,11 @@ single writing/save/history owner. the user explicitly requires bidirectional,
 nonhierarchical links: a note's linked notes follow it everywhere. indent and
 outdent EDIT LINKS. there is no canonical parent or occurrence-owned subtree.
 
-scope: explicit user context links projected in existing page/note writing
-surfaces. compact annotations retain pr 1's prose contract. citations, inline
-reference provenance, highlight/link-note attachment motifs and directed
-stances keep their existing meanings. no navigation redesign, graph workspace,
+scope: neutral user links projected in existing page/note writing
+surfaces. compact annotations retain pr 1's prose contract. citations,
+highlight/link-note attachment motifs and directed machine facts keep their
+existing meanings. the subsequent connections cutover removes inline references
+and user stances. no navigation redesign, graph workspace,
 offline mode, crdt, new editor framework, task system or full roam syntax suite.
 
 ## model and projection
@@ -151,7 +155,7 @@ may now be referenced elsewhere.
 transaction through flush-only graph/body owners. extract the shared neutral
 link mutation from `user_relations.py` into the graph owner so universal link
 authoring and bullets enforce the SAME uniqueness, annotation and version rules.
-body projection, inline-reference indexing and note reindexing retain their owners.
+body projection, embed facts and note reindexing retain their owners.
 
 topology changes bump BOTH endpoint `links` versions; rank changes bump only
 the reordered endpoint; duplicate no-op insertion bumps neither. all neutral

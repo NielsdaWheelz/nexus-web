@@ -30,6 +30,9 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
+- [open] local credentials / operations · 2026-10-07 connections verification · provider/shared local storage keys appeared in an agent tool result; disposable login replaced, existing keys need owner rotation: [ticket](tickets/connections-verification-credential-rotation.md).
+- [open] reader map / development · 2026-10-07 connections review · one multi-pane hot-reload run observed an invalid computed hit height; fresh reader runs passed, trigger remains unproved: [ticket](tickets/reader-map-css-measurement-hmr.md).
+- [open] generation / queue · 2026-10-07 connections verification · missing codex catalog is recorded as generic worker failure before generation admission: [ticket](tickets/background-catalog-unavailable-loses-classification.md).
 - [open] processing recovery / release · 2026-09-28 pr #387 investigation · the keats normalizations and gutenberg correction never ran in production (commands are unreleased); run them after the release, then land #387: [ticket](tickets/processing-repairs-await-release-then-387.md).
 - [open] release / production · 2026-09-28 cleanup campaign · production still serves 7dc68929b at alembic 0241; main carries irreversible migrations 0242–0251 with preflights to run first: [ticket](tickets/production-release-pending-since-7dc68929b.md).
 - [open] resource sharing / production migration · 2026-09-28 resource-sharing reauthoring · run 0249's malformed/duplicate `resource_grants` count read-only against production before deploy: [ticket](tickets/resource-grants-0249-production-preflight.md).
@@ -344,7 +347,6 @@ unexpected timeouts. See
 - [open] 2026-09-28 api / bff observability · server-timing phases outlived the tests that read them; keep or delete at the api/auth/bff reauthor: [ticket](tickets/server-timing-phases-outlived-their-tests.md).
 - [open] dossiers / typed wire · 2026-09-28 cleanup pr-08 · the head ships `coverage` that the web ignores while it derives the same label from `input_manifest`: [ticket](tickets/dossier-coverage-is-computed-and-dropped.md).
 - [open] search / typed wire · 2026-09-28 cleanup pr-08 · `RetrievalLocator` `= None` defaults generate optional fields; stored locators omit those keys, so dropping them needs a backfill: [ticket](tickets/retrieval-locator-defaults-generate-optional-fields.md).
-- [open] dossiers / resource graph · 2026-09-28 cleanup pr-08 · user links to or from an `artifact_revision` die at the next regenerate; revisions should not be link endpoints: [ticket](tickets/dossier-revision-user-links-die-on-regenerate.md).
 - [open] dossiers / production migration · 2026-09-28 cleanup pr-08 · run 0250's stored-json preconditions and loss counts read-only against production before the backend deploy: [ticket](tickets/dossier-latest-revision-0250-production-preflight.md).
 - [open] schema / production migration · 2026-09-28 pr #413 · inventory irreversible 0251 data loss against the production lineage and verify the backup before release: [ticket](tickets/schema-0251-production-loss-preflight.md).
 - [open] resource actions web · 2026-09-28 cleanup pr-08 · web decodes and drops `MakeArtifactRevisionCurrent` until the backend with 0250 ships: [ticket](tickets/web-make-current-arm-outlives-revision-history.md).

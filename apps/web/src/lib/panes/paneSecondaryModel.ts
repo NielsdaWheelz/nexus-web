@@ -59,18 +59,6 @@ export const PANE_SECONDARY_SURFACE_DEFINITIONS = [
     iconId: "users",
   },
   {
-    id: "resource-evidence",
-    groupId: "resource-inspector",
-    title: "Evidence",
-    iconId: "link-2",
-  },
-  {
-    id: "resource-context",
-    groupId: "resource-inspector",
-    title: "Context",
-    iconId: "link-2",
-  },
-  {
     id: "resource-connections",
     groupId: "resource-inspector",
     title: "Connections",

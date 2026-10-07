@@ -1,16 +1,14 @@
-"""Conversation context: the edges whose source is a conversation.
+"""Direct conversation context: neutral user links plus citation/system attachments.
 
-The context surface lists, adds and removes bare ``kind=context`` edges under one
-attached-context slot per target (user, citation and system origins share it). Read
-admission and the reverse lookups accept any conversation edge to the target. Mutators
-are flush-only; the routes commit.
+This projection owns prompt, admission, search and reverse-lookup membership.
+It never traverses another conversation's connections. Mutations only flush.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, cast
+from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy import select, text
@@ -27,12 +25,15 @@ from nexus.services.keyset_cursor import (
     decode_keyset_cursor,
     encode_keyset_cursor,
 )
-from nexus.services.resource_graph.edges import create_edge
+from nexus.services.resource_graph.edges import (
+    conversation_link_order_key,
+    create_edge,
+    delete_edge,
+)
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.resolve import ResolvedResource, resolve_ref, resolve_refs
-from nexus.services.resource_graph.schemas import EdgeCreate, EdgeOrigin
+from nexus.services.resource_graph.schemas import EdgeCreate
 from nexus.services.resource_items.capabilities import (
-    CONVERSATION_CONTEXT_EDGE_ORIGINS,
     resource_can_attach,
 )
 from nexus.services.resource_items.routing import resource_activation_for_ref
@@ -56,30 +57,72 @@ class ConversationPage:
     page: PageInfo
 
 
+def context_facts_sql(conversation_id_sql: str = ":conversation_id") -> str:
+    """Direct facts, with canonical user pairs projected from either endpoint.
+
+    ``conversation_id_sql`` is a caller-owned SQL expression, never input text.
+    ``viewer_id`` is bound by every caller. This is also the search membership law.
+    """
+    return f"""
+        SELECT e.id AS edge_id, e.created_at,
+               CASE WHEN e.source_scheme = 'conversation' AND e.source_id = {conversation_id_sql}
+                    THEN e.target_scheme ELSE e.source_scheme END AS target_scheme,
+               CASE WHEN e.source_scheme = 'conversation' AND e.source_id = {conversation_id_sql}
+                    THEN e.target_id ELSE e.source_id END AS target_id,
+               v.order_key
+        FROM resource_edges e
+        LEFT JOIN resource_view_states v
+          ON v.edge_id = e.id AND v.user_id = e.user_id
+         AND v.surface_scheme = 'conversation' AND v.surface_id = {conversation_id_sql}
+        WHERE e.user_id = :viewer_id AND e.origin = 'user' AND e.kind = 'context'
+          AND e.ordinal IS NULL AND e.snapshot IS NULL AND e.source_order_key IS NULL
+          AND ((e.source_scheme = 'conversation' AND e.source_id = {conversation_id_sql})
+            OR (e.target_scheme = 'conversation' AND e.target_id = {conversation_id_sql}))
+        UNION ALL
+        SELECT e.id AS edge_id, e.created_at, e.target_scheme, e.target_id, e.source_order_key AS order_key
+        FROM resource_edges e
+        WHERE e.user_id = :viewer_id AND e.origin IN ('citation', 'system')
+          AND e.source_scheme = 'conversation' AND e.source_id = {conversation_id_sql}
+          AND e.kind = 'context' AND e.ordinal IS NULL AND e.snapshot IS NULL
+    """
+
+
 def list_context_refs(
     db: Session, *, viewer_id: UUID, conversation_id: UUID
 ) -> list[ContextRefOut]:
+    """One target per direct attachment, in its stable first-attached position."""
     _require_owner(db, viewer_id, conversation_id)
     rows = (
         db.execute(
-            select(ResourceEdge)
-            .where(*_context_edge_predicates(viewer_id, conversation_id))
-            .order_by(
-                ResourceEdge.source_order_key.asc().nulls_last(),
-                ResourceEdge.created_at.asc(),
-                ResourceEdge.id.asc(),
-            )
+            text(f"""
+        SELECT * FROM (
+            SELECT DISTINCT ON (target_scheme, target_id) *
+            FROM ({context_facts_sql()}) facts
+            ORDER BY target_scheme, target_id, order_key ASC NULLS LAST, created_at, edge_id
+        ) targets
+        ORDER BY order_key ASC NULLS LAST, created_at, edge_id
+    """),
+            {"viewer_id": viewer_id, "conversation_id": conversation_id},
         )
-        .scalars()
+        .mappings()
         .all()
     )
     targets = [
-        ResourceRef(scheme=cast("ResourceScheme", row.target_scheme), id=row.target_id)
+        ResourceRef(scheme=cast(ResourceScheme, row["target_scheme"]), id=row["target_id"])
         for row in rows
     ]
     resolved = resolve_refs(db, viewer_id=viewer_id, refs=targets)
     return [
-        _context_ref_out(db, viewer_id=viewer_id, row=row, target=target, resolved=item)
+        ContextRefOut(
+            edge_id=row["edge_id"],
+            conversation_id=conversation_id,
+            target=target,
+            resolved=item,
+            activation=resource_activation_for_ref(
+                db, viewer_id=viewer_id, ref=target, missing=item.missing
+            ),
+            created_at=row["created_at"],
+        )
         for row, target, item in zip(rows, targets, resolved, strict=True)
     ]
 
@@ -90,8 +133,7 @@ def add_context_ref_without_commit(
     viewer_id: UUID,
     conversation_id: UUID,
     target: ResourceRef,
-    origin: EdgeOrigin,
-    source_order_key: str | None = None,
+    origin: Literal["citation", "system"],
 ) -> ContextRefOut:
     """Add one context edge inside the caller's transaction, idempotent per target."""
     _require_owner(db, viewer_id, conversation_id)
@@ -103,17 +145,23 @@ def add_context_ref_without_commit(
     if resolved.missing:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
 
-    existing = db.execute(
-        select(ResourceEdge).where(
-            *_context_edge_predicates(viewer_id, conversation_id),
-            ResourceEdge.target_scheme == target.scheme,
-            ResourceEdge.target_id == target.id,
+    if origin not in ("citation", "system"):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Only automatic context facts use this command"
         )
-    ).scalar_one_or_none()
+    order_key = conversation_link_order_key(
+        db, viewer_id=viewer_id, conversation_id=conversation_id, target=target
+    )
+    existing = next(
+        (
+            item
+            for item in list_context_refs(db, viewer_id=viewer_id, conversation_id=conversation_id)
+            if item.target == target
+        ),
+        None,
+    )
     if existing is not None:
-        return _context_ref_out(
-            db, viewer_id=viewer_id, row=existing, target=target, resolved=resolved
-        )
+        return existing
 
     created = create_edge(
         db,
@@ -123,8 +171,7 @@ def add_context_ref_without_commit(
             target=target,
             kind="context",
             origin=origin,
-            source_order_key=source_order_key
-            or _next_source_order_key(db, viewer_id=viewer_id, conversation_id=conversation_id),
+            source_order_key=order_key,
         ),
     )
     return ContextRefOut(
@@ -145,34 +192,40 @@ def remove_context_ref(
     _require_owner(db, viewer_id, conversation_id)
     row = db.execute(
         select(ResourceEdge).where(
-            ResourceEdge.id == edge_id, *_context_edge_predicates(viewer_id, conversation_id)
+            ResourceEdge.id == edge_id,
+            ResourceEdge.user_id == viewer_id,
+            ResourceEdge.source_scheme == "conversation",
+            ResourceEdge.source_id == conversation_id,
+            ResourceEdge.kind == "context",
+            ResourceEdge.origin.in_(("citation", "system")),
+            ResourceEdge.ordinal.is_(None),
+            ResourceEdge.snapshot.is_(None),
         )
     ).scalar_one_or_none()
     if row is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context ref not found")
-    db.delete(row)
-    db.flush()
+    delete_edge(db, viewer_id=viewer_id, edge_id=row.id)
 
 
 def admits_resource_for_conversation_read(
-    db: Session, *, conversation_id: UUID, target: ResourceRef
+    db: Session, *, viewer_id: UUID, conversation_id: UUID, target: ResourceRef
 ) -> bool:
-    """ANY edge from the conversation to the target admits it, whatever kind or origin.
-
-    No owner check: the callers are chat tools already authorized for the conversation.
-    """
-    return (
-        db.execute(
-            select(ResourceEdge.id)
-            .where(
-                ResourceEdge.source_scheme == "conversation",
-                ResourceEdge.source_id == conversation_id,
-                ResourceEdge.target_scheme == target.scheme,
-                ResourceEdge.target_id == target.id,
-            )
-            .limit(1)
-        ).scalar_one_or_none()
-        is not None
+    """Membership only; callers separately authorize the conversation and resource."""
+    return bool(
+        db.scalar(
+            text(f"""
+        SELECT EXISTS (
+            SELECT 1 FROM ({context_facts_sql()}) facts
+            WHERE target_scheme = :target_scheme AND target_id = :target_id
+        )
+    """),
+            {
+                "viewer_id": viewer_id,
+                "conversation_id": conversation_id,
+                "target_scheme": target.scheme,
+                "target_id": target.id,
+            },
+        )
     )
 
 
@@ -216,13 +269,8 @@ def list_conversations_with_any_edge_to_ref(
             FROM conversations c
             WHERE c.owner_user_id = :viewer_id
               AND EXISTS (
-                  SELECT 1
-                  FROM resource_edges e
-                  WHERE e.source_scheme = 'conversation'
-                    AND e.source_id = c.id
-                    AND e.user_id = :viewer_id
-                    AND e.target_scheme = :target_scheme
-                    AND e.target_id = :target_id
+                  SELECT 1 FROM ({context_facts_sql("c.id")}) facts
+                  WHERE facts.target_scheme = :target_scheme AND facts.target_id = :target_id
               )
               {cursor_clause}
             ORDER BY c.updated_at DESC, c.id DESC
@@ -264,32 +312,27 @@ def batch_conversations_with_any_edge_to_ref(
     if not targets:
         return {}
     rows = db.execute(
-        select(ResourceEdge.target_id, Conversation)
-        .join(Conversation, Conversation.id == ResourceEdge.source_id)
-        .where(
-            ResourceEdge.source_scheme == "conversation",
-            ResourceEdge.user_id == viewer_id,
-            ResourceEdge.target_scheme == target_scheme,
-            ResourceEdge.target_id.in_(targets),
-            Conversation.owner_user_id == viewer_id,
-        )
-        .order_by(ResourceEdge.created_at.asc(), ResourceEdge.id.asc())
+        text(f"""
+        SELECT facts.target_id, c.id
+        FROM conversations c
+        CROSS JOIN LATERAL ({context_facts_sql("c.id")}) facts
+        WHERE c.owner_user_id = :viewer_id
+          AND facts.target_scheme = :target_scheme AND facts.target_id = ANY(:targets)
+        GROUP BY facts.target_id, c.id
+        ORDER BY min(facts.created_at), c.id
+    """),
+        {"viewer_id": viewer_id, "target_scheme": target_scheme, "targets": targets},
     ).all()
+    conversations = {
+        row.id: row
+        for row in db.scalars(
+            select(Conversation).where(Conversation.id.in_({row[1] for row in rows}))
+        )
+    }
     result: dict[UUID, list[Conversation]] = {}
-    for target_id, conversation in rows:
-        result.setdefault(target_id, []).append(conversation)
+    for target_id, conversation_id in rows:
+        result.setdefault(target_id, []).append(conversations[conversation_id])
     return result
-
-
-def _context_edge_predicates(viewer_id: UUID, conversation_id: UUID) -> tuple[Any, ...]:
-    return (
-        ResourceEdge.user_id == viewer_id,
-        ResourceEdge.source_scheme == "conversation",
-        ResourceEdge.source_id == conversation_id,
-        ResourceEdge.kind == "context",
-        ResourceEdge.origin.in_(CONVERSATION_CONTEXT_EDGE_ORIGINS),
-        ResourceEdge.ordinal.is_(None),
-    )
 
 
 def _require_owner(db: Session, viewer_id: UUID, conversation_id: UUID) -> None:
@@ -298,36 +341,3 @@ def _require_owner(db: Session, viewer_id: UUID, conversation_id: UUID) -> None:
         raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
     if conversation.owner_user_id != viewer_id:
         raise ForbiddenError(ApiErrorCode.E_OWNER_REQUIRED, "Owner required")
-
-
-def _context_ref_out(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    row: ResourceEdge,
-    target: ResourceRef,
-    resolved: ResolvedResource,
-) -> ContextRefOut:
-    return ContextRefOut(
-        edge_id=row.id,
-        conversation_id=row.source_id,
-        target=target,
-        resolved=resolved,
-        activation=resource_activation_for_ref(
-            db, viewer_id=viewer_id, ref=target, missing=resolved.missing
-        ),
-        created_at=row.created_at,
-    )
-
-
-def _next_source_order_key(db: Session, *, viewer_id: UUID, conversation_id: UUID) -> str:
-    existing = db.execute(
-        select(ResourceEdge.source_order_key)
-        .where(
-            *_context_edge_predicates(viewer_id, conversation_id),
-            ResourceEdge.source_order_key.is_not(None),
-        )
-        .order_by(ResourceEdge.source_order_key.desc())
-        .limit(1)
-    ).scalar_one_or_none()
-    return "0000000001" if existing is None else f"{int(existing) + 1:010d}"

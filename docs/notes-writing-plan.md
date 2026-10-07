@@ -1,5 +1,8 @@
 # apple-quality writing and saving
 
+subsequent target: [connections cutover](connections-plan.md) retires inline
+resource references while retaining this writing and saving contract.
+
 status: approved contract; implementation in progress for pr 1 of 2
 date: 2026-09-25; baseline: cfa27d6ce615bb4775e7784954f19dcdd8c8ebb1
 companion: [bullet interaction spec](notes-bullets-plan.md)

@@ -41,6 +41,17 @@ shellcheck "${shell_files[@]}"
   uv run --frozen --no-sync ruff format --check "${python_files[@]}"
   uv run --frozen --no-sync ruff check "${python_files[@]}"
   uv run --frozen --no-sync pyright
+  uv run --frozen --no-sync python - <<'PY'
+from pathlib import Path
+
+from scripts.generate_tool_contract_projection import PROJECTION_RELATIVE_PATH, render_projection
+
+if (Path("..") / PROJECTION_RELATIVE_PATH).read_text(encoding="utf-8") != render_projection():
+    raise SystemExit(
+        "error: toolContractProjection.ts is stale; run: "
+        "cd python && uv run python scripts/generate_tool_contract_projection.py"
+    )
+PY
 )
 
 (

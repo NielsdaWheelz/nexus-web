@@ -107,15 +107,12 @@ import {
   applyFocusClass,
   reconcileFocusAfterRefetch,
 } from "@/lib/highlights/useHighlightInteraction";
-import LinkTargetDialog from "@/components/resources/LinkTargetDialog";
 import Dialog from "@/components/ui/Dialog";
 import { useEvidenceFilters } from "@/lib/reader/useEvidenceFilters";
-import { useLinkComposer } from "@/lib/reader/useLinkComposer";
+import { useResourceOverlaysController } from "@/lib/resources/resourceOverlaysController";
+import { subscribeLinkMutations } from "@/lib/resourceGraph/links";
+import { mutateConnection } from "@/lib/resourceGraph/connectionMutations";
 import { useReaderKeyChord } from "@/lib/reader/useReaderKeyChord";
-import {
-  useStanceComposer,
-  type StanceEdgeRef,
-} from "@/lib/reader/useStanceComposer";
 import {
   notifyHighlightActionIntentOwnerReady,
   useHighlightActionIntentOwners,
@@ -142,11 +139,10 @@ import {
   getReaderDocumentMap,
   findEvidenceItem,
   projectReaderMapMarkers,
-  userStanceAssociations,
   type ReaderDocumentMap,
   type ReaderDocumentMapMarker,
   type ReaderEvidenceItem,
-  type ReaderEvidenceUserEdge,
+  type ReaderEvidenceMutableEdge,
   type ReaderEvidenceObject,
   type ReaderEvidencePassageGroup,
   type ReaderEvidenceResolution,
@@ -471,7 +467,7 @@ function pulseReaderApparatusElement(element: HTMLElement): void {
 
 function evidenceItemSnippet(item: ReaderEvidenceItem): string | null {
   if (item.kind === "Highlight") return item.quote || item.label;
-  if (item.kind === "Synapse" && item.rationale) return item.rationale;
+  if (item.kind === "MachineLink" && item.rationale) return item.rationale;
   return item.excerpt.kind === "Present"
     ? item.excerpt.value
     : item.label || null;
@@ -1204,6 +1200,8 @@ export default function MediaPaneBody() {
     recoveryOwnerKey?: string;
   } | null>(null);
   const highlightEditRequestIdRef = useRef(0);
+  const [linkEditRequest, setLinkEditRequest] = useState<string | null>(null);
+  const handleLinkEditOpened = useCallback(() => setLinkEditRequest(null), []);
   const [highlightColorIntent, setHighlightColorIntent] = useState<{
     readonly intent: Extract<HighlightActionIntent, { kind: "EditHighlight" }>;
     readonly highlight: AnchoredReaderRow;
@@ -1231,10 +1229,6 @@ export default function MediaPaneBody() {
     hasPending: () => boolean;
     lease: MountedEditorMutationLease | null;
   } | null>(null);
-  const highlightLinkIntentRef = useRef<Extract<
-    HighlightActionIntent,
-    { kind: "LinkHighlight" }
-  > | null>(null);
   const highlightBoundsIntentRef = useRef<Extract<
     HighlightActionIntent,
     { kind: "EditHighlightBounds" }
@@ -4006,7 +4000,7 @@ export default function MediaPaneBody() {
       const rowId = sourceReferenceByStableKey.get(itemId)?.item.id ?? itemId;
       setFocusedApparatusItemId(rowId);
       commitEvidenceActivation(rowId);
-      requestSecondarySurface("resource-evidence");
+      requestSecondarySurface("resource-connections");
       focusReaderApparatusInContent(itemId, false);
     },
     [
@@ -5456,28 +5450,11 @@ export default function MediaPaneBody() {
     [activatePaneTarget, id, pendingExistingChatHighlightId],
   );
 
-  const handleDismissSynapse = useCallback(async (edgeId: string) => {
-    const { dismissSynapseEdge } = await import("@/lib/synapse");
-    await dismissSynapseEdge(edgeId);
-    setDocumentMapVersion((v) => v + 1);
+  const handleMutateReaderConnection = useCallback(async (edge: ReaderEvidenceMutableEdge) => {
+    if (edge.mutation === null) return;
+    await mutateConnection(edge.edge_id, edge.mutation);
+    setDocumentMapVersion((value) => value + 1);
   }, []);
-
-  // Remove an explicit user relation whether Evidence projects it as a
-  // top-level Link or folds it onto another fact. The typed role selects the
-  // domain command; presentation never infers meaning from storage direction.
-  const handleRemoveReaderUserEdge = useCallback(
-    async (edge: ReaderEvidenceUserEdge) => {
-      if (edge.role === "context") {
-        const { deleteLink } = await import("@/lib/resourceGraph/links");
-        await deleteLink(edge.edge_id);
-      } else {
-        const { deleteStance } = await import("@/lib/resourceGraph/stances");
-        await deleteStance(edge.edge_id);
-      }
-      setDocumentMapVersion((v) => v + 1);
-    },
-    [],
-  );
 
   const handleReaderLinkNoteChanged = useCallback(() => {
     setDocumentMapVersion((v) => v + 1);
@@ -5855,12 +5832,8 @@ export default function MediaPaneBody() {
   // Canonical Evidence filter state belongs to the inspector.
   const evidenceFilters = useEvidenceFilters();
 
-  const createHighlightForSelection = useCallback(async () => {
-    const created = await handleCreateHighlight(DEFAULT_COLOR);
-    return created?.id ?? null;
-  }, [handleCreateHighlight]);
 
-  const refreshLinkedReaderState = useCallback(async () => {
+  const refreshLinkedReaderState = useCallback(() => {
     if (freshSelectionLinkSessionRef.current) {
       freshSelectionLinkSessionRef.current = false;
       clearReaderSelection();
@@ -5871,21 +5844,27 @@ export default function MediaPaneBody() {
     // the durable source is immediately painted and can be acted on again.
     reloadTextHighlights();
     setPdfRefreshToken((version) => version + 1);
-    const pending = highlightLinkIntentRef.current;
-    highlightLinkIntentRef.current = null;
-    if (pending) await pending.onCommitted();
   }, [clearReaderSelection, refreshMediaHighlights, reloadTextHighlights]);
 
   const openEvidenceForLink = useCallback(() => {
-    requestSecondarySurface("resource-evidence");
+    requestSecondarySurface("resource-connections");
   }, [requestSecondarySurface]);
-  const linkComposer = useLinkComposer({
-    onLinked: refreshLinkedReaderState,
-    // The Connection's note lives on the Evidence sidecar's Link card, where the
-    // Add/Edit/Remove-note controls are hosted; both toast affordances open it.
-    onAddLinkNote: openEvidenceForLink,
-    onViewConnection: openEvidenceForLink,
-  });
+  const editNoteOnLink = useCallback((linkId: string) => {
+    setLinkEditRequest(linkId);
+    requestSecondarySurface("resource-connections");
+  }, [requestSecondarySurface]);
+  const { linkComposer } = useResourceOverlaysController();
+  const handleCloseLinkComposer = useCallback(() => {
+    freshSelectionLinkSessionRef.current = false;
+    selectionActionInFlightRef.current = false;
+    setIsCreating(false);
+  }, []);
+  useEffect(() => subscribeLinkMutations(() => {
+    refreshMediaHighlights();
+    reloadTextHighlights();
+    setPdfRefreshToken((value) => value + 1);
+    setDocumentMapVersion((value) => value + 1);
+  }), [refreshMediaHighlights, reloadTextHighlights]);
 
   // Open the Link session with a source built from the gesture — an existing
   // Highlight is a durable `resource` ref; a fresh reflowable selection carries
@@ -5902,12 +5881,12 @@ export default function MediaPaneBody() {
         const ref = `highlight:${target.highlight.id}`;
         linkComposer.openLink({
           source: { kind: "resource", ref },
-          sourceRef: ref,
+          sourceRef: ref, label: target.highlight.exact, onLinked: refreshLinkedReaderState, onClose: handleCloseLinkComposer, onAddLinkNote: editNoteOnLink, onViewConnection: openEvidenceForLink,
         });
         return;
       }
       const activeSelection = readRetainedSelection();
-      if (!activeSelection || selectionActionInFlightRef.current) return;
+      if (!activeSelection || selectionActionInFlightRef.current || linkComposer.open || linkComposer.committing) return;
       selectionActionInFlightRef.current = true;
       freshSelectionLinkSessionRef.current = true;
       setIsCreating(true);
@@ -5920,21 +5899,11 @@ export default function MediaPaneBody() {
           end_offset: activeSelection.endOffset,
           color: target.color,
         },
+        label: activeSelection.selectedText, onLinked: refreshLinkedReaderState, onClose: handleCloseLinkComposer, onAddLinkNote: editNoteOnLink, onViewConnection: openEvidenceForLink,
       });
     },
-    [linkComposer, readRetainedSelection],
+    [linkComposer, readRetainedSelection, refreshLinkedReaderState, handleCloseLinkComposer, editNoteOnLink, openEvidenceForLink],
   );
-
-  const handleCloseLinkComposer = useCallback(() => {
-    linkComposer.close();
-    const pending = highlightLinkIntentRef.current;
-    highlightLinkIntentRef.current = null;
-    pending?.onAborted();
-    if (!freshSelectionLinkSessionRef.current) return;
-    freshSelectionLinkSessionRef.current = false;
-    selectionActionInFlightRef.current = false;
-    setIsCreating(false);
-  }, [linkComposer]);
 
   const mountedHighlightActionRefs = useMemo(
     () =>
@@ -5948,7 +5917,6 @@ export default function MediaPaneBody() {
       if (
         highlightColorIntentRef.current !== null ||
         highlightNoteIntentController.occupied() ||
-        highlightLinkIntentRef.current !== null ||
         highlightBoundsIntentRef.current !== null ||
         highlightDeleteIntentRef.current !== null ||
         quickNote !== null ||
@@ -6010,15 +5978,10 @@ export default function MediaPaneBody() {
             requestId: highlightEditRequestIdRef.current,
             recoveryOwnerKey,
           });
-          requestSecondarySurface("resource-evidence");
+          requestSecondarySurface("resource-connections");
           setHighlightActionAnchor(null);
           return true;
         }
-        case "LinkHighlight":
-          highlightLinkIntentRef.current = intent;
-          handleLink({ kind: "existing", highlight });
-          setHighlightActionAnchor(null);
-          return true;
         case "EditHighlightBounds":
           if (isPdf) return false;
           highlightBoundsIntentRef.current = intent;
@@ -6080,7 +6043,6 @@ export default function MediaPaneBody() {
       feedback,
       focusHighlight,
       focusState.editingBounds,
-      handleLink,
       highlightNoteIntentController,
       id,
       isPdf,
@@ -6110,12 +6072,10 @@ export default function MediaPaneBody() {
     () => () => {
       const pending = [
         highlightColorIntentRef.current,
-        highlightLinkIntentRef.current,
         highlightBoundsIntentRef.current,
       ];
       highlightColorIntentRef.current = null;
       highlightNoteIntentController.releaseOwner();
-      highlightLinkIntentRef.current = null;
       highlightBoundsIntentRef.current = null;
       for (const intent of pending) intent?.onAborted();
     },
@@ -6161,55 +6121,6 @@ export default function MediaPaneBody() {
       publishMediaFailure,
     ],
   );
-
-  const stanceEdges = useMemo<StanceEdgeRef[]>(() => {
-    const out: StanceEdgeRef[] = [];
-    for (const group of readerEvidence?.passage_groups ?? []) {
-      for (const item of group.items) {
-        if (item.kind !== "Highlight") continue;
-        for (const association of userStanceAssociations(item)) {
-          out.push({
-            sourceHighlightId: item.highlight_id,
-            kind: association.role,
-            stanceId: association.edge_id,
-          });
-        }
-      }
-    }
-    return out;
-  }, [readerEvidence?.passage_groups]);
-
-  const resolveStanceTarget = useCallback(async () => {
-    const focusedId = focusState.focusedId;
-    if (focusedId) {
-      return { highlightId: focusedId, targetRef: `media:${id}` };
-    }
-    const created = await createHighlightForSelection();
-    if (!created) return null;
-    return { highlightId: created, targetRef: `media:${id}` };
-  }, [createHighlightForSelection, focusState.focusedId, id]);
-
-  const stanceComposer = useStanceComposer({
-    resolveTarget: resolveStanceTarget,
-    stanceEdges,
-    onChanged: refreshMediaHighlights,
-  });
-
-  // Focus-a-passage + one dedicated key (D-11): t = concede, y = doubt. Enabled
-  // while a highlight is focused (both readers) or a live text selection exists.
-  const stanceChordEnabled =
-    !focusState.editingBounds &&
-    (focusState.focusedId !== null || (!isPdf && selection !== null));
-  useReaderKeyChord({
-    enabled: stanceChordEnabled,
-    key: "t",
-    onTrigger: () => void stanceComposer.mintStance("supports"),
-  });
-  useReaderKeyChord({
-    enabled: stanceChordEnabled,
-    key: "y",
-    onTrigger: () => void stanceComposer.mintStance("contradicts"),
-  });
 
   const queueDocumentMapPulse = usePendingDocumentMapPulse({
     activeFragmentId: activeContent?.fragmentId ?? null,
@@ -6384,7 +6295,7 @@ export default function MediaPaneBody() {
     const target = sourceTargetByStableKey.get(requestedApparatusStableKey);
     if (!location && !target) return;
     urlApparatusAppliedRef.current = requestedApparatusStableKey;
-    requestSecondarySurface("resource-evidence");
+    requestSecondarySurface("resource-connections");
     if (location) activateEvidencePassage(location.group, location.item.id);
     else if (target) activateEvidenceSourceTargetResolution({ occurrenceItemId: null, targetRef: target.ref });
   }, [
@@ -6600,10 +6511,12 @@ export default function MediaPaneBody() {
             enabled: !isMobileViewport && isPaneActive && canRead &&
               secondaryPane?.groupId === "resource-inspector" &&
               secondaryPane.visibility === "visible" &&
-              secondaryPane.activeSurfaceId === "resource-evidence",
+              secondaryPane.activeSurfaceId === "resource-connections",
           }}
           filters={evidenceFilters}
           highlightEditRequest={highlightEditRequest}
+          linkEditRequest={linkEditRequest}
+          onLinkEditOpened={handleLinkEditOpened}
           onHighlightEditClose={handleEvidenceHighlightEditClose}
           activeItemId={activeEvidenceItemId}
           followGeneration={evidenceFollowGeneration}
@@ -6620,8 +6533,9 @@ export default function MediaPaneBody() {
           onActivateSourceTarget={handleActivateEvidenceSourceTarget}
           onOpenSourceLink={handleOpenEvidenceSourceLink}
           onHoverItem={handleHoverEvidenceItem}
-          onDismissSynapse={handleDismissSynapse}
-          onRemoveUserEdge={handleRemoveReaderUserEdge}
+          onLink={() => void linkComposer.openResourceLink(`media:${id}`)}
+
+          onMutateConnection={handleMutateReaderConnection}
           onLinkNoteChanged={handleReaderLinkNoteChanged}
         />
       </div>
@@ -6634,18 +6548,22 @@ export default function MediaPaneBody() {
       evidenceFollowGeneration,
       evidenceFilters,
       highlightEditRequest,
+      linkEditRequest,
+      handleLinkEditOpened,
       handleEvidenceHighlightEditClose,
       handleActivateEvidenceObject,
       handleActivateEvidenceSourceTarget,
       handleOpenEvidenceSourceLink,
-      handleDismissSynapse,
-      handleRemoveReaderUserEdge,
+
+      handleMutateReaderConnection,
       handleReaderLinkNoteChanged,
       handleNoteDetached,
       handleNoteEditAccepted,
       handleNoteMutationStarted,
       handleNoteSaved,
       handleHoverEvidenceItem,
+      linkComposer,
+      id,
       handleOpenNoteLink,
       hoveredEvidenceItemId,
       canRead,
@@ -6861,7 +6779,7 @@ export default function MediaPaneBody() {
         } else if (event.key === "e") {
           event.preventDefault();
           clearChord();
-          requestSecondarySurface("resource-evidence");
+          requestSecondarySurface("resource-connections");
         } else {
           // Non-chord key: execute bare-G default immediately and pass through
           clearChord();
@@ -7457,6 +7375,7 @@ export default function MediaPaneBody() {
                         exact,
                         color: DEFAULT_COLOR,
                       },
+                      label: exact, onLinked: refreshLinkedReaderState, onClose: handleCloseLinkComposer, onAddLinkNote: editNoteOnLink, onViewConnection: openEvidenceForLink,
                     })
                   }
                   temporaryHighlight={evidencePdfHighlight}
@@ -7587,18 +7506,6 @@ export default function MediaPaneBody() {
           ) : null}
         </div>
       </div>
-
-      <LinkTargetDialog
-        open={linkComposer.open}
-        sourceRef={linkComposer.sourceRef}
-        excludeRefs={
-          linkComposer.sourceRef ? [linkComposer.sourceRef] : undefined
-        }
-        busy={linkComposer.committing}
-        failure={linkComposer.failure}
-        onPick={(target, label) => void linkComposer.confirm(target, label)}
-        onClose={handleCloseLinkComposer}
-      />
 
       {selectionPopoverProps ? (
         <SelectionPopover

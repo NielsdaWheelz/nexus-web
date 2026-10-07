@@ -243,7 +243,7 @@ episodes immediately resurface with their consumption state intact.
 
 `services/reading_time.py` owns document estimates within the shared media
 summary used by library rows, lectern, author works, search, browse, episode
-lists, and resonance slates. it composes the stored-count relation from
+lists, and suggestions. it composes the stored-count relation from
 `media_document_metrics.py`, document quote-readiness from `capabilities.py`, and
 viewer-scoped current-position facts from `consumption/reader_cursor.py`.
 requests aggregate stored integers, never document text. estimates cover
@@ -303,7 +303,7 @@ The pane URL owns the requested `LibraryEntryView` (order + projection + entry
 type); the Library controller owns one committed exact collection
 `{view, entries, collectionRevision, nextCursor, exhaustion}`.
 A same-visit query replacement is in-place: pane chrome, controls, focus, live
-ShellScroll position, Slate, and Inspector stay mounted while the exact first
+ShellScroll position, suggestions, and Inspector stay mounted while the exact first
 page loads. The full query remains runtime/history identity.
 `lib/libraries/libraryView.ts` is the sole owner of the closed view types, the
 strict URL codec, API query construction, projection/order option availability,
@@ -364,22 +364,22 @@ retain the existing transition and requested/committed lifecycle.
 See
 [library-entry-view-continuity-hard-cutover.md](../cutovers/library-entry-view-continuity-hard-cutover.md).
 
-## Resonance and Reading Slate
+## suggestions
 
-`python/nexus/services/resonance/` is the sole relevance-policy owner. It
+`python/nexus/services/suggestions/` is the sole suggestion-policy owner. it
 composes public, policy-neutral read ports from `library_entries`, consumption,
 the resource graph, contributor credits, media/podcasts, and the semantic index;
 those modules retain their tables and mutations.
 
-- library entry ordering belongs to `library_entry_listing`; resonance owns
+- library entry ordering belongs to `library_entry_listing`; suggestions owns
   suggestions, not ordering within the library.
-- `GET /libraries/{id}/slate` returns zero to ten deterministic suggestions
+- `GET /libraries/{id}/suggestions` returns zero to ten deterministic suggestions
   outside complete destination placement. A library suggestion must have a
   factual graph, shared-author, or calibrated semantic relation to one of five
   representative complete-placement anchors; recency cannot qualify it.
 - A non-default, non-system admin library accepts media plus actively
   subscribed podcasts. Default accepts media suggestions only. Member-only and
-  system libraries return an empty Slate because their actor-facing filing
+  system libraries return empty suggestions because their actor-facing filing
   commands cannot add entries. `Finished` media remains eligible for an
   addable destination.
 - Every read uses one repeatable-read, read-only snapshot and performs no
@@ -390,10 +390,10 @@ The frontend renders **Suggested for this library** after the complete entry
 inventory in a fixed comfortable List, independent of the main collection's
 empty state, Gallery choice, or density. Add delegates to the existing
 media/podcast filing command. It does not synthesize a `LibraryEntry`; visible
-Slate survivors stay in order, at most one canonical replacement is appended,
+suggestion survivors stay in order, at most one canonical replacement is appended,
 and the main entry projection reloads on the next pane activation.
 
-slate rows carry factual publication dates, consumption and shared reading
+suggestion rows carry factual publication dates, consumption and shared reading
 estimates; graph/author/semantic evidence stays internal to ranking. relation
 explanations and inline related-item expansion are absent from collection rows;
 resource connections remain available inside the opened resource.

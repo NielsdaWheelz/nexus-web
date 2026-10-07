@@ -19,7 +19,8 @@ import { emptyNoteBody } from "@/lib/notes/prosemirror/schema";
 import { useNoteEditorSession } from "@/lib/notes/useNoteEditorSession";
 import { getWritingSession, WritingStorageError, WritingUnknownOutcomeError, type BodyAdapter, type OperationCallbacks, type PendingBodyIdentity, type RecoveryCandidate } from "@/lib/notes/writingSession";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { decodeLinkNoteOut } from "@/lib/resourceGraph/links";
+import { projectLinkNote } from "@/lib/resourceGraph/links";
+import type { Schema } from "@/lib/api/wire";
 import { resolveResourceLocator } from "@/lib/resources/resourceLocators";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { expectExactRecord, expectOneOf, expectRecord, expectString } from "@/lib/validation";
@@ -217,13 +218,17 @@ function AnnotationBody({
     acknowledge: (data) => {
       const saved = target.kind === "highlight"
         ? decodeHighlightLinkedNoteBlock(data)
-        : decodeLinkNoteOut(data);
+        : projectLinkNote(
+          // justify-type-assertion: this adapter owns the typed LinkNoteOut route;
+          // the shared body outbox erases only its transport response type.
+          data as Schema<"LinkNoteOut">,
+        );
       if (saved.note_block_id !== noteBlockId) throw new TypeError("annotation save changed note identity");
       projection.current = {
         note_block_id: saved.note_block_id,
         body_pm_json: saved.body_pm_json,
         body_text: saved.body_text,
-        version_by_lane: saved.version_by_lane,
+        version_by_lane: { body: saved.version_by_lane.body, links: saved.version_by_lane.links },
       };
       return { body: { bodyPmJson: saved.body_pm_json, bodyText: saved.body_text }, version: saved.version_by_lane.body };
     },

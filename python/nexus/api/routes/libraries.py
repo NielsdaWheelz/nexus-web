@@ -28,14 +28,15 @@ from nexus.schemas.library import (
     UpdateLibraryMemberRequest,
     UpdateLibraryRequest,
 )
+from nexus.schemas.suggestions import SuggestionsOut
 from nexus.services import (
     library_entries,
     library_entry_listing,
     library_governance,
     library_sharing,
 )
-from nexus.services.resonance import service as resonance_service
 from nexus.services.sealed_handles import InvalidSealedHandle, unseal_user
+from nexus.services.suggestions import service as suggestions_service
 
 router = APIRouter(tags=["libraries"])
 
@@ -294,22 +295,22 @@ def list_library_entries(
     return ok(page, by_alias=True)
 
 
-@router.get("/libraries/{library_id}/slate")
-def get_library_slate(
+@router.get("/libraries/{library_id}/suggestions")
+def get_library_suggestions(
     request: Request,
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_repeatable_read_db)],
-) -> dict:
-    """Read the library's Reading Slate."""
+) -> Data[SuggestionsOut]:
+    """Read the library's ranked suggestions."""
     if request.query_params:
         raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST, "Reading Slate does not accept query parameters"
+            ApiErrorCode.E_INVALID_REQUEST, "Suggestions does not accept query parameters"
         )
-    slate = resonance_service.build_library_slate(
+    suggestions = suggestions_service.build_library_suggestions(
         db, viewer_id=viewer.user_id, library_id=library_id
     )
-    return ok(slate, by_alias=True)
+    return Data(data=suggestions)
 
 
 @router.patch("/libraries/{library_id}/entries/reorder", status_code=204)

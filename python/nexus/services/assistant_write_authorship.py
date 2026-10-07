@@ -10,20 +10,39 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from uuid import UUID, uuid5
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import AssistantWriteAuthorship, MessageToolCall, ResourceEdge
+from nexus.db.models import (
+    AssistantWriteAuthorship,
+    Conversation,
+    GenerationApiCredential,
+    LLMCall,
+    LLMToolPosition,
+    Message,
+    MessageToolCall,
+    ResourceEdge,
+)
 from nexus.schemas.machine_authorship import (
     MachineAuthorshipOut,
     MachineAuthorshipTargetKind,
 )
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 from nexus.services.resource_graph.resolve import assert_ref_visible
-from nexus.services.tool_authority import ToolPositionRecord
+from nexus.services.resource_graph.schemas import (
+    ChatCreationRecord,
+    ConnectionCreation,
+    GenerationCreationRecord,
+    UnavailableCreationRecord,
+    UndoAssistantChatMutation,
+    UndoAssistantGenerationMutation,
+)
+
+if TYPE_CHECKING:
+    from nexus.services.tool_authority import ToolPositionRecord
 
 _REF_TARGET_KIND: dict[str, MachineAuthorshipTargetKind] = {
     "entry": "library_entry",
@@ -209,6 +228,111 @@ def machine_authorship_for_edge(
     return _machine_authorship_for_target(db, target_kind="resource_edge", target_id=edge_id)
 
 
+def assistant_edge_provenance(
+    db: Session, *, viewer_id: UUID, edge_id: UUID
+) -> tuple[
+    ConnectionCreation | None,
+    UndoAssistantChatMutation | UndoAssistantGenerationMutation | None,
+]:
+    """Project one assistant link's retained authorship, receipt and undo owner.
+
+    Durable authorship survives its live execution records. A historical fact
+    without a surviving receipt retains its identity and gets no invented route.
+    """
+    authorship = db.scalar(
+        select(AssistantWriteAuthorship)
+        .join(ResourceEdge, ResourceEdge.id == AssistantWriteAuthorship.target_id)
+        .where(
+            ResourceEdge.id == edge_id,
+            ResourceEdge.user_id == viewer_id,
+            ResourceEdge.origin == "assistant",
+            AssistantWriteAuthorship.target_kind == "resource_edge",
+            AssistantWriteAuthorship.canonical_tool_id == "nexus.edge.create",
+        )
+    )
+    if authorship is None:
+        return None, None
+    creation = ConnectionCreation(
+        authorship=_machine_authorship_out(authorship), record=UnavailableCreationRecord()
+    )
+    chat_call = db.scalar(
+        select(MessageToolCall)
+        .join(Message, Message.id == MessageToolCall.assistant_message_id)
+        .join(Conversation, Conversation.id == Message.conversation_id)
+        .where(
+            Conversation.owner_user_id == viewer_id,
+            MessageToolCall.conversation_id == Conversation.id,
+            Message.role == "assistant",
+            MessageToolCall.tool_position_id == authorship.tool_position_id,
+            MessageToolCall.canonical_tool_id == "nexus.edge.create",
+            MessageToolCall.record_kind.in_(("current_execution", "historical_execution")),
+            MessageToolCall.status == "complete",
+        )
+    )
+    if chat_call is not None:
+        targets = _expected_created_targets(
+            tool_id="nexus.edge.create", created_refs=chat_call.result_refs
+        )
+        if targets != (("resource_edge", edge_id),):
+            raise AssertionError("assistant link differs from its chat undo effect")
+        return (
+            ConnectionCreation(
+                authorship=creation.authorship,
+                record=ChatCreationRecord(
+                    conversation_id=chat_call.conversation_id,
+                    message_id=chat_call.assistant_message_id,
+                    tool_call_id=chat_call.id,
+                ),
+            ),
+            UndoAssistantChatMutation(
+                conversation_id=chat_call.conversation_id, tool_call_id=chat_call.id
+            )
+            if chat_call.record_kind == "current_execution"
+            and chat_call.reverted_at is None
+            and authorship.reverted_at is None
+            else None,
+        )
+    position = db.scalar(
+        select(LLMToolPosition)
+        .join(
+            GenerationApiCredential,
+            GenerationApiCredential.generation_id == LLMToolPosition.generation_id,
+        )
+        .join(LLMCall, LLMCall.id == LLMToolPosition.generation_id)
+        .where(
+            LLMToolPosition.id == authorship.tool_position_id,
+            LLMToolPosition.canonical_tool_id == "nexus.edge.create",
+            LLMToolPosition.transport_kind == "GenerationApi",
+            LLMToolPosition.replay_status == "Completed",
+            GenerationApiCredential.user_id == viewer_id,
+            LLMCall.owner_kind != "chat_run",
+        )
+    )
+    if position is None:
+        return creation, None
+    evidence = position.result_evidence
+    result = evidence.get("tool_result") if evidence is not None else None
+    if not isinstance(result, dict) or result.get("type") != "Success":
+        return creation, None
+    refs = evidence.get("created_refs") if evidence is not None else None
+    if not isinstance(refs, list) or any(not isinstance(ref, dict) for ref in refs):
+        raise AssertionError("completed assistant link lacks its undo effect")
+    targets = _expected_created_targets(tool_id="nexus.edge.create", created_refs=refs)
+    if targets != (("resource_edge", edge_id),):
+        raise AssertionError("assistant link differs from its generation undo effect")
+    return (
+        ConnectionCreation(
+            authorship=creation.authorship,
+            record=GenerationCreationRecord(
+                generation_id=position.generation_id, position_id=position.id
+            ),
+        ),
+        UndoAssistantGenerationMutation(position_id=position.id)
+        if position.reverted_at is None and authorship.reverted_at is None
+        else None,
+    )
+
+
 def _machine_authorship_for_target(
     db: Session,
     *,
@@ -304,6 +428,7 @@ def _expected_created_targets(
 
 
 __all__ = [
+    "assistant_edge_provenance",
     "machine_authorship_for_edge",
     "machine_authorship_for_resource_uri",
     "machine_authorships_for_tool_calls",

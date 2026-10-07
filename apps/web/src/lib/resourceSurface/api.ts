@@ -1,16 +1,15 @@
 import { apiFetch } from "@/lib/api/client";
+import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { FrozenRequest } from "@/lib/notes/writingSession";
 import {
-  decodeResourceItem,
-  normalizeResourceSurface,
-  normalizeResourceSurfaceNode,
+  projectResourceSurface,
+  projectResourceSurfaceNode,
   type ResourceSurfaceNode,
   type ResourceItem,
   type ResourceSurface,
   type SurfacePosition,
 } from "@/lib/resources/resourceItems";
 import type { ResourceSurfaceCommand, SurfaceContext, SurfaceBodyEdit } from "@/lib/resourceSurface/model";
-import { expectRecord, expectExactRecord, expectCanonicalUuid, expectInteger, expectString } from "@/lib/validation";
 
 export interface ResourceLaneVersion {
   ref: string;
@@ -61,17 +60,20 @@ function wireCommand(command: ResourceSurfaceCommand): Record<string, unknown> {
       return { type: command.type, entries: command.entries.map((entry) => ({ endpoint_ref: entry.endpointRef, link_id: entry.linkId, context: wireContext(entry.context) })) };
     case "relink": return { type: command.type, link_id: command.linkId, destination_ref: command.destinationRef, position: wirePosition(command.position) };
     case "join_notes": return { type: command.type, earlier_link_id: command.earlierLinkId, later_link_id: command.laterLinkId, body_pm_json: command.bodyPmJson };
-    case "paste_outline": return { type: command.type, position: wirePosition(command.position), items: command.items.map((item) => ({ note_id: item.noteId, body_pm_json: item.bodyPmJson, ...(item.parentIndex === undefined ? {} : { parent_index: item.parentIndex }) })) };
+    case "paste_outline": return { type: command.type, position: wirePosition(command.position), items: command.items.map((item) => ({
+      ...(item.kind === "note" ? { kind: item.kind, note_id: item.noteId, body_pm_json: item.bodyPmJson } : { kind: item.kind, target_ref: item.targetRef }),
+      ...(item.parentIndex === undefined ? {} : { parent_index: item.parentIndex }),
+    })) };
     case "reverse_edit": return { type: command.type, receipt_id: command.receiptId };
   }
 }
 
 export async function fetchResourceSurface(sourceRef: string): Promise<ResourceSurface> {
-  const response = await apiFetch<{ data: unknown }>(
+  const response = await apiFetch<ApiJson<"/resource-items/{resource_ref}/surface", "get">>(
     `/api/resource-items/${encodeURIComponent(sourceRef)}/surface`,
     { cache: "no-store" },
   );
-  return normalizeResourceSurface(response.data);
+  return projectResourceSurface(response.data);
 }
 
 export function prepareResourceSurfaceCommand(input: {
@@ -102,20 +104,13 @@ export interface ResourceSurfaceReceipt {
   surfaces: ResourceSurface[];
   reverseVersions: ResourceLaneVersion[];
 }
-export function decodeResourceSurfaceCommand(data: unknown): ResourceSurfaceReceipt {
-  const result = expectExactRecord(data, ["client_mutation_id", "receipt_id", "nodes", "surfaces", "reverse_versions"], "surface command response");
-  if (!Array.isArray(result.nodes) || !Array.isArray(result.surfaces) || !Array.isArray(result.reverse_versions)) throw new TypeError("Surface receipt nodes and surfaces must be arrays");
+export function projectResourceSurfaceCommand(data: Schema<"ResourceSurfaceCommandOut">): ResourceSurfaceReceipt {
   return {
-    clientMutationId: expectCanonicalUuid(result.client_mutation_id, "surface receipt mutation id"),
-    receiptId: expectCanonicalUuid(result.receipt_id, "surface receipt id"),
-    nodes: result.nodes.map(normalizeResourceSurfaceNode),
-    surfaces: result.surfaces.map(normalizeResourceSurface),
-    reverseVersions: result.reverse_versions.map((raw) => {
-      const value = expectExactRecord(raw, ["ref", "lane", "version"], "reverse version");
-      const lane = expectString(value.lane, "reverse lane");
-      if (lane !== "body" && lane !== "title" && lane !== "links") throw new TypeError("Invalid reverse lane");
-      return { ref: expectString(value.ref, "reverse ref"), lane, version: expectInteger(value.version, "reverse version") };
-    }),
+    clientMutationId: data.client_mutation_id,
+    receiptId: data.receipt_id,
+    nodes: data.nodes.map(projectResourceSurfaceNode),
+    surfaces: data.surfaces.map(projectResourceSurface),
+    reverseVersions: data.reverse_versions,
   };
 }
 
@@ -138,10 +133,8 @@ export function prepareResourceSurfaceTitle(input: {
   };
 }
 
-export function decodeResourceSurfaceTitle(data: unknown): ResourceItem {
-  return decodeResourceItem(
-    expectRecord(expectRecord(data, "title response").item, "title item"),
-  );
+export function projectResourceSurfaceTitle(data: Schema<"ResourceTitleMutationOut">): ResourceItem {
+  return data.item;
 }
 
 export function resourceSurfaceCommandId(): string {

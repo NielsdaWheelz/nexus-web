@@ -1,4 +1,5 @@
-import type { ApiPath } from "@/lib/api/client";
+import type { ApiJson, Schema } from "@/lib/api/wire";
+import type { ConnectionMutation } from "@/lib/resourceGraph/connectionMutations";
 import { apiFetch } from "@/lib/api/client";
 import { absent, present, type Presence } from "@/lib/api/presence";
 import type { MediaRetrievalLocator } from "@/lib/api/sse/locators";
@@ -8,13 +9,13 @@ import type { MediaNavigationResponse } from "@/lib/media/readerNavigation";
 import type { EdgeKind, EdgeOrigin } from "@/lib/resourceGraph/connections";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
-import { decodeReaderDocumentMapContract } from "./documentMapContract";
+import { projectReaderDocumentMap } from "./documentMapContract";
 
 export type ReaderEvidenceFactKind =
-  "Highlight" | "SourceReference" | "GeneratedCitation" | "Link" | "Synapse";
+  "Highlight" | "SourceReference" | "GeneratedCitation" | "Link" | "MachineLink";
 
 export type ReaderEvidenceSemanticKind =
-  "highlight" | "citation" | "link" | "synapse";
+  "highlight" | "citation" | "link" | "machine_link";
 
 export type ReaderEvidenceSourceKind =
   | "footnote_ref"
@@ -112,6 +113,8 @@ export interface ReaderEvidenceDirectlyAttachedAssociation {
   relationship: "DirectlyAttached";
   object: ReaderEvidenceObject;
   edge_id: string;
+  mutation: ConnectionMutation | null;
+  creation: Schema<"ConnectionCreationOut"> | null;
   role: EdgeKind;
   origin: EdgeOrigin;
   direction: "Outgoing" | "Incoming";
@@ -122,13 +125,6 @@ export type ReaderEvidenceHighlightNoteAssociation =
     origin: "highlight_note";
     direction: "Outgoing";
     object: ReaderEvidenceNoteObject;
-  };
-
-export type ReaderEvidenceUserStanceAssociation =
-  ReaderEvidenceDirectlyAttachedAssociation & {
-    origin: "user";
-    direction: "Outgoing";
-    role: "supports" | "contradicts";
   };
 
 export type ReaderEvidenceAssociation =
@@ -193,37 +189,33 @@ export interface ReaderEvidenceSourceReference extends ReaderEvidenceItemBase {
 export interface ReaderEvidenceGeneratedCitation extends ReaderEvidenceItemBase {
   kind: "GeneratedCitation";
   edge_id: string;
+  mutation: ConnectionMutation | null;
+  creation: Schema<"ConnectionCreationOut"> | null;
   role: EdgeKind;
 }
 
 export interface ReaderEvidenceLink extends ReaderEvidenceItemBase {
   kind: "Link";
   edge_id: string;
+  mutation: ConnectionMutation | null;
+  creation: Schema<"ConnectionCreationOut"> | null;
   role: EdgeKind;
   origin: EdgeOrigin;
   object: ReaderEvidenceObject;
   link_note: { ref: string; note_block_id: string; preview: string | null } | null;
 }
 
-/** Explicit user-authored graph facts that the Evidence presenter may remove.
- * A fact can arrive either as a top-level Link row or folded onto another fact
- * as a DirectlyAttached association; both carry the authoritative mutation key
- * and relation role. */
-export type ReaderEvidenceUserLink = ReaderEvidenceLink & {
-  origin: "user";
-};
-export type ReaderEvidenceUserAssociation =
-  ReaderEvidenceDirectlyAttachedAssociation & {
-    origin: "user";
-  };
-export type ReaderEvidenceUserEdge =
-  ReaderEvidenceUserLink | ReaderEvidenceUserAssociation;
+export type ReaderEvidenceUserLink = ReaderEvidenceLink & { origin: "user" };
+export type ReaderEvidenceMutableEdge = { edge_id: string; mutation: ConnectionMutation | null };
 
-export interface ReaderEvidenceSynapse extends ReaderEvidenceItemBase {
-  kind: "Synapse";
+export interface ReaderEvidenceMachineLink extends ReaderEvidenceItemBase {
+  kind: "MachineLink";
   edge_id: string;
+  mutation: ConnectionMutation | null;
+  creation: Schema<"ConnectionCreationOut"> | null;
   role: EdgeKind;
-  rationale: string;
+  rationale: string | null;
+  origin: "discovery" | "assistant";
   object: ReaderEvidenceObject;
 }
 
@@ -232,7 +224,7 @@ export type ReaderEvidenceItem =
   | ReaderEvidenceSourceReference
   | ReaderEvidenceGeneratedCitation
   | ReaderEvidenceLink
-  | ReaderEvidenceSynapse;
+  | ReaderEvidenceMachineLink;
 
 export interface ReaderEvidencePassageGroup {
   locus_ref: string;
@@ -246,7 +238,7 @@ export interface ReaderEvidenceCounts {
   highlights: number;
   citations: number;
   links: number;
-  synapses: number;
+  machine_links: number;
   passages: number;
   document: number;
 }
@@ -267,7 +259,7 @@ export interface ReaderDocumentMapMarker {
   item_id: string;
   position: number;
   end_position: Presence<number>;
-  tone: "Neutral" | "Highlight" | "Citation" | "Link" | "Synapse" | "Warning";
+  tone: "Neutral" | "Highlight" | "Citation" | "Link" | "MachineLink" | "Warning";
   label: string;
   preview: Presence<string>;
 }
@@ -307,9 +299,7 @@ export interface ReaderDocumentMap {
   };
 }
 
-interface ReaderDocumentMapResponse {
-  data: unknown;
-}
+type ReaderDocumentMapResponse = ApiJson<"/media/{media_id}/document-map", "get">;
 
 export type ReaderEvidenceItemLocation =
   | {
@@ -333,8 +323,8 @@ export function semanticKindForEvidenceItem(
       return "citation";
     case "Link":
       return "link";
-    case "Synapse":
-      return "synapse";
+    case "MachineLink":
+      return "machine_link";
   }
 }
 
@@ -350,31 +340,10 @@ export function highlightNoteAssociations(
   );
 }
 
-export function userStanceAssociations(
-  item: ReaderEvidenceHighlight,
-): ReaderEvidenceUserStanceAssociation[] {
-  return item.associations.filter(
-    (association): association is ReaderEvidenceUserStanceAssociation =>
-      association.relationship === "DirectlyAttached" &&
-      association.origin === "user" &&
-      association.direction === "Outgoing" &&
-      (association.role === "supports" || association.role === "contradicts"),
-  );
-}
-
 export function isReaderEvidenceUserLink(
   item: ReaderEvidenceItem,
 ): item is ReaderEvidenceUserLink {
   return item.kind === "Link" && item.origin === "user";
-}
-
-export function isReaderEvidenceUserAssociation(
-  association: ReaderEvidenceAssociation | ReaderEvidenceAlsoReference,
-): association is ReaderEvidenceUserAssociation {
-  return (
-    association.relationship === "DirectlyAttached" &&
-    association.origin === "user"
-  );
 }
 
 export function findEvidenceItem(
@@ -442,8 +411,8 @@ export async function getReaderDocumentMap(
   options: { signal?: AbortSignal } = {},
 ): Promise<ReaderDocumentMap> {
   const response = await apiFetch<ReaderDocumentMapResponse>(
-    `/api/media/${mediaId}/document-map` as ApiPath,
+    `/api/media/${mediaId}/document-map`,
     { signal: options.signal },
   );
-  return decodeReaderDocumentMapContract(response.data);
+  return projectReaderDocumentMap(response.data);
 }

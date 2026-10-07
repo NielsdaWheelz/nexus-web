@@ -16,7 +16,7 @@ from nexus.services.resource_items.surfaces import resource_items_out
 from nexus.services.search.candidates import (
     TargetCandidate,
     candidate_resource_ref,
-    reference_candidates,
+    lexical_resource_candidates,
 )
 
 OPENABLE_SEARCH_RESULT_LIMIT = 20
@@ -30,7 +30,7 @@ def search_openable_resources(
     request: ResourceOpenableSearchRequest,
 ) -> ResourceOpenableSearchResponse:
     schemes = set(request.schemes.value) if isinstance(request.schemes, Present) else None
-    candidates = reference_candidates(
+    candidates = lexical_resource_candidates(
         db,
         viewer_id,
         q=request.q,

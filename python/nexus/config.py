@@ -408,9 +408,8 @@ class Settings(BaseSettings):
         alias="NEXUS_CODEX_AGENT_SOCKET",
     )
 
-    # Synapse resonance engine: SYNAPSE_ENABLED=false turns every scan trigger
-    # into a no-op (synapse spec G6).
-    synapse_enabled: bool = Field(default=True, alias="SYNAPSE_ENABLED")
+    # CONNECTION_DISCOVERY_ENABLED=false makes every connection scan trigger a no-op.
+    connection_discovery_enabled: bool = Field(default=True, alias="CONNECTION_DISCOVERY_ENABLED")
 
     # Grand atlas projection: the nightly PCA re-projection cadence. 0 (default)
     # leaves atlas_project_job unregistered as periodic; the deploy env sets a

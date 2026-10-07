@@ -85,6 +85,7 @@ import { requestContributorActionIntent } from "@/lib/contributors/actionIntent"
 import { requestPodcastActionIntent } from "@/lib/podcasts/actionIntent";
 
 export interface ResourceActionPorts {
+  readonly linkComposer: ReturnType<typeof useResourceOverlaysController>["linkComposer"];
   readonly workspace: ReturnType<typeof useWorkspaceStore>;
   readonly activePaneId: string;
   readonly openShare: ReturnType<typeof useShareController>["openShare"];
@@ -1022,14 +1023,15 @@ export function resourceActionDescriptors({
             capability.state
           ],
         );
+      case "LinkResource":
+        return make(capability, "ResourceAction.Link", (ports) =>
+          ports.linkComposer.openResourceLink(ref), { openOnly: true });
       case "EditHighlight":
-      case "LinkHighlight":
       case "EditHighlightBounds":
       case "DeleteHighlight": {
         const kind = capability.kind;
         const actionIds = {
           EditHighlight: "ResourceOperation.Highlight.Edit",
-          LinkHighlight: "ResourceOperation.Highlight.Link",
           EditHighlightBounds: "ResourceOperation.Highlight.EditBounds",
           DeleteHighlight: "ResourceOperation.Highlight.Delete",
         } as const;

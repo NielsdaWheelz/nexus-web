@@ -21,7 +21,7 @@ export const ALL_EVIDENCE_FILTERS: EvidenceFilterState = {
   highlight: true,
   citation: true,
   link: true,
-  synapse: true,
+  machine_link: true,
 };
 
 export function evidenceItemPassesFilters(

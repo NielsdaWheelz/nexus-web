@@ -92,7 +92,7 @@ export function readerDocumentMapMarkerTypeLabel(
       return "citation";
     case "Link":
       return "link";
-    case "Synapse":
-      return "synapse";
+    case "MachineLink":
+      return "machine-created link";
   }
 }

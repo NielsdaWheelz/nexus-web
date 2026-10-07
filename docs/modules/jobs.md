@@ -103,7 +103,7 @@ typed `UUID` to the Oracle task, which does not decode the durable carrier again
 ### Lease policy by kind
 
 The generation kinds use these exact renewable registry leases:
-`enrich_metadata` and `synapse_scan`,
+`enrich_metadata` and `connection_discovery_scan`,
 300s; `oracle_reading_generate` and `media_unit_build`, 450s;
 `dossier_build`, 900s; and `chat_run`, 1,200s. The worker
 renews its exact running claim before dispatch and throughout execution;

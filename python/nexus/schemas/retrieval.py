@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, ClassVar, Literal, NewType, cast
+from typing import Annotated, Any, ClassVar, Literal, NewType, NotRequired, cast
 from uuid import UUID
 
 from pydantic import (
@@ -13,6 +13,7 @@ from pydantic import (
     TypeAdapter,
     model_validator,
 )
+from typing_extensions import TypedDict
 
 from nexus.schemas.search_types import SEARCH_RESULT_TYPES
 
@@ -319,6 +320,12 @@ RetrievalResultRef = Annotated[
 ]
 
 
+class TextQuoteSelector(TypedDict):
+    exact: str
+    prefix: NotRequired[str]
+    suffix: NotRequired[str]
+
+
 class WebTextOffsetsLocator(BaseModel):
     type: Literal["web_text_offsets"]
     media_id: UUID | str
@@ -326,7 +333,7 @@ class WebTextOffsetsLocator(BaseModel):
     start_offset: int = Field(ge=0)
     end_offset: int = Field(ge=0)
     media_kind: str | None = None
-    text_quote_selector: dict[str, Any] | None = None
+    text_quote_selector: TextQuoteSelector | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -345,7 +352,7 @@ class EpubFragmentOffsetsLocator(BaseModel):
     start_offset: int = Field(ge=0)
     end_offset: int = Field(ge=0)
     media_kind: str | None = None
-    text_quote_selector: dict[str, Any] | None = None
+    text_quote_selector: TextQuoteSelector | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -392,7 +399,7 @@ class PdfPageGeometryLocator(BaseModel):
     exact: str
     prefix: str | None = None
     suffix: str | None = None
-    text_quote_selector: dict[str, Any] | None = None
+    text_quote_selector: TextQuoteSelector | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -402,7 +409,7 @@ class TranscriptTimeRangeLocator(BaseModel):
     media_id: UUID | str
     t_start_ms: int = Field(ge=0)
     t_end_ms: int = Field(ge=0)
-    text_quote_selector: dict[str, Any] | None = None
+    text_quote_selector: TextQuoteSelector | None = None
 
     model_config = ConfigDict(extra="forbid")
 

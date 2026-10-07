@@ -192,7 +192,7 @@ interface DrawContext {
 }
 
 interface EdgeColors {
-  readonly synapse: string;
+  readonly discovery: string;
   readonly contradicts: string;
 }
 
@@ -305,7 +305,7 @@ function drawEdges(
       ctx.globalAlpha = 0.6;
       ctx.lineWidth = 0.9;
     } else {
-      ctx.strokeStyle = colors.synapse;
+      ctx.strokeStyle = colors.discovery;
       ctx.globalAlpha = 0.1;
       ctx.lineWidth = 0.6;
     }
@@ -478,7 +478,7 @@ export default function GrandAtlasPaneBody() {
   const interactingRef = useRef(false);
   const reducedMotionRef = useRef(false);
   const edgeColorsRef = useRef<EdgeColors>({
-    synapse: "#c39a4d",
+    discovery: "#c39a4d",
     contradicts: "#8a5236",
   });
   const dragRef = useRef<{
@@ -558,7 +558,7 @@ export default function GrandAtlasPaneBody() {
       return color;
     };
     edgeColorsRef.current = {
-      synapse: resolve("--atlas-synapse-line", "#c39a4d"),
+      discovery: resolve("--atlas-discovery-line", "#c39a4d"),
       contradicts: resolve("--atlas-contradicts-line", "#8a5236"),
     };
   }, []);

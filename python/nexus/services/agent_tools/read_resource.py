@@ -40,7 +40,9 @@ from nexus.services.resource_items.capabilities import (
     resource_read_policy,
 )
 
-type ReadRefusalCode = Literal["unknown_scheme", "invalid_uri", "missing", "not_readable"]
+type ReadRefusalCode = Literal[
+    "unknown_scheme", "invalid_uri", "missing", "not_readable", "invalid_cursor", "stale_cursor"
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +61,7 @@ class ReadResourceResult:
     # chip; both are None for non-evidence bodies and for ``too_large``.
     citation_result_type: str | None = None
     citation_source_id: str | None = None
+    next_cursor: str | None = None
 
 
 def execute_read_resource(
@@ -66,10 +69,13 @@ def execute_read_resource(
     *,
     viewer_id: UUID,
     uri: str,
+    cursor: str | None = None,
 ) -> ReadResourceResult | ReadRefusal:
     """Read exact bounded text from one admitted resource."""
 
     if uri.startswith("page_range:"):
+        if cursor is not None:
+            return ReadRefusal("invalid_cursor")
         return _bounded(_read_page_range(db, viewer_id, uri))
 
     parsed = parse_resource_ref(uri)
@@ -77,6 +83,26 @@ def execute_read_resource(
         if parsed.reason == "unsupported_scheme":
             return ReadRefusal("unknown_scheme")
         return ReadRefusal("invalid_uri")
+
+    if parsed.scheme in ("conversation", "message"):
+        from nexus.services.conversations import ConversationReadRefusal, read_message_page
+
+        page = read_message_page(db, viewer_id=viewer_id, ref=parsed, cursor=cursor)
+        if isinstance(page, ConversationReadRefusal):
+            return ReadRefusal(page.code)
+        citation_type = (
+            resource_citation_result_type(parsed) if parsed.scheme == "message" else None
+        )
+        return ReadResourceResult(
+            uri=uri,
+            body=page.body,
+            kind=parsed.scheme,
+            citation_result_type=citation_type,
+            citation_source_id=str(parsed.id) if citation_type is not None else None,
+            next_cursor=page.next_cursor,
+        )
+    if cursor is not None:
+        return ReadRefusal("invalid_cursor")
 
     read_policy = resource_read_policy(parsed)
     if read_policy in ("scope", "none"):
@@ -140,14 +166,20 @@ def _present_read(loaded: ResolvedResource) -> ReadResourceResult | ReadRefusal:
     scheme = parsed.scheme
     citation_result_type = resource_citation_result_type(parsed)
     citation_source_id = str(parsed.id) if citation_result_type is not None else None
-    if scheme == "highlight":
-        quote = loaded.quote
-        if quote is None:
-            # justify-defect: the highlight loader always sets quote for a visible highlight.
-            raise AssertionError(f"highlight {loaded.uri} loaded without a quote")
+    if scheme in ("highlight", "passage_anchor"):
+        if scheme == "highlight":
+            if loaded.quote is None:
+                # justify-defect: the highlight loader always sets its visible quote.
+                raise AssertionError(f"highlight {loaded.uri} loaded without a quote")
+            exact = loaded.quote.exact
+        else:
+            if loaded.body is None:
+                # justify-defect: the anchor loader projects the durable stored exact quote.
+                raise AssertionError(f"passage anchor {loaded.uri} loaded without its body")
+            exact = loaded.body
         return ReadResourceResult(
             uri=loaded.uri,
-            body=quote.exact,
+            body=exact,
             kind="quote",
             citation_result_type=citation_result_type,
             citation_source_id=citation_source_id,
@@ -157,22 +189,6 @@ def _present_read(loaded: ResolvedResource) -> ReadResourceResult | ReadRefusal:
             uri=loaded.uri,
             body=loaded.body or "",
             kind="section",
-            citation_result_type=citation_result_type,
-            citation_source_id=citation_source_id,
-        )
-    if scheme == "conversation":
-        return ReadResourceResult(
-            uri=loaded.uri,
-            body=f"{loaded.title}\nChat history with {loaded.message_count or 0} messages.",
-            kind="conversation",
-            citation_result_type=citation_result_type,
-            citation_source_id=citation_source_id,
-        )
-    if scheme == "message":
-        return ReadResourceResult(
-            uri=loaded.uri,
-            body=f"{loaded.message_role}:\n{loaded.body or ''}",
-            kind="message",
             citation_result_type=citation_result_type,
             citation_source_id=citation_source_id,
         )

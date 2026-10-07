@@ -4,7 +4,7 @@ import { Play } from "lucide-react";
 import { useCallback, useId, useMemo, useRef, useState } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import QuickReadsSection from "@/components/collections/QuickReadsSection";
-import ReadingSlateSection from "@/components/collections/ReadingSlateSection";
+import SuggestionsSection from "@/components/collections/SuggestionsSection";
 import {
   FeedbackNotice,
   type FeedbackContent,
@@ -53,8 +53,8 @@ import {
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import type { PaneFilterRowsStatus } from "@/lib/panes/paneFilterRows";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
-import { slateTargetId } from "@/lib/resonance/contract";
-import type { ReadingSlateAccept } from "@/lib/resonance/useReadingSlate";
+import { suggestionTargetId } from "@/lib/suggestions/contract";
+import type { SuggestionsAccept } from "@/lib/suggestions/useSuggestions";
 import styles from "./LecternPaneBody.module.css";
 
 const LECTERN_FILTER_UNIT = { singular: "item", plural: "items" };
@@ -226,7 +226,7 @@ export default function LecternPaneBody() {
     [presentFailure, setOrder],
   );
 
-  const acceptSlateTarget = useCallback<ReadingSlateAccept>(
+  const acceptSuggestionTarget = useCallback<SuggestionsAccept>(
     (target, options) => {
       if (target.kind !== "Media") {
         return Promise.resolve({
@@ -251,7 +251,7 @@ export default function LecternPaneBody() {
       let underlying: ReturnType<typeof placeItems>;
       try {
         underlying = placeItems({
-          mediaIds: [assumeMediaId(slateTargetId(target))],
+          mediaIds: [assumeMediaId(suggestionTargetId(target))],
           placement: { kind: "Last" },
           unknownObservation: {
             signal: options.signal,
@@ -548,12 +548,12 @@ export default function LecternPaneBody() {
         )}
       </section>
       <QuickReadsSection isActive={isPaneActive} />
-      <ReadingSlateSection
-        returnScope="Lectern.ReadingSlate"
+      <SuggestionsSection
+        returnScope="Lectern.Suggestions"
         destination={{ kind: "Lectern" }}
         paneId={paneId}
         isActive={isPaneActive}
-        accept={acceptSlateTarget}
+        accept={acceptSuggestionTarget}
       />
     </PaneSurface>
   );

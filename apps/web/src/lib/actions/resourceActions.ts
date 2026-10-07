@@ -182,7 +182,7 @@ export const RESOURCE_ACTION_CATALOG = {
       Present: { label: "Edit note…", icon: NotebookPen },
     },
   },
-  "ResourceOperation.Highlight.Link": {
+  "ResourceAction.Link": {
     label: "Link…",
     icon: Link2,
     group: "CreateTransform",

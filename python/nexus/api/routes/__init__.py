@@ -13,6 +13,7 @@ from nexus.api.routes.auth_handoff_codes import router as auth_handoff_codes_rou
 from nexus.api.routes.browse import router as browse_router
 from nexus.api.routes.chat_reader_selections import router as chat_reader_selections_router
 from nexus.api.routes.chat_runs import router as chat_runs_router
+from nexus.api.routes.connection_discovery import router as connection_discovery_router
 from nexus.api.routes.consumption_activity import router as consumption_activity_router
 from nexus.api.routes.contributors import router as contributors_router
 from nexus.api.routes.conversation_branches import router as conversation_branches_router
@@ -47,7 +48,6 @@ from nexus.api.routes.resource_shares import router as resource_shares_router
 from nexus.api.routes.search import router as search_router
 from nexus.api.routes.stream import router as stream_router
 from nexus.api.routes.stream_tokens import router as stream_tokens_router
-from nexus.api.routes.synapse import router as synapse_router
 from nexus.api.routes.telemetry import router as telemetry_router
 from nexus.api.routes.users import router as users_router
 from nexus.api.routes.vault import router as vault_router
@@ -86,7 +86,7 @@ def create_api_router(*, podcasts: bool, email_ingest: bool) -> APIRouter:
     api_router.include_router(resource_items_router)
     api_router.include_router(resource_shares_router)
     api_router.include_router(resource_graph_router)
-    api_router.include_router(synapse_router)
+    api_router.include_router(connection_discovery_router)
     api_router.include_router(highlights_router)
     api_router.include_router(conversations_router)
     api_router.include_router(conversation_context_router)

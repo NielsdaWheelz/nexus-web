@@ -5,7 +5,6 @@ import type { ComponentType } from "react";
 import {
   FileText,
   GitBranch,
-  Link2,
   ListTree,
   Network,
   Search,
@@ -25,7 +24,6 @@ const SECONDARY_ICONS: Record<
 > = {
   "file-text": FileText,
   "git-branch": GitBranch,
-  "link-2": Link2,
   "list-tree": ListTree,
   network: Network,
   search: Search,

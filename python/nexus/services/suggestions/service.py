@@ -1,4 +1,4 @@
-"""Resonance's three deterministic contextual reads.
+"""Three deterministic contextual suggestion reads.
 
 Read-only: no model call, no provider call, no job, no persisted
 recommendation state. Each read composes policy-neutral relations owned by
@@ -14,12 +14,12 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import visible_media_ids_cte_sql, visible_podcast_ids_cte_sql
 from nexus.schemas.consumption import ConsumptionOut, ConsumptionStateValue
 from nexus.schemas.presence import absent, present
-from nexus.schemas.resonance import (
-    MediaSlateTargetOut,
-    PodcastSlateTargetOut,
+from nexus.schemas.suggestions import (
+    MediaSuggestionTargetOut,
+    PodcastSuggestionTargetOut,
     QuickReadsOut,
-    SlateItemOut,
-    SlateOut,
+    SuggestionItemOut,
+    SuggestionsOut,
 )
 from nexus.services import library_entries, library_governance, reading_time
 from nexus.services import media as media_service
@@ -30,16 +30,16 @@ from nexus.services.podcasts.subscriptions_query import (
     active_subscription_rows_sql,
     hydrate_compact_podcast_targets,
 )
-from nexus.services.resonance import _evidence, _slate
-from nexus.services.resonance._slate import RankedCandidate
+from nexus.services.suggestions import _evidence, _ranking
+from nexus.services.suggestions._ranking import RankedCandidate
 
 
-def build_lectern_slate(db: Session, *, viewer_id: UUID) -> SlateOut:
+def build_lectern_suggestions(db: Session, *, viewer_id: UUID) -> SuggestionsOut:
     """Up to ten next reads, empty while the Lectern queue is at capacity."""
     if not consumption_service.lectern_has_capacity(db, viewer_id=viewer_id):
-        return SlateOut(items=[])
+        return SuggestionsOut(items=[])
     as_of = _evidence.capture_as_of(db)
-    candidates = _evidence.acquire_slate_candidates(
+    candidates = _evidence.acquire_suggestion_candidates(
         db,
         viewer_id=viewer_id,
         as_of=as_of,
@@ -56,16 +56,18 @@ def build_lectern_slate(db: Session, *, viewer_id: UUID) -> SlateOut:
         relation_params={},
         surface="lectern",
     )
-    selected = _slate.compose_lectern(
-        _slate.rank_lectern_candidates(candidates, as_of=as_of), limit=10
+    selected = _ranking.compose_lectern(
+        _ranking.rank_lectern_candidates(candidates, as_of=as_of), limit=10
     )
-    return SlateOut(items=_hydrate_slate_items(db, viewer_id=viewer_id, selected=selected))
+    return SuggestionsOut(
+        items=_hydrate_suggestion_items(db, viewer_id=viewer_id, selected=selected)
+    )
 
 
 def build_quick_reads(db: Session, *, viewer_id: UUID) -> QuickReadsOut:
     """Up to five unfinished documents under ten minutes from the current cursor."""
     as_of = _evidence.capture_as_of(db)
-    candidates = _evidence.acquire_slate_candidates(
+    candidates = _evidence.acquire_suggestion_candidates(
         db,
         viewer_id=viewer_id,
         as_of=as_of,
@@ -82,21 +84,23 @@ def build_quick_reads(db: Session, *, viewer_id: UUID) -> QuickReadsOut:
         relation_params={},
         surface="lectern",
     )
-    selected = _slate.compose_lectern(
-        _slate.rank_lectern_candidates(candidates, as_of=as_of), limit=5
+    selected = _ranking.compose_lectern(
+        _ranking.rank_lectern_candidates(candidates, as_of=as_of), limit=5
     )
-    return QuickReadsOut(items=_hydrate_slate_items(db, viewer_id=viewer_id, selected=selected))
+    return QuickReadsOut(
+        items=_hydrate_suggestion_items(db, viewer_id=viewer_id, selected=selected)
+    )
 
 
-def build_library_slate(db: Session, *, viewer_id: UUID, library_id: UUID) -> SlateOut:
+def build_library_suggestions(db: Session, *, viewer_id: UUID, library_id: UUID) -> SuggestionsOut:
     """Up to ten relational suggestions for one admin-owned, non-system library."""
     context = library_governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
     if context.system_key is not None or context.role != "admin":
-        return SlateOut(items=[])
+        return SuggestionsOut(items=[])
     as_of = _evidence.capture_as_of(db)
     anchors = _evidence.library_anchors(db, viewer_id=viewer_id, library_id=library_id)
     if not anchors:
-        return SlateOut(items=[])
+        return SuggestionsOut(items=[])
     media_targets = f"""
         SELECT targets.*
         FROM ({_media_target_relation()}) targets
@@ -105,7 +109,7 @@ def build_library_slate(db: Session, *, viewer_id: UUID, library_id: UUID) -> Sl
             WHERE membership.media_id = targets.target_id
         )
     """
-    candidates = _evidence.acquire_slate_candidates(
+    candidates = _evidence.acquire_suggestion_candidates(
         db,
         viewer_id=viewer_id,
         as_of=as_of,
@@ -116,8 +120,10 @@ def build_library_slate(db: Session, *, viewer_id: UUID, library_id: UUID) -> Sl
         relation_params={"library_id": library_id},
         surface="library",
     )
-    selected = _slate.compose_library(_slate.rank_library_candidates(candidates, as_of=as_of))
-    return SlateOut(items=_hydrate_slate_items(db, viewer_id=viewer_id, selected=selected))
+    selected = _ranking.compose_library(_ranking.rank_library_candidates(candidates, as_of=as_of))
+    return SuggestionsOut(
+        items=_hydrate_suggestion_items(db, viewer_id=viewer_id, selected=selected)
+    )
 
 
 def _media_target_relation() -> str:
@@ -202,9 +208,9 @@ def _library_target_relation(media_targets: str) -> str:
     """
 
 
-def _hydrate_slate_items(
+def _hydrate_suggestion_items(
     db: Session, *, viewer_id: UUID, selected: list[RankedCandidate]
-) -> list[SlateItemOut]:
+) -> list[SuggestionItemOut]:
     media_ids = [row.target_ref.id for row in selected if row.target_ref.scheme == "media"]
     media_targets = media_service.hydrate_compact_media_targets(
         db, viewer_id=viewer_id, media_ids=media_ids
@@ -220,15 +226,15 @@ def _hydrate_slate_items(
         "in_progress": "InProgress",
         "finished": "Finished",
     }
-    items: list[SlateItemOut] = []
+    items: list[SuggestionItemOut] = []
     for ranked in selected:
         ref = ranked.target_ref
         if ref.scheme == "media":
             media = media_targets[ref.id]
             consumed = consumption[ref.id]
             items.append(
-                SlateItemOut(
-                    target=MediaSlateTargetOut(
+                SuggestionItemOut(
+                    target=MediaSuggestionTargetOut(
                         ref=ref.uri,
                         media_summary=media.summary,
                         image_url=media.image_url,
@@ -250,8 +256,8 @@ def _hydrate_slate_items(
         else:
             podcast = podcast_targets[ref.id]
             items.append(
-                SlateItemOut(
-                    target=PodcastSlateTargetOut(
+                SuggestionItemOut(
+                    target=PodcastSuggestionTargetOut(
                         ref=ref.uri,
                         title=podcast.title,
                         subtitle=podcast.subtitle,

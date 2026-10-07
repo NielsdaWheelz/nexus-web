@@ -14,7 +14,6 @@ import Button from "@/components/ui/Button";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
 import Input from "@/components/ui/Input";
 import Dialog from "@/components/ui/Dialog";
 import PaneSurface from "@/components/ui/PaneSurface";
@@ -700,10 +699,6 @@ export default function AuthorPaneBody() {
     [filterQuery, workRows],
   );
   const canonicalHandle = data?.detail.handle ?? null;
-  const connectionsComposerController = useConnectionsComposerController({
-    scheme: "contributor",
-    id: canonicalHandle ?? handle,
-  });
   const connectionsResource = useMemo(
     () =>
       resolveAuthorConnectionsResource(
@@ -717,7 +712,7 @@ export default function AuthorPaneBody() {
       connectionsResource.kind === "Ready" ? (
         <ConnectionsSurface
           resourceRef={connectionsResource.ref}
-          composerController={connectionsComposerController}
+
           activateTarget={activateTarget}
         />
       ) : connectionsResource.kind === "Loading" ? (
@@ -735,7 +730,7 @@ export default function AuthorPaneBody() {
           announcement="None"
         />
       ),
-    [activateTarget, connectionsComposerController, connectionsResource],
+    [activateTarget, connectionsResource],
   );
   const { companionAction } = useResourceInspector({
     scheme: "contributor",

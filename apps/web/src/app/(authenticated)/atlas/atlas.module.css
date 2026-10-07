@@ -7,7 +7,7 @@
     var(--oracle-gold, #c39a4d) 45%,
     #6b2a2a 55%
   );
-  --atlas-synapse-line: var(--oracle-gold, #c39a4d);
+  --atlas-discovery-line: var(--oracle-gold, #c39a4d);
   background: var(--oracle-bg);
   color: var(--oracle-fg);
   min-height: 100%;

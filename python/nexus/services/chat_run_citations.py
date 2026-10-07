@@ -395,6 +395,7 @@ def publish_chat_citations(
             continue
         if admits_resource_for_conversation_read(
             db,
+            viewer_id=run.owner_user_id,
             conversation_id=run.conversation_id,
             target=edge.target,
         ):

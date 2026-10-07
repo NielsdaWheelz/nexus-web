@@ -4,6 +4,9 @@ status: static research; no product changes or runtime qualification
 date: 2026-09-25
 baseline: `main`, `cfa27d6ce615bb4775e7784954f19dcdd8c8ebb1`
 
+2026-10-07: link-note replay/hydration findings below are historical; the
+[connections verification](../connections-verification.md) records their observed fixes.
+
 the worktree was clean at the audit's first read. later documentation changes
 belong to this research and concurrent work; this pass did not alter them.
 repository rules and the local verification standard were read. relevant
@@ -135,8 +138,8 @@ the concrete findings are recorded individually:
 | suggested recovery discards work | conflict copy at `ResourceSurfaceEditor.tsx:133-138` recommends reload; `useResourceSurfaceSession.ts:791-832` clears pending edits and retained draft | [reload loss](../tickets/notes-recovery-reload-discards-pending-edits.md) |
 | failed draft decoding deletes the raw record | `draftStore.ts:63-80`, `noteEditorDraftStore.ts:29-53` and `dailyDraftStore.ts:46-61` remove undecodable payload | [raw recovery](../tickets/notes-draft-decoding-deletes-unrecoverable-payload.md) |
 | a never-saved annotation draft is not rediscovered | `HighlightNoteEditor.tsx:181-199` puts a new random child id in its key; `:298-318` reads only that key on remount | [annotation identity](../tickets/annotation-draft-key-changes-before-first-save.md) |
-| link adapter drops the editor's replay id | `EvidenceItemRow.tsx:264-269` omits it; `links.ts:140` invents an id per network call | [link replay](../tickets/link-note-adapter-drops-editor-mutation-identity.md) |
-| reopening link-note editing has no existing body input | `EvidenceItemRow.tsx:260-274` always passes `note={null}` | [link hydration](../tickets/link-note-editor-does-not-hydrate-existing-body.md) |
+| link adapter drops the editor's replay id | `EvidenceItemRow.tsx:264-269` omits it; `links.ts:140` invents an id per network call | [link replay](../connections-verification.md) |
+| reopening link-note editing has no existing body input | `EvidenceItemRow.tsx:260-274` always passes `note={null}` | [link hydration](../connections-verification.md) |
 | typing does surface-sized synchronous work | `useResourceSurfaceSession.ts:706-707` publishes and stores; `model.ts:430-495` projects the list; `draftStore.ts:130-151` serializes the acknowledged surface and pending work | [measurement](../tickets/notes-keystroke-cost-needs-device-measurement.md) |
 
 these are static mechanisms. no lost production text, retry failure or measured

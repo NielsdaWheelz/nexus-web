@@ -8,18 +8,18 @@ import {
   useState,
 } from "react";
 import { ApiError } from "@/lib/api/client";
-import { lecternSlateResource, librarySlateResource } from "@/lib/api/resource";
+import { lecternSuggestionsResource, librarySuggestionsResource } from "@/lib/api/resource";
 import { useResource } from "@/lib/api/useResource";
-import { getLecternSlate, getLibrarySlate } from "@/lib/resonance/client";
+import { getLecternSuggestions, getLibrarySuggestions } from "@/lib/suggestions/client";
 import type {
   ResourceRefUri,
-  SlateItem,
-  SlateSnapshot,
-  SlateTarget,
-} from "@/lib/resonance/contract";
+  SuggestionItem,
+  SuggestionsSnapshot,
+  SuggestionTarget,
+} from "@/lib/suggestions/contract";
 import { assertNever } from "@/lib/assertNever";
 
-export type ReadingSlateDestination =
+export type SuggestionsDestination =
   { kind: "Lectern" } | { kind: "Library"; id: string; name: string };
 
 export type UnknownRecovery =
@@ -36,67 +36,67 @@ export interface AcceptOptions {
   onUnknown: (outcome: { error: ApiError; recovery: UnknownRecovery }) => void;
 }
 
-export type ReadingSlateAccept = (
-  target: SlateTarget,
+export type SuggestionsAccept = (
+  target: SuggestionTarget,
   options: AcceptOptions,
 ) => Promise<AcceptResult>;
 
-export interface ReadingSlateAddOptions {
+export interface SuggestionsAddOptions {
   isFocusOwned: () => boolean;
 }
 
-export type ReadingSlateState =
+export type SuggestionsState =
   | { kind: "InitialLoading" }
   | { kind: "InitialFailed"; error: ApiError; retry: () => void }
-  | { kind: "Ready"; items: SlateItem[] }
-  | { kind: "Refreshing"; items: SlateItem[] }
+  | { kind: "Ready"; items: SuggestionItem[] }
+  | { kind: "Refreshing"; items: SuggestionItem[] }
   | {
       kind: "RefreshFailed";
-      items: SlateItem[];
+      items: SuggestionItem[];
       error: ApiError;
       retry: () => void;
     }
   | {
       kind: "Adding";
-      items: SlateItem[];
+      items: SuggestionItem[];
       acceptedRef: ResourceRefUri;
       acceptedIndex: number;
     }
-  | { kind: "AddFailed"; items: SlateItem[]; error: ApiError }
+  | { kind: "AddFailed"; items: SuggestionItem[]; error: ApiError }
   | {
       kind: "AddUnknown";
-      items: SlateItem[];
+      items: SuggestionItem[];
       error: ApiError;
       recovery: UnknownRecovery;
     }
-  | { kind: "Refilling"; survivors: SlateItem[] }
+  | { kind: "Refilling"; survivors: SuggestionItem[] }
   | {
       kind: "RefillFailed";
-      survivors: SlateItem[];
+      survivors: SuggestionItem[];
       error: ApiError;
       retry: () => void;
     };
 
 type QueryIntent =
   | { kind: "Initial" }
-  | { kind: "Refresh"; items: SlateItem[] }
+  | { kind: "Refresh"; items: SuggestionItem[] }
   | {
       kind: "Refill";
-      survivors: SlateItem[];
+      survivors: SuggestionItem[];
       acceptedRef: ResourceRefUri;
     };
 
-export interface ReadingSlateFocusRequest {
+export interface SuggestionsFocusRequest {
   survivorRef: ResourceRefUri | null;
 }
 
-export interface ReadingSlateController {
-  state: ReadingSlateState;
-  add: (item: SlateItem, options: ReadingSlateAddOptions) => void;
-  focusRequest: ReadingSlateFocusRequest | null;
+export interface SuggestionsController {
+  state: SuggestionsState;
+  add: (item: SuggestionItem, options: SuggestionsAddOptions) => void;
+  focusRequest: SuggestionsFocusRequest | null;
 }
 
-function visibleItems(state: ReadingSlateState): SlateItem[] | null {
+function visibleItems(state: SuggestionsState): SuggestionItem[] | null {
   switch (state.kind) {
     case "InitialLoading":
     case "InitialFailed":
@@ -116,11 +116,11 @@ function visibleItems(state: ReadingSlateState): SlateItem[] | null {
   }
 }
 
-export function mergeSlateAfterAdd(
-  survivors: SlateItem[],
+export function mergeSuggestionsAfterAdd(
+  survivors: SuggestionItem[],
   acceptedRef: ResourceRefUri,
-  fresh: SlateItem[],
-): SlateItem[] {
+  fresh: SuggestionItem[],
+): SuggestionItem[] {
   const survivorRefs = new Set(survivors.map((item) => item.target.ref));
   const replacement = fresh.find(
     (item) =>
@@ -129,7 +129,7 @@ export function mergeSlateAfterAdd(
   return replacement === undefined ? survivors : [...survivors, replacement];
 }
 
-function destinationKey(destination: ReadingSlateDestination): string {
+function destinationKey(destination: SuggestionsDestination): string {
   switch (destination.kind) {
     case "Lectern":
       return "Lectern";
@@ -140,36 +140,36 @@ function destinationKey(destination: ReadingSlateDestination): string {
   }
 }
 
-function isReadParked(state: ReadingSlateState): boolean {
+function isReadParked(state: SuggestionsState): boolean {
   return state.kind === "Adding" || state.kind === "AddUnknown";
 }
 
-export function useReadingSlate({
+export function useSuggestions({
   destination,
   isActive,
   accept,
 }: {
-  destination: ReadingSlateDestination;
+  destination: SuggestionsDestination;
   isActive: boolean;
-  accept: ReadingSlateAccept;
-}): ReadingSlateController {
+  accept: SuggestionsAccept;
+}): SuggestionsController {
   const key = destinationKey(destination);
   // Destination props can change without a host remount. Ownership is checked
   // during render so the previous destination cannot paint, accept input, or
   // install its still-ready useResource value before the reset effect commits.
   const stateOwnerKeyRef = useRef(key);
   const destinationChangedAtRender = stateOwnerKeyRef.current !== key;
-  const [storedState, setState] = useState<ReadingSlateState>({
+  const [storedState, setState] = useState<SuggestionsState>({
     kind: "InitialLoading",
   });
-  const state: ReadingSlateState = destinationChangedAtRender
+  const state: SuggestionsState = destinationChangedAtRender
     ? { kind: "InitialLoading" }
     : storedState;
   const stateRef = useRef(state);
   stateRef.current = state;
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [storedFocusRequest, setFocusRequest] =
-    useState<ReadingSlateFocusRequest | null>(null);
+    useState<SuggestionsFocusRequest | null>(null);
   const focusRequest = destinationChangedAtRender ? null : storedFocusRequest;
   const queryIntentRef = useRef<QueryIntent>({ kind: "Initial" });
   const loadStartedVersionRef = useRef<number | null>(null);
@@ -216,25 +216,25 @@ export function useReadingSlate({
       ? { id: destination.id, refreshVersion: requestRefreshVersion }
       : null;
   const lecternResource = useResource<
-    SlateSnapshot,
+    SuggestionsSnapshot,
     { refreshVersion: number }
   >({
-    descriptor: lecternSlateResource,
+    descriptor: lecternSuggestionsResource,
     params: lecternParams,
     load: ({ refreshVersion: requestedVersion }, signal) => {
       loadStartedVersionRef.current = requestedVersion;
-      return getLecternSlate(signal);
+      return getLecternSuggestions(signal);
     },
   });
   const libraryResource = useResource<
-    SlateSnapshot,
+    SuggestionsSnapshot,
     { id: string; refreshVersion: number }
   >({
-    descriptor: librarySlateResource,
+    descriptor: librarySuggestionsResource,
     params: libraryParams,
     load: ({ id, refreshVersion: requestedVersion }, signal) => {
       loadStartedVersionRef.current = requestedVersion;
-      return getLibrarySlate(id, signal);
+      return getLibrarySuggestions(id, signal);
     },
   });
   const resource =
@@ -383,7 +383,7 @@ export function useReadingSlate({
       case "Refill":
         setState({
           kind: "Ready",
-          items: mergeSlateAfterAdd(
+          items: mergeSuggestionsAfterAdd(
             intent.survivors,
             intent.acceptedRef,
             resource.data.items,
@@ -404,7 +404,7 @@ export function useReadingSlate({
   ]);
 
   const add = useCallback(
-    (item: SlateItem, options: ReadingSlateAddOptions) => {
+    (item: SuggestionItem, options: SuggestionsAddOptions) => {
       if (stateOwnerKeyRef.current !== key) return;
       const current = stateRef.current;
       const items = visibleItems(current);
@@ -516,11 +516,11 @@ export function useReadingSlate({
   return { state, add, focusRequest };
 }
 
-export type ReadingSlateErrorContext =
+export type SuggestionsErrorContext =
   "initial" | "refresh" | "add" | "unknown" | "refill";
 
-export function readingSlateErrorMessage(
-  context: ReadingSlateErrorContext,
+export function suggestionsErrorMessage(
+  context: SuggestionsErrorContext,
   error: ApiError,
 ): string {
   switch (context) {

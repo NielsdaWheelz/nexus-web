@@ -49,8 +49,9 @@ from nexus.services.note_indexing import enqueue_note_reindex
 from nexus.services.notes import delete_page_in_current_transaction
 from nexus.services.resource_graph import adjacency as graph_adjacency
 from nexus.services.resource_graph import highlight_notes as graph_highlight_notes
-from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_graph.refs import ResourceRef, parse_resource_ref
 from nexus.services.resource_items import versions
+from nexus.services.resource_items.capabilities import resource_can_embed
 from nexus.services.vault_contracts import (
     EditableVaultFile,
     ExistingHighlightFile,
@@ -690,6 +691,20 @@ def _apply_page_body_from_vault(
 
 
 def _vault_body_pm_json(markdown: str) -> dict[str, Any]:
+    embed = re.fullmatch(r"!\[\[([^|\]\n]+)(?:\|([^\]\n]*))?\]\]", markdown.strip())
+    if embed is not None:
+        ref = parse_resource_ref(embed.group(1))
+        if isinstance(ref, ResourceRef) and resource_can_embed(ref):
+            return {
+                "type": "object_embed",
+                "attrs": {
+                    "objectType": ref.scheme,
+                    "objectId": str(ref.id),
+                    "label": embed.group(2) or ref.uri,
+                    "relationType": "embeds",
+                    "displayMode": "compact",
+                },
+            }
     return pm_doc_from_markdown_projection(markdown)
 
 
@@ -745,15 +760,14 @@ def _vault_markdown_from_pm_json(value: object) -> str:
         if node_type == "text" and isinstance(node.get("text"), str):
             parts.append(node["text"])
             return
-        if node_type in {"object_ref", "object_embed"} and isinstance(node.get("attrs"), dict):
+        if node_type == "object_embed" and isinstance(node.get("attrs"), dict):
             attrs = node["attrs"]
             object_type = attrs.get("objectType")
             object_id = attrs.get("objectId")
             label = attrs.get("label")
             if isinstance(object_type, str) and isinstance(object_id, str):
                 suffix = f"|{label}" if isinstance(label, str) and label else ""
-                prefix = "!" if node_type == "object_embed" else ""
-                parts.append(f"{prefix}[[{object_type}:{object_id}{suffix}]]")
+                parts.append(f"![[{object_type}:{object_id}{suffix}]]")
             return
         if node_type == "image" and isinstance(node.get("attrs"), dict):
             src = node["attrs"].get("src")

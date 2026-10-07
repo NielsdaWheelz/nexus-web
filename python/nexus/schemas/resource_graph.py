@@ -2,17 +2,17 @@
 
 Refs travel as ``<scheme>:<uuid>`` strings; routes parse them at the boundary.
 ``ConnectionOut`` carries live endpoint display so a connections list renders without a
-second round trip. The client decodes these key-exact: adding or removing a field here
-is a breaking change.
+second round trip. Generated wire types own the client contract.
 """
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from nexus.schemas.highlights import HIGHLIGHT_COLORS, PdfQuadIn
+from nexus.schemas.machine_authorship import MachineAuthorshipOut
 from nexus.schemas.resource_items import (
     ExpectedNoteBody,
     ResourceActivationOut,
@@ -20,13 +20,14 @@ from nexus.schemas.resource_items import (
 )
 from nexus.services.resource_graph.refs import ResourceScheme
 from nexus.services.resource_graph.schemas import Connection as Connection
+from nexus.services.resource_graph.schemas import (
+    ConnectionCreationRecord,
+    ConnectionMutation,
+    snapshot_to_jsonb,
+)
 from nexus.services.resource_graph.schemas import ConnectionEndpoint as ConnectionEndpoint
 from nexus.services.resource_graph.schemas import EdgeKind as EdgeKind
 from nexus.services.resource_graph.schemas import EdgeOrigin as EdgeOrigin
-from nexus.services.resource_graph.schemas import snapshot_to_jsonb
-
-if TYPE_CHECKING:
-    from nexus.services.resource_graph.context import ContextRefOut as ContextRefRecord
 
 
 class ResourceGraphModel(BaseModel):
@@ -49,13 +50,22 @@ class ConnectionQueryRequest(ResourceGraphModel):
     cursor: str | None = None
 
 
+class ConnectionActivationOut(ResourceGraphModel):
+    """The graph's existing snake-case activation bytes, explicitly typed."""
+
+    resource_ref: str
+    kind: Literal["route", "external", "none"]
+    href: str | None
+    unresolved_reason: str | None
+
+
 class ConnectionEndpointOut(ResourceGraphModel):
     ref: str
     scheme: ResourceScheme
     id: UUID
     label: str | None
     description: str | None
-    activation: ResourceActivationOut
+    activation: ConnectionActivationOut
     href: str | None
     missing: bool
 
@@ -69,7 +79,7 @@ class ConnectionCitationOut(ResourceGraphModel):
     ordinal: int
     role: EdgeKind
     snapshot: dict[str, Any]
-    activation: ResourceActivationOut
+    activation: ConnectionActivationOut
     target_reader: ConnectionReaderTargetOut | None
     target_status: Literal["current", "missing", "forbidden", "unanchorable"]
 
@@ -78,6 +88,11 @@ class ConnectionLinkNoteOut(ResourceGraphModel):
     ref: str
     note_block_id: UUID
     preview: str | None
+
+
+class ConnectionCreationOut(ResourceGraphModel):
+    authorship: MachineAuthorshipOut
+    record: Annotated[ConnectionCreationRecord, Field(discriminator="kind")]
 
 
 class ConnectionOut(ResourceGraphModel):
@@ -94,7 +109,9 @@ class ConnectionOut(ResourceGraphModel):
     target: ConnectionEndpointOut
     other: ConnectionEndpointOut
     citation: ConnectionCitationOut | None
-    link_note: ConnectionLinkNoteOut | None = None
+    link_note: ConnectionLinkNoteOut | None
+    creation: ConnectionCreationOut | None
+    mutation: Annotated[ConnectionMutation, Field(discriminator="kind")] | None
     created_at: datetime
 
 
@@ -114,7 +131,7 @@ class ContextRefOut(ResourceGraphModel):
     created_at: datetime
 
 
-class LinkResourceSource(ResourceGraphModel):
+class LinkResourceEndpoint(ResourceGraphModel):
     kind: Literal["resource"] = "resource"
     ref: str
 
@@ -142,36 +159,32 @@ class LinkPdfSelectionSource(ResourceGraphModel):
     color: HIGHLIGHT_COLORS
 
 
-LinkSource = Annotated[
-    LinkResourceSource | LinkFragmentSelectionSource | LinkPdfSelectionSource,
-    Field(discriminator="kind"),
-]
-
-
-class LinkResourceTarget(ResourceGraphModel):
-    kind: Literal["resource"] = "resource"
-    ref: str
-
-
-class LinkPassageTarget(ResourceGraphModel):
+class LinkPassageEndpoint(ResourceGraphModel):
     """A transient passage candidate, materialized into a ``passage_anchor`` on confirm."""
 
     kind: Literal["passage"] = "passage"
     candidate_ref: str
 
 
-LinkTarget = Annotated[LinkResourceTarget | LinkPassageTarget, Field(discriminator="kind")]
+LinkEndpoint = Annotated[LinkResourceEndpoint | LinkPassageEndpoint, Field(discriminator="kind")]
+LinkSource = Annotated[
+    LinkResourceEndpoint
+    | LinkPassageEndpoint
+    | LinkFragmentSelectionSource
+    | LinkPdfSelectionSource,
+    Field(discriminator="kind"),
+]
 
 
 class CreateLinkRequest(ResourceGraphModel):
     client_mutation_id: str = Field(..., min_length=1, max_length=120)
     source: LinkSource
-    target: LinkTarget
+    target: LinkEndpoint
 
 
 class CreateLinkOut(ResourceGraphModel):
     created: bool
-    created_source_ref: str | None = None
+    created_source_ref: str | None
     connection: ConnectionOut
 
 
@@ -190,22 +203,26 @@ class PutLinkNoteRequest(ResourceGraphModel):
         return validated
 
 
+class LinkNoteVersionsOut(ResourceGraphModel):
+    body: int
+    links: int
+
+
 class LinkNoteOut(ResourceGraphModel):
     note_block_id: UUID
     body_pm_json: dict[str, Any]
     body_text: str
-    version_by_lane: dict[str, int]
+    version_by_lane: LinkNoteVersionsOut
     connection: ConnectionOut
 
 
-class PutStanceRequest(ResourceGraphModel):
-    source_ref: str
-    target_ref: str
-    kind: Literal["supports", "contradicts"]
-
-
-class StanceOut(ResourceGraphModel):
-    connection: ConnectionOut
+def _activation_out(activation: ResourceActivationOut) -> ConnectionActivationOut:
+    return ConnectionActivationOut(
+        resource_ref=activation.resource_ref,
+        kind=activation.kind,
+        href=activation.href,
+        unresolved_reason=activation.unresolved_reason,
+    )
 
 
 def endpoint_out(endpoint: ConnectionEndpoint) -> ConnectionEndpointOut:
@@ -215,7 +232,7 @@ def endpoint_out(endpoint: ConnectionEndpoint) -> ConnectionEndpointOut:
         id=endpoint.ref.id,
         label=endpoint.label,
         description=endpoint.description,
-        activation=endpoint.activation,
+        activation=_activation_out(endpoint.activation),
         href=endpoint.href,
         missing=endpoint.missing,
     )
@@ -234,7 +251,7 @@ def connection_out(item: Connection) -> ConnectionOut:
             ordinal=item.citation.ordinal,
             role=item.citation.role,
             snapshot=snapshot_to_jsonb(item.citation.snapshot),
-            activation=item.citation.activation,
+            activation=_activation_out(item.citation.activation),
             target_reader=target_reader,
             target_status=item.citation.target_status,
         )
@@ -261,18 +278,11 @@ def connection_out(item: Connection) -> ConnectionOut:
             if item.link_note is not None
             else None
         ),
+        creation=(
+            ConnectionCreationOut(authorship=item.creation.authorship, record=item.creation.record)
+            if item.creation is not None
+            else None
+        ),
+        mutation=item.mutation,
         created_at=item.created_at,
-    )
-
-
-def context_ref_out(record: "ContextRefRecord") -> ContextRefOut:
-    return ContextRefOut(
-        id=record.edge_id,
-        conversation_id=record.conversation_id,
-        resource_ref=record.target.uri,
-        activation=record.activation,
-        label=record.resolved.label,
-        summary=record.resolved.summary,
-        missing=record.resolved.missing,
-        created_at=record.created_at,
     )

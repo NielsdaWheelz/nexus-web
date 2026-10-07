@@ -15,16 +15,14 @@ coercion.
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    SerializerFunctionWrapHandler,
     field_validator,
-    model_serializer,
     model_validator,
 )
 from pydantic.alias_generators import to_camel
@@ -103,7 +101,7 @@ SimpleResourceActionCapabilityKind = Literal[
     "RegenerateMessage",
     "DeleteMessage",
     "EditHighlight",
-    "LinkHighlight",
+    "LinkResource",
     "LearnHighlight",
     "EditHighlightBounds",
     "DeleteHighlight",
@@ -228,38 +226,52 @@ class TranscriptResourceActionCapabilityOut(BaseModel):
     model_config = _OUT_CONFIG
 
 
-class LecternMembershipResourceActionCapabilityOut(BaseModel):
+class AbsentLecternMembershipResourceActionCapabilityOut(BaseModel):
     kind: Literal["LecternMembership"] = "LecternMembership"
     availability: ServerActionAvailabilityOut
-    state: Literal["Absent", "Present"]
-    lectern_item_id: UUID | None = None
+    state: Literal["Absent"] = "Absent"
 
     model_config = _OUT_CONFIG
 
-    @model_serializer(mode="wrap")
-    def _serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
-        value = handler(self)
-        if self.state == "Absent":
-            value.pop("lecternItemId", None)
-            value.pop("lectern_item_id", None)
-        return value
+
+class PresentLecternMembershipResourceActionCapabilityOut(BaseModel):
+    kind: Literal["LecternMembership"] = "LecternMembership"
+    availability: ServerActionAvailabilityOut
+    state: Literal["Present"] = "Present"
+    lectern_item_id: UUID
+
+    model_config = _OUT_CONFIG
 
 
-class HighlightNoteResourceActionCapabilityOut(BaseModel):
+type LecternMembershipResourceActionCapabilityOut = Annotated[
+    AbsentLecternMembershipResourceActionCapabilityOut
+    | PresentLecternMembershipResourceActionCapabilityOut,
+    Field(discriminator="state"),
+]
+
+
+class AbsentHighlightNoteResourceActionCapabilityOut(BaseModel):
     kind: Literal["HighlightNote"] = "HighlightNote"
     availability: ServerActionAvailabilityOut
-    state: Literal["Absent", "Present"]
-    note_block_id: UUID | None = None
+    state: Literal["Absent"] = "Absent"
 
     model_config = _OUT_CONFIG
 
-    @model_serializer(mode="wrap")
-    def _serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
-        value = handler(self)
-        if self.state == "Absent":
-            value.pop("noteBlockId", None)
-            value.pop("note_block_id", None)
-        return value
+
+class PresentHighlightNoteResourceActionCapabilityOut(BaseModel):
+    kind: Literal["HighlightNote"] = "HighlightNote"
+    availability: ServerActionAvailabilityOut
+    state: Literal["Present"] = "Present"
+    note_block_id: UUID
+
+    model_config = _OUT_CONFIG
+
+
+type HighlightNoteResourceActionCapabilityOut = Annotated[
+    AbsentHighlightNoteResourceActionCapabilityOut
+    | PresentHighlightNoteResourceActionCapabilityOut,
+    Field(discriminator="state"),
+]
 
 
 ResourceActionCapabilityOut = Annotated[
@@ -282,7 +294,7 @@ class ResourceActionSnapshotOut(BaseModel):
     ref: str
     activation: ResourceActivationOut
     missing: bool
-    capabilities: list[ResourceActionCapabilityOut] = Field(default_factory=list)
+    capabilities: list[ResourceActionCapabilityOut]
 
     model_config = _OUT_CONFIG
 

@@ -7,6 +7,17 @@ status: open · origin: 2026-09-28 cleanup campaign · area: release / productio
 - production web and backend both serve `7dc68929b` (#377). on 2026-09-28, `/version` reported it and alembic was at `0241`.
 - merging to main deploys nothing. `deploy/hetzner/deploy.sh <sha>` converges the backend (`release.py`: backup, migrate, start), then promotes and aliases the vercel build of the same sha. web and backend therefore release together.
 - main carries migrations `0242`–`0252`. most are irreversible: their `downgrade()` raises. after the release, the verified pre-migration backup is the only copy of the dropped data. rollback means restoring the application and that backup together, losing every write made since the release.
+- the 2026-10-07 connections census again found `0241`, 67 succeeded
+  `synapse_scan` generations and 19 succeeded scan jobs. `0246` deletes those
+  receipts before the new connections cutover; its history-preservation contract
+  begins at `0252`. reconcile that earlier history-reset decision and its
+  unsettled-generation blockers explicitly; do not infer deletion authority from
+  the connections implementation. a read-only production copy is being used for
+  the full-chain rehearsal.
+- the isolated 2026-10-07 replay of that snapshot failed at `0246` with
+  `unsettled chat run blocks model history cutover`. alembic rolled the
+  transaction back; no guard was bypassed and production was never written.
+  settle the named owner before the full-chain release/rehearsal can pass.
 
 | revision | what | reversible | preflight |
 |---|---|---|---|

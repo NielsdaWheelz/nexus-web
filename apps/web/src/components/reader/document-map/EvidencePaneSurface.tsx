@@ -2,6 +2,7 @@
 
 import {
   useCallback,
+  useId,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -16,6 +17,7 @@ import {
   FeedbackNotice,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
+import Button from "@/components/ui/Button";
 import Chip from "@/components/ui/Chip";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import type {
@@ -25,7 +27,7 @@ import type {
   ReaderEvidencePassageGroup,
   ReaderEvidenceSourceActivation,
   ReaderEvidenceSourceTarget,
-  ReaderEvidenceUserEdge,
+  ReaderEvidenceMutableEdge,
 } from "@/lib/reader/documentMap";
 import { isReaderEvidenceUserLink } from "@/lib/reader/documentMap";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
@@ -76,6 +78,8 @@ interface EvidencePaneSurfaceProps {
   activeItemId: string | null;
   followGeneration: number;
   highlightEditRequest: EvidenceHighlightEditRequest | null;
+  linkEditRequest: string | null;
+  onLinkEditOpened: () => void;
   onHighlightEditClose: (highlightId: string) => void;
   hoveredItemId: string | null;
   highlightActions: EvidenceHighlightActions;
@@ -94,11 +98,10 @@ interface EvidencePaneSurfaceProps {
     opener: ReaderEvidenceSourceActivation,
   ) => void;
   onHoverItem: (item: ReaderEvidenceItem | null) => void;
-  onDismissSynapse: (edgeId: string) => Promise<void>;
-  /** Remove an explicit user edge whether it is a top-level Link or folded
-   * association. The caller dispatches context to Link DELETE and stances to
-   * stance DELETE from the typed role; generated associations never qualify. */
-  onRemoveUserEdge: (edge: ReaderEvidenceUserEdge) => Promise<void>;
+  onLink: () => void;
+
+  /** Dispatch the command declared by the graph owner. */
+  onMutateConnection: (edge: ReaderEvidenceMutableEdge) => Promise<void>;
   /** Refresh the evidence projection after a committed link-note change. */
   onLinkNoteChanged: () => void;
 }
@@ -110,6 +113,8 @@ export default function EvidencePaneSurface({
   activeItemId,
   followGeneration,
   highlightEditRequest,
+  linkEditRequest,
+  onLinkEditOpened,
   onHighlightEditClose,
   hoveredItemId,
   highlightActions,
@@ -118,10 +123,12 @@ export default function EvidencePaneSurface({
   onActivateSourceTarget,
   onOpenSourceLink,
   onHoverItem,
-  onDismissSynapse,
-  onRemoveUserEdge,
+
+  onLink,
+  onMutateConnection,
   onLinkNoteChanged,
 }: EvidencePaneSurfaceProps) {
+  const scopeId = useId();
   const evidence = projection.kind === "Ready" ? projection.evidence : null;
   const aggregateStatus =
     projection.kind === "Ready" ? projection.aggregateStatus : null;
@@ -318,6 +325,26 @@ export default function EvidencePaneSurface({
   }, [browse, evidence, highlightEditRequest, visiblePassageGroups]);
 
   useLayoutEffect(() => {
+    if (!linkEditRequest || !evidence) return;
+    const item = [...evidence.passage_groups.flatMap((group) => group.items), ...evidence.document_items]
+      .find((candidate) => isReaderEvidenceUserLink(candidate) && candidate.edge_id === linkEditRequest);
+    if (!item) return;
+    const index = visiblePassageGroups.findIndex(({ items }) => items.some((candidate) => candidate.id === item.id));
+    if (index < 0 && !evidence.document_items.some((candidate) => candidate.id === item.id)) {
+      setRevealedItemId(item.id);
+      return;
+    }
+    browse();
+    setMode("browse");
+    setScope("all");
+    setRevealedItemId(item.id);
+    if (index >= 0) setBrowsePage(Math.floor(index / BROWSE_PAGE_SIZE));
+    setEditingLinkId(linkEditRequest);
+    pendingRevealRef.current = item.id;
+    onLinkEditOpened();
+  }, [browse, evidence, linkEditRequest, onLinkEditOpened, visiblePassageGroups]);
+
+  useLayoutEffect(() => {
     const list = listRef.current;
     const anchor = browseAnchorRef.current;
     if (!list || mode !== "browse") return;
@@ -358,7 +385,7 @@ export default function EvidencePaneSurface({
     ? evidence.counts.highlights +
       evidence.counts.citations +
       evidence.counts.links +
-      evidence.counts.synapses
+      evidence.counts.machine_links
     : 0;
 
   // Drop the open link-note editor when its Link fact leaves the evidence set.
@@ -378,7 +405,7 @@ export default function EvidencePaneSurface({
 
   const linkActions: EvidenceLinkActions = {
     editingLinkId,
-    onRemoveUserEdge,
+    onMutateConnection,
     onEditLink: (id) => {
       if (id) {
         if (editingHighlightId) {
@@ -458,7 +485,7 @@ export default function EvidencePaneSurface({
     onActivateSourceTarget,
     onOpenSourceLink,
     onHoverItem,
-    onDismissSynapse,
+
   };
 
   const handleListKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -467,20 +494,21 @@ export default function EvidencePaneSurface({
 
   const header = (
     <header className={styles.header}>
-      <h2 className={styles.title}>Evidence</h2>
+      <h2 className={styles.title}>Connections</h2>
+      <Button type="button" variant="ghost" size="sm" onClick={onLink}>Link…</Button>
       <TabsList aria-label="By location" className={styles.scopeTabs}>
         <TabsTrigger
-          id="evidence-scope-all"
+          id={`${scopeId}-evidence-scope-all`}
           value="all"
-          aria-controls="evidence-panel-all"
+          aria-controls={`${scopeId}-evidence-panel-all`}
         >
-          All evidence{" "}
+          All connections{" "}
           <span className={styles.count}>{totalFacts}</span>
         </TabsTrigger>
         <TabsTrigger
-          id="evidence-scope-document"
+          id={`${scopeId}-evidence-scope-document`}
           value="document"
-          aria-controls="evidence-panel-document"
+          aria-controls={`${scopeId}-evidence-panel-document`}
         >
           Whole document{" "}
           <span className={styles.count}>{evidence?.counts.document ?? 0}</span>
@@ -506,10 +534,10 @@ export default function EvidencePaneSurface({
           Links {evidence?.counts.links ?? 0}
         </Chip>
         <Chip
-          pressed={filters.filter.synapse}
-          onPressedChange={() => filters.toggleFilter("synapse")}
+          pressed={filters.filter.machine_link}
+          onPressedChange={() => filters.toggleFilter("machine_link")}
         >
-          Synapses {evidence?.counts.synapses ?? 0}
+          Machine links {evidence?.counts.machine_links ?? 0}
         </Chip>
       </div>
       <div className={styles.viewControls}>
@@ -524,7 +552,7 @@ export default function EvidencePaneSurface({
         ) : null}
         {following && remainingCount > 0 ? <span className={styles.remaining}>{remainingCount} {remainingCount === 1 ? "item" : "items"} below</span> : null}
         {!following && scope === "all" && browsePageCount > 1 ? (
-          <nav className={styles.browsePages} aria-label="Evidence pages">
+          <nav className={styles.browsePages} aria-label="Connection pages">
             <button type="button" disabled={effectiveBrowsePage === 0}
               onClick={() => changeBrowsePage(effectiveBrowsePage - 1)}>earlier</button>
             <span>{effectiveBrowsePage + 1} of {browsePageCount}</span>
@@ -579,7 +607,7 @@ export default function EvidencePaneSurface({
       <FeedbackNotice
         content={{
           tone: "Neutral",
-          title: "No reader evidence in this document.",
+          title: "No connections in this document yet.",
         }}
         announcement="None"
       />
@@ -590,8 +618,8 @@ export default function EvidencePaneSurface({
         content={{
           tone: "Neutral",
           title: scope === "all"
-            ? "No evidence in this document."
-            : "No whole-document evidence in this document.",
+            ? "No connections in this document yet."
+            : "No whole-document connections yet.",
         }}
         announcement="None"
       />
@@ -615,7 +643,7 @@ export default function EvidencePaneSurface({
   } else if (scope === "all") {
     content = (
       <div className={styles.passageList} style={{ paddingTop: following ? 0 : browseInset, paddingBottom: following ? 0 : listGeometry.height }}>
-        {following && displayedGroups.length === 0 ? <p className={styles.noCurrentEvidence}>no evidence beside this passage</p> : null}
+        {following && displayedGroups.length === 0 ? <p className={styles.noCurrentEvidence}>no connections beside this passage</p> : null}
         {displayedGroups.map(({ group, items }) => (
           <PassageGroup
             key={group.locus_ref}
@@ -642,7 +670,7 @@ export default function EvidencePaneSurface({
           />
         ))}
         {!following && documentRows.length > 0 ? (
-          <section className={styles.documentList} aria-label="Whole-document evidence">
+          <section className={styles.documentList} aria-label="Whole-document connections">
             <h3 className={styles.sectionHeading}>Whole document</h3>
             {documentRows}
           </section>
@@ -672,7 +700,7 @@ export default function EvidencePaneSurface({
       variant="segmented"
       className={styles.root}
       role="group"
-      aria-label="Evidence"
+      aria-label="Connections"
       data-evidence-mode={following ? "follow" : "browse"}
     >
       {header}
@@ -683,16 +711,16 @@ export default function EvidencePaneSurface({
         />
       ) : null}
       <TabsContent
-        id="evidence-panel-all"
+        id={`${scopeId}-evidence-panel-all`}
         value="all"
-        aria-labelledby="evidence-scope-all"
+        aria-labelledby={`${scopeId}-evidence-scope-all`}
         className={styles.tabPanel}
       >
         <div
           ref={scope === "all" ? listRef : undefined}
           className={styles.list}
           role="group"
-          aria-label="All evidence"
+          aria-label="All connections"
           tabIndex={0}
           onWheelCapture={(event) => browse(event.target)}
           onTouchMoveCapture={(event) => browse(event.target)}
@@ -705,9 +733,9 @@ export default function EvidencePaneSurface({
         </div>
       </TabsContent>
       <TabsContent
-        id="evidence-panel-document"
+        id={`${scopeId}-evidence-panel-document`}
         value="document"
-        aria-labelledby="evidence-scope-document"
+        aria-labelledby={`${scopeId}-evidence-scope-document`}
         className={styles.tabPanel}
       >
         <div
@@ -836,7 +864,7 @@ function PassageGroup({
           open={openDisclosureIds.has(groupDisclosureId)}
           onToggle={() => rowActions.onToggleDisclosure(groupDisclosureId)}
           onActivateObject={rowActions.onActivateObject}
-          onRemoveUserEdge={linkActions.onRemoveUserEdge}
+          onMutateConnection={linkActions.onMutateConnection}
         />
       ) : null}
     </section>

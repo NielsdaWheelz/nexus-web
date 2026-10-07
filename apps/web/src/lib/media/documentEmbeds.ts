@@ -39,7 +39,7 @@ export interface DocumentEmbedLocator {
 }
 
 export type DocumentEmbedDisplayMode =
-  "resolved" | "unsupported" | "failed";
+  "resolved" | "pending" | "unsupported" | "failed";
 
 export type DocumentEmbedActionKind =
   "open_child_media" | "open_original" | "retry_child" | "refresh_parent";
@@ -362,7 +362,7 @@ function decodeDisplay(raw: unknown, name: string): DocumentEmbedDisplay {
   return {
     mode: expectOneOf(
       value.mode,
-      ["resolved", "unsupported", "failed"] as const,
+      ["resolved", "pending", "unsupported", "failed"] as const,
       `${name}.mode`,
     ),
     label: expectString(value.label, `${name}.label`),
@@ -773,6 +773,8 @@ function isExternalHref(href: string): boolean {
 
 function formatDocumentEmbedState(state: DocumentEmbedDisplayMode): string {
   switch (state) {
+    case "pending":
+      return "Resolving";
     case "resolved":
       return "Resolved";
     case "unsupported":

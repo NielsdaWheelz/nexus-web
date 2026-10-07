@@ -18,7 +18,7 @@ type ActionMenuProps = ComponentProps<typeof ActionMenu>;
 
 /**
  * The separate control that owns context-edge commands — remove from
- * conversation context, unlink a connection edge, or dismiss a synapse edge.
+ * conversation context, unlink a connection edge, or dismiss a discovery edge.
  * These are edge mutations, NOT resource-snapshot facts, so they never enter the
  * canonical `ResourceActionMenu`: they publish through this dedicated,
  * distinctly-labelled trigger + one-item menu. Busy and expected-error feedback
@@ -35,8 +35,7 @@ export default function ContextEdgeMenu({
 }: {
   readonly action: ContextEdgeActionKind;
   /**
-   * Runs the owning edge mutation (deleteLink / deleteStance /
-   * dismissSynapseEdge / removeContextRef). Any post-mutation reload is the
+   * Runs the server-declared owning mutation. Any post-mutation reload is the
    * caller's own — this control never touches the resource snapshot cache.
    */
   readonly execute: () => Promise<void>;
@@ -51,12 +50,16 @@ export default function ContextEdgeMenu({
   readonly retryable?: boolean;
 }) {
   const busyRef = useRef(false);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
 
   async function run() {
     if (busyRef.current) return;
+    // Both menu selection and Retry return to the trigger before the feedback
+    // or row can disappear. The row owner moves focus when removal succeeds.
+    triggerRef.current?.focus();
     busyRef.current = true;
     setBusy(true);
     setFeedback(null);
@@ -102,6 +105,7 @@ export default function ContextEdgeMenu({
         options={[descriptor]}
         label={label ?? entry.triggerLabel}
         renderTrigger={iconTrigger}
+        triggerRef={(node) => { triggerRef.current = node; }}
       />
       {feedback ? (
         <FeedbackNotice

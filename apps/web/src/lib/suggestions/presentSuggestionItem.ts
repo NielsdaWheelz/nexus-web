@@ -1,9 +1,9 @@
 import { absent, present } from "@/lib/api/presence";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import type { CollectionRowView } from "@/lib/collections/types";
-import type { SlateItem } from "@/lib/resonance/contract";
+import type { SuggestionItem } from "@/lib/suggestions/contract";
 
-export function presentSlateItem(item: SlateItem): CollectionRowView {
+export function presentSuggestionItem(item: SuggestionItem): CollectionRowView {
   const target = item.target;
   if (target.kind === "Media") {
     return presentMedia(target.mediaSummary, {

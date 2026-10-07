@@ -1,15 +1,14 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { ChevronRight, Link2, Plus } from "lucide-react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import NoteBodyEditor, { type NoteBodyEdit, type NoteBodyEditorDocument, type NoteBodyInputHandoff, type NoteBodySelection } from "@/components/notes/NoteBodyEditor";
-import ResourceTargetListbox, { resourceTargetKey, resourceTargetOptionId } from "@/components/resources/ResourceTargetListbox";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { useResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime";
 import { useMobileChromeActionMenuLock } from "@/lib/workspace/useMobileChromeActionMenuLock";
-import { useResourceTargetSearch } from "@/lib/resources/useResourceTargetSearch";
+import { useResourceOverlaysController } from "@/lib/resources/resourceOverlaysController";
 import type { ResourceItem, SurfacePosition } from "@/lib/resources/resourceItems";
 import type { ResourceOutline, OutlineRow } from "@/lib/resourceSurface/outline";
 import { ProtectedSurfaceLinkError, TerminalSurfaceLinkError } from "@/lib/resourceSurface/outline";
@@ -52,28 +51,15 @@ export default function ResourceSurfaceBodyEditor({
   onActivate, onOpenObject, onFeedback, onError, inputHandoff,
   onInputHandoffClaimed,
 }: Props) {
-  const [addItemOpen, setAddItemOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const [activeTargetKey, setActiveTargetKey] = useState<string | null>(null);
+  const { linkComposer } = useResourceOverlaysController();
   const [dragId, setDragId] = useState<string | null>(null);
   const [drop, setDrop] = useState<{ id: string; placement: "before" | "after" | "inside" } | null>(null);
   const sectionRef = useRef<HTMLElement | null>(null);
-  const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const addItemInputId = useId();
-  const addItemListboxId = useId();
   const filtering = rowFilterQuery.trim().length > 0;
   const structural = editable && structuralEditing && !filtering;
   const visibleRows = useMemo(() => filtering
     ? outline.rows.filter((row) => matchesPaneFilterQuery(rowFilterQuery, resourceSurfaceFilterFields(row)))
     : outline.rows, [filtering, outline.rows, rowFilterQuery]);
-  const presentRefs = useMemo(() => [outline.activeEndpointRef, ...outline.rows.filter((row) => row.depth === 0).map((row) => row.target.item.ref)], [outline.activeEndpointRef, outline.rows]);
-  const { targets, loading, error } = useResourceTargetSearch({ purpose: "link", query, sourceRef: outline.activeEndpointRef, excludeRefs: presentRefs });
-  const directTargets = useMemo(() => targets.filter((target) => target.kind === "resource" && target.item.capabilities.adjacencyTarget), [targets]);
-  useEffect(() => { if (addItemOpen) searchInputRef.current?.focus(); }, [addItemOpen]);
-  useEffect(() => {
-    const keys = directTargets.map(resourceTargetKey);
-    setActiveTargetKey((current) => current && keys.includes(current) ? current : keys[0] ?? null);
-  }, [directTargets]);
   const selected = outline.selection?.kind === "blocks" ? outline.selection.occurrenceIds : [];
   const selectedSet = new Set(selected);
   const lastTopRow = outline.rows.filter((row) => row.depth === 0).at(-1);
@@ -88,14 +74,12 @@ export default function ResourceSurfaceBodyEditor({
     } else onError?.(failure);
   };
   const run = (operation: Promise<void> | void) => { if (operation) void operation.catch(report); };
-  const pickTarget = (target: (typeof directTargets)[number]) => {
-    if (target.kind !== "resource") return;
-    run(outline.reference(target.item.ref, end));
-    setAddItemOpen(false); setQuery(""); setActiveTargetKey(null);
-  };
-  const activeTarget = directTargets.find((target) => resourceTargetKey(target) === activeTargetKey);
   const focusSerial = (id: string) => focusRequest?.occurrenceId === id ? focusRequest.serial : outline.focusRequest?.occurrenceId === id ? outline.focusRequest.serial : 0;
-  const selectBlock = (id: string, extend = false) => { outline.select(id, extend); sectionRef.current?.focus(); };
+  const selectBlock = (id: string, extend = false) => {
+    outline.select(id, extend);
+    window.getSelection()?.removeAllRanges();
+    sectionRef.current?.focus();
+  };
   const blockKey = (event: KeyboardEvent<HTMLElement>) => {
     if (event.target !== sectionRef.current) return;
     const key = event.key;
@@ -225,20 +209,7 @@ export default function ResourceSurfaceBodyEditor({
         {filtering && !visibleRows.length ? <li className={styles.emptyRow} role="status">No items match this filter.</li> : null}
         {structural ? <li className={styles.insertionRow}><button type="button" className={styles.insertNote} onClick={() => outline.insert(end)}><Plus size={16} aria-hidden="true" />Add a note</button></li> : null}
       </ol>
-      {structural ? <div className={styles.addItem}>{addItemOpen ? <div className={styles.addItemSearch}>
-        <label htmlFor={addItemInputId}>Add item</label><input ref={searchInputRef} id={addItemInputId} type="search" value={query}
-          role="combobox" aria-autocomplete="list" aria-controls={addItemListboxId} aria-expanded={Boolean(query.trim())}
-          aria-activedescendant={activeTarget ? resourceTargetOptionId(addItemListboxId, activeTarget) : undefined}
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") { event.preventDefault(); setAddItemOpen(false); setQuery(""); return; }
-            if (!query.trim() || !directTargets.length) return;
-            const index = Math.max(0, directTargets.findIndex((target) => resourceTargetKey(target) === activeTargetKey));
-            if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setActiveTargetKey(resourceTargetKey(directTargets[(index + (event.key === "ArrowDown" ? 1 : -1) + directTargets.length) % directTargets.length]!)); }
-            if (event.key === "Enter") { event.preventDefault(); pickTarget(directTargets[index]!); }
-          }} />
-        {query.trim() ? <ResourceTargetListbox id={addItemListboxId} ariaLabel="Resources to add" targets={directTargets} activeKey={activeTargetKey} loading={loading} error={error} onHover={(target) => setActiveTargetKey(resourceTargetKey(target))} onPick={pickTarget} /> : null}
-      </div> : <Button variant="ghost" size="sm" leadingIcon={<Link2 size={16} aria-hidden="true" />} onClick={() => setAddItemOpen(true)}>Add item</Button>}</div> : null}
+      {structural ? <div className={styles.addItem}><Button variant="ghost" size="sm" leadingIcon={<Link2 size={16} aria-hidden="true" />} onClick={() => void linkComposer.openResourceLink(outline.activeEndpointRef)}>Link…</Button></div> : null}
     </section>
   );
 }
@@ -257,7 +228,7 @@ function RowActions({ row, label, text, outline, enabled, report, onSelectBlock 
   options.push(
     { kind: "command", id: "Notes.SelectBlock", label: "Select block", onSelect: onSelectBlock },
     { kind: "command", id: "Notes.CopyText", label: "Copy text", disabled: Boolean(row.terminal), onSelect: () => run(copyText(text)) },
-    { kind: "command", id: "Notes.CopyReference", label: "Copy reference", onSelect: () => run(outline.copyReference(row.occurrenceId)) },
+    { kind: "command", id: "Notes.CopyLink", label: "Copy link", disabled: !row.target.item.activation.href, onSelect: () => run(outline.copyLink(row.occurrenceId)) },
     { kind: "command", id: "Notes.IndentLink", label: "Indent link", disabled: !enabled || row.target.content.kind !== "note_body" || row.hasLinkNote || !preceding || preceding.target.item.ref === row.target.item.ref, onSelect: () => run(outline.indent(row.occurrenceId)) },
     { kind: "command", id: "Notes.OutdentLink", label: "Outdent link", disabled: !enabled || row.target.content.kind !== "note_body" || row.hasLinkNote || row.path.linkPath.length < 2, onSelect: () => run(outline.outdent(row.occurrenceId)) },
     { kind: "command", id: "Notes.MoveEarlier", label: "Move link earlier", disabled: !enabled || index <= 0, onSelect: () => run(outline.move(row.occurrenceId, "up")) },

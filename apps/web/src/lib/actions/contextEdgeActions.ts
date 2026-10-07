@@ -25,7 +25,7 @@ interface ContextEdgeActionCatalogEntry {
 
 /**
  * The one owner of context-edge command identity and presentation. These
- * commands act on a conversation-context / connection / synapse EDGE — not on
+ * commands act on a connection EDGE — not on
  * the canonical resource — so they are NOT resource actions under the canonical
  * taxonomy. They left
  * `RESOURCE_ACTION_CATALOG` for this separate, typed publication contract and
@@ -35,23 +35,30 @@ interface ContextEdgeActionCatalogEntry {
 export const CONTEXT_EDGE_ACTION_CATALOG = {
   Unlink: {
     id: "ContextEdgeAction.Connection.Unlink",
-    label: "Unlink connection",
-    busyLabel: "Unlinking...",
+    label: "Remove link",
+    busyLabel: "Removing…",
     triggerLabel: "Edit connection",
     icon: ListMinus,
   },
   Dismiss: {
     id: "ContextEdgeAction.Connection.Dismiss",
-    label: "Dismiss connection",
+    label: "Dismiss link",
     busyLabel: "Dismissing...",
     triggerLabel: "Edit connection",
     icon: ListMinus,
   },
   RemoveFromContext: {
     id: "ContextEdgeAction.Context.Remove",
-    label: "Remove from conversation context",
+    label: "Remove from chat",
     busyLabel: "Removing...",
     triggerLabel: "Remove from context",
+    icon: ListMinus,
+  },
+  UndoAssistant: {
+    id: "ContextEdgeAction.Assistant.Undo",
+    label: "Undo assistant link",
+    busyLabel: "Undoing…",
+    triggerLabel: "Edit connection",
     icon: ListMinus,
   },
 } as const satisfies Record<string, ContextEdgeActionCatalogEntry>;

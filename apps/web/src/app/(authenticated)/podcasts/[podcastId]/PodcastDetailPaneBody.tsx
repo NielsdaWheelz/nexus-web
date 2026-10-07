@@ -67,7 +67,6 @@ import PaneCollectionBar from "@/components/workspace/PaneCollectionBar";
 import CollectionFilterEditor from "@/components/workspace/CollectionFilterEditor";
 import usePaneCollectionInput from "@/components/workspace/usePaneCollectionInput";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import {
   decodePodcastDetailResponse,
@@ -1337,19 +1336,15 @@ export default function PodcastDetailPaneBody() {
     acceptPodcastActionIntent,
   );
 
-  const connectionsComposerController = useConnectionsComposerController({
-    scheme: "podcast",
-    id: podcastId ?? "",
-  });
   const connectionsBody = useMemo(
     () => (
       <ConnectionsSurface
         resourceRef={{ scheme: "podcast", id: podcastId ?? "" }}
-        composerController={connectionsComposerController}
+
         activateTarget={activateTarget}
       />
     ),
-    [activateTarget, connectionsComposerController, podcastId],
+    [activateTarget, podcastId],
   );
   const { companionAction } = useResourceInspector({
     scheme: "podcast",

@@ -13,24 +13,25 @@ from sqlalchemy.orm import Session
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.responses import ok
+from nexus.responses import Data, ok
 from nexus.schemas.consumption import (
     ConsumptionCommand,
     LecternCommand,
 )
+from nexus.schemas.suggestions import QuickReadsOut, SuggestionsOut
 from nexus.services.consumption import service as consumption_service
-from nexus.services.resonance import service as resonance_service
+from nexus.services.suggestions import service as suggestions_service
 
 router = APIRouter(tags=["lectern"])
 
 
-@router.get("/lectern/slate")
-def get_lectern_slate(
+@router.get("/lectern/suggestions")
+def get_lectern_suggestions(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_repeatable_read_db)],
-) -> dict:
-    slate = resonance_service.build_lectern_slate(db, viewer_id=viewer.user_id)
-    return ok(slate, by_alias=True)
+) -> Data[SuggestionsOut]:
+    suggestions = suggestions_service.build_lectern_suggestions(db, viewer_id=viewer.user_id)
+    return Data(data=suggestions)
 
 
 @router.get("/lectern/quick-reads")
@@ -38,13 +39,13 @@ def get_quick_reads(
     request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_repeatable_read_db)],
-) -> dict:
+) -> Data[QuickReadsOut]:
     if request.query_params:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST, "Quick reads does not accept query parameters"
         )
-    quick_reads = resonance_service.build_quick_reads(db, viewer_id=viewer.user_id)
-    return ok(quick_reads, by_alias=True)
+    quick_reads = suggestions_service.build_quick_reads(db, viewer_id=viewer.user_id)
+    return Data(data=quick_reads)
 
 
 @router.get("/lectern")

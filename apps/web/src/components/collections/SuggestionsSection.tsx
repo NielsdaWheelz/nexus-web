@@ -14,19 +14,19 @@ import PaneSection from "@/components/ui/PaneSection";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import type { CollectionRowView } from "@/lib/collections/types";
 import { usePaneReturnDescendantReady } from "@/lib/panes/paneRuntime";
-import { presentSlateItem } from "@/lib/resonance/presentSlateItem";
+import { presentSuggestionItem } from "@/lib/suggestions/presentSuggestionItem";
 import {
-  readingSlateErrorMessage,
-  useReadingSlate,
-  type ReadingSlateAccept,
-  type ReadingSlateDestination,
-  type ReadingSlateState,
-} from "@/lib/resonance/useReadingSlate";
+  suggestionsErrorMessage,
+  useSuggestions,
+  type SuggestionsAccept,
+  type SuggestionsDestination,
+  type SuggestionsState,
+} from "@/lib/suggestions/useSuggestions";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { usePaneChromeFocusReturn } from "@/lib/workspace/mobileChrome";
 import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
 import { assertNever } from "@/lib/assertNever";
-import styles from "./ReadingSlateSection.module.css";
+import styles from "./SuggestionsSection.module.css";
 
 function shouldMoveTerminalFocusToPaneChrome(
   isActive: boolean,
@@ -36,7 +36,7 @@ function shouldMoveTerminalFocusToPaneChrome(
   return isActive && section?.contains(activeElement) === true;
 }
 
-function rowsForState(state: ReadingSlateState): CollectionRowView[] {
+function rowsForState(state: SuggestionsState): CollectionRowView[] {
   switch (state.kind) {
     case "InitialLoading":
     case "InitialFailed":
@@ -47,16 +47,16 @@ function rowsForState(state: ReadingSlateState): CollectionRowView[] {
     case "Adding":
     case "AddFailed":
     case "AddUnknown":
-      return state.items.map(presentSlateItem);
+      return state.items.map(presentSuggestionItem);
     case "Refilling":
     case "RefillFailed":
-      return state.survivors.map(presentSlateItem);
+      return state.survivors.map(presentSuggestionItem);
     default:
       return assertNever(state);
   }
 }
 
-function isBusy(state: ReadingSlateState): boolean {
+function isBusy(state: SuggestionsState): boolean {
   return (
     state.kind === "InitialLoading" ||
     state.kind === "Refreshing" ||
@@ -65,7 +65,7 @@ function isBusy(state: ReadingSlateState): boolean {
   );
 }
 
-function addControlsDisabled(state: ReadingSlateState): boolean {
+function addControlsDisabled(state: SuggestionsState): boolean {
   return (
     state.kind === "Adding" ||
     state.kind === "AddUnknown" ||
@@ -74,7 +74,7 @@ function addControlsDisabled(state: ReadingSlateState): boolean {
   );
 }
 
-function stateNotice(state: ReadingSlateState) {
+function stateNotice(state: SuggestionsState) {
   switch (state.kind) {
     case "InitialLoading":
     case "InitialFailed":
@@ -86,7 +86,7 @@ function stateNotice(state: ReadingSlateState) {
     case "RefreshFailed":
       return (
         <div className={styles.quietNotice}>
-          <span>{readingSlateErrorMessage("refresh", state.error)}</span>
+          <span>{suggestionsErrorMessage("refresh", state.error)}</span>
           <Button variant="ghost" size="sm" onClick={state.retry}>
             Retry
           </Button>
@@ -95,26 +95,26 @@ function stateNotice(state: ReadingSlateState) {
     case "AddFailed":
       return (
         <p className={styles.alert} role="alert">
-          {readingSlateErrorMessage("add", state.error)}
+          {suggestionsErrorMessage("add", state.error)}
         </p>
       );
     case "AddUnknown":
       return state.recovery.kind === "Local" ? (
         <div className={styles.alert} role="alert">
-          <span>{readingSlateErrorMessage("unknown", state.error)}</span>
+          <span>{suggestionsErrorMessage("unknown", state.error)}</span>
           <Button variant="ghost" size="sm" onClick={state.recovery.retry}>
             Retry
           </Button>
         </div>
       ) : (
         <p className={styles.quietNotice}>
-          {readingSlateErrorMessage("unknown", state.error)}
+          {suggestionsErrorMessage("unknown", state.error)}
         </p>
       );
     case "RefillFailed":
       return (
         <div className={styles.quietNotice}>
-          <span>{readingSlateErrorMessage("refill", state.error)}</span>
+          <span>{suggestionsErrorMessage("refill", state.error)}</span>
           <Button variant="ghost" size="sm" onClick={state.retry}>
             Retry
           </Button>
@@ -125,22 +125,22 @@ function stateNotice(state: ReadingSlateState) {
   }
 }
 
-export default function ReadingSlateSection({
+export default function SuggestionsSection({
   destination,
   paneId,
   isActive,
   accept,
   returnScope,
 }: {
-  destination: ReadingSlateDestination;
+  destination: SuggestionsDestination;
   paneId: string;
   isActive: boolean;
-  accept: ReadingSlateAccept;
+  accept: SuggestionsAccept;
   returnScope: string;
 }) {
   const reactId = useId();
-  const sectionId = `reading-slate-${reactId.replaceAll(":", "")}`;
-  const controller = useReadingSlate({ destination, isActive, accept });
+  const sectionId = `suggestions-${reactId.replaceAll(":", "")}`;
+  const controller = useSuggestions({ destination, isActive, accept });
   const isMobile = useIsMobileViewport();
   const { focus: returnPaneChromeFocus } = usePaneChromeFocusReturn();
   const { state } = controller;
@@ -159,18 +159,17 @@ export default function ReadingSlateSection({
     ownerKey: string;
     rows: CollectionRowView[];
   }>({ ownerKey: rowOwnerKey, rows: [] });
-  const title =
-    destination.kind === "Lectern" ? "At hand" : "Suggested for this library";
+  const title = "Suggestions";
   const ariaLabel =
     destination.kind === "Lectern"
-      ? "At hand suggestions"
+      ? "Suggestions for Lectern"
       : `Suggestions for ${destination.name}`;
   const terminalEmpty = state.kind === "Ready" && state.items.length === 0;
   const [terminalHidden, setTerminalHidden] = useState(false);
   const rendersSection = !terminalEmpty || !terminalHidden;
   // Keep only this destination's previous rows through the terminal layout
   // handoff. That leaves focused DOM connected until pane chrome owns focus,
-  // while a destination change can never resurrect another slate's rows.
+  // while a destination change can never resurrect another suggestions's rows.
   const renderedRows =
     terminalEmpty && retainedRowsRef.current.ownerKey === rowOwnerKey
       ? retainedRowsRef.current.rows
@@ -288,7 +287,7 @@ export default function ReadingSlateSection({
             );
             if (originatingRow === null) {
               throw new Error(
-                "Reading Slate Add control must be contained by its collection row.",
+                "Suggestions Add control must be contained by its collection row.",
               );
             }
             const focusWasOwnedAtAdd =
@@ -312,7 +311,7 @@ export default function ReadingSlateSection({
             });
           }}
         >
-          {destination.kind === "Lectern" ? "Add to Lectern" : "Add"}
+          {destination.kind === "Lectern" ? "Add to Lectern" : `Add to ${destination.name}`}
         </Button>
       );
     }
@@ -329,7 +328,7 @@ export default function ReadingSlateSection({
         title={title}
       >
         <div className={styles.quietNotice}>
-          <span>{readingSlateErrorMessage("initial", state.error)}</span>
+          <span>{suggestionsErrorMessage("initial", state.error)}</span>
           <Button variant="ghost" size="sm" onClick={state.retry}>
             Retry
           </Button>

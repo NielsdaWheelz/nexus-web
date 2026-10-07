@@ -6,7 +6,7 @@
  * lifecycle/messages/branch state), and renders the shared `ChatSurface` view
  * (which owns scroll). This adapter only holds pane chrome: typed section
  * publication, toolbar toggles and action menu, the
- * Resource Inspector surfaces (context refs + forks + Dossier), and the open-resource /
+ * Resource Inspector surfaces (Connections + forks + Dossier), and the open-resource /
  * reader-source navigation wiring.
  */
 
@@ -28,11 +28,10 @@ import ChatSurface from "@/components/chat/ChatSurface";
 import PaneSearchResults from "@/components/resource-inspector/PaneSearchResults";
 import type { DossierCitationActivate } from "@/components/dossier/DossierSurface";
 import ConversationForksPanel from "@/components/chat/ConversationForksPanel";
-import ConversationContextRefsSurface from "@/components/chat/ConversationContextRefsSurface";
+import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { useConversation } from "@/components/chat/useConversation";
 import { useConversationPaneFind } from "@/components/chat/useConversationPaneFind";
 import { usePendingReaderSelection } from "@/components/chat/usePendingReaderSelection";
-import { useConversationContextRefs } from "@/lib/conversations/useConversationContextRefs";
 import {
   readerTargetFromReaderSelection,
   type ReaderSourceTarget,
@@ -55,7 +54,6 @@ import {
 } from "@/lib/resources/activation";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import type { SSEContextRefAddedEvent } from "@/lib/api/sse/events";
-import type { ContextRefOut } from "@/lib/resourceGraph/contextRefs";
 import type { AcceptedChatAdmission } from "@/lib/conversations/chatAdmission";
 import type { BranchDraft, ForkOption } from "@/lib/conversations/types";
 import {
@@ -128,20 +126,14 @@ export default function Conversation() {
 
   const [branchFocusKey, setBranchFocusKey] = useState("");
 
-  // The context-ref secondary surface is keyed off the engine's resolved id, but the engine
-  // needs onContextRefAdded before that id exists — break the ordering cycle with
-  // a stable callback that reads the live upsert/id through refs.
-  const upsertContextRefRef = useRef<
-    ((contextRef: ContextRefOut) => void) | null
-  >(null);
+  const [connectionsRefresh, setConnectionsRefresh] = useState(0);
   const activeConversationIdRef = useRef<string | null>(conversationId);
 
   const onContextRefAdded = useCallback(
     (data: SSEContextRefAddedEvent["data"]) => {
       const activeId = activeConversationIdRef.current;
       if (activeId !== null && data.conversation_id !== activeId) return;
-      // The SSE payload is already a ContextRefOut (the materialized context edge).
-      upsertContextRefRef.current?.(data);
+      setConnectionsRefresh((value) => value + 1);
     },
     [],
   );
@@ -247,9 +239,6 @@ export default function Conversation() {
     }
   }, [convo.branch, routeTargetKey]);
 
-  const { contextRefs, removeContextRef, upsertContextRef } =
-    useConversationContextRefs(convo.conversationId);
-  upsertContextRefRef.current = upsertContextRef;
 
   const branch = convo.branch;
   const paneFind = useConversationPaneFind({
@@ -368,17 +357,6 @@ export default function Conversation() {
     [activateReaderSource],
   );
 
-  const handleOpenResource = useCallback(
-    (contextRef: ContextRefOut) => {
-      activateResource(contextRef.activation, {
-        labelHint: contextRef.label,
-        activateTarget: paneRuntime.activateTarget,
-        disposition: { kind: "Follow" },
-      });
-    },
-    [paneRuntime],
-  );
-
   // Pending + sent quote cards delegate snapshot activation here: the reader
   // positions from the IMMUTABLE snapshot locator, never the live Highlight.
   const handleActivateReaderSelection = useCallback(
@@ -442,17 +420,13 @@ export default function Conversation() {
   // Pane chrome: action menu + Resource Inspector surfaces
   // --------------------------------------------------------------------------
 
-  const contextBody = useMemo(
+  const connectionsBody = useMemo(
     () => (
       <div className={styles.chatSecondaryBody}>
-        <ConversationContextRefsSurface
-          contextRefs={contextRefs}
-          removeContextRef={removeContextRef}
-          onOpenResource={handleOpenResource}
-        />
+        {convo.conversationId ? <ConnectionsSurface resourceRef={{ scheme: "conversation", id: convo.conversationId }} refreshKey={connectionsRefresh} activateTarget={paneRuntime.activateTarget} /> : <p>Connections appear after this chat is created.</p>}
       </div>
     ),
-    [contextRefs, handleOpenResource, removeContextRef],
+    [connectionsRefresh, convo.conversationId, paneRuntime.activateTarget],
   );
   const forksBody = useMemo(
     () => (
@@ -557,7 +531,7 @@ export default function Conversation() {
   const inspector = useResourceInspector({
     scheme: "conversation",
     handle: convo.conversationId,
-    bodies: { linkedItems: contextBody, forks: forksBody },
+    bodies: { linkedItems: connectionsBody, forks: forksBody },
     searchResults: searchResultsBody,
     onCitationActivate: handleDossierCitationActivate,
   });

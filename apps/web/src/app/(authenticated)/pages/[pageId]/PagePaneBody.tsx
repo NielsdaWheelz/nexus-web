@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
 import ResourceSurfaceEditor from "@/components/resource-surface/ResourceSurfaceEditor";
 import {
   FeedbackNotice,
@@ -516,19 +515,15 @@ function MaterializedPageChrome({
     disposition: WorkspaceTargetDisposition;
   }) => void;
 }) {
-  const composer = useConnectionsComposerController({
-    scheme: "page",
-    id: page.id,
-  });
   const connections = useMemo(
     () => (
       <ConnectionsSurface
         resourceRef={{ scheme: "page", id: page.id }}
-        composerController={composer}
+
         activateTarget={activateTarget}
       />
     ),
-    [activateTarget, composer, page.id],
+    [activateTarget, page.id],
   );
   const { companionAction } = useResourceInspector({
     scheme: "page",

@@ -9,10 +9,12 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
-from nexus.responses import ok
+from nexus.responses import Data, ok
 from nexus.schemas.notes import (
     CreatePageRequest,
     DailyCaptureRequest,
+    DailyCaptureResult,
+    DailyPageDescriptor,
     NotePagesOut,
     UpdatePageRequest,
 )
@@ -54,18 +56,18 @@ def delete_page(page_id: UUID, viewer: ViewerDep, db: DbDep) -> Response:
 
 
 @router.get("/daily/{local_date}")
-def read_daily_page(local_date: date, viewer: ViewerDep, db: DbDep) -> dict:
-    return ok(notes_service.read_daily_page(db, viewer.user_id, local_date), by_alias=True)
+def read_daily_page(local_date: date, viewer: ViewerDep, db: DbDep) -> Data[DailyPageDescriptor]:
+    return Data(data=notes_service.read_daily_page(db, viewer.user_id, local_date))
 
 
 @router.post("/daily/{local_date}/captures", status_code=201)
 def capture_daily_page_note(
     local_date: date, request: DailyCaptureRequest, viewer: ViewerDep, db: DbDep
-) -> dict:
+) -> Data[DailyCaptureResult]:
     result = notes_service.capture_daily_page_note(
         db, viewer.user_id, local_date=local_date, request=request
     )
-    return ok(result, by_alias=True)
+    return Data(data=result)
 
 
 @router.get("/blocks/{block_id}")

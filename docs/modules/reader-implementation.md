@@ -507,10 +507,12 @@ is not generated chat citation evidence and must not write or read
 Reader connections are graph-authored linked items for the current media,
 separate from source-authored apparatus.
 
-- Backend ownership remains `resource_edges`; the media reader consumes those
-  rows only through `GET /media/{id}/document-map`.
-- Evidence classifies these rows under semantic `Links` and
-  `Synapses` filters; it exposes no storage-shaped `Connections` category.
+- backend ownership remains `resource_edges`; the media reader consumes those
+  rows through `GET /media/{id}/document-map` under the connections pane.
+- reader filters distinguish links, machine links, highlights and citations.
+  user links retain a fact row inside their passage group; highlight association
+  folding cannot hide their link-note action. attachment and citation facts keep
+  their source-owned identity and removal policy.
 - Rows align to the referenced passage when the media-owned endpoint resolves
   to PDF geometry or exact rendered fragment text offsets. Unavailable passage
   facts remain in `Passages` under `Needs attention`; they never invent locator
@@ -518,7 +520,7 @@ separate from source-authored apparatus.
 - Activating a row opens the source object; activating its target uses the
   target-owned reader locator. Edges never store reader locators.
 - **Link** (see
-  [universal-link-authoring-hard-cutover.md](../cutovers/universal-link-authoring-hard-cutover.md))
+  [connections cutover](../connections-plan.md))
   is the reader's primary chain-link authoring verb: a fresh selection or an
   existing Highlight opens one searchable target dialog whose results include
   direct Resources, existing Highlights, and passage candidates; confirming a

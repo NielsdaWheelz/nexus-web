@@ -177,6 +177,7 @@ def search(
                 semantic_embedding=embedding,
                 scope_type=query.scope.kind,
                 scope_id=query.scope.id,
+                frozen_context_refs=query.frozen_context_refs,
                 contributor_ids=contributor_ids,
                 roles=query.roles,
                 content_kinds=content_kinds,
@@ -193,6 +194,7 @@ def search(
                 semantic_embedding=embedding,
                 scope_type=query.scope.kind,
                 scope_id=query.scope.id,
+                frozen_context_refs=query.frozen_context_refs,
                 limit=CANDIDATES_PER_TYPE,
                 highlight_notes_only=True,
             )

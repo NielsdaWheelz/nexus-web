@@ -1,7 +1,7 @@
-"""Anchor selection and the bounded acquisition SQL behind one Slate read.
+"""Anchor selection and the bounded acquisition SQL behind one Suggestions read.
 
 Every lane joins a viewer-visibility relation owned by another module, is
-capped at ``SLATE_FAMILY_CANDIDATE_LIMIT`` per contextual family, and measures
+capped at ``SUGGESTION_FAMILY_CANDIDATE_LIMIT`` per contextual family, and measures
 every window against the caller's single ``as_of`` instant. Each relational
 lane emits its rows in strength order, and that position becomes the evidence
 value's ``rank``: the one place any of these orders is decided.
@@ -22,17 +22,19 @@ from nexus.db.models import MediaKind
 from nexus.services import highlights, library_entries, notes
 from nexus.services.consumption import projection
 from nexus.services.contributor_credits import visible_author_credit_rows_sql
-from nexus.services.resonance._slate import (
+from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.semantic_chunks import media_neighbor_rows_sql
+from nexus.services.suggestions._ranking import (
     ARRIVAL_WINDOW_DAYS,
     CONTINUITY_MAX_IDLE_DAYS,
     REDISCOVERY_MIN_AGE_DAYS,
-    RESONANCE_EDGE_ORIGINS,
     SEMANTIC_DIMENSIONS,
     SEMANTIC_MIN_SIMILARITY,
     SEMANTIC_MODEL,
     SEMANTIC_PROVIDER,
-    SLATE_ANCHOR_LIMIT,
-    SLATE_FAMILY_CANDIDATE_LIMIT,
+    SUGGESTION_ANCHOR_LIMIT,
+    SUGGESTION_EDGE_ORIGINS,
+    SUGGESTION_FAMILY_CANDIDATE_LIMIT,
     Anchor,
     ArrivalEvidence,
     CandidateEvidence,
@@ -42,8 +44,6 @@ from nexus.services.resonance._slate import (
     SemanticEvidence,
     SharedAuthorEvidence,
 )
-from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.semantic_chunks import media_neighbor_rows_sql
 
 SEMANTIC_CHUNK_CANDIDATE_MULTIPLIER = 20
 SEMANTIC_CHUNK_CANDIDATE_MINIMUM = 100
@@ -90,15 +90,15 @@ def lectern_anchors(db: Session, *, viewer_id: UUID) -> tuple[Anchor, ...]:
     """The five newest objects the viewer touched, engagement before notes."""
     gathered: list[tuple[datetime, int, ResourceRef]] = []
     for fact in projection.recent_engagement_anchor_facts(
-        db, viewer_id=viewer_id, limit=SLATE_ANCHOR_LIMIT
+        db, viewer_id=viewer_id, limit=SUGGESTION_ANCHOR_LIMIT
     ):
         gathered.append((fact.activity_at, 0, ResourceRef(scheme="media", id=fact.media_id)))
     for fact in highlights.recent_highlight_anchor_facts(
-        db, viewer_id=viewer_id, limit=SLATE_ANCHOR_LIMIT
+        db, viewer_id=viewer_id, limit=SUGGESTION_ANCHOR_LIMIT
     ):
         gathered.append((fact.activity_at, 1, ResourceRef(scheme="media", id=fact.media_id)))
     for note_fact in notes.recent_note_anchor_facts(
-        db, viewer_id=viewer_id, limit=SLATE_ANCHOR_LIMIT
+        db, viewer_id=viewer_id, limit=SUGGESTION_ANCHOR_LIMIT
     ):
         source_priority = 2 if note_fact.ref.scheme == "note_block" else 3
         gathered.append((note_fact.activity_at, source_priority, note_fact.ref))
@@ -110,19 +110,19 @@ def lectern_anchors(db: Session, *, viewer_id: UUID) -> tuple[Anchor, ...]:
             continue
         seen.add(ref.uri)
         refs.append(ref)
-        if len(refs) == SLATE_ANCHOR_LIMIT:
+        if len(refs) == SUGGESTION_ANCHOR_LIMIT:
             break
     return tuple(Anchor(ref=ref, rank=rank) for rank, ref in enumerate(refs))
 
 
 def library_anchors(db: Session, *, viewer_id: UUID, library_id: UUID) -> tuple[Anchor, ...]:
     refs = library_entries.library_anchor_facts(
-        db, viewer_id=viewer_id, library_id=library_id, limit=SLATE_ANCHOR_LIMIT
+        db, viewer_id=viewer_id, library_id=library_id, limit=SUGGESTION_ANCHOR_LIMIT
     )
     return tuple(Anchor(ref=ref, rank=rank) for rank, ref in enumerate(refs))
 
 
-def acquire_slate_candidates(
+def acquire_suggestion_candidates(
     db: Session,
     *,
     viewer_id: UUID,
@@ -301,7 +301,7 @@ def _nonrelational_media_ids(
             FROM eligible_media
             WHERE {_CONTINUITY_WINDOW}
             ORDER BY last_engaged_at DESC, media_id ASC
-            LIMIT {SLATE_FAMILY_CANDIDATE_LIMIT}
+            LIMIT {SUGGESTION_FAMILY_CANDIDATE_LIMIT}
         """),
         params,
     ).mappings()
@@ -345,7 +345,7 @@ def _nonrelational_media_ids(
                     CASE WHEN episode_on = arrived_on THEN published_at END
                 ) DESC NULLS LAST,
                 media_id ASC
-            LIMIT {SLATE_FAMILY_CANDIDATE_LIMIT}
+            LIMIT {SUGGESTION_FAMILY_CANDIDATE_LIMIT}
         """),
         params,
     ).mappings()
@@ -390,7 +390,7 @@ def _relational_target_relation(target_relation: str, *, exclude_nonrelational: 
                 ) <= :as_of - :rediscovery_days * interval '1 day'
                 THEN 'Rediscovery'
                 ELSE 'GraphThread'
-            END AS slate_family
+            END AS suggestions_family
         FROM normalized
         WHERE true
         {exclusion}
@@ -464,7 +464,7 @@ def _edge_rows(
                 ) AS pair(anchor_scheme, anchor_id, target_scheme, target_id)
             ),
             qualified AS (
-                SELECT incident.target_scheme, incident.target_id, eligible.slate_family,
+                SELECT incident.target_scheme, incident.target_id, eligible.suggestions_family,
                        anchors.rank AS anchor_rank, incident.edge_id, incident.edge_kind,
                        incident.edge_origin, incident.created_at
                 FROM incident
@@ -484,17 +484,17 @@ def _edge_rows(
             SELECT * FROM (
                 SELECT strongest_per_target.*,
                        ROW_NUMBER() OVER (
-                           PARTITION BY slate_family ORDER BY {_EDGE_STRENGTH_ORDER}
+                           PARTITION BY suggestions_family ORDER BY {_EDGE_STRENGTH_ORDER}
                        ) AS family_rank
                 FROM strongest_per_target
             ) ranked
-            WHERE family_rank <= {SLATE_FAMILY_CANDIDATE_LIMIT}
+            WHERE family_rank <= {SUGGESTION_FAMILY_CANDIDATE_LIMIT}
             ORDER BY {_EDGE_STRENGTH_ORDER}
         """),
         {
             "viewer_id": viewer_id,
             "anchors": _anchors_json(anchors),
-            "edge_origins": list(RESONANCE_EDGE_ORIGINS),
+            "edge_origins": list(SUGGESTION_EDGE_ORIGINS),
             **params,
         },
     ).mappings()
@@ -540,7 +540,7 @@ def _shared_author_rows(
             eligible_targets AS ({relation}),
             pairs AS (
                 SELECT DISTINCT
-                    eligible.target_scheme, eligible.target_id, eligible.slate_family,
+                    eligible.target_scheme, eligible.target_id, eligible.suggestions_family,
                     anchors.rank AS anchor_rank, eligible.last_engaged_at,
                     eligible.latest_exact_arrival_at, target_author.contributor_id
                 FROM anchors
@@ -561,12 +561,12 @@ def _shared_author_rows(
             ),
             pair_strength AS (
                 SELECT
-                    target_scheme, target_id, slate_family, anchor_rank,
+                    target_scheme, target_id, suggestions_family, anchor_rank,
                     last_engaged_at, latest_exact_arrival_at, COUNT(*) AS author_count,
                     (ARRAY_AGG(contributor_id ORDER BY contributor_id ASC))[1] AS first_author_id
                 FROM pairs
                 GROUP BY
-                    target_scheme, target_id, slate_family, anchor_rank,
+                    target_scheme, target_id, suggestions_family, anchor_rank,
                     last_engaged_at, latest_exact_arrival_at
             ),
             strongest_per_target AS (
@@ -577,13 +577,13 @@ def _shared_author_rows(
             ranked AS (
                 SELECT strongest_per_target.*,
                        ROW_NUMBER() OVER (
-                           PARTITION BY slate_family ORDER BY {strength}
+                           PARTITION BY suggestions_family ORDER BY {strength}
                        ) AS family_rank
                 FROM strongest_per_target
             )
             SELECT ranked.*
             FROM ranked
-            WHERE ranked.family_rank <= {SLATE_FAMILY_CANDIDATE_LIMIT}
+            WHERE ranked.family_rank <= {SUGGESTION_FAMILY_CANDIDATE_LIMIT}
             ORDER BY {strength}
         """),
         {"viewer_id": viewer_id, "anchors": _anchors_json(author_anchors), **params},
@@ -608,7 +608,7 @@ def _semantic_rows(
     eligible_context = f"""
         SELECT
             target_id AS media_id,
-            slate_family AS candidate_partition,
+            suggestions_family AS candidate_partition,
             last_engaged_at,
             latest_exact_arrival_at
         FROM ({relation}) relational_targets
@@ -641,7 +641,7 @@ def _semantic_rows(
                 "anchor_media_id": anchor.ref.id,
                 "embedding_dimensions": SEMANTIC_DIMENSIONS,
                 "candidate_limit": max(
-                    SLATE_FAMILY_CANDIDATE_LIMIT * SEMANTIC_CHUNK_CANDIDATE_MULTIPLIER,
+                    SUGGESTION_FAMILY_CANDIDATE_LIMIT * SEMANTIC_CHUNK_CANDIDATE_MULTIPLIER,
                     SEMANTIC_CHUNK_CANDIDATE_MINIMUM,
                 ),
                 **params,
@@ -682,7 +682,7 @@ def _semantic_rows(
     family_counts = {"GraphThread": 0, "Rediscovery": 0}
     for row in qualified:
         peer_id = UUID(str(row["peer_media_id"]))
-        if peer_id in seen or family_counts[row["partition"]] == SLATE_FAMILY_CANDIDATE_LIMIT:
+        if peer_id in seen or family_counts[row["partition"]] == SUGGESTION_FAMILY_CANDIDATE_LIMIT:
             continue
         seen.add(peer_id)
         family_counts[row["partition"]] += 1

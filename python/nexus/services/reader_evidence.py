@@ -33,6 +33,7 @@ from nexus.schemas.reader_document_map import (
     ReaderEvidenceHighlightOut,
     ReaderEvidenceItemOut,
     ReaderEvidenceLinkOut,
+    ReaderEvidenceMachineLinkOut,
     ReaderEvidenceNoteObjectOut,
     ReaderEvidenceObjectOut,
     ReaderEvidenceOut,
@@ -42,15 +43,17 @@ from nexus.schemas.reader_document_map import (
     ReaderEvidenceResolvedOut,
     ReaderEvidenceSourceReferenceOut,
     ReaderEvidenceSourceTargetOut,
-    ReaderEvidenceSynapseOut,
     ReaderEvidenceUnavailableOut,
     ReaderEvidenceUnavailableReason,
     ReaderSourceHtmlOut,
     ReaderSourceTextOut,
     ReaderSourceUnavailableOut,
 )
-from nexus.schemas.resource_graph import ConnectionEndpointOut, ConnectionLinkNoteOut
-from nexus.schemas.resource_items import ResourceActivationOut
+from nexus.schemas.resource_graph import (
+    ConnectionActivationOut,
+    ConnectionEndpointOut,
+    ConnectionLinkNoteOut,
+)
 from nexus.services.reader_connections import ReaderConnectionRow
 from nexus.services.reader_evidence_markers import build_markers
 from nexus.services.reader_locations import (
@@ -75,7 +78,7 @@ _ITEM_KIND_ORDER = {
     "SourceReference": 1,
     "GeneratedCitation": 2,
     "Link": 3,
-    "Synapse": 4,
+    "MachineLink": 4,
 }
 _PLAIN_OBJECT_KINDS: dict[str, Literal["Dossier", "Oracle", "Media", "Other"]] = {
     "artifact": "Dossier",
@@ -168,13 +171,12 @@ def build_reader_evidence(
     _add_highlight_facts(ctx, highlights=highlights, media_kind=media_kind)
     if apparatus.status in ("ready", "partial"):
         _compose_apparatus(ctx, apparatus=apparatus)
-    authored_chat_loci, consumed_edge_ids = _add_generated_citations(ctx, connections=connections)
-    _add_synapses(ctx, connections=connections, consumed_edge_ids=consumed_edge_ids)
+    _, consumed_edge_ids = _add_generated_citations(ctx, connections=connections)
+    _add_machine_links(ctx, connections=connections, consumed_edge_ids=consumed_edge_ids)
     _add_remaining_connections(
         ctx,
         connections=connections,
         consumed_edge_ids=consumed_edge_ids,
-        authored_chat_loci=authored_chat_loci,
     )
 
     groups_out = _finalize_groups(ctx.groups)
@@ -199,7 +201,7 @@ def build_reader_evidence(
                     item.kind in ("SourceReference", "GeneratedCitation") for item in all_items
                 ),
                 links=sum(item.kind == "Link" for item in all_items),
-                synapses=sum(item.kind == "Synapse" for item in all_items),
+                machine_links=sum(item.kind == "MachineLink" for item in all_items),
                 passages=sum(len(group.items) for group in groups_out),
                 document=len(ctx.document_items),
             ),
@@ -225,6 +227,7 @@ def _add_highlight_facts(
             suffix=highlight.suffix,
         )
         item = ReaderEvidenceHighlightOut(
+            associations=[],
             id=locus_ref,
             label=highlight.exact or "Highlight",
             excerpt=present(highlight.exact) if highlight.exact else absent(),
@@ -317,6 +320,7 @@ def _compose_apparatus(ctx: _Projection, *, apparatus: ReaderApparatusResponse) 
         )
         marker_anchor_id = owner.source_ref.get("marker_id")
         item = ReaderEvidenceSourceReferenceOut(
+            associations=[],
             id=f"source-reference:{owner.stable_key}",
             label=owner.label
             or next((target.label for target in targets if target.label), None)
@@ -338,7 +342,7 @@ def _compose_apparatus(ctx: _Projection, *, apparatus: ReaderApparatusResponse) 
 
 def _apparatus_activation(
     ctx: _Projection, target: ReaderApparatusItemOut, *, resolution: ReaderEvidenceResolutionOut
-) -> ResourceActivationOut:
+) -> ConnectionActivationOut:
     """Route a target already proven visible by the enclosing apparatus read."""
     href = route_for_visible_apparatus_item(
         media_id=ctx.media_id,
@@ -349,13 +353,13 @@ def _apparatus_activation(
         locator_current=isinstance(resolution, ReaderEvidenceResolvedOut),
     )
     if href is None:
-        return ResourceActivationOut(
+        return ConnectionActivationOut(
             resource_ref=target.resource_ref,
             kind="none",
             href=None,
             unresolved_reason="not_routeable",
         )
-    return ResourceActivationOut(
+    return ConnectionActivationOut(
         resource_ref=target.resource_ref, kind="route", href=href, unresolved_reason=None
     )
 
@@ -410,6 +414,8 @@ def _add_generated_citations(
             excerpt=present(excerpt) if excerpt else absent(),
             associations=[ReaderEvidenceAuthoredInOut(object=source_object)],
             edge_id=row.connection.edge_id,
+            creation=row.connection.creation,
+            mutation=row.connection.mutation,
             role=row.connection.kind,
         )
         _place_item(ctx, locus_ref, _resolution_for_connection(ctx, row), item)
@@ -419,7 +425,7 @@ def _add_generated_citations(
     return authored_chat_loci, consumed_edge_ids
 
 
-def _add_synapses(
+def _add_machine_links(
     ctx: _Projection, *, connections: list[ReaderConnectionRow], consumed_edge_ids: set[UUID]
 ) -> None:
     for row in connections:
@@ -428,7 +434,8 @@ def _add_synapses(
         if row.connection.origin == "document_embed":
             ctx.omitted_counts["document_embed_graph_duplicate"] += 1
             continue
-        if row.connection.origin != "synapse":
+        origin = row.connection.origin
+        if origin != "discovery" and origin != "assistant":
             continue
         related = _object_for_endpoint(ctx, row.connection.other)
         if related is None:
@@ -439,13 +446,17 @@ def _add_synapses(
             ctx,
             _matched_ref(row),
             _resolution_for_connection(ctx, row),
-            ReaderEvidenceSynapseOut(
-                id=f"synapse:{row.connection.edge_id}",
-                label=row.title or "Synapse",
+            ReaderEvidenceMachineLinkOut(
+                associations=[],
+                id=f"machine_link:{row.connection.edge_id}",
+                label=row.title or related.label,
                 excerpt=present(row.excerpt) if row.excerpt else absent(),
                 edge_id=row.connection.edge_id,
+                creation=row.connection.creation,
+                mutation=row.connection.mutation,
                 role=row.connection.kind,
-                rationale=row.excerpt or "Related by Synapse",
+                rationale=row.excerpt,
+                origin=origin,
                 object=related,
             ),
         )
@@ -457,12 +468,7 @@ def _add_remaining_connections(
     *,
     connections: list[ReaderConnectionRow],
     consumed_edge_ids: set[UUID],
-    authored_chat_loci: set[tuple[UUID, str]],
 ) -> None:
-    # Only loci with an independently represented fact can honestly own an
-    # AlsoReferences association. A graph edge at an otherwise empty locus is
-    # itself a Link fact.
-    association_loci = set(ctx.groups)
     for row in connections:
         if row.connection.edge_id in consumed_edge_ids or row.connection.origin == "document_embed":
             continue
@@ -471,21 +477,15 @@ def _add_remaining_connections(
         if related is None:
             ctx.omitted_counts["unreadable_related_object"] += 1
             continue
-        if (
-            isinstance(related, ReaderEvidenceChatObjectOut)
-            and row.connection.kind == "context"
-            and row.connection.source_ref == f"conversation:{related.conversation_id}"
-            and row.connection.target_ref == locus_ref
-            and (related.conversation_id, locus_ref) in authored_chat_loci
-            and related.message_ref.kind == "Absent"
-        ):
-            ctx.omitted_counts["coalesced_chat_context"] += 1
-            continue
         represented = ctx.represented_facts.get(locus_ref, [])
-        if represented:
+        # A user link is an independently editable fact with its own annotation.
+        # Keep that row even when its local highlight already represents the locus.
+        if represented and row.connection.origin != "user":
             association = ReaderEvidenceDirectlyAttachedOut(
                 object=related,
                 edge_id=row.connection.edge_id,
+                creation=row.connection.creation,
+                mutation=row.connection.mutation,
                 role=row.connection.kind,
                 origin=row.connection.origin,
                 direction="Incoming" if row.connection.direction == "incoming" else "Outgoing",
@@ -497,27 +497,20 @@ def _add_remaining_connections(
             continue
 
         resolution = _resolution_for_connection(ctx, row)
-        if (
-            locus_ref != f"media:{ctx.media_id}"
-            and locus_ref in association_loci
-            and row.connection.kind == "context"
-        ):
-            group = _ensure_group(ctx, locus_ref, resolution)
-            if all(value.object.ref != related.ref for value in group.also_references):
-                group.also_references.append(ReaderEvidenceAlsoReferenceOut(object=related))
-            continue
-
         _place_item(
             ctx,
             locus_ref,
             resolution,
             ReaderEvidenceLinkOut(
+                associations=[],
                 # A same-media Link surfaces one item per local endpoint; the
                 # anchored locus keys each so the two rows never collide on id.
                 id=f"link:{row.connection.edge_id}:anchor:{locus_ref}",
                 label=row.title or related.label,
                 excerpt=present(row.excerpt) if row.excerpt else absent(),
                 edge_id=row.connection.edge_id,
+                creation=row.connection.creation,
+                mutation=row.connection.mutation,
                 role=row.connection.kind,
                 origin=row.connection.origin,
                 object=related,
@@ -599,6 +592,12 @@ def _object_for_endpoint(
 ) -> ReaderEvidenceObjectOut | None:
     if endpoint.missing:
         return None
+    activation = ConnectionActivationOut(
+        resource_ref=endpoint.activation.resource_ref,
+        kind=endpoint.activation.kind,
+        href=endpoint.activation.href,
+        unresolved_reason=endpoint.activation.unresolved_reason,
+    )
     label = endpoint.label or endpoint.ref
     excerpt = present(endpoint.description) if endpoint.description else absent()
     if endpoint.scheme == "message":
@@ -609,7 +608,7 @@ def _object_for_endpoint(
             ref=endpoint.ref,
             label=meta.conversation_title,
             excerpt=absent(),
-            activation=endpoint.activation,
+            activation=activation,
             conversation_id=meta.conversation_id,
             message_ref=present(endpoint.ref),
         )
@@ -618,7 +617,7 @@ def _object_for_endpoint(
             ref=endpoint.ref,
             label=label,
             excerpt=excerpt,
-            activation=endpoint.activation,
+            activation=activation,
             conversation_id=endpoint.id,
             message_ref=absent(),
         )
@@ -630,7 +629,7 @@ def _object_for_endpoint(
             ref=endpoint.ref,
             label=meta.body_text or label,
             excerpt=present(meta.body_text) if meta.body_text else excerpt,
-            activation=endpoint.activation,
+            activation=activation,
             note_block_id=endpoint.id,
             body_pm_json=meta.body_pm_json,
         )
@@ -639,7 +638,7 @@ def _object_for_endpoint(
         ref=endpoint.ref,
         label=label,
         excerpt=excerpt,
-        activation=endpoint.activation,
+        activation=activation,
     )
 
 

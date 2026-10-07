@@ -1,7 +1,6 @@
 """Edge vocabularies and the plain records the graph modules exchange.
 
-``EdgeKind``/``EdgeOrigin`` mirror the ``resource_edges`` CHECKs exactly; widening one
-needs a migration and a change to the sole writer, ``resource_graph.edges``.
+``resource_graph.edges`` owns the closed edge vocabulary and shape validation.
 """
 
 from __future__ import annotations
@@ -11,6 +10,7 @@ from datetime import datetime
 from typing import Literal, get_args
 from uuid import UUID
 
+from nexus.schemas.machine_authorship import MachineAuthorshipOut
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 
@@ -21,7 +21,7 @@ EdgeOrigin = Literal[
     "system",
     "note_body",
     "highlight_note",
-    "synapse",
+    "discovery",
     "document_embed",
     "assistant",
     "link_note",
@@ -31,8 +31,17 @@ EDGE_ORIGINS: tuple[EdgeOrigin, ...] = get_args(EdgeOrigin)
 ConnectionDirection = Literal["incoming", "outgoing", "both"]
 
 SEARCH_SCOPE_EDGE_KIND: EdgeKind = "context"
-SYNAPSE_SOURCE_SCHEMES: tuple[ResourceScheme, ...] = ("media", "page", "note_block", "highlight")
-SYNAPSE_TARGET_SCHEMES: tuple[ResourceScheme, ...] = ("media", "note_block", "evidence_span")
+CONNECTION_DISCOVERY_SOURCE_SCHEMES: tuple[ResourceScheme, ...] = (
+    "media",
+    "page",
+    "note_block",
+    "highlight",
+)
+CONNECTION_DISCOVERY_TARGET_SCHEMES: tuple[ResourceScheme, ...] = (
+    "media",
+    "note_block",
+    "evidence_span",
+)
 ASSISTANT_EDGE_SCHEMES: tuple[ResourceScheme, ...] = ("media", "page", "note_block", "highlight")
 
 
@@ -94,10 +103,10 @@ def is_neutral_link_shape(
     snapshot: object | None,
     source_order_key: str | None,
 ) -> bool:
-    """The canonical neutral-Link predicate: ``uq_resource_edges_user_context_link_pair``.
+    """The canonical neutral user-Link shape, independent of storage orientation.
 
     The writer, the delete gate and the "is this undirected?" read all share it, so the
-    neutral-Link shape cannot drift between them. Stances and directed conversation context are excluded.
+    neutral-Link shape cannot drift between them. Source-owned context facts are excluded.
     """
     return (
         origin == "user"
@@ -180,6 +189,74 @@ class ConnectionLinkNote:
 
 
 @dataclass(frozen=True, slots=True)
+class UnlinkMutation:
+    kind: Literal["unlink"] = "unlink"
+
+
+@dataclass(frozen=True, slots=True)
+class DismissDiscoveryMutation:
+    kind: Literal["dismiss_discovery"] = "dismiss_discovery"
+
+
+@dataclass(frozen=True, slots=True)
+class DetachContextMutation:
+    conversation_id: UUID
+    kind: Literal["detach_context"] = "detach_context"
+
+
+@dataclass(frozen=True, slots=True)
+class UndoAssistantChatMutation:
+    conversation_id: UUID
+    tool_call_id: UUID
+    kind: Literal["undo_assistant_chat"] = "undo_assistant_chat"
+
+
+@dataclass(frozen=True, slots=True)
+class UndoAssistantGenerationMutation:
+    position_id: UUID
+    kind: Literal["undo_assistant_generation"] = "undo_assistant_generation"
+
+
+ConnectionMutation = (
+    UnlinkMutation
+    | DismissDiscoveryMutation
+    | DetachContextMutation
+    | UndoAssistantChatMutation
+    | UndoAssistantGenerationMutation
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ChatCreationRecord:
+    conversation_id: UUID
+    message_id: UUID
+    tool_call_id: UUID
+    kind: Literal["chat"] = "chat"
+
+
+@dataclass(frozen=True, slots=True)
+class GenerationCreationRecord:
+    generation_id: UUID
+    position_id: UUID
+    kind: Literal["generation"] = "generation"
+
+
+@dataclass(frozen=True, slots=True)
+class UnavailableCreationRecord:
+    reason: Literal["creation_history_unavailable"] = "creation_history_unavailable"
+    kind: Literal["unavailable"] = "unavailable"
+
+
+ConnectionCreationRecord = ChatCreationRecord | GenerationCreationRecord | UnavailableCreationRecord
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectionCreation:
+    authorship: MachineAuthorshipOut
+    record: ConnectionCreationRecord
+
+
+@dataclass(frozen=True, slots=True)
 class Connection:
     edge_id: UUID
     direction: Literal["incoming", "outgoing", "undirected"]
@@ -195,6 +272,8 @@ class Connection:
     other: ConnectionEndpoint
     citation: ConnectionCitation | None
     link_note: ConnectionLinkNote | None
+    creation: ConnectionCreation | None
+    mutation: ConnectionMutation | None
     created_at: datetime
 
 

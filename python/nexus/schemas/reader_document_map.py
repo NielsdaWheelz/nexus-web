@@ -20,9 +20,15 @@ from nexus.schemas.reader_apparatus import (
     ReaderApparatusConfidence,
     ReaderApparatusItemKind,
 )
-from nexus.schemas.resource_graph import ConnectionLinkNoteOut, EdgeKind, EdgeOrigin
-from nexus.schemas.resource_items import ResourceActivationOut
+from nexus.schemas.resource_graph import (
+    ConnectionActivationOut,
+    ConnectionCreationOut,
+    ConnectionLinkNoteOut,
+    EdgeKind,
+    EdgeOrigin,
+)
 from nexus.schemas.retrieval import MediaRetrievalLocator
+from nexus.services.resource_graph.schemas import ConnectionMutation
 
 ReaderDocumentMapStatus = Literal["ready", "empty", "partial"]
 ReaderEvidenceUnavailableReason = Literal["Missing", "Unanchorable", "Stale"]
@@ -33,10 +39,10 @@ ReaderDocumentMapMarkerKind = Literal[
     "SourceReference",
     "GeneratedCitation",
     "Link",
-    "Synapse",
+    "MachineLink",
 ]
 ReaderDocumentMapMarkerTone = Literal[
-    "Neutral", "Highlight", "Citation", "Link", "Synapse", "Warning"
+    "Neutral", "Highlight", "Citation", "Link", "MachineLink", "Warning"
 ]
 
 
@@ -50,7 +56,7 @@ class ReaderPdfPageLocatorOut(BaseModel):
 
 class ReaderEvidenceAnchorOut(BaseModel):
     locator: MediaRetrievalLocator | ReaderPdfPageLocatorOut
-    passage_anchor_id: UUID | None = None
+    passage_anchor_id: UUID | None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -81,7 +87,7 @@ class ReaderEvidenceObjectBaseOut(BaseModel):
     ref: str
     label: str
     excerpt: Presence[str]
-    activation: ResourceActivationOut
+    activation: ConnectionActivationOut
 
     model_config = ConfigDict(extra="forbid")
 
@@ -121,6 +127,8 @@ class ReaderEvidenceDirectlyAttachedOut(BaseModel):
     relationship: Literal["DirectlyAttached"] = "DirectlyAttached"
     object: ReaderEvidenceObjectOut
     edge_id: UUID
+    creation: ConnectionCreationOut | None
+    mutation: Annotated[ConnectionMutation, Field(discriminator="kind")] | None
     role: EdgeKind
     origin: EdgeOrigin
     direction: Literal["Outgoing", "Incoming"]
@@ -145,7 +153,7 @@ class ReaderEvidenceItemBaseOut(BaseModel):
     id: str
     label: str
     excerpt: Presence[str]
-    associations: list[ReaderEvidenceAssociationOut] = Field(default_factory=list)
+    associations: list[ReaderEvidenceAssociationOut]
 
     model_config = ConfigDict(extra="forbid")
 
@@ -193,7 +201,7 @@ class ReaderEvidenceSourceTargetOut(BaseModel):
     apparatus_kind: ReaderApparatusItemKind
     label: Presence[str]
     content: SourceContent
-    activation: ResourceActivationOut
+    activation: ConnectionActivationOut
     resolution: ReaderEvidenceResolutionOut
 
     model_config = ConfigDict(extra="forbid")
@@ -211,23 +219,30 @@ class ReaderEvidenceSourceReferenceOut(ReaderEvidenceItemBaseOut):
 class ReaderEvidenceGeneratedCitationOut(ReaderEvidenceItemBaseOut):
     kind: Literal["GeneratedCitation"] = "GeneratedCitation"
     edge_id: UUID
+    creation: ConnectionCreationOut | None
+    mutation: Annotated[ConnectionMutation, Field(discriminator="kind")] | None
     role: EdgeKind
 
 
 class ReaderEvidenceLinkOut(ReaderEvidenceItemBaseOut):
     kind: Literal["Link"] = "Link"
     edge_id: UUID
+    creation: ConnectionCreationOut | None
+    mutation: Annotated[ConnectionMutation, Field(discriminator="kind")] | None
     role: EdgeKind
     origin: EdgeOrigin
     object: ReaderEvidenceObjectOut
     link_note: ConnectionLinkNoteOut | None
 
 
-class ReaderEvidenceSynapseOut(ReaderEvidenceItemBaseOut):
-    kind: Literal["Synapse"] = "Synapse"
+class ReaderEvidenceMachineLinkOut(ReaderEvidenceItemBaseOut):
+    kind: Literal["MachineLink"] = "MachineLink"
     edge_id: UUID
+    creation: ConnectionCreationOut | None
+    mutation: Annotated[ConnectionMutation, Field(discriminator="kind")] | None
     role: EdgeKind
-    rationale: str
+    rationale: str | None
+    origin: Literal["discovery", "assistant"]
     object: ReaderEvidenceObjectOut
 
 
@@ -236,7 +251,7 @@ ReaderEvidenceItemOut = Annotated[
     | ReaderEvidenceSourceReferenceOut
     | ReaderEvidenceGeneratedCitationOut
     | ReaderEvidenceLinkOut
-    | ReaderEvidenceSynapseOut,
+    | ReaderEvidenceMachineLinkOut,
     Field(discriminator="kind"),
 ]
 
@@ -246,7 +261,7 @@ class ReaderEvidencePassageGroupOut(BaseModel):
     resolution: ReaderEvidenceResolutionOut
     target_excerpt: Presence[str]
     items: list[ReaderEvidenceItemOut]
-    also_references: list[ReaderEvidenceAlsoReferenceOut] = Field(default_factory=list)
+    also_references: list[ReaderEvidenceAlsoReferenceOut]
 
     model_config = ConfigDict(extra="forbid")
 
@@ -255,7 +270,7 @@ class ReaderEvidenceCountsOut(BaseModel):
     highlights: int = Field(ge=0)
     citations: int = Field(ge=0)
     links: int = Field(ge=0)
-    synapses: int = Field(ge=0)
+    machine_links: int = Field(ge=0)
     passages: int = Field(ge=0)
     document: int = Field(ge=0)
 
@@ -265,8 +280,8 @@ class ReaderEvidenceCountsOut(BaseModel):
 class ReaderEvidenceOut(BaseModel):
     counts: ReaderEvidenceCountsOut
     source_targets: list[ReaderEvidenceSourceTargetOut]
-    passage_groups: list[ReaderEvidencePassageGroupOut] = Field(default_factory=list)
-    document_items: list[ReaderEvidenceItemOut] = Field(default_factory=list)
+    passage_groups: list[ReaderEvidencePassageGroupOut]
+    document_items: list[ReaderEvidenceItemOut]
 
     model_config = ConfigDict(extra="forbid")
 
@@ -285,7 +300,7 @@ class ReaderDocumentMapMarkerOut(BaseModel):
 
 
 class ReaderDocumentMapDiagnosticsOut(BaseModel):
-    omitted_item_counts: dict[str, int] = Field(default_factory=dict)
+    omitted_item_counts: dict[str, int]
 
     model_config = ConfigDict(extra="forbid")
 
@@ -297,11 +312,9 @@ class ReaderDocumentMapOut(BaseModel):
     title: str
     status: ReaderDocumentMapStatus
     navigation: Presence[MediaNavigationOut]
-    embeds: list[DocumentEmbedOut] = Field(default_factory=list)
+    embeds: list[DocumentEmbedOut]
     evidence: ReaderEvidenceOut
-    markers: list[ReaderDocumentMapMarkerOut] = Field(default_factory=list)
-    diagnostics: ReaderDocumentMapDiagnosticsOut = Field(
-        default_factory=ReaderDocumentMapDiagnosticsOut
-    )
+    markers: list[ReaderDocumentMapMarkerOut]
+    diagnostics: ReaderDocumentMapDiagnosticsOut
 
     model_config = ConfigDict(extra="forbid")

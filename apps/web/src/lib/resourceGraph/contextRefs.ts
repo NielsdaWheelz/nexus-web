@@ -85,19 +85,6 @@ export function decodeContextRef(
   };
 }
 
-export async function listContextRefs(
-  conversationId: string,
-  options: { signal?: AbortSignal } = {},
-): Promise<ContextRefOut[]> {
-  const response = await apiFetch<{ data: unknown[] }>(
-    `/api/conversations/${conversationId}/context-refs`,
-    { cache: "no-store", signal: options.signal },
-  );
-  return response.data.map((row, index) =>
-    decodeContextRef(row, `ContextRef[${index}]`),
-  );
-}
-
 export async function removeContextRef(
   conversationId: string,
   edgeId: string,

@@ -7,19 +7,18 @@ import {
   LocateFixed,
   MessageSquare,
 } from "lucide-react";
-import { type FeedbackContent } from "@/components/feedback/Feedback";
 import HighlightResourceActionMenu from "@/components/highlights/HighlightResourceActionMenu";
 import HighlightNoteEditor from "@/components/notes/HighlightNoteEditor";
 import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHandoff";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { connectionMutationAction, connectionMutationErrorMessage } from "@/lib/resourceGraph/connectionMutations";
+import type { ContextEdgeActionKind } from "@/lib/actions/contextEdgeActions";
 import ContextEdgeMenu from "@/components/resources/ContextEdgeMenu";
+import ConnectionCreation from "@/components/connections/ConnectionCreation";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import MachineText from "@/components/ui/MachineText";
 import Pill from "@/components/ui/Pill";
-import {
-  isApiError,
-  isSameSystemApiDefect,
-  type ApiError,
-} from "@/lib/api/client";
 import type { HighlightLinkedNoteBlock } from "@/lib/highlights/highlightContract";
 import { fetchResourceSurface } from "@/lib/resourceSurface/api";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
@@ -28,7 +27,6 @@ import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget
 import { resourceIconForUri } from "@/lib/resources/resourceKind";
 import {
   highlightNoteAssociations,
-  isReaderEvidenceUserAssociation,
   isReaderEvidenceUserLink,
 } from "@/lib/reader/documentMap";
 import type {
@@ -40,33 +38,12 @@ import type {
   ReaderEvidencePassageGroup,
   ReaderEvidenceSourceTarget,
   ReaderEvidenceSourceActivation,
-  ReaderEvidenceUserEdge,
+  ReaderEvidenceMutableEdge,
 } from "@/lib/reader/documentMap";
 import { anchoredRowForEvidenceItem } from "@/lib/reader/evidencePlacement";
 import type { AnchoredReaderRow } from "../useAnchoredReaderProjection";
 import styles from "./EvidencePaneSurface.module.css";
 import SourceNoteContent from "./SourceNoteContent";
-
-function evidenceActionErrorMessage(
-  error: ApiError,
-  title: string,
-): FeedbackContent {
-  switch (error.code) {
-    case "E_NETWORK":
-      return {
-        tone: "Danger",
-        title: "It’s unclear whether this action completed.",
-        message: "Check the result before trying again.",
-        requestId: error.requestId,
-      };
-    case "E_INVALID_REQUEST":
-    case "E_FORBIDDEN":
-    case "E_NOT_FOUND":
-      return { tone: "Danger", title, requestId: error.requestId };
-    default:
-      throw error;
-  }
-}
 
 export interface EvidenceHighlightActions {
   onNoteSaved: (highlightId: string, note: HighlightLinkedNoteBlock) => void;
@@ -83,11 +60,11 @@ export interface EvidenceHighlightActions {
  * Controls for the stable user-Link facts that survive from Universal Link
  * Authoring, re-expressed on main's Evidence model: a neutral (context) Link
  * carries a Remove control and a note affordance. The Link's edge id is the
- * mutation key, mirroring the Synapse-dismiss branch on evidence items.
+ * mutation key, mirroring the MachineLink-dismiss branch on evidence items.
  */
 export interface EvidenceLinkActions {
   editingLinkId: string | null;
-  onRemoveUserEdge: (edge: ReaderEvidenceUserEdge) => Promise<void>;
+  onMutateConnection: (edge: ReaderEvidenceMutableEdge) => Promise<void>;
   onEditLink: (linkId: string | null) => void;
   onLinkNoteChanged: () => void;
 }
@@ -117,7 +94,7 @@ export interface EvidenceRowActions {
     opener: ReaderEvidenceSourceActivation,
   ) => void;
   onHoverItem: (item: ReaderEvidenceItem | null) => void;
-  onDismissSynapse: (edgeId: string) => Promise<void>;
+
 }
 
 export function EvidenceItemRow({
@@ -150,8 +127,7 @@ export function EvidenceItemRow({
   onBrowse: () => void;
 }) {
   const removableLink = isReaderEvidenceUserLink(item) ? item : null;
-  // Link notes are a capability of neutral top-level Links only. A user stance
-  // or a folded association may be removable, but neither mints note parity.
+  // Link notes belong to neutral top-level user links.
   const annotatableLink =
     removableLink?.role === "context" ? removableLink : null;
   const editingLinkNote =
@@ -166,6 +142,7 @@ export function EvidenceItemRow({
     : editing && item.kind === "Highlight" ? linkedHighlightNoteId : null;
   const [loadedNote, setLoadedNote] = useState<HighlightLinkedNoteBlock | null>(null);
   const [noteLoadError, setNoteLoadError] = useState(false);
+  const [noteLoadDefect, setNoteLoadDefect] = useState<{ error: unknown } | null>(null);
   const [noteLoadSerial, setNoteLoadSerial] = useState(0);
   useEffect(() => {
     if (!editingNoteId) return;
@@ -187,8 +164,12 @@ export function EvidenceItemRow({
         version_by_lane: { body: version.body, links: version.links },
       });
       setNoteLoadError(false);
-    }).catch(() => {
-      if (active) setNoteLoadError(true);
+    }).catch((error: unknown) => {
+      if (!active || handleUnauthenticatedApiError(error)) return;
+      if (isApiError(error) && !isSameSystemApiDefect(error) &&
+          ["E_NETWORK", "E_UPSTREAM_TIMEOUT", "E_NOT_FOUND", "E_FORBIDDEN"].includes(error.code)) {
+        setNoteLoadError(true);
+      } else setNoteLoadDefect({ error });
     });
     return () => { active = false; };
   }, [editingNoteId, noteLoadSerial]);
@@ -203,6 +184,7 @@ export function EvidenceItemRow({
   const handleFocus = (event: FocusEvent<HTMLElement>) => {
     if (event.currentTarget.contains(event.target)) rowActions.onHoverItem(item);
   };
+  if (noteLoadDefect) throw noteLoadDefect.error;
   return (
     <article
       className={styles.item}
@@ -227,10 +209,10 @@ export function EvidenceItemRow({
             ) : null}
           </div>
           <div className={styles.itemLabel}>{item.label}</div>
-          {item.kind === "Synapse" ? (
+          {item.kind === "MachineLink" && item.rationale ? (
             <MachineText
               variant="inline"
-              origin={{ label: "Synapse" }}
+              origin={{ label: item.origin === "discovery" ? "Connection discovery" : "Assistant" }}
               className={styles.itemExcerpt}
             >
               {item.rationale}
@@ -238,6 +220,8 @@ export function EvidenceItemRow({
           ) : item.kind !== "SourceReference" && item.excerpt.kind === "Present" ? (
             <p className={styles.itemExcerpt}>{item.excerpt.value}</p>
           ) : null}
+          {item.kind === "MachineLink" && item.mutation?.kind === "dismiss_discovery" ? <p className={styles.itemExcerpt}>Dismissing hides this link and prevents rediscovery of this pair.</p> : null}
+          {"creation" in item && item.creation ? <div className={styles.kindLabel}><ConnectionCreation creation={item.creation} /></div> : null}
           {item.kind === "Highlight" && linkedNote && !editing ? (
             <p className={styles.notePreview}>{linkedNote.body_text}</p>
           ) : null}
@@ -253,7 +237,7 @@ export function EvidenceItemRow({
               ) : item.target_refs.map((ref) => {
                 const target = sourceTargets.get(ref);
                 if (!target) {
-                  // justify-defect: the transport decoder guarantees every target ref resolves.
+                  // justify-defect: the backend projection guarantees every target ref resolves.
                   throw new Error(`Source reference ${item.id} has no target ${ref}`);
                 }
                 return (
@@ -275,30 +259,17 @@ export function EvidenceItemRow({
           {highlight ? (
             <HighlightResourceActionMenu highlight={highlight} />
           ) : null}
-          {item.kind === "Link" || item.kind === "Synapse" ? (
+          {item.kind === "Link" || item.kind === "MachineLink" ? (
             <ObjectOpenButton
               object={item.object}
               onActivate={rowActions.onActivateObject}
             />
           ) : null}
-          {item.kind === "Link" || item.kind === "Synapse" ? (
+          {item.kind === "Link" || item.kind === "MachineLink" ? (
             <EvidenceObjectActions
               actionSubject={item.object.actionSubject}
               label={item.object.label}
-              relationship={
-                item.kind === "Synapse"
-                  ? {
-                      kind: "Dismiss",
-                      execute: () => rowActions.onDismissSynapse(item.edge_id),
-                    }
-                  : removableLink
-                    ? {
-                        kind: "Unlink",
-                        execute: () =>
-                          linkActions.onRemoveUserEdge(removableLink),
-                      }
-                    : { kind: "None" }
-              }
+              relationship={item.mutation ? { kind: "Mutation", action: connectionMutationAction(item.mutation), execute: () => linkActions.onMutateConnection(item) } : { kind: "None" }}
             />
           ) : null}
           {annotatableLink ? (
@@ -315,6 +286,11 @@ export function EvidenceItemRow({
             >
               <MessageSquare size={14} aria-hidden="true" />
             </button>
+          ) : null}
+          {item.kind === "GeneratedCitation" && item.mutation ? (
+            <ContextEdgeMenu action={connectionMutationAction(item.mutation)} label={`Edit connection ${item.label}`} retryable
+              execute={() => linkActions.onMutateConnection(item)}
+              presentFailure={connectionMutationErrorMessage} />
           ) : null}
         </div>
       </div>
@@ -417,7 +393,7 @@ export function EvidenceItemRow({
                   key={`${association.relationship}:${association.object.ref}:${index}`}
                   association={association}
                   onActivateObject={rowActions.onActivateObject}
-                  onRemoveUserEdge={linkActions.onRemoveUserEdge}
+                  onMutateConnection={linkActions.onMutateConnection}
                 />
               ))}
             </div>
@@ -434,14 +410,14 @@ export function AssociationDisclosure({
   open,
   onToggle,
   onActivateObject,
-  onRemoveUserEdge,
+  onMutateConnection,
 }: {
   label: string;
   associations: Array<ReaderEvidenceAssociation | ReaderEvidenceAlsoReference>;
   open: boolean;
   onToggle: () => void;
   onActivateObject: ActivateEvidenceObject;
-  onRemoveUserEdge: EvidenceLinkActions["onRemoveUserEdge"];
+  onMutateConnection: EvidenceLinkActions["onMutateConnection"];
 }) {
   const panelId = useId();
   return (
@@ -467,7 +443,7 @@ export function AssociationDisclosure({
               key={`${association.object.ref}:${index}`}
               association={association}
               onActivateObject={onActivateObject}
-              onRemoveUserEdge={onRemoveUserEdge}
+              onMutateConnection={onMutateConnection}
             />
           ))}
         </div>
@@ -479,16 +455,14 @@ export function AssociationDisclosure({
 function AssociationRow({
   association,
   onActivateObject,
-  onRemoveUserEdge,
+  onMutateConnection,
 }: {
   association: ReaderEvidenceAssociation | ReaderEvidenceAlsoReference;
   onActivateObject: ActivateEvidenceObject;
-  onRemoveUserEdge: EvidenceLinkActions["onRemoveUserEdge"];
+  onMutateConnection: EvidenceLinkActions["onMutateConnection"];
 }) {
   const Icon = resourceIconForUri(association.object.ref);
-  const removableAssociation = isReaderEvidenceUserAssociation(association)
-    ? association
-    : null;
+  const mutableAssociation = association.relationship === "DirectlyAttached" && association.mutation !== null ? association : null;
   const objectActionLabel =
     association.object.kind === "Media"
       ? `Open target in reader for ${association.object.label}`
@@ -518,14 +492,7 @@ function AssociationRow({
         <EvidenceObjectActions
           actionSubject={association.object.actionSubject}
           label={association.object.label}
-          relationship={
-            removableAssociation
-              ? {
-                  kind: "Unlink",
-                  execute: () => onRemoveUserEdge(removableAssociation),
-                }
-              : { kind: "None" }
-          }
+          relationship={mutableAssociation && mutableAssociation.mutation ? { kind: "Mutation", action: connectionMutationAction(mutableAssociation.mutation), execute: () => onMutateConnection(mutableAssociation) } : { kind: "None" }}
         />
       </div>
       {association.object.excerpt.kind === "Present" ? (
@@ -533,14 +500,14 @@ function AssociationRow({
           {association.object.excerpt.value}
         </p>
       ) : null}
+      {association.relationship === "DirectlyAttached" && association.creation ? <div className={styles.relationshipKind}><ConnectionCreation creation={association.creation} /></div> : null}
     </div>
   );
 }
 
 type EvidenceRelationshipAction =
   | { kind: "None" }
-  | { kind: "Unlink"; execute: () => Promise<void> }
-  | { kind: "Dismiss"; execute: () => Promise<void> };
+  | { kind: "Mutation"; action: ContextEdgeActionKind; execute: () => Promise<void> };
 
 /**
  * The canonical resource dropdown for an evidence object, paired with the
@@ -567,18 +534,11 @@ function EvidenceObjectActions({
       />
       {relationship.kind !== "None" ? (
         <ContextEdgeMenu
-          action={relationship.kind === "Unlink" ? "Unlink" : "Dismiss"}
+          action={relationship.action}
+          retryable
           label={`Edit connection ${label}`}
           execute={relationship.execute}
-          presentFailure={(error) => {
-            if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-            return evidenceActionErrorMessage(
-              error,
-              relationship.kind === "Unlink"
-                ? "Connection could not be unlinked."
-                : "Connection could not be dismissed.",
-            );
-          }}
+          presentFailure={connectionMutationErrorMessage}
         />
       ) : null}
     </>
@@ -734,8 +694,8 @@ function itemKindLabel(item: ReaderEvidenceItem): string {
       return "Cited by";
     case "Link":
       return "Link";
-    case "Synapse":
-      return "Synapse";
+    case "MachineLink":
+      return "Machine-created link";
   }
 }
 

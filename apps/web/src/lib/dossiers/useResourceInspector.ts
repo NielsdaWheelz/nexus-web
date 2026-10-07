@@ -189,7 +189,7 @@ export function useResourceInspector({
   );
   const viewMediaEvidence = useCallback(() => {
     citationCommandsRef.current.paneRuntime?.requestSecondarySurface(
-      "resource-evidence",
+      "resource-connections",
     );
   }, []);
 

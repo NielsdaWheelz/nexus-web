@@ -9,13 +9,14 @@ from sqlalchemy.orm import Session
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.responses import ok
+from nexus.responses import Data
 from nexus.schemas.resource_graph import (
     ConnectionPageOut,
     ConnectionQueryRequest,
+    CreateLinkOut,
     CreateLinkRequest,
+    LinkNoteOut,
     PutLinkNoteRequest,
-    PutStanceRequest,
     connection_out,
 )
 from nexus.services.resource_graph import connections as connections_service
@@ -44,7 +45,9 @@ def _parse_ref(raw: str) -> ResourceRef:
 
 
 @router.post("/connections/query")
-def query_connections(body: ConnectionQueryRequest, viewer: ViewerDep, db: DbDep) -> dict:
+def query_connections(
+    body: ConnectionQueryRequest, viewer: ViewerDep, db: DbDep
+) -> Data[ConnectionPageOut]:
     filters = body.filters
     page = connections_service.query_connections(
         db=db,
@@ -67,16 +70,16 @@ def query_connections(body: ConnectionQueryRequest, viewer: ViewerDep, db: DbDep
             cursor=body.cursor,
         ),
     )
-    return ok(
-        ConnectionPageOut(
+    return Data(
+        data=ConnectionPageOut(
             items=[connection_out(item) for item in page.items], next_cursor=page.next_cursor
         )
     )
 
 
 @router.post("/links", status_code=201)
-def create_link(body: CreateLinkRequest, viewer: ViewerDep, db: DbDep) -> dict:
-    return ok(user_relations_service.create_link(db, viewer_id=viewer.user_id, request=body))
+def create_link(body: CreateLinkRequest, viewer: ViewerDep, db: DbDep) -> Data[CreateLinkOut]:
+    return Data(data=user_relations_service.create_link(db, viewer_id=viewer.user_id, request=body))
 
 
 @router.delete("/links/{link_id}", status_code=204)
@@ -86,9 +89,11 @@ def delete_link(link_id: UUID, viewer: ViewerDep, db: DbDep) -> Response:
 
 
 @router.put("/links/{link_id}/note")
-def put_link_note(link_id: UUID, body: PutLinkNoteRequest, viewer: ViewerDep, db: DbDep) -> dict:
-    return ok(
-        user_relations_service.put_link_note(
+def put_link_note(
+    link_id: UUID, body: PutLinkNoteRequest, viewer: ViewerDep, db: DbDep
+) -> Data[LinkNoteOut]:
+    return Data(
+        data=user_relations_service.put_link_note(
             db, viewer_id=viewer.user_id, link_id=link_id, request=body
         )
     )
@@ -109,15 +114,4 @@ def delete_link_note(
         note_block_id=note_block_id,
         client_mutation_id=client_mutation_id,
     )
-    return Response(status_code=204)
-
-
-@router.put("/stances")
-def put_stance(body: PutStanceRequest, viewer: ViewerDep, db: DbDep) -> dict:
-    return ok(user_relations_service.put_stance(db, viewer_id=viewer.user_id, request=body))
-
-
-@router.delete("/stances/{stance_id}", status_code=204)
-def delete_stance(stance_id: UUID, viewer: ViewerDep, db: DbDep) -> Response:
-    user_relations_service.delete_stance(db, viewer_id=viewer.user_id, stance_id=stance_id)
     return Response(status_code=204)

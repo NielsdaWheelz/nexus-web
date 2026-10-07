@@ -719,11 +719,11 @@ function LoadedResourceSurfaceEditor({
         ? "This note changed elsewhere. Your version is kept here. Copy it before reviewing the remote version."
         : session.status === "server_failed"
           ? "The server rejected this change. Your draft is kept on this device."
-          : session.recoveryCandidates.length > 0
+          : session.recoveryCandidates.some((candidate) => !candidate.legacy && !candidate.corrupt)
             ? "Unsaved work from another session is available. Choose what to recover."
             : session.status === "recovered"
               ? "Recovered unsaved changes are open. Review them before retrying."
-              : "An older draft is available for export. Copy it before continuing.";
+              : "An older or unreadable draft is kept on this device. Copy its recovery data before continuing.";
   return (
     <div ref={surfaceRootRef} className={styles.surface}>
       {recovery ? (

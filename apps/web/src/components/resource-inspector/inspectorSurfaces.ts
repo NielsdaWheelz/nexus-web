@@ -3,7 +3,7 @@
 // `ResourceInspectorResourcePolicy` and the route-owned domain bodies the pane
 // supplies, it wires the tab host's publication: Contents (when a Contents body
 // exists) · optional Members (Library governance) · the single LinkedItems
-// surface (Evidence|Context|Connections) ·
+// surface (Connections) ·
 // Forks (Conversation only) · the always-published Dossier — in that fixed tab
 // order — and resolves `default_surface_order` (fallback preference, NOT tab
 // order) to the first concrete published surface.
@@ -24,7 +24,7 @@ export interface InspectorDomainBodies {
   contents?: ReactNode;
   /** `resource-members` — an authorized Library governance surface. */
   members?: ReactNode;
-  /** The single LinkedItems body (Evidence | Context | Connections). */
+  /** The single LinkedItems body (Connections). */
   linkedItems?: ReactNode;
   /** `resource-forks` — Conversation only. */
   forks?: ReactNode;
@@ -41,9 +41,6 @@ function linkedItemsSurfaceId(
 ): WorkspaceSecondarySurfaceId {
   switch (linkedItems) {
     case "MediaEvidence":
-      return "resource-evidence";
-    case "ConversationContext":
-      return "resource-context";
     case "ResourceConnections":
       return "resource-connections";
     default: {

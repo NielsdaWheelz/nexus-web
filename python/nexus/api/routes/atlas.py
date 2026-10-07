@@ -166,7 +166,7 @@ def read_atlas(
               AND re.source_scheme = 'media'
               AND re.target_scheme = 'media'
               AND (
-                  (re.origin = 'synapse' AND re.kind = 'context')
+                  (re.origin = 'connection_discovery' AND re.kind = 'context')
                   OR re.kind = 'contradicts'
               )
               AND re.source_id IN ({_PERSONAL_MEDIA_SQL})

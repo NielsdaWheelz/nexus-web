@@ -34,14 +34,16 @@ from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySou
 from nexus.schemas.offline_reading_package import OFFLINE_READING_MAX_TITLE_CODEPOINTS
 from nexus.schemas.presence import Present
 from nexus.schemas.resource_action_snapshots import (
+    AbsentHighlightNoteResourceActionCapabilityOut,
+    AbsentLecternMembershipResourceActionCapabilityOut,
     ConsumptionResourceActionCapabilityOut,
     EpisodeConsumptionResourceActionCapabilityOut,
-    HighlightNoteResourceActionCapabilityOut,
-    LecternMembershipResourceActionCapabilityOut,
     OfflineReadingResourceActionCapabilityOut,
     OpenSourceResourceActionCapabilityOut,
     PlaybackResourceActionCapabilityOut,
     PodcastSubscriptionResourceActionCapabilityOut,
+    PresentHighlightNoteResourceActionCapabilityOut,
+    PresentLecternMembershipResourceActionCapabilityOut,
     RecoveryResourceActionCapabilityOut,
     RepairSearchOfferOut,
     RepairSourceOfferOut,
@@ -479,8 +481,10 @@ def _capabilities_for_ref(
         capabilities.append(_simple("OpenInNewPane"))
     if capability.sharing != "None" and activation.kind == "route":
         capabilities.append(_simple("Share"))
-    if capability.chat_subject != "none":
+    if capability.chat_subject != "none" and capability.link_mode != "none":
         capabilities.append(_simple("Chat"))
+    if capability.link_mode != "none":
+        capabilities.append(_simple("LinkResource"))
 
     if ref.scheme == "media":
         _extend_media(ref, capability=capability, facts=facts, capabilities=capabilities)
@@ -607,13 +611,13 @@ def _extend_media(
     item_id = facts.lectern_item_ids.get(ref.id)
     if item_id is not None:
         capabilities.append(
-            LecternMembershipResourceActionCapabilityOut(
-                availability=_available(), state="Present", lectern_item_id=item_id
+            PresentLecternMembershipResourceActionCapabilityOut(
+                availability=_available(), lectern_item_id=item_id
             )
         )
     else:
         capabilities.append(
-            LecternMembershipResourceActionCapabilityOut(availability=_available(), state="Absent")
+            AbsentLecternMembershipResourceActionCapabilityOut(availability=_available())
         )
 
     if capability.library_placement == "ManageEntries":
@@ -687,20 +691,17 @@ def _extend_highlight(
     capabilities.append(_simple("EditHighlight", owner_availability))
     if action.note_block_id is None:
         capabilities.append(
-            HighlightNoteResourceActionCapabilityOut(
+            AbsentHighlightNoteResourceActionCapabilityOut(
                 availability=_available(),
-                state="Absent",
             )
         )
     else:
         capabilities.append(
-            HighlightNoteResourceActionCapabilityOut(
+            PresentHighlightNoteResourceActionCapabilityOut(
                 availability=_available(),
-                state="Present",
                 note_block_id=action.note_block_id,
             )
         )
-    capabilities.append(_simple("LinkHighlight"))
     if action.learn_applicable:
         capabilities.append(_simple("LearnHighlight"))
     if action.edit_bounds_applicable:

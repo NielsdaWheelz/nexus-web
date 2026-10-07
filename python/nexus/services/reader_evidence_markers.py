@@ -21,7 +21,7 @@ _ITEM_TONES: dict[str, ReaderDocumentMapMarkerTone] = {
     "SourceReference": "Citation",
     "GeneratedCitation": "Citation",
     "Link": "Link",
-    "Synapse": "Synapse",
+    "MachineLink": "MachineLink",
 }
 
 

@@ -23,8 +23,7 @@ from nexus.db.session import use_read_committed, use_serializable
 # reader-profile-persistence-hard-cutover.md §6), the consumption
 # ensure-membership insert (spec lectern-player-lifecycle-hard-cutover.md §5.3),
 # and the Link mutation's first inserts — passage-anchor identity, canonical
-# neutral-Link pair, directed stance pair, and client-minted Highlight id (spec
-# universal-link-authoring-hard-cutover.md, Graph Shapes) — plus the daily Page
+# neutral-link pair and client-minted highlight id (connections-plan.md) — plus the daily page
 # binding's first-capture date/Page assignment all retry the whole operation on
 # a first-sight race.
 RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
@@ -48,8 +47,7 @@ RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
         "uq_consumption_queue_items_user_media",
         "uq_consumption_completion_facts_user_media",
         "uq_passage_anchors_identity",
-        "uq_resource_edges_user_context_link_pair",
-        "uq_resource_edges_user_stance_directed_pair",
+        "uq_resource_edges_user_link_pair",
         "highlights_pkey",
         "pages_pkey",
         "libraries_pkey",

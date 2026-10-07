@@ -1,4 +1,4 @@
-"""Slate vocabulary, tuning, ranking and composition. Pure: no database.
+"""Suggestions vocabulary, tuning, ranking and composition. Pure: no database.
 
 Every evidence value arrives from acquisition with its ``rank`` — the position
 of its target in that evidence kind's strength order — so ranking here is a
@@ -16,19 +16,19 @@ from uuid import UUID
 from nexus.db.models import MediaKind
 from nexus.services.resource_graph.refs import ResourceRef
 
-SLATE_LIMIT = 10
-SLATE_ANCHOR_LIMIT = 5
-SLATE_FAMILY_CANDIDATE_LIMIT = 20
+SUGGESTION_LIMIT = 10
+SUGGESTION_ANCHOR_LIMIT = 5
+SUGGESTION_FAMILY_CANDIDATE_LIMIT = 20
 CONTINUITY_MAX_IDLE_DAYS = 30
 ARRIVAL_WINDOW_DAYS = 14
 REDISCOVERY_MIN_AGE_DAYS = 90
-RESONANCE_EDGE_ORIGINS = (
+SUGGESTION_EDGE_ORIGINS = (
     "user",
     "citation",
     "note_body",
     "highlight_note",
     "document_embed",
-    "synapse",
+    "discovery",
 )
 
 # Human-reviewed production calibration: a semantic neighbour ranks only when
@@ -151,7 +151,7 @@ def rank_lectern_candidates(
             ranked[family].append(_relational_candidate(candidate, relation, family))
     for rows in ranked.values():
         rows.sort(key=lambda row: row.order)
-        del rows[SLATE_FAMILY_CANDIDATE_LIMIT:]
+        del rows[SUGGESTION_FAMILY_CANDIDATE_LIMIT:]
     return ranked
 
 
@@ -169,7 +169,7 @@ def rank_library_candidates(
     ranked: list[RankedCandidate] = []
     for rows in by_family.values():
         rows.sort(key=lambda row: row.order)
-        ranked.extend(rows[:SLATE_FAMILY_CANDIDATE_LIMIT])
+        ranked.extend(rows[:SUGGESTION_FAMILY_CANDIDATE_LIMIT])
     ranked.sort(key=lambda row: row.order)
     return ranked
 
@@ -203,7 +203,9 @@ def compose_library(ranked: list[RankedCandidate]) -> list[RankedCandidate]:
     remaining = list(ranked)
     selected: list[RankedCandidate] = []
     counts: Counter[tuple[str, object]] = Counter()
-    while len(selected) < SLATE_LIMIT and _take_one(remaining, selected=selected, counts=counts):
+    while len(selected) < SUGGESTION_LIMIT and _take_one(
+        remaining, selected=selected, counts=counts
+    ):
         pass
     return selected
 

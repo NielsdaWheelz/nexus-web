@@ -26,7 +26,7 @@ export type RetrievalLocator =
   | {
       type: "epub_fragment_offsets";
       media_id: string;
-      section_id?: string;
+      section_id?: string | null;
       fragment_id: string;
       start_offset: number;
       end_offset: number;

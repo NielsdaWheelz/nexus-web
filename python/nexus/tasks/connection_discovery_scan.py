@@ -1,4 +1,4 @@
-"""Worker job handler for one synapse scan."""
+"""Worker job handler for one connection_discovery scan."""
 
 from __future__ import annotations
 
@@ -7,15 +7,15 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from nexus.jobs.queue import JobExecutionContext, RescheduleRequested
+from nexus.services.connection_discovery import run_connection_discovery_scan
 from nexus.services.llm_execution import ExecutionRuntime
 from nexus.services.resource_graph.refs import assert_resource_ref
-from nexus.services.synapse import run_synapse_scan
 from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
-_SPEC = LlmTaskSpec(label="synapse_scan")
+_SPEC = LlmTaskSpec(label="connection_discovery_scan")
 
 
-def synapse_scan(
+def connection_discovery_scan(
     user_id: str,
     ref: str,
     reason: str,
@@ -26,7 +26,7 @@ def synapse_scan(
     parsed_ref = assert_resource_ref(ref)
 
     async def _handler(db: Session, runtime: ExecutionRuntime) -> dict | RescheduleRequested:
-        result = await run_synapse_scan(
+        result = await run_connection_discovery_scan(
             db,
             user_id=user_uuid,
             ref=parsed_ref,

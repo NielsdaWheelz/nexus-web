@@ -662,6 +662,7 @@ def _build_subject_block(
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Resource cannot be a chat subject")
     if not admits_resource_for_conversation_read(
         db,
+        viewer_id=viewer_id,
         conversation_id=conversation_id,
         target=subject,
     ):

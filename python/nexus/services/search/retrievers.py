@@ -31,6 +31,7 @@ from nexus.services.contributor_credits import (
     contributor_fts_text_sql,
     credit_target_filter_exists_sql,
 )
+from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search.chunks import search_content_chunks, search_note_chunks
 from nexus.services.search.projection import _required_locator, _truncate_snippet
 from nexus.services.search.results import (
@@ -792,7 +793,7 @@ _KINDS: dict[str, _Kind] = {
     "highlight": _Kind("highlight", "h.id", _highlight_sql, _highlight_row, "h.id"),
     "message": _Kind("message", "m.id", _message_sql, _message_row, "m.id"),
     "conversation": _Kind("conversation", "c.id", _conversation_sql, _conversation_row),
-    "artifact": _Kind("conversation", "r.id", _artifact_sql, _artifact_row),
+    "artifact": _Kind("artifact", "r.id", _artifact_sql, _artifact_row),
     "reader_apparatus_item": _Kind(
         "reader_apparatus_item", "a.id", _apparatus_sql, _apparatus_row, "rai.id"
     ),
@@ -818,6 +819,7 @@ def retrieve(
     roles: Sequence[str],
     content_kinds: Sequence[str],
     limit: int,
+    frozen_context_refs: tuple[ResourceRef, ...] | None = None,
 ) -> Sequence[InternalSearchResult]:
     """One result type's raw-scored candidates under the viewer's visibility."""
     filters = _Filters(contributor_ids, tuple(roles), tuple(content_kinds))
@@ -832,6 +834,7 @@ def retrieve(
             semantic_embedding=semantic_embedding,
             scope_type=scope_type,
             scope_id=scope_id,
+            frozen_context_refs=frozen_context_refs,
             contributor_ids=contributor_ids,
             roles=list(roles),
             content_kinds=list(content_kinds),
@@ -845,6 +848,7 @@ def retrieve(
             semantic_embedding=semantic_embedding,
             scope_type=scope_type,
             scope_id=scope_id,
+            frozen_context_refs=frozen_context_refs,
             limit=limit,
         )
 
@@ -861,7 +865,9 @@ def retrieve(
         return []
 
     kind = _KINDS["media" if forced is not None else result_type]
-    cell = scope_filter_sql(scope_type, scope_id, kind.entity)
+    cell = scope_filter_sql(
+        scope_type, scope_id, kind.entity, frozen_context_refs=frozen_context_refs
+    )
     if cell is None:
         return []
     scope_sql, params = cell

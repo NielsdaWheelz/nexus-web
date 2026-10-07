@@ -7,7 +7,6 @@ tsvector/trgm index basis and the offset basis for note passage anchors.
 
 from __future__ import annotations
 
-import re
 from typing import Any, cast
 from uuid import UUID
 
@@ -16,17 +15,12 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import NoteBlock
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
-from nexus.schemas.resource_items import ExpectedNoteBody, is_object_type
+from nexus.schemas.resource_items import ExpectedNoteBody, validate_note_body_pm_json
 from nexus.services.resource_graph.edges import replace_edges_for_origin
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.schemas import EdgeCreate
 from nexus.services.resource_items import versions
-from nexus.services.resource_items.capabilities import resource_can_be_note_reference_target
-
-_OBJECT_REF_MARKDOWN_RE = re.compile(
-    r"\[\[([a-z_]+):([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
-    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?:\|([^\]\n]*))?\]\]"
-)
+from nexus.services.resource_items.capabilities import resource_can_embed
 
 
 def note_ref(block_id: UUID) -> ResourceRef:
@@ -34,28 +28,9 @@ def note_ref(block_id: UUID) -> ResourceRef:
 
 
 def pm_doc_from_markdown_projection(markdown: str) -> dict[str, Any]:
-    """One paragraph of text and ``[[scheme:uuid|label]]`` object references."""
+    """Project plain markdown text into one body, retaining literal brackets."""
     content: list[dict[str, Any]] = []
-    position = 0
-    for match in _OBJECT_REF_MARKDOWN_RE.finditer(markdown):
-        if match.start() > position:
-            _append_text(content, markdown[position : match.start()])
-        object_type = match.group(1)
-        if not is_object_type(object_type):
-            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Object reference type is invalid")
-        content.append(
-            {
-                "type": "object_ref",
-                "attrs": {
-                    "objectType": object_type,
-                    "objectId": str(UUID(match.group(2))),
-                    "label": match.group(3) or f"{object_type}:{match.group(2)}",
-                },
-            }
-        )
-        position = match.end()
-    if position < len(markdown):
-        _append_text(content, markdown[position:])
+    _append_text(content, markdown)
     return {"type": "paragraph", "content": content} if content else {"type": "paragraph"}
 
 
@@ -80,7 +55,7 @@ def text_from_pm_json(value: object) -> str:
         node_type = node.get("type")
         if node_type == "text" and isinstance(node.get("text"), str):
             parts.append(str(node["text"]))
-        elif node_type in {"object_ref", "object_embed"} and isinstance(node.get("attrs"), dict):
+        elif node_type == "object_embed" and isinstance(node.get("attrs"), dict):
             attrs = node["attrs"]
             label = attrs.get("label") or f"{attrs.get('objectType')}:{attrs.get('objectId')}"
             if isinstance(label, str):
@@ -125,6 +100,10 @@ def require_expected_body(
 def upsert_note_body(
     db: Session, *, viewer_id: UUID, block_id: UUID, body_pm_json: dict[str, Any]
 ) -> NoteBlock:
+    try:
+        validate_note_body_pm_json(body_pm_json)
+    except ValueError as exc:
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, str(exc)) from exc
     block = db.get(NoteBlock, block_id)
     if block is None:
         block = NoteBlock(
@@ -151,8 +130,7 @@ def upsert_note_body(
 
 
 def sync_note_body_edges(db: Session, *, viewer_id: UUID, block: NoteBlock) -> None:
-    """Replace the block's ``note_body`` edges. Self-targets and schemes that
-    cannot be a note reference target stay prose and mint no edge."""
+    """Replace the block's owned embed facts; ordinary text creates no edges."""
     source = note_ref(block.id)
     replace_edges_for_origin(
         db,
@@ -162,7 +140,7 @@ def sync_note_body_edges(db: Session, *, viewer_id: UUID, block: NoteBlock) -> N
         edges=[
             EdgeCreate(source=source, target=target, kind="context", origin="note_body")
             for target in _body_target_refs(block.body_pm_json)
-            if target != source and resource_can_be_note_reference_target(target)
+            if target != source and resource_can_embed(target)
         ],
     )
 
@@ -178,9 +156,7 @@ def _body_target_refs(value: object) -> list[ResourceRef]:
             return
         if not isinstance(node, dict):
             return
-        if node.get("type") in {"object_ref", "object_embed"} and isinstance(
-            node.get("attrs"), dict
-        ):
+        if node.get("type") == "object_embed" and isinstance(node.get("attrs"), dict):
             object_type = node["attrs"].get("objectType")
             object_id = node["attrs"].get("objectId")
             if isinstance(object_type, str) and isinstance(object_id, str):

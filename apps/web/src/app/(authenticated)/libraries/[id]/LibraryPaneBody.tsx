@@ -40,7 +40,6 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
 import { addLibraryPlacement } from "@/lib/libraries/libraryPlacement";
@@ -62,7 +61,7 @@ import Toggle from "@/components/ui/Toggle";
 import PaneSurface from "@/components/ui/PaneSurface";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
-import ReadingSlateSection from "@/components/collections/ReadingSlateSection";
+import SuggestionsSection from "@/components/collections/SuggestionsSection";
 import type {
   CollectionContext,
   CollectionRowView,
@@ -146,8 +145,8 @@ import {
   decodeLibraryEntryListItem,
   type LibraryEntryListItem,
 } from "@/lib/libraries/entryListItem";
-import { slateTargetId } from "@/lib/resonance/contract";
-import type { ReadingSlateAccept } from "@/lib/resonance/useReadingSlate";
+import { suggestionTargetId } from "@/lib/suggestions/contract";
+import type { SuggestionsAccept } from "@/lib/suggestions/useSuggestions";
 import styles from "./LibraryPaneBody.module.css";
 
 type Library = LibraryOut;
@@ -1290,8 +1289,8 @@ export default function LibraryPaneBody() {
       error !== null,
   );
 
-  // Reading-slate intake writes the same library-entry contract as placement.
-  const acceptSlateTarget = useCallback<ReadingSlateAccept>(
+  // Reading-suggestions intake writes the same library-entry contract as placement.
+  const acceptSuggestionTarget = useCallback<SuggestionsAccept>(
     (target, options) => {
       if (!viewIsCommitted || committedView === null) {
         return Promise.resolve({ kind: "Abandoned" });
@@ -1299,7 +1298,7 @@ export default function LibraryPaneBody() {
       if (currentLibrary === null) {
         return Promise.resolve({ kind: "Abandoned" });
       }
-      const targetId = slateTargetId(target);
+      const targetId = suggestionTargetId(target);
       const frozenAttempt = () =>
         addLibraryPlacement({
           target: { kind: target.kind, id: targetId },
@@ -1819,19 +1818,15 @@ export default function LibraryPaneBody() {
     loading || !entryCollectionComplete
       ? { kind: "Pending" }
       : { kind: "Count", value: visibleEntries.length, unit: "entry" };
-  const connectionsComposerController = useConnectionsComposerController({
-    scheme: "library",
-    id,
-  });
   const connectionsBody = useMemo(
     () => (
       <ConnectionsSurface
         resourceRef={{ scheme: "library", id }}
-        composerController={connectionsComposerController}
+
         activateTarget={activateTarget}
       />
     ),
-    [activateTarget, connectionsComposerController, id],
+    [activateTarget, id],
   );
   const membersBody = useMemo(
     () =>
@@ -2419,8 +2414,8 @@ export default function LibraryPaneBody() {
         {currentLibrary !== null &&
         controller?.entries.exhaustion === "Complete" &&
         entryExhaustion.kind === "Complete" ? (
-          <ReadingSlateSection
-            returnScope="Library.ReadingSlate"
+          <SuggestionsSection
+            returnScope="Library.Suggestions"
             destination={{
               kind: "Library",
               id: currentLibrary.id,
@@ -2428,7 +2423,7 @@ export default function LibraryPaneBody() {
             }}
             paneId={paneId}
             isActive={isPaneActive}
-            accept={acceptSlateTarget}
+            accept={acceptSuggestionTarget}
           />
         ) : null}
       </PaneSurface>

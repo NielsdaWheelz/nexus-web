@@ -73,11 +73,11 @@ export interface ConversationIndexResourceParams
   view?: UpdatedTitleIndexView;
 }
 
-export interface ReadingSlateResourceParams {
+export interface SuggestionsResourceParams {
   refreshVersion: number;
 }
 
-export interface LibrarySlateResourceParams extends ReadingSlateResourceParams {
+export interface LibrarySuggestionsResourceParams extends SuggestionsResourceParams {
   id: string;
 }
 
@@ -204,19 +204,19 @@ export const contributorWorksResource: ResourceDescriptor<ContributorWorksResour
 // ignores limit, so a mismatch would silently seed a different row count.
 export const AUTHOR_WORKS_LIMIT = 100;
 
-export const lecternSlateResource: ResourceDescriptor<ReadingSlateResourceParams> =
+export const lecternSuggestionsResource: ResourceDescriptor<SuggestionsResourceParams> =
   {
-    cacheKey: ({ refreshVersion }) => `lectern:slate:${refreshVersion}`,
-    serverPath: () => "/lectern/slate",
-    clientPath: () => "/api/lectern/slate",
+    cacheKey: ({ refreshVersion }) => `lectern:suggestions:${refreshVersion}`,
+    serverPath: () => "/lectern/suggestions",
+    clientPath: () => "/api/lectern/suggestions",
   };
 
-export const librarySlateResource: ResourceDescriptor<LibrarySlateResourceParams> =
+export const librarySuggestionsResource: ResourceDescriptor<LibrarySuggestionsResourceParams> =
   {
     cacheKey: ({ id, refreshVersion }) =>
-      `library:${id}:slate:${refreshVersion}`,
-    serverPath: ({ id }) => `/libraries/${encoded(id)}/slate`,
-    clientPath: ({ id }) => `/api/libraries/${encoded(id)}/slate`,
+      `library:${id}:suggestions:${refreshVersion}`,
+    serverPath: ({ id }) => `/libraries/${encoded(id)}/suggestions`,
+    clientPath: ({ id }) => `/api/libraries/${encoded(id)}/suggestions`,
   };
 
 function notePagesQuery(params: NotePagesResourceParams): string {

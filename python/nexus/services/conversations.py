@@ -8,7 +8,7 @@ API cannot be probed.
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import assert_never, cast
+from typing import Literal, assert_never, cast
 from uuid import UUID
 
 from sqlalchemy import RowMapping, delete, func, select, text
@@ -40,10 +40,12 @@ from nexus.schemas.conversation import (
     PageInfo,
 )
 from nexus.schemas.presence import Presence, absent, present
+from nexus.schemas.resource_graph import LinkPassageEndpoint, LinkResourceEndpoint
 from nexus.services.chat_failure import rerun_eligibility
 from nexus.services.chat_reader_selection import (
     decode_reader_selection_snapshot,
     reader_selection_out,
+    render_historical_reader_selection_prompt_block,
 )
 from nexus.services.collection_keyset import (
     Direction,
@@ -63,18 +65,23 @@ from nexus.services.collection_revisions import (
     require_collection_revision,
 )
 from nexus.services.keyset_cursor import (
+    KeysetValue,
     KeysetValueKind,
     decode_keyset_cursor,
     encode_keyset_cursor,
 )
+from nexus.services.media_read_map import READ_DOCUMENT_MAX_CHARS
 from nexus.services.resource_graph import cleanup as graph_cleanup
 from nexus.services.resource_graph import context as context_service
 from nexus.services.resource_graph.citations import citation_counts_for_sources
+from nexus.services.resource_graph.edges import create_link
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
     parse_resource_ref,
 )
+from nexus.services.resource_graph.user_relations import materialize_link_endpoint
+from nexus.services.resource_items.capabilities import resource_link_mode
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 100
@@ -107,6 +114,150 @@ def message_document(role: str, content: str) -> dict[str, object]:
             }
         ],
     }
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationReadPage:
+    body: str
+    next_cursor: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationReadRefusal:
+    code: Literal["missing", "invalid_cursor", "stale_cursor"]
+
+
+def read_message_page(
+    db: Session, *, viewer_id: UUID, ref: ResourceRef, cursor: str | None
+) -> ConversationReadPage | ConversationReadRefusal:
+    """Bounded current message content, with one metadata/body statement snapshot.
+
+    Continuation binds source metadata, not a durable transcript copy. Completing,
+    editing or deleting a message invalidates the cursor, including late branches.
+    """
+    if ref.scheme not in ("conversation", "message"):
+        raise AssertionError("completed-message reader received another resource scheme")
+    query = {"viewer_id": str(viewer_id), "uri": ref.uri}
+    after_seq, after_id, offset = -1, UUID(int=0), 0
+    revision = None
+    if cursor is not None:
+        try:
+            values = decode_keyset_cursor(
+                cursor,
+                family="CompletedMessages",
+                query=query,
+                expected_kinds=(
+                    KeysetValueKind.Text,
+                    KeysetValueKind.Int,
+                    KeysetValueKind.Uuid,
+                    KeysetValueKind.Int,
+                ),
+            )
+        except InvalidRequestError:
+            return ConversationReadRefusal("invalid_cursor")
+        revision, after_seq, after_id, offset = cast(tuple[str, int, UUID, int], values)
+        if after_seq < 1 or offset < 0:
+            return ConversationReadRefusal("invalid_cursor")
+    # Both the visibility gate and selected bodies share the metadata's statement
+    # snapshot. The caller may already own a READ COMMITTED transaction.
+    record = (
+        db.execute(
+            text(f"""
+        WITH visible AS (
+            SELECT c.conversation_id AS id FROM ({visible_conversation_ids_cte_sql()}) c
+            WHERE c.conversation_id = CASE WHEN :scheme = 'conversation' THEN CAST(:id AS uuid)
+                ELSE (SELECT conversation_id FROM messages WHERE id=:id) END
+        ), complete AS MATERIALIZED (
+            SELECT m.id,m.seq,m.parent_message_id,m.role,m.updated_at
+            FROM messages m JOIN visible v ON v.id=m.conversation_id
+            WHERE m.role IN ('user','assistant')
+              AND ((:scheme='conversation' AND m.status='complete')
+                OR (:scheme='message' AND m.id=:id AND m.status!='pending'))
+        ), metadata AS (
+            SELECT encode(sha256(convert_to(COALESCE(string_agg(
+                jsonb_build_array(id,seq,parent_message_id,role,extract(epoch FROM updated_at))::text,
+                ',' ORDER BY seq,id),''),'UTF8')),'hex') AS revision,
+                count(*) AS total,
+                count(*) FILTER (WHERE NOT :continuation OR (seq,id) > (:after_seq,CAST(:after_id AS uuid))
+                    OR ((seq,id) = (:after_seq,CAST(:after_id AS uuid)) AND :offset > 0)) AS remaining,
+                bool_or(seq=:after_seq AND id=:after_id) AS cursor_exists
+            FROM complete
+        ), chosen AS (
+            SELECT m.id,m.seq,m.parent_message_id,m.role,m.content,m.reader_selection_snapshot
+            FROM complete c JOIN messages m ON m.id=c.id
+            WHERE NOT :continuation OR (m.seq,m.id) > (:after_seq,CAST(:after_id AS uuid))
+                OR ((m.seq,m.id) = (:after_seq,CAST(:after_id AS uuid)) AND :offset > 0)
+            ORDER BY m.seq,m.id LIMIT 20
+        )
+        SELECT EXISTS(SELECT 1 FROM visible) AS visible, metadata.*,
+            COALESCE((SELECT jsonb_agg(to_jsonb(chosen) ORDER BY seq,id) FROM chosen),'[]'::jsonb) AS messages
+        FROM metadata
+    """),
+            {
+                "viewer_id": viewer_id,
+                "scheme": ref.scheme,
+                "id": ref.id,
+                "continuation": cursor is not None,
+                "after_seq": after_seq,
+                "after_id": after_id,
+                "offset": offset,
+            },
+        )
+        .mappings()
+        .one()
+    )
+    if not record["visible"] or (ref.scheme == "message" and not record["total"]):
+        return ConversationReadRefusal("missing")
+    if revision is not None and revision != record["revision"]:
+        return ConversationReadRefusal("stale_cursor")
+    if cursor is not None and not record["cursor_exists"]:
+        return ConversationReadRefusal("invalid_cursor")
+    if not record["messages"]:
+        return ConversationReadPage(body="no completed messages.", next_cursor=None)
+
+    segments: list[str] = []
+    used = 0
+    next_cursor = None
+    for index, message in enumerate(record["messages"]):
+        body = message["content"]
+        snapshot = message["reader_selection_snapshot"]
+        if snapshot is not None:
+            quote = render_historical_reader_selection_prompt_block(
+                decode_reader_selection_snapshot(snapshot)
+            )
+            body = f"{quote}\n{body}"
+        start = offset if message["id"] == str(after_id) else 0
+        total = len(body)
+        if start > total or (start > 0 and start == total):
+            return ConversationReadRefusal("invalid_cursor")
+        parent = (
+            f"message:{message['parent_message_id']}" if message["parent_message_id"] else "root"
+        )
+        label = f"message:{message['id']} parent={parent} role={message['role']}"
+        header = f"{label} [{start},{total})/{total}\n"
+        available = READ_DOCUMENT_MAX_CHARS - used - (2 if segments else 0) - len(header)
+        if available < 0 or (available == 0 and total > start):
+            break
+        end = min(total, start + max(available, 0))
+        segment = f"{label} [{start},{end})/{total}\n{body[start:end]}"
+        used += len(segment) + (2 if segments else 0)
+        segments.append(segment)
+        if end < total or index + 1 < record["remaining"]:
+            next_cursor = encode_keyset_cursor(
+                family="CompletedMessages",
+                query=query,
+                after=(
+                    KeysetValue(KeysetValueKind.Text, record["revision"]),
+                    KeysetValue(KeysetValueKind.Int, message["seq"]),
+                    KeysetValue(KeysetValueKind.Uuid, UUID(message["id"])),
+                    KeysetValue(KeysetValueKind.Int, end if end < total else 0),
+                ),
+            )
+        else:
+            next_cursor = None
+        if end < total:
+            break
+    return ConversationReadPage(body="\n\n".join(segments), next_cursor=next_cursor)
 
 
 def get_conversation_for_visible_read_or_404(
@@ -245,20 +396,26 @@ def create_conversation(
     db.flush()
     result = conversation_to_out(db, conversation, message_count=0, viewer_id=viewer_id)
 
-    for index, resource_uri in enumerate(initial_context_refs or ()):
+    for resource_uri in initial_context_refs or ():
         ref = parse_resource_ref(resource_uri)
         if isinstance(ref, ResourceRefParseFailure):
             raise InvalidRequestError(
                 ApiErrorCode.E_INVALID_REQUEST,
                 f"Invalid resource_uri: {resource_uri!r}. Expected '<scheme>:<uuid>'.",
             )
-        context_service.add_context_ref_without_commit(
+        create_link(
             db,
             viewer_id=viewer_id,
-            conversation_id=conversation.id,
-            target=ref,
-            origin="user",
-            source_order_key=f"{index + 1:010d}",
+            source=ResourceRef(scheme="conversation", id=conversation.id),
+            target=materialize_link_endpoint(
+                db,
+                viewer_id=viewer_id,
+                endpoint=(
+                    LinkPassageEndpoint(candidate_ref=ref.uri)
+                    if resource_link_mode(ref) == "materialize_passage"
+                    else LinkResourceEndpoint(ref=ref.uri)
+                ),
+            ),
         )
 
     bump_collection_revision(db, viewer_id=viewer_id, family=CollectionFamily.ConversationIndex)

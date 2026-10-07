@@ -14,6 +14,8 @@ import {
 } from "react";
 import Dialog from "@/components/ui/Dialog";
 import Button from "@/components/ui/Button";
+import LinkTargetDialog from "@/components/resources/LinkTargetDialog";
+import { useLinkComposer, type LinkComposer } from "@/lib/resources/useLinkComposer";
 import LibrarySettingsDialog from "@/components/LibrarySettingsDialog";
 import AcquisitionControl from "@/components/browse/AcquisitionControl";
 import PodcastSubscriptionSettingsOverlay from "@/components/podcasts/PodcastSubscriptionSettingsOverlay";
@@ -80,6 +82,7 @@ type OpenResourceOverlay = (
 ) => void;
 
 interface ResourceOverlaysContextValue {
+  readonly linkComposer: LinkComposer;
   readonly openAuthorsEditor: OpenResourceOverlay;
   readonly openMediaMetadata: (id: string, triggerEl: HTMLButtonElement | null, fallback: () => HTMLElement | null) => void;
   readonly openLibrarySettings: OpenResourceOverlay;
@@ -116,6 +119,7 @@ export function useResourceOverlaysController(): Pick<
   | "openLibrarySettings"
   | "openPodcastSettings"
   | "openSubscribe"
+  | "linkComposer"
 > {
   const value = useResourceOverlaysContext();
   return useMemo(
@@ -125,6 +129,7 @@ export function useResourceOverlaysController(): Pick<
       openLibrarySettings: value.openLibrarySettings,
       openPodcastSettings: value.openPodcastSettings,
       openSubscribe: value.openSubscribe,
+      linkComposer: value.linkComposer,
     }),
     [
       value.openAuthorsEditor,
@@ -132,6 +137,7 @@ export function useResourceOverlaysController(): Pick<
       value.openLibrarySettings,
       value.openPodcastSettings,
       value.openSubscribe,
+      value.linkComposer,
     ],
   );
 }
@@ -170,6 +176,7 @@ export function ResourceOverlaysProvider({
 }: {
   children: ReactNode;
 }) {
+  const linkComposer = useLinkComposer();
   const [authors, openAuthorsEditor, closeAuthors] = useOverlaySession();
   const [metadata, setMetadata] = useState<MetadataSession | null>(null);
   const metadataKey = useRef(0);
@@ -188,6 +195,7 @@ export function ResourceOverlaysProvider({
 
   const value = useMemo<ResourceOverlaysContextValue>(
     () => ({
+      linkComposer,
       openAuthorsEditor,
       openMediaMetadata,
       openLibrarySettings,
@@ -205,6 +213,7 @@ export function ResourceOverlaysProvider({
       closeSubscribe,
     }),
     [
+      linkComposer,
       openAuthorsEditor,
       openMediaMetadata,
       openLibrarySettings,
@@ -247,6 +256,7 @@ function returnFocusToActiveElement(): () => HTMLElement | null {
 
 export function ResourceActionOverlays() {
   const {
+    linkComposer,
     authors,
     metadata,
     librarySettings,
@@ -266,6 +276,16 @@ export function ResourceActionOverlays() {
 
   return (
     <PaneReturnVisitScope visitId={visitId} routeKey="resource-action-overlays">
+      {linkComposer.open ? <LinkTargetDialog
+        open={linkComposer.open}
+        sourceLabel={linkComposer.sourceLabel}
+        sourceRef={linkComposer.sourceRef}
+        excludeRefs={linkComposer.sourceRef ? [linkComposer.sourceRef] : undefined}
+        busy={linkComposer.committing}
+        failure={linkComposer.failure}
+        onPick={(target, label) => void linkComposer.confirm(target, label)}
+        onClose={linkComposer.close}
+      /> : null}
       {authors ? (
         <AuthorsEditorOverlay
           key={authors.key}

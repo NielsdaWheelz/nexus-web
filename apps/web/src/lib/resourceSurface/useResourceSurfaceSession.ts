@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import type { NoteBodyEdit, NoteBodyEditorDocument, NoteBodySelection } from "@/components/notes/NoteBodyEditor";
 import { isApiError } from "@/lib/api/client";
+import type { Schema } from "@/lib/api/wire";
 import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHandoff";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -16,7 +17,7 @@ import {
   type DailyDraft,
   type DailyDraftHandoff,
 } from "@/lib/notes/dailyDraftStore";
-import { decodeDailyCaptureResult } from "@/lib/notes/api";
+import { projectDailyCaptureResult } from "@/lib/notes/api";
 import { noteBodyHasContent } from "@/lib/notes/prosemirror/bodyContent";
 import {
   createNoteBodyDoc,
@@ -37,8 +38,8 @@ import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { copyText } from "@/lib/ui/copyText";
 import type { ResourceSurface, ResourceSurfaceNode } from "@/lib/resources/resourceItems";
 import {
-  decodeResourceSurfaceCommand,
-  decodeResourceSurfaceTitle,
+  projectResourceSurfaceCommand,
+  projectResourceSurfaceTitle,
   fetchResourceSurface,
   prepareResourceSurfaceCommand,
   prepareResourceSurfaceTitle,
@@ -460,7 +461,7 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
       const ref = sourceRefRef.current;
       if (!ref) return;
       const mutationId = resourceSurfaceCommandId();
-      const intent: ResourceSurfaceDraftIntent = { clientMutationId: mutationId, endpointRef: ref, context: { rootRef: ref, linkPath: [] }, command: { type: "reverse_edit", receiptId: item.receiptId ?? item.mutationId }, bodyEdits: [], baseSurfaces: [...projectedGraphRef.current.values()], inverseSurfaces: redo ? after : before, reversesMutationId: item.mutationId, reverseVersions: item.reverseVersions };
+      const intent: ResourceSurfaceDraftIntent = { clientMutationId: mutationId, endpointRef: ref, context: { rootRef: ref, linkPath: [] }, command: { type: "reverse_edit", receiptId: item.receiptId ?? item.mutationId }, bodyEdits: [], baseSurfaces: [...projectedGraphRef.current.values()], baseNodes: [...owner.graph.nodes.values()], inverseSurfaces: redo ? after : before, reversesMutationId: item.mutationId, reverseVersions: item.reverseVersions };
       const restoredBodies = new Map<string, NoteBodyValue>();
       for (const restored of intent.inverseSurfaces!) for (const node of [restored.source, ...restored.orderedItems.map((link) => link.target)]) {
         if (node.content.kind === "note_body" && item.bodyRefs.includes(node.item.ref) && session.peekSnapshot(node.item.ref)) restoredBodies.set(node.item.ref, bodyFromJson(node.content.bodyPmJson));
@@ -527,7 +528,8 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
       case "remove_occurrence": for (const entry of command.entries) { path(entry.context); add(entry.endpointRef, "links"); add(linkTarget(entry.endpointRef, entry.linkId), "links"); } break;
       case "join_notes": add(linkTarget(operation.sourceRef, command.earlierLinkId), "body"); add(linkTarget(operation.sourceRef, command.laterLinkId), "body"); add(linkTarget(operation.sourceRef, command.laterLinkId), "links"); break;
       case "reverse_edit": if (!intent.reverseVersions) throw new Error("Inverse receipt has not settled"); for (const version of intent.reverseVersions) add(version.ref, version.lane); break;
-      case "insert_note": case "move_occurrence": case "paste_outline": break;
+      case "paste_outline": for (const item of command.items) if (item.kind === "resource") add(item.targetRef, "links"); break;
+      case "insert_note": case "move_occurrence": break;
     }
     for (const edit of intent.bodyEdits) add(edit.ref, "body");
     return prepareResourceSurfaceCommand({ sourceRef: operation.sourceRef, clientMutationId: intent.clientMutationId, baseVersions: [...versions.values()], command, context: intent.context, bodyEdits: intent.bodyEdits });
@@ -541,7 +543,8 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
       owner.retained = true;
     }
     if (operation.kind === "capture") {
-      const result = decodeDailyCaptureResult(data);
+      // The operation owner selects the response schema for the generic journal.
+      const result = projectDailyCaptureResult(data as Schema<"DailyCaptureResult">);
       if (result.localDate !== operation.localDate || result.clientMutationId !== operation.clientMutationId) throw new TypeError("daily capture acknowledgement identity mismatch");
       acceptSurface(result.surface, "page:" + result.pageId);
       const captured = surfaceBody(result.surface, draftNoteRef(operation.noteId));
@@ -558,7 +561,7 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
     const previous = acknowledgedRef.current;
     if (!previous) throw new Error("surface owner disappeared during acknowledgement");
     if (operation.kind === "title") {
-      const item = decodeResourceSurfaceTitle(data);
+      const item = projectResourceSurfaceTitle(data as Schema<"ResourceTitleMutationOut">);
       acceptSurface({
         ...previous,
         source: {
@@ -571,7 +574,7 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
       }, sourceRefRef.current);
       return;
     }
-    const receipt = decodeResourceSurfaceCommand(data);
+    const receipt = projectResourceSurfaceCommand(data as Schema<"ResourceSurfaceCommandOut">);
     if (receipt.clientMutationId !== operation.intent.clientMutationId) throw new TypeError("Surface receipt mutation identity mismatch");
     const local = projectSurfaceGraph(new Map(operation.intent.baseSurfaces.map((surface) => [surface.source.item.ref, surface])), [operation.intent]);
     const mapping = new Map<string, string>();
@@ -922,7 +925,7 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
       return body && node.content.kind === "note_body" ? { ...node, content: { kind: "note_body", ...body } } : node;
     };
     const beforeCheckpoint = before.map((surface) => ({ source: checkpointNode(surface.source), orderedItems: surface.orderedItems.map((row) => ({ ...row, target: checkpointNode(row.target) })) }));
-    const intent = createResourceSurfaceIntent({ surface: current, command: next, clientMutationId, context, bodyEdits, baseSurfaces: before });
+    const intent = createResourceSurfaceIntent({ surface: current, command: next, clientMutationId, context, bodyEdits, baseSurfaces: before, baseNodes: [...owner.graph.nodes.values()] });
     const after = projectSurfaceGraph(projectedGraphRef.current, [intent]);
     const changedRefs = new Set([...after].filter(([ref, surface]) => JSON.stringify(projectedGraphRef.current.get(ref)) !== JSON.stringify(surface)).map(([ref]) => ref));
     if (next.type !== "reverse_edit") session.recordStructure(ownerKey, { kind: "structure", mutationId: clientMutationId, receiptId: null, bodyRefs: [...absorbedRefs], before: [...beforeCheckpoint.filter((surface) => changedRefs.has(surface.source.item.ref)), ...[...after.values()].filter((surface) => !projectedGraphRef.current.has(surface.source.item.ref)).map((surface) => ({ ...surface, orderedItems: [] }))], after: [...after.values()].filter((surface) => changedRefs.has(surface.source.item.ref)), selectionBefore, selectionAfter: selectionBefore });
@@ -1064,6 +1067,7 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
     // refer to a pending pair created by the lost reply, so replaying one entry
     // in isolation would strand its identity mapping in the old journal.
     for (const { operation } of operations) if (operation.kind === "graph") {
+      for (const node of operation.intent.baseNodes) acceptGraphNode(owner.graph, node);
       for (const surface of operation.intent.baseSurfaces) {
         if (!owner.graph.surfaces.has(surface.source.item.ref)) owner.graph.surfaces.set(surface.source.item.ref, surface);
         for (const node of [surface.source, ...surface.orderedItems.map((row) => row.target)]) {
@@ -1197,7 +1201,7 @@ export function useResourceSurfaceSession(input: PersistedOptions | DailySurface
   }
   const hasRecoveredDraft = recoveryCandidates.length > 0 || recoveredPauseRef.current || unreadableDailyDraft;
   if (storageUnavailable) { status = "storage_failed"; localRetained = false; }
-  else if (status === "clean" && hasRecoveredDraft) status = "recovered";
+  else if (status === "clean" && recoveredPauseRef.current) status = "recovered";
   const provisionalRow: OutlineRow | null = daily && provisional ? {
     occurrenceId: provisional.occurrenceId,
     path: { rootRef: sourceRefRef.current ?? ownerKey, linkPath: [] },

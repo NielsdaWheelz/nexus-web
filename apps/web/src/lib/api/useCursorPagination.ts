@@ -33,6 +33,8 @@ export function useCursorPagination<T>(args: {
   firstPage: AsyncResource<CursorPage<T>>;
   initialMoreError: ApiError | null;
   loadMorePage: (cursor: string, signal: AbortSignal) => Promise<CursorPage<T>>;
+  /** Pause continuations while a retained first page is being refreshed. */
+  loadMoreEnabled?: boolean;
 }): {
   items: T[];
   status: "loading" | "error" | "ready";
@@ -43,7 +45,7 @@ export function useCursorPagination<T>(args: {
   loadMore: () => void;
   retry: () => void;
 } {
-  const { firstPage, initialMoreError, loadMorePage } = args;
+  const { firstPage, initialMoreError, loadMorePage, loadMoreEnabled = true } = args;
   const firstData = firstPage.status === "ready" ? firstPage.data : null;
 
   const [continuation, setContinuation] = useState<CursorContinuation<T>>({
@@ -109,11 +111,13 @@ export function useCursorPagination<T>(args: {
     abortRef.current?.abort();
     abortRef.current = null;
     loadingRef.current = false;
-  }, [firstData]);
+    setContinuation((current) => current.loadingMore
+      ? { ...current, loadingMore: false } : current);
+  }, [firstData, loadMoreEnabled]);
 
   const loadMore = useCallback(() => {
     const next = cursorRef.current;
-    if (next === null || loadingRef.current) return;
+    if (!loadMoreEnabled || next === null || loadingRef.current) return;
     const generation = generationRef.current;
     loadingRef.current = true;
     setContinuation((current) => ({
@@ -165,7 +169,7 @@ export function useCursorPagination<T>(args: {
         }
       }
     })();
-  }, []);
+  }, [loadMoreEnabled]);
 
   if (defect !== null && defect.owner === firstData) throw defect.error;
 

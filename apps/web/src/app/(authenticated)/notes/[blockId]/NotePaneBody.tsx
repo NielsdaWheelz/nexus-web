@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
-import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
 import ResourceSurfaceEditor from "@/components/resource-surface/ResourceSurfaceEditor";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
@@ -172,19 +171,15 @@ export default function NotePaneBody() {
     const pending = consumePendingNoteActivation(blockId);
     if (pending) setPulseTarget(pending);
   }, [blockId, setPulseTarget]);
-  const composer = useConnectionsComposerController({
-    scheme: "note_block",
-    id: blockId,
-  });
   const connections = useMemo(
     () => (
       <ConnectionsSurface
         resourceRef={{ scheme: "note_block", id: blockId }}
-        composerController={composer}
+
         activateTarget={activateTarget}
       />
     ),
-    [activateTarget, blockId, composer],
+    [activateTarget, blockId],
   );
   const { companionAction } = useResourceInspector({
     scheme: "note_block",

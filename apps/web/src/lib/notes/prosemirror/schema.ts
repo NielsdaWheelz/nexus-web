@@ -55,47 +55,6 @@ export const noteBodyNodeSpecs = {
     parseDOM: [{ tag: "br" }],
     toDOM: () => ["br"],
   },
-  object_ref: {
-    inline: true,
-    group: "inline",
-    atom: true,
-    attrs: {
-      objectType: {},
-      objectId: {},
-      label: { default: "" },
-    },
-    parseDOM: [
-      {
-        tag: "span[data-object-type][data-object-id]",
-        getAttrs: (dom) => {
-          if (!(dom instanceof HTMLElement)) return false;
-          const objectType = requiredDomAttribute(dom, "data-object-type");
-          const objectId = requiredDomAttribute(dom, "data-object-id");
-          if (!objectType || !objectId) return false;
-          return {
-            objectType,
-            objectId,
-            label: dom.textContent ?? "",
-          };
-        },
-      },
-    ],
-    toDOM: (node) => [
-      "span",
-      {
-        "data-object-type": node.attrs.objectType,
-        "data-object-id": node.attrs.objectId,
-        contenteditable: "false",
-        class: "note-object-ref",
-        role: "link",
-        tabindex: "0",
-        "aria-label": `Open ${
-          node.attrs.label || `${node.attrs.objectType}:${node.attrs.objectId}`
-        }`,
-      },
-      node.attrs.label || `${node.attrs.objectType}:${node.attrs.objectId}`,
-    ],
-  },
   object_embed: {
     group: "block_body block",
     atom: true,

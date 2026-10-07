@@ -6,13 +6,14 @@ import {
   librariesResource,
   libraryEntriesResource,
   libraryResource,
-  lecternSlateResource,
+  lecternSuggestionsResource,
   mediaFragmentsResource,
   mediaResource,
   notePagesResource,
   settingsAccountResource,
 } from "@/lib/api/resource";
-import { decodeSlateEnvelope } from "@/lib/resonance/contract";
+import type { ApiJson } from "@/lib/api/wire";
+import { projectSuggestions } from "@/lib/suggestions/contract";
 import type { ResourceFetcher } from "@/lib/api/resourceTransport";
 import type { PaneRouteId, RouteParams } from "@/lib/panes/paneRouteModel";
 import { loadNotePages } from "@/lib/notes/pageContract";
@@ -158,17 +159,19 @@ export async function loadMediaPane(
 // state), settingsIdentities (Supabase server action, no FastAPI path),
 // settingsLocalVault (client-only File System data), search (query-driven,
 // no route-keyed primary). Lectern's canonical ordered queue remains exclusively
-// owned by the shell-mounted LecternProvider; only its independent Slate read is
+// owned by the shell-mounted LecternProvider; only its independent Suggestions read is
 // seeded here.
 export const paneResourceLoaders: Partial<
   Record<PaneRouteId, PaneResourceLoader>
 > = {
   lectern: {
-    cacheKey: () => lecternSlateResource.cacheKey({ refreshVersion: 0 }),
-    load: async (request) =>
-      decodeSlateEnvelope(
-        await request(lecternSlateResource, { refreshVersion: 0 }),
-      ),
+    cacheKey: () => lecternSuggestionsResource.cacheKey({ refreshVersion: 0 }),
+    load: async (request) => {
+      const response = await request<
+        { refreshVersion: number }, ApiJson<"/lectern/suggestions", "get">
+      >(lecternSuggestionsResource, { refreshVersion: 0 });
+      return projectSuggestions(response.data);
+    },
   },
 
   libraries: {

@@ -5,7 +5,7 @@
 The player module owns two related but distinct concerns: the **Lectern** (one
 ordered, mixed-media list of outstanding intentions) and **Now Playing** (one
 device-local audio session, not a second durable list). Podcast, video, reader,
-agent, and Nexus actions address the ordered list. The Resonance subsystem's
+agent, and Nexus actions address the ordered list. the suggestions subsystem's
 read-only **Quick reads** and **At hand** projections are adjacent to the
 Lectern; neither becomes another queue or acquires mutation ownership. The
 player is the consumer of podcast episodes (and YouTube videos) for playback; the
@@ -15,7 +15,7 @@ owns acquisition, sync/backfill, and explicit transcription.
 
 Full behavioral contracts, wire shapes, and acceptance criteria:
 `docs/cutovers/lectern-player-lifecycle-hard-cutover.md` and
-`docs/cutovers/resonance-reading-slate-hard-cutover.md`. Android playback and
+[connections cutover](../connections-plan.md). Android playback and
 pause shortening are specified by
 `docs/cutovers/android-native-player-pause-shortening-hard-cutover.md`; the
 current signed-web/native compatibility and release contract is
@@ -40,7 +40,7 @@ split by storage and query concern:
   claim -> validation -> domain writes -> semantic memo -> snapshot read. Read
   facades (`get_lectern` / `get_listening_state` / `get_reader_cursor`) run on
   the request-scoped session; `put_reader_cursor` owns one transaction for the
-  cursor CAS, engagement projection, and completion transition. Resonance reads
+  cursor CAS, engagement projection, and completion transition. suggestions reads
   the Lectern capacity predicate `lectern_has_capacity` here; the policy-neutral
   engagement, recent-anchor, and complete-membership relations it composes come
   from `projection` directly. One narrow in-transaction exception composes here
@@ -100,8 +100,8 @@ split by storage and query concern:
   (catalog hydration only; canonical playback state comes from the player
   descriptor).
 
-`python/nexus/services/resonance/` owns deterministic quick reads and reading
-slates. at hand combines continuity, arrival, graph, contributor and calibrated
+`python/nexus/services/suggestions/` owns deterministic quick reads and
+suggestions. lectern suggestions combine continuity, arrival, graph, contributor and calibrated
 semantic evidence, returning at most ten unfinished placeable media outside the
 complete queue. a full queue suppresses at hand.
 
@@ -116,7 +116,7 @@ repeatable-read, read-only snapshot without model or provider calls.
 `services/reading_time.py` owns duration from stored canonical word counts and
 the current durable reader cursor; see
 [library duration](library.md#reading-time-projection-and-ordering).
-media slate targets carry the same `MediaSummaryOut` as lectern and library
+media suggestion targets carry the same `MediaSummaryOut` as lectern and library
 rows. it contains original publication, ordered credits, processing state, and
 modality-specific duration; ranking reasons and anchors remain internal.
 podcast containers retain their separate target contract. `presentMedia`
@@ -139,7 +139,7 @@ media/podcast DTOs, and the Lectern snapshot so activation derivation
 
 ```http
 GET  /lectern
-GET  /lectern/slate
+GET  /lectern/suggestions
 GET  /lectern/quick-reads
 POST /lectern/commands
 POST /consumption/commands
@@ -232,15 +232,15 @@ Lectern pane is the sole full-list editor).
 - `components/collections/QuickReadsSection.tsx` is an independent client read
   through `useResource`: first active mount, reactivation and active consumption
   or placement revision changes refetch with existing abort/retry handling. it
-  uses the shared slate presenter and collection rows, distinguishes empty from
+  uses the shared suggestions presenter and collection rows, distinguishes empty from
   error, and has no dedicated add button or controls. opening navigates without
   enqueueing; standard resource menus remain available. if refresh removes its
   focused row, the active section receives orphaned focus; deliberate focus
   moves and inactive panes are left alone.
-- `apps/web/src/lib/resonance/` and
-  `components/collections/ReadingSlateSection.tsx` own strict Slate transport,
+- `apps/web/src/lib/suggestions/` and
+  `components/collections/SuggestionsSection.tsx` own generated-wire transport,
   presentation, the destination-keyed read/add/refill state machine, focus,
-  and quiet read recovery for at hand and library suggestions. they do not own
+  and quiet read recovery for lectern and library suggestions. they do not own
   queue state or write commands. collection rows no longer expose relation
   explanations or inline related expansion; opened-resource connections remain.
 - `apps/web/src/lib/player/` — the audio session: `playerSession.ts` (pure

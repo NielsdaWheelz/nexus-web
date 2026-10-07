@@ -1,4 +1,4 @@
-"""Wire schemas for the synapse scan API.
+"""Wire schemas for the connection discovery scan API.
 
 Scan state is a projection of the background-job row: there is no scan
 resource to hydrate, so ``status`` is the whole read surface.
@@ -8,23 +8,23 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-SynapseScanStatus = Literal["idle", "pending", "running"]
+DiscoveryScanStatus = Literal["idle", "pending", "running"]
 
 
-class SynapseModel(BaseModel):
+class DiscoveryModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class SynapseScanRequest(SynapseModel):
+class DiscoveryScanRequest(DiscoveryModel):
     ref: str
 
 
-class SynapseScanOut(SynapseModel):
+class DiscoveryScanOut(DiscoveryModel):
     """``queued`` is False when the engine is disabled or a scan is in flight."""
 
     queued: bool
-    status: SynapseScanStatus
+    status: DiscoveryScanStatus
 
 
-class SynapseScanStatusOut(SynapseModel):
-    status: SynapseScanStatus
+class DiscoveryScanStatusOut(DiscoveryModel):
+    status: DiscoveryScanStatus

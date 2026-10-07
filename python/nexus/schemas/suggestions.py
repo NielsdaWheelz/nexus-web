@@ -1,7 +1,4 @@
-"""Strict camelCase wire contracts for the deterministic Resonance slates.
-
-Every variant is key-exact against ``apps/web/src/lib/resonance/contract.ts``.
-"""
+"""CamelCase wire contracts for deterministic collection suggestions."""
 
 from collections.abc import Callable
 from typing import Annotated, Literal, Self
@@ -42,11 +39,11 @@ PodcastResourceRefUri = Annotated[str, AfterValidator(_ref_uri_validator("podcas
 InternalHref = Annotated[str, AfterValidator(_internal_href)]
 
 
-class ResonanceModel(BaseModel):
+class SuggestionsModel(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
 
 
-class MediaSlateTargetOut(ResonanceModel):
+class MediaSuggestionTargetOut(SuggestionsModel):
     kind: Literal["Media"] = "Media"
     ref: MediaResourceRefUri
     media_summary: MediaSummaryOut
@@ -54,7 +51,7 @@ class MediaSlateTargetOut(ResonanceModel):
     href: InternalHref
 
 
-class PodcastSlateTargetOut(ResonanceModel):
+class PodcastSuggestionTargetOut(SuggestionsModel):
     kind: Literal["Podcast"] = "Podcast"
     ref: PodcastResourceRefUri
     title: str
@@ -63,19 +60,19 @@ class PodcastSlateTargetOut(ResonanceModel):
     href: InternalHref
 
 
-SlateTargetOut = Annotated[
-    MediaSlateTargetOut | PodcastSlateTargetOut,
+SuggestionTargetOut = Annotated[
+    MediaSuggestionTargetOut | PodcastSuggestionTargetOut,
     Field(discriminator="kind"),
 ]
 
 
-class SlateItemOut(ResonanceModel):
-    target: SlateTargetOut
+class SuggestionItemOut(SuggestionsModel):
+    target: SuggestionTargetOut
     consumption: Presence[ConsumptionOut]
 
     @model_validator(mode="after")
     def validate_target_facts(self) -> Self:
-        if isinstance(self.target, PodcastSlateTargetOut):
+        if isinstance(self.target, PodcastSuggestionTargetOut):
             if isinstance(self.consumption, Present):
                 raise ValueError("Podcast targets have no consumption")
         elif not isinstance(self.consumption, Present):
@@ -83,23 +80,23 @@ class SlateItemOut(ResonanceModel):
         return self
 
 
-class SlateOut(ResonanceModel):
-    items: list[SlateItemOut] = Field(max_length=10)
+class SuggestionsOut(SuggestionsModel):
+    items: list[SuggestionItemOut] = Field(max_length=10)
 
 
-class QuickReadsOut(ResonanceModel):
-    items: list[SlateItemOut] = Field(max_length=5)
+class QuickReadsOut(SuggestionsModel):
+    items: list[SuggestionItemOut] = Field(max_length=5)
 
     @model_validator(mode="after")
     def validate_quick_reads(self) -> Self:
         for item in self.items:
             duration = (
                 item.target.media_summary.duration
-                if isinstance(item.target, MediaSlateTargetOut)
+                if isinstance(item.target, MediaSuggestionTargetOut)
                 else None
             )
             if (
-                not isinstance(item.target, MediaSlateTargetOut)
+                not isinstance(item.target, MediaSuggestionTargetOut)
                 or not isinstance(duration, Present)
                 or duration.value.modality != "Read"
                 or not isinstance(duration.value.estimate.remaining_minutes, Present)

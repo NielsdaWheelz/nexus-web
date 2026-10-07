@@ -1,4 +1,4 @@
-"""Current-resume reading duration shared by library ordering and resonance."""
+"""Current-resume reading duration shared by library ordering and suggestions."""
 
 import math
 from uuid import UUID
@@ -17,7 +17,7 @@ def reading_time_rows_sql() -> str:
     """Quotable positive-count documents, with raw float8 total/remaining seconds.
 
     Bind ``viewer_id``. This relation owns duration, not visibility or consumption
-    completion; the composing library/resonance read owns those policies.
+    completion; the composing library/suggestions read owns those policies.
     """
     return f"""
         SELECT duration.media_id, duration.total_seconds,
