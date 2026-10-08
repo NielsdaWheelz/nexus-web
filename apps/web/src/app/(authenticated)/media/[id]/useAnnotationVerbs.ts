@@ -34,8 +34,7 @@ import {
   type HighlightActionIntent,
 } from "@/lib/highlights/actionIntent";
 import { requirePaneRuntime, usePaneRuntime } from "@/lib/panes/paneRuntime";
-import { deleteStance, putStance } from "@/lib/resourceGraph/stances";
-import { useLinkComposer, type LinkComposer } from "@/lib/resourceGraph/useLinkComposer";
+import { useResourceOverlaysController } from "@/lib/resources/resourceOverlaysController";
 import { useShareController } from "@/lib/sharing/controller";
 import { anchoredShareOpenOptions } from "@/lib/sharing/openOptions";
 import { canonicalResourceRef, resourceShareTarget } from "@/lib/sharing/targets";
@@ -64,10 +63,9 @@ export interface AnnotationVerbs {
   /** Being recoloured from its menu. */
   readonly recolouring: string | null;
   /** A highlight whose note the Evidence row edits. */
-  readonly noteEdit: { readonly highlightId: string; readonly request: number } | null;
+  readonly noteEdit: { readonly kind: "highlight" | "link"; readonly id: string; readonly request: number } | null;
   /** A highlight waiting for an existing chat to be chosen. */
   readonly choosingChat: string | null;
-  readonly link: LinkComposer;
   onSelection(capture: SelectionCapture | null): void;
   onMarks(event: MarkEvent): void;
   highlight(color: HighlightColor): void;
@@ -111,7 +109,6 @@ export function useAnnotationVerbs(input: {
   const [colour, setColour] = useState<Intent<"EditHighlight"> | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const bounds = useRef<Intent<"EditHighlightBounds"> | null>(null);
-  const linking = useRef<Intent<"LinkHighlight"> | null>(null);
   const notes = useMemo(
     () => createMountedEditorIntentController<NoteIntent>(notifyHighlightActionIntentOwnerReady),
     [],
@@ -126,15 +123,7 @@ export function useAnnotationVerbs(input: {
     },
     [feedback],
   );
-  const link = useLinkComposer({
-    onLinked: async () => {
-      store.refresh();
-      await linking.current?.onCommitted();
-      linking.current = null;
-    },
-    onAddLinkNote: () => openEvidence(null),
-    onViewConnection: () => openEvidence(null),
-  });
+  const { linkComposer: link } = useResourceOverlaysController();
 
   /** Creates the selection's highlight (or finds the viewer's exact twin), then continues with it. */
   const withHighlight = useCallback(
@@ -154,23 +143,6 @@ export function useAnnotationVerbs(input: {
         .finally(() => setBusy(false));
     },
     [busy, capture, fail, store],
-  );
-
-  const stance = useCallback(
-    (kind: "supports" | "contradicts") => {
-      const toggle = async (id: string) => {
-        const item = store.highlight(id);
-        const edge = item?.associations.find(
-          (a) => a.relationship === "DirectlyAttached" && a.origin === "user" && a.role === kind,
-        );
-        if (edge?.relationship === "DirectlyAttached") await deleteStance(edge.edge_id);
-        else await putStance({ sourceRef: `highlight:${id}`, targetRef: `media:${mediaId}`, kind });
-        store.refresh();
-      };
-      if (focused && !capture) void toggle(focused).catch((error: unknown) => fail(error, "Stance wasn’t changed"));
-      else withHighlight("yellow", toggle);
-    },
-    [capture, fail, focused, mediaId, store, withHighlight],
   );
 
   const note = useCallback(() => {
@@ -194,14 +166,14 @@ export function useAnnotationVerbs(input: {
     const keydown = (event: KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
       if (isEditableTarget(event.target) || (!capture && !focused)) return;
-      const run = { n: capture ? note : null, t: () => stance("supports"), y: () => stance("contradicts") }[event.key];
+      const run = event.key === "n" && capture ? note : null;
       if (!run) return;
       event.preventDefault();
       run();
     };
     window.addEventListener("keydown", keydown);
     return () => window.removeEventListener("keydown", keydown);
-  }, [capture, focused, note, stance]);
+  }, [capture, focused, note]);
 
   const refs = useMemo(
     () => marks.map((mark) => canonicalResourceRef({ scheme: "highlight", id: mark.id })),
@@ -210,7 +182,7 @@ export function useAnnotationVerbs(input: {
   const accept = useCallback(
     (intent: HighlightActionIntent) => {
       const id = intent.ref.slice("highlight:".length);
-      if (colour || linking.current || bounds.current || notes.occupied() || link.open) return false;
+      if (colour || bounds.current || notes.occupied() || link.open) return false;
       switch (intent.kind) {
         case "EditHighlight":
           setColour(intent);
@@ -218,12 +190,8 @@ export function useAnnotationVerbs(input: {
         case "AddHighlightNote":
         case "EditHighlightNote":
           if (!notes.accept(intent)) return false;
-          setNoteEdit((current) => ({ highlightId: id, request: (current?.request ?? 0) + 1 }));
+          setNoteEdit((current) => ({ kind: "highlight", id, request: (current?.request ?? 0) + 1 }));
           openEvidence(`highlight:${id}`);
-          break;
-        case "LinkHighlight":
-          linking.current = intent;
-          link.openLink({ source: { kind: "resource", ref: intent.ref }, sourceRef: intent.ref });
           break;
         case "EditHighlightBounds":
           if (marks.find((m) => m.id === id)?.anchor.kind !== "text") return false;
@@ -300,14 +268,6 @@ export function useAnnotationVerbs(input: {
     recolouring: colour?.ref.slice("highlight:".length) ?? null,
     noteEdit,
     choosingChat,
-    link: {
-      ...link,
-      close() {
-        link.close();
-        linking.current?.onAborted();
-        linking.current = null;
-      },
-    },
     onSelection(next) {
       const rebound = bounds.current;
       if (rebound && next?.anchor.kind === "text") {
@@ -332,7 +292,16 @@ export function useAnnotationVerbs(input: {
       const anchor = capture?.anchor;
       if (!anchor) return;
       const highlight_id = createRandomId();
+      setCapture(null);
+      document.getSelection()?.removeAllRanges();
       link.openLink({
+        label: "selected passage",
+        onLinked: store.refresh,
+        onAddLinkNote: (id) => {
+          setNoteEdit((current) => ({ kind: "link", id, request: (current?.request ?? 0) + 1 }));
+          openEvidence(id);
+        },
+        onViewConnection: () => openEvidence(null),
         source:
           anchor.kind === "text"
             ? { kind: "fragment_selection", highlight_id, fragment_id: anchor.unit, start_offset: anchor.start, end_offset: anchor.end, color: "yellow" }

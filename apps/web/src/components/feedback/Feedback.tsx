@@ -101,6 +101,7 @@ const HUD_WITH_ACTIONS_MS = 10_000;
 const MAX_HUDS = 3;
 
 const FeedbackContext = createContext<FeedbackContextValue | null>(null);
+const PersistentFeedbackElementContext = createContext<HTMLDivElement | null>(null);
 
 function toneIcon(tone: FeedbackTone): ReactNode {
   switch (tone) {
@@ -299,6 +300,7 @@ function SignalArticle({
 }
 
 export function FeedbackProvider({ children }: { children: ReactNode }) {
+  const [persistentElement, setPersistentElement] = useState<HTMLDivElement | null>(null);
   const [records, setRecords] = useState<SignalRecord[]>([]);
   const recordsRef = useRef<SignalRecord[]>([]);
   const nextIdRef = useRef(1);
@@ -531,70 +533,77 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
 
   return (
     <FeedbackContext.Provider value={value}>
-      {children}
-      <div
-        className={styles.announcer}
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-      >
-        {detachedAnnouncement?.policy === "Polite" ? (
-          <span key={detachedAnnouncement.sequence}>
-            {detachedAnnouncement.text}
-          </span>
-        ) : null}
-      </div>
-      <div
-        className={styles.announcer}
-        role="alert"
-        aria-live="assertive"
-        aria-atomic="true"
-      >
-        {detachedAnnouncement?.policy === "Assertive" ? (
-          <span key={detachedAnnouncement.sequence}>
-            {detachedAnnouncement.text}
-          </span>
-        ) : null}
-      </div>
-      <div
-        className={styles.persistentRail}
-        role="region"
-        aria-label="Persistent feedback"
-      >
-        {records
-          .filter((record): record is PersistentRecord => record.kind === "Persistent")
-          .map((record) => (
-            <SignalArticle
-              key={record.id}
-              content={record.content}
-              actions={record.actions}
-              className={styles.persistent}
-              onAction={(actionIndex) => runAction(record.id, actionIndex)}
-            />
-          ))}
-      </div>
-      <div className={styles.hudViewport} role="region" aria-label="HUD feedback">
-        {records
-          .filter((record): record is HudRecord => record.kind === "Hud")
-          .map((record) => (
-            <SignalArticle
-              key={record.id}
-              content={record.content}
-              actions={record.actions}
-              className={styles.hud}
-              onAction={(actionIndex) => runAction(record.id, actionIndex)}
-              onDismiss={() => removeRecord(record.id)}
-              onMouseEnter={() => setPauseReason(record.id, "Hover", true)}
-              onMouseLeave={() => setPauseReason(record.id, "Hover", false)}
-              onFocusCapture={() => setPauseReason(record.id, "Focus", true)}
-              onBlurCapture={(event) => {
-                if (!event.currentTarget.contains(event.relatedTarget)) {
-                  setPauseReason(record.id, "Focus", false);
-                }
-              }}
-            />
-          ))}
-      </div>
+      <PersistentFeedbackElementContext.Provider value={persistentElement}>
+        <div className={styles.viewport}>
+          <div className={styles.application}>
+            {children}
+            <div className={styles.hudViewport} role="region" aria-label="HUD feedback">
+              {records
+                .filter((record): record is HudRecord => record.kind === "Hud")
+                .map((record) => (
+                  <SignalArticle
+                    key={record.id}
+                    content={record.content}
+                    actions={record.actions}
+                    className={styles.hud}
+                    onAction={(actionIndex) => runAction(record.id, actionIndex)}
+                    onDismiss={() => removeRecord(record.id)}
+                    onMouseEnter={() => setPauseReason(record.id, "Hover", true)}
+                    onMouseLeave={() => setPauseReason(record.id, "Hover", false)}
+                    onFocusCapture={() => setPauseReason(record.id, "Focus", true)}
+                    onBlurCapture={(event) => {
+                      if (!event.currentTarget.contains(event.relatedTarget)) {
+                        setPauseReason(record.id, "Focus", false);
+                      }
+                    }}
+                  />
+                ))}
+            </div>
+          </div>
+          <div
+            ref={setPersistentElement}
+            className={styles.persistentRail}
+            role="region"
+            aria-label="Persistent feedback"
+          >
+            {records
+              .filter((record): record is PersistentRecord => record.kind === "Persistent")
+              .map((record) => (
+                <SignalArticle
+                  key={record.id}
+                  content={record.content}
+                  actions={record.actions}
+                  className={styles.persistent}
+                  onAction={(actionIndex) => runAction(record.id, actionIndex)}
+                />
+              ))}
+          </div>
+        </div>
+        <div
+          className={styles.announcer}
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {detachedAnnouncement?.policy === "Polite" ? (
+            <span key={detachedAnnouncement.sequence}>
+              {detachedAnnouncement.text}
+            </span>
+          ) : null}
+        </div>
+        <div
+          className={styles.announcer}
+          role="alert"
+          aria-live="assertive"
+          aria-atomic="true"
+        >
+          {detachedAnnouncement?.policy === "Assertive" ? (
+            <span key={detachedAnnouncement.sequence}>
+              {detachedAnnouncement.text}
+            </span>
+          ) : null}
+        </div>
+      </PersistentFeedbackElementContext.Provider>
     </FeedbackContext.Provider>
   );
 }
@@ -605,6 +614,11 @@ export function useFeedback(): FeedbackContextValue {
     throw new Error("useFeedback must be used within a FeedbackProvider");
   }
   return context;
+}
+
+/** The existing mobile viewport owner measures this flow surface beside the player. */
+export function usePersistentFeedbackElement(): HTMLDivElement | null {
+  return useContext(PersistentFeedbackElementContext);
 }
 
 export function FeedbackNotice({

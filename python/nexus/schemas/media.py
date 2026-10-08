@@ -89,34 +89,34 @@ class DocumentEmbedSummaryOut(BaseModel):
 
 class DocumentEmbedTextOut(BaseModel):
     kind: Literal["present", "absent"]
-    value: str | None = None
-    reason: Literal["not_in_source", "redacted", "not_applicable"] | None = None
+    value: str | None
+    reason: Literal["not_in_source", "redacted", "not_applicable"] | None
 
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
 
 class DocumentEmbedUrlOut(BaseModel):
     status: Literal["present", "malformed", "absent"]
-    value: str | None = None
-    error_code: str | None = None
-    reason: Literal["not_in_source", "not_applicable"] | None = None
+    value: str | None
+    error_code: str | None
+    reason: Literal["not_in_source", "not_applicable"] | None
 
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
 
 class DocumentEmbedProviderRefOut(BaseModel):
     kind: Literal["present", "absent"]
-    value: str | None = None
-    reason: Literal["unsupported_provider", "unparseable", "not_applicable"] | None = None
+    value: str | None
+    reason: Literal["unsupported_provider", "unparseable", "not_applicable"] | None
 
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
 
 class DocumentEmbedLocatorOut(BaseModel):
     kind: Literal["anchored", "unanchored"]
-    fragment_id: UUID | None = None
-    canonical_start_offset: int | None = Field(default=None, ge=0)
-    canonical_end_offset: int | None = Field(default=None, ge=0)
+    fragment_id: UUID | None
+    canonical_start_offset: int | None = Field(ge=0)
+    canonical_end_offset: int | None = Field(ge=0)
     document_order_key: str
     placeholder_text: str
 
@@ -134,13 +134,13 @@ class DocumentEmbedTargetOut(BaseModel):
         "unsupported",
         "partial",
     ]
-    media_id: UUID | None = None
-    resource_ref: str | None = None
-    href: str | None = None
-    kind: str | None = None
-    title: str | None = None
-    thumbnail_url: str | None = None
-    playback: PlaybackSourceOut | None = None
+    media_id: UUID | None
+    resource_ref: str | None
+    href: str | None
+    kind: str | None
+    title: str | None
+    thumbnail_url: str | None
+    playback: PlaybackSourceOut | None
 
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
@@ -148,7 +148,7 @@ class DocumentEmbedTargetOut(BaseModel):
 class DocumentEmbedDisplayActionOut(BaseModel):
     kind: Literal["open_child_media", "open_original", "retry_child", "refresh_parent"]
     label: str
-    href: str | None = None
+    href: str | None
     disabled: bool = False
 
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
@@ -158,7 +158,7 @@ class DocumentEmbedDisplayOut(BaseModel):
     mode: Literal["resolved", "pending", "unsupported", "failed"]
     label: str
     description: str
-    actions: list[DocumentEmbedDisplayActionOut] = Field(default_factory=list)
+    actions: list[DocumentEmbedDisplayActionOut]
 
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
@@ -166,7 +166,7 @@ class DocumentEmbedDisplayOut(BaseModel):
 class DocumentEmbedOut(BaseModel):
     id: UUID
     media_id: UUID
-    fragment_id: UUID | None = None
+    fragment_id: UUID | None
     occurrence_key: str
     ordinal: int
     provider: DocumentEmbedProvider

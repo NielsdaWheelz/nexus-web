@@ -2,8 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
-import { apiFetch, type ApiPath } from "@/lib/api/client";
-import type { ApiJson } from "@/lib/api/wire";
+import { undoToolCall } from "@/lib/chat/toolCallUndo";
 import { chatFailure, type ChatFailure, type Message } from "@/lib/chat/wire";
 import { formatDisplayNumber, truncateText } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
@@ -78,14 +77,8 @@ function WriteTrail({ trail }: { trail: Trail }) {
   if (!writes.length) return null;
   const undo = async (id: string) => {
     setBusy(true);
-    const path = `/api/conversations/${trail.conversation_id}/tool-calls/${id}/undo`;
     try {
-      await apiFetch<
-        ApiJson<
-          "/conversations/{conversation_id}/tool-calls/{tool_call_id}/undo",
-          "post"
-        >
-      >(path as ApiPath, { method: "POST" });
+      await undoToolCall(trail.conversation_id, id);
       setUndone(new Set(undone).add(id));
     } catch (error) {
       setFailure(chatFailure(error, "Undo unavailable"));

@@ -9,7 +9,7 @@ word) and then calls `get_repeatable_read_db`, which opens REPEATABLE READ and
 caller inherits a read-only snapshot it did not ask for.
 
 evidence: synapse D1 (see `retry-serializable-keeps-open-transaction-isolation.md`).
-`services/synapse.py:_scan` now ends that snapshot itself with `db.rollback()`
+`services/connection_discovery.py:_scan` now ends that snapshot itself with `db.rollback()`
 right after retrieval and exclusion; other background callers of `search()`
 (tool runtime, dossier inputs) are unaudited.
 

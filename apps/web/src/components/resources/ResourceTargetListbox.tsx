@@ -1,18 +1,16 @@
 "use client";
 
 import EmphasisSegments from "@/components/ui/EmphasisSegments";
-import { resourceIconForScheme } from "@/lib/resources/resourceKind";
+import { resourceIconForScheme, resourceTypeLabel } from "@/lib/resources/resourceKind";
 import type { ResourceTarget } from "@/lib/resources/resourceTargets";
 import { parseSnippetSegments } from "@/lib/search/searchViewModel";
 import styles from "./ResourceTargetListbox.module.css";
 
 /**
- * The one shared target-search result list — Connections, `LinkTargetDialog`,
- * and notes `@`/Mod-K/`[[` autocomplete all render through this component
+ * The shared resource and passage search result list used by `LinkTargetDialog`.
  * (universal-link-authoring-hard-cutover.md §Resource Target Search /
  * "shared controller/listbox"). It owns rows, loading/empty/error states, and
- * `role="option"` ids; it does NOT assume an `<input>` exists — notes drives
- * this from a contenteditable combobox host — so it takes an already-computed
+ * `role="option"` ids. It takes an already-computed
  * `activeKey` and reports hover/pick by target, leaving keyboard handling,
  * `aria-activedescendant`, and positioning to the caller.
  */
@@ -24,7 +22,7 @@ export function resourceTargetKey(target: ResourceTarget): string {
 }
 
 /** The DOM id a caller sets as `aria-activedescendant` to point at `target`'s
- * row. Callers own the combobox host (`<input>` or contenteditable) so they
+ * row. Callers own the combobox host so they
  * compute this themselves rather than reading it off a listbox DOM node. */
 export function resourceTargetOptionId(listboxId: string, target: ResourceTarget): string {
   return `${listboxId}-option-${resourceTargetKey(target)}`;
@@ -90,7 +88,7 @@ export default function ResourceTargetListbox({
         </div>
       ) : null}
       {settled && targets.length === 0 ? <div className={styles.status}>{emptyMessage}</div> : null}
-      {settled
+      {targets.length > 0
         ? targets.map((target) => {
             const key = resourceTargetKey(target);
             const active = key === activeKey;
@@ -121,6 +119,7 @@ export default function ResourceTargetListbox({
                   <span className={styles.label} dir="auto">
                     {label}
                   </span>
+                  <span className={styles.meta}>{target.kind === "passage" ? "Passage" : resourceTypeLabel(target.item.scheme)}</span>
                   {target.kind === "passage" ? (
                     <span className={styles.meta} dir="auto">
                       <span>{target.source.label}</span>

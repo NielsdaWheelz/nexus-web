@@ -11,8 +11,8 @@ WORKER_LEASE_SECONDS=300
 WORKER_DB_FAILURE_BACKOFF_SECONDS=60
 WORKER_DB_FAILURE_BACKOFF_MAX_SECONDS=900
 
-# Synapse resonance scans (synapse_scan jobs no-op when false).
-# SYNAPSE_ENABLED=true
+# Connection discovery scans (connection_discovery_scan jobs no-op when false).
+# CONNECTION_DISCOVERY_ENABLED=true
 
 # Grand atlas nightly re-projection (0 disables the periodic sweep).
 ATLAS_PROJECT_SCHEDULE_SECONDS=86400

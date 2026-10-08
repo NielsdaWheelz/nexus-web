@@ -23,7 +23,7 @@ import Toggle from "@/components/ui/Toggle";
 import PaneSurface from "@/components/ui/PaneSurface";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionExhaustionNotice from "@/components/collections/CollectionExhaustionNotice";
-import ReadingSlateSection from "@/components/collections/ReadingSlateSection";
+import SuggestionsSection from "@/components/collections/SuggestionsSection";
 import type { CollectionRowView } from "@/lib/collections/types";
 import LibraryMembersSurface from "@/components/libraries/LibraryMembersSurface";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
@@ -78,7 +78,7 @@ import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { isAbortError } from "@/lib/errors";
 import { podcastRefreshRequestAnnouncement, requestPodcastRefresh } from "@/lib/podcasts/refresh";
 import type { LibraryEntryListItem } from "@/lib/libraries/entryListItem";
-import { slateTargetId } from "@/lib/resonance";
+import { suggestionTargetId } from "@/lib/suggestions";
 import styles from "./LibraryPaneBody.module.css";
 
 type LibraryEntry = LibraryEntryListItem;
@@ -921,9 +921,9 @@ export default function LibraryPaneBody() {
         {currentLibrary !== null &&
           committed?.nextCursor.kind === "Absent" &&
           entryExhaustion.kind === "Complete" ? (
-          <ReadingSlateSection
+          <SuggestionsSection
             key={currentLibrary.id}
-            returnScope="Library.ReadingSlate"
+            returnScope="Library.Suggestions"
             destination={{
               kind: "Library",
               id: currentLibrary.id,
@@ -933,7 +933,7 @@ export default function LibraryPaneBody() {
             isActive={isPaneActive}
             accept={async (target) => {
               await addLibraryPlacement({
-                target: { kind: target.kind, id: slateTargetId(target) },
+                target: { kind: target.kind, id: suggestionTargetId(target) },
                 destination: {
                   kind: "Library",
                   library: { id: currentLibrary.id, name: currentLibrary.name },

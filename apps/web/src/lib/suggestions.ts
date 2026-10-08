@@ -1,4 +1,4 @@
-/** Reading-slate reads (Lectern "At hand", library suggestions, quick reads)
+/** Suggestions reads (Lectern "At hand", library suggestions, quick reads)
  * and their row presentation. Items are the generated wire shape. */
 
 import { absent, present } from "@/lib/api/presence";
@@ -9,26 +9,26 @@ import type { CollectionRowView } from "@/lib/collections/types";
 import { mediaSummaryFromWire } from "@/lib/media/mediaSummary";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 
-export type SlateItem = Schema<"SlateItemOut">;
-export type SlateTarget = SlateItem["target"];
-export type Slate = Schema<"SlateOut">;
+export type SuggestionItem = Schema<"SuggestionItemOut">;
+export type SuggestionTarget = SuggestionItem["target"];
+export type Suggestions = Schema<"SuggestionsOut">;
 
-/** `/api/lectern/slate`, `/api/lectern/quick-reads` or `/api/libraries/{id}/slate`:
+/** `/api/lectern/suggestions`, `/api/lectern/quick-reads` or `/api/libraries/{id}/suggestions`:
  * three reads of one generated item shape. */
-export async function getSlate(
+export async function getSuggestions(
   path: ApiPath,
   signal?: AbortSignal,
-): Promise<Slate> {
-  return (await apiFetch<ApiJson<"/lectern/slate", "get">>(path, { signal }))
+): Promise<Suggestions> {
+  return (await apiFetch<ApiJson<"/lectern/suggestions", "get">>(path, { signal }))
     .data;
 }
 
-/** The uuid half of a slate target's `<scheme>:<uuid>` ref. */
-export function slateTargetId(target: SlateTarget): string {
+/** The uuid half of a suggestion target's `<scheme>:<uuid>` ref. */
+export function suggestionTargetId(target: SuggestionTarget): string {
   return target.ref.slice(target.ref.indexOf(":") + 1);
 }
 
-export function presentSlateItem({ target }: SlateItem): CollectionRowView {
+export function presentSuggestionItem({ target }: SuggestionItem): CollectionRowView {
   const actionSubject = { ref: assumeCanonicalResourceRef(target.ref) };
   if (target.kind === "Media") {
     return presentMedia(mediaSummaryFromWire(target.mediaSummary), {

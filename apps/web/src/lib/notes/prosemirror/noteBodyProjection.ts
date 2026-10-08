@@ -54,7 +54,6 @@ export function projectNoteBody(body: ProseMirrorNode): {
       case "hard_break":
         appendSource(node, position, "\n");
         break;
-      case "object_ref":
       case "object_embed":
         appendSource(
           node,

@@ -5,7 +5,8 @@
 // acknowledgement through a pending ledger, which a map read issued after the
 // write settles (created, recoloured, rebounded and deleted alike). The map is
 // read while someone subscribes: a remounted subscriber reads it again.
-import { apiFetch, apiCommand204 } from "@/lib/api/client";
+import { apiFetch, apiCommand204, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { RailMarker } from "@/lib/documentReader/chrome/MapRail";
 import type {
@@ -26,7 +27,7 @@ type Highlight = Schema<"TypedHighlightOut">;
 export interface AnnotationState {
   readonly map:
     | { readonly status: "loading" }
-    | { readonly status: "failed"; readonly error: unknown }
+    | { readonly status: "failed"; readonly error: unknown; readonly data: DocumentMap | null }
     | { readonly status: "ready"; readonly data: DocumentMap };
   readonly decorations: Pick<Decorations, "identity" | "marks" | "noteRefs">;
   readonly markers: readonly RailMarker[];
@@ -150,8 +151,8 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
       state = { ...state, map: { status: "ready", data } };
       project(data);
     } catch (error) {
-      if (signal.aborted) return;
-      state = { ...state, map: { status: "failed", error } };
+      if (signal.aborted || handleUnauthenticatedApiError(error)) return;
+      state = { ...state, map: { status: "failed", error, data: last } };
       project(last);
     }
   }
@@ -181,7 +182,10 @@ export function createAnnotationStore(mediaId: string): AnnotationStore {
     )?.id ?? null;
 
   return {
-    getState: () => state,
+    getState: () => {
+      if (state.map.status === "failed" && (!isApiError(state.map.error) || isSameSystemApiDefect(state.map.error))) throw state.map.error;
+      return state;
+    },
     subscribe(listener) {
       listeners.add(listener);
       if (listeners.size === 1) void read();

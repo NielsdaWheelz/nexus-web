@@ -1,6 +1,7 @@
 # resource graph output boundary
 
-status: implemented · origin: 2026-10-04 simplification · base: `765f335aed06795ef2b3be7031dd4ebb02c04f22`
+status: implemented · updated: 2026-10-07 connections cutover
+origin: 2026-10-04 output-boundary simplification; prior receipts below are historical.
 
 ## behavior
 
@@ -9,7 +10,6 @@ status: implemented · origin: 2026-10-04 simplification · base: `765f335aed067
 | `POST /resource-graph/connections/query` | 200 | `Data[ConnectionPageOut]` |
 | `POST /resource-graph/links` | 201 | `Data[CreateLinkOut]` |
 | `PUT /resource-graph/links/{link_id}/note` | 200 | `Data[LinkNoteOut]` |
-| `PUT /resource-graph/stances` | 200 | `Data[StanceOut]` |
 | `PUT /highlights/{highlight_id}/note` | 200 | `Data[LinkedNoteBlockRef]` |
 
 success preserves the `{"data": ...}` envelope, snake keys, required nulls, values,
@@ -20,13 +20,15 @@ private connection queries may succeed with no items.
 connections preserve current labels, activation, missing state, citation projection
 and folded ordinary link note. direction, rollup, filters, newest-first ordering and
 cursor retain their meaning. neutral links are undirected despite canonical storage
-orientation; `other` is the far endpoint. structural annotation edges stay hidden.
+orientation; `other` is the far endpoint. pair rows retain their note preview;
+annotation-note connections expose their attachment facts independently. owner
+mutation and creator descriptors come from the typed server projection.
 
 link creation atomically materializes selected highlights/passages and creates or
 reuses a neutral link. reversed duplicates return `created=false`; exact mutation
 replay returns its original result, and changed content under that id conflicts.
-stance put replaces the directed supports/contradicts relationship for an unordered
-pair; repeating the same stance preserves its id. deletion stays idempotent.
+user links have no stance. deletion stays idempotent and never deletes either
+resource or its ordinary annotation note.
 
 first-note save freezes request bytes and replay identity, respects expected absence,
 and persists the ordinary note plus attachments together. later saves use the
@@ -58,10 +60,15 @@ success. canonical later-save and persisted journal decoders keep their owners.
 trade: malformed stored replay now fails as a server defect before publication
 instead of a browser type error. the writer can complete a restored frozen first-create
 without an annotation adapter; recovery admission stays with its existing owner.
-structure and numeric representation stay. no migration, capability removal or
-release-order dependency is introduced.
+structure and numeric representation stay. the later neutral-link cutover,
+admission and stopped-writer migration belong to
+[connections](connections.md) and [its plan](../connections-plan.md).
 
-## qualification
+## historical qualification
+
+these receipts describe the output-boundary change before the connections
+cutover. stance routes and hidden annotation facts below are retired.
+[current verification](../connections-verification.md) owns the new behavior.
 
 pre-integration qualification used temporary isolated postgres/api/browser probes.
 

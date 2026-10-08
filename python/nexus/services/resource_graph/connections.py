@@ -11,7 +11,8 @@ from sqlalchemy import and_, false, or_, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import NoteBlock, ResourceEdge
-from nexus.errors import ApiErrorCode, InvalidRequestError
+from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.services.assistant_write_authorship import assistant_edge_provenance
 from nexus.services.resource_graph.citations import citation_reader_targets_for_edges
 from nexus.services.resource_graph.edges import Pair, link_note_blocks_for_pairs
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
@@ -19,12 +20,17 @@ from nexus.services.resource_graph.resolve import resolve_refs
 from nexus.services.resource_graph.schemas import (
     Connection,
     ConnectionCitation,
+    ConnectionDirection,
     ConnectionEndpoint,
     ConnectionLinkNote,
+    ConnectionMutation,
     ConnectionPage,
     ConnectionQuery,
+    DetachContextMutation,
+    DismissDiscoveryMutation,
     EdgeKind,
     EdgeOrigin,
+    UnlinkMutation,
     is_neutral_link_shape,
     snapshot_from_jsonb,
 )
@@ -48,8 +54,6 @@ def query_connections(db: Session, *, viewer_id: UUID, query: ConnectionQuery) -
         if query.rollup == "owner":
             for child in expand_owned_child_refs(db, viewer_id=viewer_id, ref=ref):
                 expanded.setdefault(child.uri, child)
-    matched: set[Pair] = {(ref.scheme, ref.id) for ref in expanded.values()}
-
     rows = _query_rows(db, viewer_id=viewer_id, refs=tuple(expanded.values()), query=query)
     page_rows = rows[: query.limit]
     next_cursor = (
@@ -57,12 +61,56 @@ def query_connections(db: Session, *, viewer_id: UUID, query: ConnectionQuery) -
         if len(rows) > query.limit
         else None
     )
-    endpoints = _hydrate_endpoints(db, viewer_id=viewer_id, rows=page_rows)
-    link_notes = _link_notes_for_rows(db, viewer_id=viewer_id, rows=page_rows)
+    return ConnectionPage(
+        items=tuple(
+            _hydrate_connections(
+                db,
+                viewer_id=viewer_id,
+                rows=page_rows,
+                refs=tuple(expanded.values()),
+                direction=query.direction,
+            )
+        ),
+        next_cursor=next_cursor,
+    )
+
+
+def connection_for_edge(
+    db: Session, *, viewer_id: UUID, edge_id: UUID, ref: ResourceRef
+) -> Connection:
+    """Hydrate an exact owned edge from an incident endpoint's perspective."""
+    row = db.scalar(
+        select(ResourceEdge).where(
+            ResourceEdge.id == edge_id,
+            ResourceEdge.user_id == viewer_id,
+            or_(
+                and_(ResourceEdge.source_scheme == ref.scheme, ResourceEdge.source_id == ref.id),
+                and_(ResourceEdge.target_scheme == ref.scheme, ResourceEdge.target_id == ref.id),
+            ),
+        )
+    )
+    if row is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Connection not found")
+    return _hydrate_connections(db, viewer_id=viewer_id, rows=[row], refs=(ref,), direction="both")[
+        0
+    ]
+
+
+def _hydrate_connections(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    rows: list[ResourceEdge],
+    refs: tuple[ResourceRef, ...],
+    direction: ConnectionDirection,
+) -> list[Connection]:
+    matched: set[Pair] = {(ref.scheme, ref.id) for ref in refs}
+    endpoints = _hydrate_endpoints(db, viewer_id=viewer_id, rows=rows)
+    link_notes = _link_notes_for_rows(db, viewer_id=viewer_id, rows=rows)
     citations = citation_reader_targets_for_edges(
         db,
         viewer_id=viewer_id,
-        edges=page_rows,
+        edges=rows,
         target_missing_ref_uris={
             endpoint.ref.uri for endpoint in endpoints.values() if endpoint.missing
         },
@@ -74,25 +122,28 @@ def query_connections(db: Session, *, viewer_id: UUID, query: ConnectionQuery) -
     )
 
     items: list[Connection] = []
-    for row in page_rows:
+    for row in rows:
         source_ref = ResourceRef(scheme=cast("ResourceScheme", row.source_scheme), id=row.source_id)
         target_ref = ResourceRef(scheme=cast("ResourceScheme", row.target_scheme), id=row.target_id)
-        incoming = query.direction == "incoming" or (
-            query.direction == "both"
-            and (target_ref.scheme, target_ref.id) in matched
+        neutral = _is_neutral_link_row(row)
+        incoming = (
+            (target_ref.scheme, target_ref.id) in matched
             and (source_ref.scheme, source_ref.id) not in matched
+            if neutral or direction == "both"
+            else direction == "incoming"
         )
         projection = citations.get(row.id)
+        creation = None
+        if row.origin == "assistant":
+            creation, mutation = assistant_edge_provenance(db, viewer_id=viewer_id, edge_id=row.id)
+        else:
+            mutation = _connection_mutation(row)
         items.append(
             Connection(
                 edge_id=row.id,
                 # A neutral Link is undirected: no presenter may read meaning from its
                 # canonical storage direction. ``other`` still points at the far endpoint.
-                direction=(
-                    "undirected"
-                    if _is_neutral_link_row(row)
-                    else ("incoming" if incoming else "outgoing")
-                ),
+                direction=("undirected" if neutral else ("incoming" if incoming else "outgoing")),
                 kind=cast("EdgeKind", row.kind),
                 origin=cast("EdgeOrigin", row.origin),
                 snapshot=snapshot_from_jsonb(row.snapshot) if row.snapshot is not None else None,
@@ -117,15 +168,40 @@ def query_connections(db: Session, *, viewer_id: UUID, query: ConnectionQuery) -
                     else None
                 ),
                 link_note=link_notes.get(row.id),
+                creation=creation,
+                mutation=mutation,
                 created_at=row.created_at,
             )
         )
-    return ConnectionPage(items=tuple(items), next_cursor=next_cursor)
+    return items
+
+
+def _connection_mutation(row: ResourceEdge) -> ConnectionMutation | None:
+    if _is_neutral_link_row(row):
+        return UnlinkMutation()
+    if row.origin == "discovery":
+        return DismissDiscoveryMutation()
+    if (
+        row.origin in ("citation", "system")
+        and row.source_scheme == "conversation"
+        and row.kind == "context"
+        and row.ordinal is None
+        and row.snapshot is None
+    ):
+        return DetachContextMutation(conversation_id=row.source_id)
+    return None
 
 
 def _query_rows(
     db: Session, *, viewer_id: UUID, refs: tuple[ResourceRef, ...], query: ConnectionQuery
 ) -> list[ResourceEdge]:
+    neutral = and_(
+        ResourceEdge.origin == "user",
+        ResourceEdge.kind == "context",
+        ResourceEdge.ordinal.is_(None),
+        ResourceEdge.snapshot.is_(None),
+        ResourceEdge.source_order_key.is_(None),
+    )
     directions: list[Any] = []
     if query.direction in ("incoming", "both"):
         directions.append(
@@ -135,21 +211,33 @@ def _query_rows(
         directions.append(
             _endpoint_clause(ResourceEdge.source_scheme, ResourceEdge.source_id, refs)
         )
+    if query.direction != "both":
+        directions.append(
+            and_(
+                neutral,
+                or_(
+                    _endpoint_clause(ResourceEdge.source_scheme, ResourceEdge.source_id, refs),
+                    _endpoint_clause(ResourceEdge.target_scheme, ResourceEdge.target_id, refs),
+                ),
+            )
+        )
     stmt = select(ResourceEdge).where(
         ResourceEdge.user_id == viewer_id,
         or_(*directions),
-        # Structural Link-note attachment edges are folded onto their Link, never
-        # rendered as their own connection.
-        ResourceEdge.origin != "link_note",
     )
     if query.filters.origins is not None:
         stmt = stmt.where(ResourceEdge.origin.in_(query.filters.origins))
     if query.filters.kinds is not None:
         stmt = stmt.where(ResourceEdge.kind.in_(query.filters.kinds))
+    forward, reverse = [], []
     if query.filters.source_schemes is not None:
-        stmt = stmt.where(ResourceEdge.source_scheme.in_(query.filters.source_schemes))
+        forward.append(ResourceEdge.source_scheme.in_(query.filters.source_schemes))
+        reverse.append(ResourceEdge.target_scheme.in_(query.filters.source_schemes))
     if query.filters.target_schemes is not None:
-        stmt = stmt.where(ResourceEdge.target_scheme.in_(query.filters.target_schemes))
+        forward.append(ResourceEdge.target_scheme.in_(query.filters.target_schemes))
+        reverse.append(ResourceEdge.source_scheme.in_(query.filters.target_schemes))
+    if forward:
+        stmt = stmt.where(or_(and_(*forward), and_(neutral, *reverse)))
     if query.cursor is not None:
         created_at, edge_id = _decode_cursor(query.cursor)
         stmt = stmt.where(
@@ -228,7 +316,7 @@ def _is_neutral_link_row(row: ResourceEdge) -> bool:
 def _link_notes_for_rows(
     db: Session, *, viewer_id: UUID, rows: list[ResourceEdge]
 ) -> dict[UUID, ConnectionLinkNote]:
-    """Fold each neutral Link's note onto its edge; the attachment rows stay invisible."""
+    """Keep the neutral pair's note preview alongside its independent attachment facts."""
     pairs = {
         row.id: frozenset({(row.source_scheme, row.source_id), (row.target_scheme, row.target_id)})
         for row in rows

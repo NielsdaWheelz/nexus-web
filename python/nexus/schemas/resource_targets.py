@@ -1,7 +1,6 @@
 """Wire schemas for ``POST /resource-items/targets/search``, camelCase on the wire.
 
-One request shape covers the ``link`` hybrid profile and the ``reference`` lexical
-profile. A passage target's ``candidate_ref`` is transient — derived from the index row,
+One search combines the existing hybrid and lexical candidates. A passage target's ``candidate_ref`` is transient — derived from the index row,
 reloaded at Link confirmation, never persisted — and ``excerpt`` keeps the search
 snippet's ``<b>…</b>`` match markup.
 """
@@ -19,7 +18,6 @@ from nexus.services.resource_graph.refs import ResourceScheme
 
 class ResourceTargetSearchRequest(CamelModel):
     q: str
-    purpose: Literal["link", "reference"]
     source_ref: str | None = None
     schemes: list[ResourceScheme] | None = None
     exclude_refs: list[str] = Field(default_factory=list)

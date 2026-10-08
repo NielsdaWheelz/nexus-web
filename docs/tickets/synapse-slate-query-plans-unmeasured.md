@@ -1,11 +1,11 @@
 # synapse and slate query plans are unmeasured at production shape
 
-status: open · origin: 2026-10-04 synapse reauthor (design §9 risk, branch cleanup/synapse-reauthor) · area: resonance / synapse / performance
+status: open · origin: 2026-10-04 synapse reauthor (design §9 risk, branch cleanup/synapse-reauthor) · area: suggestions / discovery / performance
 
 the rewrite moved slate ranking into one sql statement per surface
-(`services/resonance.py:_targets_sql` + `_candidates`: every visible media per
+(`services/suggestions.py:_targets_sql` + `_candidates`: every visible media per
 read, the materialized engagement union, the owner-normalized edge lane) and
-gave synapse a new exclusion query (`services/synapse.py:_excluded`: edges
+gave synapse a new exclusion query (`services/connection_discovery.py:_excluded`: edges
 filtered by the source's exact endpoint, plus every one of the user's
 suppressions, owner-normalized by `owner_rows_sql`; dismissals are
 human-scale, but `_publish` reads all of them under SERIALIZABLE). all of it

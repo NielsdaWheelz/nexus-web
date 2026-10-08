@@ -39,7 +39,7 @@ type LlmCallOwnerKind = Literal[
     "artifact_build",
     "artifact_learn_request",
     "media_summary",
-    "synapse_scan",
+    "connection_discovery_scan",
     "media_enrichment",
 ]
 type GenerationOutcome = Literal["Succeeded", "Failed", "Cancelled"]
@@ -49,7 +49,7 @@ type GenerationOutcome = Literal["Succeeded", "Failed", "Cancelled"]
 _OPERATION_OWNER_KINDS: dict[str, LlmCallOwnerKind] = {
     "metadata_enrichment": "media_enrichment",
     "media_summary": "media_summary",
-    "synapse": "synapse_scan",
+    "connection_discovery": "connection_discovery_scan",
     "oracle": "oracle_reading",
     "dossier_page": "artifact_build",
     "dossier_note": "artifact_build",
@@ -134,6 +134,24 @@ class ModelTurnRecord:
     dispatch_started_at: datetime | None
     accepted_at: datetime | None
     completed_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class TerminalGenerationHistory:
+    """Sealed audit facts; deliberately not an executable GenerationRecord."""
+
+    id: UUID
+    owner_kind: str
+    owner_id: UUID
+    generation_seq: int
+    generation_spec: dict[str, JsonValue]
+    generation_fingerprint: str
+    outcome: GenerationOutcome
+    failure_code: str | None
+    terminal: dict[str, JsonValue]
+    created_at: datetime
+    completed_at: datetime
+    model_turns: tuple[ModelTurnRecord, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -531,6 +549,38 @@ def read_model_turns(db: Session, *, generation_id: UUID) -> tuple[ModelTurnReco
         .order_by(LLMModelTurn.turn_seq)
     ).all()
     return tuple(_turn_record(turn) for turn in turns)
+
+
+def read_terminal_generation_history(
+    db: Session, *, generation_id: UUID
+) -> TerminalGenerationHistory | None:
+    """Inspect an immutable terminal receipt without admitting its old vocabulary.
+
+    Active lifecycle reads always decode GenerationSpec. This explicit audit read
+    preserves the stored document and fingerprint and rejects unfinished work;
+    callers cannot use its result to resume or dispatch a generation.
+    """
+    call = db.get(LLMCall, generation_id)
+    if call is None:
+        return None
+    if call.outcome not in _TERMINAL_KINDS or call.terminal is None or call.completed_at is None:
+        raise ValueError("terminal history requires a completed generation")
+    # justify-type-assertion: JSONB stores these documents without active-schema
+    # decoding, and the terminal guard narrows the database outcome above.
+    return TerminalGenerationHistory(
+        id=call.id,
+        owner_kind=call.owner_kind,
+        owner_id=call.owner_id,
+        generation_seq=call.generation_seq,
+        generation_spec=cast(dict[str, JsonValue], call.generation_spec),
+        generation_fingerprint=call.generation_fingerprint,
+        outcome=cast(GenerationOutcome, call.outcome),
+        failure_code=call.failure_code,
+        terminal=cast(dict[str, JsonValue], call.terminal),
+        created_at=call.created_at,
+        completed_at=call.completed_at,
+        model_turns=read_model_turns(db, generation_id=generation_id),
+    )
 
 
 def read_model_turns_for_generations(

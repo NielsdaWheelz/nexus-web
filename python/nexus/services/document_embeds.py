@@ -533,16 +533,61 @@ def _embed_out(db: Session, *, viewer_id: UUID, row: DocumentEmbed) -> DocumentE
 def _target_out(db: Session, *, viewer_id: UUID, row: DocumentEmbed) -> DocumentEmbedTargetOut:
     if row.target_media_id is None:
         if row.resolution_status == "unsupported":
-            return DocumentEmbedTargetOut(status="unsupported")
+            return DocumentEmbedTargetOut(
+                status="unsupported",
+                media_id=None,
+                resource_ref=None,
+                href=None,
+                kind=None,
+                title=None,
+                thumbnail_url=None,
+                playback=None,
+            )
         if row.resolution_status == "resolving":
-            return DocumentEmbedTargetOut(status="partial")
-        return DocumentEmbedTargetOut(status="missing")
+            return DocumentEmbedTargetOut(
+                status="partial",
+                media_id=None,
+                resource_ref=None,
+                href=None,
+                kind=None,
+                title=None,
+                thumbnail_url=None,
+                playback=None,
+            )
+        return DocumentEmbedTargetOut(
+            status="missing",
+            media_id=None,
+            resource_ref=None,
+            href=None,
+            kind=None,
+            title=None,
+            thumbnail_url=None,
+            playback=None,
+        )
     resource_ref = f"media:{row.target_media_id}"
     if not can_read_media(db, viewer_id, row.target_media_id):
-        return DocumentEmbedTargetOut(status="forbidden", resource_ref=resource_ref)
+        return DocumentEmbedTargetOut(
+            status="forbidden",
+            media_id=None,
+            resource_ref=resource_ref,
+            href=None,
+            kind=None,
+            title=None,
+            thumbnail_url=None,
+            playback=None,
+        )
     media = db.get(Media, row.target_media_id)
     if media is None:
-        return DocumentEmbedTargetOut(status="missing", resource_ref=resource_ref)
+        return DocumentEmbedTargetOut(
+            status="missing",
+            media_id=None,
+            resource_ref=resource_ref,
+            href=None,
+            kind=None,
+            title=None,
+            thumbnail_url=None,
+            playback=None,
+        )
     return DocumentEmbedTargetOut(
         status="exact",
         media_id=row.target_media_id,
@@ -563,25 +608,29 @@ def _target_out(db: Session, *, viewer_id: UUID, row: DocumentEmbed) -> Document
 
 def _text(value: str | None) -> DocumentEmbedTextOut:
     if value:
-        return DocumentEmbedTextOut(kind="present", value=value)
-    return DocumentEmbedTextOut(kind="absent", reason="not_in_source")
+        return DocumentEmbedTextOut(kind="present", value=value, reason=None)
+    return DocumentEmbedTextOut(kind="absent", value=None, reason="not_in_source")
 
 
 def _url(
     value: str | None, *, malformed: bool = False, error_code: str | None = None
 ) -> DocumentEmbedUrlOut:
     if malformed:
-        return DocumentEmbedUrlOut(status="malformed", value=None, error_code=error_code)
+        return DocumentEmbedUrlOut(
+            status="malformed", value=None, error_code=error_code, reason=None
+        )
     if value:
-        return DocumentEmbedUrlOut(status="present", value=value)
-    return DocumentEmbedUrlOut(status="absent", value=None, reason="not_in_source")
+        return DocumentEmbedUrlOut(status="present", value=value, error_code=None, reason=None)
+    return DocumentEmbedUrlOut(status="absent", value=None, error_code=None, reason="not_in_source")
 
 
 def _provider_ref(row: DocumentEmbed) -> DocumentEmbedProviderRefOut:
     if row.provider_target_ref:
-        return DocumentEmbedProviderRefOut(kind="present", value=row.provider_target_ref)
+        return DocumentEmbedProviderRefOut(
+            kind="present", value=row.provider_target_ref, reason=None
+        )
     reason = "unsupported_provider" if row.resolution_status == "unsupported" else "unparseable"
-    return DocumentEmbedProviderRefOut(kind="absent", reason=reason)
+    return DocumentEmbedProviderRefOut(kind="absent", value=None, reason=reason)
 
 
 def _display(row: DocumentEmbed, target: DocumentEmbedTargetOut) -> DocumentEmbedDisplayOut:
@@ -612,7 +661,9 @@ def _display(row: DocumentEmbed, target: DocumentEmbedTargetOut) -> DocumentEmbe
         )
     if row.resolution_status == "failed" and target.media_id is not None:
         actions.append(
-            DocumentEmbedDisplayActionOut(kind="retry_child", label="Retry", disabled=True)
+            DocumentEmbedDisplayActionOut(
+                kind="retry_child", label="Retry", href=None, disabled=True
+            )
         )
     return DocumentEmbedDisplayOut(
         mode=mode,

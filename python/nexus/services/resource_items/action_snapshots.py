@@ -480,8 +480,10 @@ def _capabilities_for_ref(
         capabilities.append(_simple("OpenInNewPane"))
     if capability.sharing != "None" and activation.kind == "route":
         capabilities.append(_simple("Share"))
-    if capability.chat_subject != "none":
+    if capability.chat_subject != "none" and capability.link_mode != "none":
         capabilities.append(_simple("Chat"))
+    if capability.link_mode != "none":
+        capabilities.append(_simple("LinkResource"))
 
     if ref.scheme == "media":
         _extend_media(ref, capability=capability, facts=facts, capabilities=capabilities)
@@ -715,7 +717,6 @@ def _extend_highlight(
                 note_block_id=action.note_block_id,
             )
         )
-    capabilities.append(_simple("LinkHighlight"))
     if action.learn_applicable:
         capabilities.append(_simple("LearnHighlight"))
     if action.edit_bounds_applicable:

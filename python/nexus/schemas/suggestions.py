@@ -1,4 +1,4 @@
-"""Reading-slate wire shapes. A media target always carries consumption; a
+"""Suggestion wire shapes. A media target always carries consumption; a
 podcast target never does (the builders guarantee it)."""
 
 from typing import Annotated, Literal
@@ -10,7 +10,7 @@ from nexus.schemas.media_summary import MediaSummaryOut
 from nexus.schemas.presence import Presence
 
 
-class MediaSlateTargetOut(CamelOut):
+class MediaSuggestionTargetOut(CamelOut):
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
     kind: Literal["Media"] = "Media"
@@ -20,7 +20,7 @@ class MediaSlateTargetOut(CamelOut):
     href: str
 
 
-class PodcastSlateTargetOut(CamelOut):
+class PodcastSuggestionTargetOut(CamelOut):
     model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
     kind: Literal["Podcast"] = "Podcast"
@@ -31,14 +31,16 @@ class PodcastSlateTargetOut(CamelOut):
     href: str
 
 
-class SlateItemOut(CamelOut):
-    target: Annotated[MediaSlateTargetOut | PodcastSlateTargetOut, Field(discriminator="kind")]
+class SuggestionItemOut(CamelOut):
+    target: Annotated[
+        MediaSuggestionTargetOut | PodcastSuggestionTargetOut, Field(discriminator="kind")
+    ]
     consumption: Presence[ConsumptionOut]
 
 
-class SlateOut(CamelOut):
-    items: list[SlateItemOut] = Field(max_length=10)
+class SuggestionsOut(CamelOut):
+    items: list[SuggestionItemOut] = Field(max_length=10)
 
 
 class QuickReadsOut(CamelOut):
-    items: list[SlateItemOut] = Field(max_length=5)
+    items: list[SuggestionItemOut] = Field(max_length=5)

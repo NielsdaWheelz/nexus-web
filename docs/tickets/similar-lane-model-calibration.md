@@ -1,8 +1,8 @@
 # the Similar lane is calibrated to one embedding model
 
-status: open · origin: 2026-10-04 synapse reauthor (spec D9 residual, branch cleanup/synapse-reauthor) · area: resonance / semantic index
+status: open · origin: 2026-10-04 synapse reauthor (spec D9 residual, branch cleanup/synapse-reauthor) · area: suggestions / semantic index
 
-`python/nexus/services/resonance.py` pins `_EMBEDDING =
+`python/nexus/services/suggestions.py` pins `_EMBEDDING =
 ("openai", "openai_text_embedding_3_small_256_v1", 256)` and
 `_MIN_SIMILARITY = 0.80`, a human-reviewed calibration for that model. the
 rewrite binds the identity in sql (`semantic_chunks.media_neighbor_rows_sql`

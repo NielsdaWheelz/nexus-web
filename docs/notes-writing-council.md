@@ -7,6 +7,9 @@ method: three native research agents, primary-source web research, static code
 review, and an architectural synthesis. the disciplines below are review
 perspectives, not quotations from outside experts. no product code changed.
 
+2026-10-07: link-note replay/hydration and shared-link census findings are
+resolved on the specified baseline; see [connections verification](connections-verification.md).
+
 approved follow-up: [writing/saving](notes-writing-plan.md) and
 [bullet interaction](notes-bullets-plan.md) supersede the proposals below.
 the user requires shared bidirectional, nonhierarchical links and link-mutating
@@ -121,8 +124,8 @@ there are real saving concerns, independently of any redesign:
 - [suggested reload recovery discards pending edits](tickets/notes-recovery-reload-discards-pending-edits.md)
 - [draft decoding deletes the recovery payload](tickets/notes-draft-decoding-deletes-unrecoverable-payload.md)
 - [new annotation drafts can become undiscoverable](tickets/annotation-draft-key-changes-before-first-save.md)
-- [link-note saving drops replay identity](tickets/link-note-adapter-drops-editor-mutation-identity.md)
-- [link-note editing lacks existing-body hydration](tickets/link-note-editor-does-not-hydrate-existing-body.md)
+- [link-note saving drops replay identity](connections-verification.md)
+- [link-note editing lacks existing-body hydration](connections-verification.md)
 
 these are static findings, not observed production data loss. ordinary typing
 also synchronously serializes the acknowledged surface and pending work. its
@@ -220,7 +223,7 @@ nested note edges and artifact readers traverse descendants. a canonical home
 cannot be inferred from an arbitrary first placement. occurrence-local nesting
 also needs an explicit surface/root-scoped placement contract, rather than a
 parent field bolted onto resource-owned adjacency.
-[containment census ticket](tickets/notes-outline-containment-needs-existing-data-census.md)
+[containment census ticket](connections-verification.md)
 
 a continuous prosemirror document may be an in-memory projection of canonical
 resource/occurrence data. it must not become a competing persisted truth.

@@ -469,30 +469,22 @@ date before saving. native names allow 100 raw code points while the web form al
 80 UTF-16 units; [alignment remains deferred](tickets/account-display-name-has-conflicting-length-bounds.md).
 bare `/daily` still opens an unsupported pane: the declared server redirect is a
 [hidden entry path](tickets/daily-root-entry-bypasses-server-redirect.md), not qualified behavior.
-Page/note ordering, inline note-to-object refs, highlight-note attachments, and
-backlinks are `resource_edges`, below — notes own no link table.
+page/note links, highlight-note attachments and backlinks use `resource_edges`;
+notes own no separate relationship table.
 
-**Resource graph** — `resource_edges` (the single directed connection table:
-`kind` (`context`, `supports`, `contradicts`), writer `origin` (`user`,
-`citation`, `system`, `note_body`, `highlight_note`, `synapse`,
-`document_embed`, `assistant`, `link_note`), polymorphic `scheme`+`id`
-endpoints with no endpoint FKs, optional ordered-adjacency keys, citation
-`ordinal`+`snapshot`, and synapse rationale snapshots),
-`resource_external_snapshots` (stable targets for public web-search citations),
-and the oracle reading's three citation edges (ordinal = phase). This subgraph is
-the single durable positive connection
-contract. **Link** is the one durable relationship-authoring primitive:
-exactly one neutral `origin='user', kind='context'` edge exists per user and
-canonical unordered endpoint pair (`min(A,B) → max(A,B)`, ordered by
-`(scheme, id)`); repeated or reverse creation returns the existing Link rather
-than raising or duplicating. A directional user **stance**
-(`supports`/`contradicts`) may coexist on the same pair — at most one per
-user/unordered pair, its stored direction carrying meaning — and ordered
-adjacency (page/note occurrence order) is a third, never-canonicalized shape;
-all three may coexist on the same endpoints. An optional **Link note** is one
-ordinary note attached through two structural `link_note` edges (one per
-endpoint), folded by `connections.py` into a single `ConnectionOut.link_note`
-field — the attachment edges themselves never render as separate rows.
+**resource graph** — `resource_edges` stores typed facts with polymorphic
+`scheme`+`id` endpoints: user, citation, system, note-body embed, highlight-note,
+discovery, document-embed, assistant and link-note origins. citations retain
+ordinal/snapshot and discovery retains its rationale. machine kinds may express
+supports or contradicts. user links have one shape: `origin=user`, `kind=context`,
+canonical unordered endpoints, no self-link, ordinal, snapshot or source order.
+repeated/reverse creation returns the existing pair. application admission owns
+shape and visibility; the database owns pair uniqueness. endpoint view states
+own independent adjacency order without defining link existence. an optional
+link note is an ordinary note with two `link_note` attachments, one per endpoint.
+connections exposes these facts and the pair's note preview with owner-specific
+mutations and durable assistant creator receipts. external snapshots remain
+public-web citation targets. see [connections](modules/connections.md).
 
 **Universal Dossiers** — `artifacts` is the stable head keyed by subject plus
 derived audience, and carries its one revision: `revision_id` (the
@@ -519,7 +511,10 @@ sole durable per-result record (telemetry; carries `cited_edge_id` pointing
 back at the citation edge). Candidate generation and rerank/selection are
 transient, in-memory passes over a tool call's results; only the
 selected/included outcome is ever written. Conversation
-context refs are `resource_edges` with `source_scheme='conversation'`. Assistant
+context membership combines incident neutral user links and outgoing
+citation/system context facts; citation occurrences stay distinct. prompt, frozen
+tool admission and scoped search share this projection. linked-chat reads page
+all completed branches without importing their attachments. Assistant
 message API responses include a
 `trust_trail` read model assembled from these durable rows.
 
@@ -700,7 +695,7 @@ Task catalog (each is a thin handler in `tasks/` that wraps a service):
 `podcast_reindex_semantic_job`, `podcast_refresh_due_job` (periodic),
 `reconcile_stale_ingest_media_job` (periodic),
 `sync_gutenberg_catalog_job` (periodic), `prune_background_jobs_job`
-(periodic), `purge_expired_auth_handoff_codes` (periodic), `synapse_scan`,
+(periodic), `purge_expired_auth_handoff_codes` (periodic), `connection_discovery_scan`,
 `atlas_project_job` (periodic), `media_teardown`,
 `storage_object_cleanup`, and `storage_orphan_sweep` (periodic).
 
@@ -719,7 +714,7 @@ rather than proposed and reconciled after the fact.
 > queue-level retries.
 
 **Generation boundary.** Every durable generative job — chat, Oracle,
-synapse, dossiers, media summaries, and metadata enrichment — runs through
+connection discovery, dossiers, media summaries, and metadata enrichment — runs through
 `GenerationService` and `services/llm_execution.py`. Admission freezes the
 exact selection, budgets, output contract, prompt reference, and operation-owned
 tool plan in one `GenerationSpec`; workers never reread mutable policy. All
@@ -1419,7 +1414,7 @@ the hide-finished completion filter for reads — no DML on
   duration; positioned web/epub uses current whole-document progression;
   positioned pdf or unknown progression means unknown remainder. high-water
   consumption progress and completion remain separate. one projection serves
-  library ordering and resonance eligibility; display alone uses coarse rounding
+  library ordering and suggestion eligibility; display alone uses coarse rounding
   and retains exact zero. `schemas/reading_time.py` and `lib/media/readingTime.ts`
   own the shared wire shape and decoder. requests never scan document text.
 - **remaining-time order belongs to library listing.** `sort=remaining` orders
@@ -1427,14 +1422,14 @@ the hide-finished completion filter for reads — no DML on
   then title and target identity. finite `FloatOrNull` cursor keys retain exact
   view/plan binding. existing cursor/content revision changes invalidate old
   continuations. filters and authored positions retain their owners.
-- **resonance is the one relevance owner.** `services/resonance.py` composes
+- **suggestions is the one relevance owner.** `services/suggestions.py` composes
   policy-neutral read ports from consumption, libraries, the resource graph,
-  contributors and the semantic index. it owns quick reads, at hand and library
+  contributors and the semantic index. it owns quick reads, lectern and library
   suggestions; fact owners retain their tables and mutations. library entry
-  ordering belongs to `library_entry_listing`. `GET /libraries/{id}/slate`
+  ordering belongs to `library_entry_listing`. `GET /libraries/{id}/suggestions`
   returns at most ten deterministic, destination-addable suggestions outside
   complete membership. successful add preserves visible survivors and appends
-  at most one novel result. slate payloads carry target, factual publication date,
+  at most one novel result. suggestion payloads carry target, factual publication date,
   consumption and shared reading estimate; relation reasons remain internal.
   inline related discovery and `/media/{id}/related` are retired; the resource
   graph and opened-resource connections remain.
@@ -1515,8 +1510,10 @@ transaction. Later edits use the ordinary resource-surface mutation owners.
 Amanuensis composes the surface owner's insert-note capability and does not own
 a second surface-write protocol.
 
-Inline `object_ref`/`object_embed` nodes remain part of note prose and sync
-`origin='note_body'` edges. Highlight notes remain ordinary notes linked by an
+note prose has no inline resource references or resource autocomplete. ordinary
+hyperlinks remain clickable without graph writes. whole-block `object_embed`
+nodes retain `origin='note_body'` facts. ordinary links are authored through
+the shared picker and appear in connections and eligible writing outlines. Highlight notes remain ordinary notes linked by an
 `origin='highlight_note'` edge. Note bodies retain direct indexing through
 `note_indexing.enqueue_note_reindex`. Backlinks, citations, and inferred
 relations remain Inspector concerns rather than editor rows.
@@ -1699,11 +1696,11 @@ origin, heartbeat, podcast preference, activity/completion writes, or
 previous/next behavior. After Episode Add, the
 consumption owner may install the observed Preview position once, only when
 owned progress is still empty. The shared
-`ReadingSlateSection` consumes an optional Lectern first-paint seed and
+`SuggestionsSection` consumes an optional Lectern first-paint seed and
 otherwise queries only while its pane is active. It delegates Add to the
 existing Lectern or library mutation owner and owns deterministic stable
 refill, not destination state. the lectern section order is queue, quick reads,
-then at hand. `QuickReadsSection` uses an independent client `useResource` read,
+then suggestions. `QuickReadsSection` uses an independent client `useResource` read,
 refreshing on active mount, reactivation and consumption/placement revisions.
 it has no selection controls or dedicated add button; opening navigates without
 enqueueing. shared collection rows retain standard menus, factual dates and
@@ -1984,7 +1981,7 @@ they open over Resume and never become panes.
   closing global/account surfaces does not strand or steal focus. Lectern is
   the brand and authenticated-home target.
   Pinning is intentionally absent; personalized retrieval lives in the Lectern
-  quick reads, reading slate and Nexus ranking. See
+  quick reads, suggestions and Nexus ranking. See
   [`modules/app-navigation.md`](modules/app-navigation.md).
 - **First paint: stream, don't gate.** The `(authenticated)` layout runs only
   **local** work (`verifySession`, header-derived `loadRenderEnvironment`) above a
@@ -2239,7 +2236,7 @@ The things most likely to bite you, distilled:
 | Chat / conversations                                              | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py`                                                                                                        |
 | Oracle                                                            | `python/nexus/services/oracle/` (`corpus.py`, `corpus.json`, `synthesis.py`, `readings.py`), `python/nexus/services/atlas.py`                                                                          |
 | Search / retrieval / indexing / resource target/openable search   | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation}.py`, `python/nexus/services/search/candidates.py`, `python/nexus/services/resource_items/{targets,openables}.py`   |
-| Resource graph (edges, refs, citations, connections, Link/stance) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `connections`, `context`, `citations`, `cleanup`, `user_relations`, `policy`)                                                     |
+| Resource graph (edges, refs, citations, connections, links) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `connections`, `context`, `citations`, `cleanup`, `user_relations`, `policy`)                                                     |
 | Universal Dossiers / Media Intelligence                           | `python/nexus/services/dossier/`, `python/nexus/services/media_intelligence.py`, `python/nexus/api/routes/dossiers.py`                                                                               |
 | Agent tools                                                       | `python/nexus/services/agent_tools/`                                                                                                                                                                   |
 | Libraries / contributors / notes                                  | `python/nexus/services/{library_governance,library_entries,library_invitations,contributors,notes}.py`                                                                                                 |

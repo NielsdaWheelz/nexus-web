@@ -58,6 +58,7 @@ import { useReaderActivity } from "./activity";
 import { createAnnotationStore } from "./annotations";
 import { useReaderChrome } from "./chrome";
 import EmbedCard from "./Embeds";
+import { subscribeLinkMutations } from "@/lib/resourceGraph/links";
 import EvidencePane from "./evidence/EvidencePane";
 import type { EvidenceActions } from "./evidence/EvidenceRow";
 import {
@@ -178,6 +179,7 @@ function MediaPane({ id }: { readonly id: string }) {
 
   // ---- annotations ----
   const [store] = useState(() => createAnnotationStore(id));
+  useEffect(() => subscribeLinkMutations(store.refresh), [store]);
   const annotations = useSyncExternalStore(store.subscribe, store.getState, store.getState);
   useEffect(() => {
     // The map belongs to another publication: read it again for this one.
@@ -187,7 +189,7 @@ function MediaPane({ id }: { readonly id: string }) {
   const openEvidence = useCallback(
     (item: string | null) => {
       if (item) setOpenKey({ id: item });
-      requestSecondarySurface("resource-evidence");
+      requestSecondarySurface("resource-connections");
     },
     [requestSecondarySurface],
   );
@@ -276,7 +278,7 @@ function MediaPane({ id }: { readonly id: string }) {
     () => ({
       verbs: { noteEdit, hovered, hover, closeNoteEdit, noteAccepted, noteMutation },
       sources: new Map(
-        annotations.map.status === "ready"
+        annotations.map.status !== "loading" && annotations.map.data
           ? annotations.map.data.evidence.source_targets.map((target) => [target.ref, target])
           : [],
       ),
@@ -305,6 +307,7 @@ function MediaPane({ id }: { readonly id: string }) {
   const evidence = useMemo(
     () => (
       <EvidencePane
+        resourceRef={`media:${id}`}
         state={annotations}
         reader={reader}
         actions={actions}
@@ -313,7 +316,7 @@ function MediaPane({ id }: { readonly id: string }) {
         onJump={onJump}
       />
     ),
-    [actions, annotations, onJump, openKey, reader, store],
+    [actions, annotations, id, onJump, openKey, reader, store],
   );
   const contents = useMemo(
     () =>

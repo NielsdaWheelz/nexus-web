@@ -99,7 +99,7 @@ export function useResourceInspector({
   );
   const viewMediaEvidence = useCallback(
     () =>
-      latest.current.paneRuntime?.requestSecondarySurface("resource-evidence"),
+      latest.current.paneRuntime?.requestSecondarySurface("resource-connections"),
     [],
   );
 

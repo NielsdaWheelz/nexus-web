@@ -1,11 +1,12 @@
 import type { ResourceItem, ResourceSurface, ResourceSurfaceNode, ResourceSurfaceOccurrence, SurfacePosition } from "@/lib/resources/resourceItems";
-import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import type { ResourceSurfaceDraftIntent, ResourceSurfacePendingBody } from "./draftStore";
 
 export type SurfaceContext = { rootRef: string; linkPath: string[] };
 export type SurfaceBodyEdit = { ref: string; bodyPmJson: Record<string, unknown> };
 export type SurfaceRemoval = { endpointRef: string; linkId: string; context: SurfaceContext };
-export type OutlinePasteItem = { noteId: string; bodyPmJson: Record<string, unknown>; parentIndex?: number };
+export type OutlinePasteItem =
+  | { kind: "note"; noteId: string; bodyPmJson: Record<string, unknown>; parentIndex?: number }
+  | { kind: "resource"; targetRef: string; parentIndex?: number };
 export type ResourceSurfaceCommand =
   | { type: "insert_note"; noteId: string; position: SurfacePosition; bodyPmJson: Record<string, unknown> }
   | { type: "split_note"; linkId: string; noteId: string; leftBodyPmJson: Record<string, unknown>; rightBodyPmJson: Record<string, unknown> }
@@ -55,7 +56,8 @@ function createdNode(surface: ResourceSurface, noteId: string, bodyPmJson: Recor
 }
 export function projectSurfaceGraph(surfaces: ReadonlyMap<string, ResourceSurface>, intents: readonly ResourceSurfaceDraftIntent[], bodies: ReadonlyMap<string, ResourceSurfacePendingBody> = new Map()): Map<string, ResourceSurface> {
   const graph = new Map(surfaces);
-  const node = (ref: string): ResourceSurfaceNode | undefined => graph.get(ref)?.source ?? [...graph.values()].flatMap((surface) => surface.orderedItems).find((row) => row.target.item.ref === ref)?.target;
+  const baseNodes = new Map(intents.flatMap((intent) => intent.baseNodes).map((node) => [node.item.ref, node]));
+  const node = (ref: string): ResourceSurfaceNode | undefined => graph.get(ref)?.source ?? [...graph.values()].flatMap((surface) => surface.orderedItems).find((row) => row.target.item.ref === ref)?.target ?? baseNodes.get(ref);
   const replaceNode = (next: ResourceSurfaceNode) => {
     for (const [ref, surface] of graph) graph.set(ref, { source: ref === next.item.ref ? next : surface.source, orderedItems: surface.orderedItems.map((row) => row.target.item.ref === next.item.ref ? { ...row, target: next } : row) });
   };
@@ -103,9 +105,8 @@ export function projectSurfaceGraph(surfaces: ReadonlyMap<string, ResourceSurfac
       case "insert_resource": {
         const existing = surface.orderedItems.find((row) => row.target.item.ref === command.targetRef);
         if (existing) break;
-        const parsed = parseResourceRef(command.targetRef);
-        if (!parsed) throw new TypeError("Reference must be canonical");
-        const target = node(command.targetRef) ?? { item: { ...surface.source.item, ref: command.targetRef, scheme: parsed.scheme, id: parsed.id, label: "Resource", summary: "", route: null, activation: { resource_ref: command.targetRef, kind: "none" as const, href: null, unresolved_reason: null } }, content: { kind: "resource_summary" as const } };
+        const target = node(command.targetRef);
+        if (!target) throw new Error("Linked resource has not loaded");
         insert(intent.endpointRef, target, pendingSurfaceLinkId(intent.clientMutationId), command.position);
         break;
       }
@@ -130,12 +131,21 @@ export function projectSurfaceGraph(surfaces: ReadonlyMap<string, ResourceSurfac
       }
       case "paste_outline": {
         let rootPosition = command.position;
+        const refs: string[] = [];
         command.items.forEach((item, index) => {
-          const target = createdNode(surface, item.noteId, item.bodyPmJson);
-          graph.set(target.item.ref, { source: target, orderedItems: [] });
-          const parent = item.parentIndex === undefined ? intent.endpointRef : `note_block:${command.items[item.parentIndex]!.noteId}`;
-          const position = item.parentIndex === undefined ? rootPosition : surfacePositionAtEnd(graph.get(parent)!);
-          const linkId = insert(parent, target, pendingSurfaceLinkId(intent.clientMutationId, index), position);
+          const target = item.kind === "note"
+            ? createdNode(surface, item.noteId, item.bodyPmJson)
+            : node(item.targetRef);
+          if (!target) throw new Error("Pasted resource has not loaded");
+          if (item.kind === "note") graph.set(target.item.ref, { source: target, orderedItems: [] });
+          refs.push(target.item.ref);
+          const parent = item.parentIndex === undefined ? intent.endpointRef : refs[item.parentIndex]!;
+          if (item.parentIndex !== undefined && command.items[item.parentIndex]?.kind !== "note") throw new Error("Outline parents must be earlier copied notes");
+          const parentSurface = graph.get(parent);
+          if (!parentSurface) throw new Error("Pasted parent neighborhood has not loaded");
+          const existing = parentSurface.orderedItems.find((row) => row.target.item.ref === target.item.ref);
+          const position = item.parentIndex === undefined ? rootPosition : surfacePositionAtEnd(parentSurface);
+          const linkId = existing?.linkId ?? insert(parent, target, pendingSurfaceLinkId(intent.clientMutationId, index), position);
           if (item.parentIndex === undefined) rootPosition = { kind: "after", linkId };
         });
         break;
@@ -151,8 +161,8 @@ export function projectSurfaceGraph(surfaces: ReadonlyMap<string, ResourceSurfac
   }
   return graph;
 }
-export function createResourceSurfaceIntent(input: { surface: ResourceSurface; command: ResourceSurfaceCommand; clientMutationId: string; context?: SurfaceContext; bodyEdits?: SurfaceBodyEdit[]; baseSurfaces: ResourceSurface[] }): ResourceSurfaceDraftIntent {
-  return { clientMutationId: input.clientMutationId, endpointRef: input.surface.source.item.ref, context: input.context ?? { rootRef: input.surface.source.item.ref, linkPath: [] }, command: input.command, bodyEdits: input.bodyEdits ?? [], baseSurfaces: input.baseSurfaces };
+export function createResourceSurfaceIntent(input: { surface: ResourceSurface; command: ResourceSurfaceCommand; clientMutationId: string; context?: SurfaceContext; bodyEdits?: SurfaceBodyEdit[]; baseSurfaces: ResourceSurface[]; baseNodes: ResourceSurfaceNode[] }): ResourceSurfaceDraftIntent {
+  return { clientMutationId: input.clientMutationId, endpointRef: input.surface.source.item.ref, context: input.context ?? { rootRef: input.surface.source.item.ref, linkPath: [] }, command: input.command, bodyEdits: input.bodyEdits ?? [], baseSurfaces: input.baseSurfaces, baseNodes: input.baseNodes };
 }
 export function remapSurfaceIntent(intent: ResourceSurfaceDraftIntent, links: ReadonlyMap<string, string>): ResourceSurfaceDraftIntent {
   const map = (id: string) => links.get(id) ?? id;
@@ -188,7 +198,7 @@ export function surfaceIntentBodyRefs(intent: ResourceSurfaceDraftIntent): Set<s
       if (row) refs.add(row.target.item.ref);
       break;
     }
-    case "paste_outline": for (const item of command.items) refs.add(`note_block:${item.noteId}`); break;
+    case "paste_outline": for (const item of command.items) if (item.kind === "note") refs.add(`note_block:${item.noteId}`); break;
     case "reverse_edit":
       for (const version of intent.reverseVersions ?? []) if (version.lane === "body") refs.add(version.ref);
       if (!intent.reverseVersions) {

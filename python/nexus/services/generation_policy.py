@@ -214,7 +214,7 @@ _BACKGROUND_ROWS: tuple[
 ] = (
     ("metadata_enrichment", "luna", "xhigh", 300, 32, 64_000, 8_000, _NO_HOST),
     ("media_summary", "luna", "low", 120, 256, 128_000, 16_000, _NO_HOST),
-    ("synapse", "luna", "low", 120, 256, 128_000, 16_000, _NO_HOST),
+    ("connection_discovery", "luna", "low", 120, 256, 128_000, 16_000, _NO_HOST),
     ("oracle", "sol", "medium", 180, 256, 128_000, 16_000, _NO_HOST),
     ("dossier_page", "luna", "low", 120, 1024, 400_000, 32_000, _NO_HOST),
     ("dossier_note", "luna", "low", 120, 1024, 400_000, 32_000, _NO_HOST),

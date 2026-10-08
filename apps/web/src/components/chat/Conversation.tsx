@@ -33,7 +33,7 @@ import ChatSurface, {
   type ActivateSource,
   type RowActions,
 } from "./ChatSurface";
-import ContextRefsPanel from "./ContextRefsPanel";
+import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { useConversationFindSource } from "./conversationFind";
 import { useChatStore } from "./conversationStore";
 import { DocentOverlay, useDocentWalk } from "./Docent";
@@ -139,14 +139,10 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
   const bodies = useMemo(
     () => ({
       linkedItems: conversationId ? (
-        <ContextRefsPanel
-          conversationId={conversationId}
-          version={contextVersion}
-          onOpen={(ref) => follow(ref.activation, null, { kind: "Follow" })}
-        />
+        <ConnectionsSurface resourceRef={{ scheme: "conversation", id: conversationId }} refreshKey={contextVersion} />
       ) : (
         <FeedbackNotice
-          content={{ tone: "Neutral", title: "No context yet." }}
+          content={{ tone: "Neutral", title: "Start a chat to link items." }}
           announcement="None"
         />
       ),
@@ -166,7 +162,7 @@ function Conversation({ conversationId }: { conversationId: string | null }) {
         />
       ),
     }),
-    [conversationId, contextVersion, follow, view, store, router],
+    [conversationId, contextVersion, view, store, router],
   );
   const inspector = useResourceInspector({
     scheme: "conversation",

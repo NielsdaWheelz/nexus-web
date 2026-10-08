@@ -304,7 +304,6 @@ unexpected timeouts. See
 - [open] 2026-09-28 sse transport · the listen cap's 429 E_RATE_LIMITED is misnamed and the sse client treats it as fatal: [ticket](tickets/sse-listen-cap-rejection-is-misnamed-and-fatal.md).
 - [open] 2026-09-28 api / bff observability · server-timing phases outlived the tests that read them; keep or delete at the api/auth/bff reauthor: [ticket](tickets/server-timing-phases-outlived-their-tests.md).
 - [open] search / typed wire · 2026-09-28 cleanup pr-08 · remaining always-sent locator output keys need a closure census and precise output views; compacted input/storage omissions remain intentional: [ticket](tickets/retrieval-locator-defaults-generate-optional-fields.md).
-- [open] dossiers / resource graph · 2026-09-28 cleanup pr-08 · user links to or from an `artifact_revision` die at the next regenerate; revisions should not be link endpoints: [ticket](tickets/dossier-revision-user-links-die-on-regenerate.md).
 - [open] dossiers / production migration · 2026-09-28 cleanup pr-08 · correct 0250's sql null guard omission, then record missing facts and loss counts read-only before deploy: [ticket](tickets/dossier-latest-revision-0250-production-preflight.md).
 - [open] dossiers / production migration · 2026-10-04 dossier reauthor · run 0259's refusal query and loss counts read-only against production before the release: [ticket](tickets/dossier-0259-production-preflight.md).
 - [open] model cutover / llm ledger · 2026-10-04 dossier reauthor · the cutover owner check queries `artifact_learn_requests` (dropped by 0250) and must acknowledge deleted-build orphans: [ticket](tickets/model-cutover-archive-queries-dropped-learn-table.md).
@@ -365,3 +364,5 @@ unexpected timeouts. See
 - [qualification] library / index return · 2026-10-05 source review · qualify whether an older memento survives an intervening placement epoch: [ticket](tickets/library-index-return-placement-epoch-unqualified.md).
 - [deferred] account / display-name bounds · 2026-10-05 source audit · web allows 80 UTF-16 units while native allows 100 code points; choose and align the product contract: [ticket](tickets/account-display-name-has-conflicting-length-bounds.md).
 - [deferred] workspace / daily entry · 2026-10-05 original browser controls · bare `/daily` opens an unsupported pane while its hidden page declares a redirect: [ticket](tickets/daily-root-entry-bypasses-server-redirect.md).
+- [background catalog failure loses classification](tickets/background-catalog-unavailable-loses-classification.md).
+- [verification credentials require owner rotation](tickets/connections-verification-credential-rotation.md).

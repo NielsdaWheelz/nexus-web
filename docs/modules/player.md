@@ -22,7 +22,7 @@ play starts; the client asks it at play time). The server picks successors,
 decides origin (a media with a visible Lectern row advances at its end, one
 off the Lectern stops) and owns the "finished means start over" rule.
 
-The Resonance subsystem's **Quick reads** and **At hand** sit beside the
+**quick reads** and **suggestions** sit beside the
 Lectern without owning queue state. Browse owns discovery and Preview; the
 [podcast module](podcast.md) owns acquisition and sync. Observed activity and
 Stats are [Consumption Activity](consumption-activity.md). Android offline
@@ -89,7 +89,7 @@ GET  /media/{id}/player             -> PlayerDescriptor (404 when not playable)
 PUT  /media/{id}/listening-state    {positionMs, durationMs, episodePlaybackRate, expectedResetEpoch} -> 204
 POST /media/{id}/preview-position   {positionMs, durationMs} -> 204
 POST /consumption/activity          {mediaRef, deviceClass, batch} -> 204 (the BFF adds deviceId)
-GET  /lectern/slate, /lectern/quick-reads   (Resonance)
+GET  /lectern/suggestions, /lectern/quick-reads   (suggestions)
 ```
 
 `api/routes/lectern.py` owns the Lectern reads and the two command ports;

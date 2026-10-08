@@ -4,7 +4,7 @@ Flush-only: every mutator flushes inside the caller's transaction and never comm
 conversation create, citation write-through, Oracle persistence and Dossier promotion
 stay atomic. Dedup is explicit SELECT-then-write: a machine bare edge is unique per
 viewer, origin and directed pair; a neutral user Link is unique per viewer and
-*unordered* pair and returns the existing row instead of raising, so a neutral Link and a directed stance may coexist on one pair.
+*unordered* pair and returns the existing row instead of raising, so unrelated source-owned facts may coexist on one pair.
 """
 
 from __future__ import annotations
@@ -18,16 +18,16 @@ from uuid import UUID
 from sqlalchemy import and_, delete, or_, select, tuple_
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ResourceEdge, ResourceViewState
+from nexus.db.models import Conversation, ResourceEdge, ResourceViewState
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.resolve import assert_ref_visible
 from nexus.services.resource_graph.schemas import (
     ASSISTANT_EDGE_SCHEMES,
+    CONNECTION_DISCOVERY_SOURCE_SCHEMES,
+    CONNECTION_DISCOVERY_TARGET_SCHEMES,
     EDGE_KINDS,
     EDGE_ORIGINS,
-    SYNAPSE_SOURCE_SCHEMES,
-    SYNAPSE_TARGET_SCHEMES,
     EdgeCreate,
     EdgeKind,
     EdgeOrigin,
@@ -38,11 +38,9 @@ from nexus.services.resource_graph.schemas import (
 )
 from nexus.services.resource_items import versions
 from nexus.services.resource_items.capabilities import (
-    CONVERSATION_CONTEXT_EDGE_ORIGINS,
     resource_can_be_citation_output_source,
-    resource_can_link_source,
-    resource_can_link_target,
     resource_can_own_ordered_adjacency,
+    resource_link_mode,
 )
 
 Pair = tuple[str, UUID]
@@ -72,7 +70,7 @@ def _invalid(message: str) -> NoReturn:
 
 
 def validate_edge_shape(edge: EdgeCreate) -> None:
-    """Reject an ill-shaped edge with a typed 400 before the table CHECKs raise a 500."""
+    """Enforce graph shape before any write, including callers composing primitives."""
     if edge.kind not in EDGE_KINDS:
         _invalid(f"Invalid edge kind {edge.kind!r}")
     if edge.origin not in EDGE_ORIGINS:
@@ -90,13 +88,13 @@ def validate_edge_shape(edge: EdgeCreate) -> None:
         return
     if edge.ordinal is not None:
         _invalid("Only citation edges can carry ordinals")
-    if edge.snapshot is not None and edge.origin not in ("synapse", "assistant"):
-        _invalid("Only citation, synapse, and assistant edges can carry snapshots")
-    if edge.origin in ("synapse", "assistant"):
+    if edge.snapshot is not None and edge.origin not in ("discovery", "assistant"):
+        _invalid("Only citation, discovery, and assistant edges can carry snapshots")
+    if edge.origin in ("discovery", "assistant"):
         _validate_rationale_edge(edge)
         return
 
-    if edge.origin != "user" and edge.kind != "context":
+    if edge.kind != "context":
         _invalid(f"{edge.origin} edges must use kind=context")
     shape = _ORIGIN_SHAPES.get(edge.origin)
     if shape is not None:
@@ -125,12 +123,12 @@ def _validate_citation(edge: EdgeCreate) -> None:
 
 
 def _validate_rationale_edge(edge: EdgeCreate) -> None:
-    """Synapse and assistant edges: bounded schemes plus a non-empty rationale excerpt."""
-    if edge.origin == "synapse":
-        if edge.source.scheme not in SYNAPSE_SOURCE_SCHEMES:
-            _invalid("Synapse edges must start from media, page, note_block, or highlight")
-        if edge.target.scheme not in SYNAPSE_TARGET_SCHEMES:
-            _invalid("Synapse edges must target media, note_block, or evidence_span")
+    """Discovery and assistant edges: bounded schemes plus a non-empty rationale excerpt."""
+    if edge.origin == "discovery":
+        if edge.source.scheme not in CONNECTION_DISCOVERY_SOURCE_SCHEMES:
+            _invalid("Discovery edges must start from media, page, note_block, or highlight")
+        if edge.target.scheme not in CONNECTION_DISCOVERY_TARGET_SCHEMES:
+            _invalid("Discovery edges must target media, note_block, or evidence_span")
     else:
         if (
             edge.source.scheme not in ASSISTANT_EDGE_SCHEMES
@@ -139,7 +137,7 @@ def _validate_rationale_edge(edge: EdgeCreate) -> None:
             _invalid("Assistant edges must connect media, page, note_block, or highlight")
         if edge.source_order_key is not None:
             _invalid("Assistant edges cannot carry order keys")
-    label = "Synapse" if edge.origin == "synapse" else "Assistant"
+    label = "Discovery" if edge.origin == "discovery" else "Assistant"
     if edge.snapshot is None:
         _invalid(f"{label} edges require a rationale snapshot")
     if not (edge.snapshot.excerpt or "").strip():
@@ -148,7 +146,7 @@ def _validate_rationale_edge(edge: EdgeCreate) -> None:
 
 def _allows_source_order(edge: EdgeCreate) -> bool:
     return (
-        edge.origin in CONVERSATION_CONTEXT_EDGE_ORIGINS
+        edge.origin in ("citation", "system")
         and edge.kind == "context"
         and edge.source.scheme == "conversation"
         and edge.ordinal is None
@@ -167,9 +165,8 @@ def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
         if existing is not None:
             return _edge_out(existing)
     elif input.ordinal is None:
-        # Directed same-origin dedup for machine bare edges. User edges are not deduped
-        # here: neutral Links took the idempotent path above, and stances are transaction-owned.
-        if input.origin != "user" and _scalar(
+        # Source-owned bare facts retain directed, same-origin uniqueness.
+        if _scalar(
             db,
             select(ResourceEdge.id).where(
                 ResourceEdge.user_id == viewer_id,
@@ -198,13 +195,25 @@ def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
         ),
     ):
         _invalid(f"Citation ordinal {input.ordinal} already exists for {input.source.uri}")
+    if _is_neutral_link(input):
+        # Chat-chat links allocate independent ranks under a consistent lock order.
+        chat_ids = sorted(
+            ref.id for ref in (input.source, input.target) if ref.scheme == "conversation"
+        )
+        if chat_ids:
+            db.scalars(
+                select(Conversation.id)
+                .where(Conversation.id.in_(chat_ids), Conversation.owner_user_id == viewer_id)
+                .order_by(Conversation.id)
+                .with_for_update()
+            ).all()
     row = _row_from_input(viewer_id, input)
     db.add(row)
     db.flush()
     if _is_neutral_link(input):
         for endpoint, other in ((input.source, input.target), (input.target, input.source)):
             versions.bump_version(db, viewer_id=viewer_id, ref=endpoint, lane="links")
-            if resource_can_own_ordered_adjacency(endpoint):
+            if endpoint.scheme == "conversation" or resource_can_own_ordered_adjacency(endpoint):
                 _append_link_order(
                     db, viewer_id=viewer_id, endpoint=endpoint, other=other, link_id=row.id
                 )
@@ -214,15 +223,12 @@ def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
 def _append_link_order(
     db: Session, *, viewer_id: UUID, endpoint: ResourceRef, other: ResourceRef, link_id: UUID
 ) -> None:
-    keys = db.scalars(
-        select(ResourceViewState.order_key).where(
-            ResourceViewState.user_id == viewer_id,
-            ResourceViewState.surface_scheme == endpoint.scheme,
-            ResourceViewState.surface_id == endpoint.id,
-            ResourceViewState.order_key.is_not(None),
+    if endpoint.scheme == "conversation":
+        key = conversation_link_order_key(
+            db, viewer_id=viewer_id, conversation_id=endpoint.id, target=other
         )
-    ).all()
-    key = f"{max((int(key) for key in keys if key is not None), default=0) + 1:010d}"
+    else:
+        key = _next_outline_order_key(db, viewer_id=viewer_id, endpoint=endpoint)
     db.add(
         ResourceViewState(
             user_id=viewer_id,
@@ -236,6 +242,74 @@ def _append_link_order(
         )
     )
     db.flush()
+
+
+def _next_outline_order_key(db: Session, *, viewer_id: UUID, endpoint: ResourceRef) -> str:
+    keys = db.scalars(
+        select(ResourceViewState.order_key).where(
+            ResourceViewState.user_id == viewer_id,
+            ResourceViewState.surface_scheme == endpoint.scheme,
+            ResourceViewState.surface_id == endpoint.id,
+            ResourceViewState.order_key.is_not(None),
+        )
+    ).all()
+    return f"{max((int(key) for key in keys if key is not None), default=0) + 1:010d}"
+
+
+def conversation_link_order_key(
+    db: Session, *, viewer_id: UUID, conversation_id: UUID, target: ResourceRef
+) -> str:
+    """Reuse a target's rank or append after all user and automatic attachment reasons.
+
+    Flush-only callers insert their fact in this transaction. Chat-chat callers
+    lock both conversations in id order before requesting either endpoint rank.
+    """
+    conversation = db.scalar(
+        select(Conversation.id)
+        .where(Conversation.id == conversation_id, Conversation.owner_user_id == viewer_id)
+        .with_for_update()
+    )
+    if conversation is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Conversation not found")
+    ranks: list[tuple[str | None, str | None, UUID | None]] = list(
+        db.execute(
+            select(
+                ResourceViewState.order_key,
+                ResourceViewState.target_scheme,
+                ResourceViewState.target_id,
+            ).where(
+                ResourceViewState.user_id == viewer_id,
+                ResourceViewState.surface_scheme == "conversation",
+                ResourceViewState.surface_id == conversation_id,
+                ResourceViewState.edge_id.is_not(None),
+                ResourceViewState.order_key.is_not(None),
+            )
+        ).tuples()
+    )
+    ranks.extend(
+        db.execute(
+            select(
+                ResourceEdge.source_order_key, ResourceEdge.target_scheme, ResourceEdge.target_id
+            ).where(
+                ResourceEdge.user_id == viewer_id,
+                ResourceEdge.source_scheme == "conversation",
+                ResourceEdge.source_id == conversation_id,
+                ResourceEdge.origin.in_(("citation", "system")),
+                ResourceEdge.kind == "context",
+                ResourceEdge.ordinal.is_(None),
+                ResourceEdge.snapshot.is_(None),
+                ResourceEdge.source_order_key.is_not(None),
+            )
+        ).tuples()
+    )
+    existing = [
+        key
+        for key, scheme, identity in ranks
+        if key is not None and scheme == target.scheme and identity == target.id
+    ]
+    if existing:
+        return min(existing, key=int)
+    return f"{max((int(key) for key, _, _ in ranks if key is not None), default=0) + 1:010d}"
 
 
 def require_unannotated_link(db: Session, *, viewer_id: UUID, edge: ResourceEdge) -> None:
@@ -254,13 +328,15 @@ def create_link(
     db: Session, *, viewer_id: UUID, source: ResourceRef, target: ResourceRef
 ) -> EdgeWrite:
     """Create or reuse one shared pair; canonical direction has no product meaning."""
+    input = EdgeCreate(source=source, target=target, kind="context", origin="user")
+    _validate_edge_input(db, viewer_id=viewer_id, edge=input)
     existing = _existing_link_pair(db, viewer_id=viewer_id, a=source, b=target)
     if existing is not None:
         return EdgeWrite(edge=_edge_out(existing), created=False)
     edge = create_edge(
         db,
         viewer_id=viewer_id,
-        input=EdgeCreate(source=source, target=target, kind="context", origin="user"),
+        input=input,
     )
     return EdgeWrite(edge=edge, created=True)
 
@@ -351,6 +427,10 @@ def replace_edges_for_origin(
     A self-target member (a note body referencing its own block) is dropped rather than
     raising: a machine-extracted set must not fail on one.
     """
+    if origin == "user":
+        _invalid("User links must use the pair command")
+    if any(edge.origin != origin or edge.source != source for edge in edges):
+        _invalid("Replacement members must belong to the requested source and origin")
     members = [edge for edge in edges if edge.target != source]
     for edge in members:
         _validate_edge_input(db, viewer_id=viewer_id, edge=edge)
@@ -438,11 +518,8 @@ def _is_neutral_link(edge: EdgeCreate) -> bool:
 
 def _validate_edge_input(db: Session, *, viewer_id: UUID, edge: EdgeCreate) -> None:
     validate_edge_shape(edge)
-    # Only the neutral Link shape is subject to the user-Link verb; ordered context edges
-    # and stances carry their own precise E_LINK_* gates upstream.
-    if _is_neutral_link(edge) and not (
-        (resource_can_link_source(edge.source) and resource_can_link_target(edge.target))
-        or (resource_can_link_source(edge.target) and resource_can_link_target(edge.source))
+    if _is_neutral_link(edge) and (
+        resource_link_mode(edge.source) != "direct" or resource_link_mode(edge.target) != "direct"
     ):
         _invalid("Resource cannot be linked")
     # External snapshots exist to outlive whatever they captured, so they are never gated.

@@ -1,7 +1,8 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import Button from "@/components/ui/Button";
 import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
 import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
 import { useResourceTargetSearch } from "@/lib/resources/useResourceTargetSearch";
@@ -22,10 +23,9 @@ import {
 } from "@/components/feedback/Feedback";
 import styles from "./LinkTargetDialog.module.css";
 
-const LISTBOX_ID = "link-target-listbox";
-
 export interface LinkTargetDialogProps {
   open: boolean;
+  sourceLabel: string;
   /** An existing durable Link source, for already-linked dedupe. Omitted for a
    * fresh selection that has no Highlight yet. */
   sourceRef?: string;
@@ -53,8 +53,8 @@ export interface LinkTargetDialogProps {
 }
 
 /**
- * Reader-owned modal search surface for choosing a Link target. Wraps the
- * shared `useResourceTargetSearch(purpose="link")` controller and
+ * The shared modal for choosing a link target. Wraps the
+ * `useResourceTargetSearch` controller and
  * `ResourceTargetListbox` in a `useDialogOverlay`-governed overlay (focus
  * trap, body-scroll lock, return focus, Escape) — the CitePicker precedent
  * hand-rolled all of this (universal-link-authoring-hard-cutover.md
@@ -62,6 +62,7 @@ export interface LinkTargetDialogProps {
  */
 export default function LinkTargetDialog({
   open,
+  sourceLabel,
   sourceRef,
   excludeRefs,
   busy = false,
@@ -74,10 +75,10 @@ export default function LinkTargetDialog({
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [activeKey, setActiveKey] = useState<string | null>(null);
+  const listboxId = `link-targets-${useId().replaceAll(":", "")}`;
 
-  const { targets, loading, error } = useResourceTargetSearch({
-    purpose: "link",
-    query,
+  const { targets, loading, error, hasMore, loadingMore, loadMore, retry } = useResourceTargetSearch({
+    query: open ? query : "",
     sourceRef,
     excludeRefs,
   });
@@ -142,37 +143,42 @@ export default function LinkTargetDialog({
         className={styles.panel}
         role="dialog"
         aria-modal="true"
-        aria-label="Link"
+        aria-label={`Link ${sourceLabel}`}
         aria-busy={busy || undefined}
         data-busy={busy || undefined}
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
+        <div className={styles.header}>
+          <span>Link {sourceLabel}</span>
+          <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
+        </div>
+        {busy ? <p role="status">Linking… Closing keeps the submitted request running.</p> : null}
         <input
           ref={inputRef}
           type="text"
           className={styles.input}
           role="combobox"
           aria-expanded
-          aria-controls={LISTBOX_ID}
+          aria-controls={listboxId}
           aria-autocomplete="list"
           disabled={busy}
           aria-activedescendant={
             effectiveActiveKey
               ? resourceTargetOptionId(
-                  LISTBOX_ID,
+                  listboxId,
                   targets.find((target) => resourceTargetKey(target) === effectiveActiveKey)!,
                 )
               : undefined
           }
-          placeholder="Search to link…"
-          aria-label="Link search"
+          placeholder="Search items and passages"
+          aria-label="Search items and passages"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={onKeyDown}
         />
         <ResourceTargetListbox
-          id={LISTBOX_ID}
+          id={listboxId}
           ariaLabel="Link targets"
           targets={targets}
           activeKey={effectiveActiveKey}
@@ -183,6 +189,14 @@ export default function LinkTargetDialog({
           onHover={(target) => setActiveKey(resourceTargetKey(target))}
           onPick={pick}
         />
+        <div role="status" aria-live="polite">
+          {loadingMore ? "Loading more results…" : null}
+        </div>
+        {error ? (
+          <Button variant="ghost" size="sm" onClick={retry}>Retry search</Button>
+        ) : hasMore ? (
+          <Button variant="ghost" size="sm" disabled={busy || loadingMore} onClick={loadMore}>Load more</Button>
+        ) : null}
         {failure ? (
           <FeedbackNotice
             content={failure.content}

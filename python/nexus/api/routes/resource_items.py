@@ -12,12 +12,13 @@ from fastapi import APIRouter, Depends, Response
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.responses import Data, ok
+from nexus.responses import Data
 from nexus.schemas.resource_action_snapshots import (
     ResourceActionSnapshotResolveRequest,
     ResourceActionSnapshotResolveResponse,
 )
 from nexus.schemas.resource_items import (
+    ResourceBodyMutationOut,
     ResourceBodyMutationRequest,
     ResourceLocatorResolveRequest,
     ResourceLocatorResolveResponse,
@@ -131,10 +132,9 @@ def update_resource_title(
 @router.patch("/{resource_ref}/body")
 def update_resource_body(
     resource_ref: str, request: ResourceBodyMutationRequest, viewer: ViewerDep, db: DbSession
-) -> dict:
-    return ok(
-        mutations.update_body(
+) -> Data[ResourceBodyMutationOut]:
+    return Data(
+        data=mutations.update_body(
             db, viewer_id=viewer.user_id, ref=_parse_ref(resource_ref), request=request
         ),
-        by_alias=True,
     )

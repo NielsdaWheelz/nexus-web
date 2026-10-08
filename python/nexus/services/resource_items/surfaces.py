@@ -27,6 +27,8 @@ from nexus.schemas.resource_items import (
     JoinNotesSurfaceCommand,
     MoveOccurrenceSurfaceCommand,
     NoteBodySurfaceContent,
+    OutlineItem,
+    OutlineNote,
     PageTitleSurfaceContent,
     PasteOutlineSurfaceCommand,
     RelinkSurfaceCommand,
@@ -41,7 +43,6 @@ from nexus.schemas.resource_items import (
     ResourceSurfaceNode,
     ResourceSurfaceOccurrence,
     ResourceSurfaceOut,
-    ResourceUserRelationPolicyOut,
     ReverseEditSurfaceCommand,
     SplitNoteSurfaceCommand,
     SurfaceAfterPosition,
@@ -63,6 +64,7 @@ from nexus.services.resource_items import versions
 from nexus.services.resource_items.capabilities import (
     capability_for_ref,
     resource_can_own_ordered_adjacency,
+    resource_link_mode,
 )
 from nexus.services.resource_items.routing import resource_activations_for_refs
 from nexus.services.resource_mutation_replay import canonical_json_bytes, lookup_replay
@@ -269,18 +271,48 @@ def execute_surface_command(
                 )
             case PasteOutlineSurfaceCommand():
                 _position_index(links, command.position)
+                root_path = endpoints.copy()
+                paths: list[set[ResourceRef]] = []
+                terminal: list[bool] = []
                 for index, item in enumerate(command.items):
                     if item.parent_index is not None and item.parent_index >= index:
                         raise ApiError(
                             ApiErrorCode.E_INVALID_REQUEST,
                             "Outline parents must precede their children",
                         )
-                    ref = note_bodies.note_ref(item.note_id)
-                    if ref in new_refs:
+                    parent = item.parent_index
+                    endpoint = (
+                        source if parent is None else _outline_item_ref(command.items[parent])
+                    )
+                    ancestors = root_path if parent is None else paths[parent]
+                    if parent is not None and (
+                        not isinstance(command.items[parent], OutlineNote) or terminal[parent]
+                    ):
                         raise ApiError(
-                            ApiErrorCode.E_INVALID_REQUEST, "Outline note ids must be unique"
+                            ApiErrorCode.E_INVALID_REQUEST,
+                            "Outline parents must be earlier copied notes",
                         )
-                    new_refs.add(ref)
+                    ref = _outline_item_ref(item)
+                    if ref == endpoint:
+                        raise ApiError(
+                            ApiErrorCode.E_INVALID_REQUEST, "A resource cannot be linked to itself"
+                        )
+                    if isinstance(item, OutlineNote):
+                        if ref in new_refs:
+                            raise ApiError(
+                                ApiErrorCode.E_INVALID_REQUEST, "Outline note ids must be unique"
+                            )
+                        new_refs.add(ref)
+                    else:
+                        assert_ref_visible(db, viewer_id=viewer_id, ref=ref)
+                        if resource_link_mode(ref) != "direct":
+                            raise ApiError(
+                                ApiErrorCode.E_INVALID_REQUEST,
+                                "Outline resources must be durable link endpoints",
+                            )
+                        endpoints.add(ref)
+                    terminal.append(ref in ancestors)
+                    paths.append(ancestors | {ref})
             case ReverseEditSurfaceCommand():
                 receipt = db.scalar(
                     select(ResourceMutation).where(
@@ -515,28 +547,53 @@ def _apply_command(db: Session, *, viewer_id: UUID, source: ResourceRef, command
                 endpoint = (
                     source
                     if item.parent_index is None
-                    else note_bodies.note_ref(command.items[item.parent_index].note_id)
+                    else _outline_item_ref(command.items[item.parent_index])
                 )
-                note = insert_note_occurrence_without_commit(
-                    db,
-                    viewer_id=viewer_id,
-                    source=endpoint,
-                    note_id=item.note_id,
-                    body_pm_json=item.body_pm_json,
-                    position=position if item.parent_index is None else "end",
-                    reindex_reason="surface_paste",
+                ref = _outline_item_ref(item)
+                item_position: SurfacePosition | Literal["end"] = (
+                    position if item.parent_index is None else "end"
                 )
+                if isinstance(item, OutlineNote):
+                    insert_note_occurrence_without_commit(
+                        db,
+                        viewer_id=viewer_id,
+                        source=endpoint,
+                        note_id=item.note_id,
+                        body_pm_json=item.body_pm_json,
+                        position=item_position,
+                        reindex_reason="surface_paste",
+                    )
+                else:
+                    write = graph_adjacency.insert_link(
+                        db, user_id=viewer_id, source=endpoint, target=ref
+                    )
+                    if write.created:
+                        _place(
+                            db,
+                            viewer_id=viewer_id,
+                            source=endpoint,
+                            link_id=write.edge.id,
+                            position=item_position,
+                        )
                 if item.parent_index is None:
                     link = next(
                         edge
                         for edge in graph_adjacency.ordered_edges(
                             db, user_id=viewer_id, source=source
                         )
-                        if graph_adjacency.other_endpoint(edge, source).id == note.id
+                        if graph_adjacency.other_endpoint(edge, source) == ref
                     )
                     position = SurfaceAfterPosition(kind="after", link_id=link.id)
         case _:
             raise AssertionError("unreachable surface command")
+
+
+def _outline_item_ref(item: OutlineItem) -> ResourceRef:
+    return (
+        note_bodies.note_ref(item.note_id)
+        if isinstance(item, OutlineNote)
+        else _parse_ref_or_error(item.target_ref)
+    )
 
 
 def insert_note_occurrence_without_commit(
@@ -617,7 +674,7 @@ def _restore(
         if rows == before["orders"].get(uri):
             continue
         ref = _parse_ref_or_error(uri)
-        if not resource_can_own_ordered_adjacency(ref):
+        if not resource_can_own_ordered_adjacency(ref) and ref.scheme != "conversation":
             continue
         graph_adjacency.restore_endpoint_order(
             db,
@@ -764,11 +821,7 @@ def _resource_item_out(
         capabilities=ResourceItemCapabilitiesOut(
             sharing=capability.sharing,
             library_placement=capability.library_placement,
-            user_relation=ResourceUserRelationPolicyOut(
-                user_link_source=capability.user_relation.user_link_source,
-                user_link_target=capability.user_relation.user_link_target,
-                note_reference_target=capability.user_relation.note_reference_target,
-            ),
+            link_mode=capability.link_mode,
             attachable=capability.attachable,
             chat_subject=capability.chat_subject,
             readable=capability.readable,

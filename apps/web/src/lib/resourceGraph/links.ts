@@ -32,11 +32,13 @@ export function subscribeLinkMutations(listener: (mutation: LinkMutation) => voi
   return () => { linkMutationListeners.delete(listener); };
 }
 
-export async function createLink(input: {
+export interface CreateLinkInput {
   clientMutationId: string;
   source: LinkSource;
   target: LinkTarget;
-}): Promise<CreateLinkOut> {
+}
+
+export async function createLink(input: CreateLinkInput): Promise<CreateLinkOut> {
   const { data } = await apiFetch<ApiJson<"/resource-graph/links", "post">>(
     "/api/resource-graph/links",
     {

@@ -158,11 +158,7 @@ export function provisionalDailyOccurrence(input: {
         },
         missing: false,
         capabilities: {
-          userRelation: {
-            userLinkSource: false,
-            userLinkTarget: "none",
-            noteReferenceTarget: false,
-          },
+          linkMode: "none",
           sharing: "None",
           libraryPlacement: "None",
           attachable: false,

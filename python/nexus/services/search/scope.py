@@ -10,9 +10,10 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_conversation, can_read_media, is_library_member
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.services.library_entries import library_media_ids_cte_sql
+from nexus.services.resource_graph.context import context_facts_sql
+from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.schemas import SEARCH_SCOPE_EDGE_KIND
 from nexus.services.resource_items.capabilities import (
-    CONVERSATION_CONTEXT_EDGE_ORIGINS,
     NOTE_MEDIA_SEARCH_EDGE_ORIGINS,
 )
 from nexus.services.search.query import ScopeKind, SearchScope
@@ -66,26 +67,20 @@ def _sql_values(values: tuple[str, ...]) -> str:
 
 
 _NOTE_MEDIA_ORIGINS = _sql_values(NOTE_MEDIA_SEARCH_EDGE_ORIGINS)
-_CONVERSATION_ORIGINS = _sql_values(CONVERSATION_CONTEXT_EDGE_ORIGINS)
 # Every matrix cell binds only `scope_id`; `viewer_id` is ambient in every
 # retriever's own params, so the library id is rebound onto `:scope_id`.
 _LIBRARY_MEDIA_IDS_SQL = library_media_ids_cte_sql(library_param=":scope_id")
 
 
+def _context_ref_scope(scheme: str, identity_sql: str) -> str:
+    return f"""EXISTS (
+        SELECT 1 FROM ({context_facts_sql(":scope_id")}) facts
+        WHERE facts.target_scheme='{scheme}' AND facts.target_id={identity_sql}
+    )"""
+
+
 def _media_context_ref_scope(media_id_sql: str) -> str:
-    return f"""
-            EXISTS (
-                SELECT 1 FROM resource_edges e
-                WHERE e.source_scheme = 'conversation'
-                  AND e.source_id = :scope_id
-                  AND e.target_scheme = 'media'
-                  AND e.target_id = {media_id_sql}
-                  AND e.kind = '{SEARCH_SCOPE_EDGE_KIND}'
-                  AND e.origin IN {_CONVERSATION_ORIGINS}
-                  AND e.user_id = :viewer_id
-                  AND e.ordinal IS NULL
-            )
-    """
+    return _context_ref_scope("media", media_id_sql)
 
 
 def _note_object_scope(scheme: str, object_id_sql: str) -> dict[str, str | None]:
@@ -133,19 +128,7 @@ def _note_object_scope(scheme: str, object_id_sql: str) -> dict[str, str | None]
                   {note_media_edge}
             )
         """,
-        "conversation": f"""
-            AND EXISTS (
-                SELECT 1 FROM resource_edges e
-                WHERE e.source_scheme = 'conversation'
-                  AND e.source_id = :scope_id
-                  AND e.target_scheme = '{scheme}'
-                  AND e.target_id = {object_id_sql}
-                  AND e.kind = '{SEARCH_SCOPE_EDGE_KIND}'
-                  AND e.origin IN {_CONVERSATION_ORIGINS}
-                  AND e.user_id = :viewer_id
-                  AND e.ordinal IS NULL
-            )
-        """,
+        "conversation": f"AND {_context_ref_scope(scheme, object_id_sql)}",
     }
 
 
@@ -201,29 +184,21 @@ _SCOPE_MATRIX: dict[str, dict[str, str | None]] = {
     "highlight": {
         "media": "AND h.anchor_media_id = :scope_id",
         "library": f"AND h.anchor_media_id IN ({_LIBRARY_MEDIA_IDS_SQL})",
-        "conversation": f"""
-            AND EXISTS (
-                SELECT 1 FROM resource_edges e
-                WHERE e.source_scheme = 'conversation'
-                  AND e.source_id = :scope_id
-                  AND e.target_scheme = 'highlight'
-                  AND e.target_id = h.id
-                  AND e.kind = '{SEARCH_SCOPE_EDGE_KIND}'
-                  AND e.origin IN {_CONVERSATION_ORIGINS}
-                  AND e.user_id = :viewer_id
-                  AND e.ordinal IS NULL
-            )
-        """,
+        "conversation": f"AND {_context_ref_scope('highlight', 'h.id')}",
     },
     "message": {
         "media": None,
         "library": None,
-        "conversation": "AND m.conversation_id = :scope_id",
+        "conversation": f"""AND (m.conversation_id = :scope_id OR (
+            m.status='complete' AND m.role IN ('user','assistant') AND (
+                {_context_ref_scope("conversation", "m.conversation_id")}
+                OR {_context_ref_scope("message", "m.id")}
+            )))""",
     },
     "conversation": {
         "media": None,
         "library": None,
-        "conversation": "AND c.id = :scope_id",
+        "conversation": f"AND (c.id = :scope_id OR {_context_ref_scope('conversation', 'c.id')})",
     },
     "web_result": {
         "media": None,
@@ -260,12 +235,71 @@ _SCOPE_MATRIX: dict[str, dict[str, str | None]] = {
 }
 
 
-def scope_filter_sql(scope_type: str, scope_id: UUID | None, entity: str) -> ScopeFilter | None:
-    """One cell of the scope matrix: ``("", {})`` unscoped, ``(sql, params)``
-    when supported, or None when the entity yields no results under the scope."""
+def _frozen_context_filter(refs: tuple[ResourceRef, ...], entity: str) -> ScopeFilter:
+    """Search exact frozen resources and completed messages owned by frozen chats."""
+    by_scheme: dict[str, list[UUID]] = {}
+    for ref in refs:
+        by_scheme.setdefault(ref.scheme, []).append(ref.id)
+    direct = {
+        "media": ("media", "m.id"),
+        "podcast": ("podcast", "p.id"),
+        "page": ("page", "p.id"),
+        "note_block": ("note_block", "cc.owner_id"),
+        "highlight": ("highlight", "h.id"),
+        "fragment": ("fragment", "f.id"),
+        "reader_apparatus_item": ("reader_apparatus_item", "rai.id"),
+        "contributor": ("contributor", "cc.contributor_id"),
+        "conversation": ("conversation", "c.id"),
+    }
+    params: dict[str, Any] = {}
+
+    def admitted(scheme: str, column: str) -> str:
+        key = f"frozen_{scheme}_ids"
+        params[key] = by_scheme.get(scheme, [])
+        return f"{column} = ANY(:{key})"
+
+    if entity == "message":
+        clause = f"({admitted('message', 'm.id')} OR (m.status='complete' AND m.role IN ('user','assistant') AND {admitted('conversation', 'm.conversation_id')}))"
+    elif entity == "artifact":
+        clause = f"({admitted('artifact', 'a.id')} OR {admitted('conversation', 'c.id')})"
+    elif entity == "content_chunk":
+        clause = f"({admitted('content_chunk', 'cc.id')} OR {admitted('evidence_span', 'cc.primary_evidence_span_id')})"
+    elif entity == "web_result":
+        clause = admitted("conversation", "mtc.conversation_id")
+    elif entity in direct:
+        scheme, column = direct[entity]
+        clause = admitted(scheme, column)
+    else:
+        return ("AND FALSE", {})
+    return (f"AND ({clause})", params)
+
+
+def scope_filter_sql(
+    scope_type: str,
+    scope_id: UUID | None,
+    entity: str,
+    *,
+    frozen_context_refs: tuple[ResourceRef, ...] | None = None,
+) -> ScopeFilter | None:
+    """Live app scopes or generation-owned frozen resource membership.
+
+    Media/library scopes keep their existing descendant contracts. A frozen chat
+    scope reads that chat's own history; it never imports current attachments.
+    """
+    if frozen_context_refs is not None and scope_type == "all":
+        return _frozen_context_filter(frozen_context_refs, entity)
+    if frozen_context_refs is not None and scope_type == "conversation":
+        own = {
+            "message": "AND m.conversation_id=:scope_id AND m.status='complete' AND m.role IN ('user','assistant')",
+            "conversation": "AND c.id=:scope_id",
+            "artifact": "AND c.id=:scope_id",
+            "web_result": "AND mtc.conversation_id=:scope_id",
+        }
+        clause = own.get(entity)
+        return (clause, {"scope_id": scope_id}) if clause is not None else None
     if scope_type == "all":
         return ("", {})
-    cell = _SCOPE_MATRIX[entity][scope_type]
+    cell = _SCOPE_MATRIX["conversation" if entity == "artifact" else entity][scope_type]
     if cell is None:
         return None
     return (cell, {"scope_id": scope_id})

@@ -1,4 +1,4 @@
-"""Resonance: three deterministic next-read slates over one snapshot.
+"""Suggestions: three deterministic next-read lists over one snapshot.
 
 Read-only and model-free; the caller's REPEATABLE READ transaction makes
 ``now()`` one instant. SQL decides each target's one family (Continuity,
@@ -20,12 +20,12 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql, visible_podcast_ids_cte_sql
 from nexus.schemas.presence import absent
-from nexus.schemas.resonance import (
-    MediaSlateTargetOut,
-    PodcastSlateTargetOut,
+from nexus.schemas.suggestions import (
+    MediaSuggestionTargetOut,
+    PodcastSuggestionTargetOut,
     QuickReadsOut,
-    SlateItemOut,
-    SlateOut,
+    SuggestionItemOut,
+    SuggestionsOut,
 )
 from nexus.services import highlights, library_entries, library_governance, notes, reading_time
 from nexus.services import media as media_service
@@ -43,7 +43,7 @@ from nexus.services.semantic_chunks import media_neighbor_rows_sql
 
 _ANCHORS = 5
 _PER_FAMILY = 20
-_EDGE_ORIGINS = ["user", "citation", "note_body", "highlight_note", "document_embed", "synapse"]
+_EDGE_ORIGINS = ["user", "citation", "note_body", "highlight_note", "document_embed", "discovery"]
 # Human-reviewed calibration: a neighbour ranks only under this exact embedding
 # identity at this similarity. Another model yields no Similar evidence.
 _EMBEDDING = ("openai", "openai_text_embedding_3_small_256_v1", 256)
@@ -66,12 +66,12 @@ class _Candidate:
     author: UUID | None
 
 
-def build_lectern_slate(db: Session, *, viewer_id: UUID) -> SlateOut:
+def build_lectern_suggestions(db: Session, *, viewer_id: UUID) -> SuggestionsOut:
     """Up to ten next reads; empty while the Lectern is at capacity."""
     if not consumption_service.lectern_has_capacity(db, viewer_id=viewer_id):
-        return SlateOut(items=[])
+        return SuggestionsOut(items=[])
     candidates = _candidates(db, viewer_id, _lectern_anchors(db, viewer_id), "lectern", {})
-    return SlateOut(items=_hydrate(db, viewer_id, _rotate(candidates, limit=10)))
+    return SuggestionsOut(items=_hydrate(db, viewer_id, _rotate(candidates, limit=10)))
 
 
 def build_quick_reads(db: Session, *, viewer_id: UUID) -> QuickReadsOut:
@@ -80,11 +80,11 @@ def build_quick_reads(db: Session, *, viewer_id: UUID) -> QuickReadsOut:
     return QuickReadsOut(items=_hydrate(db, viewer_id, _rotate(candidates, limit=5)))
 
 
-def build_library_slate(db: Session, *, viewer_id: UUID, library_id: UUID) -> SlateOut:
+def build_library_suggestions(db: Session, *, viewer_id: UUID, library_id: UUID) -> SuggestionsOut:
     """Up to ten relational suggestions for an admin-owned, non-system library."""
     context = library_governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
     if context.system_key is not None or context.role != "admin":
-        return SlateOut(items=[])
+        return SuggestionsOut(items=[])
     anchors = library_entries.library_anchor_facts(
         db, viewer_id=viewer_id, library_id=library_id, limit=_ANCHORS
     )
@@ -95,7 +95,7 @@ def build_library_slate(db: Session, *, viewer_id: UUID, library_id: UUID) -> Sl
     counts: Counter[tuple[str, object]] = Counter()
     while len(picked) < 10 and _take(ordered, picked, counts):
         pass
-    return SlateOut(items=_hydrate(db, viewer_id, picked))
+    return SuggestionsOut(items=_hydrate(db, viewer_id, picked))
 
 
 def _lectern_anchors(db: Session, viewer_id: UUID) -> tuple[ResourceRef, ...]:
@@ -419,7 +419,7 @@ def _take(
     return True
 
 
-def _hydrate(db: Session, viewer_id: UUID, picked: list[_Candidate]) -> list[SlateItemOut]:
+def _hydrate(db: Session, viewer_id: UUID, picked: list[_Candidate]) -> list[SuggestionItemOut]:
     media_ids = [c.id for c in picked if c.scheme == "media"]
     media = media_service.hydrate_compact_media_targets(
         db, viewer_id=viewer_id, media_ids=media_ids
@@ -428,13 +428,13 @@ def _hydrate(db: Session, viewer_id: UUID, picked: list[_Candidate]) -> list[Sla
     podcasts = hydrate_compact_podcast_targets(
         db, viewer_id=viewer_id, podcast_ids=[c.id for c in picked if c.scheme == "podcast"]
     )
-    items: list[SlateItemOut] = []
+    items: list[SuggestionItemOut] = []
     for c in picked:
         if c.scheme == "media":
             target = media[c.id]
             items.append(
-                SlateItemOut(
-                    target=MediaSlateTargetOut(
+                SuggestionItemOut(
+                    target=MediaSuggestionTargetOut(
                         ref=f"{c.scheme}:{c.id}",
                         media_summary=target.summary,
                         image_url=target.image_url,
@@ -446,8 +446,8 @@ def _hydrate(db: Session, viewer_id: UUID, picked: list[_Candidate]) -> list[Sla
         else:
             podcast = podcasts[c.id]
             items.append(
-                SlateItemOut(
-                    target=PodcastSlateTargetOut(
+                SuggestionItemOut(
+                    target=PodcastSuggestionTargetOut(
                         ref=f"{c.scheme}:{c.id}",
                         title=podcast.title,
                         subtitle=podcast.subtitle,

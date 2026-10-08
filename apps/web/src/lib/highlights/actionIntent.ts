@@ -17,7 +17,6 @@ export type HighlightActionIntent = CommittingMountedActionIntentBase & (
       readonly kind: "EditHighlightNote";
       readonly noteBlockId: string;
     }
-  | { readonly kind: "LinkHighlight" }
   | { readonly kind: "EditHighlightBounds" }
   | { readonly kind: "DeleteHighlight" }
 );

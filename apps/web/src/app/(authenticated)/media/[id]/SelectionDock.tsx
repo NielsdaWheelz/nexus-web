@@ -8,7 +8,6 @@ import { useState } from "react";
 import { Ellipsis, Highlighter, Link2, MessageCircleQuestion, NotebookPen } from "lucide-react";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
 import HighlightNoteEditor from "@/components/notes/HighlightNoteEditor";
-import LinkTargetDialog from "@/components/resources/LinkTargetDialog";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
@@ -201,15 +200,6 @@ export default function SelectionDock({
           onSelect={verbs.recolour}
         />
       </Dialog>
-      <LinkTargetDialog
-        open={verbs.link.open}
-        sourceRef={verbs.link.sourceRef}
-        excludeRefs={verbs.link.sourceRef ? [verbs.link.sourceRef] : undefined}
-        busy={verbs.link.committing}
-        failure={verbs.link.failure}
-        onPick={(target, name) => void verbs.link.confirm(target, name)}
-        onClose={verbs.link.close}
-      />
       <ConversationDestinationOverlay
         open={verbs.choosingChat !== null}
         onClose={() => verbs.chat(null)}

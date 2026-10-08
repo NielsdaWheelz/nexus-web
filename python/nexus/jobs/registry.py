@@ -241,9 +241,9 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             # transition stays operator-discoverable.
             never_prune_dead=True,
         ),
-        "synapse_scan": JobDefinition(
-            kind="synapse_scan",
-            handler_path="nexus.jobs.registry:_run_synapse_scan",
+        "connection_discovery_scan": JobDefinition(
+            kind="connection_discovery_scan",
+            handler_path="nexus.jobs.registry:_run_connection_discovery_scan",
             resource_class="Light",
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
@@ -414,10 +414,10 @@ def _run_media_unit_build(*, payload: Payload, context: Context) -> JobResult:
     )
 
 
-def _run_synapse_scan(*, payload: Payload, context: Context) -> JobResult:
-    from nexus.services.synapse import synapse_scan_job
+def _run_connection_discovery_scan(*, payload: Payload, context: Context) -> JobResult:
+    from nexus.services.connection_discovery import connection_discovery_scan_job
 
-    return synapse_scan_job(payload, context=context)
+    return connection_discovery_scan_job(payload, context=context)
 
 
 def _run_atlas_project(*, payload: Payload, context: Context) -> JobResult:

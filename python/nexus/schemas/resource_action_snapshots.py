@@ -105,7 +105,7 @@ SimpleResourceActionCapabilityKind = Literal[
     "RegenerateMessage",
     "DeleteMessage",
     "EditHighlight",
-    "LinkHighlight",
+    "LinkResource",
     "LearnHighlight",
     "EditHighlightBounds",
     "DeleteHighlight",

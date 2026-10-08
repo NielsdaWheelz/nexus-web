@@ -446,9 +446,9 @@ def _build_fragment_highlight(
     )
     db.flush()
 
-    from nexus.services import synapse
+    from nexus.services import connection_discovery
 
-    synapse.queue_synapse_scan(
+    connection_discovery.queue_connection_discovery_scan(
         db,
         user_id=viewer_id,
         ref=ResourceRef(scheme="highlight", id=highlight.id),

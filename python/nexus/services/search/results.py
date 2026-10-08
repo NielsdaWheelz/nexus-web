@@ -19,6 +19,8 @@ TYPE_WEIGHTS = {
     "episode": 1.15,
     "video": 1.15,
     "content_chunk": 1.1,
+    "evidence_span": 1.1,
+    "oracle_passage_anchor": 1.1,
     "fragment": 1.1,
     "contributor": 1.25,
     "page": 1.2,

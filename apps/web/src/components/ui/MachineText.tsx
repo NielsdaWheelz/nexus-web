@@ -6,7 +6,7 @@ import styles from "./MachineText.module.css";
 export interface MachineOrigin {
   /**
    * Honest origin label for the small-caps signature (e.g. "Assistant",
-   * "Synapse", "Dossier"). MUST derive from the surface's own provenance
+   * "Connection discovery", "Dossier"). MUST derive from the surface's own provenance
    * (message.role, edge.origin, model attribution) — never a literal invented
    * in the component. Also stamped onto `data-machine-origin` for the gate.
    */

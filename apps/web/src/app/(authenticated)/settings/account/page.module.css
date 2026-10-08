@@ -46,6 +46,11 @@
   min-width: 0;
 }
 
+.effect[aria-current="true"] {
+  border-inline-start: 2px solid var(--accent);
+  padding-inline-start: var(--space-3);
+}
+
 .effectHeading {
   display: flex;
   flex-wrap: wrap;

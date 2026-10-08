@@ -1,4 +1,4 @@
-export type MobileBottomSurfaceId = "Nexus" | "Player";
+export type MobileBottomSurfaceId = "Nexus" | "Player" | "Feedback";
 
 export interface MobileBottomSurfaceRect {
   readonly top: number;
@@ -25,24 +25,26 @@ function bottomSurfaceClearancePx(
 }
 
 /**
- * Where the fixed Nexus control rests. The MiniPlayer is normal flow, so it
- * places Nexus without ever becoming a content obstruction itself.
+ * Where the fixed Nexus control rests. The player and persistent feedback are
+ * normal flow, so they place Nexus without becoming content obstructions.
  */
 export function resolveNexusBottomOffsetPx(input: {
   viewportHeightPx: number;
   safeBottomPx: number;
   playerRect: MobileBottomSurfaceRect | null;
+  feedbackRect: MobileBottomSurfaceRect | null;
 }): number {
   return Math.max(
     Math.ceil(input.safeBottomPx),
     bottomSurfaceClearancePx(input.viewportHeightPx, input.playerRect),
+    bottomSurfaceClearancePx(input.viewportHeightPx, input.feedbackRect),
   );
 }
 
 /**
- * The full-window band terminal content must clear. The flow Player is excluded:
- * its normal-flow layout already shortens every content surface above it, and
- * the Nexus rectangle resting on it carries the whole protected band.
+ * The full-window band terminal content must clear. Flow surfaces are excluded:
+ * their normal-flow layout already shortens every content surface above them, and
+ * the Nexus rectangle above them carries the whole protected band.
  */
 export function resolveContentBottomClearancePx(input: {
   viewportHeightPx: number;

@@ -28,7 +28,6 @@ import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBound
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import {
   createNoteBodyKeymap,
-  createObjectRefSyntaxPlugin,
   noteBodyEditSourceMeta,
   splitNoteBodyAtSelection,
   toggleNoteBodyFormat,
@@ -52,16 +51,6 @@ import { notePulseDecorations } from "@/lib/notes/prosemirror/notePulse";
 import { projectNoteBody } from "@/lib/notes/prosemirror/noteBodyProjection";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
-import {
-  parseResourceRef,
-  type ResourceScheme,
-} from "@/lib/resourceGraph/resourceRef";
-import { useResourceTargetSearch } from "@/lib/resources/useResourceTargetSearch";
-import type { ResourceTarget } from "@/lib/resources/resourceTargets";
-import ResourceTargetListbox, {
-  resourceTargetKey,
-} from "@/components/resources/ResourceTargetListbox";
-import { nextRovingIndexForKey } from "@/lib/ui/rovingIndex";
 import "prosemirror-view/style/prosemirror.css";
 import styles from "./NoteBodyEditor.module.css";
 
@@ -77,7 +66,6 @@ export type NoteBodyEditSource =
   | "composition"
   | "paste"
   | "format"
-  | "reference"
   | "attachment";
 
 export interface NoteBodyEdit {
@@ -147,17 +135,11 @@ export interface NoteBodyEditorProps {
   onInputHandoffClaimed?: (handoffId: string) => void;
 }
 
-interface ObjectRefTextRange {
+interface LinkMenu {
   from: number;
   to: number;
   query: string;
-  filter: "all" | "page_note";
-}
-
-interface ObjectRefMenu extends ObjectRefTextRange {
-  activeKey: string | null;
   error: string | null;
-  mode: "reference" | "link";
   left: number;
   top: number;
   selectedText: string;
@@ -181,13 +163,8 @@ class MediaAttachmentContractDefect extends Error {
   }
 }
 
-const OBJECT_REF_SEARCH_QUERY_MAX_LENGTH = 200;
 const NOTE_PULSE_RANGE_DURATION_MS = 2400;
 const notePulseDecorationKey = new PluginKey<DecorationSet>("noteBodyPulse");
-const PAGE_NOTE_SCHEMES = [
-  "page",
-  "note_block",
-] as const satisfies readonly ResourceScheme[];
 
 const FORMAT_CONTROLS = [
   { name: "strong", label: "Bold", shortcut: "⌘/Ctrl+B", Icon: Bold },
@@ -217,7 +194,7 @@ export default function NoteBodyEditor(props: NoteBodyEditorProps) {
   const shellRef = useRef<HTMLDivElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const linkInputRef = useRef<HTMLInputElement | null>(null);
-  const autocompleteListboxId = useId();
+  const linkInputId = useId();
   const doc = useMemo(
     () => createNoteBodyDoc({ bodyPmJson: document.body.bodyPmJson }),
     [document.body.bodyPmJson],
@@ -238,56 +215,15 @@ export default function NoteBodyEditor(props: NoteBodyEditorProps) {
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [toolbarOpen, setToolbarOpen] = useState(false);
   const [formatState, setFormatState] = useState<FormatState>(EMPTY_FORMAT_STATE);
-  const [menu, setMenu] = useState<ObjectRefMenu | null>(null);
-  const menuRef = useRef<ObjectRefMenu | null>(null);
+  const [menu, setMenu] = useState<LinkMenu | null>(null);
+  const menuRef = useRef<LinkMenu | null>(null);
   const handleUnauthenticatedApiError = useUnauthenticatedApiHandler();
 
-  const publishMenu = useCallback((next: ObjectRefMenu | null) => {
+  const publishMenu = useCallback((next: LinkMenu | null) => {
     menuRef.current = next;
     setMenu(next);
   }, []);
   const closeMenu = useCallback(() => publishMenu(null), [publishMenu]);
-  const schemes = menu?.filter === "page_note" ? PAGE_NOTE_SCHEMES : undefined;
-  const { targets, loading, error } = useResourceTargetSearch({
-    purpose: "reference",
-    query: menu?.query ?? "",
-    schemes,
-  });
-  const targetsRef = useRef(targets);
-  targetsRef.current = targets;
-
-  useEffect(() => {
-    const current = menuRef.current;
-    if (!current) return;
-    const activeKey = current.activeKey &&
-      targets.some(target => resourceTargetKey(target) === current.activeKey)
-      ? current.activeKey : (targets[0] ? resourceTargetKey(targets[0]) : null);
-    if (activeKey !== current.activeKey) publishMenu({ ...current, activeKey });
-  }, [menu, publishMenu, targets]);
-
-  const chooseKey = useCallback((activeKey: string) => {
-    const current = menuRef.current;
-    if (current) publishMenu({ ...current, activeKey });
-  }, [publishMenu]);
-
-  const moveMenuSelection = useCallback((key: string, homeEnd: boolean): boolean => {
-    const current = menuRef.current;
-    if (!current) return false;
-    const rows = targetsRef.current;
-    const next = nextRovingIndexForKey({
-      key,
-      currentIndex: Math.max(0, rows.findIndex(
-        target => resourceTargetKey(target) === current.activeKey,
-      )),
-      itemCount: rows.length,
-      orientation: "vertical",
-      wrap: true,
-      homeEnd,
-    });
-    if (next === null) return false;
-    chooseKey(resourceTargetKey(rows[next]!));
-    return true;
-  }, [chooseKey]);
 
   const refreshFormatState = useCallback((state: EditorState) => {
     const marks = state.storedMarks ?? state.selection.$from.marks();
@@ -315,84 +251,50 @@ export default function NoteBodyEditor(props: NoteBodyEditorProps) {
     return changed;
   }, [refreshFormatState]);
 
-  const openMenu = useCallback((view: EditorView, range: ObjectRefTextRange, mode: "reference" | "link") => {
+  const openLinkMenu = useCallback((): boolean => {
+    const view = owner.current?.view;
     const shell = shellRef.current;
-    if (!shell || !inputs.current.editable) {
-      closeMenu();
-      return;
-    }
-    const caret = view.coordsAtPos(range.to);
+    if (!view || !shell || !inputs.current.editable || view.composing) return false;
+    if (!(view.state.selection instanceof TextSelection)) return false;
+    const { from, to } = view.state.selection;
+    const caret = view.coordsAtPos(to);
     const box = shell.getBoundingClientRect();
+    const selectedText = view.state.doc.textBetween(from, to, " ", " ");
+    inputs.current.onHistoryBoundary();
     publishMenu({
-      ...range,
-      mode,
-      activeKey: menuRef.current?.activeKey ?? null,
+      from,
+      to,
+      query: noteBodyHrefFromInput(selectedText) ?? "",
       error: null,
-      selectedText: view.state.doc.textBetween(range.from, range.to, " ", " "),
+      selectedText,
       left: Math.max(0, caret.left - box.left),
       top: Math.max(0, caret.bottom - box.top + 6),
     });
-  }, [closeMenu, publishMenu]);
-
-  const openLinkMenu = useCallback((): boolean => {
-    const view = owner.current?.view;
-    if (!view || !shellRef.current || !inputs.current.editable || view.composing) return false;
-    if (!(view.state.selection instanceof TextSelection)) return false;
-    const { from, to } = view.state.selection;
-    inputs.current.onHistoryBoundary();
-    openMenu(view, {
-      from,
-      to,
-      filter: "all",
-      query: view.state.doc.textBetween(from, to, " ", " ").trim()
-        .slice(0, OBJECT_REF_SEARCH_QUERY_MAX_LENGTH),
-    }, "link");
     return true;
-  }, [openMenu]);
+  }, [publishMenu]);
 
-  const selectionStillMatches = useCallback((view: EditorView, current: ObjectRefMenu, kind: "reference" | "link") => {
+  const selectionStillMatches = useCallback((view: EditorView, current: LinkMenu) => {
     if (current.to <= view.state.doc.content.size &&
         view.state.doc.textBetween(current.from, current.to, " ", " ") === current.selectedText) return true;
     closeMenu();
     inputs.current.onFeedback({
       tone: "Warning",
       title: "Selection changed",
-      message: `The selected text changed. Select it again to add a ${kind}.`,
+      message: "The selected text changed. Select it again to add a link.",
     });
     return false;
   }, [closeMenu]);
 
-  const insertObjectRef = useCallback((target: ResourceTarget) => {
-    const view = owner.current?.view;
-    const current = menuRef.current;
-    if (!view || !current || target.kind !== "resource") return;
-    const parsed = parseResourceRef(target.item.ref);
-    if (!parsed || !selectionStillMatches(view, current, "reference")) return;
-    const node = noteBodySchema.nodes.object_ref!.create({
-      objectType: parsed.scheme,
-      objectId: parsed.id,
-      label: target.item.label,
-    });
-    const space = noteBodySchema.text(" ");
-    inputs.current.onHistoryBoundary();
-    const tr = view.state.tr.setMeta(noteBodyEditSourceMeta, "reference")
-      .replaceWith(current.from, current.to, Fragment.fromArray([node, space]));
-    tr.setSelection(TextSelection.create(tr.doc, current.from + node.nodeSize + space.nodeSize));
-    closeMenu();
-    view.dispatch(tr.scrollIntoView());
-    view.focus();
-  }, [closeMenu, selectionStillMatches]);
-
   const insertWebLink = useCallback(() => {
     const view = owner.current?.view;
     const current = menuRef.current;
-    if (!view || !current || current.mode !== "link") return;
+    if (!view || !current) return;
     const href = noteBodyHrefFromInput(current.query);
     if (!href) {
       publishMenu({ ...current, error: "Enter a web address, email address, or local path." });
       return;
     }
-    if (!selectionStillMatches(view, current, "link")) return;
+    if (!selectionStillMatches(view, current)) return;
     const mark = noteBodySchema.marks.link!.create({ href });
     inputs.current.onHistoryBoundary();
     const tr = view.state.tr.setMeta(noteBodyEditSourceMeta, "format");
@@ -494,12 +396,6 @@ export default function NoteBodyEditor(props: NoteBodyEditorProps) {
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    function refreshObjectRefMenu(view: EditorView, state: EditorState) {
-      if (menuRef.current?.mode === "link") return;
-      const range = objectRefTriggerFromState(state);
-      if (range) openMenu(view, range, "reference");
-      else closeMenu();
-    }
     const previous = owner.current?.resourceKey === resourceKey ? owner.current : null;
     const state = previous?.state ?? EditorState.create({
       schema: noteBodySchema,
@@ -518,7 +414,6 @@ export default function NoteBodyEditor(props: NoteBodyEditorProps) {
             inputs.current.onRedoRequest();
           },
         }),
-        createObjectRefSyntaxPlugin(),
       ],
     });
     const view = new EditorView(host, {
@@ -526,9 +421,6 @@ export default function NoteBodyEditor(props: NoteBodyEditorProps) {
       attributes: editorAttributes({
         ariaLabel: inputs.current.ariaLabel,
         compact: inputs.current.compact,
-        menuOpen: false,
-        autocompleteListboxId,
-        activeOptionId: undefined,
       }),
       editable: () => inputs.current.editable && !attachmentBusy.current,
       transformPasted(slice) {
@@ -585,14 +477,14 @@ export default function NoteBodyEditor(props: NoteBodyEditorProps) {
         },
         click(_currentView, event) {
           if (!(event.target instanceof HTMLElement)) return false;
-          const objectRef = event.target.closest<HTMLElement>(
+          const embed = event.target.closest<HTMLElement>(
             "[data-object-type][data-object-id]",
           );
-          if (!objectRef || !host.contains(objectRef)) return false;
+          if (!embed || !host.contains(embed)) return false;
           event.preventDefault();
           inputs.current.onOpenObject?.(
-            objectRef.dataset.objectType ?? "",
-            objectRef.dataset.objectId ?? "",
+            embed.dataset.objectType ?? "",
+            embed.dataset.objectId ?? "",
             workspaceTargetClickIntent(event).disposition,
           );
           return true;
@@ -616,40 +508,19 @@ export default function NoteBodyEditor(props: NoteBodyEditorProps) {
         },
         keydown(currentView, event) {
           if (currentView.composing || event.isComposing || event.keyCode === 229) return false;
-          const currentMenu = menuRef.current;
-          if (currentMenu?.mode === "reference" && targetsRef.current.length > 0) {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              closeMenu();
-              return true;
-            }
-            if (moveMenuSelection(event.key, true)) {
-              event.preventDefault();
-              return true;
-            }
-            if (event.key === "Enter" &&
-                !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
-              event.preventDefault();
-              const selected = targetsRef.current.find(
-                target => resourceTargetKey(target) === currentMenu.activeKey,
-              ) ?? targetsRef.current[0];
-              if (selected) insertObjectRef(selected);
-              return true;
-            }
-          }
           if (event.target instanceof HTMLElement) {
-            const objectRef = event.target.closest<HTMLElement>(
+            const embed = event.target.closest<HTMLElement>(
               "[data-object-type][data-object-id]",
             );
             if (
-              objectRef &&
-              host.contains(objectRef) &&
+              embed &&
+              host.contains(embed) &&
               (event.key === "Enter" || event.key === " ")
             ) {
               event.preventDefault();
               inputs.current.onOpenObject?.(
-                objectRef.dataset.objectType ?? "",
-                objectRef.dataset.objectId ?? "",
+                embed.dataset.objectType ?? "",
+                embed.dataset.objectId ?? "",
                 workspaceTargetClickIntent(event).disposition,
               );
               return true;
@@ -748,7 +619,6 @@ export default function NoteBodyEditor(props: NoteBodyEditorProps) {
         }
         refreshFormatState(nextState);
         if (view.hasFocus()) setToolbarOpen(!nextState.selection.empty);
-        refreshObjectRefMenu(view, nextState);
       },
     });
 
@@ -775,8 +645,7 @@ export default function NoteBodyEditor(props: NoteBodyEditorProps) {
       view.destroy();
     };
   }, [
-    applyPulse, attachFiles, autocompleteListboxId, closeMenu, insertObjectRef,
-    openLinkMenu, openMenu, refreshFormatState, resourceKey, runFormat, moveMenuSelection,
+    applyPulse, attachFiles, openLinkMenu, refreshFormatState, resourceKey, runFormat,
   ]);
 
   useLayoutEffect(() => {
@@ -820,19 +689,17 @@ export default function NoteBodyEditor(props: NoteBodyEditorProps) {
   useEffect(() => {
     applyPulse(notePulseTarget ?? null);
   }, [applyPulse, notePulseTarget]);
+  const menuOpen = menu !== null;
   useEffect(() => {
-    if (menu?.mode === "link") linkInputRef.current?.focus();
-  }, [menu?.mode]);
-
-  const menuOpen = Boolean(menu && (menu.mode === "link" || targets.length > 0));
-  const activeOptionId = menu?.activeKey ? `${autocompleteListboxId}-option-${menu.activeKey}` : undefined;
+    if (menuOpen) linkInputRef.current?.focus();
+  }, [menuOpen]);
   useLayoutEffect(() => {
     owner.current?.view?.setProps({
       attributes: editorAttributes({
-        ariaLabel, compact, menuOpen, autocompleteListboxId, activeOptionId,
+        ariaLabel, compact,
       }),
     });
-  }, [activeOptionId, ariaLabel, autocompleteListboxId, compact, menuOpen, resourceKey]);
+  }, [ariaLabel, compact, resourceKey]);
 
   if (defect) throw defect.error;
   return (
@@ -849,7 +716,7 @@ export default function NoteBodyEditor(props: NoteBodyEditorProps) {
       }}
     >
       <div ref={hostRef} className={styles.editorHost} />
-      {editable && toolbarOpen && menu?.mode !== "link" ? (
+      {editable && toolbarOpen && !menuOpen ? (
         <div className={styles.formatToolbar} role="toolbar" aria-label="Text formatting">
           {FORMAT_CONTROLS.map(({ name, label, shortcut, Icon }) => (
             <button key={name} type="button" className={styles.formatButton}
@@ -862,52 +729,33 @@ export default function NoteBodyEditor(props: NoteBodyEditorProps) {
           ><Link2 size={16} aria-hidden="true" /></button>
         </div>
       ) : null}
-      {menu && menuOpen ? (
-        <div className={styles.autocomplete} style={{ left: menu.left, top: menu.top }}>
-          {menu.mode === "link" ? (
-            <div className={styles.linkPicker}>
-              <label className={styles.linkLabel} htmlFor={`${autocompleteListboxId}-input`}>Link address or note</label>
-              <div className={styles.linkControls}>
-                <input ref={linkInputRef} id={`${autocompleteListboxId}-input`} className={styles.linkInput}
-                  role="combobox" aria-expanded aria-controls={autocompleteListboxId}
-                  aria-activedescendant={activeOptionId} aria-label="Link address or note" value={menu.query}
-                  onChange={event => {
-                    const current = menuRef.current;
-                    if (current) publishMenu({ ...current, query: event.target.value, error: null });
-                  }}
-                  onKeyDown={event => {
-                    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
-                    const current = menuRef.current;
-                    if (!current) return;
-                    if (event.key === "Escape") {
-                      event.preventDefault();
-                      closeMenu();
-                      owner.current?.view?.focus();
-                    } else if (event.key === "Enter") {
-                      event.preventDefault();
-                      if (noteBodyHrefFromInput(current.query)) insertWebLink();
-                      else {
-                        const selected = targets.find(target => resourceTargetKey(target) === current.activeKey) ?? targets[0];
-                        if (selected) insertObjectRef(selected);
-                        else publishMenu({ ...current, error: "Enter a web address or choose a note." });
-                      }
-                    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                      event.preventDefault();
-                      moveMenuSelection(event.key, false);
-                    }
-                  }}
-                />
-                <button type="button" className={styles.linkAdd} disabled={!noteBodyHrefFromInput(menu.query)} onClick={insertWebLink}>Add link</button>
-              </div>
-              {menu.error ? <span className={styles.linkError} role="alert">{menu.error}</span> : null}
+      {menu ? (
+        <div className={styles.hyperlinkMenu} style={{ left: menu.left, top: menu.top }} role="dialog" aria-label="Add hyperlink">
+          <div className={styles.linkPicker}>
+            <label className={styles.linkLabel} htmlFor={linkInputId}>Link address</label>
+            <div className={styles.linkControls}>
+              <input ref={linkInputRef} id={linkInputId} className={styles.linkInput}
+                value={menu.query}
+                onChange={event => {
+                  const current = menuRef.current;
+                  if (current) publishMenu({ ...current, query: event.target.value, error: null });
+                }}
+                onKeyDown={event => {
+                  if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    closeMenu();
+                    owner.current?.view?.focus();
+                  } else if (event.key === "Enter") {
+                    event.preventDefault();
+                    insertWebLink();
+                  }
+                }}
+              />
+              <button type="button" className={styles.linkAdd} disabled={!noteBodyHrefFromInput(menu.query)} onClick={insertWebLink}>Add link</button>
             </div>
-          ) : null}
-          <ResourceTargetListbox id={autocompleteListboxId}
-            ariaLabel={menu.mode === "link" ? "Note references" : "Object references"}
-            targets={targets} activeKey={menu.activeKey} loading={loading} error={error}
-            emptyMessage={menu.mode === "link" ? "No notes found" : "No matches"}
-            onHover={target => chooseKey(resourceTargetKey(target))} onPick={insertObjectRef}
-          />
+            {menu.error ? <span className={styles.linkError} role="alert">{menu.error}</span> : null}
+          </div>
         </div>
       ) : null}
     </div>
@@ -1083,51 +931,9 @@ function createNotePulseDecorationPlugin(): Plugin<DecorationSet> {
   });
 }
 
-function objectRefTriggerFromState(
-  state: EditorState,
-): ObjectRefTextRange | null {
-  if (!state.selection.empty) return null;
-  const { $from } = state.selection;
-  if (!$from.parent.inlineContent) return null;
-  const textBefore = $from.parent.textBetween(
-    0,
-    $from.parentOffset,
-    "\n",
-    "\n",
-  );
-  const pageMatch = /(^|\s)\[\[([A-Za-z0-9][A-Za-z0-9 _.'-]{0,79})$/.exec(
-    textBefore,
-  );
-  if (pageMatch) {
-    const query = pageMatch[2]!.trim();
-    if (!query) return null;
-    const linkIndex = pageMatch.index + pageMatch[1]!.length;
-    return {
-      from: $from.pos - ($from.parentOffset - linkIndex),
-      to: $from.pos,
-      query,
-      filter: "page_note",
-    };
-  }
-  const match = /(^|\s)@([A-Za-z0-9][A-Za-z0-9 _.'-]{0,79})$/.exec(textBefore);
-  if (!match) return null;
-  const query = match[2]!.trim();
-  if (!query) return null;
-  const atIndex = match.index + match[1]!.length;
-  return {
-    from: $from.pos - ($from.parentOffset - atIndex),
-    to: $from.pos,
-    query,
-    filter: "all",
-  };
-}
-
 function editorAttributes(input: {
   ariaLabel: string;
   compact: boolean;
-  menuOpen: boolean;
-  autocompleteListboxId: string;
-  activeOptionId: string | undefined;
 }): Record<string, string> {
   return {
     class: input.compact
@@ -1136,15 +942,5 @@ function editorAttributes(input: {
     role: "textbox",
     "aria-label": input.ariaLabel,
     "aria-multiline": "true",
-    "aria-expanded": input.menuOpen ? "true" : "false",
-    ...(input.menuOpen
-      ? {
-          "aria-autocomplete": "list",
-          "aria-controls": input.autocompleteListboxId,
-          ...(input.activeOptionId
-            ? { "aria-activedescendant": input.activeOptionId }
-            : {}),
-        }
-      : {}),
   };
 }

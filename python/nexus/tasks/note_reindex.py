@@ -6,7 +6,7 @@ from nexus.db.models import NoteBlock
 from nexus.db.session import get_session_factory
 from nexus.jobs.queue import JobExecutionContext
 from nexus.logging import get_logger
-from nexus.services import synapse
+from nexus.services import connection_discovery
 from nexus.services.note_indexing import rebuild_note_content_index
 from nexus.services.resource_graph.refs import ResourceRef
 
@@ -20,7 +20,7 @@ def note_reindex_job(note_block_id: str, reason: str, context: JobExecutionConte
         index_result = rebuild_note_content_index(db, note_block_id=block_id, reason=reason)
         block = db.get(NoteBlock, block_id)
         if block is not None:
-            synapse.queue_synapse_scan(
+            connection_discovery.queue_connection_discovery_scan(
                 db,
                 user_id=block.user_id,
                 ref=ResourceRef(scheme="note_block", id=block_id),
