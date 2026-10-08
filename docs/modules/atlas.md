@@ -18,8 +18,8 @@ until the next sweep; there is no on-demand trigger.
 `GET /atlas` is a typed route returning `Data[AtlasOut]`: stars (media_id,
 nullable x/y, title, kind, the viewer's highlight count), constellations (one per
 non-system membership, empty ones omitted, the viewer's default named `All`) and
-edges (the viewer's synapse-context and contradicts edges between two of their
-stars; a synapse edge that targets an evidence span stands for its media). Stars
+edges (the viewer's discovery-context and contradicts edges between two of their
+stars; a discovery edge that targets an evidence span stands for its media). Stars
 come from the viewer's personal relation over non-system memberships, so corpus
 works never become stars. There is no ETag: no consumer sent `If-None-Match`.
 

@@ -6,6 +6,8 @@
 // group at the reading position in view and marks those inside the visible
 // band; scrolling the list browses. A group's jump is a reader jump.
 import { useEffect, useMemo, useRef, useState } from "react";
+import Button from "@/components/ui/Button";
+import { useResourceOverlaysController } from "@/lib/resources/resourceOverlaysController";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import { useReaderState, type Reader } from "@/lib/documentReader/DocumentReader";
 import type { AnnotationState } from "../annotations";
@@ -20,17 +22,18 @@ type Group = AnnotationState extends { map: infer M }
       : never
     : never
   : never;
-type Filter = "Highlights" | "Citations" | "Links" | "Synapses";
+type Filter = "Highlights" | "Citations" | "Links" | "Machine links";
 
 const FILTER_OF: Record<EvidenceItem["kind"], Filter> = {
   Highlight: "Highlights",
   SourceReference: "Citations",
   GeneratedCitation: "Citations",
   Link: "Links",
-  Synapse: "Synapses",
+  MachineLink: "Machine links",
 };
 
 export default function EvidencePane({
+  resourceRef,
   state,
   reader,
   actions,
@@ -38,6 +41,7 @@ export default function EvidencePane({
   onJump,
   onRetry,
 }: {
+  readonly resourceRef: string;
   readonly state: AnnotationState;
   readonly reader: Reader;
   readonly actions: EvidenceActions;
@@ -46,13 +50,15 @@ export default function EvidencePane({
   readonly onJump: (group: Group) => void;
   readonly onRetry: () => void;
 }) {
+  const { linkComposer } = useResourceOverlaysController();
   const [hidden, setHidden] = useState<ReadonlySet<Filter>>(new Set());
   const [following, setFollowing] = useState(true);
   const [active, setActive] = useState<string | null>(null);
   const list = useRef<HTMLDivElement>(null);
+  const linkButton = useRef<HTMLButtonElement>(null);
   const band = useReaderState(reader, (s) => s.viewport && [s.viewport.start, s.viewport.end].join());
   const structure = useReaderState(reader, (s) => (s.document.status === "ready" ? s.document.structure : null));
-  const data = state.map.status === "ready" ? state.map.data : null;
+  const data = state.map.status !== "loading" ? state.map.data : null;
   const evidence = data?.evidence;
 
   const groups = useMemo(() => {
@@ -91,31 +97,33 @@ export default function EvidencePane({
   useEffect(() => {
     if (!openKey) return;
     const group = groups.find(({ group }) =>
-      group.items.some((item) => item.id === openKey.id || (item.kind === "SourceReference" && item.stable_key === openKey.id)),
+      group.items.some((item) => item.id === openKey.id || ("edge_id" in item && item.edge_id === openKey.id) || (item.kind === "SourceReference" && item.stable_key === openKey.id)),
     );
-    if (!group) return;
+    const documentItem = evidence?.document_items.some((item) => item.id === openKey.id || ("edge_id" in item && item.edge_id === openKey.id));
+    if (!group && !documentItem) return;
+    const key = group ? group.group.locus_ref : "document";
     setFollowing(false);
-    setActive(group.group.locus_ref);
+    setActive(key);
     setHidden(new Set());
     requestAnimationFrame(() =>
-      list.current?.querySelector(`[data-group="${CSS.escape(group.group.locus_ref)}"]`)?.scrollIntoView({ block: "start" }),
+      list.current?.querySelector(`[data-group="${CSS.escape(key)}"]`)?.scrollIntoView({ block: "start" }),
     );
-  }, [groups, openKey]);
+  }, [evidence, groups, openKey]);
 
   if (state.map.status === "loading") return <p className={styles.status}>Loading reader items…</p>;
-  if (state.map.status === "failed")
-    return (
+  const failure = state.map.status === "failed" ? (
       <FeedbackNotice
-        content={{ tone: "Danger", title: "Document Map couldn’t be loaded" }}
+        content={{ tone: "Danger", title: "Connections couldn’t be loaded" }}
         announcement="Assertive"
         actions={[{ label: "Retry", onClick: onRetry }]}
       />
-    );
+    ) : null;
+  if (!data) return failure;
   const counts: Record<Filter, number> = {
     Highlights: evidence!.counts.highlights,
     Citations: evidence!.counts.citations,
     Links: evidence!.counts.links,
-    Synapses: evidence!.counts.synapses,
+    "Machine links": evidence!.counts.machine_links,
   };
   const placed = groups.filter(({ group }) => group.resolution.kind === "Resolved");
   const unplaced = groups.filter(({ group }) => group.resolution.kind !== "Resolved");
@@ -140,7 +148,10 @@ export default function EvidencePane({
           ) : null}
         </header>
         {visible(items).map((item) => (
-          <EvidenceRow key={item.id} item={item} actions={actions} active={active === key} />
+          <EvidenceRow key={item.id} item={item} actions={actions} active={active === key} onConnectionChanged={(row) => {
+            if (row?.contains(document.activeElement)) linkButton.current?.focus();
+            actions.refresh();
+          }} />
         ))}
       </section>
     ) : null;
@@ -149,7 +160,9 @@ export default function EvidencePane({
 
   return (
     <div className={styles.evidence}>
+      {failure}
       <div className={styles.evidenceHead}>
+        <Button ref={linkButton} variant="ghost" size="sm" onClick={() => void linkComposer.openResourceLink(resourceRef)}>Link…</Button>
         <div role="group" aria-label="Filter by type" className={styles.filters}>
           {(Object.keys(counts) as Filter[]).map((filter) => (
             <button
@@ -177,12 +190,12 @@ export default function EvidencePane({
         ref={list}
         className={styles.evidenceList}
         role="group"
-        aria-label="All evidence"
+        aria-label="Connections"
         onWheel={() => setFollowing(false)}
         onTouchMove={() => setFollowing(false)}
       >
         {placed.length + unplaced.length + evidence!.document_items.length === 0 ? (
-          <p className={styles.status}>No reader evidence in this document.</p>
+          <p className={styles.status}>No connections in this document yet.</p>
         ) : null}
         {placed.map(({ group }) =>
           section(group.locus_ref, "Passage", excerpt(group), group.items, () => onJump(group)),

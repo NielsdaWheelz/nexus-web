@@ -1,11 +1,7 @@
-"""The user-authored relationship commands: Link, Link note and stance.
+"""User link commands compose selection, passage, note and graph owners atomically.
 
-Each command is one retryable transaction that composes the Highlight, passage-anchor,
-note and edge writers, then commits. The canonical unordered pair is ordered by
-``(scheme, lowercase-uuid-string)`` here, in the service, never by a CHECK; stance
-direction is stored as given, and one stance per unordered pair is enforced by
-selecting both orientations under SERIALIZABLE. This module reads ``resource_edges``
-but never writes it directly.
+The public mutations own serializable retry and exact response replay. The graph
+writer owns canonical pairs and endpoint order; composition helpers only flush.
 """
 
 from __future__ import annotations
@@ -13,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ResourceEdge
@@ -29,33 +25,24 @@ from nexus.errors import (
 from nexus.schemas.resource_graph import (
     CreateLinkOut,
     CreateLinkRequest,
+    LinkEndpoint,
     LinkNoteOut,
     PutLinkNoteRequest,
-    PutStanceRequest,
-    StanceOut,
     connection_out,
 )
 from nexus.schemas.resource_items import NoteBodyVersionsOut
 from nexus.services import highlights, note_bodies, passage_anchors, pdf_highlights
 from nexus.services.note_indexing import enqueue_note_reindex
 from nexus.services.resource_graph import cleanup, connections, edges
-from nexus.services.resource_graph.edges import source_is, target_is
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref, parse_resource_ref
 from nexus.services.resource_graph.resolve import assert_ref_visible, resolve_refs
 from nexus.services.resource_graph.schemas import (
-    Connection,
-    ConnectionFilters,
-    ConnectionQuery,
     EdgeCreate,
-    EdgeKind,
     EdgeOut,
     is_neutral_link_shape,
 )
 from nexus.services.resource_items import versions
-from nexus.services.resource_items.capabilities import (
-    resource_can_link_source,
-    resource_user_link_target_mode,
-)
+from nexus.services.resource_items.capabilities import resource_link_mode
 from nexus.services.resource_items.targets import candidate_owner_and_quote
 from nexus.services.resource_mutation_replay import (
     canonical_json_bytes,
@@ -64,8 +51,6 @@ from nexus.services.resource_mutation_replay import (
 )
 
 _LINK_SCOPE = "resource_graph:link"
-_LINK_FILTERS = ConnectionFilters(origins=("user",), kinds=("context",))
-_STANCE_FILTERS = ConnectionFilters(origins=("user",), kinds=("supports", "contradicts"))
 
 
 def count_retained_neutral_links(
@@ -119,7 +104,7 @@ def create_link(db: Session, *, viewer_id: UUID, request: CreateLinkRequest) -> 
             return CreateLinkOut.model_validate(replay)
 
         source_ref, created_source_ref = _link_source(db, viewer_id=viewer_id, request=request)
-        target_ref = _link_target(db, viewer_id=viewer_id, request=request)
+        target_ref = materialize_link_endpoint(db, viewer_id=viewer_id, endpoint=request.target)
         if source_ref.uri == target_ref.uri:
             raise ApiError(ApiErrorCode.E_LINK_SELF, "A resource cannot be linked to itself")
 
@@ -128,12 +113,11 @@ def create_link(db: Session, *, viewer_id: UUID, request: CreateLinkRequest) -> 
             created=write.created,
             created_source_ref=created_source_ref.uri if created_source_ref is not None else None,
             connection=connection_out(
-                _connection(
+                connections.connection_for_edge(
                     db,
                     viewer_id=viewer_id,
                     edge_id=write.edge.id,
-                    refs=(source_ref, target_ref),
-                    filters=_LINK_FILTERS,
+                    ref=source_ref,
                 )
             ),
         )
@@ -236,12 +220,11 @@ def put_link_note(
                 )
             ),
             connection=connection_out(
-                _connection(
+                connections.connection_for_edge(
                     db,
                     viewer_id=viewer_id,
                     edge_id=link.id,
-                    refs=(link.source, link.target),
-                    filters=_LINK_FILTERS,
+                    ref=link.source,
                 )
             ),
         )
@@ -307,70 +290,13 @@ def detach_link_note(
     retry_serializable(db, "detach_link_note", op)
 
 
-def put_stance(db: Session, *, viewer_id: UUID, request: PutStanceRequest) -> StanceOut:
-    """Replace whatever stance the unordered pair carried with this directed one.
-
-    A focused highlight materializes a passage anchor inside the media it is about;
-    durable media is the explicit fallback when the quote is ambiguous.
-    """
-    source = _parse_ref(request.source_ref)
-    target_input = _parse_ref(request.target_ref)
-
-    def op() -> StanceOut:
-        _admit_source(db, viewer_id=viewer_id, ref=source)
-        _admit_target(db, viewer_id=viewer_id, ref=target_input)
-        target = _focused_stance_target(db, viewer_id=viewer_id, source=source, target=target_input)
-        if source.uri == target.uri:
-            raise ApiError(ApiErrorCode.E_LINK_SELF, "A resource cannot take a stance on itself")
-
-        edge = _replace_stance(
-            db, viewer_id=viewer_id, source=source, target=target, kind=request.kind
-        )
-        response = StanceOut(
-            connection=connection_out(
-                _connection(
-                    db,
-                    viewer_id=viewer_id,
-                    edge_id=edge.id,
-                    refs=(source, target),
-                    filters=_STANCE_FILTERS,
-                )
-            )
-        )
-        db.commit()
-        return response
-
-    return retry_serializable(db, "put_stance", op)
-
-
-def delete_stance(db: Session, *, viewer_id: UUID, stance_id: UUID) -> None:
-    """Idempotent stance removal; view state goes before the edge."""
-
-    def op() -> None:
-        edge = edges.get_owned_edge(db, viewer_id=viewer_id, edge_id=stance_id)
-        if edge is None:
-            return
-        if edge.origin != "user":
-            raise ForbiddenError(
-                ApiErrorCode.E_FORBIDDEN, "Only user relations can be removed here"
-            )
-        if edge.kind not in ("supports", "contradicts"):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Stance not found")
-        edges.delete_edge(db, viewer_id=viewer_id, edge_id=stance_id)
-        db.commit()
-
-    retry_serializable(db, "delete_stance", op)
-
-
 def _link_source(
     db: Session, *, viewer_id: UUID, request: CreateLinkRequest
 ) -> tuple[ResourceRef, ResourceRef | None]:
     """The Link source; the second element is the Highlight this request just minted."""
     source = request.source
-    if source.kind == "resource":
-        ref = _parse_ref(source.ref)
-        _admit_source(db, viewer_id=viewer_id, ref=ref)
-        return ref, None
+    if source.kind == "resource" or source.kind == "passage":
+        return materialize_link_endpoint(db, viewer_id=viewer_id, endpoint=source), None
     if source.kind == "fragment_selection":
         highlight = highlights.create_fragment_highlight_in_txn(
             db,
@@ -396,17 +322,21 @@ def _link_source(
     return ref, ref
 
 
-def _link_target(db: Session, *, viewer_id: UUID, request: CreateLinkRequest) -> ResourceRef:
-    target = request.target
-    if target.kind == "resource":
-        ref = _parse_ref(target.ref)
-        _admit_target(db, viewer_id=viewer_id, ref=ref)
+def materialize_link_endpoint(
+    db: Session, *, viewer_id: UUID, endpoint: LinkEndpoint
+) -> ResourceRef:
+    """Resolve a visible link endpoint; may create a passage anchor, and only flushes."""
+    if endpoint.kind == "resource":
+        ref = _parse_ref(endpoint.ref)
+        if resource_link_mode(ref) != "direct":
+            raise ApiError(ApiErrorCode.E_LINK_CAPABILITY, "Resource cannot be linked")
+        assert_ref_visible(db, viewer_id=viewer_id, ref=ref)
         return ref
 
-    candidate = _parse_ref(target.candidate_ref)
-    if resource_user_link_target_mode(candidate) != "materialize_passage":
+    candidate = _parse_ref(endpoint.candidate_ref)
+    if resource_link_mode(candidate) != "materialize_passage":
         raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST, "Target is not a passage candidate"
+            ApiErrorCode.E_INVALID_REQUEST, "Resource is not a passage candidate"
         )
     owner_and_quote = candidate_owner_and_quote(db, ref=candidate)
     if owner_and_quote is None:
@@ -417,76 +347,6 @@ def _link_target(db: Session, *, viewer_id: UUID, request: CreateLinkRequest) ->
         db, user_id=viewer_id, owner_scheme=owner_ref.scheme, owner_id=owner_ref.id, exact=exact
     )
     return ResourceRef(scheme="passage_anchor", id=anchor.id)
-
-
-def _focused_stance_target(
-    db: Session, *, viewer_id: UUID, source: ResourceRef, target: ResourceRef
-) -> ResourceRef:
-    if source.scheme != "highlight" or target.scheme != "media":
-        return target
-    highlight = highlights.get_highlight_for_visible_read_or_404(db, viewer_id, source.id)
-    try:
-        anchor = passage_anchors.materialize_or_reuse(
-            db,
-            user_id=viewer_id,
-            owner_scheme="media",
-            owner_id=target.id,
-            exact=highlight.exact,
-            prefix=highlight.prefix,
-            suffix=highlight.suffix,
-        )
-    except ApiError as exc:
-        if exc.code is ApiErrorCode.E_LINK_TARGET_AMBIGUOUS:
-            return target
-        raise
-    return ResourceRef(scheme="passage_anchor", id=anchor.id)
-
-
-def _replace_stance(
-    db: Session, *, viewer_id: UUID, source: ResourceRef, target: ResourceRef, kind: EdgeKind
-) -> EdgeOut:
-    """An unchanged re-PUT keeps the existing edge id; any other prior stance is dropped."""
-    prior_id = db.execute(
-        select(ResourceEdge.id).where(
-            ResourceEdge.user_id == viewer_id,
-            ResourceEdge.origin == "user",
-            ResourceEdge.kind.in_(("supports", "contradicts")),
-            ResourceEdge.ordinal.is_(None),
-            ResourceEdge.snapshot.is_(None),
-            ResourceEdge.source_order_key.is_(None),
-            or_(
-                and_(source_is(source), target_is(target)),
-                and_(source_is(target), target_is(source)),
-            ),
-        )
-    ).scalar_one_or_none()
-    if prior_id is not None:
-        prior = edges.get_owned_edge(db, viewer_id=viewer_id, edge_id=prior_id)
-        if (
-            prior is not None
-            and prior.source.uri == source.uri
-            and prior.target.uri == target.uri
-            and prior.kind == kind
-        ):
-            return prior
-        edges.delete_edge(db, viewer_id=viewer_id, edge_id=prior_id)
-    return edges.create_edge(
-        db,
-        viewer_id=viewer_id,
-        input=EdgeCreate(source=source, target=target, kind=kind, origin="user"),
-    )
-
-
-def _admit_source(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> None:
-    if not resource_can_link_source(ref):
-        raise ApiError(ApiErrorCode.E_LINK_CAPABILITY, "Resource cannot be a link source")
-    assert_ref_visible(db, viewer_id=viewer_id, ref=ref)
-
-
-def _admit_target(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> None:
-    if resource_user_link_target_mode(ref) != "direct":
-        raise ApiError(ApiErrorCode.E_LINK_CAPABILITY, "Resource cannot be a link target")
-    assert_ref_visible(db, viewer_id=viewer_id, ref=ref)
 
 
 def _parse_ref(raw: str) -> ResourceRef:
@@ -514,22 +374,3 @@ def _neutral_link(db: Session, *, viewer_id: UUID, link_id: UUID) -> EdgeOut:
     if edge is None or not _is_neutral_link(edge):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Link not found")
     return edge
-
-
-def _connection(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    edge_id: UUID,
-    refs: tuple[ResourceRef, ...],
-    filters: ConnectionFilters,
-) -> Connection:
-    """Hydrate the just-written edge through the canonical connection read."""
-    page = connections.query_connections(
-        db,
-        viewer_id=viewer_id,
-        query=ConnectionQuery(
-            refs=refs, direction="both", rollup="exact", filters=filters, limit=100
-        ),
-    )
-    return next(item for item in page.items if item.edge_id == edge_id)

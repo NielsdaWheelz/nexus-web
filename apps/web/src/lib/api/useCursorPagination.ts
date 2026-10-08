@@ -33,6 +33,7 @@ interface CursorContinuation<T, Cursor extends string> {
 export function useCursorPagination<T, Cursor extends string = string>(args: {
   firstPage: AsyncResource<CursorPage<T, Cursor>>;
   initialMoreError: ApiError | null;
+  loadMoreEnabled?: boolean;
   loadMorePage: (cursor: Cursor, signal: AbortSignal) => Promise<CursorPage<T, Cursor>>;
 }): {
   items: T[];
@@ -44,7 +45,7 @@ export function useCursorPagination<T, Cursor extends string = string>(args: {
   loadMore: () => void;
   retry: () => void;
 } {
-  const { firstPage, initialMoreError, loadMorePage } = args;
+  const { firstPage, initialMoreError, loadMorePage, loadMoreEnabled = true } = args;
   const firstData = firstPage.status === "ready" ? firstPage.data : null;
 
   const [continuation, setContinuation] = useState<CursorContinuation<T, Cursor>>({
@@ -98,6 +99,8 @@ export function useCursorPagination<T, Cursor extends string = string>(args: {
   const firstDataRef = useRef(firstData);
   firstDataRef.current = firstData;
   const loadingRef = useRef(false);
+  const enabledRef = useRef(loadMoreEnabled);
+  enabledRef.current = loadMoreEnabled;
   const loadRef = useRef(loadMorePage);
   loadRef.current = loadMorePage;
 
@@ -110,11 +113,12 @@ export function useCursorPagination<T, Cursor extends string = string>(args: {
     abortRef.current?.abort();
     abortRef.current = null;
     loadingRef.current = false;
-  }, [firstData]);
+    setContinuation((current) => current.loadingMore ? { ...current, loadingMore: false } : current);
+  }, [firstData, loadMoreEnabled]);
 
   const loadMore = useCallback(() => {
     const next = cursorRef.current;
-    if (next.kind === "Absent" || loadingRef.current) return;
+    if (!enabledRef.current || next.kind === "Absent" || loadingRef.current) return;
     const generation = generationRef.current;
     loadingRef.current = true;
     setContinuation((current) => ({

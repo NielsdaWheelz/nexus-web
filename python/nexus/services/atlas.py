@@ -60,7 +60,7 @@ def read_atlas(db: Session, *, viewer_id: UUID, default_library_id: UUID) -> Atl
         ),
         params,
     ).mappings()
-    # Synapse context links now target evidence spans; a span stands for its media.
+    # Discovery context links target evidence spans; a span stands for its media.
     edges = db.execute(
         text(
             f"""
@@ -71,7 +71,7 @@ def read_atlas(db: Session, *, viewer_id: UUID, default_library_id: UUID) -> Atl
                 AND es.id = e.target_id AND es.owner_kind = 'media'
             WHERE e.user_id = :viewer_id AND e.source_scheme = 'media'
               AND (e.target_scheme = 'media' OR es.id IS NOT NULL)
-              AND ((e.origin = 'synapse' AND e.kind = 'context') OR e.kind = 'contradicts')
+              AND ((e.origin = 'discovery' AND e.kind = 'context') OR e.kind = 'contradicts')
               AND e.source_id IN ({_PERSONAL})
               AND COALESCE(es.owner_id, e.target_id) IN ({_PERSONAL})
               AND COALESCE(es.owner_id, e.target_id) <> e.source_id

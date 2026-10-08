@@ -2,7 +2,7 @@ import { apiFetch, decodeApiPayload } from "@/lib/api/client";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import { withNotePageActionSubject, type NotePage } from "@/lib/notes/pageContract";
 import { isLocalDate } from "@/lib/localDate";
-import { normalizeResourceSurface, type ResourceSurface } from "@/lib/resources/resourceItems";
+import { projectResourceSurface, type ResourceSurface } from "@/lib/resources/resourceItems";
 
 export async function createNotePage(input: {
   pageId: string;
@@ -45,7 +45,7 @@ export async function readDailyPage(
   return {
     ...data,
     page: withNotePageActionSubject(data.page),
-    surface: normalizeResourceSurface(data.surface),
+    surface: projectResourceSurface(data.surface),
   };
 }
 
@@ -55,7 +55,7 @@ export type DailyCaptureResult = Omit<Schema<"DailyCaptureResult">, "surface"> &
 };
 
 export function acceptDailyCaptureResult(result: Schema<"DailyCaptureResult">): DailyCaptureResult {
-  const surface = normalizeResourceSurface(result.surface);
+  const surface = projectResourceSurface(result.surface);
   if (surface.source.item.ref !== `page:${result.pageId}`) {
     throw new TypeError("daily capture result.surface source must match pageId");
   }

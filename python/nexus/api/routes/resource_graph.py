@@ -16,8 +16,6 @@ from nexus.schemas.resource_graph import (
     CreateLinkRequest,
     LinkNoteOut,
     PutLinkNoteRequest,
-    PutStanceRequest,
-    StanceOut,
     connection_out,
 )
 from nexus.services.resource_graph import connections as connections_service
@@ -114,15 +112,4 @@ def delete_link_note(
         note_block_id=note_block_id,
         client_mutation_id=client_mutation_id,
     )
-    return Response(status_code=204)
-
-
-@router.put("/stances")
-def put_stance(body: PutStanceRequest, viewer: ViewerDep, db: DbSession) -> Data[StanceOut]:
-    return Data(data=user_relations_service.put_stance(db, viewer_id=viewer.user_id, request=body))
-
-
-@router.delete("/stances/{stance_id}", status_code=204)
-def delete_stance(stance_id: UUID, viewer: ViewerDep, db: DbSession) -> Response:
-    user_relations_service.delete_stance(db, viewer_id=viewer.user_id, stance_id=stance_id)
     return Response(status_code=204)

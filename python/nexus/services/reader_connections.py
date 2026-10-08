@@ -34,7 +34,7 @@ READER_CONNECTION_ORIGINS: tuple[EdgeOrigin, ...] = (
     "note_body",
     "highlight_note",
     "user",
-    "synapse",
+    "discovery",
     "system",
     "document_embed",
     "assistant",

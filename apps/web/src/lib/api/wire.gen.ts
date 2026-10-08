@@ -295,6 +295,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connection-discovery/edges/{edge_id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dismiss Edge */
+        post: operations["dismiss_edge_connection_discovery_edges__edge_id__dismiss_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connection-discovery/scans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Scan */
+        get: operations["read_scan_connection_discovery_scans_get"];
+        put?: never;
+        /** Request Scan */
+        post: operations["request_scan_connection_discovery_scans_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/consumption/activity": {
         parameters: {
             query?: never;
@@ -495,26 +530,6 @@ export interface paths {
         put?: never;
         /** Set Active Path */
         post: operations["set_active_path_conversations__conversation_id__active_path_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/conversations/{conversation_id}/context-refs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Context Refs
-         * @description List a conversation's context refs, hydrated, in first-attached order.
-         */
-        get: operations["list_context_refs_conversations__conversation_id__context_refs_get"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -921,15 +936,15 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/lectern/slate": {
+    "/lectern/suggestions": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get Lectern Slate */
-        get: operations["get_lectern_slate_lectern_slate_get"];
+        /** Get Lectern Suggestions */
+        get: operations["get_lectern_suggestions_lectern_suggestions_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1222,7 +1237,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/libraries/{library_id}/slate": {
+    "/libraries/{library_id}/suggestions": {
         parameters: {
             query?: never;
             header?: never;
@@ -1230,10 +1245,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get Library Slate
+         * Get Library Suggestions
          * @description Read the library's Reading Slate.
          */
-        get: operations["get_library_slate_libraries__library_id__slate_get"];
+        get: operations["get_library_suggestions_libraries__library_id__suggestions_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2564,40 +2579,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/resource-graph/stances": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /** Put Stance */
-        put: operations["put_stance_resource_graph_stances_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/resource-graph/stances/{stance_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Delete Stance */
-        delete: operations["delete_stance_resource_graph_stances__stance_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/resource-items/action-snapshots/resolve": {
         parameters: {
             query?: never;
@@ -2918,41 +2899,6 @@ export interface paths {
         get: operations["stream_podcast_subscription_events_stream_podcast_subscriptions__podcast_id__events_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/synapse/edges/{edge_id}/dismiss": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Dismiss Edge */
-        post: operations["dismiss_edge_synapse_edges__edge_id__dismiss_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/synapse/scans": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Read Scan */
-        get: operations["read_scan_synapse_scans_get"];
-        put?: never;
-        /** Request Scan */
-        post: operations["request_scan_synapse_scans_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3646,6 +3592,29 @@ export interface components {
              */
             code: "E_MESSAGE_TOO_LONG" | "E_CATALOG_DEFINITION_STALE" | "E_INVALID_GENERATION_SELECTION" | "E_GENERATION_SELECTION_UNAVAILABLE" | "E_INVALID_REQUEST" | "E_BRANCH_PATH_INVALID" | "E_BRANCH_ANCHOR_INVALID" | "E_FORBIDDEN" | "E_NOT_FOUND" | "E_CONVERSATION_NOT_FOUND" | "E_MESSAGE_NOT_FOUND" | "E_READER_SELECTION_STALE" | "E_READER_SELECTION_NOT_FOUND" | "E_READER_SELECTION_FORBIDDEN" | "E_READER_SELECTION_GEOMETRY_ONLY" | "E_READER_SELECTION_TOO_LARGE" | "E_CONVERSATION_NO_LONGER_EMPTY" | "E_GENERATION_CONTEXT_TOO_LARGE";
         };
+        /** ChatCreationRecord */
+        ChatCreationRecord: {
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "chat";
+            /**
+             * Message Id
+             * Format: uuid
+             */
+            message_id: string;
+            /**
+             * Tool Call Id
+             * Format: uuid
+             */
+            tool_call_id: string;
+        };
         /** ChatPublicationWarning */
         ChatPublicationWarning: {
             /**
@@ -3907,7 +3876,7 @@ export interface components {
              * Error Type
              * @enum {unknown}
              */
-            error_type: "BudgetExceeded" | "Conflict" | "DeadlineExceeded" | "InvalidInput" | "InvalidUpstreamResponse" | "InvalidUrl" | "QuoteAmbiguous" | "QuoteNotFound" | "RateLimited" | "ResourceUnavailable" | "TargetAmbiguous" | "TooLarge" | "ToolUnavailable" | "Uninspectable" | "Unreadable" | "UnsafeDestination" | "UnsupportedContent" | "UpstreamUnavailable" | "WriteCapReached" | null;
+            error_type: "BudgetExceeded" | "Conflict" | "DeadlineExceeded" | "InvalidCursor" | "InvalidInput" | "InvalidUpstreamResponse" | "InvalidUrl" | "QuoteAmbiguous" | "QuoteNotFound" | "RateLimited" | "ResourceUnavailable" | "StaleCursor" | "TargetAmbiguous" | "TooLarge" | "ToolUnavailable" | "Uninspectable" | "Unreadable" | "UnsafeDestination" | "UnsupportedContent" | "UpstreamUnavailable" | "WriteCapReached" | null;
             /** Input */
             input: {
                 [key: string]: unknown;
@@ -3951,7 +3920,7 @@ export interface components {
              * Error Type
              * @enum {unknown}
              */
-            error_type: "BudgetExceeded" | "Conflict" | "DeadlineExceeded" | "InvalidInput" | "InvalidUpstreamResponse" | "InvalidUrl" | "QuoteAmbiguous" | "QuoteNotFound" | "RateLimited" | "ResourceUnavailable" | "TargetAmbiguous" | "TooLarge" | "ToolUnavailable" | "Uninspectable" | "Unreadable" | "UnsafeDestination" | "UnsupportedContent" | "UpstreamUnavailable" | "WriteCapReached" | null;
+            error_type: "BudgetExceeded" | "Conflict" | "DeadlineExceeded" | "InvalidCursor" | "InvalidInput" | "InvalidUpstreamResponse" | "InvalidUrl" | "QuoteAmbiguous" | "QuoteNotFound" | "RateLimited" | "ResourceUnavailable" | "StaleCursor" | "TargetAmbiguous" | "TooLarge" | "ToolUnavailable" | "Uninspectable" | "Unreadable" | "UnsafeDestination" | "UnsupportedContent" | "UpstreamUnavailable" | "WriteCapReached" | null;
             /** Provider Event Seq End */
             provider_event_seq_end: number;
             /** Provider Event Seq Start */
@@ -3991,7 +3960,7 @@ export interface components {
              * Error Type
              * @enum {unknown}
              */
-            error_type: "BudgetExceeded" | "Conflict" | "DeadlineExceeded" | "InvalidInput" | "InvalidUpstreamResponse" | "InvalidUrl" | "QuoteAmbiguous" | "QuoteNotFound" | "RateLimited" | "ResourceUnavailable" | "TargetAmbiguous" | "TooLarge" | "ToolUnavailable" | "Uninspectable" | "Unreadable" | "UnsafeDestination" | "UnsupportedContent" | "UpstreamUnavailable" | "WriteCapReached" | null;
+            error_type: "BudgetExceeded" | "Conflict" | "DeadlineExceeded" | "InvalidCursor" | "InvalidInput" | "InvalidUpstreamResponse" | "InvalidUrl" | "QuoteAmbiguous" | "QuoteNotFound" | "RateLimited" | "ResourceUnavailable" | "StaleCursor" | "TargetAmbiguous" | "TooLarge" | "ToolUnavailable" | "Uninspectable" | "Unreadable" | "UnsafeDestination" | "UnsupportedContent" | "UpstreamUnavailable" | "WriteCapReached" | null;
             /** Filters */
             filters: {
                 [key: string]: unknown;
@@ -4223,6 +4192,27 @@ export interface components {
              */
             target_status: "current" | "missing" | "forbidden" | "unanchorable";
         };
+        /** ConnectionCreationOut */
+        ConnectionCreationOut: {
+            authorship: components["schemas"]["MachineAuthorshipOut"];
+            /** Record */
+            record: components["schemas"]["ChatCreationRecord"] | components["schemas"]["GenerationCreationRecord"];
+        };
+        /** ConnectionDiscoveryScanOut */
+        ConnectionDiscoveryScanOut: {
+            /** Outcome */
+            outcome: ("ok" | "skipped" | "terminal_failed") | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "idle" | "pending" | "running" | "failed";
+        };
+        /** ConnectionDiscoveryScanRequest */
+        ConnectionDiscoveryScanRequest: {
+            /** Ref */
+            ref: string;
+        };
         /** ConnectionEndpointOut */
         ConnectionEndpointOut: {
             activation: components["schemas"]["ResourceActivationOut"];
@@ -4252,7 +4242,7 @@ export interface components {
             /** Kinds */
             kinds?: ("context" | "supports" | "contradicts")[] | null;
             /** Origins */
-            origins?: ("user" | "citation" | "system" | "note_body" | "highlight_note" | "synapse" | "document_embed" | "assistant" | "link_note")[] | null;
+            origins?: ("user" | "citation" | "system" | "note_body" | "highlight_note" | "discovery" | "document_embed" | "assistant" | "link_note")[] | null;
             /** Source Schemes */
             source_schemes?: ("media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "artifact" | "artifact_revision" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor")[] | null;
             /** Target Schemes */
@@ -4278,6 +4268,7 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            creation: components["schemas"]["ConnectionCreationOut"] | null;
             /**
              * Direction
              * @enum {string}
@@ -4294,13 +4285,15 @@ export interface components {
              */
             kind: "context" | "supports" | "contradicts";
             link_note: components["schemas"]["ConnectionLinkNoteOut"] | null;
+            /** Mutation */
+            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DismissDiscoveryMutation"] | components["schemas"]["DetachContextMutation"] | components["schemas"]["UndoAssistantChatMutation"] | components["schemas"]["UndoAssistantGenerationMutation"]) | null;
             /** Ordinal */
             ordinal: number | null;
             /**
              * Origin
              * @enum {string}
              */
-            origin: "user" | "citation" | "system" | "note_body" | "highlight_note" | "synapse" | "document_embed" | "assistant" | "link_note";
+            origin: "user" | "citation" | "system" | "note_body" | "highlight_note" | "discovery" | "document_embed" | "assistant" | "link_note";
             other: components["schemas"]["ConnectionEndpointOut"];
             /** Snapshot */
             snapshot: {
@@ -4842,9 +4835,9 @@ export interface components {
             /** Client Mutation Id */
             client_mutation_id: string;
             /** Source */
-            source: components["schemas"]["LinkResourceSource"] | components["schemas"]["LinkFragmentSelectionSource"] | components["schemas"]["LinkPdfSelectionSource"];
+            source: components["schemas"]["LinkResourceEndpoint"] | components["schemas"]["LinkPassageEndpoint"] | components["schemas"]["LinkFragmentSelectionSource"] | components["schemas"]["LinkPdfSelectionSource"];
             /** Target */
-            target: components["schemas"]["LinkResourceTarget"] | components["schemas"]["LinkPassageTarget"];
+            target: components["schemas"]["LinkResourceEndpoint"] | components["schemas"]["LinkPassageEndpoint"];
         };
         /**
          * CreateMediaHighlightRequest
@@ -5067,6 +5060,10 @@ export interface components {
         /** Data[CollectionRevisionOut] */
         Data_CollectionRevisionOut_: {
             data: components["schemas"]["CollectionRevisionOut"];
+        };
+        /** Data[ConnectionDiscoveryScanOut] */
+        Data_ConnectionDiscoveryScanOut_: {
+            data: components["schemas"]["ConnectionDiscoveryScanOut"];
         };
         /** Data[ConnectionPageOut] */
         Data_ConnectionPageOut_: {
@@ -5312,6 +5309,10 @@ export interface components {
         Data_ResourceActionSnapshotResolveResponse_: {
             data: components["schemas"]["ResourceActionSnapshotResolveResponse"];
         };
+        /** Data[ResourceBodyMutationOut] */
+        Data_ResourceBodyMutationOut_: {
+            data: components["schemas"]["ResourceBodyMutationOut"];
+        };
         /** Data[ResourceLocatorResolveResponse] */
         Data_ResourceLocatorResolveResponse_: {
             data: components["schemas"]["ResourceLocatorResolveResponse"];
@@ -5340,21 +5341,13 @@ export interface components {
         Data_ResourceTitleMutationOut_: {
             data: components["schemas"]["ResourceTitleMutationOut"];
         };
-        /** Data[SlateOut] */
-        Data_SlateOut_: {
-            data: components["schemas"]["SlateOut"];
-        };
         /** Data[SourceRetryAdmission] */
         Data_SourceRetryAdmission_: {
             data: components["schemas"]["SourceRetryAdmission"];
         };
-        /** Data[StanceOut] */
-        Data_StanceOut_: {
-            data: components["schemas"]["StanceOut"];
-        };
-        /** Data[SynapseScanOut] */
-        Data_SynapseScanOut_: {
-            data: components["schemas"]["SynapseScanOut"];
+        /** Data[SuggestionsOut] */
+        Data_SuggestionsOut_: {
+            data: components["schemas"]["SuggestionsOut"];
         };
         /** Data[TranscriptRequestOut] */
         Data_TranscriptRequestOut_: {
@@ -5408,6 +5401,19 @@ export interface components {
             idempotent: boolean;
             invite: components["schemas"]["LibraryInvitationOut"];
         };
+        /** DetachContextMutation */
+        DetachContextMutation: {
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "detach_context";
+        };
         /** DeviceActivityOut */
         DeviceActivityOut: {
             /** Activems */
@@ -5433,6 +5439,14 @@ export interface components {
              * @enum {string}
              */
             kind: "Direct";
+        };
+        /** DismissDiscoveryMutation */
+        DismissDiscoveryMutation: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "dismiss_discovery";
         };
         /** DocumentEmbedDisplayActionOut */
         DocumentEmbedDisplayActionOut: {
@@ -6308,6 +6322,24 @@ export interface components {
             readiness: components["schemas"]["Ready"] | components["schemas"]["OperatorActionRequired"] | components["schemas"]["TemporarilyUnavailable"];
             /** Route */
             route: components["schemas"]["CodexPersonalRoute"] | components["schemas"]["ProviderApiRoute"];
+        };
+        /** GenerationCreationRecord */
+        GenerationCreationRecord: {
+            /**
+             * Generation Id
+             * Format: uuid
+             */
+            generation_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "generation";
+            /**
+             * Position Id
+             * Format: uuid
+             */
+            position_id: string;
         };
         /** GenerationModelRow */
         GenerationModelRow: {
@@ -7366,10 +7398,10 @@ export interface components {
             version_by_lane: components["schemas"]["NoteBodyVersionsOut"];
         };
         /**
-         * LinkPassageTarget
+         * LinkPassageEndpoint
          * @description A transient passage candidate, materialized into a ``passage_anchor`` on confirm.
          */
-        LinkPassageTarget: {
+        LinkPassageEndpoint: {
             /** Candidate Ref */
             candidate_ref: string;
             /**
@@ -7413,18 +7445,8 @@ export interface components {
             /** Quads */
             quads: components["schemas"]["PdfQuadIn"][];
         };
-        /** LinkResourceSource */
-        LinkResourceSource: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "resource";
-            /** Ref */
-            ref: string;
-        };
-        /** LinkResourceTarget */
-        LinkResourceTarget: {
+        /** LinkResourceEndpoint */
+        LinkResourceEndpoint: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -7866,8 +7888,8 @@ export interface components {
              */
             type: "media";
         };
-        /** MediaSlateTargetOut */
-        MediaSlateTargetOut: {
+        /** MediaSuggestionTargetOut */
+        MediaSuggestionTargetOut: {
             /** Href */
             href: string;
             imageUrl: components["schemas"]["Presence_str_-Output"];
@@ -8804,12 +8826,29 @@ export interface components {
                 [key: string]: unknown;
             };
             /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "note";
+            /**
              * Note Id
              * Format: uuid
              */
             note_id: string;
             /** Parent Index */
             parent_index?: number | null;
+        };
+        /** OutlineResource */
+        OutlineResource: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "resource";
+            /** Parent Index */
+            parent_index?: number | null;
+            /** Target Ref */
+            target_ref: string;
         };
         /** OwnedMediaCandidate */
         OwnedMediaCandidate: {
@@ -8906,7 +8945,7 @@ export interface components {
         /** PasteOutlineSurfaceCommand */
         PasteOutlineSurfaceCommand: {
             /** Items */
-            items: components["schemas"]["OutlineNote"][];
+            items: (components["schemas"]["OutlineNote"] | components["schemas"]["OutlineResource"])[];
             /** Position */
             position: components["schemas"]["SurfaceStartPosition"] | components["schemas"]["SurfaceAfterPosition"];
             /**
@@ -9613,22 +9652,6 @@ export interface components {
              */
             type: "podcast";
         };
-        /** PodcastSlateTargetOut */
-        PodcastSlateTargetOut: {
-            /** Href */
-            href: string;
-            imageUrl: components["schemas"]["Presence_str_-Output"];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Podcast";
-            /** Ref */
-            ref: string;
-            subtitle: components["schemas"]["Presence_str_-Output"];
-            /** Title */
-            title: string;
-        };
         /** PodcastSubscribeDestinationOutcomeOut */
         PodcastSubscribeDestinationOutcomeOut: {
             /**
@@ -9811,6 +9834,22 @@ export interface components {
              * Format: uuid
              */
             user_id: string;
+        };
+        /** PodcastSuggestionTargetOut */
+        PodcastSuggestionTargetOut: {
+            /** Href */
+            href: string;
+            imageUrl: components["schemas"]["Presence_str_-Output"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "Podcast";
+            /** Ref */
+            ref: string;
+            subtitle: components["schemas"]["Presence_str_-Output"];
+            /** Title */
+            title: string;
         };
         /** @enum {string} */
         PodcastSyncStatus: "Pending" | "Running" | "Complete" | "SourceLimited" | "Failed";
@@ -10721,22 +10760,10 @@ export interface components {
              */
             note_block_id: string;
         };
-        /** PutStanceRequest */
-        PutStanceRequest: {
-            /**
-             * Kind
-             * @enum {string}
-             */
-            kind: "supports" | "contradicts";
-            /** Source Ref */
-            source_ref: string;
-            /** Target Ref */
-            target_ref: string;
-        };
         /** QuickReadsOut */
         QuickReadsOut: {
             /** Items */
-            items: components["schemas"]["SlateItemOut"][];
+            items: components["schemas"]["SuggestionItemOut"][];
         };
         /** ReadableActivation */
         ReadableActivation: {
@@ -10837,7 +10864,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "Embed" | "Highlight" | "SourceReference" | "GeneratedCitation" | "Link" | "Synapse";
+            kind: "Embed" | "Highlight" | "SourceReference" | "GeneratedCitation" | "Link" | "MachineLink";
             /** Label */
             label: string;
             /** Position */
@@ -10847,7 +10874,7 @@ export interface components {
              * Tone
              * @enum {string}
              */
-            tone: "Neutral" | "Highlight" | "Citation" | "Link" | "Synapse" | "Warning";
+            tone: "Neutral" | "Highlight" | "Citation" | "Link" | "MachineLink" | "Warning";
         };
         /**
          * ReaderDocumentMapOut
@@ -10953,13 +10980,14 @@ export interface components {
             highlights: number;
             /** Links */
             links: number;
+            /** Machine Links */
+            machine_links: number;
             /** Passages */
             passages: number;
-            /** Synapses */
-            synapses: number;
         };
         /** ReaderEvidenceDirectlyAttachedOut */
         ReaderEvidenceDirectlyAttachedOut: {
+            creation: components["schemas"]["ConnectionCreationOut"] | null;
             /**
              * Direction
              * @enum {string}
@@ -10970,13 +10998,15 @@ export interface components {
              * Format: uuid
              */
             edge_id: string;
+            /** Mutation */
+            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DismissDiscoveryMutation"] | components["schemas"]["DetachContextMutation"] | components["schemas"]["UndoAssistantChatMutation"] | components["schemas"]["UndoAssistantGenerationMutation"]) | null;
             /** Object */
             object: components["schemas"]["ReaderEvidenceChatObjectOut"] | components["schemas"]["ReaderEvidenceNoteObjectOut"] | components["schemas"]["ReaderEvidencePlainObjectOut"];
             /**
              * Origin
              * @enum {string}
              */
-            origin: "user" | "citation" | "system" | "note_body" | "highlight_note" | "synapse" | "document_embed" | "assistant" | "link_note";
+            origin: "user" | "citation" | "system" | "note_body" | "highlight_note" | "discovery" | "document_embed" | "assistant" | "link_note";
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -10992,6 +11022,7 @@ export interface components {
         ReaderEvidenceGeneratedCitationOut: {
             /** Associations */
             associations: (components["schemas"]["ReaderEvidenceAuthoredInOut"] | components["schemas"]["ReaderEvidenceDirectlyAttachedOut"])[];
+            creation: components["schemas"]["ConnectionCreationOut"] | null;
             /**
              * Edge Id
              * Format: uuid
@@ -11007,6 +11038,8 @@ export interface components {
             kind: "GeneratedCitation";
             /** Label */
             label: string;
+            /** Mutation */
+            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DismissDiscoveryMutation"] | components["schemas"]["DetachContextMutation"] | components["schemas"]["UndoAssistantChatMutation"] | components["schemas"]["UndoAssistantGenerationMutation"]) | null;
             /**
              * Role
              * @enum {string}
@@ -11065,6 +11098,7 @@ export interface components {
         ReaderEvidenceLinkOut: {
             /** Associations */
             associations: (components["schemas"]["ReaderEvidenceAuthoredInOut"] | components["schemas"]["ReaderEvidenceDirectlyAttachedOut"])[];
+            creation: components["schemas"]["ConnectionCreationOut"] | null;
             /**
              * Edge Id
              * Format: uuid
@@ -11081,13 +11115,52 @@ export interface components {
             /** Label */
             label: string;
             link_note: components["schemas"]["ConnectionLinkNoteOut"] | null;
+            /** Mutation */
+            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DismissDiscoveryMutation"] | components["schemas"]["DetachContextMutation"] | components["schemas"]["UndoAssistantChatMutation"] | components["schemas"]["UndoAssistantGenerationMutation"]) | null;
             /** Object */
             object: components["schemas"]["ReaderEvidenceChatObjectOut"] | components["schemas"]["ReaderEvidenceNoteObjectOut"] | components["schemas"]["ReaderEvidencePlainObjectOut"];
             /**
              * Origin
              * @enum {string}
              */
-            origin: "user" | "citation" | "system" | "note_body" | "highlight_note" | "synapse" | "document_embed" | "assistant" | "link_note";
+            origin: "user" | "citation" | "system" | "note_body" | "highlight_note" | "discovery" | "document_embed" | "assistant" | "link_note";
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "context" | "supports" | "contradicts";
+        };
+        /** ReaderEvidenceMachineLinkOut */
+        ReaderEvidenceMachineLinkOut: {
+            /** Associations */
+            associations: (components["schemas"]["ReaderEvidenceAuthoredInOut"] | components["schemas"]["ReaderEvidenceDirectlyAttachedOut"])[];
+            creation: components["schemas"]["ConnectionCreationOut"] | null;
+            /**
+             * Edge Id
+             * Format: uuid
+             */
+            edge_id: string;
+            excerpt: components["schemas"]["Presence_str_-Output"];
+            /** Id */
+            id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "MachineLink";
+            /** Label */
+            label: string;
+            /** Mutation */
+            mutation: (components["schemas"]["UnlinkMutation"] | components["schemas"]["DismissDiscoveryMutation"] | components["schemas"]["DetachContextMutation"] | components["schemas"]["UndoAssistantChatMutation"] | components["schemas"]["UndoAssistantGenerationMutation"]) | null;
+            /** Object */
+            object: components["schemas"]["ReaderEvidenceChatObjectOut"] | components["schemas"]["ReaderEvidenceNoteObjectOut"] | components["schemas"]["ReaderEvidencePlainObjectOut"];
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "assistant" | "discovery";
+            /** Rationale */
+            rationale: string | null;
             /**
              * Role
              * @enum {string}
@@ -11121,7 +11194,7 @@ export interface components {
         ReaderEvidenceOut: {
             counts: components["schemas"]["ReaderEvidenceCountsOut"];
             /** Document Items */
-            document_items: (components["schemas"]["ReaderEvidenceHighlightOut"] | components["schemas"]["ReaderEvidenceSourceReferenceOut"] | components["schemas"]["ReaderEvidenceGeneratedCitationOut"] | components["schemas"]["ReaderEvidenceLinkOut"] | components["schemas"]["ReaderEvidenceSynapseOut"])[];
+            document_items: (components["schemas"]["ReaderEvidenceHighlightOut"] | components["schemas"]["ReaderEvidenceSourceReferenceOut"] | components["schemas"]["ReaderEvidenceGeneratedCitationOut"] | components["schemas"]["ReaderEvidenceLinkOut"] | components["schemas"]["ReaderEvidenceMachineLinkOut"])[];
             /** Passage Groups */
             passage_groups: components["schemas"]["ReaderEvidencePassageGroupOut"][];
             /** Source Targets */
@@ -11132,7 +11205,7 @@ export interface components {
             /** Also References */
             also_references: components["schemas"]["ReaderEvidenceAlsoReferenceOut"][];
             /** Items */
-            items: (components["schemas"]["ReaderEvidenceHighlightOut"] | components["schemas"]["ReaderEvidenceSourceReferenceOut"] | components["schemas"]["ReaderEvidenceGeneratedCitationOut"] | components["schemas"]["ReaderEvidenceLinkOut"] | components["schemas"]["ReaderEvidenceSynapseOut"])[];
+            items: (components["schemas"]["ReaderEvidenceHighlightOut"] | components["schemas"]["ReaderEvidenceSourceReferenceOut"] | components["schemas"]["ReaderEvidenceGeneratedCitationOut"] | components["schemas"]["ReaderEvidenceLinkOut"] | components["schemas"]["ReaderEvidenceMachineLinkOut"])[];
             /** Locus Ref */
             locus_ref: string;
             /** Resolution */
@@ -11214,35 +11287,6 @@ export interface components {
             resolution: components["schemas"]["ReaderEvidenceResolvedOut"] | components["schemas"]["ReaderEvidenceUnavailableOut"];
             /** Stable Key */
             stable_key: string;
-        };
-        /** ReaderEvidenceSynapseOut */
-        ReaderEvidenceSynapseOut: {
-            /** Associations */
-            associations: (components["schemas"]["ReaderEvidenceAuthoredInOut"] | components["schemas"]["ReaderEvidenceDirectlyAttachedOut"])[];
-            /**
-             * Edge Id
-             * Format: uuid
-             */
-            edge_id: string;
-            excerpt: components["schemas"]["Presence_str_-Output"];
-            /** Id */
-            id: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "Synapse";
-            /** Label */
-            label: string;
-            /** Object */
-            object: components["schemas"]["ReaderEvidenceChatObjectOut"] | components["schemas"]["ReaderEvidenceNoteObjectOut"] | components["schemas"]["ReaderEvidencePlainObjectOut"];
-            /** Rationale */
-            rationale: string;
-            /**
-             * Role
-             * @enum {string}
-             */
-            role: "context" | "supports" | "contradicts";
         };
         /** ReaderEvidenceUnavailableOut */
         ReaderEvidenceUnavailableOut: {
@@ -11926,6 +11970,29 @@ export interface components {
             /** Unresolved Reason */
             unresolved_reason: string | null;
         };
+        /** ResourceBodyMutationOut */
+        ResourceBodyMutationOut: {
+            /** Bodypmjson */
+            bodyPmJson: {
+                [key: string]: unknown;
+            };
+            /** Bodytext */
+            bodyText: string;
+            /** Clientmutationid */
+            clientMutationId: string;
+            item: components["schemas"]["ResourceItemOut"];
+            /**
+             * Updatedat
+             * Format: date-time
+             */
+            updatedAt: string;
+            /** Versions */
+            versions: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
+        };
         /** ResourceBodyMutationRequest */
         ResourceBodyMutationRequest: {
             /** Base Versions */
@@ -11976,6 +12043,11 @@ export interface components {
              */
             libraryPlacement: "None" | "ManageEntries";
             /**
+             * Linkmode
+             * @enum {string}
+             */
+            linkMode: "none" | "direct" | "materialize_passage";
+            /**
              * Promptrender
              * @enum {string}
              */
@@ -11990,7 +12062,6 @@ export interface components {
              * @enum {string}
              */
             sharing: "None" | "CopyOnly" | "ResourceGrants" | "HighlightGrants" | "LibraryMembership";
-            userRelation: components["schemas"]["ResourceUserRelationPolicyOut"];
         };
         /** ResourceItemOut */
         ResourceItemOut: {
@@ -12192,11 +12263,6 @@ export interface components {
              * @default 10
              */
             limit: number;
-            /**
-             * Purpose
-             * @enum {string}
-             */
-            purpose: "link" | "reference";
             /** Q */
             q: string;
             /** Schemes */
@@ -12236,18 +12302,6 @@ export interface components {
             client_mutation_id: string;
             /** Title */
             title: string;
-        };
-        /** ResourceUserRelationPolicyOut */
-        ResourceUserRelationPolicyOut: {
-            /** Notereferencetarget */
-            noteReferenceTarget: boolean;
-            /** Userlinksource */
-            userLinkSource: boolean;
-            /**
-             * Userlinktarget
-             * @enum {string}
-             */
-            userLinkTarget: "none" | "direct" | "materialize_passage";
         };
         /** RestoreActivityExclusionIn */
         RestoreActivityExclusionIn: {
@@ -13233,18 +13287,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditAuthors" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "LearnHighlight" | "LibraryPlacement" | "LibrarySettings" | "LinkHighlight" | "MediaMetadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastSettings" | "RefreshPodcast" | "RefreshSource" | "RegenerateArtifact" | "RegenerateMessage" | "RemoveMedia" | "RerunMessage" | "ResetProgress" | "RetryPodcastBackfill" | "Share" | "WalkMessageSources";
-        };
-        /** SlateItemOut */
-        SlateItemOut: {
-            consumption: components["schemas"]["Presence_ConsumptionOut_"];
-            /** Target */
-            target: components["schemas"]["MediaSlateTargetOut"] | components["schemas"]["PodcastSlateTargetOut"];
-        };
-        /** SlateOut */
-        SlateOut: {
-            /** Items */
-            items: components["schemas"]["SlateItemOut"][];
+            kind: "Chat" | "DeleteConversation" | "DeleteHighlight" | "DeleteLibrary" | "DeleteMessage" | "DeletePage" | "DownloadOriginal" | "EditAuthors" | "EditHighlight" | "EditHighlightBounds" | "EditNoteBody" | "EditPageTitle" | "ForkMessage" | "LearnHighlight" | "LibraryPlacement" | "LibrarySettings" | "LinkResource" | "MediaMetadata" | "Open" | "OpenInNewPane" | "PlayNext" | "PodcastSettings" | "RefreshPodcast" | "RefreshSource" | "RegenerateArtifact" | "RegenerateMessage" | "RemoveMedia" | "RerunMessage" | "ResetProgress" | "RetryPodcastBackfill" | "Share" | "WalkMessageSources";
         };
         /** SourceAccepted */
         SourceAccepted: {
@@ -13532,10 +13575,6 @@ export interface components {
              */
             type: "split_note";
         };
-        /** StanceOut */
-        StanceOut: {
-            connection: components["schemas"]["ConnectionOut"];
-        };
         /** StarOut */
         StarOut: {
             /** Kind */
@@ -13575,6 +13614,17 @@ export interface components {
              * @enum {string}
              */
             kind: "Succeeded";
+        };
+        /** SuggestionItemOut */
+        SuggestionItemOut: {
+            consumption: components["schemas"]["Presence_ConsumptionOut_"];
+            /** Target */
+            target: components["schemas"]["MediaSuggestionTargetOut"] | components["schemas"]["PodcastSuggestionTargetOut"];
+        };
+        /** SuggestionsOut */
+        SuggestionsOut: {
+            /** Items */
+            items: components["schemas"]["SuggestionItemOut"][];
         };
         /** SurfaceAfterPosition */
         SurfaceAfterPosition: {
@@ -13623,19 +13673,6 @@ export interface components {
              * @enum {string}
              */
             kind: "start";
-        };
-        /** SynapseScanOut */
-        SynapseScanOut: {
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "idle" | "pending" | "running" | "failed";
-        };
-        /** SynapseScanRequest */
-        SynapseScanRequest: {
-            /** Ref */
-            ref: string;
         };
         /** TemporarilyUnavailable */
         TemporarilyUnavailable: {
@@ -14024,7 +14061,7 @@ export interface components {
              * Error Type
              * @enum {unknown}
              */
-            error_type: "BudgetExceeded" | "Conflict" | "DeadlineExceeded" | "InvalidInput" | "InvalidUpstreamResponse" | "InvalidUrl" | "QuoteAmbiguous" | "QuoteNotFound" | "RateLimited" | "ResourceUnavailable" | "TargetAmbiguous" | "TooLarge" | "ToolUnavailable" | "Uninspectable" | "Unreadable" | "UnsafeDestination" | "UnsupportedContent" | "UpstreamUnavailable" | "WriteCapReached" | null;
+            error_type: "BudgetExceeded" | "Conflict" | "DeadlineExceeded" | "InvalidCursor" | "InvalidInput" | "InvalidUpstreamResponse" | "InvalidUrl" | "QuoteAmbiguous" | "QuoteNotFound" | "RateLimited" | "ResourceUnavailable" | "StaleCursor" | "TargetAmbiguous" | "TooLarge" | "ToolUnavailable" | "Uninspectable" | "Unreadable" | "UnsafeDestination" | "UnsupportedContent" | "UpstreamUnavailable" | "WriteCapReached" | null;
             /**
              * Id
              * Format: uuid
@@ -14123,6 +14160,37 @@ export interface components {
              */
             updated_at: string;
         };
+        /** UndoAssistantChatMutation */
+        UndoAssistantChatMutation: {
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "undo_assistant_chat";
+            /**
+             * Tool Call Id
+             * Format: uuid
+             */
+            tool_call_id: string;
+        };
+        /** UndoAssistantGenerationMutation */
+        UndoAssistantGenerationMutation: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "undo_assistant_generation";
+            /**
+             * Position Id
+             * Format: uuid
+             */
+            position_id: string;
+        };
         /**
          * UndoFinishCommand
          * @description Undo the finish ``finish_id`` names (its ``finishId``): the override it replaced and the
@@ -14167,6 +14235,14 @@ export interface components {
              * Format: uuid
              */
             itemId: string;
+        };
+        /** UnlinkMutation */
+        UnlinkMutation: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "unlink";
         };
         /** UnresolvedNavigationTarget */
         UnresolvedNavigationTarget: {
@@ -15405,6 +15481,99 @@ export interface operations {
             };
         };
     };
+    dismiss_edge_connection_discovery_edges__edge_id__dismiss_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                edge_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_scan_connection_discovery_scans_get: {
+        parameters: {
+            query: {
+                ref: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_ConnectionDiscoveryScanOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    request_scan_connection_discovery_scans_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectionDiscoveryScanRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Data_ConnectionDiscoveryScanOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     post_activity_consumption_activity_post: {
         parameters: {
             query?: never;
@@ -15784,39 +15953,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_context_refs_conversations__conversation_id__context_refs_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                conversation_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
             };
             /** @description Validation Error */
             422: {
@@ -16645,7 +16781,7 @@ export interface operations {
             };
         };
     };
-    get_lectern_slate_lectern_slate_get: {
+    get_lectern_suggestions_lectern_suggestions_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -16660,7 +16796,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_SlateOut_"];
+                    "application/json": components["schemas"]["Data_SuggestionsOut_"];
                 };
             };
         };
@@ -17279,7 +17415,7 @@ export interface operations {
             };
         };
     };
-    get_library_slate_libraries__library_id__slate_get: {
+    get_library_suggestions_libraries__library_id__suggestions_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -17296,7 +17432,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_SlateOut_"];
+                    "application/json": components["schemas"]["Data_SuggestionsOut_"];
                 };
             };
             /** @description Validation Error */
@@ -19977,68 +20113,6 @@ export interface operations {
             };
         };
     };
-    put_stance_resource_graph_stances_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PutStanceRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_StanceOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_stance_resource_graph_stances__stance_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                stance_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     resolve_action_snapshots_resource_items_action_snapshots_resolve_post: {
         parameters: {
             query?: never;
@@ -20192,9 +20266,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Data_ResourceBodyMutationOut_"];
                 };
             };
             /** @description Validation Error */
@@ -20661,99 +20733,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    dismiss_edge_synapse_edges__edge_id__dismiss_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                edge_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    read_scan_synapse_scans_get: {
-        parameters: {
-            query: {
-                ref: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_SynapseScanOut_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    request_scan_synapse_scans_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SynapseScanRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Data_SynapseScanOut_"];
                 };
             };
             /** @description Validation Error */

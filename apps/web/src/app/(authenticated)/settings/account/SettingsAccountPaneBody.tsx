@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import {
   useCallback,
   useEffect,
@@ -75,7 +76,7 @@ function effectStatus(effect: GenerationEffect, undone: boolean): string {
   return effect.reverted_at || undone ? "Undone" : "Assistant-created";
 }
 
-function GenerationEffects() {
+function GenerationEffects({ generationId, positionId }: { generationId: string | null; positionId: string | null }) {
   const [page, setPage] = useState<GenerationEffectsPage | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -83,12 +84,17 @@ function GenerationEffects() {
   const [undone, setUndone] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  const selectedRef = useRef<HTMLLIElement | null>(null);
+  const revealedRef = useRef(false);
+  const path = generationId
+    ? `/api/generation-effects?generation_id=${encodeURIComponent(generationId)}` as ApiPath
+    : "/api/generation-effects";
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setError(null);
     try {
-      const next = await apiFetch<GenerationEffectsPage>("/api/generation-effects", {
+      const next = await apiFetch<GenerationEffectsPage>(path, {
         cache: "no-store",
         signal,
       });
@@ -107,7 +113,7 @@ function GenerationEffects() {
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
-  }, []);
+  }, [path]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -115,13 +121,20 @@ function GenerationEffects() {
     return () => controller.abort();
   }, [refresh]);
 
-  const loadMore = async () => {
+  useEffect(() => {
+    if (revealedRef.current || !selectedRef.current) return;
+    selectedRef.current.scrollIntoView({ block: "nearest" });
+    selectedRef.current.focus({ preventScroll: true });
+    revealedRef.current = true;
+  }, [page]);
+
+  const loadMore = useCallback(async () => {
     if (!page?.next_cursor || loading || loadingMore || busyId !== null) return;
     setLoadingMore(true);
     setError(null);
     try {
-      const path = `/api/generation-effects?before=${encodeURIComponent(page.next_cursor)}` as ApiPath;
-      const next = await apiFetch<GenerationEffectsPage>(path, { cache: "no-store" });
+      const continuation = `${path}${generationId ? "&" : "?"}before=${encodeURIComponent(page.next_cursor)}` as ApiPath;
+      const next = await apiFetch<GenerationEffectsPage>(continuation, { cache: "no-store" });
       setPage({ items: [...page.items, ...next.items], next_cursor: next.next_cursor });
     } catch (caught) {
       if (handleUnauthenticatedApiError(caught)) return;
@@ -133,7 +146,12 @@ function GenerationEffects() {
     } finally {
       setLoadingMore(false);
     }
-  };
+  }, [page, loading, loadingMore, busyId, path, generationId]);
+
+  useEffect(() => {
+    if (!positionId || error || page?.items.some((effect) => effect.position_id === positionId)) return;
+    if (page?.next_cursor) void loadMore();
+  }, [positionId, error, page, loadMore]);
 
   const undo = async (effect: GenerationEffect) => {
     if (!effect.undo_allowed || !effect.undo_url || undone.has(effect.position_id) || busyId || loading || loadingMore) return;
@@ -168,17 +186,19 @@ function GenerationEffects() {
 
   return (
     <PaneSection
+      id="assistant-writes"
       title="Assistant writes"
-      description="Finished assistant write attempts. Undo removes the items created by a successful write."
+      description={generationId ? "Writes from the generation that created this link." : "Finished assistant write attempts. Undo removes the items created by a successful write."}
       actions={<Button variant="ghost" size="sm" onClick={() => void refresh()} disabled={loading || loadingMore || busyId !== null}>Refresh</Button>}
     >
       {error ? <p className={styles.effectsError} role="alert">{error}</p> : null}
       {loading && page === null ? <p className={styles.current}>Loading writes…</p> : null}
-      {!loading && page?.items.length === 0 ? <p className={styles.current}>No assistant writes yet.</p> : null}
+      {!loading && page?.items.length === 0 ? <p className={styles.current}>{generationId ? "Creation history is no longer available." : "No assistant writes yet."}</p> : null}
+      {positionId && page && !page.items.some((effect) => effect.position_id === positionId) ? <p className={styles.current}>{page.next_cursor ? "Finding the creation record…" : page.items.length ? "The selected creation record is no longer available." : null}</p> : null}
       {page?.items.length ? (
         <ol className={styles.effectsList}>
           {page.items.map((effect) => (
-            <li key={effect.position_id} className={styles.effect}>
+            <li key={effect.position_id} className={styles.effect} ref={effect.position_id === positionId ? selectedRef : undefined} tabIndex={effect.position_id === positionId ? -1 : undefined} aria-current={effect.position_id === positionId ? "true" : undefined}>
               <div className={styles.effectHeading}>
                 <strong>{effect.canonical_id.replace(/^nexus\./, "").replaceAll(".", " ")}</strong>
                 <time dateTime={effect.created_at}>{new Date(effect.created_at).toLocaleString()}</time>
@@ -264,6 +284,9 @@ function accountErrorMessage(
 }
 
 export default function SettingsAccountPaneBody() {
+  const params = usePaneSearchParams();
+  const generationId = params.get("generation_id");
+  const positionId = params.get("position_id");
   const { setCalendarTimeZone } = useAuthenticatedAccount();
   const accountResource = useResource<ApiJson<"/me", "get">, NoResourceParams>({
     descriptor: settingsAccountResource,
@@ -626,7 +649,7 @@ export default function SettingsAccountPaneBody() {
           <p className={styles.current}>The Post Room is not configured.</p>
         )}
       </PaneSection>
-      <GenerationEffects />
+      <GenerationEffects key={`${generationId ?? "all"}:${positionId ?? "none"}`} generationId={generationId} positionId={positionId} />
     </PaneSurface>
   );
 }

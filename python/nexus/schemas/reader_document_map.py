@@ -15,7 +15,13 @@ from nexus.schemas.reader_apparatus import (
     ReaderApparatusConfidence,
     ReaderApparatusItemKind,
 )
-from nexus.schemas.resource_graph import ConnectionLinkNoteOut, EdgeKind, EdgeOrigin
+from nexus.schemas.resource_graph import (
+    ConnectionCreationOut,
+    ConnectionLinkNoteOut,
+    ConnectionMutation,
+    EdgeKind,
+    EdgeOrigin,
+)
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import MediaRetrievalLocator
 
@@ -27,10 +33,10 @@ ReaderDocumentMapMarkerKind = Literal[
     "SourceReference",
     "GeneratedCitation",
     "Link",
-    "Synapse",
+    "MachineLink",
 ]
 ReaderDocumentMapMarkerTone = Literal[
-    "Neutral", "Highlight", "Citation", "Link", "Synapse", "Warning"
+    "Neutral", "Highlight", "Citation", "Link", "MachineLink", "Warning"
 ]
 
 
@@ -113,6 +119,8 @@ class ReaderEvidenceDirectlyAttachedOut(_ReaderMapOut):
     relationship: Literal["DirectlyAttached"] = "DirectlyAttached"
     object: ReaderEvidenceObjectOut
     edge_id: UUID
+    creation: ConnectionCreationOut | None
+    mutation: Annotated[ConnectionMutation, Field(discriminator="kind")] | None
     role: EdgeKind
     origin: EdgeOrigin
     direction: Literal["Outgoing", "Incoming"]
@@ -198,23 +206,30 @@ class ReaderEvidenceSourceReferenceOut(ReaderEvidenceItemBaseOut):
 class ReaderEvidenceGeneratedCitationOut(ReaderEvidenceItemBaseOut):
     kind: Literal["GeneratedCitation"] = "GeneratedCitation"
     edge_id: UUID
+    creation: ConnectionCreationOut | None
+    mutation: Annotated[ConnectionMutation, Field(discriminator="kind")] | None
     role: EdgeKind
 
 
 class ReaderEvidenceLinkOut(ReaderEvidenceItemBaseOut):
     kind: Literal["Link"] = "Link"
     edge_id: UUID
+    creation: ConnectionCreationOut | None
+    mutation: Annotated[ConnectionMutation, Field(discriminator="kind")] | None
     role: EdgeKind
     origin: EdgeOrigin
     object: ReaderEvidenceObjectOut
     link_note: ConnectionLinkNoteOut | None
 
 
-class ReaderEvidenceSynapseOut(ReaderEvidenceItemBaseOut):
-    kind: Literal["Synapse"] = "Synapse"
+class ReaderEvidenceMachineLinkOut(ReaderEvidenceItemBaseOut):
+    kind: Literal["MachineLink"] = "MachineLink"
     edge_id: UUID
+    creation: ConnectionCreationOut | None
+    mutation: Annotated[ConnectionMutation, Field(discriminator="kind")] | None
     role: EdgeKind
-    rationale: str
+    origin: Literal["assistant", "discovery"]
+    rationale: str | None
     object: ReaderEvidenceObjectOut
 
 
@@ -223,7 +238,7 @@ ReaderEvidenceItemOut = Annotated[
     | ReaderEvidenceSourceReferenceOut
     | ReaderEvidenceGeneratedCitationOut
     | ReaderEvidenceLinkOut
-    | ReaderEvidenceSynapseOut,
+    | ReaderEvidenceMachineLinkOut,
     Field(discriminator="kind"),
 ]
 
@@ -240,7 +255,7 @@ class ReaderEvidenceCountsOut(_ReaderMapOut):
     highlights: int = Field(ge=0)
     citations: int = Field(ge=0)
     links: int = Field(ge=0)
-    synapses: int = Field(ge=0)
+    machine_links: int = Field(ge=0)
     passages: int = Field(ge=0)
     document: int = Field(ge=0)
 

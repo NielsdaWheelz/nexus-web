@@ -13,6 +13,7 @@ from uuid import UUID
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.search_types import ALL_RESULT_TYPES
 from nexus.services.contributor_taxonomy import CONTRIBUTOR_ROLE_SET
+from nexus.services.resource_graph.refs import ResourceRef
 
 DEFAULT_LIMIT = 20
 MAX_LIMIT = 50
@@ -108,6 +109,7 @@ class SearchQuery:
     scope: SearchScope = field(default_factory=lambda: SearchScope("all"))
     cursor: str | None = None
     limit: int = DEFAULT_LIMIT
+    frozen_context_refs: tuple[ResourceRef, ...] | None = None
 
     @property
     def effective_kinds(self) -> frozenset[SearchKind]:

@@ -1,7 +1,7 @@
 "use client";
 
 import { apiFetch, isApiError, type ApiPath } from "@/lib/api/client";
-import type { Schema } from "@/lib/api/wire";
+import type { ApiJson, Schema } from "@/lib/api/wire";
 import { createRandomId } from "@/lib/createRandomId";
 import type { MountedEditorMutationLease } from "@/lib/actions/mountedActionHandoff";
 import type { NoteBodyEdit, NoteBodyEditorDocument, NoteBodySelection } from "@/components/notes/NoteBodyEditor";
@@ -9,8 +9,8 @@ import { expectRecord, expectInteger, expectString } from "@/lib/validation";
 import { noteBodyHasContent } from "@/lib/notes/prosemirror/bodyContent";
 import { decodeNoteBodyValue, type NoteBodyValue } from "@/lib/notes/prosemirror/schema";
 
-const PREFIX = "nexus.writingJournal:v4:";
-const PREVIOUS_PREFIX = "nexus.writingJournal:v3:";
+const PREFIX = "nexus.writingJournal:v5:";
+const PREVIOUS_PREFIXES = ["nexus.writingJournal:v3:", "nexus.writingJournal:v4:"];
 const IDLE_MS = 1500;
 const MAX_MS = 5000;
 
@@ -67,7 +67,7 @@ type OperationEntry = {
   paused: "network" | "conflict" | "server" | "storage" | null;
 };
 type Journal = {
-  version: 4;
+  version: 5;
   accountId: string;
   writerId: string;
   revision: number;
@@ -128,7 +128,7 @@ function parseJournal(raw: string, accountId: string): Journal {
   const value: unknown = JSON.parse(raw);
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("journal must be an object");
   const journal = value as Journal;
-  if (journal.version !== 4 || journal.accountId !== accountId || typeof journal.writerId !== "string" ||
+  if (journal.version !== 5 || journal.accountId !== accountId || typeof journal.writerId !== "string" ||
     !Number.isSafeInteger(journal.revision) || !journal.entries || typeof journal.entries !== "object" ||
     Array.isArray(journal.entries) || !Array.isArray(journal.operations) || !Array.isArray(journal.adoptedSources)) {
     throw new TypeError("journal identity or structure is invalid");
@@ -200,7 +200,7 @@ export class WritingSession {
 
   constructor(accountId: string) {
     this.accountId = accountId;
-    this.journal = { version: 4, accountId, writerId: this.writerId, revision: 0, adoptedSources: [], entries: {}, operations: [] };
+    this.journal = { version: 5, accountId, writerId: this.writerId, revision: 0, adoptedSources: [], entries: {}, operations: [] };
   }
 
   subscribe = (listener: () => void): (() => void) => {
@@ -640,7 +640,7 @@ export class WritingSession {
           createdVersions = data.version_by_lane;
           return { body, version: createdVersions.body };
         })
-        : this.completeOperation<{ data: unknown } | undefined, BodyAck>(submitted.request, (reply) => this.acknowledgeCanonicalBody(reply?.data));
+        : this.completeOperation<ApiJson<"/resource-items/{resource_ref}/body", "patch">, BodyAck>(submitted.request, (reply) => this.acknowledgeCanonicalBody(reply.data));
       void acknowledgement.then(async (ack) => {
         entry.acknowledged = ack;
         runtime.version = ack.version;
@@ -743,11 +743,10 @@ export class WritingSession {
     // defect cannot prove noncommit; only an explicit 4xx response can.
     return "network";
   }
-  private acknowledgeCanonicalBody(data: unknown): BodyAck {
-    const value = expectRecord(data, "note body response");
-    const item = expectRecord(value.item, "note body response item");
-    const versions = expectRecord(item.versionByLane, "note body version");
-    return { body: decodeNoteBodyValue(value.bodyPmJson, value.bodyText, "note body response"), version: expectInteger(versions.body, "note body version") };
+  private acknowledgeCanonicalBody(data: Schema<"ResourceBodyMutationOut">): BodyAck {
+    const version = data.item.versionByLane.body;
+    if (version === undefined) throw new Error("Body acknowledgement omitted its version");
+    return { body: { bodyPmJson: data.bodyPmJson, bodyText: data.bodyText }, version };
   }
   async refreshConflict(noteRef: string): Promise<void> {
     const runtime = this.state(noteRef);
@@ -809,7 +808,7 @@ export class WritingSession {
       for (let index = 0; index < storage.length; index++) {
         const key = storage.key(index);
         if (!key || key === this.key()) continue;
-        const legacy = key.startsWith(`${PREVIOUS_PREFIX}${this.accountId}:`);
+        const legacy = PREVIOUS_PREFIXES.some((prefix) => key.startsWith(`${prefix}${this.accountId}:`));
         if (!legacy && !key.startsWith(`${PREFIX}${this.accountId}:`)) continue;
         const raw = storage.getItem(key);
         if (raw === null) continue;

@@ -3,7 +3,8 @@ import type { SurfaceHistorySelection } from "@/lib/notes/writingSession";
 import type { NoteBodySelection, NoteBodySplit } from "@/components/notes/NoteBodyEditor";
 import type { ResourceSurface, ResourceSurfaceNode, SurfacePosition } from "@/lib/resources/resourceItems";
 import { createNoteBodyDoc, noteBodySchema, noteBodyValueFromDoc } from "@/lib/notes/prosemirror/schema";
-import { copyText } from "@/lib/ui/copyText";
+import { copyResourceLink, RESOURCE_CLIPBOARD_TYPE } from "@/lib/ui/copyText";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { expectExactRecord, expectInteger, expectRecord, expectString } from "@/lib/validation";
 import { surfacePathKey, surfacePositionAtEnd, type ResourceSurfaceCommand, type SurfaceContext } from "./model";
 
@@ -59,11 +60,10 @@ export interface ResourceOutline {
   split(occurrenceId: string, split: NoteBodySplit): Promise<void>;
   join(occurrenceId: string, direction: "backward" | "forward"): Promise<void>;
   insert(position: SurfacePosition, context?: SurfaceContext): void;
-  reference(targetRef: string, position: SurfacePosition, context?: SurfaceContext): Promise<void>;
   drop(occurrenceId: string, targetId: string, placement: "before" | "after" | "inside"): Promise<void>;
   copy(clipboard: DataTransfer, cut?: boolean): Promise<void>;
   paste(clipboard: DataTransfer): Promise<boolean>;
-  copyReference(occurrenceId: string): Promise<void>;
+  copyLink(occurrenceId: string): Promise<void>;
 }
 export type NeighborhoodLoad = { kind: "loading" } | { kind: "error"; error: unknown };
 export function outlineRows(rootRef: string, graph: ReadonlyMap<string, ResourceSurface>, view: OutlineViewState, loads: ReadonlyMap<string, NeighborhoodLoad>): OutlineRow[] {
@@ -102,8 +102,9 @@ export function outlineRows(rootRef: string, graph: ReadonlyMap<string, Resource
   return rows;
 }
 export const OUTLINE_CLIPBOARD_TYPE = "application/x-nexus-outline+json";
-const REFERENCE_CLIPBOARD_TYPE = "application/x-nexus-reference+json";
-type ClipboardItem = { body: Record<string, unknown>; parentIndex?: number };
+type ClipboardItem =
+  | { kind: "note"; body: Record<string, unknown>; parentIndex?: number }
+  | { kind: "resource"; ref: string; label: string; parentIndex?: number };
 function outlineFromHtml(html: string): ClipboardItem[] | null {
   if (!html) return null;
   const document = new DOMParser().parseFromString(html, "text/html");
@@ -133,7 +134,7 @@ function outlineFromHtml(html: string): ClipboardItem[] | null {
         body = noteBodySchema.nodes.paragraph!.create(null, inline);
       }
       const index = items.length;
-      items.push({ body: noteBodyValueFromDoc(noteBodySchema.nodes.note_body_doc!.create(null, body)).bodyPmJson, ...(parentIndex === undefined ? {} : { parentIndex }) });
+      items.push({ kind: "note", body: noteBodyValueFromDoc(noteBodySchema.nodes.note_body_doc!.create(null, body)).bodyPmJson, ...(parentIndex === undefined ? {} : { parentIndex }) });
       for (const nested of li.querySelectorAll("ul, ol")) {
         if (nested.parentElement?.closest("li") === li) visit(nested, index);
       }
@@ -335,11 +336,6 @@ export function createResourceOutline(input: {
       const noteId = crypto.randomUUID();
       input.command(endpointFor(path), path, { type: "insert_note", noteId, position, bodyPmJson: { type: "paragraph" } }, `note_block:${noteId}`);
     },
-    async reference(targetRef, position, path = view.focusedPath ?? { rootRef: input.rootRef, linkPath: [] }) {
-      assertStructural();
-      await input.resolve(targetRef);
-      input.command(endpointFor(path), path, { type: "insert_resource", targetRef, position }, targetRef);
-    },
     async drop(id, targetId, placement) {
       if (!checkSingle() || id === targetId) return;
       const value = row(id); const target = row(targetId); assertStructural(value, target);
@@ -376,14 +372,17 @@ export function createResourceOutline(input: {
           const parent = selected[candidate]!;
           if (parent.path.linkPath.length < value.path.linkPath.length && parent.path.linkPath.every((link, offset) => value.path.linkPath[offset] === link)) { parentIndex = candidate; break; }
         }
-        const body = !value.terminal && value.target.content.kind === "note_body" ? input.body(value.target.item.ref) : { type: "paragraph", content: [{ type: "object_ref", attrs: { objectType: value.target.item.scheme, objectId: value.target.item.id, label: value.target.item.label } }] };
-        return { body, ...(parentIndex === undefined ? {} : { parentIndex }) };
+        const parent = parentIndex === undefined ? {} : { parentIndex };
+        return !value.terminal && value.target.content.kind === "note_body"
+          ? { kind: "note", body: input.body(value.target.item.ref), ...parent }
+          : { kind: "resource", ref: value.target.item.ref, label: value.target.item.label, ...parent };
       });
-      clipboard.setData(OUTLINE_CLIPBOARD_TYPE, JSON.stringify({ version: 1, items }));
+      clipboard.setData(OUTLINE_CLIPBOARD_TYPE, JSON.stringify({ version: 2, items }));
       const depths: number[] = [];
       clipboard.setData("text/plain", items.map((item, index) => {
         const depth = item.parentIndex === undefined ? 0 : depths[item.parentIndex]! + 1; depths[index] = depth;
-        return "  ".repeat(depth) + "- " + noteBodyValueFromDoc(createNoteBodyDoc({ bodyPmJson: item.body })).bodyText;
+        const text = item.kind === "note" ? noteBodyValueFromDoc(createNoteBodyDoc({ bodyPmJson: item.body })).bodyText : item.label;
+        return "  ".repeat(depth) + "- " + text;
       }).join("\n"));
       if (cut) await remove(selected.map((value) => value.occurrenceId));
     },
@@ -392,29 +391,36 @@ export function createResourceOutline(input: {
       assertStructural();
       const selected = row(view.selection.occurrenceIds.at(-1)!);
       const position: SurfacePosition = { kind: "after", linkId: selected.linkId };
-      const reference = clipboard.getData(REFERENCE_CLIPBOARD_TYPE);
-      if (reference) {
-        const decoded = expectExactRecord(JSON.parse(reference), ["ref"], "reference clipboard");
-        const targetRef = expectString(decoded.ref, "reference ref"); await input.resolve(targetRef);
+      const resource = clipboard.getData(RESOURCE_CLIPBOARD_TYPE);
+      if (resource) {
+        const decoded = expectExactRecord(JSON.parse(resource), ["ref"], "resource clipboard");
+        const targetRef = expectString(decoded.ref, "resource ref");
+        if (!parseResourceRef(targetRef)) throw new TypeError("Invalid resource clipboard ref");
+        await input.resolve(targetRef);
         send(selected, { type: "insert_resource", targetRef, position }); return true;
       }
-      const plainReference = /^\[\[([a-z_]+:[0-9a-f-]{36})\]\]$/.exec(clipboard.getData("text/plain").trim());
-      if (plainReference) { await input.resolve(plainReference[1]!); send(selected, { type: "insert_resource", targetRef: plainReference[1]!, position }); return true; }
       const raw = clipboard.getData(OUTLINE_CLIPBOARD_TYPE);
       let items: ClipboardItem[];
       const htmlItems = raw ? null : outlineFromHtml(clipboard.getData("text/html"));
       if (raw) {
         const decoded = expectExactRecord(JSON.parse(raw), ["version", "items"], "outline clipboard");
-        if (decoded.version !== 1 || !Array.isArray(decoded.items)) throw new TypeError("Unsupported outline clipboard");
+        if (decoded.version !== 2 || !Array.isArray(decoded.items)) throw new TypeError("This copied outline cannot be pasted. Copy the items again.");
         items = decoded.items.map((rawItem, index) => {
           const record = expectRecord(rawItem, "outline clipboard item");
-          const value = expectExactRecord(record, "parentIndex" in record ? ["body", "parentIndex"] : ["body"], "outline clipboard item");
-          const body = expectRecord(value.body, "outline clipboard body");
-          createNoteBodyDoc({ bodyPmJson: body });
-          if (value.parentIndex === undefined) return { body };
-          const parentIndex = expectInteger(value.parentIndex, "outline parent index");
-          if (parentIndex < 0 || parentIndex >= index) throw new TypeError("Outline parent must precede child");
-          return { body, parentIndex };
+          const kind = expectString(record.kind, "outline clipboard kind");
+          if (kind !== "note" && kind !== "resource") throw new TypeError("Unsupported outline clipboard item");
+          const fields = kind === "note" ? ["kind", "body"] : ["kind", "ref", "label"];
+          const value = expectExactRecord(record, "parentIndex" in record ? [...fields, "parentIndex"] : fields, "outline clipboard item");
+          const parentIndex = "parentIndex" in value ? expectInteger(value.parentIndex, "outline parent index") : undefined;
+          if (parentIndex !== undefined && (parentIndex < 0 || parentIndex >= index)) throw new TypeError("Outline parent must precede child");
+          const parent = parentIndex === undefined ? {} : { parentIndex };
+          if (kind === "resource") {
+            const ref = expectString(value.ref, "outline resource ref");
+            if (!parseResourceRef(ref)) throw new TypeError("Invalid outline resource ref");
+            return { kind, ref, label: expectString(value.label, "outline resource label"), ...parent };
+          }
+          const body = expectRecord(value.body, "outline clipboard body"); createNoteBodyDoc({ bodyPmJson: body });
+          return { kind, body, ...parent };
         });
       } else if (htmlItems) {
         items = htmlItems;
@@ -427,14 +433,23 @@ export function createResourceOutline(input: {
           const indent = match[1]!.replaceAll("\t", "  ").length;
           while (parents.length && parents.at(-1)!.indent >= indent) parents.pop();
           const parentIndex = parents.at(-1)?.index; parents.push({ indent, index });
-          return { body: { type: "paragraph", ...(match[2] ? { content: [{ type: "text", text: match[2] }] } : {}) }, ...(parentIndex === undefined ? {} : { parentIndex }) };
+          return { kind: "note", body: { type: "paragraph", ...(match[2] ? { content: [{ type: "text", text: match[2] }] } : {}) }, ...(parentIndex === undefined ? {} : { parentIndex }) };
         });
       }
       if (!items.length) return false;
-      send(selected, { type: "paste_outline", position, items: items.map((item) => ({ noteId: crypto.randomUUID(), bodyPmJson: item.body, ...(item.parentIndex === undefined ? {} : { parentIndex: item.parentIndex }) })) });
+      for (const item of items) if (item.parentIndex !== undefined && items[item.parentIndex]?.kind !== "note") throw new TypeError("Outline parents must be earlier copied notes");
+      for (const item of items) if (item.kind === "resource") await input.resolve(item.ref);
+      send(selected, { type: "paste_outline", position, items: items.map((item) => ({
+        ...(item.kind === "note" ? { kind: item.kind, noteId: crypto.randomUUID(), bodyPmJson: item.body } : { kind: item.kind, targetRef: item.ref }),
+        ...(item.parentIndex === undefined ? {} : { parentIndex: item.parentIndex }),
+      })) });
       return true;
     },
-    async copyReference(id) { await copyText(`[[${row(id).target.item.ref}]]`); },
+    async copyLink(id) {
+      const item = row(id).target.item;
+      if (!item.activation.href) throw new Error("This resource has no address to copy");
+      await copyResourceLink(new URL(item.activation.href, window.location.origin).href, item.ref);
+    },
   };
   return result;
 }

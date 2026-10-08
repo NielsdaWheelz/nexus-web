@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { usePersistentFeedbackElement } from "@/components/feedback/Feedback";
 import {
   resolveContentBottomClearancePx,
   resolveContentSurfaceBottomClearancePx,
@@ -65,6 +66,7 @@ export function MobileViewportProvider({
 }: {
   children: React.ReactNode;
 }) {
+  const persistentFeedbackElement = usePersistentFeedbackElement();
   const bottomSurfacesRef = useRef(
     new Map<MobileBottomSurfaceId, BottomSurfaceRegistration>(),
   );
@@ -76,8 +78,8 @@ export function MobileViewportProvider({
   const frameRef = useRef<number | null>(null);
   const [rootTextEntryFocused, setRootTextEntryFocused] = useState(false);
 
-  // One ordered pass: the flow Player places Nexus, the placed Nexus sets the
-  // protected full-window band, and that band projects into every registered
+  // One ordered pass: flow feedback and Player place Nexus, which sets the
+  // protected full-window band; that band projects into every registered
   // content surface. Reading each rectangle after the write it depends on lets
   // the pass converge without a second frame.
   const measure = useCallback(() => {
@@ -90,6 +92,7 @@ export function MobileViewportProvider({
       viewportHeightPx,
       safeBottomPx,
       playerRect: measureBottomSurface(bottomSurfacesRef.current.get("Player")),
+      feedbackRect: measureBottomSurface(bottomSurfacesRef.current.get("Feedback")),
     });
     root.style.setProperty(
       "--mobile-nexus-bottom-offset",
@@ -179,6 +182,11 @@ export function MobileViewportProvider({
     },
     [measure, scheduleMeasure],
   );
+
+  useLayoutEffect(() => {
+    if (!persistentFeedbackElement) return;
+    return registerBottomSurface("Feedback", persistentFeedbackElement);
+  }, [persistentFeedbackElement, registerBottomSurface]);
 
   const reportMobileOverlayKeyboardInset = useCallback(
     (px: number) => {

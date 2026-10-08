@@ -13,7 +13,9 @@ import {
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
 import { createLink, deleteLink } from "@/lib/resourceGraph/links";
-import type { LinkSource, LinkTarget } from "@/lib/resourceGraph/links";
+import type { CreateLinkInput, LinkSource, LinkTarget } from "@/lib/resourceGraph/links";
+
+import { resolveResourceLocator } from "@/lib/resources/resourceLocators";
 
 type LinkMutation = "Create" | "Undo";
 
@@ -36,9 +38,9 @@ function linkErrorMessage(error: unknown, mutation: LinkMutation): FeedbackConte
       if (mutation === "Create") {
         return {
           tone: "Warning",
-          title: "Link outcome not confirmed",
+          title: "Couldn’t confirm the change.",
           message:
-            "The request may have completed. Retry replays the same Link request safely.",
+            "The link may already be saved. Retry checks the same change.",
           requestId,
         };
       }
@@ -52,9 +54,9 @@ function linkErrorMessage(error: unknown, mutation: LinkMutation): FeedbackConte
       if (mutation === "Create") {
         return {
           tone: "Warning",
-          title: "Link outcome not confirmed",
+          title: "Couldn’t confirm the change.",
           message:
-            "The request may have completed. Retry replays the same Link request safely.",
+            "The link may already be saved. Retry checks the same change.",
           requestId,
         };
       }
@@ -148,219 +150,184 @@ export interface LinkComposerFailure {
   actions: FeedbackActions;
 }
 
-/**
- * The reader Link session (§ Target Behavior / Reader). Opening a Link performs
- * ZERO writes: the raw selection source (client-minted `highlight_id`) is held
- * until the user confirms a target, and only then does one `createLink` call
- * create the Highlight, materialize/reuse the passage anchor, and canonicalize
- * the Link atomically server-side (invariant 6). Cancel writes nothing.
- *
- * A fresh selection carries a `fragment_selection`/`pdf_selection` source; an
- * existing Highlight carries a `resource` source (`highlight:<id>`) and its
- * `sourceRef` for already-linked dedupe in the dialog. On success the toast
- * offers Undo — which deletes only the Link and keeps the authored Highlight
- * (invariant 8) — and, optionally, "Add note to link". A duplicate/reverse
- * target returns `created=false` ("Already linked · View connection") with no
- * Undo. Failure keeps the dialog/selection open with a Retry.
- */
+export interface LinkSessionInput {
+  source: LinkSource;
+  sourceRef?: string;
+  label: string;
+  onLinked?: () => void;
+  onClose?: () => void;
+  onAddLinkNote?: (linkId: string) => void;
+  onViewConnection?: () => void;
+  savedFile?: boolean;
+}
+
+type Session = LinkSessionInput & { key: number };
 export interface LinkComposer {
   open: boolean;
-  /** Durable ResourceRef of the source Resource/Highlight, for dialog dedupe;
-   * omitted for a fresh selection that has no Highlight yet. */
   sourceRef: string | undefined;
+  sourceLabel: string;
   committing: boolean;
-  /** Create failure stays inside the open Link surface with its exact Retry. */
   failure: LinkComposerFailure | null;
-  openLink: (args: { source: LinkSource; sourceRef?: string }) => void;
+  openLink: (input: LinkSessionInput) => void;
+  openResourceLink: (ref: string) => Promise<void>;
+  linkTo: (input: LinkSessionInput & { target: LinkTarget; targetLabel: string }) => Promise<void>;
   close: () => void;
-  /** `label` is the picked target's own display label — the confirmation toast
-   * names it directly, because a canonically-reordered pair loses which server
-   * endpoint was the target and the response can't say. */
   confirm: (target: LinkTarget, label: string) => Promise<void>;
 }
 
-export function useLinkComposer({
-  onLinked,
-  onAddLinkNote,
-  onViewConnection,
-}: {
-  /** Refresh the reader-connections read model so the new Link appears. */
-  onLinked: () => void | Promise<void>;
-  /** Open the Link-note composer for the just-created Link (toast action). */
-  onAddLinkNote?: (linkId: string) => void;
-  /** Reveal the Connection for an already-linked target (toast action). */
-  onViewConnection?: () => void;
-}): LinkComposer {
+/** One app-owned mutation session. Closing a submitted picker never abandons its intent. */
+export function useLinkComposer(): LinkComposer {
   const feedback = useFeedback();
+  const [session, setSession] = useState<Session | null>(null);
+  const sessionRef = useRef<Session | null>(null);
+  const nextKey = useRef(0);
   const [open, setOpen] = useState(false);
-  const [source, setSource] = useState<LinkSource | null>(null);
-  const [sourceRef, setSourceRef] = useState<string | undefined>(undefined);
+  const openRef = useRef(false);
   const [committing, setCommitting] = useState(false);
   const [failure, setFailure] = useState<LinkComposerFailure | null>(null);
+  const failureRef = useRef<{ key: string; failure: LinkComposerFailure } | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const commitGuardRef = useRef(false);
+  const commitGuard = useRef(false);
 
-  const openLink = useCallback(
-    (args: { source: LinkSource; sourceRef?: string }) => {
-      setSource(args.source);
-      setSourceRef(args.sourceRef);
-      setFailure(null);
-      setOpen(true);
-    },
-    [],
-  );
-
-  const close = useCallback(() => {
-    setOpen(false);
-    setSource(null);
-    setSourceRef(undefined);
+  const openLink = useCallback((input: LinkSessionInput) => {
+    if (commitGuard.current || openRef.current) return;
+    const next = { ...input, key: ++nextKey.current };
+    sessionRef.current = next;
+    setSession(next);
     setFailure(null);
+    failureRef.current = null;
+    openRef.current = true;
+    setOpen(true);
   }, []);
 
-  const undo = useCallback(
-    async (linkId: string) => {
-      const feedbackKey = `reader-link-undo:${linkId}`;
+  const close = useCallback(() => {
+    openRef.current = false;
+    setOpen(false);
+    sessionRef.current?.onClose?.();
+    const pending = failureRef.current;
+    if (pending) feedback.publish({
+      kind: "Persistent", key: pending.key, announcement: "Polite", ...pending.failure,
+    });
+  }, [feedback]);
+
+  const undo = useCallback(async (linkId: string, owner: LinkSessionInput) => {
+    const key = `resource-link-undo:${linkId}`;
+    try {
+      await deleteLink(linkId);
+      feedback.resolve(key);
+      owner.onLinked?.();
+    } catch (error) {
+      if (handleUnauthenticatedApiError(error)) return;
       try {
-        await deleteLink(linkId);
-        feedback.resolve(feedbackKey);
-        await onLinked();
+        feedback.publish({
+          kind: "Persistent", key, announcement: "Polite",
+          content: isUndoOutcomeUnknown(error) ? {
+            tone: "Warning", title: "Couldn’t confirm the change.",
+            message: "Retry removes the same link; its items remain saved.",
+          } : linkErrorMessage(error, "Undo"),
+          actions: [{ label: "Retry", onClick: () => void undo(linkId, owner) }],
+        });
+      } catch (error) { setDefect({ error }); }
+    }
+  }, [feedback]);
+
+  const run = useCallback(async (owner: LinkSessionInput, intent: CreateLinkInput, label: string, sessionKey: number | null) => {
+    const key = `resource-link:${intent.clientMutationId}`;
+    const current = () => sessionKey !== null && sessionRef.current?.key === sessionKey;
+    async function submit() {
+      if (commitGuard.current) {
+        feedback.publish({ kind: "Persistent", key, announcement: "Polite",
+          content: { tone: "Info", title: owner.savedFile ? "File saved. Link pending." : "Link pending", message: "Another link is being saved. Retry this link when it finishes." },
+          actions: [{ label: "Retry link", onClick: () => void submit() }],
+        });
+        return;
+      }
+      commitGuard.current = true;
+      setCommitting(true);
+      if (current()) { setFailure(null); failureRef.current = null; }
+      try {
+        const result = await createLink(intent);
+        feedback.resolve(key);
+        const notifyClose = current() && openRef.current;
+        if (current()) {
+          openRef.current = false;
+          setOpen(false);
+          setFailure(null);
+          failureRef.current = null;
+        }
+        const linkId = result.connection.edge_id;
+        let actions: FeedbackActions | undefined;
+        if (result.created) {
+          const undoAction = { label: "Undo", onClick: () => void undo(linkId, owner) };
+          actions = owner.onAddLinkNote
+            ? [undoAction, { label: "Add note to link", onClick: () => owner.onAddLinkNote?.(linkId) }]
+            : [undoAction];
+        } else if (owner.onViewConnection) {
+          actions = [{ label: "View connection", onClick: owner.onViewConnection }];
+        }
+        feedback.publish({
+          kind: "Hud",
+          content: { tone: result.created ? "Success" : "Info", title: result.created ? "Linked" : "Already linked", message: owner.savedFile ? `${label}. Undo removes the link; the file stays saved.` : label },
+          actions,
+        });
+        if (current() || sessionKey === null) owner.onLinked?.();
+        if (notifyClose) owner.onClose?.();
       } catch (error) {
         if (handleUnauthenticatedApiError(error)) return;
-        if (
-          isApiError(error) &&
-          !isSameSystemApiDefect(error) &&
-          error.code === "E_NOT_FOUND"
-        ) {
-          feedback.resolve(feedbackKey);
-          await onLinked();
-          return;
-        }
         try {
-          if (isUndoOutcomeUnknown(error)) {
-            feedback.publish({
-              kind: "Persistent",
-              key: feedbackKey,
-              // Polite: an unconfirmed removal loses no data and does not block
-              // the current action; it persists on the rail with Retry.
-              announcement: "Polite",
-              content: {
-                tone: "Warning",
-                title: "Removal outcome not confirmed",
-                message:
-                  "Check Connections before trying again. Retry repeats the same Link removal.",
-                requestId: isApiError(error) ? error.requestId : undefined,
-              },
-              actions: [
-                { label: "Retry", onClick: () => void undo(linkId) },
-              ],
-            });
-            return;
-          }
-          // A permanent undo failure (E_FORBIDDEN) cannot be retried and needs
-          // no durable rail: the link simply stays, and the Connections surface
-          // remains the durable place to manage it. Present it as a
-          // harmless-to-miss HUD rather than an actionless, never-resolved
-          // persistent record that could never be dismissed.
-          feedback.publish({
-            kind: "Hud",
-            key: feedbackKey,
-            content: linkErrorMessage(error, "Undo"),
+          const failed: LinkComposerFailure = {
+            content: owner.savedFile ? { ...linkErrorMessage(error, "Create"), title: "File saved. Link not confirmed.", message: "Retry link uses the saved file. It won’t upload it again." } : linkErrorMessage(error, "Create"),
+            actions: [{ label: owner.savedFile ? "Retry link" : "Retry", onClick: () => void submit() }],
+          };
+          if (current()) { setFailure(failed); failureRef.current = { key, failure: failed }; }
+          if (!current() || !openRef.current) feedback.publish({
+            kind: "Persistent", key, announcement: "Polite", ...failed,
           });
-        } catch (caughtDefect) {
-          setDefect({ error: caughtDefect });
-        }
+        } catch (error) { setDefect({ error }); }
+      } finally {
+        commitGuard.current = false;
+        setCommitting(false);
       }
-    },
-    [feedback, onLinked],
-  );
+    }
+    await submit();
+  }, [feedback, undo]);
 
-  const confirm = useCallback(
-    async (target: LinkTarget, label: string) => {
-      if (!source || committing || commitGuardRef.current) return;
-      const intent = {
-        clientMutationId: createRandomId("link"),
-        source,
-        target,
-        label,
-      };
+  const confirm = useCallback(async (target: LinkTarget, label: string) => {
+    const owner = sessionRef.current;
+    if (!owner || commitGuard.current) return;
+    const pending = failureRef.current;
+    if (pending) feedback.publish({ kind: "Persistent", key: pending.key, announcement: "Polite", ...pending.failure });
+    await run(owner, { clientMutationId: createRandomId("link"), source: owner.source, target }, label, owner.key);
+  }, [feedback, run]);
 
-      async function runConfirmedIntent() {
-        if (commitGuardRef.current) return;
-        commitGuardRef.current = true;
-        setCommitting(true);
-        setFailure(null);
-        try {
-          const result = await createLink({
-            clientMutationId: intent.clientMutationId,
-            source: intent.source,
-            target: intent.target,
-          });
-          await onLinked();
-          setOpen(false);
-          setSource(null);
-          setSourceRef(undefined);
+  const linkTo = useCallback(async (input: LinkSessionInput & { target: LinkTarget; targetLabel: string }) => {
+    await run(input, { clientMutationId: createRandomId("link"), source: input.source, target: input.target }, input.targetLabel, null);
+  }, [run]);
 
-          if (result.created) {
-            const linkId = result.connection.edge_id;
-            feedback.publish({
-              kind: "Hud",
-              content: {
-                tone: "Success",
-                title: `Linked to ${intent.label}`,
-              },
-              actions: onAddLinkNote
-                ? [
-                    { label: "Undo", onClick: () => void undo(linkId) },
-                    {
-                      label: "Add note to link",
-                      onClick: () => onAddLinkNote(linkId),
-                    },
-                  ]
-                : [{ label: "Undo", onClick: () => void undo(linkId) }],
-            });
-          } else {
-            feedback.publish({
-              kind: "Hud",
-              content: {
-                tone: "Info",
-                title: `Already linked to ${intent.label}`,
-              },
-              actions: onViewConnection
-                ? [{ label: "View connection", onClick: onViewConnection }]
-                : undefined,
-            });
-          }
-        } catch (error) {
-          if (handleUnauthenticatedApiError(error)) return;
-          // Keep the dialog and frozen intent open; Retry reuses its mutation id.
-          try {
-            setFailure({
-              content: linkErrorMessage(error, "Create"),
-              actions: [
-                {
-                  label: "Retry",
-                  onClick: () => void runConfirmedIntent(),
-                },
-              ],
-            });
-          } catch (caughtDefect) {
-            setDefect({ error: caughtDefect });
-          }
-        } finally {
-          commitGuardRef.current = false;
-          setCommitting(false);
-        }
+  const openResourceLink = useCallback(async (ref: string) => {
+    try {
+      const { resourceItem } = await resolveResourceLocator({ kind: "resource_ref", ref });
+      if (resourceItem.missing || resourceItem.capabilities.linkMode === "none") {
+        feedback.publish({ kind: "Hud", content: { tone: "Warning", title: "This item can’t be linked." } });
+        return;
       }
+      openLink({
+        source: resourceItem.capabilities.linkMode === "materialize_passage"
+          ? { kind: "passage", candidate_ref: resourceItem.ref }
+          : { kind: "resource", ref: resourceItem.ref },
+        sourceRef: resourceItem.ref, label: resourceItem.label,
+      });
+    } catch (error) {
+      if (handleUnauthenticatedApiError(error)) return;
+      try { feedback.publish({ kind: "Hud", content: linkErrorMessage(error, "Create") }); }
+      catch (error) { setDefect({ error }); }
+    }
+  }, [feedback, openLink]);
 
-      await runConfirmedIntent();
-    },
-    [committing, feedback, onAddLinkNote, onLinked, onViewConnection, source, undo],
-  );
-
-  const composer = useMemo(
-    () => ({ open, sourceRef, committing, failure, openLink, close, confirm }),
-    [close, committing, confirm, failure, open, openLink, sourceRef],
-  );
+  const composer = useMemo(() => ({
+    open, sourceRef: session?.sourceRef, sourceLabel: session?.label ?? "item", committing, failure,
+    openLink, openResourceLink, linkTo, close, confirm,
+  }), [open, session, committing, failure, openLink, openResourceLink, linkTo, close, confirm]);
   if (defect) throw defect.error;
   return composer;
 }

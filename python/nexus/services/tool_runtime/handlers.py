@@ -245,6 +245,8 @@ async def _run_search(
     value: tool_declarations.NexusSearchInput,
     context: ExecutionContext,
 ) -> HandlerSuccess[tool_declarations.NexusSearchSuccess]:
+    from dataclasses import replace
+
     from nexus.services.resource_items.capabilities import resource_can_be_app_search_scope
     from nexus.services.retrieval_citation import citation_from_search_result
     from nexus.services.search.query import SearchQuery, SearchScope, build_search_query, hash_query
@@ -258,30 +260,41 @@ async def _run_search(
         _db: Session,
     ) -> tuple[SearchQuery, list[SearchScope], list[str], dict[str, list[str]]]:
         with recorder.db.begin():
+            frozen_refs = (
+                None
+                if recorder.account_visible
+                else tuple(
+                    _parse_ref_or_unavailable(uri)
+                    for uri in sorted(recorder.admitted_resource_uris)
+                )
+            )
             requested_scopes = list(value.scopes or ())
-            if value.scopes is None:
-                requested_scopes = (
-                    ["all"]
-                    if recorder.account_visible
-                    else [
-                        uri
-                        for uri in sorted(recorder.admitted_resource_uris)
-                        if resource_can_be_app_search_scope(_parse_ref_or_unavailable(uri))
-                    ]
-                )
             scopes = []
-            for uri in requested_scopes:
-                if uri == "all" and recorder.account_visible:
-                    scopes.append(scope_from_uri("all"))
-                    continue
-                ref = (
-                    _assert_visible(recorder, uri)
-                    if recorder.account_visible
-                    else _admitted_target(recorder, uri)
+            if value.scopes is None and frozen_refs is not None:
+                # Exact frozen targets cover notes/messages as well as scope resources.
+                # Existing media/library scopes retain their bounded descendant search.
+                requested_scopes = [ref.uri for ref in frozen_refs]
+                scopes = [SearchScope(kind="all")] if frozen_refs else []
+                scopes.extend(
+                    scope_from_uri(ref.uri)
+                    for ref in frozen_refs
+                    if ref.scheme in ("media", "library")
                 )
-                if not resource_can_be_app_search_scope(ref):
-                    _resource_unavailable()
-                scopes.append(scope_from_uri(uri))
+            else:
+                if value.scopes is None:
+                    requested_scopes = ["all"]
+                for uri in requested_scopes:
+                    if uri == "all" and recorder.account_visible:
+                        scopes.append(scope_from_uri("all"))
+                        continue
+                    ref = (
+                        _assert_visible(recorder, uri)
+                        if recorder.account_visible
+                        else _admitted_target(recorder, uri)
+                    )
+                    if not resource_can_be_app_search_scope(ref):
+                        _resource_unavailable()
+                    scopes.append(scope_from_uri(uri))
             query = build_search_query(
                 text=value.query,
                 raw_kinds=list(value.kinds) if value.kinds is not None else None,
@@ -292,6 +305,7 @@ async def _run_search(
                 cursor=None,
                 limit=value.limit or APP_SEARCH_LIMIT,
             )
+            query = replace(query, frozen_context_refs=frozen_refs)
             filters = {
                 key: list(items)
                 for key, items in (
@@ -466,7 +480,7 @@ _READ_KINDS: Mapping[str, str] = {
     "artifact": "artifact",
     "artifact_revision": "artifact",
     "content_chunk": "section",
-    "conversation": "section",
+    "conversation": "conversation",
     "evidence_span": "section",
     "full": "full",
     "message": "section",
@@ -489,8 +503,14 @@ def _run_resource_read(
 
     recorder = _nexus_recorder(context)
     _admitted_target(recorder, value.uri, allow_derived_read=True)
-    result = execute_read_resource(recorder.db, viewer_id=recorder.principal_id, uri=value.uri)
+    result = execute_read_resource(
+        recorder.db, viewer_id=recorder.principal_id, uri=value.uri, cursor=value.cursor
+    )
     if isinstance(result, ReadRefusal):
+        if result.code == "invalid_cursor":
+            _declared_failure(tool_declarations.InvalidCursor(type="InvalidCursor"))
+        if result.code == "stale_cursor":
+            _declared_failure(tool_declarations.StaleCursor(type="StaleCursor"))
         if result.code == "not_readable":
             _declared_failure(tool_declarations.Unreadable(type="Unreadable"))
         _resource_unavailable()
@@ -525,6 +545,7 @@ def _run_resource_read(
             kind=cast("Any", kind),
             text=result.body,
             uri=value.uri,
+            next_cursor=result.next_cursor,
         ),
         actual_attempts=0,
     )

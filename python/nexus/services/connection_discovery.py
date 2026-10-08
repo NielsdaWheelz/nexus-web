@@ -1,7 +1,7 @@
-"""Synapse: the sole writer of ``origin='synapse'`` resource-graph edges.
+"""Connection discovery: the sole writer of ``origin='discovery'`` resource-graph edges.
 
 A scan judges one source against candidates retrieved from the viewer's own
-corpus and replace-sets the source's synapse edges with the grounded picks: a
+corpus and replace-sets the source's discovery edges with the grounded picks: a
 successful scan owns the whole set, even when it empties it; every other
 outcome leaves it untouched. Exclusion is at work grain (a passage, highlight
 or anchor counts as its media): the source's own work, works it already
@@ -21,7 +21,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
-from nexus.db.models import Highlight, NoteBlock, SynapseSuppression
+from nexus.db.models import ConnectionDiscoverySuppression, Highlight, NoteBlock
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
@@ -53,7 +53,7 @@ from nexus.services.resource_graph.owners import owner_rows_sql
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_graph.resolve import resolve_ref, resolve_refs
 from nexus.services.resource_graph.schemas import (
-    SYNAPSE_SOURCE_SCHEMES,
+    CONNECTION_DISCOVERY_SOURCE_SCHEMES,
     CitationSnapshot,
     EdgeCreate,
 )
@@ -72,7 +72,7 @@ _MAX_EDGES = 4
 _MAX_PER_WORK = 2  # two passages of one work is passage grain; four is monologue
 
 
-class SynapseConnection(BaseModel):
+class ConnectionDiscoveryConnection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     candidate_index: int
@@ -88,10 +88,10 @@ class SynapseConnection(BaseModel):
         return value
 
 
-class SynapseSynthesis(BaseModel):
+class ConnectionDiscoverySynthesis(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    connections: list[SynapseConnection]
+    connections: list[ConnectionDiscoveryConnection]
 
 
 class _Candidate(BaseModel):
@@ -105,7 +105,7 @@ class _Candidate(BaseModel):
 class _Input(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    kind: Literal["synapse-input.v2"] = "synapse-input.v2"
+    kind: Literal["connection_discovery-input.v2"] = "connection_discovery-input.v2"
     source_ref: str
     source_text: str
     candidates: tuple[_Candidate, ...]
@@ -116,13 +116,13 @@ class _Outcome(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    connections: tuple[SynapseConnection, ...] = ()
+    connections: tuple[ConnectionDiscoveryConnection, ...] = ()
     error_code: str | None = None
 
 
 _PROMPT = synthesis.build_synthesis_prompt(
     persona=(
-        "You are the resonance engine of a personal knowledge system: given one "
+        "You are the connection discovery engine of a personal knowledge system: given one "
         "source object and candidate passages from the user's own corpus, you "
         "judge which candidates genuinely illuminate the source."
     ),
@@ -136,7 +136,7 @@ _PROMPT = synthesis.build_synthesis_prompt(
         f"Propose at most {_MAX_EDGES} connections, only the strongest; fewer is better.",
         'Use kind "supports" or "contradicts" only when the relation is genuinely '
         'argued; otherwise use "context".',
-        "rationale: one sentence to the user naming the specific resonance, under 200 characters.",
+        "rationale: one sentence to the user naming the specific connection, under 200 characters.",
         "Write each rationale so it reads correctly from either object; never use "
         "the words 'source', 'candidate', or indices.",
         "An empty list is a good answer.",
@@ -148,10 +148,15 @@ _PROMPT = synthesis.build_synthesis_prompt(
 )
 
 
-def queue_synapse_scan(db: Session, *, user_id: UUID, ref: ResourceRef, reason: str) -> bool:
+def queue_connection_discovery_scan(
+    db: Session, *, user_id: UUID, ref: ResourceRef, reason: str
+) -> bool:
     """Soft-enqueue one scan; True only when a row was inserted. Flush-only and
     never raises: a failed insert rolls back only its savepoint."""
-    if not get_settings().synapse_enabled or ref.scheme not in SYNAPSE_SOURCE_SCHEMES:
+    if (
+        not get_settings().connection_discovery_enabled
+        or ref.scheme not in CONNECTION_DISCOVERY_SOURCE_SCHEMES
+    ):
         return False
     key = _dedupe_key(user_id, ref)
     try:
@@ -166,17 +171,21 @@ def queue_synapse_scan(db: Session, *, user_id: UUID, ref: ResourceRef, reason: 
             )
             _, inserted = enqueue_unique_job(
                 db,
-                kind="synapse_scan",
+                kind="connection_discovery_scan",
                 payload={"user_id": str(user_id), "ref": ref.uri, "reason": reason},
                 dedupe_key=key,
             )
         return inserted
     except SQLAlchemyError as exc:
-        logger.warning("synapse_scan_enqueue_failed", ref=ref.uri, reason=reason, error=str(exc))
+        logger.warning(
+            "connection_discovery_scan_enqueue_failed", ref=ref.uri, reason=reason, error=str(exc)
+        )
         return False
 
 
-def scan_status(db: Session, *, user_id: UUID, ref: ResourceRef) -> ScanStatus:
+def scan_state(
+    db: Session, *, user_id: UUID, ref: ResourceRef
+) -> tuple[ScanStatus, ScanResult | None]:
     """The job row, projected. A ``failed`` row awaiting its retry still owes
     work; a dead row or a terminal model failure reads ``failed``."""
     row = db.execute(
@@ -184,25 +193,26 @@ def scan_status(db: Session, *, user_id: UUID, ref: ResourceRef) -> ScanStatus:
         {"k": _dedupe_key(user_id, ref)},
     ).first()
     if row is None:
-        return "idle"
+        return "idle", None
     status, result = row
     if status in ("pending", "failed"):
-        return "pending"
+        return "pending", None
     if status == "running":
-        return "running"
-    return "failed" if status == "dead" or result == "terminal_failed" else "idle"
+        return "running", None
+    outcome: ScanResult | None = result if result in ("ok", "skipped", "terminal_failed") else None
+    return ("failed" if status == "dead" or outcome == "terminal_failed" else "idle"), outcome
 
 
-def dismiss_synapse_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None:
+def dismiss_connection_discovery_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None:
     """Remember the pair at work grain, then delete the edge. Commits."""
 
     def attempt() -> None:
         edge = get_owned_edge(db, viewer_id=viewer_id, edge_id=edge_id)
         if edge is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Edge not found")
-        if edge.origin != "synapse":
+        if edge.origin != "discovery":
             raise ConflictError(
-                ApiErrorCode.E_RETRY_INVALID_STATE, "Only synapse edges can be dismissed"
+                ApiErrorCode.E_RETRY_INVALID_STATE, "Only discovery links can be dismissed"
             )
         work = _work(db, edge.target)
         key = {
@@ -212,15 +222,17 @@ def dismiss_synapse_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None
             "target_scheme": work.scheme,
             "target_id": work.id,
         }
-        if db.get(SynapseSuppression, key) is None:
-            db.add(SynapseSuppression(**key))
+        if db.get(ConnectionDiscoverySuppression, key) is None:
+            db.add(ConnectionDiscoverySuppression(**key))
         delete_edge(db, viewer_id=viewer_id, edge_id=edge_id)
         db.commit()
 
-    retry_serializable(db, "synapse.dismiss", attempt)
+    retry_serializable(db, "connection_discovery.dismiss", attempt)
 
 
-def synapse_scan_job(payload: Mapping[str, object], *, context: JobExecutionContext) -> dict:
+def connection_discovery_scan_job(
+    payload: Mapping[str, object], *, context: JobExecutionContext
+) -> dict:
     user_id, ref = UUID(str(payload["user_id"])), assert_resource_ref(str(payload["ref"]))
 
     async def handle(db: Session, runtime: llm.ExecutionRuntime) -> dict:
@@ -229,7 +241,7 @@ def synapse_scan_job(payload: Mapping[str, object], *, context: JobExecutionCont
         )
         return {"status": status, "error_code": error_code, "ref": ref.uri}
 
-    return run_llm_task(LlmTaskSpec(label="synapse_scan"), handle)
+    return run_llm_task(LlmTaskSpec(label="connection_discovery_scan"), handle)
 
 
 async def _scan(
@@ -242,7 +254,7 @@ async def _scan(
 ) -> tuple[ScanResult, str | None]:
     """An admitted generation replays its frozen input; otherwise the input is
     built fresh. Only ``ok`` touches the edges."""
-    if not get_settings().synapse_enabled:
+    if not get_settings().connection_discovery_enabled:
         return "skipped", None
 
     def lock_dispatch(dispatch_db: Session):
@@ -284,19 +296,22 @@ async def _scan(
         intent = synthesis.build_synthesis_intent(
             system_prompt=_PROMPT,
             user_content=canonical_json_bytes(source.model_dump(mode="json")).decode(),
-            schema=SynapseSynthesis,
+            schema=ConnectionDiscoverySynthesis,
         )
-    revision = generation_policy.operation_revision("synapse") + ".synapse-input.v2"
+    revision = (
+        generation_policy.operation_revision("connection_discovery")
+        + ".connection_discovery-input.v2"
+    )
     try:
         request = await llm.admit_job_generation(
-            owner=LlmCallOwner(kind="synapse_scan", id=ref.id),
+            owner=LlmCallOwner(kind="connection_discovery_scan", id=ref.id),
             user_id=user_id,
             generation_id=step_journal.stable_generation_id(context.job_id, _STEP),
-            operation="synapse",
+            operation="connection_discovery",
             intent=intent,
             prompt_template_revision=revision,
             prompt_payload_ref=ImmutablePromptPayloadRef(
-                owner_kind="synapse_scan",
+                owner_kind="connection_discovery_scan",
                 owner_id=str(ref.id),
                 revision=revision,
                 payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
@@ -329,16 +344,16 @@ def _encode(terminal: llm.BackendTerminal, offered: int) -> llm.EncodedGeneratio
         code, _ = synthesis.outcome_failure_facts(evidence)
         return llm.EncodedGenerationTerminal(_Outcome(error_code=code).model_dump_json())
 
-    def grounded(value: SynapseSynthesis) -> str | None:
+    def grounded(value: ConnectionDiscoverySynthesis) -> str | None:
         if len(value.connections) > _MAX_EDGES:
-            return f"synapse output exceeds {_MAX_EDGES} connections"
+            return f"connection_discovery output exceeds {_MAX_EDGES} connections"
         if any(not 0 <= c.candidate_index < offered for c in value.connections):
-            return "synapse output references a candidate index that was not offered"
+            return "connection_discovery output references a candidate index that was not offered"
         return None
 
     try:
         value = synthesis.decode_structured_synthesis(
-            evidence, schema=SynapseSynthesis, validate=grounded
+            evidence, schema=ConnectionDiscoverySynthesis, validate=grounded
         )
     except synthesis.StructuredSynthesisError as exc:
         return llm.EncodedGenerationTerminal(
@@ -356,9 +371,9 @@ def _publish(
     user_id: UUID,
     ref: ResourceRef,
     context: JobExecutionContext,
-    picks: list[tuple[str, SynapseConnection]],
+    picks: list[tuple[str, ConnectionDiscoveryConnection]],
 ) -> tuple[ScanResult, None]:
-    """Replace-set the source's synapse edges under the job's lease fence,
+    """Replace-set the source's discovery edges under the job's lease fence,
     re-reading exclusions (a dismissal may land while the model runs) and
     dropping targets that are gone."""
 
@@ -376,13 +391,13 @@ def _publish(
             db,
             viewer_id=user_id,
             source=ref,
-            origin="synapse",
+            origin="discovery",
             edges=[
                 EdgeCreate(
                     source=ref,
                     target=target,
                     kind=pick.kind,
-                    origin="synapse",
+                    origin="discovery",
                     snapshot=CitationSnapshot(excerpt=pick.rationale),
                 )
                 for (_, pick), target, item in zip(picks, targets, resolved, strict=True)
@@ -392,7 +407,7 @@ def _publish(
         db.commit()
         return "ok", None
 
-    return retry_serializable(db, "synapse.publish", attempt)
+    return retry_serializable(db, "connection_discovery.publish", attempt)
 
 
 def _dossier(
@@ -434,7 +449,7 @@ def _dossier(
 
 def _excluded(db: Session, *, user_id: UUID, ref: ResourceRef) -> set[ResourceRef]:
     """Works the judge must never see: the source's own, every one related to
-    the source itself (except through its own synapse set), and every one a
+    the source itself (except through its own discovery set), and every one a
     dismissal paired with the source's work, read at work grain on both sides."""
     rows = db.execute(
         text(f"""
@@ -444,10 +459,10 @@ def _excluded(db: Session, *, user_id: UUID, ref: ResourceRef) -> set[ResourceRe
                 WHERE user_id = :user_id AND origin <> 'link_note'
                   AND ((source_scheme = :scheme AND source_id = :id)
                        OR (target_scheme = :scheme AND target_id = :id))
-                  AND NOT (origin = 'synapse' AND source_scheme = :scheme AND source_id = :id)
+                  AND NOT (origin = 'discovery' AND source_scheme = :scheme AND source_id = :id)
                 UNION ALL
                 SELECT source_scheme, source_id, target_scheme, target_id
-                FROM synapse_suppressions WHERE user_id = :user_id
+                FROM connection_discovery_suppressions WHERE user_id = :user_id
             ),
             ends AS (
                 SELECT CAST(:scheme AS text) AS scheme, CAST(:id AS uuid) AS id
@@ -513,4 +528,4 @@ def _candidates(
 
 
 def _dedupe_key(user_id: UUID, ref: ResourceRef) -> str:
-    return f"synapse_scan:{user_id}:{ref.uri}"
+    return f"connection_discovery_scan:{user_id}:{ref.uri}"

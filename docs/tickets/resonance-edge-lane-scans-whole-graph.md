@@ -1,8 +1,8 @@
 # the slate's edge lane owner-normalizes the whole graph on every read
 
-status: open · origin: 2026-10-04 synapse reauthor (spec D10, branch cleanup/synapse-reauthor) · area: resonance / performance
+status: open · origin: 2026-10-04 synapse reauthor (spec D10, branch cleanup/synapse-reauthor) · area: suggestions / performance
 
-`python/nexus/services/resonance.py:_candidates` builds `edges` from every
+`python/nexus/services/suggestions.py:_candidates` builds `edges` from every
 `resource_edges` row of the viewer in the six resonance origins, then runs
 `owner_rows_sql` over all of their endpoints before joining the five anchors.
 cost grows with the user's whole graph on each At hand, quick reads and

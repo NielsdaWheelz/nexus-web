@@ -1,17 +1,10 @@
-import { Fragment, type Node as ProseMirrorNode } from "prosemirror-model";
-import { Plugin, type Command, type EditorState } from "prosemirror-state";
+import { type Command, type EditorState } from "prosemirror-state";
 import { keymap } from "prosemirror-keymap";
 import {
   noteBodySchema,
   noteBodyValueFromDoc,
   type NoteBodyValue,
 } from "@/lib/notes/prosemirror/schema";
-import { isResourceScheme } from "@/lib/resourceGraph/resourceRef";
-import { resourceCanBeNoteReferenceTarget } from "@/lib/resources/resourceCapabilities";
-
-const OBJECT_REF_PATTERN =
-  /\[\[([a-z_]+):([0-9a-fA-F-]{36})(?:\|([^\]]+))?\]\]/g;
-
 export interface NoteBodySplit {
   left: NoteBodyValue;
   right: NoteBodyValue;
@@ -120,87 +113,5 @@ export function createNoteBodyKeymap(actions: {
     "Mod-z": action(actions.undo),
     "Mod-y": action(actions.redo),
     "Shift-Mod-z": action(actions.redo),
-  });
-}
-
-export function createObjectRefSyntaxPlugin() {
-  return new Plugin({
-    appendTransaction(transactions, _oldState, newState) {
-      if (
-        !transactions.some((transaction) => transaction.docChanged) ||
-        transactions.some(
-          (transaction) => transaction.getMeta(noteBodyEditSourceMeta) === "external",
-        )
-      ) {
-        return null;
-      }
-
-      const replacements: {
-        from: number;
-        to: number;
-        nodes: ProseMirrorNode[];
-      }[] = [];
-
-      newState.doc.descendants((node, pos) => {
-        if (!node.isText || !node.text) {
-          return true;
-        }
-
-        const nodes: ProseMirrorNode[] = [];
-        let lastIndex = 0;
-        for (const match of node.text.matchAll(OBJECT_REF_PATTERN)) {
-          const index = match.index ?? 0;
-          const objectType = match[1]!;
-          if (
-            !isResourceScheme(objectType) ||
-            !resourceCanBeNoteReferenceTarget(objectType)
-          ) {
-            continue;
-          }
-          if (index > lastIndex) {
-            nodes.push(
-              noteBodySchema.text(
-                node.text.slice(lastIndex, index),
-                node.marks,
-              ),
-            );
-          }
-          const objectId = match[2]!.toLowerCase();
-          const label = (match[3] ?? `${objectType}:${objectId}`).trim();
-          nodes.push(
-            noteBodySchema.nodes.object_ref!.create({
-              objectType,
-              objectId,
-              label,
-            }),
-          );
-          lastIndex = index + match[0].length;
-        }
-
-        if (nodes.length === 0) {
-          return true;
-        }
-        if (lastIndex < node.text.length) {
-          nodes.push(
-            noteBodySchema.text(node.text.slice(lastIndex), node.marks),
-          );
-        }
-        replacements.push({ from: pos, to: pos + node.nodeSize, nodes });
-        return true;
-      });
-
-      if (replacements.length === 0) {
-        return null;
-      }
-      const tr = newState.tr;
-      for (const replacement of replacements.reverse()) {
-        tr.replaceWith(
-          replacement.from,
-          replacement.to,
-          Fragment.fromArray(replacement.nodes),
-        );
-      }
-      return tr.docChanged ? tr : null;
-    },
   });
 }

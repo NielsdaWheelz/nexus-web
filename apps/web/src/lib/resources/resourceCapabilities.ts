@@ -26,18 +26,7 @@ export function isLibraryPlacementMode(
   return value === "None" || value === "ManageEntries";
 }
 
-// Mirrors backend `ResourceUserRelationPolicy`
-// (python/nexus/services/resource_items/capabilities.py). Replaces the scalar
-// `linkable` boolean, which could not distinguish a direct durable endpoint
-// from raw material a search hit must materialize into a `passage_anchor`
-// before it can be linked (universal-link-authoring-hard-cutover.md,
-// Invariant 4).
-export type UserLinkTargetMode = "none" | "direct" | "materialize_passage";
-
-export interface ResourceUserRelationPolicy {
-  userLinkSource: boolean;
-  userLinkTarget: UserLinkTargetMode;
-}
+export type ResourceLinkMode = "none" | "direct" | "materialize_passage";
 
 // Mirrors backend `ResourceInspectorSurfaceRole`/`ResourceInspectorPolicy`
 // (python/nexus/services/resource_items/capabilities.py). Closed-code union
@@ -49,9 +38,9 @@ export type ResourceInspectorSurfaceRole =
   "Contents" | "LinkedItems" | "Forks" | "Dossier";
 
 // Which concrete LinkedItems surface a subject's Inspector resolves to:
-// Media -> Evidence, Conversation -> Context, everything else -> Connections.
+// Media retains passage-aware rendering; other resources use Connections.
 export type ResourceInspectorLinkedItemsSurface =
-  "MediaEvidence" | "ConversationContext" | "ResourceConnections";
+  "MediaEvidence" | "ResourceConnections";
 
 // Only Conversation ever carries a Forks surface.
 type ResourceInspectorForksSurface = "ConversationForks";
@@ -73,7 +62,7 @@ export interface ResourceInspectorResourcePolicy {
 export type ResourceInspectorPolicy = ResourceInspectorResourcePolicy | null;
 
 export interface ResourceCapabilityProjection {
-  userRelation: ResourceUserRelationPolicy;
+  linkMode: ResourceLinkMode;
   sharing: ShareMode;
   libraryPlacement: LibraryPlacementMode;
   attachable: boolean;
@@ -91,9 +80,16 @@ export interface ResourceCapabilityProjection {
   adjacencyTarget: boolean;
 }
 
+export const CONNECTION_DISCOVERY_SOURCE_SCHEMES = [
+  "media",
+  "page",
+  "note_block",
+  "highlight",
+] as const satisfies readonly ResourceScheme[];
+
 export const RESOURCE_CAPABILITIES = {
   media: {
-    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    linkMode: "direct",
     sharing: "ResourceGrants",
     libraryPlacement: "ManageEntries",
     attachable: true,
@@ -115,7 +111,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   library: {
-    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    linkMode: "direct",
     sharing: "LibraryMembership",
     libraryPlacement: "None",
     attachable: true,
@@ -137,10 +133,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   evidence_span: {
-    userRelation: {
-      userLinkSource: false,
-      userLinkTarget: "materialize_passage",
-    },
+    linkMode: "materialize_passage",
     sharing: "None",
     libraryPlacement: "None",
     attachable: true,
@@ -158,10 +151,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   content_chunk: {
-    userRelation: {
-      userLinkSource: false,
-      userLinkTarget: "materialize_passage",
-    },
+    linkMode: "materialize_passage",
     sharing: "None",
     libraryPlacement: "None",
     attachable: true,
@@ -179,7 +169,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   highlight: {
-    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    linkMode: "direct",
     sharing: "HighlightGrants",
     libraryPlacement: "None",
     attachable: true,
@@ -197,7 +187,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   page: {
-    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    linkMode: "direct",
     sharing: "CopyOnly",
     libraryPlacement: "None",
     attachable: true,
@@ -219,7 +209,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   note_block: {
-    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    linkMode: "direct",
     sharing: "CopyOnly",
     libraryPlacement: "None",
     attachable: true,
@@ -241,10 +231,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   fragment: {
-    userRelation: {
-      userLinkSource: false,
-      userLinkTarget: "materialize_passage",
-    },
+    linkMode: "materialize_passage",
     sharing: "None",
     libraryPlacement: "None",
     attachable: true,
@@ -262,7 +249,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   conversation: {
-    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    linkMode: "direct",
     sharing: "CopyOnly",
     libraryPlacement: "None",
     attachable: true,
@@ -270,7 +257,7 @@ export const RESOURCE_CAPABILITIES = {
     readable: "body",
     inspectable: "none",
     inspectorPolicy: {
-      linkedItems: "ConversationContext",
+      linkedItems: "ResourceConnections",
       forks: "ConversationForks",
       defaultSurfaceOrder: ["LinkedItems", "Forks", "Dossier"],
     },
@@ -284,7 +271,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   message: {
-    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    linkMode: "direct",
     sharing: "None",
     libraryPlacement: "None",
     attachable: true,
@@ -302,7 +289,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   oracle_reading: {
-    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    linkMode: "direct",
     sharing: "CopyOnly",
     libraryPlacement: "None",
     attachable: true,
@@ -320,10 +307,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   oracle_passage_anchor: {
-    userRelation: {
-      userLinkSource: false,
-      userLinkTarget: "materialize_passage",
-    },
+    linkMode: "materialize_passage",
     sharing: "None",
     libraryPlacement: "None",
     attachable: false,
@@ -341,7 +325,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   artifact: {
-    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    linkMode: "direct",
     sharing: "CopyOnly",
     libraryPlacement: "None",
     attachable: true,
@@ -359,7 +343,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   artifact_revision: {
-    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    linkMode: "none",
     sharing: "None",
     libraryPlacement: "None",
     attachable: true,
@@ -377,7 +361,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   external_snapshot: {
-    userRelation: { userLinkSource: false, userLinkTarget: "none" },
+    linkMode: "none",
     sharing: "None",
     libraryPlacement: "None",
     attachable: false,
@@ -395,7 +379,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: false,
   },
   contributor: {
-    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    linkMode: "direct",
     sharing: "CopyOnly",
     libraryPlacement: "None",
     attachable: true,
@@ -417,7 +401,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   podcast: {
-    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    linkMode: "direct",
     sharing: "CopyOnly",
     libraryPlacement: "ManageEntries",
     attachable: true,
@@ -439,10 +423,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   reader_apparatus_item: {
-    userRelation: {
-      userLinkSource: false,
-      userLinkTarget: "materialize_passage",
-    },
+    linkMode: "materialize_passage",
     sharing: "None",
     libraryPlacement: "None",
     attachable: true,
@@ -460,7 +441,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   passage_anchor: {
-    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    linkMode: "direct",
     sharing: "None",
     libraryPlacement: "None",
     attachable: true,
@@ -478,18 +459,6 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
 } as const satisfies Record<ResourceScheme, ResourceCapabilityProjection>;
-
-/** Whether `scheme` can be the target of a durable, direct-endpoint Link or
- * note reference. `materialize_passage` targets are raw material a search hit
- * must convert into a `passage_anchor` first (Invariant 4); they are never
- * themselves a direct edge/reference endpoint. Mirrors backend
- * `resource_can_be_note_reference_target` / the `note_reference_target`
- * property on `ResourceUserRelationPolicy`. */
-export function resourceCanBeNoteReferenceTarget(
-  scheme: ResourceScheme,
-): boolean {
-  return RESOURCE_CAPABILITIES[scheme].userRelation.userLinkTarget === "direct";
-}
 
 export function resourceSchemeIsAppSearchScope(
   scheme: ResourceScheme,

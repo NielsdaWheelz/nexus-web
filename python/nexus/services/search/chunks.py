@@ -205,9 +205,12 @@ def search_content_chunks(
     roles: list[str],
     content_kinds: list[str],
     limit: int,
+    frozen_context_refs: tuple[ResourceRef, ...] | None = None,
 ) -> list[InternalSearchResult]:
     """Indexed document passages, hybrid when an embedding is available."""
-    cell = scope_filter_sql(scope_type, scope_id, "content_chunk")
+    cell = scope_filter_sql(
+        scope_type, scope_id, "content_chunk", frozen_context_refs=frozen_context_refs
+    )
     if cell is None:
         return []
     scope_sql, params = cell
@@ -453,10 +456,13 @@ def search_note_chunks(
     scope_type: str,
     scope_id: UUID | None,
     limit: int,
+    frozen_context_refs: tuple[ResourceRef, ...] | None = None,
     highlight_notes_only: bool = False,
 ) -> list[InternalSearchResult]:
     """Note-block hits over the same chunk machinery that serves documents."""
-    cell = scope_filter_sql(scope_type, scope_id, "note_block")
+    cell = scope_filter_sql(
+        scope_type, scope_id, "note_block", frozen_context_refs=frozen_context_refs
+    )
     if cell is None:
         return []
     scope_sql, params = cell

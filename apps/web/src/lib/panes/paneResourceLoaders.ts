@@ -7,7 +7,7 @@ import {
   librariesResource,
   libraryEntriesResource,
   libraryResource,
-  lecternSlateResource,
+  lecternSuggestionsResource,
   mediaResource,
   notePagesResource,
   settingsAccountResource,
@@ -108,17 +108,17 @@ export async function loadMediaPane(
 // snapshot), podcastDetail / podcasts (cacheKey embeds mutable filter/sort/search UI
 // state), settingsIdentities (Supabase server action, no FastAPI path),
 // search (query-driven, no route-keyed primary). Lectern's canonical ordered queue remains exclusively
-// owned by the shell-mounted LecternProvider; only its independent Slate read is
+// owned by the shell-mounted LecternProvider; only its independent Suggestions read is
 // seeded here.
 export const paneResourceLoaders: Partial<
   Record<PaneRouteId, PaneResourceLoader>
 > = {
   lectern: {
-    cacheKey: () => lecternSlateResource.cacheKey({ refreshVersion: 0 }),
+    cacheKey: () => lecternSuggestionsResource.cacheKey({ refreshVersion: 0 }),
     load: async (request) =>
       (
-        await request<{ refreshVersion: number }, ApiJson<"/lectern/slate", "get">>(
-          lecternSlateResource,
+        await request<{ refreshVersion: number }, ApiJson<"/lectern/suggestions", "get">>(
+          lecternSuggestionsResource,
           { refreshVersion: 0 },
         )
       ).data,

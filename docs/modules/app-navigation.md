@@ -20,7 +20,7 @@ Neither is a directory of every feature.
 - **Mobile Places order is exact:** Lectern, Libraries, Browse, Podcasts,
   Chats, Notes. Stats, Atlas, and Oracle remain retrievable through Nexus.
 - **Fixed navigation is not customizable.** Pinning is not part of this
-  contract. Personalized retrieval belongs in the Lectern Reading Slate and
+  contract. personalized retrieval belongs in lectern suggestions and
   Nexus, where it can scale without destabilizing spatial memory.
 
 On desktop, Imports, Add, Account and Nexus remain rail actions. Imports is a

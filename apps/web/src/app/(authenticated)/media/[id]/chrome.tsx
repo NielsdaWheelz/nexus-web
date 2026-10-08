@@ -309,7 +309,7 @@ export function useReaderChrome(input: {
       if (pending !== null) {
         window.clearTimeout(pending);
         pending = null;
-        if (event.key === "e") requestSecondarySurface("resource-evidence");
+        if (event.key === "e") requestSecondarySurface("resource-connections");
         else if (event.key === "c") chat();
         else return openInspector();
         event.preventDefault();

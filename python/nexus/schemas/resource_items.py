@@ -37,12 +37,11 @@ NOTE_PM_NODE_TYPES = {
     "paragraph",
     "text",
     "hard_break",
-    "object_ref",
     "object_embed",
     "code_block",
     "image",
 }
-NOTE_PM_INLINE_NODE_TYPES = {"text", "hard_break", "object_ref", "image"}
+NOTE_PM_INLINE_NODE_TYPES = {"text", "hard_break", "image"}
 NOTE_PM_MARK_TYPES = {"strong", "em", "code", "link", "strikethrough", "underline"}
 
 
@@ -131,7 +130,7 @@ def _validate_pm_node(node: object, *, path: str, top_level: bool = False) -> st
     content = node.get("content")
     if content is None:
         return node_type
-    if node_type in {"hard_break", "object_ref", "object_embed", "image"}:
+    if node_type in {"hard_break", "object_embed", "image"}:
         raise ValueError(f"{path}.content is not valid on atom nodes")
     if not isinstance(content, list):
         raise ValueError(f"{path}.content must be a list")
@@ -193,7 +192,7 @@ def _safe_note_link_href(href: str) -> bool:
 
 
 def _validate_pm_attrs(node_type: str, attrs: dict[str, Any] | None, *, path: str) -> None:
-    if node_type in {"object_ref", "object_embed"}:
+    if node_type == "object_embed":
         if not isinstance(attrs, dict):
             raise ValueError(f"{path} must be an object")
         object_type = attrs.get("objectType")
@@ -228,16 +227,10 @@ def _validate_pm_attrs(node_type: str, attrs: dict[str, Any] | None, *, path: st
             raise ValueError(f"{path}.title must be a string or null")
 
 
-class ResourceUserRelationPolicyOut(CamelModel):
-    user_link_source: bool
-    user_link_target: Literal["none", "direct", "materialize_passage"]
-    note_reference_target: bool
-
-
 class ResourceItemCapabilitiesOut(CamelModel):
     sharing: Literal["None", "CopyOnly", "ResourceGrants", "HighlightGrants", "LibraryMembership"]
     library_placement: Literal["None", "ManageEntries"]
-    user_relation: ResourceUserRelationPolicyOut
+    link_mode: Literal["none", "direct", "materialize_passage"]
     attachable: bool
     chat_subject: Literal["none", "label", "scope", "readable", "quote", "generated_output"]
     readable: Literal["none", "scope", "body", "media"]
@@ -510,6 +503,7 @@ class JoinNotesSurfaceCommand(BaseModel):
 
 
 class OutlineNote(BaseModel):
+    kind: Literal["note"]
     note_id: UUID
     body_pm_json: dict[str, Any]
     parent_index: int | None = Field(default=None, ge=0)
@@ -529,10 +523,35 @@ class OutlineNote(BaseModel):
         return validate_note_body_pm_json(value) or value
 
 
+class OutlineResource(BaseModel):
+    kind: Literal["resource"]
+    target_ref: str
+    parent_index: int | None = Field(default=None, ge=0)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("target_ref")
+    @classmethod
+    def validate_target_ref(cls, value: str) -> str:
+        if isinstance(parse_resource_ref(value), ResourceRefParseFailure):
+            raise ValueError("target_ref must be a canonical ResourceRef")
+        return value
+
+    @field_validator("parent_index")
+    @classmethod
+    def validate_parent_index(cls, value: int | None) -> int:
+        if value is None:
+            raise ValueError("Omit parent_index for a root item")
+        return value
+
+
+OutlineItem = Annotated[OutlineNote | OutlineResource, Field(discriminator="kind")]
+
+
 class PasteOutlineSurfaceCommand(BaseModel):
     type: Literal["paste_outline"]
     position: SurfacePosition
-    items: list[OutlineNote] = Field(min_length=1, max_length=1000)
+    items: list[OutlineItem] = Field(min_length=1, max_length=1000)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -604,7 +623,7 @@ class ResourceBodyMutationOut(CamelModel):
     item: ResourceItemOut
     body_pm_json: dict[str, Any]
     body_text: str
-    versions: dict[str, dict[str, int]] = Field(default_factory=dict)
+    versions: dict[str, dict[str, int]]
     updated_at: datetime
 
 

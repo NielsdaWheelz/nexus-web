@@ -1,4 +1,4 @@
-"""Embedding identity, the OpenAI batch embed, and resonance's ANN relation."""
+"""Embedding identity, the OpenAI batch embed, and the suggestions ANN relation."""
 
 from __future__ import annotations
 

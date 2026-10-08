@@ -4,9 +4,9 @@ import { Play } from "lucide-react";
 import { useCallback, useMemo, useRef, useState } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import QuickReadsSection from "@/components/collections/QuickReadsSection";
-import ReadingSlateSection, {
-  type SlateAccept,
-} from "@/components/collections/ReadingSlateSection";
+import SuggestionsSection, {
+  type SuggestionAccept,
+} from "@/components/collections/SuggestionsSection";
 import {
   FeedbackNotice,
   type FeedbackContent,
@@ -50,7 +50,7 @@ import { usePlayerCommands } from "@/lib/player/playerRuntime";
 import { usePaneIsActive, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
-import { slateTargetId } from "@/lib/resonance";
+import { suggestionTargetId } from "@/lib/suggestions";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
 import styles from "./LecternPaneBody.module.css";
 
@@ -235,10 +235,10 @@ export default function LecternPaneBody() {
     },
   });
 
-  const acceptSlateTarget = useCallback<SlateAccept>(
+  const acceptSuggestionTarget = useCallback<SuggestionAccept>(
     async (target) => {
       await placeItems({
-        mediaIds: [assumeMediaId(slateTargetId(target))],
+        mediaIds: [assumeMediaId(suggestionTargetId(target))],
         placement: { kind: "Last" },
       });
     },
@@ -357,12 +357,12 @@ export default function LecternPaneBody() {
         )}
       </section>
       <QuickReadsSection isActive={isPaneActive} />
-      <ReadingSlateSection
-        returnScope="Lectern.ReadingSlate"
+      <SuggestionsSection
+        returnScope="Lectern.Suggestions"
         destination={{ kind: "Lectern" }}
         paneId={paneId}
         isActive={isPaneActive}
-        accept={acceptSlateTarget}
+        accept={acceptSuggestionTarget}
       />
     </PaneSurface>
   );

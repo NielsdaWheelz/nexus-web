@@ -1,9 +1,8 @@
-"""The two resource-target profiles over the same retrieval engine.
+"""Candidate retrieval for linking and the route-only omnibox.
 
-``link_candidates`` is the hybrid pool plus the target-only metadata sources;
-``reference_candidates`` is one lexical UNION over direct targets, one-character
-capable and never semantic. Admission, dedupe and paging stay with
-``resource_items/targets.py``; this module only retrieves and ranks.
+Linking combines hybrid search with visible metadata and passage candidates.
+The omnibox uses the lexical resource query. Admission and paging belong to
+resource_items; this module retrieves and ranks.
 """
 
 from __future__ import annotations
@@ -23,6 +22,7 @@ from nexus.auth.permissions import (
     visible_media_ids_cte_sql,
     visible_podcast_ids_cte_sql,
 )
+from nexus.services.dossier.subjects import head_visible_sql
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search.projection import (
     _result_resource_ref,
@@ -49,13 +49,10 @@ from nexus.services.search.retrievers import retrieve
 from nexus.services.search.service import _query_has_full_text_terms, build_query_embedding
 from nexus.text import escape_like
 
-# Sources the reference profile fans out to before the refill loop in
-# resource_items/targets.py re-calls with a larger cap.
-REFERENCE_CANDIDATES_PER_SOURCE = 50
+LEXICAL_CANDIDATES_PER_SOURCE = 50
 
-# The purpose=link hybrid pool: every durable/passage result type of ordinary
-# search. web_result (no durable resource) and Conversation Dossier artifacts
-# are excluded; the artifact scheme is served by the Library Dossier source.
+# Ordinary durable and passage result families. Artifact heads and the extra
+# passage families are supplied by the metadata query below.
 _LINK_HYBRID_TYPES = (
     ("media", "media"),
     ("episode", "media"),
@@ -92,15 +89,19 @@ class OracleReadingCandidate:
 
 
 @dataclass(slots=True)
-class LibraryDossierCandidate:
-    """A Library-audience Dossier head; identity is the artifact head id."""
-
+class ArtifactCandidate:
     id: UUID
-    library_id: UUID
-    library_name: str
     snippet: str
     score: _SearchScore
     result_type: Literal["artifact"] = "artifact"
+
+
+@dataclass(slots=True)
+class PassageCandidate:
+    id: UUID
+    snippet: str
+    score: _SearchScore
+    result_type: Literal["evidence_span", "oracle_passage_anchor"]
 
 
 @dataclass(slots=True)
@@ -115,7 +116,11 @@ class PassageAnchorCandidate:
 
 
 ResourceMetadataCandidate = (
-    LibraryCandidate | OracleReadingCandidate | LibraryDossierCandidate | PassageAnchorCandidate
+    LibraryCandidate
+    | OracleReadingCandidate
+    | ArtifactCandidate
+    | PassageAnchorCandidate
+    | PassageCandidate
 )
 TargetCandidate = InternalSearchResult | ResourceMetadataCandidate
 
@@ -126,10 +131,12 @@ def candidate_resource_ref(candidate: TargetCandidate) -> ResourceRef:
         return ResourceRef(scheme="library", id=candidate.id)
     if isinstance(candidate, OracleReadingCandidate):
         return ResourceRef(scheme="oracle_reading", id=candidate.id)
-    if isinstance(candidate, LibraryDossierCandidate):
+    if isinstance(candidate, ArtifactCandidate):
         return ResourceRef(scheme="artifact", id=candidate.id)
     if isinstance(candidate, PassageAnchorCandidate):
         return ResourceRef(scheme="passage_anchor", id=candidate.id)
+    if isinstance(candidate, PassageCandidate):
+        return ResourceRef(scheme=candidate.result_type, id=candidate.id)
     return _result_resource_ref(candidate)
 
 
@@ -180,18 +187,24 @@ def link_candidates(
                 )
             )
     out.extend(
-        _union(db, _metadata_parts(include), viewer_id=viewer_id, q=query, limit=limit_per_source)
+        _union(
+            db,
+            _metadata_parts(include) + _passage_parts(include),
+            viewer_id=viewer_id,
+            q=query,
+            limit=limit_per_source,
+        )
     )
     return rank_candidates(out)
 
 
-def reference_candidates(
+def lexical_resource_candidates(
     db: Session,
     viewer_id: UUID,
     *,
     q: str,
     schemes: Collection[str] | None = None,
-    limit_per_source: int = REFERENCE_CANDIDATES_PER_SOURCE,
+    limit_per_source: int = LEXICAL_CANDIDATES_PER_SOURCE,
 ) -> list[TargetCandidate]:
     """One lexical UNION over direct targets: exact/prefix/substring ILIKE plus FTS.
 
@@ -236,7 +249,7 @@ def _branch(result_type: str, sql: str) -> str:
 
 
 def _direct_parts(include: Callable[[str], bool]) -> list[str]:
-    """One UNION branch per direct target source (ported from search_object_refs)."""
+    """One UNION branch per direct target source."""
     media_blob = "concat_ws(' ', m.title, COALESCE(m.description, ''))"
     podcast_blob = "concat_ws(' ', p.title, COALESCE(p.description, ''))"
     title = "COALESCE(c.title, '')"
@@ -378,13 +391,7 @@ def _contributor_branch() -> str:
 
 
 def _metadata_parts(include: Callable[[str], bool]) -> list[str]:
-    """The target-only sources: libraries, readings, Library Dossiers, anchors.
-
-    The Default library projects "All": it matches the token "All" and is
-    labelled "All", never its stored seeded name. Only a Library subject with
-    its derived Library audience is an eligible Dossier head. A passage anchor
-    is gated by its owner — visible media, or a viewer-owned note block.
-    """
+    """Visible libraries, readings, dossier heads and saved passage anchors."""
     library_name = "CASE WHEN l.is_default THEN 'All' ELSE l.name END"
     reading_blob = """concat_ws(' ', r.question_text, COALESCE(r.folio_motto, ''),
         COALESCE(r.interpretation_text, ''))"""
@@ -415,18 +422,25 @@ def _metadata_parts(include: Callable[[str], bool]) -> list[str]:
             )
         )
     if include("artifact"):
+        subject_title = """COALESCE(m.title, c.title,
+            CASE WHEN l.is_default THEN 'All' ELSE l.name END, p.title, co.display_name,
+            pg.title, nb.body_text, idea.display_title, 'Dossier')"""
+        blob = f"concat_ws(' ', {subject_title}, a.content_text)"
         parts.append(
             _branch(
                 "artifact",
-                f"""a.id, {_tier_score(library_name, "a.content_text")} AS score,
-                jsonb_build_object('library_id', a.subject_id, 'library_name', {library_name},
-                    'content_text', a.content_text) AS payload
+                f"""a.id, {_tier_score(subject_title, blob)} AS score,
+                jsonb_build_object('content_text', {blob}) AS payload
                 FROM artifacts a
-                JOIN libraries l ON l.id = a.subject_id
-                JOIN memberships mem ON mem.library_id = l.id AND mem.user_id = :viewer_id
-                WHERE a.subject_scheme = 'library' AND a.audience_scheme = 'library'
-                  AND a.audience_id = a.subject_id AND a.revision_id IS NOT NULL
-                  AND {_matches("a.content_text")}
+                LEFT JOIN media m ON a.subject_scheme = 'media' AND m.id = a.subject_id
+                LEFT JOIN conversations c ON a.subject_scheme = 'conversation' AND c.id = a.subject_id
+                LEFT JOIN libraries l ON a.subject_scheme = 'library' AND l.id = a.subject_id
+                LEFT JOIN podcasts p ON a.subject_scheme = 'podcast' AND p.id = a.subject_id
+                LEFT JOIN contributors co ON a.subject_scheme = 'contributor' AND co.id = a.subject_id
+                LEFT JOIN pages pg ON a.subject_scheme = 'page' AND pg.id = a.subject_id
+                LEFT JOIN note_blocks nb ON a.subject_scheme = 'note_block' AND nb.id = a.subject_id
+                LEFT JOIN artifact_idea_subjects idea ON a.subject_scheme = 'idea' AND idea.id = a.subject_id
+                WHERE {head_visible_sql("a")} AND {_matches(blob)}
                 ORDER BY score DESC, a.id ASC LIMIT :limit""",
             )
         )
@@ -446,6 +460,46 @@ def _metadata_parts(include: Callable[[str], bool]) -> list[str]:
                                             WHERE user_id = :viewer_id)))
                   AND {_matches(anchor_exact)}
                 ORDER BY score DESC, pa.created_at DESC, pa.id ASC LIMIT :limit""",
+            )
+        )
+    return parts
+
+
+def _passage_parts(include: Callable[[str], bool]) -> list[str]:
+    parts: list[str] = []
+    if include("evidence_span"):
+        parts.append(
+            _branch(
+                "evidence_span",
+                f"""es.id, {_tier_score("es.span_text", "es.span_text")} AS score,
+                jsonb_build_object('exact', es.span_text) AS payload
+                FROM evidence_spans es
+                WHERE ((es.owner_kind = 'media'
+                        AND es.owner_id IN ({visible_media_ids_cte_sql()}))
+                    OR (es.owner_kind = 'note_block' AND es.owner_id IN
+                        (SELECT id FROM note_blocks WHERE user_id = :viewer_id)))
+                  AND {_matches("es.span_text")}
+                ORDER BY score DESC, es.id ASC LIMIT :limit""",
+            )
+        )
+    if include("oracle_passage_anchor"):
+        exact = "COALESCE(es.span_text, cc.chunk_text)"
+        parts.append(
+            _branch(
+                "oracle_passage_anchor",
+                f"""a.id, {_tier_score("a.display_label", exact)} AS score,
+                jsonb_build_object('exact', {exact}) AS payload
+                FROM oracle_passage_anchors a
+                JOIN oracle_corpus_sources s ON s.id = a.corpus_source_id
+                JOIN content_chunks cc ON cc.id = a.current_content_chunk_id
+                    AND cc.owner_kind = 'media' AND cc.owner_id = s.media_id
+                LEFT JOIN evidence_spans es ON es.id = a.current_evidence_span_id
+                    AND es.owner_kind = 'media' AND es.owner_id = s.media_id
+                WHERE a.resolution_status = 'resolved'
+                  AND (a.current_evidence_span_id IS NULL OR es.id IS NOT NULL)
+                  AND s.media_id IN ({visible_media_ids_cte_sql()})
+                  AND {_matches(f"concat_ws(' ', a.display_label, {exact})")}
+                ORDER BY score DESC, a.id ASC LIMIT :limit""",
             )
         )
     return parts
@@ -479,7 +533,7 @@ def _candidate(
     result_type: str, candidate_id: Any, score: _SearchScore, raw: Any, q: str
 ) -> TargetCandidate:
     if not isinstance(candidate_id, UUID) or not isinstance(raw, dict):
-        raise AssertionError("direct reference candidate row violated its typed SQL contract")
+        raise AssertionError("resource candidate row violated its typed SQL contract")
     payload = cast(dict[str, Any], raw)
     text_of = str(payload.get("title") or "")
 
@@ -551,14 +605,17 @@ def _candidate(
             score,
         )
     if result_type == "artifact":
-        name = str(payload["library_name"])
         content = str(payload.get("content_text") or "")
-        return LibraryDossierCandidate(
+        return ArtifactCandidate(
+            candidate_id, _snippet_around_query(content, q) or _truncate_snippet(content), score
+        )
+    if result_type in ("evidence_span", "oracle_passage_anchor"):
+        exact = str(payload["exact"])
+        return PassageCandidate(
             candidate_id,
-            UUID(str(payload["library_id"])),
-            name,
-            _snippet_around_query(content, q) or _truncate_snippet(content or name),
+            _snippet_around_query(exact, q) or _truncate_snippet(exact),
             score,
+            result_type,
         )
     if result_type == "passage_anchor":
         exact = str(payload.get("exact") or "")
@@ -570,4 +627,4 @@ def _candidate(
             _snippet_around_query(exact, q) or _truncate_snippet(exact),
             score,
         )
-    raise AssertionError(f"unsupported reference candidate type: {result_type}")
+    raise AssertionError(f"unsupported resource candidate type: {result_type}")

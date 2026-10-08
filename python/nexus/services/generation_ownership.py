@@ -22,7 +22,7 @@ def user_id_for_job_owner(db: Session, *, owner: LlmCallOwner, job_id: UUID) -> 
     }.get(owner.kind)
     if payload_key is not None and job.payload.get(payload_key) != str(owner.id):
         return None
-    if owner.kind == "synapse_scan":
+    if owner.kind == "connection_discovery_scan":
         from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 
         ref = parse_resource_ref(str(job.payload.get("ref", "")))
@@ -45,8 +45,8 @@ def user_id_for_job_owner(db: Session, *, owner: LlmCallOwner, job_id: UUID) -> 
             {"id": owner.id},
         )
         return UUID(str(value)) if value is not None else None
-    if owner.kind in {"synapse_scan", "media_enrichment"}:
-        key = "user_id" if owner.kind == "synapse_scan" else "requester_user_id"
+    if owner.kind in {"connection_discovery_scan", "media_enrichment"}:
+        key = "user_id" if owner.kind == "connection_discovery_scan" else "requester_user_id"
         value = job.payload.get(key)
         try:
             return UUID(str(value))

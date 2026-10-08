@@ -6,12 +6,13 @@ second round trip. These native output models own the generated web transport co
 """
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from nexus.schemas.highlights import HIGHLIGHT_COLORS, LinkedNoteBlockRef, PdfQuadIn
+from nexus.schemas.machine_authorship import MachineAuthorshipOut
 from nexus.schemas.resource_items import (
     ExpectedNoteBody,
     ResourceActivationOut,
@@ -19,13 +20,14 @@ from nexus.schemas.resource_items import (
 )
 from nexus.services.resource_graph.refs import ResourceScheme
 from nexus.services.resource_graph.schemas import Connection as Connection
+from nexus.services.resource_graph.schemas import (
+    ConnectionCreationRecord,
+    ConnectionMutation,
+    snapshot_to_jsonb,
+)
 from nexus.services.resource_graph.schemas import ConnectionEndpoint as ConnectionEndpoint
 from nexus.services.resource_graph.schemas import EdgeKind as EdgeKind
 from nexus.services.resource_graph.schemas import EdgeOrigin as EdgeOrigin
-from nexus.services.resource_graph.schemas import snapshot_to_jsonb
-
-if TYPE_CHECKING:
-    from nexus.services.resource_graph.context import ContextRefOut as ContextRefRecord
 
 
 class ResourceGraphModel(BaseModel):
@@ -93,6 +95,11 @@ class ConnectionLinkNoteOut(ResourceGraphModel):
         return self
 
 
+class ConnectionCreationOut(ResourceGraphModel):
+    authorship: MachineAuthorshipOut
+    record: Annotated[ConnectionCreationRecord, Field(discriminator="kind")]
+
+
 class ConnectionOut(ResourceGraphModel):
     edge_id: UUID
     direction: Literal["incoming", "outgoing", "undirected"]
@@ -108,6 +115,8 @@ class ConnectionOut(ResourceGraphModel):
     other: ConnectionEndpointOut
     citation: ConnectionCitationOut | None
     link_note: ConnectionLinkNoteOut | None
+    creation: ConnectionCreationOut | None
+    mutation: Annotated[ConnectionMutation, Field(discriminator="kind")] | None
     created_at: datetime
 
     @model_validator(mode="after")
@@ -135,7 +144,7 @@ class ContextRefOut(ResourceGraphModel):
     created_at: datetime
 
 
-class LinkResourceSource(ResourceGraphModel):
+class LinkResourceEndpoint(ResourceGraphModel):
     kind: Literal["resource"] = "resource"
     ref: str
 
@@ -163,31 +172,27 @@ class LinkPdfSelectionSource(ResourceGraphModel):
     color: HIGHLIGHT_COLORS
 
 
-LinkSource = Annotated[
-    LinkResourceSource | LinkFragmentSelectionSource | LinkPdfSelectionSource,
-    Field(discriminator="kind"),
-]
-
-
-class LinkResourceTarget(ResourceGraphModel):
-    kind: Literal["resource"] = "resource"
-    ref: str
-
-
-class LinkPassageTarget(ResourceGraphModel):
+class LinkPassageEndpoint(ResourceGraphModel):
     """A transient passage candidate, materialized into a ``passage_anchor`` on confirm."""
 
     kind: Literal["passage"] = "passage"
     candidate_ref: str
 
 
-LinkTarget = Annotated[LinkResourceTarget | LinkPassageTarget, Field(discriminator="kind")]
+LinkEndpoint = Annotated[LinkResourceEndpoint | LinkPassageEndpoint, Field(discriminator="kind")]
+LinkSource = Annotated[
+    LinkResourceEndpoint
+    | LinkPassageEndpoint
+    | LinkFragmentSelectionSource
+    | LinkPdfSelectionSource,
+    Field(discriminator="kind"),
+]
 
 
 class CreateLinkRequest(ResourceGraphModel):
     client_mutation_id: str = Field(..., min_length=1, max_length=120)
     source: LinkSource
-    target: LinkTarget
+    target: LinkEndpoint
 
 
 class CreateLinkOut(ResourceGraphModel):
@@ -215,16 +220,6 @@ class LinkNoteOut(LinkedNoteBlockRef):
     connection: ConnectionOut
 
     model_config = ConfigDict(extra="forbid")
-
-
-class PutStanceRequest(ResourceGraphModel):
-    source_ref: str
-    target_ref: str
-    kind: Literal["supports", "contradicts"]
-
-
-class StanceOut(ResourceGraphModel):
-    connection: ConnectionOut
 
 
 def endpoint_out(endpoint: ConnectionEndpoint) -> ConnectionEndpointOut:
@@ -280,18 +275,11 @@ def connection_out(item: Connection) -> ConnectionOut:
             if item.link_note is not None
             else None
         ),
+        creation=(
+            ConnectionCreationOut(authorship=item.creation.authorship, record=item.creation.record)
+            if item.creation is not None
+            else None
+        ),
+        mutation=item.mutation,
         created_at=item.created_at,
-    )
-
-
-def context_ref_out(record: "ContextRefRecord") -> ContextRefOut:
-    return ContextRefOut(
-        id=record.edge_id,
-        conversation_id=record.conversation_id,
-        resource_ref=record.target.uri,
-        activation=record.activation,
-        label=record.resolved.label,
-        summary=record.resolved.summary,
-        missing=record.resolved.missing,
-        created_at=record.created_at,
     )

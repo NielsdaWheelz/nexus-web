@@ -7,7 +7,7 @@ import PaneSection from "@/components/ui/PaneSection";
 import { useResource } from "@/lib/api/useResource";
 import { useConsumptionProjectionRevision } from "@/lib/consumption/projectionRevision";
 import { useLibraryPlacementRevision } from "@/lib/libraries/placementRevision";
-import { getSlate, presentSlateItem, type Slate } from "@/lib/resonance";
+import { getSuggestions, presentSuggestionItem, type Suggestions } from "@/lib/suggestions";
 
 export default function QuickReadsSection({ isActive }: { isActive: boolean }) {
   const consumption = useConsumptionProjectionRevision();
@@ -15,9 +15,9 @@ export default function QuickReadsSection({ isActive }: { isActive: boolean }) {
   const requestKey = isActive
     ? `lectern:quick-reads:${consumption.revision}:${placement.revision}`
     : null;
-  const resource = useResource<Slate>({
+  const resource = useResource<Suggestions>({
     cacheKey: requestKey,
-    load: (signal) => getSlate("/api/lectern/quick-reads", signal),
+    load: (signal) => getSuggestions("/api/lectern/quick-reads", signal),
   });
   const focusedRef = useRef<{ target: HTMLElement; section: HTMLElement } | null>(null);
 
@@ -55,7 +55,7 @@ export default function QuickReadsSection({ isActive }: { isActive: boolean }) {
       <CollectionView
         returnScope="Lectern.QuickReads"
         ariaLabel="Quick reads"
-        rows={resource.status === "ready" ? resource.data.items.map(presentSlateItem) : []}
+        rows={resource.status === "ready" ? resource.data.items.map(presentSuggestionItem) : []}
         status={resource.status === "idle" ? "loading" : resource.status}
         error={resource.status === "error" ? (
           <FeedbackNotice

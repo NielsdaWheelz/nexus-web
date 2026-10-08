@@ -5,24 +5,24 @@ import CollectionView from "@/components/collections/CollectionView";
 import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
-import { lecternSlateResource, librarySlateResource } from "@/lib/api/resource";
+import { lecternSuggestionsResource, librarySuggestionsResource } from "@/lib/api/resource";
 import { useResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
 import {
-  getSlate,
-  presentSlateItem,
-  type Slate,
-  type SlateItem,
-  type SlateTarget,
-} from "@/lib/resonance";
+  getSuggestions,
+  presentSuggestionItem,
+  type Suggestions,
+  type SuggestionItem,
+  type SuggestionTarget,
+} from "@/lib/suggestions";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { usePaneChromeFocusReturn } from "@/lib/workspace/mobileChrome";
 import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
-import styles from "./ReadingSlateSection.module.css";
+import styles from "./SuggestionsSection.module.css";
 
-export type SlateDestination =
+export type SuggestionsDestination =
   { kind: "Lectern" } | { kind: "Library"; id: string; name: string };
 
 /**
@@ -30,7 +30,7 @@ export type SlateDestination =
  * with the reason it is not. A destination that owns its own unknown-outcome
  * recovery (the Lectern) keeps the promise pending until that settles.
  */
-export type SlateAccept = (target: SlateTarget) => Promise<void>;
+export type SuggestionAccept = (target: SuggestionTarget) => Promise<void>;
 
 /**
  * Next-read suggestions for one destination. Key it by destination: state
@@ -39,25 +39,25 @@ export type SlateAccept = (target: SlateTarget) => Promise<void>;
  * emptied section hands focus to pane chrome before it hides. Activation
  * refreshes the list.
  */
-export default function ReadingSlateSection({
+export default function SuggestionsSection({
   destination,
   paneId,
   isActive,
   accept,
   returnScope,
 }: {
-  destination: SlateDestination;
+  destination: SuggestionsDestination;
   paneId: string;
   isActive: boolean;
-  accept: SlateAccept;
+  accept: SuggestionAccept;
   returnScope: string;
 }) {
   const lectern = destination.kind === "Lectern";
   const load = (signal?: AbortSignal) =>
-    getSlate(
+    getSuggestions(
       lectern
-        ? "/api/lectern/slate"
-        : `/api/libraries/${encodeURIComponent(destination.id)}/slate`,
+        ? "/api/lectern/suggestions"
+        : `/api/libraries/${encodeURIComponent(destination.id)}/suggestions`,
       signal,
     );
   const [version, setVersion] = useState(0);
@@ -66,12 +66,12 @@ export default function ReadingSlateSection({
     if (isActive && !wasActive.current) setVersion((value) => value + 1);
     wasActive.current = isActive;
   }, [isActive]);
-  const resource = useResource<Slate>({
+  const resource = useResource<Suggestions>({
     cacheKey: !isActive
       ? null
       : lectern
-        ? lecternSlateResource.cacheKey({ refreshVersion: version })
-        : librarySlateResource.cacheKey({
+        ? lecternSuggestionsResource.cacheKey({ refreshVersion: version })
+        : librarySuggestionsResource.cacheKey({
             id: destination.id,
             refreshVersion: version,
           }),
@@ -79,8 +79,8 @@ export default function ReadingSlateSection({
   });
 
   // Rows follow each fresh read; an Add edits them locally until the next one.
-  const [rows, setRows] = useState<SlateItem[] | null>(null);
-  const [read, setRead] = useState<Slate | null>(null);
+  const [rows, setRows] = useState<SuggestionItem[] | null>(null);
+  const [read, setRead] = useState<Suggestions | null>(null);
   if (resource.status === "ready" && resource.data !== read) {
     setRead(resource.data);
     setRows(resource.data.items);
@@ -93,10 +93,10 @@ export default function ReadingSlateSection({
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   if (defect) throw defect.error;
 
-  const sectionId = `reading-slate-${useId().replaceAll(":", "")}`;
-  const title = lectern ? "At hand" : "Suggested for this library";
+  const sectionId = `suggestions-${useId().replaceAll(":", "")}`;
+  const title = lectern ? "Suggestions" : "Suggested for this library";
   const ariaLabel = lectern
-    ? "At hand suggestions"
+    ? "Suggestions"
     : `Suggestions for ${destination.name}`;
   const isMobile = useIsMobileViewport();
   const { focus: focusPaneChrome } = usePaneChromeFocusReturn();
@@ -123,7 +123,7 @@ export default function ReadingSlateSection({
     (row ?? section)?.focus();
   }, [rows, sectionId]);
 
-  async function add(item: SlateItem, row: HTMLElement) {
+  async function add(item: SuggestionItem, row: HTMLElement) {
     const current = rows ?? [];
     const index = current.indexOf(item);
     const ownsFocus = row.contains(document.activeElement);
@@ -188,7 +188,7 @@ export default function ReadingSlateSection({
         >
           <CollectionView
             returnScope={returnScope}
-            rows={(rows ?? []).map(presentSlateItem)}
+            rows={(rows ?? []).map(presentSuggestionItem)}
             status="ready"
             ariaLabel={ariaLabel}
             surface={false}

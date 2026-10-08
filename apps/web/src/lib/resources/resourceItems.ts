@@ -29,7 +29,7 @@ export type SurfacePosition =
   | { kind: "start" }
   | { kind: "after"; linkId: string };
 
-export function normalizeResourceSurfaceNode(
+export function projectResourceSurfaceNode(
   node: Schema<"ResourceSurfaceNode">,
 ): ResourceSurfaceNode {
   const content = node.content;
@@ -49,14 +49,14 @@ export function normalizeResourceSurfaceNode(
 }
 
 /** Projects the typed surface wire into camel-case fields and canonical note bodies. */
-export function normalizeResourceSurface(
+export function projectResourceSurface(
   surface: Schema<"ResourceSurfaceOut">,
 ): ResourceSurface {
   return {
-    source: normalizeResourceSurfaceNode(surface.source),
+    source: projectResourceSurfaceNode(surface.source),
     orderedItems: surface.ordered_items.map((occurrence) => ({
       linkId: occurrence.link_id,
-      target: normalizeResourceSurfaceNode(occurrence.target),
+      target: projectResourceSurfaceNode(occurrence.target),
       collapsed: occurrence.collapsed,
       hasLinkNote: occurrence.has_link_note,
     })),

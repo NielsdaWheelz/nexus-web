@@ -102,6 +102,7 @@ from nexus.services.resource_graph.context import (
     add_context_ref_without_commit,
     list_context_refs,
 )
+from nexus.services.resource_graph.edges import create_link
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_mutation_replay import lookup_replay, record_replay
 from nexus.services.seq import assign_next_message_seq
@@ -500,13 +501,12 @@ def _admit_send(
         snapshot_json = encode_reader_selection_snapshot(snapshot)
         subject_ref = ResourceRef(scheme="highlight", id=reader_selection.key.highlight_id)
         companion_ref = ResourceRef(scheme="media", id=reader_selection.key.media_id)
-        subject_edge = add_context_ref_without_commit(
+        subject_edge = create_link(
             db,
             viewer_id=viewer_id,
-            conversation_id=conversation.id,
+            source=ResourceRef(scheme="conversation", id=conversation.id),
             target=subject_ref,
-            origin="user",
-        )
+        ).edge
         add_context_ref_without_commit(
             db,
             viewer_id=viewer_id,
@@ -519,12 +519,12 @@ def _admit_send(
             requested_id=subject_ref.id,
             scheme=subject_ref.scheme,
             id=subject_ref.id,
-            context_edge_id=subject_edge.edge_id,
+            context_edge_id=subject_edge.id,
         )
         chat_subject = {
             "requested_resource_ref": subject_ref.uri,
             "resource_ref": subject_ref.uri,
-            "context_edge_id": str(subject_edge.edge_id),
+            "context_edge_id": str(subject_edge.id),
             "companions": [companion_ref.uri],
         }
 

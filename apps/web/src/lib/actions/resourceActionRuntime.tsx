@@ -163,6 +163,7 @@ export function ResourceActionRuntimeProvider({
   const { openShare } = useShareController();
   const { openLibraryPlacement } = useLibraryPlacementController();
   const {
+    linkComposer,
     openAuthorsEditor,
     openMediaMetadata,
     openLibrarySettings,
@@ -302,6 +303,7 @@ export function ResourceActionRuntimeProvider({
     activePaneId: workspace.state.activePrimaryPaneId,
     openShare,
     openLibraryPlacement,
+    linkComposer,
     openAuthorsEditor,
     openMediaMetadata,
     openLibrarySettings,

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
+
+from nexus.db.models import Message
 
 
 def resource_uri_is_admitted(
@@ -29,6 +32,18 @@ def resource_uri_is_admitted(
     parsed = parse_resource_ref(uri)
     if isinstance(parsed, ResourceRefParseFailure):
         return False
+    if parsed.scheme == "message":
+        conversation_id = db.scalar(
+            select(Message.conversation_id).where(
+                Message.id == parsed.id,
+                Message.status == "complete",
+                Message.role.in_(("user", "assistant")),
+            )
+        )
+        return (
+            conversation_id is not None
+            and f"conversation:{conversation_id}" in admitted_resource_uris
+        )
     parent_id = parent_media_id_for_read_pointer(db, scheme=parsed.scheme, resource_id=parsed.id)
     return parent_id is not None and f"media:{parent_id}" in admitted_resource_uris
 

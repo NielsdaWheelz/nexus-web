@@ -91,7 +91,7 @@ def _entry_revision(db: Session, viewer_id: UUID) -> LibraryEntryRemovalOut:
 
 
 # ---------------------------------------------------------------------------
-# Exported SQL relations (composed inline by atlas, search scope and resonance)
+# Exported SQL relations (composed inline by atlas, search scope and suggestions)
 # ---------------------------------------------------------------------------
 
 

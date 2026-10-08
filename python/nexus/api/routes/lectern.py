@@ -20,19 +20,19 @@ from nexus.schemas.consumption import (
     LecternResult,
     LecternSnapshot,
 )
-from nexus.schemas.resonance import QuickReadsOut, SlateOut
-from nexus.services import resonance as resonance_service
+from nexus.schemas.suggestions import QuickReadsOut, SuggestionsOut
+from nexus.services import suggestions as suggestions_service
 from nexus.services.consumption import service as consumption_service
 
 router = APIRouter(tags=["lectern"])
 
 
-@router.get("/lectern/slate")
-def get_lectern_slate(
+@router.get("/lectern/suggestions")
+def get_lectern_suggestions(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: RepeatableReadDbSession,
-) -> Data[SlateOut]:
-    slate = resonance_service.build_lectern_slate(db, viewer_id=viewer.user_id)
+) -> Data[SuggestionsOut]:
+    slate = suggestions_service.build_lectern_suggestions(db, viewer_id=viewer.user_id)
     return Data(data=slate)
 
 
@@ -46,7 +46,7 @@ def get_quick_reads(
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST, "Quick reads does not accept query parameters"
         )
-    quick_reads = resonance_service.build_quick_reads(db, viewer_id=viewer.user_id)
+    quick_reads = suggestions_service.build_quick_reads(db, viewer_id=viewer.user_id)
     return Data(data=quick_reads)
 
 

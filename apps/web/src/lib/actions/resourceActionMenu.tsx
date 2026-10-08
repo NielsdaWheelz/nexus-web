@@ -84,6 +84,7 @@ import {
 import { requestPodcastActionIntent } from "@/lib/podcasts/actionIntent";
 
 export interface ResourceActionPorts {
+  readonly linkComposer: ReturnType<typeof useResourceOverlaysController>["linkComposer"];
   readonly submitMetadata: (
     mediaId: string,
     expectedJobId: Schema<"MetadataRetryAllowed">["expected_job_id"] | null,
@@ -964,14 +965,14 @@ export function resourceActionDescriptors({
             capability.state
           ],
         );
+      case "LinkResource":
+        return make(capability, "ResourceAction.Link", (ports) => ports.linkComposer.openResourceLink(ref), { openOnly: true });
       case "EditHighlight":
-      case "LinkHighlight":
       case "EditHighlightBounds":
       case "DeleteHighlight": {
         const kind = capability.kind;
         const actionIds = {
           EditHighlight: "ResourceOperation.Highlight.Edit",
-          LinkHighlight: "ResourceOperation.Highlight.Link",
           EditHighlightBounds: "ResourceOperation.Highlight.EditBounds",
           DeleteHighlight: "ResourceOperation.Highlight.Delete",
         } as const;

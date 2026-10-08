@@ -411,8 +411,8 @@ class ResourceExternalSnapshot(Base):
 
 class PassageAnchor(Base):
     """User-owned durable passage identity within one owner (media or
-    note_block), materialized when a Link/stance targets a derived passage
-    (universal-link-authoring-hard-cutover.md, Passage Anchor). Owner,
+    note_block), materialized when a link targets a derived passage
+    (connections-plan.md, owners and schemas). Owner,
     normalized quote, and key are immutable; only the selector's locator_hint
     is replaceable. ``id`` is application-generated. ``owner_id`` is
     polymorphic and deliberately has no FK; owner visibility and explicit
@@ -440,8 +440,8 @@ class PassageAnchor(Base):
     )
 
 
-class SynapseSuppression(Base):
-    """A dismissed synapse pair the resonance engine must never re-propose.
+class ConnectionDiscoverySuppression(Base):
+    """A dismissed discovery pair the discovery engine must never re-propose.
 
     Stored as-dismissed; the miner checks both directions at read time
     (service-level undirectedness). Endpoints are polymorphic refs like
@@ -449,7 +449,7 @@ class SynapseSuppression(Base):
     endpoint deletion (single-user scale).
     """
 
-    __tablename__ = "synapse_suppressions"
+    __tablename__ = "connection_discovery_suppressions"
 
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),

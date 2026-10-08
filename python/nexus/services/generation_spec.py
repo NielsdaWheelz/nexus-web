@@ -35,7 +35,7 @@ type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, J
 type BackgroundOperationKey = Literal[
     "metadata_enrichment",
     "media_summary",
-    "synapse",
+    "connection_discovery",
     "oracle",
     "dossier_page",
     "dossier_note",
