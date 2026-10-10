@@ -37,6 +37,33 @@ occurred. a fresh drained exact backup, actual restore/source review of those
 bytes, and explicit migration-loss approval remain required. follow
 [the operator sequence](../../deployment.md#reviewed-model-history-reset).
 
+## blockers found 2026-10-10
+
+the read-only release preparation of 2026-10-10 (plan and production reads in
+`nexus-web-campaign-artifacts/2026-10-09/release/plan.md` and its `preflight/`,
+outside the repo) found eight blockers for `7dc68929b`/0241 -> main. its phases 0-7
+are the owner steps, in order.
+
+- B1 (owner): no backend candidate since 2026-10-08. `backend-images.yml` fails on
+  the missing repo secret `UNIVERSAL_MEMORY_READ_TOKEN`. provision it; the first main
+  commit after it whose first image run succeeds is the target `T`. freeze main at `T`.
+- B2 (fixed, cleanup/release-blockers): `ModelCutoverRestore.target_revision` was
+  pinned to `^0258$` while release and archive cli require the candidate head.
+- B3 (owner): production `current.env` lacks `NEXUS_MEMORY_CLIENT_CONFIG_FILE`;
+  publish config with `sync-env.sh` before the window.
+- B4 (owner): production lists `moonshot`, which main refuses after the irreversible
+  migration; drop it and its key in that publication (`deploy/env/README.md`).
+- B5 (owner): the local env inputs are from may; supply or rebuild them from the
+  live files.
+- B6 (owner; harness fixed): fresh census with writers stopped, backup bound to `T`,
+  restored-copy qualification with `deploy/hetzner/qualify_model_cutover.py`
+  (`deployment.md`), review and sign.
+- B7 (fixed): two succeeded `enrich_metadata` jobs name generation ids absent from
+  `llm_calls`; the reviewed input now acknowledges such terminal jobs by id
+  (`retire_dangling_job_ids`). re-read the set from the frozen database.
+- B8 (fixed): 0245 loaded `Media` through the live ORM and failed on
+  `failure_stage='metadata'`; it now reads and writes its own schema in sql.
+
 ## what is true
 
 - the last public web/backend version observation was `7dc68929b` (#377) on 2026-09-28. reviewed aggregate SQL on 2026-10-03 independently confirms production remains at `0241`; this did not re-probe public versions.
@@ -47,7 +74,7 @@ bytes, and explicit migration-loss approval remain required. follow
 |---|---|---|---|
 | 0242 | reader publication source issues | no | |
 | 0243 | reader section semantics | no | [reader-chapter-production-correspondence-unverified](reader-chapter-production-correspondence-unverified.md) |
-| 0244 | shared note links (stop writers, drain client journals) | yes | [notes-writing-legacy-draft-checkpoint](notes-writing-legacy-draft-checkpoint.md), [notes-writing-target-unsafe-links-census](notes-writing-target-unsafe-links-census.md), [notes-writing-target-missing-body-versions](notes-writing-target-missing-body-versions.md) |
+| 0244 | shared note links (stop writers, drain client journals) | no (its downgrade raises) | [notes-writing-legacy-draft-checkpoint](notes-writing-legacy-draft-checkpoint.md), [notes-writing-target-unsafe-links-census](notes-writing-target-unsafe-links-census.md), [notes-writing-target-missing-body-versions](notes-writing-target-missing-body-versions.md) |
 | 0245 | reader source note bodies | no | [reader-source-body-production-publication-preflight](reader-source-body-production-publication-preflight.md), [reader-source-notes-production-repair-pending](reader-source-notes-production-repair-pending.md) |
 | 0246 | reviewed archival retirement; independent completed-write receipts survive history deletion | no | [model-history-cutover-blocked-by-uncertain-work](model-history-cutover-blocked-by-uncertain-work.md) |
 | 0247 | generation api credential binding | yes | |
@@ -134,8 +161,12 @@ backend, web and android ship together, in the
 deploy, new apk. see `docs/media-row-plan.md` (migration and hard cutover) at
 `407fcc735`.
 
-the graph reauthor adds `0268` (graph wire cutover, data only). preflight, read-only,
-before the release; a non-zero count stops the release and becomes a ticket:
+the graph reauthor adds `0268` (graph wire cutover, data only). its guard is the
+count below, which means something only at the 0267 schema. at production's 0241 it
+counts edges that 0244, 0246 and 0264 rewrite or delete before 0268 runs (16 on
+2026-10-10: 15 `page`->`note_block` edges with a `source_order_key`, 1
+`conversation`->`highlight`), so a non-zero count there is expected. the restored-copy
+qualification runs 0268 itself, which fails closed; that run is the preflight:
 
 ```sql
 SELECT count(*) FROM resource_edges WHERE origin = 'user' AND (

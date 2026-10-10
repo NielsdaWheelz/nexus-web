@@ -23,7 +23,7 @@ do not install the new apk before step 2.
 ## what breaks in each window
 
 **old apk against new web+api** (between steps 2 and 3):
-- the new web finds no `window.nexusOffline`: *Download for offline* is
+- the new web finds no `window.nexusDownloads`: *Download for offline* is
   disabled *Not supported on this device*, there is no *Downloads* entry, and
   *Sign Out* is the plain web post.
 - that sign-out does **not** purge the old apk's offline data (an I1 gap for
