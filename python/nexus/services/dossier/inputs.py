@@ -20,6 +20,11 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.schemas.dossier import CoverageUnit
+from nexus.schemas.resource_graph import (
+    CitationSnapshot,
+    ConnectionFiltersRequest,
+    ConnectionQueryRequest,
+)
 from nexus.services.contributor_credits import load_visible_contributor_media_ids
 from nexus.services.media_intelligence import (
     MediaOmission,
@@ -31,11 +36,11 @@ from nexus.services.media_intelligence import (
 from nexus.services.resource_graph.adjacency import load_page_surface
 from nexus.services.resource_graph.connections import query_connections
 from nexus.services.resource_graph.context import list_context_refs
-from nexus.services.resource_graph.refs import RESOURCE_SCHEMES, ResourceRef, ResourceScheme
-from nexus.services.resource_graph.schemas import (
-    CitationSnapshot,
-    ConnectionFilters,
-    ConnectionQuery,
+from nexus.services.resource_graph.refs import (
+    RESOURCE_SCHEMES,
+    ResourceRef,
+    ResourceScheme,
+    assert_resource_ref,
 )
 
 EXCERPT_CHARS = 600
@@ -109,7 +114,9 @@ def collect(
 def offer(
     target: ResourceRef, text: str, excerpt: str, link: str | None, title: str | None = None
 ) -> Candidate:
-    snapshot = CitationSnapshot(title, excerpt[:EXCERPT_CHARS], None, target.scheme, link)
+    snapshot = CitationSnapshot(
+        title=title, excerpt=excerpt[:EXCERPT_CHARS], result_type=target.scheme, deep_link=link
+    )
     return Candidate(target, text, snapshot)
 
 
@@ -335,7 +342,11 @@ def _claims(
         if budget is not None and candidates and chars > budget:
             break
         snapshot = CitationSnapshot(
-            title, excerpt, span.citation_label, "evidence_span", f"{href}#evidence-{span.id}"
+            title=title,
+            excerpt=excerpt,
+            section_label=span.citation_label,
+            result_type="evidence_span",
+            deep_link=f"{href}#evidence-{span.id}",
         )
         target = ResourceRef("evidence_span", span.id)
         candidates.append(Candidate(target, f"{prefix}{claim.claim_text}", snapshot))
@@ -347,18 +358,23 @@ def _connections(db: Session, ref: ResourceRef, viewer_id: UUID) -> list[Candida
     candidates: list[Candidate] = []
     cursor: str | None = None
     seen = 0
+    filters = ConnectionFiltersRequest(
+        source_schemes=list(_LINKABLE), target_schemes=list(_LINKABLE)
+    )
     while True:
-        filters = ConnectionFilters(source_schemes=_LINKABLE, target_schemes=_LINKABLE)
-        query = ConnectionQuery((ref,), "both", "exact", filters, 100, cursor)
+        query = ConnectionQueryRequest(
+            refs=[ref.uri], direction="both", filters=filters, cursor=cursor
+        )
         connections = query_connections(db, viewer_id=viewer_id, query=query)
         seen += len(connections.items)
         for connection in connections.items:
             end = connection.other
-            if not end.missing and end.ref != ref:
-                body = end.description or end.label or end.ref.uri
+            if not end.missing and end.ref != ref.uri:
+                body = end.description or end.label or end.ref
                 kind = f"{connection.kind}, {connection.direction}"
-                text_ = f"Connection ({kind}) — {end.label or end.ref.uri}:\n{body}"
-                candidates.append(offer(end.ref, text_, body, end.href, end.label))
+                text_ = f"Connection ({kind}) — {end.label or end.ref}:\n{body}"
+                target = assert_resource_ref(end.ref)
+                candidates.append(offer(target, text_, body, end.activation.href, end.label))
         if connections.next_cursor is None:
             return candidates
         if seen >= MAX_CONNECTIONS:

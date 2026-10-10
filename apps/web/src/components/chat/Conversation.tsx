@@ -20,8 +20,10 @@ import {
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
-import { dispatchReaderSourceActivation } from "@/lib/resourceGraph/readerSourceActivation";
-import type { ReaderSourceTarget } from "@/lib/resourceGraph/readerTarget";
+import {
+  dispatchReaderSourceActivation,
+  type ReaderSourceTarget,
+} from "@/lib/resourceGraph/citations";
 import {
   activateResource,
   type ResourceActivation,

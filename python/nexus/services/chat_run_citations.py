@@ -11,25 +11,23 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun
+from nexus.schemas.resource_graph import CitationSnapshot
 from nexus.services.chat_run_event_store import ChatRunEventEmitter
 from nexus.services.chat_run_tools import upsert_attached_context_tool_call
 from nexus.services.resource_graph import cleanup as graph_cleanup
 from nexus.services.resource_graph.citations import (
+    CitationInput,
     GeneratedMarkdownCitationMarker,
     build_citation_outs,
     parse_generated_markdown_citation_markers,
     replace_citations_for_output,
 )
-from nexus.services.resource_graph.context import (
-    add_context_ref_without_commit,
-    admits_resource_for_conversation_read,
-)
+from nexus.services.resource_graph.context import add_context_ref_without_commit
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
     parse_resource_ref,
 )
-from nexus.services.resource_graph.schemas import CitationInput, CitationSnapshot
 from nexus.services.resource_items.capabilities import resource_citation_result_type
 from nexus.services.retrieval_citation import RetrievalCitation, insert_retrieval_row
 
@@ -393,13 +391,6 @@ def publish_chat_citations(
     for edge in edges:
         if edge.target.scheme == "external_snapshot":
             continue
-        if admits_resource_for_conversation_read(
-            db,
-            viewer_id=run.owner_user_id,
-            conversation_id=run.conversation_id,
-            target=edge.target,
-        ):
-            continue
         context_ref = add_context_ref_without_commit(
             db,
             viewer_id=run.owner_user_id,
@@ -407,6 +398,8 @@ def publish_chat_citations(
             target=edge.target,
             origin="citation",
         )
+        if context_ref is None:
+            continue
         emitter.batch(
             "context_ref_added",
             {

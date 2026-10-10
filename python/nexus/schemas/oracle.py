@@ -8,7 +8,12 @@ from uuid import UUID
 import regex
 from pydantic import AfterValidator, BaseModel, StringConstraints
 
-from nexus.schemas.citation import CitationOut, CitationRole, CitationSnapshot, CitationTargetRef
+from nexus.schemas.citation import (
+    CitationOut,
+    CitationRole,
+    CitationSnapshotOut,
+    CitationTargetRef,
+)
 
 # The browser's rule (lib/oracle/oracle.ts): Unicode White_Space at either end, so
 # U+0085 goes and U+FEFF stays; str.strip and pydantic's trim also take U+001C–U+001F.
@@ -79,7 +84,7 @@ class OracleCitationFacts(BaseModel):
     role: CitationRole
     target_ref: CitationTargetRef
     deep_link: str | None
-    snapshot: CitationSnapshot | None
+    snapshot: CitationSnapshotOut | None
 
 
 class OracleStoredPassage(OraclePassageText):

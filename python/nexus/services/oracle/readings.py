@@ -37,6 +37,7 @@ from nexus.schemas.oracle import (
     OracleStoredPassage,
 )
 from nexus.schemas.presence import Present
+from nexus.schemas.resource_graph import CitationSnapshot
 from nexus.services import generation_policy, library_governance
 from nexus.services.durable_step_journal import (
     Completed,
@@ -59,12 +60,12 @@ from nexus.services.llm_ledger import LlmCallOwner
 from nexus.services.oracle import corpus, synthesis
 from nexus.services.oracle.synthesis import Candidate, Failure, Success
 from nexus.services.resource_graph.citations import (
+    CitationInput,
     build_citation_outs,
     hydrate_citation,
     replace_citations_for_output,
 )
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
-from nexus.services.resource_graph.schemas import CitationInput, CitationSnapshot
 from nexus.services.search.semantic import embed_text, nearest_chunks
 from nexus.tasks.llm_task import run_llm_task
 

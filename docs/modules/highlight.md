@@ -244,7 +244,7 @@ conversations, neutral user links, machine links and chat citations all live in
 `resource_edges` under their origin-specific contracts. A `highlight:<id>` is
 an ordinary Link source or target — same-document Highlight-to-Highlight Links
 are admissible, self-link is not — and Link creation, note attachment, and
-removal are owned entirely by `services/resource_graph/user_relations.py`, not
+removal are owned entirely by `services/resource_graph/links.py`, not
 by this module. the flush-only pair writer is `services/resource_graph/edges.py`;
 selection authoring composes it inside the existing graph command transaction.
 the highlight module may ask graph services for linked

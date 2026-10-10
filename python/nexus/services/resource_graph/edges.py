@@ -1,16 +1,16 @@
-"""The only writer of ``resource_edges``, plus the reads that guard a write.
+"""The only writer of ``resource_edges``, and the reads that guard a write.
 
-Flush-only: every mutator flushes inside the caller's transaction and never commits, so
-conversation create, citation write-through, Oracle persistence and Dossier promotion
-stay atomic. Dedup is explicit SELECT-then-write: a machine bare edge is unique per
-viewer, origin and directed pair; a neutral user Link is unique per viewer and
-*unordered* pair and returns the existing row instead of raising, so unrelated source-owned facts may coexist on one pair.
+Every mutator flushes inside the caller's transaction and never commits. A fact
+(``create_edge``, ``replace_edges_for_origin``) obeys the shape law in ``_validate``;
+a user link (``create_link``) is stored in canonical order (``ref.uri``), is unique
+per unordered pair, and ranks itself at each endpoint that orders its links. By that
+law ``origin = 'user'`` alone identifies a link everywhere.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 from typing import NoReturn, cast
 from uuid import UUID
@@ -20,22 +20,9 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import Conversation, ResourceEdge, ResourceViewState
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
-from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
+from nexus.schemas.resource_graph import EDGE_KINDS, CitationSnapshot, EdgeKind, EdgeOrigin
+from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme, assert_resource_ref
 from nexus.services.resource_graph.resolve import assert_ref_visible
-from nexus.services.resource_graph.schemas import (
-    ASSISTANT_EDGE_SCHEMES,
-    CONNECTION_DISCOVERY_SOURCE_SCHEMES,
-    CONNECTION_DISCOVERY_TARGET_SCHEMES,
-    EDGE_KINDS,
-    EDGE_ORIGINS,
-    EdgeCreate,
-    EdgeKind,
-    EdgeOrigin,
-    EdgeOut,
-    is_neutral_link,
-    snapshot_from_jsonb,
-    snapshot_to_jsonb,
-)
 from nexus.services.resource_items import versions
 from nexus.services.resource_items.capabilities import (
     resource_can_be_citation_output_source,
@@ -44,19 +31,49 @@ from nexus.services.resource_items.capabilities import (
 )
 
 Pair = tuple[str, UUID]
-
-# Source/target scheme law for the origins whose shape is not checked in full above.
-_ORIGIN_SHAPES: dict[EdgeOrigin, tuple[tuple[str, ...], tuple[str, ...] | None, str]] = {
-    "system": (("conversation",), None, "System edges must be conversation context refs"),
-    "note_body": (("note_block",), None, "Note body edges must start from note_block"),
-    "highlight_note": (
-        ("highlight",),
-        ("note_block",),
-        "Highlight note edges must connect highlight to note_block",
-    ),
-    "document_embed": (("media",), ("media",), "Document embed edges must connect media to media"),
-    "link_note": (("note_block",), None, "Invalid edge shape"),
+CONNECTION_DISCOVERY_SOURCE_SCHEMES: tuple[ResourceScheme, ...] = (
+    "media",
+    "page",
+    "note_block",
+    "highlight",
+)
+_ASSISTANT_ENDPOINTS = ("media", "page", "note_block", "highlight")
+# Every fact origin -> (source schemes, target schemes); None admits any visible resource.
+# ``user`` is absent: links are written by ``create_link`` only.
+_ENDPOINTS: dict[str, tuple[tuple[str, ...] | None, tuple[str, ...] | None]] = {
+    "citation": (None, None),
+    "system": (("conversation",), None),
+    "note_body": (("note_block",), None),
+    "highlight_note": (("highlight",), ("note_block",)),
+    "document_embed": (("media",), ("media",)),
+    "link_note": (("note_block",), None),
+    "discovery": (CONNECTION_DISCOVERY_SOURCE_SCHEMES, ("media", "note_block", "evidence_span")),
+    "assistant": (_ASSISTANT_ENDPOINTS, _ASSISTANT_ENDPOINTS),
 }
+
+
+@dataclass(frozen=True, slots=True)
+class EdgeCreate:
+    source: ResourceRef
+    target: ResourceRef
+    kind: EdgeKind
+    origin: EdgeOrigin
+    source_order_key: str | None = None
+    ordinal: int | None = None
+    snapshot: CitationSnapshot | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EdgeOut:
+    id: UUID
+    source: ResourceRef
+    target: ResourceRef
+    kind: EdgeKind
+    origin: EdgeOrigin
+    source_order_key: str | None
+    ordinal: int | None
+    snapshot: CitationSnapshot | None
+    created_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,276 +86,113 @@ def _invalid(message: str) -> NoReturn:
     raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, message)
 
 
-def validate_edge_shape(edge: EdgeCreate) -> None:
-    """Enforce graph shape before any write, including callers composing primitives."""
+def _validate(db: Session, viewer_id: UUID, edge: EdgeCreate) -> None:
+    """The shape law of every fact, then the endpoint visibility gate."""
+    if edge.origin not in _ENDPOINTS:
+        _invalid(f"{edge.origin} edges must use their own command")
     if edge.kind not in EDGE_KINDS:
         _invalid(f"Invalid edge kind {edge.kind!r}")
-    if edge.origin not in EDGE_ORIGINS:
-        _invalid(f"Invalid edge origin {edge.origin!r}")
     if edge.source == edge.target:
         _invalid("An edge cannot relate a resource to itself")
-    if edge.source_order_key is not None:
-        if not 1 <= len(edge.source_order_key) <= 64:
-            _invalid("source_order_key must be 1-64 characters")
-        if not _allows_source_order(edge):
-            _invalid("Source order key is not valid for this edge shape")
-
-    if edge.origin == "citation":
-        _validate_citation(edge)
-        return
-    if edge.ordinal is not None:
-        _invalid("Only citation edges can carry ordinals")
-    if edge.snapshot is not None and edge.origin not in ("discovery", "assistant"):
-        _invalid("Only citation, discovery, and assistant edges can carry snapshots")
-    if edge.origin in ("discovery", "assistant"):
-        _validate_rationale_edge(edge)
-        return
-
-    if edge.kind != "context":
+    sources, targets = _ENDPOINTS[edge.origin]
+    if (sources is not None and edge.source.scheme not in sources) or (
+        targets is not None and edge.target.scheme not in targets
+    ):
+        _invalid(f"Invalid {edge.origin} edge endpoints")
+    rationale = edge.origin in ("discovery", "assistant")
+    if edge.kind != "context" and not rationale and edge.ordinal is None:
         _invalid(f"{edge.origin} edges must use kind=context")
-    shape = _ORIGIN_SHAPES.get(edge.origin)
-    if shape is not None:
-        sources, targets, message = shape
-        if edge.source.scheme not in sources or (
-            targets is not None and edge.target.scheme not in targets
-        ):
-            _invalid(message)
-
-
-def _validate_citation(edge: EdgeCreate) -> None:
+    if edge.ordinal is not None:
+        if edge.origin != "citation" or edge.ordinal < 1 or edge.snapshot is None:
+            _invalid("Only citation edges carry an ordinal >= 1, with a snapshot")
+        if not resource_can_be_citation_output_source(edge.source):
+            _invalid("Citation ordinals must start from a generated output resource")
+    elif rationale:
+        if edge.snapshot is None or not (edge.snapshot.excerpt or "").strip():
+            _invalid(f"{edge.origin} edges require a non-empty rationale excerpt")
+    elif edge.snapshot is not None:
+        _invalid("Only citation, discovery and assistant edges carry snapshots")
+    elif edge.origin == "citation" and edge.source.scheme != "conversation":
+        _invalid("Bare citation edges must be conversation context refs")
+    if edge.source_order_key is not None and (
+        edge.origin not in ("citation", "system")
+        or edge.ordinal is not None
+        or not 1 <= len(edge.source_order_key) <= 64
+    ):
+        _invalid("Only conversation context facts carry a 1-64 character order key")
+    # External snapshots outlive what they captured; a citation's source is the
+    # in-flight output minting it, not yet read-visible.
+    if edge.target.scheme != "external_snapshot":
+        assert_ref_visible(db, viewer_id=viewer_id, ref=edge.target)
     if edge.ordinal is None:
-        if edge.snapshot is not None:
-            _invalid("Only ordinal citation edges can carry citation snapshots")
-        if edge.kind != "context" or edge.source.scheme != "conversation":
-            _invalid("Bare citation edges must be conversation context refs")
-        return
-    if edge.snapshot is None:
-        _invalid("Citation ordinal requires a snapshot")
-    if not resource_can_be_citation_output_source(edge.source):
-        _invalid("Citation ordinals must start from a generated output resource")
-    if edge.source_order_key is not None:
-        _invalid("Citation edges cannot carry order keys")
-    if edge.ordinal < 1:
-        _invalid("Citation ordinal must be >= 1")
-
-
-def _validate_rationale_edge(edge: EdgeCreate) -> None:
-    """Discovery and assistant edges: bounded schemes plus a non-empty rationale excerpt."""
-    if edge.origin == "discovery":
-        if edge.source.scheme not in CONNECTION_DISCOVERY_SOURCE_SCHEMES:
-            _invalid("Discovery edges must start from media, page, note_block, or highlight")
-        if edge.target.scheme not in CONNECTION_DISCOVERY_TARGET_SCHEMES:
-            _invalid("Discovery edges must target media, note_block, or evidence_span")
-    else:
-        if (
-            edge.source.scheme not in ASSISTANT_EDGE_SCHEMES
-            or edge.target.scheme not in ASSISTANT_EDGE_SCHEMES
-        ):
-            _invalid("Assistant edges must connect media, page, note_block, or highlight")
-        if edge.source_order_key is not None:
-            _invalid("Assistant edges cannot carry order keys")
-    label = "Discovery" if edge.origin == "discovery" else "Assistant"
-    if edge.snapshot is None:
-        _invalid(f"{label} edges require a rationale snapshot")
-    if not (edge.snapshot.excerpt or "").strip():
-        _invalid(f"{label} snapshots require a non-empty excerpt")
-
-
-def _allows_source_order(edge: EdgeCreate) -> bool:
-    return (
-        edge.origin in ("citation", "system")
-        and edge.kind == "context"
-        and edge.source.scheme == "conversation"
-        and edge.ordinal is None
-        and edge.snapshot is None
-    )
+        assert_ref_visible(db, viewer_id=viewer_id, ref=edge.source)
 
 
 def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
-    """Validate and insert one edge; a duplicate neutral Link returns the existing row."""
-    if is_neutral_link(input):
-        a, b = sorted((input.source, input.target), key=lambda ref: ref.uri)
-        input = replace(input, source=a, target=b)
-    _validate_edge_input(db, viewer_id=viewer_id, edge=input)
-    if is_neutral_link(input):
-        existing = existing_link_pair(db, viewer_id=viewer_id, a=input.source, b=input.target)
-        if existing is not None:
-            return _edge_out(existing)
-    elif input.ordinal is None:
-        # Source-owned bare facts retain directed, same-origin uniqueness.
-        if _scalar(
-            db,
-            select(ResourceEdge.id).where(
-                ResourceEdge.user_id == viewer_id,
-                source_is(input.source),
-                target_is(input.target),
-                ResourceEdge.origin == input.origin,
-                ResourceEdge.ordinal.is_(None),
-            ),
-        ):
-            _invalid("Edge already exists")
-        if input.source_order_key is not None and _scalar(
-            db,
-            select(ResourceEdge.id).where(
-                ResourceEdge.user_id == viewer_id,
-                source_is(input.source),
-                ResourceEdge.source_order_key == input.source_order_key,
-            ),
-        ):
-            _invalid("Source order exists")
-    elif _scalar(
-        db,
+    """Insert one fact; a bare fact is unique per origin and directed pair (400)."""
+    _validate(db, viewer_id, input)
+    if input.ordinal is None and db.scalar(
         select(ResourceEdge.id).where(
             ResourceEdge.user_id == viewer_id,
             source_is(input.source),
-            ResourceEdge.ordinal == input.ordinal,
-        ),
-    ):
-        _invalid(f"Citation ordinal {input.ordinal} already exists for {input.source.uri}")
-    if is_neutral_link(input):
-        # Chat-chat links allocate independent ranks under a consistent lock order.
-        chat_ids = sorted(
-            ref.id for ref in (input.source, input.target) if ref.scheme == "conversation"
+            target_is(input.target),
+            ResourceEdge.origin == input.origin,
+            ResourceEdge.ordinal.is_(None),
         )
-        if chat_ids:
-            db.scalars(
-                select(Conversation.id)
-                .where(Conversation.id.in_(chat_ids), Conversation.owner_user_id == viewer_id)
-                .order_by(Conversation.id)
-                .with_for_update()
-            ).all()
-    row = _row_from_input(viewer_id, input)
+    ):
+        _invalid("Edge already exists")
+    row = _row(viewer_id, input)
     db.add(row)
     db.flush()
-    if is_neutral_link(input):
-        for endpoint, other in ((input.source, input.target), (input.target, input.source)):
-            versions.bump_version(db, viewer_id=viewer_id, ref=endpoint, lane="links")
-            if endpoint.scheme == "conversation" or resource_can_own_ordered_adjacency(endpoint):
-                _append_link_order(
-                    db, viewer_id=viewer_id, endpoint=endpoint, other=other, link_id=row.id
-                )
     return _edge_out(row)
 
 
-def _append_link_order(
-    db: Session, *, viewer_id: UUID, endpoint: ResourceRef, other: ResourceRef, link_id: UUID
-) -> None:
-    if endpoint.scheme == "conversation":
-        key = conversation_link_order_key(
-            db, viewer_id=viewer_id, conversation_id=endpoint.id, target=other
-        )
-    else:
-        key = _next_outline_order_key(db, viewer_id=viewer_id, endpoint=endpoint)
-    db.add(
-        ResourceViewState(
-            user_id=viewer_id,
-            surface_scheme=endpoint.scheme,
-            surface_id=endpoint.id,
-            edge_id=link_id,
-            target_scheme=other.scheme,
-            target_id=other.id,
-            order_key=key,
-            state={},
+def replace_edges_for_origin(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    source: ResourceRef,
+    origin: EdgeOrigin,
+    edges: Sequence[EdgeCreate],
+) -> list[EdgeOut]:
+    """Replace exactly the ``(source, origin)`` set; edges come back in input order. A
+    self-target member is dropped (a machine-extracted set must not fail on one) and a
+    repeated bare target is kept once; a repeated ordinal is invalid."""
+    if origin not in _ENDPOINTS:
+        _invalid(f"{origin} edges must use their own command")
+    if any(edge.origin != origin or edge.source != source for edge in edges):
+        _invalid("Replacement members must belong to the requested source and origin")
+    members: list[EdgeCreate] = []
+    targets: set[ResourceRef] = set()
+    ordinals: set[int] = set()
+    for edge in edges:
+        if edge.target == source or (edge.ordinal is None and edge.target in targets):
+            continue
+        if edge.ordinal in ordinals:
+            _invalid(f"Duplicate citation ordinal {edge.ordinal} in replace-set")
+        if edge.ordinal is None:
+            targets.add(edge.target)
+        else:
+            ordinals.add(edge.ordinal)
+        members.append(edge)
+    for edge in members:
+        _validate(db, viewer_id, edge)
+    db.execute(
+        delete(ResourceEdge).where(
+            ResourceEdge.user_id == viewer_id, source_is(source), ResourceEdge.origin == origin
         )
     )
+    rows = [_row(viewer_id, edge) for edge in members]
+    db.add_all(rows)
     db.flush()
-
-
-def _next_outline_order_key(db: Session, *, viewer_id: UUID, endpoint: ResourceRef) -> str:
-    keys = db.scalars(
-        select(ResourceViewState.order_key).where(
-            ResourceViewState.user_id == viewer_id,
-            ResourceViewState.surface_scheme == endpoint.scheme,
-            ResourceViewState.surface_id == endpoint.id,
-            ResourceViewState.order_key.is_not(None),
-        )
-    ).all()
-    return f"{max((int(key) for key in keys if key is not None), default=0) + 1:010d}"
-
-
-def conversation_link_order_key(
-    db: Session, *, viewer_id: UUID, conversation_id: UUID, target: ResourceRef
-) -> str:
-    """Reuse a target's rank or append after all user and automatic attachment reasons.
-
-    Flush-only callers insert their fact in this transaction. Chat-chat callers
-    lock both conversations in id order before requesting either endpoint rank.
-    """
-    conversation = db.scalar(
-        select(Conversation.id)
-        .where(Conversation.id == conversation_id, Conversation.owner_user_id == viewer_id)
-        .with_for_update()
-    )
-    if conversation is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Conversation not found")
-    ranks: list[tuple[str | None, str | None, UUID | None]] = list(
-        db.execute(
-            select(
-                ResourceViewState.order_key,
-                ResourceViewState.target_scheme,
-                ResourceViewState.target_id,
-            ).where(
-                ResourceViewState.user_id == viewer_id,
-                ResourceViewState.surface_scheme == "conversation",
-                ResourceViewState.surface_id == conversation_id,
-                ResourceViewState.edge_id.is_not(None),
-                ResourceViewState.order_key.is_not(None),
-            )
-        ).tuples()
-    )
-    ranks.extend(
-        db.execute(
-            select(
-                ResourceEdge.source_order_key, ResourceEdge.target_scheme, ResourceEdge.target_id
-            ).where(
-                ResourceEdge.user_id == viewer_id,
-                ResourceEdge.source_scheme == "conversation",
-                ResourceEdge.source_id == conversation_id,
-                ResourceEdge.origin.in_(("citation", "system")),
-                ResourceEdge.kind == "context",
-                ResourceEdge.ordinal.is_(None),
-                ResourceEdge.snapshot.is_(None),
-                ResourceEdge.source_order_key.is_not(None),
-            )
-        ).tuples()
-    )
-    existing = [
-        key
-        for key, scheme, identity in ranks
-        if key is not None and scheme == target.scheme and identity == target.id
-    ]
-    if existing:
-        return min(existing, key=int)
-    return f"{max((int(key) for key, _, _ in ranks if key is not None), default=0) + 1:010d}"
-
-
-def require_unannotated_link(db: Session, *, viewer_id: UUID, edge: ResourceEdge) -> None:
-    if link_note_blocks_for_pair(
-        db,
-        viewer_id=viewer_id,
-        a=ResourceRef(scheme=cast(ResourceScheme, edge.source_scheme), id=edge.source_id),
-        b=ResourceRef(scheme=cast(ResourceScheme, edge.target_scheme), id=edge.target_id),
-    ):
-        raise ConflictError(
-            ApiErrorCode.E_RESOURCE_CONFLICT, "This link has a note; use link actions"
-        )
+    return [_edge_out(row) for row in rows]
 
 
 def create_link(
     db: Session, *, viewer_id: UUID, source: ResourceRef, target: ResourceRef
 ) -> EdgeWrite:
-    """Create or reuse one shared pair; canonical direction has no product meaning."""
-    input = EdgeCreate(source=source, target=target, kind="context", origin="user")
-    _validate_edge_input(db, viewer_id=viewer_id, edge=input)
-    existing = existing_link_pair(db, viewer_id=viewer_id, a=source, b=target)
-    if existing is not None:
-        return EdgeWrite(edge=_edge_out(existing), created=False)
-    edge = create_edge(
-        db,
-        viewer_id=viewer_id,
-        input=input,
-    )
-    return EdgeWrite(edge=edge, created=True)
+    """Create or reuse the viewer's one link between two directly linkable resources."""
+    return _link(db, viewer_id, source, target, None)
 
 
 def restore_link(
@@ -350,142 +204,216 @@ def restore_link(
     link_id: UUID,
     created_at: datetime,
 ) -> None:
-    """Restore a receipt-owned pair identity, never retarget an existing link."""
-    write = create_link(db, viewer_id=viewer_id, source=source, target=target)
-    if not write.created:
+    """Re-create a receipt-owned link under its old identity; never retarget a live one."""
+    if not _link(db, viewer_id, source, target, (link_id, created_at)).created:
         raise ConflictError(ApiErrorCode.E_RESOURCE_CONFLICT, "Restored link already exists")
-    row = db.get(ResourceEdge, write.edge.id)
-    if row is None:
-        raise AssertionError("newly created link missing")
-    states = list(db.scalars(select(ResourceViewState).where(ResourceViewState.edge_id == row.id)))
-    db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id == row.id))
-    row.id = link_id
-    row.created_at = created_at
+
+
+def _link(
+    db: Session,
+    viewer_id: UUID,
+    source: ResourceRef,
+    target: ResourceRef,
+    identity: tuple[UUID, datetime] | None,
+) -> EdgeWrite:
+    if source == target:
+        _invalid("An edge cannot relate a resource to itself")
+    if resource_link_mode(source) != "direct" or resource_link_mode(target) != "direct":
+        _invalid("Resource cannot be linked")
+    assert_ref_visible(db, viewer_id=viewer_id, ref=target)
+    assert_ref_visible(db, viewer_id=viewer_id, ref=source)
+    existing = existing_link_pair(db, viewer_id=viewer_id, a=source, b=target)
+    if existing is not None:
+        return EdgeWrite(_edge_out(existing), created=False)
+    a, b = sorted((source, target), key=lambda ref: ref.uri)
+    # A chat-chat link ranks at both chats: lock both in id order before either rank.
+    chats = sorted(ref.id for ref in (a, b) if ref.scheme == "conversation")
+    if chats:
+        db.scalars(
+            select(Conversation.id)
+            .where(Conversation.id.in_(chats))
+            .order_by(Conversation.id)
+            .with_for_update()
+        ).all()
+    row = ResourceEdge(
+        user_id=viewer_id,
+        kind="context",
+        origin="user",
+        source_scheme=a.scheme,
+        source_id=a.id,
+        target_scheme=b.scheme,
+        target_id=b.id,
+    )
+    if identity is not None:
+        row.id, row.created_at = identity
+    db.add(row)
     db.flush()
-    for state in states:
+    for endpoint, other in ((a, b), (b, a)):
+        versions.bump_version(db, viewer_id=viewer_id, ref=endpoint, lane="links")
+        if endpoint.scheme == "conversation":
+            key = conversation_rank(
+                db, viewer_id=viewer_id, conversation_id=endpoint.id, target=other
+            )
+        elif resource_can_own_ordered_adjacency(endpoint):
+            keys = db.scalars(
+                select(ResourceViewState.order_key).where(
+                    ResourceViewState.user_id == viewer_id,
+                    ResourceViewState.surface_scheme == endpoint.scheme,
+                    ResourceViewState.surface_id == endpoint.id,
+                    ResourceViewState.order_key.is_not(None),
+                )
+            )
+            key = f"{max((int(k) for k in keys if k is not None), default=0) + 1:010d}"
+        else:
+            continue
         db.add(
             ResourceViewState(
-                user_id=state.user_id,
-                surface_scheme=state.surface_scheme,
-                surface_id=state.surface_id,
+                user_id=viewer_id,
+                surface_scheme=endpoint.scheme,
+                surface_id=endpoint.id,
                 edge_id=row.id,
-                target_scheme=state.target_scheme,
-                target_id=state.target_id,
-                order_key=state.order_key,
-                state=state.state,
+                target_scheme=other.scheme,
+                target_id=other.id,
+                order_key=key,
+                state={},
             )
         )
-    db.flush()
+        db.flush()
+    return EdgeWrite(_edge_out(row), created=True)
+
+
+def conversation_rank(
+    db: Session, *, viewer_id: UUID, conversation_id: UUID, target: ResourceRef
+) -> str:
+    """The target's earliest rank in the chat, else one past every rank of its links and
+    automatic facts. Locks the chat row; the caller inserts in this transaction."""
+    db.execute(select(Conversation.id).where(Conversation.id == conversation_id).with_for_update())
+    ranks = db.execute(
+        select(
+            ResourceViewState.order_key,
+            ResourceViewState.target_scheme,
+            ResourceViewState.target_id,
+        )
+        .where(
+            ResourceViewState.user_id == viewer_id,
+            ResourceViewState.surface_scheme == "conversation",
+            ResourceViewState.surface_id == conversation_id,
+            ResourceViewState.edge_id.is_not(None),
+            ResourceViewState.order_key.is_not(None),
+        )
+        .union_all(
+            select(
+                ResourceEdge.source_order_key,
+                ResourceEdge.target_scheme,
+                ResourceEdge.target_id,
+            ).where(
+                ResourceEdge.user_id == viewer_id,
+                source_is(ResourceRef("conversation", conversation_id)),
+                ResourceEdge.source_order_key.is_not(None),
+            )
+        )
+    ).all()
+    own = [key for key, scheme, id_ in ranks if (scheme, id_) == (target.scheme, target.id)]
+    if own:
+        return min(own, key=int)
+    return f"{max((int(key) for key, _, _ in ranks), default=0) + 1:010d}"
 
 
 def get_owned_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> EdgeOut | None:
-    row = db.execute(
-        select(ResourceEdge).where(ResourceEdge.id == edge_id, ResourceEdge.user_id == viewer_id)
-    ).scalar_one_or_none()
-    return _edge_out(row) if row is not None else None
+    row = db.get(ResourceEdge, edge_id)
+    return _edge_out(row) if row is not None and row.user_id == viewer_id else None
 
 
 def delete_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None:
-    row = db.execute(
-        select(ResourceEdge).where(ResourceEdge.id == edge_id, ResourceEdge.user_id == viewer_id)
-    ).scalar_one_or_none()
-    if row is None:
+    """Delete one owned edge after its view states; a link must carry no note (409)."""
+    row = db.get(ResourceEdge, edge_id)
+    if row is None or row.user_id != viewer_id:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Edge not found")
-    if is_neutral_link(row):
+    if row.origin == "user":
         require_unannotated_link(db, viewer_id=viewer_id, edge=row)
-        for scheme, resource_id in (
-            (row.source_scheme, row.source_id),
-            (row.target_scheme, row.target_id),
-        ):
-            versions.bump_version(
-                db,
-                viewer_id=viewer_id,
-                ref=ResourceRef(scheme=cast(ResourceScheme, scheme), id=resource_id),
-                lane="links",
-            )
+        for scheme, id_ in ((row.source_scheme, row.source_id), (row.target_scheme, row.target_id)):
+            ref = assert_resource_ref(f"{scheme}:{id_}")
+            versions.bump_version(db, viewer_id=viewer_id, ref=ref, lane="links")
     db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id == row.id))
     db.delete(row)
     db.flush()
 
 
-def replace_edges_for_origin(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    source: ResourceRef,
-    origin: EdgeOrigin,
-    edges: Sequence[EdgeCreate],
-) -> list[EdgeOut]:
-    """Replace exactly the ``(source, origin)`` edge set; other origins are untouched.
+def detach_link_notes(
+    db: Session, *, viewer_id: UUID, link: EdgeOut, note_block_id: UUID | None = None
+) -> None:
+    """Delete the chosen (else every) note's two attachment edges; notes and link stay.
+    A note attached anywhere but exactly the link's two ends is ambiguous (409)."""
+    pair = link_pair(link)
+    found = link_note_blocks_for_pairs(db, viewer_id=viewer_id, pairs=[pair]).get(pair, [])
+    for note in [note_block_id] if note_block_id is not None else found:
+        rows = db.execute(
+            select(ResourceEdge.id, ResourceEdge.target_scheme, ResourceEdge.target_id).where(
+                ResourceEdge.user_id == viewer_id,
+                ResourceEdge.origin == "link_note",
+                ResourceEdge.source_scheme == "note_block",
+                ResourceEdge.source_id == note,
+            )
+        ).all()
+        if {(scheme, id_) for _, scheme, id_ in rows} != pair:
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT, "Link note has ambiguous attachments"
+            )
+        ids = [row.id for row in rows]
+        db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id.in_(ids)))
+        db.execute(delete(ResourceEdge).where(ResourceEdge.id.in_(ids)))
 
-    A self-target member (a note body referencing its own block) is dropped rather than
-    raising: a machine-extracted set must not fail on one.
-    """
-    if origin == "user":
-        _invalid("User links must use the pair command")
-    if any(edge.origin != origin or edge.source != source for edge in edges):
-        _invalid("Replacement members must belong to the requested source and origin")
-    members = [edge for edge in edges if edge.target != source]
-    for edge in members:
-        _validate_edge_input(db, viewer_id=viewer_id, edge=edge)
 
-    db.execute(
-        delete(ResourceEdge).where(
+def existing_link_pair(
+    db: Session, *, viewer_id: UUID, a: ResourceRef, b: ResourceRef
+) -> ResourceEdge | None:
+    return db.scalar(
+        select(ResourceEdge).where(
             ResourceEdge.user_id == viewer_id,
-            source_is(source),
-            ResourceEdge.origin == origin,
+            ResourceEdge.origin == "user",
+            or_(and_(source_is(a), target_is(b)), and_(source_is(b), target_is(a))),
         )
     )
-    rows: list[ResourceEdge] = []
-    seen_targets: set[Pair] = set()
-    seen_ordinals: set[int] = set()
-    for edge in members:
-        if edge.ordinal is None:
-            if (edge.target.scheme, edge.target.id) in seen_targets:
-                continue
-            seen_targets.add((edge.target.scheme, edge.target.id))
-        else:
-            if edge.ordinal in seen_ordinals:
-                _invalid(f"Duplicate citation ordinal {edge.ordinal} in replace-set")
-            seen_ordinals.add(edge.ordinal)
-        row = _row_from_input(viewer_id, edge)
-        db.add(row)
-        rows.append(row)
-    db.flush()
-    return [_edge_out(row) for row in rows]
 
 
 def link_note_blocks_for_pairs(
     db: Session, *, viewer_id: UUID, pairs: Sequence[frozenset[Pair]]
 ) -> dict[frozenset[Pair], list[UUID]]:
-    """The note blocks attached by ``origin='link_note'`` edges to BOTH endpoints of each
-    pair — the Link-note motif, resolved once for the read, the write and the teardown."""
-    endpoints = {endpoint for pair in pairs for endpoint in pair}
+    """The note blocks whose ``link_note`` edges attach to BOTH ends of each pair: the
+    link-note motif, resolved once for the read, the write and the teardown."""
+    endpoints = list({endpoint for pair in pairs for endpoint in pair})
     if not endpoints:
         return {}
     targets_by_note: dict[UUID, set[Pair]] = {}
-    for note_id, target_scheme, target_id in db.execute(
+    for note_id, scheme, target_id in db.execute(
         select(ResourceEdge.source_id, ResourceEdge.target_scheme, ResourceEdge.target_id).where(
             ResourceEdge.user_id == viewer_id,
             ResourceEdge.origin == "link_note",
             ResourceEdge.source_scheme == "note_block",
             tuple_(ResourceEdge.target_scheme, ResourceEdge.target_id).in_(endpoints),
         )
-    ).all():
-        targets_by_note.setdefault(note_id, set()).add((target_scheme, target_id))
-    out: dict[frozenset[Pair], list[UUID]] = {}
-    for pair in pairs:
-        attached = [note_id for note_id, targets in targets_by_note.items() if pair <= targets]
-        if attached:
-            out[pair] = attached
-    return out
+    ):
+        targets_by_note.setdefault(note_id, set()).add((scheme, target_id))
+    found = {
+        pair: [note for note, targets in targets_by_note.items() if pair <= targets]
+        for pair in pairs
+    }
+    return {pair: notes for pair, notes in found.items() if notes}
 
 
-def link_note_blocks_for_pair(
-    db: Session, *, viewer_id: UUID, a: ResourceRef, b: ResourceRef
-) -> list[UUID]:
-    pair = frozenset({(a.scheme, a.id), (b.scheme, b.id)})
-    return link_note_blocks_for_pairs(db, viewer_id=viewer_id, pairs=[pair]).get(pair, [])
+def link_pair(edge: ResourceEdge | EdgeOut) -> frozenset[Pair]:
+    if isinstance(edge, EdgeOut):
+        return frozenset(
+            {(edge.source.scheme, edge.source.id), (edge.target.scheme, edge.target.id)}
+        )
+    return frozenset({(edge.source_scheme, edge.source_id), (edge.target_scheme, edge.target_id)})
+
+
+def require_unannotated_link(db: Session, *, viewer_id: UUID, edge: ResourceEdge) -> None:
+    if link_note_blocks_for_pairs(db, viewer_id=viewer_id, pairs=[link_pair(edge)]):
+        raise ConflictError(
+            ApiErrorCode.E_RESOURCE_CONFLICT, "This link has a note; use link actions"
+        )
 
 
 def source_is(ref: ResourceRef):
@@ -496,45 +424,7 @@ def target_is(ref: ResourceRef):
     return and_(ResourceEdge.target_scheme == ref.scheme, ResourceEdge.target_id == ref.id)
 
 
-def _scalar(db: Session, query) -> bool:
-    return db.execute(query).scalar_one_or_none() is not None
-
-
-def _validate_edge_input(db: Session, *, viewer_id: UUID, edge: EdgeCreate) -> None:
-    validate_edge_shape(edge)
-    if is_neutral_link(edge) and (
-        resource_link_mode(edge.source) != "direct" or resource_link_mode(edge.target) != "direct"
-    ):
-        _invalid("Resource cannot be linked")
-    # External snapshots exist to outlive whatever they captured, so they are never gated.
-    if edge.target.scheme != "external_snapshot":
-        assert_ref_visible(db, viewer_id=viewer_id, ref=edge.target)
-    # A citation's source is the in-flight output minting it — a still-pending message,
-    # reading or revision — trusted by construction and not yet read-visible.
-    if edge.ordinal is None:
-        assert_ref_visible(db, viewer_id=viewer_id, ref=edge.source)
-
-
-def existing_link_pair(
-    db: Session, *, viewer_id: UUID, a: ResourceRef, b: ResourceRef
-) -> ResourceEdge | None:
-    return db.execute(
-        select(ResourceEdge).where(
-            ResourceEdge.user_id == viewer_id,
-            ResourceEdge.origin == "user",
-            ResourceEdge.kind == "context",
-            ResourceEdge.ordinal.is_(None),
-            ResourceEdge.snapshot.is_(None),
-            ResourceEdge.source_order_key.is_(None),
-            or_(
-                and_(source_is(a), target_is(b)),
-                and_(source_is(b), target_is(a)),
-            ),
-        )
-    ).scalar_one_or_none()
-
-
-def _row_from_input(viewer_id: UUID, edge: EdgeCreate) -> ResourceEdge:
+def _row(viewer_id: UUID, edge: EdgeCreate) -> ResourceEdge:
     return ResourceEdge(
         user_id=viewer_id,
         kind=edge.kind,
@@ -545,19 +435,21 @@ def _row_from_input(viewer_id: UUID, edge: EdgeCreate) -> ResourceEdge:
         target_id=edge.target.id,
         source_order_key=edge.source_order_key,
         ordinal=edge.ordinal,
-        snapshot=snapshot_to_jsonb(edge.snapshot) if edge.snapshot is not None else None,
+        snapshot=edge.snapshot.model_dump(exclude_none=True) if edge.snapshot is not None else None,
     )
 
 
 def _edge_out(row: ResourceEdge) -> EdgeOut:
     return EdgeOut(
         id=row.id,
-        source=ResourceRef(scheme=cast("ResourceScheme", row.source_scheme), id=row.source_id),
-        target=ResourceRef(scheme=cast("ResourceScheme", row.target_scheme), id=row.target_id),
-        kind=cast("EdgeKind", row.kind),
-        origin=cast("EdgeOrigin", row.origin),
+        source=assert_resource_ref(f"{row.source_scheme}:{row.source_id}"),
+        target=assert_resource_ref(f"{row.target_scheme}:{row.target_id}"),
+        kind=cast(EdgeKind, row.kind),
+        origin=cast(EdgeOrigin, row.origin),
         source_order_key=row.source_order_key,
         ordinal=row.ordinal,
-        snapshot=snapshot_from_jsonb(row.snapshot) if row.snapshot is not None else None,
+        snapshot=CitationSnapshot.model_validate(row.snapshot)
+        if row.snapshot is not None
+        else None,
         created_at=row.created_at,
     )

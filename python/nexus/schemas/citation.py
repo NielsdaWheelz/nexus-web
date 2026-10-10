@@ -1,30 +1,19 @@
-"""The shared `[N]` citation read-model, built only by the resource graph."""
+"""The shared ``[N]`` citation read model, built only by the resource graph."""
 
 from __future__ import annotations
 
-from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
+from nexus.schemas.resource_graph import EdgeKind
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import RetrievalLocator
-from nexus.services.resource_graph.schemas import EdgeKind
+from nexus.services.resource_graph.refs import ResourceScheme
 
 CitationRole = EdgeKind
-CitationTargetType = Literal[
-    "evidence_span",
-    "content_chunk",
-    "media",
-    "highlight",
-    "fragment",
-    "page",
-    "note_block",
-    "message",
-    "external_snapshot",
-    "oracle_passage_anchor",
-    "reader_apparatus_item",
-]
+# The writer admits any visible target, so the read model names every scheme.
+CitationTargetType = ResourceScheme
 
 
 class CitationTargetRef(BaseModel):
@@ -34,7 +23,7 @@ class CitationTargetRef(BaseModel):
     id: UUID
 
 
-class CitationSnapshot(BaseModel):
+class CitationSnapshotOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str | None
@@ -56,4 +45,4 @@ class CitationOut(BaseModel):
     media_id: UUID | None
     locator: RetrievalLocator | None
     deep_link: str | None
-    snapshot: CitationSnapshot | None
+    snapshot: CitationSnapshotOut | None

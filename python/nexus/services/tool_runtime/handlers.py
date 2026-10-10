@@ -629,9 +629,9 @@ def _run_relations_list(
     value: tool_declarations.RelationsListInput,
     context: ExecutionContext,
 ) -> HandlerSuccess[tool_declarations.RelationsListSuccess]:
+    from nexus.schemas.resource_graph import ConnectionFiltersRequest, ConnectionQueryRequest
     from nexus.services.assistant_write_authorship import machine_authorship_for_edge
     from nexus.services.resource_graph.connections import query_connections
-    from nexus.services.resource_graph.schemas import ConnectionFilters, ConnectionQuery
     from nexus.services.resource_items.capabilities import resource_citation_result_type
 
     recorder = _nexus_recorder(context)
@@ -639,15 +639,11 @@ def _run_relations_list(
     page = query_connections(
         recorder.db,
         viewer_id=recorder.principal_id,
-        query=ConnectionQuery(
-            refs=(ref,),
+        query=ConnectionQueryRequest(
+            refs=[ref.uri],
             direction=value.direction,
-            rollup="exact",
-            filters=ConnectionFilters(
-                kinds=tuple(value.kinds) if value.kinds is not None else None
-            ),
+            filters=ConnectionFiltersRequest(kinds=value.kinds),
             limit=value.limit or 100,
-            cursor=None,
         ),
     )
     relations = [
@@ -664,9 +660,9 @@ def _run_relations_list(
             if item.snapshot and item.snapshot.excerpt
             else None,
             source_label=item.source.label[:150] if item.source.label else None,
-            source_uri=item.source.ref.uri,
+            source_uri=item.source.ref,
             target_label=item.target.label[:150] if item.target.label else None,
-            target_uri=item.target.ref.uri,
+            target_uri=item.target.ref,
         )
         for item in page.items
     ]

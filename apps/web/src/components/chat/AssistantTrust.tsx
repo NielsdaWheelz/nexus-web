@@ -6,8 +6,10 @@ import { undoToolCall } from "@/lib/chat/toolCallUndo";
 import { chatFailure, type ChatFailure, type Message } from "@/lib/chat/wire";
 import { formatDisplayNumber, truncateText } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-import { toReaderCitationData } from "@/lib/resourceGraph/citations";
-import type { CitationOut } from "@/lib/resourceGraph/citationOut";
+import {
+  toReaderCitationData,
+  type CitationOut,
+} from "@/lib/resourceGraph/citations";
 import type { ActivateSource } from "./ChatSurface";
 import styles from "./ChatSurface.module.css";
 

@@ -24,8 +24,10 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import ReaderCitation from "@/components/ui/ReaderCitation";
-import type { ReaderCitationData } from "@/lib/resourceGraph/readerCitation";
-import type { ReaderSourceTarget } from "@/lib/resourceGraph/readerTarget";
+import type {
+  ReaderCitationData,
+  ReaderSourceTarget,
+} from "@/lib/resourceGraph/citations";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import "./hljs-theme.css";
 import styles from "./MarkdownMessage.module.css";

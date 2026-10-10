@@ -5,8 +5,10 @@ import HoverPreview, {
   HOVER_PREVIEW_DELAY_MS,
 } from "@/components/ui/HoverPreview";
 import { truncateText } from "@/lib/display/format";
-import type { ReaderCitationPreview } from "@/lib/resourceGraph/readerCitation";
-import type { ReaderSourceTarget } from "@/lib/resourceGraph/readerTarget";
+import type {
+  ReaderCitationPreview,
+  ReaderSourceTarget,
+} from "@/lib/resourceGraph/citations";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import styles from "./ReaderCitation.module.css";
 import {

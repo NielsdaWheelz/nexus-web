@@ -30,7 +30,7 @@ from nexus.services.contributor_credits import current_media_contributor_rows_sq
 from nexus.services.contributor_taxonomy import try_parse_contributor_handle
 from nexus.services.highlights import count_retained_highlights
 from nexus.services.notes import count_retained_note_blocks
-from nexus.services.resource_graph.user_relations import count_retained_neutral_links
+from nexus.services.resource_graph.links import count_retained_neutral_links
 
 Bucket = Literal["Hour", "Day", "Week", "Month", "Year"]
 _LABEL = {

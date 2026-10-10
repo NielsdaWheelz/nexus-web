@@ -1,24 +1,22 @@
-"""Reader-jump reconstruction for a cited resource.
+"""Where a cited or deep-linked resource lands in a reader.
 
-Position lives in the target, not in the citing edge, so every citing surface — chat,
-Oracle, the Dossier, the reader's own connections — recomputes ``(media_id, locator)``
-here through the single locator owner. Note-owned evidence projects to
-``(None, note_block_offsets)``, which the frontend treats as a note activation.
+Position lives in the target, not in the edge that cites it, so every citing surface
+recomputes ``(media_id, locator)`` here. Note-owned text projects to
+``(None, note_block_offsets)``, which the client treats as a note activation.
 """
 
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_highlight, can_read_media
+from nexus.auth.permissions import can_read_highlight
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.passage_anchors import (
     FragmentPassageTarget,
-    NotePassageTarget,
     PdfPassageTarget,
     TimePassageTarget,
 )
@@ -38,161 +36,82 @@ from nexus.services.locator_resolver import (
 )
 from nexus.services.passage_anchors import get_navigation_target
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_graph.resolve import (
-    oracle_anchor_current_target,
-    parent_media_id_for_read_pointer,
-)
+from nexus.services.resource_graph.resolve import assert_ref_visible, oracle_anchor_current_target
 
-ReaderTarget = tuple[UUID | None, dict[str, object] | None]
+ReaderTarget = tuple[UUID | None, dict[str, Any] | None]
 
 
 def reader_target_for_citation_target(
     db: Session, *, viewer_id: UUID, target: ResourceRef
 ) -> ReaderTarget:
-    """The in-reader jump for a citation target, or ``(None, None)`` when unanchorable."""
+    """The jump into a reader for a target the viewer can see (the caller has resolved
+    it), or ``(None, None)`` when it has none."""
     if target.scheme == "media":
         return target.id, None
-    if target.scheme == "highlight":
-        media_id = db.scalar(
-            text("SELECT anchor_media_id FROM highlights WHERE id = :id"), {"id": target.id}
-        )
-        if media_id is None or not can_read_media(db, viewer_id, media_id):
-            return None, None
-        return media_id, None
-    if target.scheme == "fragment":
-        media_id = db.scalar(
-            text("SELECT media_id FROM fragments WHERE id = :id"), {"id": target.id}
-        )
-        if media_id is None or not can_read_media(db, viewer_id, media_id):
-            return None, None
-        return media_id, None
+    if target.scheme == "highlight" or target.scheme == "fragment":
+        sql = {
+            "highlight": "SELECT anchor_media_id FROM highlights WHERE id = :id",
+            "fragment": "SELECT media_id FROM fragments WHERE id = :id",
+        }[target.scheme]
+        return db.scalar(text(sql), {"id": target.id}), None
     if target.scheme == "reader_apparatus_item":
-        return _reader_apparatus_target(db, viewer_id=viewer_id, item_id=target.id)
+        row = db.execute(
+            text("""
+            SELECT rai.media_id, rai.locator
+            FROM reader_apparatus_items rai
+            JOIN reader_apparatus_states ras ON ras.id = rai.state_id
+            WHERE rai.id = :id AND ras.status IN ('ready', 'partial')
+              AND rai.locator IS NOT NULL AND rai.locator_status != 'missing'
+            """),
+            {"id": target.id},
+        ).first()
+        return (row.media_id, retrieval_locator_json(row.locator)) if row else (None, None)
     if target.scheme == "note_block":
-        return None, _whole_note_locator(db, viewer_id=viewer_id, block_id=target.id)
-    if target.scheme == "content_chunk":
-        return _content_chunk_target(db, viewer_id=viewer_id, chunk_id=target.id)
+        body = db.scalar(
+            text("SELECT body_text FROM note_blocks WHERE id = :id AND user_id = :viewer_id"),
+            {"id": target.id, "viewer_id": viewer_id},
+        )
+        return None, _note_offsets(target.id, 0, len(body)) if body else None
     if target.scheme == "oracle_passage_anchor":
         current = oracle_anchor_current_target(db, target.id)
         if current is None:
             return None, None
         return reader_target_for_citation_target(db, viewer_id=viewer_id, target=current)
+    if target.scheme == "content_chunk":
+        row = db.execute(
+            text(
+                "SELECT owner_kind, owner_id, primary_evidence_span_id, summary_locator"
+                " FROM content_chunks WHERE id = :id"
+            ),
+            {"id": target.id},
+        ).first()
+        if row is None:
+            return None, None
+        if row.owner_kind == "media":
+            return row.owner_id, None
+        if row.primary_evidence_span_id is None:
+            block, start, end = (
+                row.summary_locator.get(k) for k in ("note_block_id", "start_offset", "end_offset")
+            )
+            if isinstance(block, str) and isinstance(start, int) and isinstance(end, int):
+                return None, _note_offsets(block, start, end)
+            return None, None
+        # A note's chunk jumps where its primary span does.
+        target = ResourceRef("evidence_span", row.primary_evidence_span_id)
     if target.scheme != "evidence_span":
         return None, None
-
     try:
         resolution = resolve_evidence_span(db, viewer_id=viewer_id, evidence_span_id=target.id)
     except NotFoundError:
-        # justify-ignore-error: the cited span was deleted or is no longer visible; the
-        # citation outlives it, so the chip renders from its stored snapshot.
+        # justify-ignore-error: the cited span is gone or hidden; the chip renders from
+        # its snapshot and the jump fails closed.
         return None, None
-    resolver = resolution.get("resolver")
-    if isinstance(resolver, dict) and resolver.get("kind") == "note":
-        return None, locator_from_resolution(
-            resolution, media_id=UUID(str(resolution["media_id"])), media_kind="note"
-        )
-    media_id = parent_media_id_for_read_pointer(db, scheme="evidence_span", resource_id=target.id)
-    if media_id is None:
-        return None, None
-    media_kind = db.scalar(text("SELECT kind FROM media WHERE id = :id"), {"id": media_id})
-    return media_id, locator_from_resolution(
-        resolution, media_id=media_id, media_kind=str(media_kind or "")
-    )
-
-
-def _content_chunk_target(db: Session, *, viewer_id: UUID, chunk_id: UUID) -> ReaderTarget:
-    row = (
-        db.execute(
-            text(
-                """
-                SELECT owner_kind, owner_id, primary_evidence_span_id, summary_locator
-                FROM content_chunks
-                WHERE id = :chunk_id
-                """
-            ),
-            {"chunk_id": chunk_id},
-        )
-        .mappings()
-        .first()
-    )
-    if row is None:
-        return None, None
-    owner_kind = str(row["owner_kind"])
-    if owner_kind == "media":
-        return row["owner_id"], None
-    if owner_kind != "note_block":
-        return None, None
-    span_id = row["primary_evidence_span_id"]
-    if span_id is None:
-        return None, _note_locator(row["summary_locator"])
-    try:
-        resolution = resolve_evidence_span(db, viewer_id=viewer_id, evidence_span_id=span_id)
-    except NotFoundError:
-        # justify-ignore-error: as above — the chunk's span is gone; no jump, chip stays.
-        return None, None
-    return None, locator_from_resolution(
-        resolution, media_id=UUID(str(row["owner_id"])), media_kind="note"
-    )
-
-
-def _whole_note_locator(
-    db: Session, *, viewer_id: UUID, block_id: UUID
-) -> dict[str, object] | None:
-    body = db.scalar(
-        text("SELECT body_text FROM note_blocks WHERE id = :block_id AND user_id = :viewer_id"),
-        {"viewer_id": viewer_id, "block_id": block_id},
-    )
-    if not body:
-        return None
-    return retrieval_locator_json(
-        {
-            "type": "note_block_offsets",
-            "block_id": str(block_id),
-            "start_offset": 0,
-            "end_offset": len(str(body)),
-        }
-    )
-
-
-def _note_locator(raw: object) -> dict[str, object] | None:
-    locator = raw if isinstance(raw, dict) else {}
-    block_id = locator.get("note_block_id")
-    start_offset = locator.get("start_offset")
-    end_offset = locator.get("end_offset")
-    if (
-        not isinstance(block_id, str)
-        or not isinstance(start_offset, int)
-        or not isinstance(end_offset, int)
-    ):
-        return None
-    return retrieval_locator_json(
-        {
-            "type": "note_block_offsets",
-            "block_id": block_id,
-            "start_offset": start_offset,
-            "end_offset": end_offset,
-        }
-    )
-
-
-def _reader_apparatus_target(db: Session, *, viewer_id: UUID, item_id: UUID) -> ReaderTarget:
-    row = db.execute(
-        text(
-            """
-            SELECT rai.media_id, rai.locator
-            FROM reader_apparatus_items rai
-            JOIN reader_apparatus_states ras ON ras.id = rai.state_id
-            WHERE rai.id = :id
-              AND ras.status IN ('ready', 'partial')
-              AND rai.locator IS NOT NULL
-              AND rai.locator_status != 'missing'
-            """
-        ),
-        {"id": item_id},
-    ).first()
-    if row is None or not can_read_media(db, viewer_id, row[0]):
-        return None, None
-    return row[0], retrieval_locator_json(row[1])
+    # A readable span is media-owned, or note-owned with the note resolver.
+    owner = UUID(str(resolution["media_id"]))
+    if resolution["resolver"]["kind"] == "note":
+        return None, locator_from_resolution(resolution, media_id=owner, media_kind="note")
+    kind = db.scalar(text("SELECT kind FROM media WHERE id = :id"), {"id": owner})
+    return owner, locator_from_resolution(resolution, media_id=owner, media_kind=kind)
 
 
 def reader_target_for_media(
@@ -205,23 +124,20 @@ def reader_target_for_media(
             db,
             viewer_id=viewer_id,
             passage_anchor_id=target_id,
-            owner=ResourceRef(scheme="media", id=media_id),
+            owner=ResourceRef("media", media_id),
         )
-        if passage.kind == "Absent":
-            raise unavailable
-        match passage.value:
-            case FragmentPassageTarget() as text_target:
+        match passage.value if passage.kind == "Present" else None:
+            case FragmentPassageTarget() as found:
                 return ReaderTargetTextOut(
-                    unit_id=str(text_target.fragment_id),
-                    start_offset=text_target.start_offset,
-                    end_offset=text_target.end_offset,
+                    unit_id=str(found.fragment_id),
+                    start_offset=found.start_offset,
+                    end_offset=found.end_offset,
                 )
-            case TimePassageTarget() as time_target:
-                return ReaderTargetTimeOut(start_ms=time_target.start_ms, end_ms=time_target.end_ms)
-            case PdfPassageTarget() as pdf_target:
-                return ReaderTargetPdfOut(page_number=pdf_target.page_number, quads=[])
-            case NotePassageTarget():
-                raise unavailable
+            case TimePassageTarget() as found:
+                return ReaderTargetTimeOut(start_ms=found.start_ms, end_ms=found.end_ms)
+            case PdfPassageTarget() as found:
+                return ReaderTargetPdfOut(page_number=found.page_number, quads=[])
+        raise unavailable
     if kind == "highlight":
         owner = db.scalar(
             text("SELECT anchor_media_id FROM highlights WHERE id = :id"), {"id": target_id}
@@ -229,23 +145,23 @@ def reader_target_for_media(
         if owner != media_id or not can_read_highlight(db, viewer_id, target_id):
             raise unavailable
         match resolve_highlight_reader_target(db, highlight_id=target_id):
-            case PdfPageGeometryTargetOut() as pdf_target:
-                return ReaderTargetPdfOut(
-                    page_number=pdf_target.page_number, quads=pdf_target.quads
-                )
+            case PdfPageGeometryTargetOut() as pdf:
+                return ReaderTargetPdfOut(page_number=pdf.page_number, quads=pdf.quads)
             case None:
                 raise unavailable
-            case text_target:
+            case found:
                 return ReaderTargetTextOut(
-                    unit_id=str(text_target.fragment_id),
-                    start_offset=text_target.start_offset,
-                    end_offset=text_target.end_offset,
+                    unit_id=str(found.fragment_id),
+                    start_offset=found.start_offset,
+                    end_offset=found.end_offset,
                 )
-    scheme = "evidence_span" if kind == "evidence" else "reader_apparatus_item"
-    owner_id, locator = reader_target_for_citation_target(
-        db, viewer_id=viewer_id, target=ResourceRef(scheme=scheme, id=target_id)
-    )
-    if owner_id != media_id or locator is None:
+    ref = ResourceRef("evidence_span" if kind == "evidence" else "reader_apparatus_item", target_id)
+    try:
+        assert_ref_visible(db, viewer_id=viewer_id, ref=ref)
+    except NotFoundError:
+        raise unavailable from None
+    owner, locator = reader_target_for_citation_target(db, viewer_id=viewer_id, target=ref)
+    if owner != media_id or locator is None:
         raise unavailable
     match locator["type"]:
         case "web_text_offsets" | "epub_fragment_offsets":
@@ -262,5 +178,15 @@ def reader_target_for_media(
             return ReaderTargetTimeOut(
                 start_ms=cast(int, locator["t_start_ms"]), end_ms=cast(int, locator["t_end_ms"])
             )
-        case _:
-            raise unavailable
+    raise unavailable
+
+
+def _note_offsets(block_id: object, start: int, end: int) -> dict[str, Any] | None:
+    return retrieval_locator_json(
+        {
+            "type": "note_block_offsets",
+            "block_id": str(block_id),
+            "start_offset": start,
+            "end_offset": end,
+        }
+    )

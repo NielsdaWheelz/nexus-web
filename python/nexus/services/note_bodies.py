@@ -16,9 +16,8 @@ from sqlalchemy.orm import Session
 from nexus.db.models import NoteBlock
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas.resource_items import ExpectedNoteBody, validate_note_body_pm_json
-from nexus.services.resource_graph.edges import replace_edges_for_origin
+from nexus.services.resource_graph.edges import EdgeCreate, replace_edges_for_origin
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
-from nexus.services.resource_graph.schemas import EdgeCreate
 from nexus.services.resource_items import versions
 from nexus.services.resource_items.capabilities import resource_can_embed
 

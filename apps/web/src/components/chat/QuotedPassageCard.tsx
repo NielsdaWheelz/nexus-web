@@ -12,7 +12,7 @@ import { useResource } from "@/lib/api/useResource";
 import type { ApiJson, Schema } from "@/lib/api/wire";
 import type { ReaderSelectionKey } from "@/lib/chat/readerIntent";
 import { failureDetail } from "@/lib/chat/wire";
-import type { ReaderSourceTarget } from "@/lib/resourceGraph/readerTarget";
+import type { ReaderSourceTarget } from "@/lib/resourceGraph/citations";
 import styles from "./ChatComposer.module.css";
 
 type Snapshot = Schema<"ReaderSelectionOut">;
@@ -63,12 +63,9 @@ export function readerTargetFromSelection(
 ): ReaderSourceTarget {
   return {
     kind: "media",
-    source: "reader_selection",
     media_id: selection.key.media_id,
     locator: selection.locator,
     snippet: selection.exact,
-    highlight_behavior: "pulse",
-    focus_behavior: "scroll_into_view",
     label: selection.source_label,
   };
 }

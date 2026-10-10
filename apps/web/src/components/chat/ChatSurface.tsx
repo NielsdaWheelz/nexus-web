@@ -23,7 +23,7 @@ import {
 import type { Live } from "@/lib/chat/runTail";
 import type { BranchDraft, ChatView } from "@/lib/chat/tree";
 import type { Message } from "@/lib/chat/wire";
-import type { ReaderSourceTarget } from "@/lib/resourceGraph/readerTarget";
+import type { ReaderSourceTarget } from "@/lib/resourceGraph/citations";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import AssistantMessage, { MessageTime } from "./AssistantMessage";

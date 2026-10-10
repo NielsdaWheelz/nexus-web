@@ -5,7 +5,7 @@ import DossierSurface from "@/components/dossier/DossierSurface";
 import { FindResults } from "@/components/find/FindBar";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
-import { dispatchReaderSourceActivation } from "@/lib/resourceGraph/readerSourceActivation";
+import { dispatchReaderSourceActivation } from "@/lib/resourceGraph/citations";
 import { useDossier } from "@/lib/dossiers/useDossier";
 import {
   findInUnits,

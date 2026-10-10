@@ -38,14 +38,18 @@ from nexus.db.models import MediaKind
 from nexus.schemas.highlights import HIGHLIGHT_COLORS
 from nexus.schemas.library import CreateLibraryRequest
 from nexus.schemas.machine_authorship import MachineAuthorshipOut
-from nexus.schemas.resource_graph import ConnectionQueryRequest
+from nexus.schemas.resource_graph import (
+    EDGE_KINDS,
+    ConnectionDirection,
+    ConnectionQueryRequest,
+    EdgeKind,
+)
 from nexus.services.agent_tools.app_search import APP_SEARCH_LIMIT
 from nexus.services.contributor_taxonomy import (
     CONTRIBUTOR_ROLES_ORDERED,
     MAX_CONTRIBUTOR_HANDLE_LENGTH,
 )
 from nexus.services.media_read_map import _MAX_MAP_SECTIONS, READ_DOCUMENT_MAX_CHARS
-from nexus.services.resource_graph.schemas import EDGE_KINDS, ConnectionDirection, EdgeKind
 from nexus.services.resource_items.capabilities import app_search_scope_hint
 from nexus.services.search.query import SEARCH_FORMATS, SEARCH_KINDS, MediaFormat, SearchKind
 

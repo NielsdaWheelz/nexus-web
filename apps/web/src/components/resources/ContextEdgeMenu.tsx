@@ -9,7 +9,7 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import type { ConnectionMutation } from "@/lib/resourceGraph/connectionMutations";
+import type { ConnectionMutation } from "@/lib/resourceGraph/links";
 
 type ActionMenuProps = ComponentProps<typeof ActionMenu>;
 

@@ -477,8 +477,8 @@ Reset view returns to canonical, and a malformed pair shows "Invalid chats view"
 with Reset. The server sorts titles on the presented title, then
 `updated_at DESC, id DESC`, and binds cursors to the order plan. Optional
 `title_search` is a trimmed, case-insensitive literal substring of the stored
-title, bounded to 200 characters. `has_context_ref` alone retains the typed
-resource-graph `{data,page}` response and manual cursor.
+title, bounded to 200 characters. Any other key, `has_context_ref` included, is
+400 `E_INVALID_REQUEST`.
 
 ## Citation Candidates And Final Edges
 

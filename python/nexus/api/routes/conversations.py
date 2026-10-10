@@ -10,16 +10,14 @@ from nexus.api.deps import require_chat_contract_revision, require_tool_projecti
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession, RepeatableReadDbSession, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.responses import Data, DataPage
+from nexus.responses import Data
 from nexus.schemas.collection_page import (
     CollectionPage,
     CollectionRevisionOut,
-    parse_manual_page_query,
 )
 from nexus.schemas.conversation import (
     ConversationListItemOut,
     ConversationOut,
-    PageInfo,
     TrustToolCallOut,
 )
 from nexus.services import conversations as conversations_service
@@ -40,34 +38,14 @@ def list_conversations(
     request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: RepeatableReadDbSession,
-) -> Data[CollectionPage[ConversationListItemOut]] | DataPage[ConversationOut, PageInfo]:
-    """List conversations.
-
-    An explicit ``has_context_ref`` selects the retained resource-graph mode
-    with its manual ``{data, page}`` envelope. Every other request is the finite
-    index, with optional literal ``title_search``.
+) -> Data[CollectionPage[ConversationListItemOut]]:
+    """List conversations: the finite index, with optional literal ``title_search``.
 
     Errors:
-        E_INVALID_REQUEST (400): a view state outside the advertised inventory,
-            a malformed has_context_ref URI, or title search over its length bound.
+        E_INVALID_REQUEST (400): a view state outside the advertised inventory, an
+            unknown query key, or title search over its length bound.
         E_INVALID_CURSOR (400): the cursor is malformed or unparseable.
     """
-
-    if "has_context_ref" in request.query_params:
-        query = parse_manual_page_query(
-            request.query_params.multi_items(),
-            domain_keys=frozenset({"has_context_ref"}),
-            default_limit=conversations_service.DEFAULT_LIMIT,
-            max_limit=conversations_service.MAX_LIMIT,
-        )
-        conversations, page = conversations_service.list_conversations_with_context_ref(
-            db,
-            viewer_id=viewer.user_id,
-            has_context_ref=query.parameters["has_context_ref"],
-            limit=query.limit,
-            cursor=query.cursor,
-        )
-        return DataPage(data=conversations, page=page)
 
     view, title_search, query = conversations_service.parse_conversation_index_query(
         request.query_params.multi_items()

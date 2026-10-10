@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -11,7 +11,12 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_highlight, can_read_media
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.schemas.resource_graph import ConnectionOut, connection_out
+from nexus.schemas.resource_graph import (
+    ConnectionFiltersRequest,
+    ConnectionOut,
+    ConnectionQueryRequest,
+    EdgeOrigin,
+)
 from nexus.services import passage_anchors, text_quote
 from nexus.services.reader_locations import (
     highlight_locator,
@@ -21,13 +26,7 @@ from nexus.services.reader_locations import (
 )
 from nexus.services.resource_graph.connections import query_connections
 from nexus.services.resource_graph.reader_targets import reader_target_for_citation_target
-from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_graph.schemas import (
-    Connection,
-    ConnectionFilters,
-    ConnectionQuery,
-    EdgeOrigin,
-)
+from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 
 READER_CONNECTION_ORIGINS: tuple[EdgeOrigin, ...] = (
     "citation",
@@ -73,30 +72,29 @@ def list_reader_connections(
     anchors: dict[str, ReaderConnectionAnchor | None] = {}
     rows: list[ReaderConnectionRow] = []
 
-    def anchor_for(connection: Connection, ref: ResourceRef) -> ReaderConnectionAnchor | None:
-        if ref.uri not in anchors:
-            anchors[ref.uri] = _anchor_for_ref(
+    def anchor_for(connection: ConnectionOut, uri: str) -> ReaderConnectionAnchor | None:
+        if uri not in anchors:
+            anchors[uri] = _anchor_for_ref(
                 db,
                 viewer_id=viewer_id,
                 media_id=media_id,
-                ref=ref,
+                ref=assert_resource_ref(uri),
                 connection=connection,
                 fragment_indexes=fragment_indexes,
                 sources_cache=sources_cache,
             )
-        return anchors[ref.uri]
+        return anchors[uri]
 
     cursor: str | None = None
     while True:
         page = query_connections(
             db,
             viewer_id=viewer_id,
-            query=ConnectionQuery(
-                refs=(ResourceRef(scheme="media", id=media_id),),
+            query=ConnectionQueryRequest(
+                refs=[f"media:{media_id}"],
                 direction="both",
                 rollup="owner",
-                filters=ConnectionFilters(origins=READER_CONNECTION_ORIGINS, source_schemes=None),
-                limit=100,
+                filters=ConnectionFiltersRequest(origins=list(READER_CONNECTION_ORIGINS)),
                 cursor=cursor,
             ),
         )
@@ -108,8 +106,12 @@ def list_reader_connections(
                 source_anchor = anchor_for(connection, connection.source.ref)
                 target_anchor = anchor_for(connection, connection.target.ref)
             if source_anchor is not None and target_anchor is not None:
-                rows.append(_row(replace(connection, other=connection.target), source_anchor))
-                rows.append(_row(replace(connection, other=connection.source), target_anchor))
+                rows.append(
+                    _row(connection.model_copy(update={"other": connection.target}), source_anchor)
+                )
+                rows.append(
+                    _row(connection.model_copy(update={"other": connection.source}), target_anchor)
+                )
                 continue
             local_ref = (
                 connection.source.ref
@@ -124,18 +126,13 @@ def list_reader_connections(
     return rows
 
 
-def _row(connection: Connection, anchor: ReaderConnectionAnchor | None) -> ReaderConnectionRow:
+def _row(connection: ConnectionOut, anchor: ReaderConnectionAnchor | None) -> ReaderConnectionRow:
     far = connection.other
     excerpt = far.description
     if connection.snapshot is not None and connection.snapshot.excerpt:
         excerpt = connection.snapshot.excerpt
-    if connection.citation is not None and connection.citation.snapshot.excerpt:
-        excerpt = connection.citation.snapshot.excerpt
     return ReaderConnectionRow(
-        connection=connection_out(connection),
-        anchor=anchor,
-        title=far.label or far.ref.uri,
-        excerpt=excerpt,
+        connection=connection, anchor=anchor, title=far.label or far.ref, excerpt=excerpt
     )
 
 
@@ -151,19 +148,23 @@ def _anchor_for_ref(
     viewer_id: UUID,
     media_id: UUID,
     ref: ResourceRef,
-    connection: Connection,
+    connection: ConnectionOut,
     fragment_indexes: dict[str, int],
     sources_cache: text_quote.MediaSourceCache,
 ) -> ReaderConnectionAnchor | None:
-    citation = connection.citation
+    # A citation of something in this media lands where the cited target jumps.
     if (
-        citation is not None
-        and connection.target.ref == ref
-        and citation.target_media_id == media_id
-        and citation.target_locator is not None
+        connection.ordinal is not None
+        and connection.target.ref == ref.uri
+        and not connection.target.missing
     ):
-        locator = citation.target_locator
-        return ReaderConnectionAnchor(locator, order_key_from_locator(locator, fragment_indexes))
+        cited_media_id, locator = reader_target_for_citation_target(
+            db, viewer_id=viewer_id, target=ref
+        )
+        if cited_media_id == media_id and locator is not None:
+            return ReaderConnectionAnchor(
+                locator, order_key_from_locator(locator, fragment_indexes)
+            )
 
     if ref.scheme == "evidence_span":
         span_media_id, span_locator = reader_target_for_citation_target(

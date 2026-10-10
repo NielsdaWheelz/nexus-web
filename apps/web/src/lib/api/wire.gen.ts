@@ -475,15 +475,11 @@ export interface paths {
         };
         /**
          * List Conversations
-         * @description List conversations.
-         *
-         *     An explicit ``has_context_ref`` selects the retained resource-graph mode
-         *     with its manual ``{data, page}`` envelope. Every other request is the finite
-         *     index, with optional literal ``title_search``.
+         * @description List conversations: the finite index, with optional literal ``title_search``.
          *
          *     Errors:
-         *         E_INVALID_REQUEST (400): a view state outside the advertised inventory,
-         *             a malformed has_context_ref URI, or title search over its length bound.
+         *         E_INVALID_REQUEST (400): a view state outside the advertised inventory, an
+         *             unknown query key, or title search over its length bound.
          *         E_INVALID_CURSOR (400): the cursor is malformed or unparseable.
          */
         get: operations["list_conversations_conversations_get"];
@@ -4039,11 +4035,28 @@ export interface components {
              * @enum {string}
              */
             role: "context" | "supports" | "contradicts";
-            snapshot: components["schemas"]["CitationSnapshot"] | null;
+            snapshot: components["schemas"]["CitationSnapshotOut"] | null;
             target_ref: components["schemas"]["CitationTargetRef"];
         };
-        /** CitationSnapshot */
+        /**
+         * CitationSnapshot
+         * @description The stored edge ``snapshot``: display text captured when the fact was written.
+         *     Written with ``model_dump(exclude_none=True)``, read with ``model_validate``.
+         */
         CitationSnapshot: {
+            /** Deep Link */
+            deep_link: string | null;
+            /** Excerpt */
+            excerpt: string | null;
+            /** Result Type */
+            result_type: string | null;
+            /** Section Label */
+            section_label: string | null;
+            /** Title */
+            title: string | null;
+        };
+        /** CitationSnapshotOut */
+        CitationSnapshotOut: {
             /** Excerpt */
             excerpt: string | null;
             /** Result Type */
@@ -4066,7 +4079,7 @@ export interface components {
              * Type
              * @enum {string}
              */
-            type: "evidence_span" | "content_chunk" | "media" | "highlight" | "fragment" | "page" | "note_block" | "message" | "external_snapshot" | "oracle_passage_anchor" | "reader_apparatus_item";
+            type: "media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "artifact" | "artifact_revision" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor";
         };
         /**
          * ClientDefectRequest
@@ -4183,27 +4196,6 @@ export interface components {
             /** Generation */
             generation: number;
         };
-        /** ConnectionCitationOut */
-        ConnectionCitationOut: {
-            activation: components["schemas"]["ResourceActivationOut"];
-            /** Ordinal */
-            ordinal: number;
-            /**
-             * Role
-             * @enum {string}
-             */
-            role: "context" | "supports" | "contradicts";
-            /** Snapshot */
-            snapshot: {
-                [key: string]: unknown;
-            };
-            target_reader: components["schemas"]["ConnectionReaderTargetOut"] | null;
-            /**
-             * Target Status
-             * @enum {string}
-             */
-            target_status: "current" | "missing" | "forbidden" | "unanchorable";
-        };
         /** ConnectionCreationOut */
         ConnectionCreationOut: {
             authorship: components["schemas"]["MachineAuthorshipOut"];
@@ -4230,24 +4222,12 @@ export interface components {
             activation: components["schemas"]["ResourceActivationOut"];
             /** Description */
             description: string | null;
-            /** Href */
-            href: string | null;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
             /** Label */
-            label: string | null;
+            label: string;
             /** Missing */
             missing: boolean;
             /** Ref */
             ref: string;
-            /**
-             * Scheme
-             * @enum {string}
-             */
-            scheme: "media" | "library" | "evidence_span" | "content_chunk" | "highlight" | "page" | "note_block" | "fragment" | "conversation" | "message" | "oracle_reading" | "oracle_passage_anchor" | "artifact" | "artifact_revision" | "external_snapshot" | "contributor" | "podcast" | "reader_apparatus_item" | "passage_anchor";
         };
         /** ConnectionFiltersRequest */
         ConnectionFiltersRequest: {
@@ -4269,12 +4249,13 @@ export interface components {
             note_block_id: string;
             /** Preview */
             preview: string | null;
-            /** Ref */
-            ref: string;
         };
-        /** ConnectionOut */
+        /**
+         * ConnectionOut
+         * @description One fact seen from a queried ref: ``other`` is the far endpoint, a user link is
+         *     ``undirected``, and ``mutation`` names the one command that may remove it.
+         */
         ConnectionOut: {
-            citation: components["schemas"]["ConnectionCitationOut"] | null;
             /**
              * Created At
              * Format: date-time
@@ -4307,18 +4288,11 @@ export interface components {
              */
             origin: "user" | "citation" | "system" | "note_body" | "highlight_note" | "discovery" | "document_embed" | "assistant" | "link_note";
             other: components["schemas"]["ConnectionEndpointOut"];
-            /** Snapshot */
-            snapshot: {
-                [key: string]: unknown;
-            } | null;
+            snapshot: components["schemas"]["CitationSnapshot"] | null;
             source: components["schemas"]["ConnectionEndpointOut"];
             /** Source Order Key */
             source_order_key: string | null;
-            /** Source Ref */
-            source_ref: string;
             target: components["schemas"]["ConnectionEndpointOut"];
-            /** Target Ref */
-            target_ref: string;
         };
         /** ConnectionPageOut */
         ConnectionPageOut: {
@@ -4350,15 +4324,6 @@ export interface components {
              * @enum {string}
              */
             rollup: "exact" | "owner";
-        };
-        /** ConnectionReaderTargetOut */
-        ConnectionReaderTargetOut: {
-            /** Locator */
-            locator: {
-                [key: string]: unknown;
-            } | null;
-            /** Media Id */
-            media_id: string | null;
         };
         /** ConstellationOut */
         ConstellationOut: {
@@ -4955,12 +4920,6 @@ export interface components {
              * Format: date
              */
             localDate: string;
-        };
-        /** DataPage[ConversationOut, PageInfo] */
-        DataPage_ConversationOut_PageInfo_: {
-            /** Data */
-            data: components["schemas"]["ConversationOut"][];
-            page: components["schemas"]["PageInfo"];
         };
         /** DataPage[LibraryDestinationOut, LibraryPageInfo] */
         DataPage_LibraryDestinationOut_LibraryPageInfo_: {
@@ -7366,7 +7325,7 @@ export interface components {
         };
         /**
          * LinkFragmentSelectionSource
-         * @description A reflowable selection materialized as a Highlight on confirmation.
+         * @description A reflowable selection, materialized as a highlight with the link.
          */
         LinkFragmentSelectionSource: {
             /**
@@ -7425,7 +7384,7 @@ export interface components {
         };
         /**
          * LinkPdfSelectionSource
-         * @description A PDF page-space selection materialized as a Highlight on confirmation.
+         * @description A PDF page-space selection, materialized as a highlight with the link.
          */
         LinkPdfSelectionSource: {
             /**
@@ -8890,14 +8849,6 @@ export interface components {
              * @constant
              */
             source: "Nexus";
-        };
-        /**
-         * PageInfo
-         * @description Manual-paging cursor envelope for retained conversation context queries.
-         */
-        PageInfo: {
-            /** Next Cursor */
-            next_cursor: string | null;
         };
         /** PageRetrievalResultRef */
         PageRetrievalResultRef: {
@@ -15924,7 +15875,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Data_CollectionPage_ConversationListItemOut__"] | components["schemas"]["DataPage_ConversationOut_PageInfo_"];
+                    "application/json": components["schemas"]["Data_CollectionPage_ConversationListItemOut__"];
                 };
             };
         };
