@@ -10,11 +10,12 @@ ticket was deleted before the capture existed.
 
 ## What is wrong
 
-OI-032's acceptance had two clauses. The second — a case that renders `NavRail`
-collapsed and asserts the chip's painted box does not cover the icon's — now
-exists (`apps/web/src/components/appnav/NavRail.browser.test.tsx`, the two
-`paints a collapsed count of N clear of the icon it belongs to` cases, sensitive
-to the registered fault `imports-collapsed-count-chip-is-full-size`).
+OI-032's acceptance had two clauses. The second — a check that renders the rail
+collapsed and asserts the chip's painted box sits inside the Imports link and
+above the icon — is the c2nv nav harness journey
+`J3.collapsed-tooltips-chip-and-targets` (design N8; it replaced the deleted
+`NavRail.browser.test.tsx`), passing on main 36e43224b and on the 2026-10-10
+reauthored rail.
 
 The first — "the collapsed-rail review capture shows a count a reader can read
 at 100 % zoom" — is now produced: the D15 journey run records

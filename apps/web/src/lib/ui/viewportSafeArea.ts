@@ -1,4 +1,4 @@
-import { readMobileCssLength } from "@/lib/mobileViewport/readMobileCssLength";
+import { readMobileCssLength } from "@/lib/mobileShell/viewport";
 
 export function readViewportSafeBounds({
   viewportPadding,

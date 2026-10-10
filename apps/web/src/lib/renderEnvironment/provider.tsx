@@ -10,6 +10,7 @@ import {
 } from "react";
 import type { RenderEnvironment, ViewportKind } from "./types";
 
+// Repeated in components/appnav/AppNav.module.css, which hides the server-rendered rail on phones.
 const MOBILE_QUERY =
   "(max-width: 768px), (max-width: 900px) and (orientation: landscape) and (pointer: coarse)";
 

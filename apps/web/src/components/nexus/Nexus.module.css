@@ -541,7 +541,6 @@
 
 .nexusButton:focus-visible { outline: var(--focus-ring-width) solid var(--ring); outline-offset: 0; }
 .nexusButton:active .nexusFace { background: var(--surface-active); box-shadow: var(--shadow-1); }
-.nexusButton[data-mobile-chrome-phase="Settling"] { transition: --mobile-chrome-collapse var(--duration-fast) var(--ease-glide); }
 
 .nexusButton[data-mobile-chrome-phase="Hidden"],
 .nexusButton[data-switchboard-open="true"] {

@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, type ComponentProps } from "react";
+import { useCallback, useState, type ComponentProps } from "react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import { useOptionalResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import { useMobileChromeActionMenuLock } from "@/lib/workspace/useMobileChromeActionMenuLock";
+import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 
 type ActionMenuProps = ComponentProps<typeof ActionMenu>;
 
@@ -66,12 +66,13 @@ export default function ContextualActionMenu({
     sections.filter((section) => section.actions.length > 0),
   );
   const resource = useOptionalResourceActionMenuModel(actionSubject);
-  const { onOpenChange: lockOpenChange } = useMobileChromeActionMenuLock();
+  const [menuOpen, setMenuOpen] = useState(false);
+  useMobileChromeHold(menuOpen);
   const refresh = resource?.refresh;
   const onOpenChange = useCallback((open: boolean) => {
-    lockOpenChange(open);
+    setMenuOpen(open);
     if (open) refresh?.();
-  }, [lockOpenChange, refresh]);
+  }, [refresh]);
   const resourceDescriptors =
     resource === null
       ? []

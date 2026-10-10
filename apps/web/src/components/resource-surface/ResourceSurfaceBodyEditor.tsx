@@ -7,7 +7,7 @@ import Button from "@/components/ui/Button";
 import NoteBodyEditor, { type NoteBodyEdit, type NoteBodyEditorDocument, type NoteBodyInputHandoff, type NoteBodySelection } from "@/components/notes/NoteBodyEditor";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { useResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime";
-import { useMobileChromeActionMenuLock } from "@/lib/workspace/useMobileChromeActionMenuLock";
+import { useMobileChromeHold } from "@/lib/mobileShell/chrome";
 import { useResourceOverlaysController } from "@/lib/resources/resourceOverlaysController";
 import type { ResourceItem, SurfacePosition } from "@/lib/resources/resourceItems";
 import type { ResourceOutline, OutlineRow } from "@/lib/resourceSurface/outline";
@@ -219,12 +219,13 @@ function RowActions({ row, label, text, outline, enabled, report, onSelectBlock 
   report: (error: unknown) => void; onSelectBlock: () => void;
 }) {
   const model = useResourceActionMenuModel({ ref: assumeCanonicalResourceRef(row.target.item.ref) });
-  const { onOpenChange: lockOpenChange } = useMobileChromeActionMenuLock();
+  const [menuOpen, setMenuOpen] = useState(false);
+  useMobileChromeHold(menuOpen);
   const refresh = model.refresh;
   const onOpenChange = useCallback((open: boolean) => {
-    lockOpenChange(open);
+    setMenuOpen(open);
     if (open) refresh();
-  }, [lockOpenChange, refresh]);
+  }, [refresh]);
   const run = (work: Promise<void>) => { void work.catch(report); };
   const siblings = outline.rows.filter((candidate) => candidate.endpointRef === row.endpointRef && candidate.path.linkPath.slice(0, -1).join() === row.path.linkPath.slice(0, -1).join());
   const index = siblings.findIndex((candidate) => candidate.occurrenceId === row.occurrenceId);

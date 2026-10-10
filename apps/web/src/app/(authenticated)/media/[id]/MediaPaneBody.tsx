@@ -53,7 +53,7 @@ import { usePlayerCommands } from "@/lib/player/playerRuntime";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { activateResource } from "@/lib/resources/activation";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import { useMobileChromeReaderScrollport, useMobileChromeVisibleLocks } from "@/lib/workspace/mobileChrome";
+import { useMobileChrome } from "@/lib/mobileShell/chrome";
 import { useReaderActivity } from "./activity";
 import { createAnnotationStore } from "./annotations";
 import { useReaderChrome } from "./chrome";
@@ -113,10 +113,7 @@ function MediaPane({ id }: { readonly id: string }) {
 
   // ---- the reader ----
   const { entry, arrival, apparatusKey } = useReaderEntry(id);
-  const locks = useMobileChromeVisibleLocks();
-  const registerScrollport = useMobileChromeReaderScrollport({ sourceKey: id, enabled: isMobile && paneActive });
-  const latest = useRef({ locks, registerScrollport });
-  latest.current = { locks, registerScrollport };
+  const chrome = useMobileChrome();
   const reader = useDocumentReader(
     id,
     useMemo(
@@ -124,12 +121,9 @@ function MediaPane({ id }: { readonly id: string }) {
         source: hostedSource(id),
         progress: hostedProgress(id),
         entry,
-        host: {
-          holdChrome: () => latest.current.locks.acquire("reader-positioning"),
-          scrollport: (element: HTMLElement) => latest.current.registerScrollport(element) ?? undefined,
-        },
+        host: { holdChrome: chrome.hold, scrollport: chrome.registerReaderScrollport },
       }),
-      [entry, id],
+      [chrome, entry, id],
     ),
   );
   const readableRef = useRef(readable);
@@ -426,7 +420,7 @@ function MediaPane({ id }: { readonly id: string }) {
   const embeds = doc?.kind === "text" ? doc.embeds : [];
 
   return (
-    <div className={styles.layout} ref={root} data-focus-mode={profile.focus_mode} data-mobile-reader-interaction-root={paneActive || undefined}>
+    <div className={styles.layout} ref={root} data-focus-mode={profile.focus_mode}>
       <DocumentReaderView
         reader={reader}
         profile={profile}

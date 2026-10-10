@@ -67,7 +67,9 @@ back-button dismissal.
 
 `useMobileModalLifecycle` is the sole mobile-modal composition owner. It
 combines `useDialogOverlay`, `useHistoryDismiss`, and `useKeyboardInset`, and
-publishes active keyboard obstruction to `MobileViewportProvider`. It renders
+publishes active keyboard obstruction to `MobileViewportProvider`
+(`lib/mobileShell/viewport.tsx`), which every route that mounts a mobile modal
+provides: the authenticated shell, and `/share` for its library picker. It renders
 no markup and owns no CSS, scrim, gesture, z-index, geometry application, or
 semantic surface choice.
 

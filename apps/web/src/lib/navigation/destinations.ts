@@ -1,28 +1,21 @@
-/**
- * The single identity registry for in-app destinations. The app navigation and
- * Nexus projects this registry independently, so neither fixed-navigation
- * membership nor presentation order leaks into destination identity.
- *
- * Create/add command rows are not destinations (they have no href); they live in
- * Nexus providers.
- */
-
-import {
-  CalendarDays,
-  Sparkles,
-  UserRound,
-  type LucideIcon,
-} from "lucide-react";
+// The identity of every in-app place. The rail, Nexus and keybindings each
+// project it; a destination without an icon takes its route's icon.
+import { CalendarDays, Sparkles, UserRound, type LucideIcon } from "lucide-react";
 import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";
 
-export interface DestinationDefinition {
+interface Place {
   label: string;
   href: string;
   keywords: string[];
-  icon?: LucideIcon; // defaults to getPaneRouteIcon(href) at render
+  icon?: LucideIcon;
 }
 
-export const DESTINATION_REGISTRY = {
+/** A place with its id. (Place alone types the registry: the id type is derived from it.) */
+export interface Destination extends Place {
+  id: DestinationId;
+}
+
+const REGISTRY = {
   today: {
     label: "Today",
     href: "/daily",
@@ -85,10 +78,7 @@ export const DESTINATION_REGISTRY = {
     href: "/search",
     keywords: ["find", "query"],
   },
-  // No root Authors directory page or fixed nav item.
-  // The identity remains for the standing head, Nexus, and keybinding. It
-  // opens Search with People selected, so it needs an explicit icon because the
-  // deleted /authors root route cannot supply the route-icon fallback.
+  // No Authors route: Search with People selected, so it names its own icon.
   authors: {
     label: "Authors",
     href: "/search?kinds=people",
@@ -120,19 +110,15 @@ export const DESTINATION_REGISTRY = {
     href: "/settings/keybindings",
     keywords: ["keybindings", "hotkeys", "shortcuts"],
   },
-} satisfies Record<string, DestinationDefinition>;
+} satisfies Record<string, Place>;
 
-export type DestinationId = keyof typeof DESTINATION_REGISTRY;
-
-export interface Destination extends DestinationDefinition {
-  id: DestinationId;
-}
+export type DestinationId = keyof typeof REGISTRY;
 
 export function getDestination(id: DestinationId): Destination {
-  return { id, ...DESTINATION_REGISTRY[id] };
+  return { id, ...REGISTRY[id] };
 }
 
-/** Ordered view for Nexus tie-breaking only; app-nav order has its own owner. */
+/** Registry order: Nexus's tie-break, nothing else. */
 export const DESTINATIONS: readonly Destination[] = (
-  Object.keys(DESTINATION_REGISTRY) as DestinationId[]
+  Object.keys(REGISTRY) as DestinationId[]
 ).map(getDestination);

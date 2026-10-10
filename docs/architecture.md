@@ -1919,18 +1919,19 @@ open over Resume and never become panes.
   `useSetPaneLabel`, `usePaneSecondary`) and route-keyed
   `usePanePrimaryChrome`; `usePaneRuntime().isActive` exposes the
   host's pane-activity capability, which reader progress uses for
-  adoption-versus-handoff arbitration. `MobileViewportProvider` resolves mobile
-  bottom geometry in one ordered pass: the normal-flow MiniPlayer rectangle
-  places the fixed Nexus wrapper (`--mobile-nexus-bottom-offset`), the placed
+  adoption-versus-handoff arbitration. `MobileViewportProvider`
+  (`lib/mobileShell/viewport.tsx`) resolves mobile bottom geometry in one
+  ordered pass: the normal-flow MiniPlayer and persistent feedback rectangles
+  place the fixed Nexus wrapper (`--mobile-nexus-bottom-offset`), the placed
   Nexus wrapper plus safe area and active mobile-overlay keyboard inset form the
   root content clearance (`--mobile-content-bottom-clearance`), and that
   protected band projects into an element-local clearance on each registered
   mobile pane content surface. The flow Player is never added to content
   clearance, so it is counted exactly once. Text entry keeps playback alive
   while hiding and unregistering the MiniPlayer.
-  `MobileChromeProvider` projects reader collapse to AppBar, the active
-  contextual row registered under the existing `PaneToolbar` motion role, and
-  the inner NexusControl without moving that wrapper. Every
+  `MobileChromeProvider` (`lib/mobileShell/chrome.tsx`) writes reader collapse,
+  `inert` and phase straight onto the registered top bar, the active contextual
+  row and the inner Nexus control, without moving the Nexus wrapper. Every
   eligible resource pane publishes one
   `resource-inspector` secondary group through `useResourceInspector`: Media
   (`Contents | Evidence | Dossier`), Conversation
@@ -1958,8 +1959,8 @@ open over Resume and never become panes.
 - **App navigation is a curated projection, not a feature directory.**
   `lib/navigation/destinations.ts` owns destination identity;
   `components/appnav/navModel.ts` independently owns the flat desktop rail, the
-  footer utility link (Imports), and the
-  mobile Places projections. Mobile global access is the bottom Nexus control
+  footer utility link (Imports) and the Account pair; Nexus owns the mobile
+  Places projection. Mobile global access is the bottom Nexus control
   plus its full-screen task, not a navigation drawer, bottom sheet, or second
   desktop palette. Section routes
   derive semantic navigation ownership from

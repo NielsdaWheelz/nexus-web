@@ -1,136 +1,94 @@
 "use client";
 
-import { useCallback, useRef, type MouseEvent as ReactMouseEvent } from "react";
+import { useRef } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import PaneHeaderIdentity from "@/components/ui/PaneHeaderIdentity";
+import { useMobileChromeSurface, useMobilePaneChrome } from "@/lib/mobileShell/chrome";
 import { projectActionControlState } from "@/lib/ui/actionDescriptor";
 import { cx } from "@/lib/ui/cx";
-import {
-  useMobileChrome,
-  useMobileChromeSurface,
-} from "@/lib/workspace/mobileChrome";
 import styles from "./AppNav.module.css";
 
+/** The fixed mobile top bar: the active pane's history, identity, More and companion. */
 export default function MobilePaneBar() {
-  const { motionPhase, paneChrome } = useMobileChrome();
-  const navigation = paneChrome?.navigation;
-  const topBarRef = useRef<HTMLElement>(null);
-  useMobileChromeSurface(topBarRef, "AppBar", true);
-
-  const paneActions = paneChrome?.paneActions ?? [];
-  const menuActions = paneChrome?.menuActions ?? [];
-  const hasHiddenStatus = [...paneActions, ...menuActions].some(
+  const chrome = useMobilePaneChrome();
+  const ref = useRef<HTMLElement>(null);
+  useMobileChromeSurface(ref, true);
+  const paneActions = chrome?.paneActions ?? [];
+  const menuActions = chrome?.menuActions ?? [];
+  const hiddenStatus = [...paneActions, ...menuActions].some(
     (action) => action.indicator?.kind === "Status",
   );
-  const hasMoreContent =
-    paneActions.length > 0 ||
-    menuActions.length > 0 ||
-    paneChrome?.actionSubject !== undefined;
-  const interactive =
-    motionPhase.kind === "Visible" || motionPhase.kind === "Pinned";
-  const handleChromeClickCapture = useCallback(
-    (event: ReactMouseEvent<HTMLElement>) => {
-      if (!(event.target instanceof Element)) return;
-      const anchor = event.target.closest("a[href]");
-      if (anchor instanceof HTMLAnchorElement) {
-        paneChrome?.activateChromeAnchor(event, anchor);
-      }
-    },
-    [paneChrome],
-  );
-  const companionAction = paneChrome?.companionAction;
-  const companionState = companionAction
-    ? projectActionControlState(companionAction.label, companionAction.state)
+  const companion = chrome?.companionAction;
+  const companionState = companion
+    ? projectActionControlState(companion.label, companion.state)
     : null;
 
   return (
     <header
-      ref={topBarRef}
+      ref={ref}
       className={styles.topBar}
-      data-mobile-chrome-phase={motionPhase.kind}
-      data-pane-chrome-for={paneChrome?.paneId}
-      aria-hidden={!interactive || undefined}
-      inert={!interactive || undefined}
-      style={{ pointerEvents: interactive ? undefined : "none" }}
-      onClickCapture={handleChromeClickCapture}
+      data-pane-chrome-for={chrome?.paneId}
+      onClickCapture={(event) => {
+        const anchor = event.target instanceof Element ? event.target.closest("a[href]") : null;
+        if (chrome && anchor instanceof HTMLAnchorElement) chrome.activateChromeAnchor(event, anchor);
+      }}
     >
       <div className={styles.topBarControls}>
         <button
           type="button"
           className={styles.topBarButton}
-          onClick={() => navigation?.onBack()}
-          disabled={!navigation?.canGoBack}
           aria-label="Go back"
+          disabled={!chrome?.navigation.canGoBack}
+          onClick={() => chrome?.navigation.onBack()}
         >
           <ChevronLeft size={20} aria-hidden="true" />
         </button>
         <button
           type="button"
           className={styles.topBarButton}
-          onClick={() => navigation?.onForward()}
-          disabled={!navigation?.canGoForward}
           aria-label="Go forward"
+          disabled={!chrome?.navigation.canGoForward}
+          onClick={() => chrome?.navigation.onForward()}
         >
           <ChevronRight size={20} aria-hidden="true" />
         </button>
       </div>
-
       <div className={styles.topBarTitle}>
-        {paneChrome ? (
-          <PaneHeaderIdentity
-            id={paneChrome.identityId}
-            model={paneChrome.header}
-            projection="Mobile"
-          />
+        {chrome ? (
+          <PaneHeaderIdentity id={chrome.identityId} model={chrome.header} projection="Mobile" />
         ) : null}
       </div>
-
       <div className={styles.topBarControls}>
-        {paneChrome && hasMoreContent ? (
+        {chrome && (paneActions.length > 0 || menuActions.length > 0 || chrome.actionSubject) ? (
           <ContextualActionMenu
             label="More"
             sections={[
               { id: "Pane", actions: paneActions },
               { id: "View", actions: menuActions },
             ]}
-            actionSubject={paneChrome.actionSubject}
-            triggerAttributes={{
-              "data-pane-menu-trigger": paneChrome.paneId,
-            }}
+            actionSubject={chrome.actionSubject}
+            triggerAttributes={{ "data-pane-menu-trigger": chrome.paneId }}
             renderTrigger={(props) => (
-              <button
-                {...props}
-                className={`${props.className} ${styles.topBarButton}`}
-              >
+              <button {...props} className={cx(props.className, styles.topBarButton)}>
                 &hellip;
-                {hasHiddenStatus ? (
-                  <span
-                    className={styles.topBarStatusMarker}
-                    aria-hidden="true"
-                  />
-                ) : null}
+                {hiddenStatus ? <span className={styles.statusMarker} aria-hidden="true" /> : null}
               </button>
             )}
           />
         ) : null}
-        {companionAction && companionState ? (
+        {companion && companionState ? (
           <button
             type="button"
-            className={cx(
-              styles.topBarButton,
-              companionState.active && styles.topBarButtonActive,
-            )}
-            aria-label={companionAction.label}
+            className={cx(styles.topBarButton, companionState.active && styles.topBarButtonActive)}
+            aria-label={companion.label}
             aria-pressed={companionState.barPressed}
             aria-expanded={companionState.barExpanded}
             aria-controls={companionState.barControls}
-            disabled={companionAction.disabled}
-            onClick={(event) =>
-              companionAction.onSelect({ triggerEl: event.currentTarget })
-            }
+            disabled={companion.disabled}
+            onClick={(event) => companion.onSelect({ triggerEl: event.currentTarget })}
           >
-            {companionAction.icon}
+            {companion.icon}
           </button>
         ) : null}
       </div>

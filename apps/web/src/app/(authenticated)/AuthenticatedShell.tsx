@@ -20,7 +20,8 @@ import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { MediaSummaryProvider } from "@/lib/media/MediaSummaryProvider";
-import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
+import { MobileChromeProvider } from "@/lib/mobileShell/chrome";
+import { MobileViewportProvider } from "@/lib/mobileShell/viewport";
 import { connectOffline } from "@/lib/offline/bridge";
 import { GlobalPlayerProvider } from "@/lib/player/playerRuntime";
 import {
@@ -35,7 +36,6 @@ import {
   ResourceOverlaysProvider,
 } from "@/lib/resources/resourceOverlaysController";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
-import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import type { WorkspaceState } from "@/lib/workspace/model";
 import { estimatePrimaryWidthPx } from "@/lib/workspace/paneSizing";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";

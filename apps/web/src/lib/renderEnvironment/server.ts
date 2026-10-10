@@ -1,8 +1,8 @@
 import "server-only";
 
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { isAndroidShellUserAgent } from "@/lib/androidShell";
-import type { PlatformKind, RenderEnvironment } from "./types";
+import { NAV_COLLAPSED_COOKIE, type PlatformKind, type RenderEnvironment } from "./types";
 
 function platformFromUserAgent(userAgent: string): PlatformKind {
   if (/iPhone|iPad|iPod/.test(userAgent)) return "ios";
@@ -24,5 +24,6 @@ export async function loadRenderEnvironment(): Promise<RenderEnvironment> {
     displayLocale,
     displayTimeZone,
     currentInstant: now.toISOString(),
+    navCollapsed: (await cookies()).get(NAV_COLLAPSED_COOKIE)?.value === "1",
   };
 }

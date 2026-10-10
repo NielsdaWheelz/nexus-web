@@ -206,7 +206,7 @@
   min-block-size: var(--size-xl);
 }
 
-/* The contextual row sits below the fixed app bar and shares its retreat phase. */
+/* The contextual row sits below the fixed app bar and retreats with it. */
 .paneShell[data-mobile="true"] .chrome {
   position: absolute;
   top: calc(var(--viewport-safe-top) + var(--pane-chrome-header-height));
@@ -224,10 +224,6 @@
     )
   );
   will-change: transform;
-}
-
-.paneShell[data-mobile="true"] .chrome[data-mobile-chrome-phase="Settling"] {
-  transition: --mobile-chrome-collapse var(--duration-fast) var(--ease-glide);
 }
 
 .paneShell[data-mobile="true"] .chrome:empty {
@@ -290,14 +286,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  /* The second selector matches the Settling rule's specificity and, coming
-     later, wins — so the collapse snaps instantly instead of gliding. Retreat
-     still happens; only the animation is removed. */
-  .paneShell[data-mobile="true"] .chrome,
-  .paneShell[data-mobile="true"] .chrome[data-mobile-chrome-phase="Settling"] {
-    transition: none;
-  }
-
   .refreshIndicatorContent {
     transition: none;
   }

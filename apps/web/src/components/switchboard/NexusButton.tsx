@@ -5,8 +5,8 @@
 import { useLayoutEffect, useRef, type PointerEvent, type RefObject } from "react";
 import { flushSync } from "react-dom";
 import AsterismMark from "@/components/AsterismMark";
-import { useMobileViewport } from "@/lib/mobileViewport/MobileViewportProvider";
-import { useMobileChrome, useMobileChromeSurface } from "@/lib/workspace/mobileChrome";
+import { useMobileChromeSurface } from "@/lib/mobileShell/chrome";
+import { useMobileViewport } from "@/lib/mobileShell/viewport";
 import type { WorkspaceAdjacentPaneDirection } from "@/lib/workspace/store";
 import styles from "@/components/nexus/Nexus.module.css";
 
@@ -34,14 +34,13 @@ export default function NexusButton({
   const swipe = useRef<Swipe>(null);
   const suppressClick = useRef(false);
   const mobileViewport = useMobileViewport();
-  const { motionPhase } = useMobileChrome();
-  const inert = open || (motionPhase.kind !== "Visible" && motionPhase.kind !== "Pinned");
-  useMobileChromeSurface(buttonRef, "NexusControl", true);
+  // The chrome module owns the button's own inert (retreat); the open switchboard inerts the wrapper.
+  useMobileChromeSurface(buttonRef, true);
   useLayoutEffect(() => {
-    if (!inert) return;
+    if (!open) return;
     if (swipe.current) suppressClick.current = true;
     swipe.current = null;
-  }, [inert]);
+  }, [open]);
   useLayoutEffect(() => {
     const element = wrapperRef.current;
     if (open || !element) return;
@@ -54,17 +53,14 @@ export default function NexusButton({
   };
 
   return (
-    <div ref={wrapperRef} className={styles.nexusWrapper}>
+    <div ref={wrapperRef} className={styles.nexusWrapper} inert={open || undefined}>
       <button
         ref={buttonRef}
         type="button"
         className={styles.nexusButton}
         aria-label={paneCount === 1 ? "Open Nexus, 1 tab" : `Open Nexus, ${paneCount} tabs`}
         aria-haspopup="dialog"
-        aria-hidden={inert || undefined}
-        inert={inert || undefined}
         data-switchboard-open={open || undefined}
-        data-mobile-chrome-phase={motionPhase.kind}
         onPointerDown={(event) => {
           if (swipe.current) {
             suppressClick.current = true;
@@ -72,7 +68,7 @@ export default function NexusButton({
             return;
           }
           suppressClick.current = false;
-          if (!event.isPrimary || event.pointerType !== "touch" || inert) return;
+          if (!event.isPrimary || event.pointerType !== "touch" || open) return;
           swipe.current = { phase: "Tracking", pointerId: event.pointerId, x: event.clientX, y: event.clientY };
           event.currentTarget.setPointerCapture(event.pointerId);
         }}
@@ -90,7 +86,8 @@ export default function NexusButton({
           if (!current) return;
           swipe.current = null;
           const dx = event.clientX - current.x;
-          if (current.phase === "Locked" && Math.abs(dx) >= COMMIT_PX && !inert) {
+          // A button the chrome retreated mid-swipe (module-written inert) never commits.
+          if (current.phase === "Locked" && Math.abs(dx) >= COMMIT_PX && !open && !event.currentTarget.inert) {
             onSwipe({ direction: dx < 0 ? "Next" : "Previous" });
           }
         }}

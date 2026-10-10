@@ -1,6 +1,7 @@
 import { cookies, headers } from "next/headers";
 import { isAndroidShellUserAgent } from "@/lib/androidShell";
 import { readSupabaseSessionCookie } from "@/lib/auth/session-cookie";
+import { MobileViewportProvider } from "@/lib/mobileShell/viewport";
 import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
 import { loadRenderEnvironment } from "@/lib/renderEnvironment/server";
 import ShareCapture from "./ShareCapture";
@@ -9,7 +10,8 @@ import styles from "./share.module.css";
 // The Android share-sheet capture surface. A compact card under the root
 // layout — never the authenticated app shell — that captures the shared text
 // on load. `verifySession` is deliberately not used: it redirects a logged-out
-// viewer to `/login`, which would trap a share behind a login flow.
+// viewer to `/login`, which would trap a share behind a login flow. The library
+// picker opens a mobile sheet, so this route provides the viewport it reports to.
 export default async function SharePage({
   searchParams,
 }: {
@@ -62,7 +64,7 @@ export default async function SharePage({
     <div className={styles.backdrop}>
       <main className={styles.card}>
         <RenderEnvironmentProvider value={renderEnvironment}>
-          {content}
+          <MobileViewportProvider>{content}</MobileViewportProvider>
         </RenderEnvironmentProvider>
       </main>
     </div>

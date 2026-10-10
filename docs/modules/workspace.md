@@ -274,49 +274,57 @@ composition so one pane failure cannot replace its siblings or the workspace.
 
 ### Mobile Reader Chrome
 
-`MobileChromeProvider` is the sole mobile reader chrome policy owner.
-The reader's text and pdf surfaces register their actual scroll element through
-the host's `ReaderHost.scrollport` (the media pane passes
-`useMobileChromeReaderScrollport`). Exactly one active reader scrollport owns
-native scroll sampling and blank-canvas reveal. One stable active-reader
-interaction root owns primary-pointer focus handoff even while the scrollport
-is loading, short, or being replaced. Window, workspace and non-reader pane
-scroll never participate.
+`lib/mobileShell/chrome.tsx` is the sole mobile reader chrome owner: one
+controller created once by `MobileChromeProvider`, with the motion law alone in
+the pure `lib/mobileShell/chromeMotion.ts`. Moving surfaces register with
+`useMobileChromeSurface(ref, enabled)`: the top bar (`MobilePaneBar`), the
+active pane's contextual row (`PaneShell`'s `.chrome`, while it has one) and the
+Nexus control. The module alone writes their motion, in one task: the inline
+`--mobile-chrome-collapse` progress `p` (0 shown, 1 hidden), `inert` while
+`p > 0`, and `data-mobile-chrome-phase` (Visible, Tracking, Settling, Hidden,
+Pinned). No React render happens while reading, and a registered element
+renders none of those three itself (the Nexus control's open-switchboard
+inertness sits on its wrapper).
 
-The provider reduces reader scroll to one normalized collapse progress. The app
-top bar, optional active contextual row, and inner Nexus control consume that
-progress in the same animation frame through compositor-only transforms. Top
-chrome retreats upward and Nexus retreats downward. The untransformed outer
-Nexus wrapper remains the registered `"Nexus"` bottom-surface measurement
-surface, so content clearance, content offset, and reader `scrollTop` remain
-fixed. Downward scroll
-collapses, upward scroll reveals after the direction dead zone, and idle partial
-progress settles to the nearest endpoint.
-Phase, inertness, and accessibility state commit before collapse motion. A new
-reader sample interrupts settlement by sampling once, cancelling every owned
-collapse transition, freezing all three surfaces at that progress, and fencing
-stale completion events.
+The reader's text and pdf surfaces register their scroll element through the
+host's `ReaderHost.scrollport` (the media pane passes
+`useMobileChrome().registerReaderScrollport`). Registration is unconditional; on
+mobile the newest registered scrollport drives, on desktop none does. Window,
+workspace and non-reader pane scroll never participate. Each scroll folds into
+`p` by the law: at or above 8px always shown, an 8px dead zone after every
+change of direction, 64px of travel from shown to hidden, sub-pixel deltas
+ignored. A stopped half-retreat settles to the nearer end after 120ms with a
+rAF tween over `--duration-fast` (instant under reduced motion, which keeps the
+retreat itself); the next sample or hold stops it where it is. Motion is
+transform-only, so layout, content offset, clearance and reader `scrollTop`
+never move; the untransformed Nexus wrapper stays the `"Nexus"` bottom surface.
 
-The provider resets fully shown when the active `(paneId, routeKey)`, semantic
-reader source, EPUB unit, or mobile mode changes. Reflow, lazy media, zoom,
-IME, rotation, and safe-area changes retain that source identity and only
-rebaseline live geometry. App-owned reader positioning holds the chrome lock
-(`lib/documentReader/runtime.ts` through the host's `holdChrome`), and
-`lib/documentReader/scrollport.ts` counts only genuine input as reading movement,
-so a programmatic jump cannot become the next reading delta.
+Holds are a count: `useMobileChrome().hold()` returns an idempotent release, and
+`useMobileChromeHold(active)` is the declarative form (Find, the library picker,
+open resource and contextual menus). App-owned reader positioning and pdf
+rescale hold through the host's `holdChrome`, and
+`lib/documentReader/scrollport.ts` counts only genuine input as reading
+movement, so a programmatic jump cannot become the next reading delta. While
+held, or while focus is inside a registered surface, the chrome is Pinned and
+samples only rebaseline; focus is read at each sample, not tracked. The motion
+resets to shown, measured from the live driver, on scrollport register and
+unregister, mobile and desktop flips, the final hold release, a reader tap
+reveal, and a reader press that releases chrome focus; a route or pane change
+that changes what is read mounts or unmounts the reader, which is how it resets.
 
-The provider pins chrome fully visible at the document top, for reduced motion,
-and while reader restore, positioning, Find, selection, navigation,
-secondary-surface, library-picker, menu, or chrome-focus locks are held.
-`useMobileChromeVisibleLocks` is the only lock capability, and final release
-rebaselines from the live scrollport. Enabled mobile surfaces register as
-`AppBar`, `PaneToolbar`, or `NexusControl`; `PaneToolbar` remains the
-internal motion-role name for the active pane's effective contextual row.
-Focus on a real control acquires `chrome-focus`; primary pointer
-intent on the reader releases only that focus. Tracking, settling, and hidden
-moving roots are inert, non-hit-testable, and absent from accessibility
-navigation, while the pane landmark remains represented. Desktop chrome is
-unaffected.
+A plain primary click on the reader's own canvas (not interactive, not
+prevented by any handler, no live selection), decided after the whole dispatch,
+reveals chrome that is hidden or moving. A primary press inside the reading
+pane, outside every surface, blurs a focused chrome control (WebKit keeps focus
+on taps). `focusPaneChrome(paneId)` holds the chrome shown and next frame
+focuses the pane's More trigger, else its landmark; it returns nothing and
+cannot reject. Desktop chrome is unaffected.
+
+`MobilePaneChrome` (the active pane's header, navigation, companion, actions and
+resource subject) is an external store slot: the mounted `PaneShell` publishes
+with `usePublishMobilePaneChrome`, and `MobilePaneBar` and
+`MobileSecondaryPaneHost` read it with `useMobilePaneChrome`. Publication does
+not touch motion.
 
 ## Mobile Secondary Panes
 
@@ -462,35 +470,40 @@ inspector while the route still offers its group. Reload clears the stack.
 
 `globals.css` is the sole raw platform-inset adapter. It maps WebView's four
 CSS safe-area values to `--viewport-safe-{top,right,bottom,left}`, and
-`readMobileCssLength` is the single browser boundary that resolves one of those
-published tokens to CSS pixels when JavaScript needs a number.
+`readMobileCssLength` (in `lib/mobileShell/viewport.tsx`) resolves one of those
+published tokens to CSS pixels when JavaScript needs a number; an expression
+that does not resolve reads as 0.
 
-`MobileViewportProvider` owns two registration kinds. Id-keyed bottom surfaces
-register through `registerBottomSurface("Nexus" | "Player", element)`: the
-fixed Nexus wrapper and the normal-flow MiniPlayer. Each active mobile pane
-body registers through `registerContentSurface(element)`, so several content
-surfaces may be registered while several mobile panes are mounted. Duplicate
-active registration of either kind is a defect, and every cleanup is
-idempotent, disconnects its observer, removes the element-local variable, and
-recomputes immediately. `useMobileModalLifecycle` reports active sheet or
-full-screen-task keyboard insets through scoped, ordered reports, so releasing
-the newest modal restores the preceding report. Inactive mounted overlays
-publish nothing. One document focus observer recognizes only text-entry targets
-outside modal layers. While root text entry owns focus, the mounted MiniPlayer
-is hidden/inert and its `"Player"` bottom surface is unregistered; playback
-continues through system controls.
+`MobileViewportProvider` (`lib/mobileShell/viewport.tsx`) owns two registration
+kinds. Id-keyed bottom surfaces register through
+`registerBottomSurface("Nexus" | "Player" | "Feedback", element)`: the fixed
+Nexus wrapper while the switchboard is closed, the normal-flow MiniPlayer or its
+unavailable notice, and the persistent feedback region (registered by the
+provider itself). The active mobile pane body registers through
+`registerContentSurface(element)`; mobile renders one pane, so there is one.
+Every cleanup is idempotent, removes the element-local variable and recomputes
+immediately; one lazily created `ResizeObserver` (border box) watches every
+registered element. `useMobileModalLifecycle` reports an active sheet's or
+full-screen task's keyboard inset as a token stack: the newest report wins and
+releasing it restores the one before. `useRootTextEntryFocused()` recognizes a
+focused text-entry target outside modal layers; while it holds, the mounted
+MiniPlayer is hidden/inert and its `"Player"` bottom surface is unregistered;
+playback continues through system controls. No keyboard inset is reported for
+root text entry.
 
 Geometry resolves in one ordered measurement pass, because each rectangle can
 only be measured after the write it depends on. The pass resolves the Nexus
-bottom offset from the safe bottom and the Player rectangle and writes root
-`--mobile-nexus-bottom-offset`; then measures the placed Nexus wrapper and
-writes root `--mobile-content-bottom-clearance` — the maximum of safe bottom,
-the Nexus band, and the active overlay keyboard inset — alongside root
-`--mobile-overlay-keyboard-inset`; then projects that protected band into each
-registered content surface's local bottom coordinate and writes an
-element-local `--mobile-content-bottom-clearance` on that element.
-`ResizeObserver`, `window.resize`, and top-level `visualViewport`
-resize/scroll share one animation-frame-coalesced path.
+bottom offset from the safe bottom and the Player and Feedback rectangles and
+writes root `--mobile-nexus-bottom-offset`; then measures the placed Nexus
+wrapper and writes root `--mobile-content-bottom-clearance` — the maximum of
+safe bottom, the Nexus band, and the newest overlay keyboard inset — alongside
+root `--mobile-overlay-keyboard-inset`; then projects that protected band into
+each registered content surface's local bottom coordinate and writes an
+element-local `--mobile-content-bottom-clearance` on that element. Every
+registration and release measures at once; observed resizes, `window.resize`
+and top-level `visualViewport` resize/scroll share one animation-frame-coalesced
+pass. The `globals.css` defaults equal the empty-registry result, so nothing
+measures before the first registration.
 
 The MiniPlayer stays normal flow. It is a bottom surface that only places
 Nexus and is never added to content clearance: its flow layout already shortens
