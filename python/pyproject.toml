@@ -89,5 +89,6 @@ include = [
     "../apps/codex_agent",
     "../apps/worker/health.py",
     "../apps/worker/main.py",
+    "../deploy/hetzner/qualify_model_cutover.py",
     "../deploy/hetzner/release.py",
 ]

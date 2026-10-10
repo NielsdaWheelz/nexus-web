@@ -152,8 +152,8 @@ VERCEL_TOKEN=... ./deploy/hetzner/deploy.sh <source-sha> \
 
 the snapshot is a readable file on the caller's machine; relative paths resolve
 from the caller's working directory. the wrapper forwards only this declared
-input. the backend controller parses the file once and validates its declared
-revision and six row-list fields before any external work. it checks the actual
+input. the backend controller parses and validates the whole reviewed input once
+before any external work. it checks the actual
 starting revision during release, then compares reviewed identities with a fresh
 census after writers and the native host stop. a matching census does not
 authorize abandoning uncertain
@@ -162,7 +162,7 @@ only when the database crosses 0246; ordinary releases retain the first command.
 
 `deploy.sh` proves the checkout, selects the single `READY` production-target
 Vercel deployment CI built for that exact SHA, and proves its staged
-`/version` serves the SHA and this tree's player-protocol contract with
+`/version` serves exactly `{"source_sha": <sha>}` with
 `Cache-Control: no-store`. It then runs the backend release, and only afterwards
 promotes that exact deployment, assigns the custom domain, polls the alias until
 it binds, and re-proves the public `/version`.
@@ -214,17 +214,17 @@ this finite operator sequence:
 2. collect a fresh exact starting census. take a fresh backup with the existing
    `nexus.release_backup create` owner for the chosen target sha, source database
    identity and actual revision. a 0230/0236 receipt cannot qualify a 0241 reset.
-3. actually restore those exact bytes in an isolated postgres/pgvector copy.
-   prove the complete starting census, actual starting-revision-to-target chain,
-   preserved domain data and completed-write undo, refused unfinished writes,
-   stale admission/job rejection and whole-transaction rollback. archive
-   traversal alone is insufficient; a preliminary live dump is not this final
-   drained backup.
+3. actually restore those exact bytes in an isolated postgres/pgvector copy
+   and replay the whole chain to the target head under the draft input (below).
+   archive traversal alone is insufficient; a preliminary live dump is not this
+   final drained backup.
 4. review the complete input: deployed and target source shas, source database
    identity/revision, all ordered row hashes, exact null-parent abandonment,
    exact orphan-parent acknowledgement, every frozen/metadata job retirement,
-   reviewer, `BackupEvidence`, and the small actual-restore attestation bound to
-   the backup/census/target and private proof receipt hashes.
+   exact acknowledgement of terminal jobs whose memo names a parent absent from
+   `llm_calls` (`retire_dangling_job_ids`), reviewer, `BackupEvidence`, and the
+   small actual-restore attestation bound to the backup/census/target head and
+   the qualification receipt hash.
 5. use the aligned release command with that input. it rejects incomplete or
    stale authority, rechecks the complete census and existing archive bytes,
    then supplies typed alembic `Config.attributes` authority. the entry hook,
@@ -241,14 +241,52 @@ write ownership or unfinished write effects block; acknowledged orphan parents
 receive no fabricated owner, terminal or executable authority. completed write
 receipts remain inspectable and undoable after history deletion.
 
+a terminal (`succeeded` or `dead`) job may name a parent that never reached
+`llm_calls`: the 7dc68929b metadata path wrote its would-be generation id into a
+`Completed` memo when it refused before dispatch (`source_changed`); #547
+removed that path. each such job is acknowledged by id. an unacknowledged or
+unfinished one refuses, and so does an acknowledged job whose parent exists.
+read the set from the frozen database, not from an earlier census.
+
 one `model_cutover_archives` row records the reviewed disposition and both source
-and execution database identities. restored-copy qualification uses the explicit
-trusted migration interface, with its own execution identity and the same
-original census. ordinary releases retain the existing backup and plain
-migration path. the canonical suffix is 0252 -> resource 0253 -> atlas 0254 ->
-native 0255 -> metadata 0256 -> effects 0257 -> local vault history 0258.
-post-reset 0256 databases gain receipt/audit storage through 0257; 0256's
-metadata uncertainty barrier stays intact.
+and execution database identities. `restore.target_revision` is the candidate's
+head; the release and the archive cli require equality. ordinary releases retain
+the existing backup and plain migration path. post-reset 0256 databases gain
+receipt/audit storage through 0257; 0256's metadata uncertainty barrier stays
+intact.
+
+#### restored-copy qualification
+
+`deploy/hetzner/qualify_model_cutover.py` is step 3. it is one-time tooling:
+delete it with the model-cutover code once production reads head. download and
+check `database.dump` as in [database backup recovery](#database-backup-recovery),
+then write the draft: the census from step 2, the four disposition lists read
+from the same frozen database, `reviewer`, the `BackupEvidence`, and a `restore`
+block naming the target sha and head with a placeholder
+`restored_database_identity` (any text but the source identity) and
+`receipt_sha256` (64 zeros). from a clean checkout at the target sha:
+
+```bash
+PYTHONPATH=python uv run --project python --frozen --no-sync python \
+  deploy/hetzner/qualify_model_cutover.py recovery.dump draft.json qualification/ \
+  --image "$POSTGRES_IMAGE"
+```
+
+it refuses a dump whose bytes differ from the draft's backup evidence, restores
+it into a disposable container of the production postgres image (database and
+owner role named as in the source identity; removed on exit), writes
+`restored-census.json`, counts every table's rows, then runs `alembic upgrade
+head` in one transaction through the trusted migration interface, with the
+restored copy as the execution database and the draft's original census. the
+entry hook proves the census and dispositions; every data-dependent guard from
+0242 to head then runs on the real rows. a refusal prints the cause and leaves
+the copy at its starting revision. success writes `receipt.json` (backup and
+census hashes, both identities, revisions reached, unconverted browser captures,
+row counts before and after per table) and `reviewed.json`: the draft with the
+restored identity and the receipt hash filled in. review that file and the
+receipt's losses; it is the release's `--model-cutover-snapshot` input. the
+release itself still runs the browser-capture conversion and the health
+checks.
 
 ## Codex agent host isolation
 
@@ -432,6 +470,7 @@ decision. Garbage collection is not part of the release.
 | Host provisioning | `deploy/hetzner/provision.sh`, `deploy/hetzner/cloud-init.yml` |
 | VPS config publication | `deploy/hetzner/sync-env.sh` |
 | Streamed database backup | `python/nexus/release_backup.py` |
+| Restored-copy qualification of the 0246 reset (one-time) | `deploy/hetzner/qualify_model_cutover.py` |
 | Vercel config publication | `deploy/vercel/sync-env.sh` |
 | Oracle corpus seed | `python/nexus/services/oracle/corpus.py` (`seed`) |
 | Environment contract | `deploy/env/README.md` and `deploy/env/*.example` |

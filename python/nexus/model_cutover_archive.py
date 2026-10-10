@@ -71,7 +71,7 @@ class ModelCutoverRestore(BaseModel):
     backup_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     census_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     target_source_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
-    target_revision: str = Field(pattern=r"^0258$")
+    target_revision: str = Field(pattern=r"^[0-9]{4}$")
     restored_database_identity: str = Field(min_length=1)
     receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
@@ -88,6 +88,8 @@ class ReviewedModelCutover(BaseModel):
     abandon_generation_ids: tuple[UUID, ...]
     archive_orphan_generation_ids: tuple[UUID, ...]
     retire_job_ids: tuple[UUID, ...]
+    # Terminal retired jobs whose original memo names a parent absent from llm_calls.
+    retire_dangling_job_ids: tuple[UUID, ...]
     backup: BackupEvidence
     restore: ModelCutoverRestore
 
@@ -108,8 +110,11 @@ class ReviewedModelCutover(BaseModel):
             or len(set(self.archive_orphan_generation_ids))
             != len(self.archive_orphan_generation_ids)
             or len(set(self.retire_job_ids)) != len(self.retire_job_ids)
+            or len(set(self.retire_dangling_job_ids)) != len(self.retire_dangling_job_ids)
         ):
             raise ValueError("model cutover disposition contains duplicate ids")
+        if not set(self.retire_dangling_job_ids) <= set(self.retire_job_ids):
+            raise ValueError("model cutover dangling jobs must also be retired jobs")
         return self
 
 
@@ -257,9 +262,11 @@ def validate_model_cutover_entry(connection: Connection, authority: ModelCutover
 
 
 def _validate_original_job_links(connection: Connection, reviewed: ReviewedModelCutover) -> None:
-    """Check original identity edges, without decoding a retired executable spec."""
+    """Check original identity edges, without decoding a retired executable spec.
 
-    from nexus.services.resource_graph.refs import assert_resource_ref
+    A terminal job whose memo names a parent absent from llm_calls has no edge to
+    check; the reviewer acknowledges exactly those jobs by id.
+    """
 
     parents = {
         str(row.id): row
@@ -268,9 +275,12 @@ def _validate_original_job_links(connection: Connection, reviewed: ReviewedModel
         )
     }
     jobs = connection.execute(
-        sa.text("SELECT id,kind,payload FROM background_jobs WHERE id=ANY(:ids) ORDER BY id"),
+        sa.text(
+            "SELECT id,kind,status,payload FROM background_jobs WHERE id=ANY(:ids) ORDER BY id"
+        ),
         {"ids": list(reviewed.retire_job_ids)},
     )
+    dangling: set[str] = set()
     for job in jobs:
         coordination = job.payload.get("coordination", {})
         admissions = job.payload.get("generation_admissions", {})
@@ -304,15 +314,21 @@ def _validate_original_job_links(connection: Connection, reviewed: ReviewedModel
                     f"model cutover job {job.id} step {step} has malformed original generation identity"
                 )
             parent = parents.get(original_id)
+            if parent is None:
+                if job.status not in {"succeeded", "dead"}:
+                    raise ValueError(
+                        f"model cutover unfinished job {job.id} step {step} has a dangling original generation"
+                    )
+                dangling.add(str(job.id))
+                continue
             fingerprint = memo.get("request_fingerprint")
             if (
-                parent is None
-                or not isinstance(fingerprint, dict)
+                not isinstance(fingerprint, dict)
                 or fingerprint.get("kind") != "Present"
                 or fingerprint.get("value") != parent.generation_fingerprint
             ):
                 raise ValueError(
-                    f"model cutover job {job.id} step {step} has dangling or mismatched original generation"
+                    f"model cutover job {job.id} step {step} has mismatched original generation"
                 )
             admission = admissions.get(step)
             if admission is not None:
@@ -340,13 +356,19 @@ def _validate_original_job_links(connection: Connection, reviewed: ReviewedModel
                     raise ValueError(
                         f"model cutover synapse job {job.id} lacks original source identity"
                     )
-                kind, owner_id = "synapse_scan", str(assert_resource_ref(raw_ref).id)
+                # Parsed here: the live ref vocabulary must not judge 0241 rows.
+                kind, owner_id = "synapse_scan", raw_ref.partition(":")[2]
             else:
                 continue
             if parent.owner_kind != kind or str(parent.owner_id) != owner_id:
                 raise ValueError(
                     f"model cutover job {job.id} step {step} differs from its original owner"
                 )
+    if dangling != {str(job_id) for job_id in reviewed.retire_dangling_job_ids}:
+        raise ValueError(
+            "model cutover requires exact acknowledgement of terminal jobs with dangling"
+            f" original generations: {sorted(dangling)}"
+        )
 
 
 def create_model_cutover_archive_table(connection: Connection) -> None:

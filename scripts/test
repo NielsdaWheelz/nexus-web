@@ -36,6 +36,7 @@ shellcheck "${shell_files[@]}"
     ../apps/codex_agent
     ../apps/worker/health.py
     ../apps/worker/main.py
+    ../deploy/hetzner/qualify_model_cutover.py
     ../deploy/hetzner/release.py
   )
   uv run --frozen --no-sync python scripts/generate_tool_contract_projection.py --check

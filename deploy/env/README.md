@@ -76,6 +76,15 @@ ordinary next release to activate it; no live reload or automatic deployment.
 the first release with this handoff requires config publication even when
 memory stays disabled.
 
+the release from `7dc68929b` (0241) needs two more edits in that same
+publication: remove `moonshot` from `GENERATION_API_PROVIDERS` and delete
+`MOONSHOT_GENERATION_API_KEY`. main refuses `moonshot` when it loads settings,
+so the api and both workers would not start after the irreversible migration;
+the `7dc68929b` image refuses a credential for an unlisted provider, so the key
+must go too for that image to stay bootable for rollback. keep the keys only the
+old image reads (`GENERATION_CONTINUATION_ENCRYPTION_KEY`, `BILLING_ENABLED`,
+`STRIPE_*`, `AGENT_TOOL_GRANT_SIGNING_KEY`) until the rollback window closes.
+
 for local host processes, `MEMORY_CLIENT_CONFIG_PATH` may name the original
 owner-only file. local interactive compose instead takes
 `NEXUS_MEMORY_CLIENT_CONFIG_FILE`; its private file must be readable by the

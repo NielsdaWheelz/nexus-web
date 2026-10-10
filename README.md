@@ -122,11 +122,10 @@ login before manually creating the `android-v*` GitHub release and attaching
 stable and versioned asset names. There is no automated Android release gate.
 
 the release operator owns compatibility between the hosted app and the
-published apk. before changing the player protocol, compare the latest
-published apk with the candidate server: player protocol version and hash must
-agree. the offline bridge has no version: its object name `nexusOffline` is its
-identity, and an incompatible change renames it (the hosted app then reads
-"not supported on this device"). verify an offline shelf-to-online reconnect on
+published apk. neither bridge has a version: the object names `nexusPlayback`
+(player) and `nexusDownloads` (offline) are their identities, and an
+incompatible change renames one (the hosted app then shows "Update Nexus for
+Android" or "not supported on this device"). verify an offline shelf-to-online reconnect on
 the signed apk. publish the compatible apk as part of the cutover; a backend
 deployment does not update the apk behind `/android`.
 

@@ -23,9 +23,10 @@ Writers and the codex host are stopped for this cutover. In order:
     metadata catalog/configuration codes).
 
 Production at 0241 crosses 0246 and 0256 in the same upgrade, which delete every
-chat run, ledger row and metadata job first, so steps 2-5, 8 and 10-11 touch no rows
-there. Irreversible: the release's pre-migration backup is the only copy of the
-replay state.
+chat run, ledger row and metadata job first, so steps 2-4, 8 and 10 and the chat and
+metadata arms of 11 touch no rows there. Steps 5 and 11 still reach the dossier builds,
+oracle readings and media summaries that survive 0246. Irreversible: the release's
+pre-migration backup is the only copy of the replay state.
 """
 
 from collections.abc import Sequence
