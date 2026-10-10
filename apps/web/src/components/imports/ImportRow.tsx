@@ -1,248 +1,105 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef } from "react";
 import { useFeedback } from "@/components/feedback/Feedback";
-import Button from "@/components/ui/Button";
-import Pill, { type PillTone } from "@/components/ui/Pill";
-import ResourceRow from "@/components/ui/ResourceRow";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
-import { useResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime";
+import Button from "@/components/ui/Button";
+import Pill from "@/components/ui/Pill";
+import ResourceRow from "@/components/ui/ResourceRow";
 import { RESOURCE_ACTION_BLOCKED_REASON_COPY } from "@/lib/actions/resourceActionMenu";
-import type { ResourceActionId } from "@/lib/actions/resourceActions";
-import { assertNever } from "@/lib/assertNever";
-import type { ImportRef } from "@/lib/imports/importRef";
+import { useResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime";
+import { useThrowLater } from "@/lib/api/serverState";
+import type { ImportItem, RecoveryOffer } from "@/lib/imports/api";
 import {
-  importsPendingKey,
+  KIND_LABEL,
+  RECOVERY_PENDING_LABEL,
+  RETRY_UPLOAD_LABEL,
+  ageLine,
+  matchLine,
+  originalFileFeedback,
+  reasonLine,
+  stateBadge,
+  statusLine,
+  uploadCommandFeedback,
+} from "@/lib/imports/copy";
+import { getFileUploadKind, type UploadFileKind } from "@/lib/imports/ingest";
+import {
+  pendingKey,
   useImports,
+  type UploadCommand,
 } from "@/lib/imports/ImportsProvider";
-import type {
-  ImportItem,
-  ReadRecoveryOffer,
-} from "@/lib/imports/importsClient";
-import { getFileUploadKind } from "@/lib/media/ingestionClient";
 import type { MediaKind } from "@/lib/media/kind";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
-import {
-  IMPORT_RECOVERY_PENDING_LABEL,
-  IMPORT_RETRY_UPLOAD_LABEL,
-  historyMatchLine,
-  importAgeLine,
-  importKindLabel,
-  importOriginalFileFeedback,
-  importUploadCommandFeedback,
-  importReasonLine,
-  importStateLabel,
-  importStatusLine,
-  isUploadObligation,
-} from "@/lib/status/imports";
-import styles from "./ImportsWorkspace.module.css";
+import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
+import styles from "./Imports.module.css";
 
-const RECOVERY_ACTION_ID: Readonly<
-  Record<Exclude<ReadRecoveryOffer, { kind: "RetryUpload" }>["kind"], ResourceActionId>
-> = {
+type MediaOffer = Exclude<RecoveryOffer, { kind: "RetryUpload" }>;
+
+const MEDIA_ACTION = {
   RetrySource: "ResourceOperation.Media.RetryProcessing",
   RepairSource: "ResourceOperation.Media.RepairSource",
   RepairSearch: "ResourceOperation.Media.RepairSearch",
+} as const;
+
+/** The upload kind a file must have to be this import's original. */
+const UPLOAD_KIND: Readonly<Record<MediaKind, UploadFileKind | null>> = {
+  pdf: "Pdf",
+  epub: "Epub",
+  web_article: null,
+  podcast_episode: null,
+  video: null,
 };
-
-const STATE_TONE: Readonly<Record<ImportItem["state"]["kind"], PillTone>> = {
-  Active: "info",
-  NeedsAttention: "warning",
-  Complete: "success",
-};
-
-/** The upload this import is still waiting for, if its obligation is the upload. */
-function uploadObligation(item: ImportItem): ReadRecoveryOffer | null {
-  if (!isUploadObligation(item)) return null;
-  return item.capabilities.recovery.kind === "Present"
-    ? item.capabilities.recovery.value
-    : null;
-}
-
-function uploadFileKind(kind: MediaKind): "Pdf" | "Epub" | null {
-  switch (kind) {
-    case "pdf":
-      return "Pdf";
-    case "epub":
-      return "Epub";
-    case "web_article":
-    case "podcast_episode":
-    case "video":
-      return null;
-    default:
-      return assertNever(kind, "Unreachable media kind");
-  }
-}
 
 /**
- * The one control a media recovery offer authorizes. The offer the pane read
- * says whether to show it; the resource-action runtime owns the identity it
- * commands and the busy state of that command, so a stale command conflicts on
- * the server instead of acting on work this reader never saw (contract D7).
+ * The one control a media offer authorizes. The resource-action runtime owns
+ * the identity it commands and its busy state, so a stale command conflicts
+ * on the server instead of acting on work this reader never saw.
  */
-function MediaRecoveryAction({
+function MediaRecovery({
   subject,
   offer,
 }: {
   readonly subject: ResourceActionSubject;
-  readonly offer: Exclude<ReadRecoveryOffer, { kind: "RetryUpload" }>;
+  readonly offer: MediaOffer;
 }) {
   const model = useResourceActionMenuModel(subject);
-  const descriptor = model.descriptors.find(
-    (candidate) => candidate.id === RECOVERY_ACTION_ID[offer.kind],
+  const action = model.descriptors.find(
+    (candidate) => candidate.id === MEDIA_ACTION[offer.kind],
   );
-  if (descriptor === undefined || descriptor.kind !== "command") return null;
-  const pending =
-    descriptor.disabled === true &&
-    descriptor.disabledReason === RESOURCE_ACTION_BLOCKED_REASON_COPY.Busy;
+  if (action === undefined || action.kind !== "command") return null;
+  const busy =
+    action.disabled === true &&
+    action.disabledReason === RESOURCE_ACTION_BLOCKED_REASON_COPY.Busy;
   return (
     <Button
       variant="secondary"
       size="sm"
-      disabled={descriptor.disabled}
-      onClick={() => descriptor.onSelect({ triggerEl: null })}
+      disabled={action.disabled}
+      onClick={() => action.onSelect({ triggerEl: null })}
     >
-      {pending ? IMPORT_RECOVERY_PENDING_LABEL : descriptor.label}
+      {busy ? RECOVERY_PENDING_LABEL : action.label}
     </Button>
   );
 }
 
-/**
- * The upload obligations, which are not resources: the provider dispatches them
- * under the same per-import, per-command pending key, so two rows can be busy
- * at once and neither disables the other.
- */
-function UploadActions({
+function MediaActions({
   item,
-  offer,
+  mediaRef,
 }: {
   readonly item: ImportItem;
-  readonly offer: ReadRecoveryOffer | null;
+  readonly mediaRef: string;
 }) {
-  const { pending, dispatchUpload } = useImports();
-  const feedback = useFeedback();
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [defect, setDefect] = useState<{ readonly error: unknown } | null>(null);
-  const retryPending = pending.has(importsPendingKey(item.ref, "RetryUpload"));
-  const removePending = pending.has(importsPendingKey(item.ref, "RemoveUpload"));
-
-  // A live page replaces its rows, so a refused command reports where the
-  // resource-action runtime reports one: the shared feedback surface.
-  const dispatch = async (command: Parameters<typeof dispatchUpload>[0]) => {
-    try {
-      await dispatchUpload(command);
-    } catch (error: unknown) {
-      try {
-        feedback.publish({
-          kind: "Hud",
-          content: importUploadCommandFeedback(command.kind, error),
-        });
-      } catch (caught: unknown) {
-        setDefect({ error: caught });
-      }
-    }
-  };
-
-  const chooseFile = (file: File) => {
-    // An import Nexus can accept bytes for is a PDF or an EPUB; anything else
-    // has no upload kind to match, so no file can be the original.
-    const expectedKind = uploadFileKind(item.media_kind);
-    if (
-      expectedKind === null ||
-      file.name !== item.title ||
-      getFileUploadKind(file) !== expectedKind
-    ) {
-      feedback.publish({
-        kind: "Hud",
-        content: importOriginalFileFeedback(item.title),
-      });
-      return;
-    }
-    if (offer === null || offer.kind !== "RetryUpload") return;
-    void dispatch({
-      kind: "RetryUpload",
-      ref: item.ref,
-      file,
-      expectedGeneration: offer.expected_generation,
-    });
-  };
-
-  const remove = () => {
-    if (!window.confirm(`Remove the unfinished import “${item.title}”?`)) return;
-    void dispatch({ kind: "RemoveUpload", ref: item.ref });
-  };
-
-  if (defect !== null) throw defect.error;
-
-  return (
-    <>
-      {offer !== null && offer.kind === "RetryUpload" ? (
-        <>
-          <input
-            ref={inputRef}
-            className="sr-only"
-            type="file"
-            // The offer's one tab stop is the button beside it, which opens
-            // this chooser. A clipped control that took focus of its own would
-            // paint its focus ring inside a 1px box (WCAG 2.4.7).
-            tabIndex={-1}
-            aria-label={`Choose ${item.title} to retry the upload`}
-            accept=".pdf,.epub,application/pdf,application/epub+zip"
-            disabled={retryPending}
-            onChange={(event) => {
-              const file = event.currentTarget.files?.[0];
-              event.currentTarget.value = "";
-              if (file !== undefined) chooseFile(file);
-            }}
-          />
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={retryPending}
-            onClick={() => inputRef.current?.click()}
-          >
-            {retryPending
-              ? IMPORT_RECOVERY_PENDING_LABEL
-              : IMPORT_RETRY_UPLOAD_LABEL}
-          </Button>
-        </>
-      ) : null}
-      {item.capabilities.can_remove ? (
-        <Button
-          variant="secondary"
-          size="sm"
-          aria-label={removePending ? undefined : `Remove ${item.title}`}
-          disabled={removePending}
-          onClick={remove}
-        >
-          {removePending ? IMPORT_RECOVERY_PENDING_LABEL : "Remove"}
-        </Button>
-      ) : null}
-    </>
-  );
-}
-
-/** Every action one import offers, in one place per row and per inspector. */
-export function ImportActions({ item }: { readonly item: ImportItem }) {
-  const upload = uploadObligation(item);
-  const mediaRef = item.media_ref.kind === "Present" ? item.media_ref.value : null;
-  const subject = useMemo<ResourceActionSubject | null>(
-    () => (mediaRef === null ? null : { ref: mediaRef }),
+  const subject = useMemo(
+    () => ({ ref: assumeCanonicalResourceRef(mediaRef) }),
     [mediaRef],
   );
-  const offer =
-    item.capabilities.recovery.kind === "Present"
-      ? item.capabilities.recovery.value
-      : null;
-  if (subject === null) {
-    return <UploadActions item={item} offer={upload} />;
-  }
+  const offer = item.capabilities.recovery;
   return (
     <>
-      {offer === null || offer.kind === "RetryUpload" ? null : (
-        <MediaRecoveryAction subject={subject} offer={offer} />
-      )}
+      {offer.kind === "Present" && offer.value.kind !== "RetryUpload" ? (
+        <MediaRecovery subject={subject} offer={offer.value} />
+      ) : null}
       <ResourceActionMenu
         actionSubject={subject}
         label={`More actions for ${item.title}`}
@@ -252,8 +109,115 @@ export function ImportActions({ item }: { readonly item: ImportItem }) {
 }
 
 /**
- * One import: what it is, what it is doing or waiting for, why, and — when the
- * server offered one — the command that recovers it. Selection opens the
+ * Retry upload and Remove for an unpublished upload. The provider dispatches
+ * them under one pending key per import and command, which the row and the
+ * inspector both read; a refusal is a HUD notice.
+ */
+function UploadActions({ item }: { readonly item: ImportItem }) {
+  const { pending, dispatchUpload } = useImports();
+  const feedback = useFeedback();
+  const fail = useThrowLater();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const handle = item.ref.slice("upload:".length);
+  const recovery = item.capabilities.recovery;
+  const offer =
+    recovery.kind === "Present" && recovery.value.kind === "RetryUpload"
+      ? recovery.value
+      : null;
+  const retrying = pending.has(pendingKey({ kind: "RetryUpload", handle }));
+  const removing = pending.has(pendingKey({ kind: "RemoveUpload", handle }));
+  const run = (command: UploadCommand) =>
+    dispatchUpload(command).catch((error: unknown) => {
+      try {
+        const content = uploadCommandFeedback(command.kind, error);
+        feedback.publish({ kind: "Hud", content });
+      } catch (defect) {
+        fail({ error: defect });
+      }
+    });
+  const choose = (file: File) => {
+    const kind = UPLOAD_KIND[item.media_kind];
+    if (
+      kind === null ||
+      file.name !== item.title ||
+      getFileUploadKind(file) !== kind
+    ) {
+      feedback.publish({
+        kind: "Hud",
+        content: originalFileFeedback(item.title),
+      });
+      return;
+    }
+    if (offer === null) return;
+    void run({
+      kind: "RetryUpload",
+      handle,
+      file,
+      expectedGeneration: offer.expected_generation,
+    });
+  };
+  const remove = () => {
+    if (!window.confirm(`Remove the unfinished import “${item.title}”?`))
+      return;
+    void run({ kind: "RemoveUpload", handle });
+  };
+  return (
+    <>
+      {offer === null ? null : (
+        <>
+          <input
+            ref={inputRef}
+            className="sr-only"
+            type="file"
+            // The button beside it is the one tab stop; a clipped control that
+            // took focus would paint its ring inside a 1px box (WCAG 2.4.7).
+            tabIndex={-1}
+            aria-label={`Choose ${item.title} to retry the upload`}
+            accept=".pdf,.epub,application/pdf,application/epub+zip"
+            disabled={retrying}
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0];
+              event.currentTarget.value = "";
+              if (file !== undefined) choose(file);
+            }}
+          />
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={retrying}
+            onClick={() => inputRef.current?.click()}
+          >
+            {retrying ? RECOVERY_PENDING_LABEL : RETRY_UPLOAD_LABEL}
+          </Button>
+        </>
+      )}
+      {item.capabilities.can_remove ? (
+        <Button
+          variant="secondary"
+          size="sm"
+          aria-label={removing ? undefined : `Remove ${item.title}`}
+          disabled={removing}
+          onClick={remove}
+        >
+          {removing ? RECOVERY_PENDING_LABEL : "Remove"}
+        </Button>
+      ) : null}
+    </>
+  );
+}
+
+/** Every action one import offers, the same in its row and its inspector. */
+export function ImportActions({ item }: { readonly item: ImportItem }) {
+  return item.media_ref.kind === "Present" ? (
+    <MediaActions item={item} mediaRef={item.media_ref.value} />
+  ) : (
+    <UploadActions item={item} />
+  );
+}
+
+/**
+ * One import: what it is, what it is doing or waiting for, why, and the
+ * command that recovers it when the server offers one. Selecting it opens the
  * inspector; the accessible name stays the whole title however it truncates.
  */
 export default function ImportRow({
@@ -263,16 +227,13 @@ export default function ImportRow({
 }: {
   readonly item: ImportItem;
   readonly selected: boolean;
-  readonly onSelect: (ref: ImportRef) => void;
+  readonly onSelect: (ref: string) => void;
 }) {
   const display = useRenderEnvironment();
-  const reason = importReasonLine(item);
   const now = new Date();
-  const matched =
-    item.matched_event.kind === "Present"
-      ? historyMatchLine(item.matched_event.value, display, now)
-      : null;
-  const age = importAgeLine(item, display, now);
+  const badge = stateBadge(item);
+  const reason = reasonLine(item);
+  const age = ageLine(item, display, now);
   return (
     <ResourceRow
       as="li"
@@ -290,7 +251,7 @@ export default function ImportRow({
       title={item.title}
       supporting={
         <>
-          <span>{importKindLabel(item.media_kind)}</span>
+          <span>{KIND_LABEL[item.media_kind]}</span>
           {item.source_label.kind === "Present" ? (
             <>
               <span aria-hidden="true"> · </span>
@@ -302,19 +263,21 @@ export default function ImportRow({
       }
       status={
         <span className={styles.rowStatus}>
-          <Pill tone={item.source_issue_count > 0 ? "warning" : STATE_TONE[item.state.kind]} size="sm">
-            {importStateLabel(item)}
+          <Pill tone={badge.tone} size="sm">
+            {badge.label}
           </Pill>
-          <span className={styles.rowStatusLine}>{importStatusLine(item)}</span>
+          <span className={styles.rowStatusLine}>{statusLine(item)}</span>
           {reason === null ? null : (
             <span className={styles.rowReason}>{reason}</span>
           )}
           <time className={styles.rowAge} dateTime={age.dateTime}>
             {age.text}
           </time>
-          {matched === null ? null : (
-            <span className={styles.rowMatched}>{matched}</span>
-          )}
+          {item.matched_event.kind === "Present" ? (
+            <span className={styles.rowMatched}>
+              {matchLine(item.matched_event.value, display, now)}
+            </span>
+          ) : null}
         </span>
       }
       actions={

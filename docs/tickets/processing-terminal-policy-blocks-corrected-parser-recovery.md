@@ -12,7 +12,7 @@ the same-source terminal set. this includes pierre
 `services/capabilities.py:53-63` and `services/media_source_ingest.py:245-255`
 deny recovery by old error code; the latter's system repair also refuses it.
 current `services/epub_structure.py:100-103` already tolerates an unresolved
-navigation target. `apps/web/src/lib/status/imports.ts:681-682` overstates
+navigation target. `apps/web/src/lib/imports/copy.ts` (`RESTRICTION_LINE.SameSourceTerminal`) overstates
 the policy as proof that the same source cannot succeed.
 
 first replay the retained exact bytes without publication. add a narrow,

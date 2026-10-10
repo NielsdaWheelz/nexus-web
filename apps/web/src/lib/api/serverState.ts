@@ -1,10 +1,12 @@
 "use client";
 
-// Server state for panes (docs/modules/podcast.md, docs/modules/contributors.md).
-// useServerValue holds one resource; useServerList holds a server-ordered
-// collection with manual load-more. Both load on key, refetch when `stale`
-// changes, coalesce refetches (one queued at most, never aborting the run in
-// flight), restore this pane visit's snapshot and throw defects in render.
+// Server state (docs/modules/podcast.md, docs/modules/contributors.md,
+// docs/modules/imports.md). useServerValue holds one resource; useServerList
+// holds a server-ordered collection with manual load-more. Both load on key,
+// refetch when `stale` changes, coalesce refetches (one queued at most, never
+// aborting the run in flight), restore this pane visit's snapshot and throw
+// defects in render. usePaneFreeServerValue is useServerValue for a read no
+// pane visit owns (the shell above the panes, or a read that restores nothing).
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -126,21 +128,11 @@ export function useVisitSnapshot<V extends { readonly key: string }>(
 function useServerState<D>(
   key: string | null,
   stale: string,
-  visit: PaneVisitDataKey<Visit<D>>,
+  restored: Visit<D> | null,
   load: Step<D>,
 ) {
   const fail = useThrowLater();
   const heldRef = useRef<Held<D> | null>(null);
-  const restored = useVisitSnapshot(
-    visit,
-    key,
-    useCallback(() => {
-      const held = heldRef.current;
-      return held?.key && held.data !== null
-        ? { key: held.key, data: held.data }
-        : null;
-    }, []),
-  );
   const [state, setState] = useState(() => arrive(key, restored));
   const held = state.key === key ? state : arrive(key, restored);
   heldRef.current = held;
@@ -229,18 +221,27 @@ function useServerState<D>(
   return { held, refetch, extend };
 }
 
-export function useServerValue<T>(input: {
-  readonly key: string | null;
-  readonly stale: string;
-  readonly visit: PaneVisitDataKey<Visit<T>>;
-  readonly load: (signal: AbortSignal) => Promise<T>;
-}): ServerValue<T> {
-  const { held, refetch } = useServerState<T>(
-    input.key,
-    input.stale,
-    input.visit,
-    (_, signal) => input.load(signal),
+/** useServerState that records its data as this pane visit's snapshot. */
+function useVisitState<D>(
+  key: string | null,
+  stale: string,
+  visit: PaneVisitDataKey<Visit<D>>,
+  load: Step<D>,
+) {
+  const shown = useRef<Visit<D> | null>(null);
+  const restored = useVisitSnapshot(
+    visit,
+    key,
+    useCallback(() => shown.current, []),
   );
+  const state = useServerState(key, stale, restored, load);
+  const { held } = state;
+  shown.current =
+    held.key && held.data !== null ? { key: held.key, data: held.data } : null;
+  return state;
+}
+
+function valueOf<T>(held: Held<T>, refetch: () => void): ServerValue<T> {
   if (held.data === null) {
     return held.error === null
       ? { status: "loading", refetch }
@@ -255,6 +256,35 @@ export function useServerValue<T>(input: {
     refreshing: running,
     refetch,
   };
+}
+
+export function useServerValue<T>(input: {
+  readonly key: string | null;
+  readonly stale: string;
+  readonly visit: PaneVisitDataKey<Visit<T>>;
+  readonly load: (signal: AbortSignal) => Promise<T>;
+}): ServerValue<T> {
+  const { held, refetch } = useVisitState<T>(
+    input.key,
+    input.stale,
+    input.visit,
+    (_, signal) => input.load(signal),
+  );
+  return valueOf(held, refetch);
+}
+
+export function usePaneFreeServerValue<T>(input: {
+  readonly key: string | null;
+  readonly stale: string;
+  readonly load: (signal: AbortSignal) => Promise<T>;
+}): ServerValue<T> {
+  const { held, refetch } = useServerState<T>(
+    input.key,
+    input.stale,
+    null,
+    (_, signal) => input.load(signal),
+  );
+  return valueOf(held, refetch);
 }
 
 function pageQuery<T>(next: ListData<T>["next"], limit: number) {
@@ -288,7 +318,7 @@ export function useServerList<T>(input: {
   const { pageSize, fetchPage } = input;
   // A prefix load of `want` rows; the continuation pair is echoed as issued.
   // One changed collection restarts the prefix once; a second one throws.
-  const { held, refetch, extend } = useServerState<ListData<T>>(
+  const { held, refetch, extend } = useVisitState<ListData<T>>(
     input.key,
     input.stale,
     input.visit,

@@ -42,7 +42,7 @@ import {
   type CompletionUndoInput,
 } from "@/lib/lectern/useCompletionUndo";
 import { offlineAvailable, useOfflineSnapshot } from "@/lib/offline/bridge";
-import { IMPORTS_CONFLICT_NOTICE } from "@/lib/status/imports";
+import { CONFLICT_NOTICE } from "@/lib/imports/copy";
 import { useShareController } from "@/lib/sharing/controller";
 import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import { useWorkspaceStore } from "@/lib/workspace/store";
@@ -356,7 +356,7 @@ export function ResourceActionRuntimeProvider({
               kind: "Hud",
               content:
                 importRecovery && error.code === "E_RESOURCE_CONFLICT"
-                  ? { ...IMPORTS_CONFLICT_NOTICE, requestId: error.requestId }
+                  ? { ...CONFLICT_NOTICE, requestId: error.requestId }
                   : {
                       tone: "Danger",
                       title: `Could not ${command.label.replace(/…$/, "")}`,

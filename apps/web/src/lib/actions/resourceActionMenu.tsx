@@ -47,14 +47,11 @@ import { deleteMemberLibrary } from "@/lib/libraries/client";
 import type { useWorkspaceStore } from "@/lib/workspace/store";
 import { findPaneChromeFocusTarget, findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import {
-  publishImportsInvalidation,
+  refreshMediaSource,
   repairSearchImport,
   repairSourceImport,
   retrySourceImport,
-} from "@/lib/imports/importsClient";
-import {
-  refreshMediaSource,
-} from "@/lib/media/ingestionClient";
+} from "@/lib/imports/api";
 import { METADATA_RETRY_BLOCKED_COPY } from "@/lib/media/mediaMetadataOperations";
 import { deleteMedia } from "@/lib/media/mediaLibraries";
 import { deleteConversation } from "@/lib/chat/conversationIndex";
@@ -742,7 +739,6 @@ export function resourceActionDescriptors({
                   expectedAttemptId: offer.expectedAttemptId,
                   clientMutationId: crypto.randomUUID(),
                 });
-                publishImportsInvalidation();
               },
               { reconcile: subjectScope },
             );
@@ -757,7 +753,6 @@ export function resourceActionDescriptors({
                   expectedJobId: offer.expectedJobId,
                   clientMutationId: crypto.randomUUID(),
                 });
-                publishImportsInvalidation();
               },
               { reconcile: subjectScope },
             );
@@ -772,7 +767,6 @@ export function resourceActionDescriptors({
                   expectedJobId: offer.expectedJobId,
                   clientMutationId: crypto.randomUUID(),
                 });
-                publishImportsInvalidation();
               },
               { reconcile: subjectScope },
             );

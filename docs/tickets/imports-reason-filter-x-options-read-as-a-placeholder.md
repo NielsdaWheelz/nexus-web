@@ -3,8 +3,8 @@
 **Status:** open
 **Origin:** 2026-09-09, imports workspace hard cutover, D15 desktop visual/assistive
 review (chain W1)
-**Area:** `apps/web/src/lib/status/imports.ts` (`IMPORT_FAILURE_COPY[...].reason`),
-`apps/web/src/components/imports/ImportsWorkspace.tsx` (the Reason `SelectField`)
+**Area:** `apps/web/src/lib/imports/copy.ts` (`FAILURE_COPY[...].reason`),
+`apps/web/src/components/imports/ImportsToolbar.tsx` (the Reason select)
 
 ## What is wrong
 

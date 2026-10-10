@@ -1,5 +1,13 @@
 "use client";
 
+/**
+ * The one Imports observer (docs/modules/imports.md). The summary is one
+ * server read whose `stale` is a wake counter; the server stamps every read
+ * with `observed_at`, and that stamp is the only observation token: the list,
+ * the detail and the history refetch exactly when it changes. Reads happen on a
+ * wake, an in-tab invalidation, Refresh, or a 5 s poll while work is active.
+ */
+
 import {
   createContext,
   useCallback,
@@ -9,369 +17,192 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
-import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { isAbortError } from "@/lib/errors";
 import {
-  libraryPlacementUnknownSince,
-  useLibraryPlacementRevision,
-} from "@/lib/libraries/placementRevision";
-import { uploadSessionHandle, type ImportRef } from "@/lib/imports/importRef";
+  usePaneFreeServerValue,
+  type ServerValue,
+} from "@/lib/api/serverState";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   fetchImportSummary,
   publishImportsInvalidation,
   subscribeImportsInvalidations,
   type ImportSummary,
-} from "@/lib/imports/importsClient";
+} from "@/lib/imports/api";
+import { removeUploadSession, retryUploadSession } from "@/lib/imports/ingest";
 import {
-  IMPORTS_CLOSED_PANE_WINDOW_MS,
-  nextObservation,
-} from "@/lib/imports/importsPolling";
-import {
-  removeUploadSession,
-  retryUploadSession,
-} from "@/lib/media/ingestionClient";
+  libraryPlacementUnknownSince,
+  useLibraryPlacementRevision,
+} from "@/lib/libraries/placementRevision";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 
-export type ImportsLoadState =
-  | { readonly kind: "Loading" }
-  | { readonly kind: "Ready" }
-  | { readonly kind: "Failed"; readonly error: ApiError };
+const POLL_MS = 5_000;
+/** A closed pane keeps polling this long after the last wake. */
+const CLOSED_PANE_WINDOW_MS = 15 * 60_000;
 
-/**
- * What the pane's reads are keyed to. `revision` changes only when the imports
- * a reader can see may have changed, so pages and detail re-key then and never
- * on an unchanged poll; `observedAt` moves on every successful read, so the
- * query hooks ride this one schedule instead of installing a second poller.
- * `reread` says whether that observation needs a live read beside keyed reads.
- */
-export interface ImportsObservationState {
-  readonly revision: number;
-  readonly observedAt: string | null;
-  readonly reread: boolean;
-}
-
-export type ImportsUploadCommand =
+export type UploadCommand =
   | {
       readonly kind: "RetryUpload";
-      readonly ref: ImportRef;
+      readonly handle: string;
       readonly file: File;
       readonly expectedGeneration: number;
     }
-  | { readonly kind: "RemoveUpload"; readonly ref: ImportRef };
+  | { readonly kind: "RemoveUpload"; readonly handle: string };
 
-export interface ImportsContextValue {
-  readonly summary: ImportSummary | null;
-  readonly loadState: ImportsLoadState;
-  readonly observation: ImportsObservationState;
+interface ImportsContextValue {
+  readonly summary: ServerValue<ImportSummary>;
+  /** The `observed_at` of the newest successful summary read ("" before). */
+  readonly observation: string;
+  /** The `pendingKey`s of upload commands in flight. */
   readonly pending: ReadonlySet<string>;
-  refresh(): Promise<void>;
+  /** A wake: read now and open the polling window. */
+  refresh(): void;
+  /** An open pane polls without a window; opening it is a wake. */
   setPaneOpen(open: boolean): void;
-  dispatchUpload(command: ImportsUploadCommand): Promise<void>;
-}
-
-/** The pending identity of one command against one import (contract D7). */
-export function importsPendingKey(
-  ref: ImportRef,
-  command: ImportsUploadCommand["kind"],
-): string {
-  return `${ref}|${command}`;
+  /** Rejects with the command's failure for the caller to report. */
+  dispatchUpload(command: UploadCommand): Promise<void>;
 }
 
 const ImportsContext = createContext<ImportsContextValue | null>(null);
 
+/** One command against one import is pending at most once (contract D7). */
+export function pendingKey(command: Pick<UploadCommand, "kind" | "handle">) {
+  return `${command.handle}|${command.kind}`;
+}
+
 export function ImportsProvider({ children }: { children: ReactNode }) {
-  const handleUnauthenticated = useUnauthenticatedApiHandler();
-  const placementChange = useLibraryPlacementRevision();
-  const [summary, setSummary] = useState<ImportSummary | null>(null);
-  const [loadState, setLoadState] = useState<ImportsLoadState>({
-    kind: "Loading",
-  });
-  const [observation, setObservation] = useState<ImportsObservationState>({
-    revision: 0,
-    observedAt: null,
-    reread: false,
-  });
-  const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
-  // A second click in the same tick must see the first one's key, which React
-  // state cannot show until it re-renders.
-  const pendingRef = useRef<ReadonlySet<string>>(pending);
+  const [wake, setWake] = useState(() => ({ count: 0, at: Date.now() }));
   const [paneOpen, setPaneOpenState] = useState(false);
-  const [documentVisible, setDocumentVisible] = useState(true);
-  const [lastWakeAtMs, setLastWakeAtMs] = useState(() => Date.now());
-  const [automaticReadsEnded, setAutomaticReadsEnded] = useState(false);
-  const [defect, setDefect] = useState<{ readonly error: unknown } | null>(null);
-
-  const mountedRef = useRef(true);
-  const inFlightRef = useRef<Promise<void> | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
-  // null: no trailing read; false: ordinary wake; true: re-keyed wake.
-  const dirtyReadRef = useRef<boolean | null>(null);
-  const wakeRequestedRef = useRef(false);
-  const wakeGenerationRef = useRef(0);
-  const summaryRef = useRef<ImportSummary | null>(null);
-  const observedPlacementRevisionRef = useRef(placementChange.revision);
-  const windowFocusedRef = useRef(true);
-
-  const read = useCallback(
-    ({ automatic, rekey }: { automatic: boolean; rekey: boolean }): Promise<void> => {
-      if (inFlightRef.current !== null) {
-        if (!automatic) {
-          dirtyReadRef.current = rekey || dirtyReadRef.current === true;
-        }
-        return inFlightRef.current;
-      }
-      // The observation window belongs to the wake that opened it, not to a
-      // read: only a failed automatic read may end one, and only while it is
-      // still the window this read was asked for. A reader gesture or an
-      // invalidation raised while this read is in flight opens the next window
-      // and queues the trailing read above, so neither this read's failure nor
-      // that trailing read may close what the reader just opened.
-      const askedInWakeGeneration = wakeGenerationRef.current;
-      const request = (async () => {
-        let nextRekey: boolean | null = rekey;
-        while (nextRekey !== null && mountedRef.current) {
-          const attemptRekey = nextRekey;
-          const attemptWakeGeneration = wakeGenerationRef.current;
-          dirtyReadRef.current = null;
-          const controller = new AbortController();
-          abortRef.current = controller;
-          try {
-            const next = await fetchImportSummary(controller.signal);
-            if (!mountedRef.current || controller.signal.aborted) break;
-            const previous = summaryRef.current;
-            const countsChanged =
-              previous !== null &&
-              (previous.needs_attention_count !== next.needs_attention_count ||
-                previous.active_count !== next.active_count);
-            const reread =
-              !countsChanged &&
-              !attemptRekey &&
-              wakeGenerationRef.current === attemptWakeGeneration;
-            summaryRef.current = next;
-            setSummary(next);
-            setLoadState({ kind: "Ready" });
-            setObservation((current) => ({
-              revision: countsChanged ? current.revision + 1 : current.revision,
-              observedAt: next.observed_at,
-              reread,
-            }));
-          } catch (error: unknown) {
-            if (controller.signal.aborted || isAbortError(error)) break;
-            if (!mountedRef.current) break;
-            if (!handleUnauthenticated(error)) {
-              if (!isApiError(error) || isSameSystemApiDefect(error)) {
-                setDefect({ error });
-              } else {
-                setLoadState({ kind: "Failed", error });
-              }
-            }
-            // A failed automatic read ends its observation window; the
-            // last-good summary stays on screen until a wake signal or a
-            // manual refresh asks again.
-            if (automatic && wakeGenerationRef.current === askedInWakeGeneration) {
-              setAutomaticReadsEnded(true);
-            }
-          } finally {
-            if (abortRef.current === controller) abortRef.current = null;
-          }
-          nextRekey = dirtyReadRef.current;
-        }
-      })().finally(() => {
-        if (inFlightRef.current === request) inFlightRef.current = null;
-      });
-      inFlightRef.current = request;
-      return request;
-    },
-    [handleUnauthenticated],
+  const [visible, setVisible] = useState(true);
+  const [windowOpen, setWindowOpen] = useState(true);
+  const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
+  // A second click in the same tick must see the first one's key.
+  const pendingRef = useRef(pending);
+  const summary = usePaneFreeServerValue({
+    key: "imports-summary",
+    stale: String(wake.count),
+    load: fetchImportSummary,
+  });
+  const refresh = useCallback(
+    () => setWake((last) => ({ count: last.count + 1, at: Date.now() })),
+    [],
   );
 
-  /**
-   * Start a fresh observation window and read now. `rekey` is the difference
-   * between "this data may be stale" and "this data is stale": an invalidation
-   * or a manual refresh re-keys every page and detail, while a resumed tab or a
-   * newly opened pane only asks again and lets the answer decide.
-   */
-  const wake = useCallback(
-    (rekey: boolean): Promise<void> => {
-      wakeRequestedRef.current = true;
-      wakeGenerationRef.current += 1;
-      setLastWakeAtMs(Date.now());
-      setAutomaticReadsEnded(false);
-      if (rekey) {
-        setObservation((current) => ({
-          ...current,
-          revision: current.revision + 1,
-        }));
-      }
-      return read({ automatic: false, rekey });
-    },
-    [read],
-  );
+  useEffect(() => subscribeImportsInvalidations(refresh), [refresh]);
 
-  const refresh = useCallback((): Promise<void> => wake(true), [wake]);
-
-  const setPaneOpen = useCallback(
-    (open: boolean) => {
-      setPaneOpenState(open);
-      if (open) void wake(false);
-    },
-    [wake],
-  );
-
-  const dispatchUpload = useCallback(
-    async (command: ImportsUploadCommand): Promise<void> => {
-      const handle = uploadSessionHandle(command.ref);
-      if (handle === null) {
-        // justify-defect: only an upload import carries an upload session, and
-        // the offer that produced this command named one.
-        throw new Error(`${command.kind} needs an upload import ref`);
-      }
-      const key = importsPendingKey(command.ref, command.kind);
-      if (pendingRef.current.has(key)) return;
-      pendingRef.current = new Set(pendingRef.current).add(key);
-      setPending(pendingRef.current);
-      try {
-        if (command.kind === "RetryUpload") {
-          await retryUploadSession({
-            sessionHandle: handle,
-            file: command.file,
-            expectedGeneration: command.expectedGeneration,
-            clientMutationId: crypto.randomUUID(),
-          });
-        } else {
-          await removeUploadSession(handle);
-        }
-      } catch (error) {
-        if (!handleUnauthenticated(error)) throw error;
-      } finally {
-        const next = new Set(pendingRef.current);
-        next.delete(key);
-        pendingRef.current = next;
-        if (mountedRef.current) setPending(next);
-      }
-    },
-    [handleUnauthenticated],
-  );
-
+  // A placement whose libraries became unknown may have changed what Imports
+  // shows (an upload retried from Imports publishes one).
+  const placement = useLibraryPlacementRevision();
+  const seenPlacement = useRef(placement.revision);
   useEffect(() => {
-    mountedRef.current = true;
-    let cancelled = false;
-    // Defer only to the end of this commit's effect flush. A pane mounted with
-    // the provider claims the same first observation through `setPaneOpen`
-    // regardless of parent/child effect order, instead of costing a second
-    // immediate read; with no pane, the provider still owns one mount read. A
-    // later genuine wake is never covered by this one-turn gate.
-    queueMicrotask(() => {
-      if (cancelled || !mountedRef.current || wakeRequestedRef.current) return;
-      void wake(false);
-    });
-    return () => {
-      cancelled = true;
-      mountedRef.current = false;
-      dirtyReadRef.current = null;
-      wakeRequestedRef.current = false;
-      abortRef.current?.abort();
-    };
-  }, [wake]);
+    const seen = seenPlacement.current;
+    seenPlacement.current = placement.revision;
+    if (placement.revision !== seen && libraryPlacementUnknownSince(seen)) {
+      publishImportsInvalidation();
+    }
+  }, [placement.revision]);
 
-  useEffect(
-    () =>
-      subscribeImportsInvalidations(() => {
-        void wake(true);
-      }),
-    [wake],
-  );
-
+  // Wakes: visible again, focus after a blur, pageshow, back online. A tab
+  // opened in the background reports its state once rather than assuming.
   useEffect(() => {
-    const observed = observedPlacementRevisionRef.current;
-    if (placementChange.revision === observed) return;
-    observedPlacementRevisionRef.current = placementChange.revision;
-    if (!libraryPlacementUnknownSince(observed)) return;
-    publishImportsInvalidation();
-  }, [placementChange.revision]);
-
-  useEffect(() => {
+    let blurred = false;
     const onVisibility = () => {
-      const visible = document.visibilityState === "visible";
-      setDocumentVisible(visible);
-      if (visible) void wake(false);
+      const shown = document.visibilityState === "visible";
+      setVisible(shown);
+      if (shown) refresh();
     };
-    const onResume = () => void wake(false);
     const onBlur = () => {
-      windowFocusedRef.current = false;
+      blurred = true;
     };
     const onFocus = () => {
-      if (windowFocusedRef.current) return;
-      windowFocusedRef.current = true;
-      void wake(false);
+      if (blurred) refresh();
+      blurred = false;
     };
-    // A tab restored or opened in the background never fires the event until it
-    // comes forward, so read the state once rather than assuming visible.
-    setDocumentVisible(document.visibilityState === "visible");
+    setVisible(document.visibilityState === "visible");
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("blur", onBlur);
     window.addEventListener("focus", onFocus);
-    window.addEventListener("pageshow", onResume);
-    window.addEventListener("online", onResume);
+    window.addEventListener("pageshow", refresh);
+    window.addEventListener("online", refresh);
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("blur", onBlur);
       window.removeEventListener("focus", onFocus);
-      window.removeEventListener("pageshow", onResume);
-      window.removeEventListener("online", onResume);
+      window.removeEventListener("pageshow", refresh);
+      window.removeEventListener("online", refresh);
     };
-  }, [wake]);
+  }, [refresh]);
 
-  const activeCount = summary?.active_count ?? 0;
-  const [pollIntervalMs, setPollIntervalMs] = useState(0);
+  // The closed-pane window opens at every wake and lapses 15 minutes later.
   useEffect(() => {
-    const evaluate = () => {
-      const next = nextObservation({
-        lastWakeAtMs,
-        nowMs: Date.now(),
-        activeCount,
-        documentVisible,
-        paneOpen,
-      });
-      setPollIntervalMs(next.kind === "Poll" ? next.delayMs : 0);
-    };
-    evaluate();
-    if (paneOpen) return;
-    const remainingMs = lastWakeAtMs + IMPORTS_CLOSED_PANE_WINDOW_MS - Date.now();
-    if (remainingMs <= 0) return;
-    const expiry = window.setTimeout(evaluate, remainingMs);
-    return () => window.clearTimeout(expiry);
-  }, [activeCount, documentVisible, lastWakeAtMs, paneOpen]);
+    setWindowOpen(true);
+    const timer = window.setTimeout(
+      () => setWindowOpen(false),
+      wake.at + CLOSED_PANE_WINDOW_MS - Date.now(),
+    );
+    return () => window.clearTimeout(timer);
+  }, [wake.at]);
 
-  // justify-polling: Imports is a composed Postgres projection and this cut adds
-  // no server push plane. `nextObservation` owns the schedule: five-second reads
-  // run only for known active work on a visible document, a closed pane keeps
-  // them for fifteen minutes past the last wake signal, and one failed automatic
-  // read ends the window. This is the only Imports poller.
+  // justify-polling: Imports is a composed projection with no push plane. Poll
+  // only known active work on a visible document, while the pane is open or
+  // its closed-pane window lasts, and only while the newest read succeeded; a
+  // failed read stops polling until the next wake or Refresh.
+  const ready = summary.status === "ready" ? summary : null;
   useIntervalPoll({
-    enabled: pollIntervalMs > 0 && !automaticReadsEnded,
-    pollIntervalMs,
-    onPoll: () => read({ automatic: true, rekey: false }),
+    enabled:
+      ready !== null &&
+      ready.error === null &&
+      ready.data.active_count > 0 &&
+      visible &&
+      (paneOpen || windowOpen),
+    pollIntervalMs: POLL_MS,
+    onPoll: summary.refetch,
   });
 
-  if (defect !== null) throw defect.error;
-
-  return (
-    <ImportsContext.Provider
-      value={{
-        summary,
-        loadState,
-        observation,
-        pending,
-        refresh,
-        setPaneOpen,
-        dispatchUpload,
-      }}
-    >
-      {children}
-    </ImportsContext.Provider>
+  const setPaneOpen = useCallback(
+    (open: boolean) => {
+      setPaneOpenState(open);
+      if (open) refresh();
+    },
+    [refresh],
   );
+
+  const dispatchUpload = useCallback(async (command: UploadCommand) => {
+    const key = pendingKey(command);
+    if (pendingRef.current.has(key)) return;
+    const settle = (next: Set<string>) => {
+      pendingRef.current = next;
+      setPending(next);
+    };
+    settle(new Set(pendingRef.current).add(key));
+    try {
+      if (command.kind === "RetryUpload") {
+        await retryUploadSession({
+          sessionHandle: command.handle,
+          file: command.file,
+          expectedGeneration: command.expectedGeneration,
+        });
+      } else {
+        await removeUploadSession(command.handle);
+      }
+    } catch (error) {
+      if (!handleUnauthenticatedApiError(error)) throw error;
+    } finally {
+      const next = new Set(pendingRef.current);
+      next.delete(key);
+      settle(next);
+    }
+  }, []);
+
+  const observation = ready?.data.observed_at ?? "";
+  const value = {
+    summary,
+    observation,
+    pending,
+    refresh,
+    setPaneOpen,
+    dispatchUpload,
+  };
+  return <ImportsContext value={value}>{children}</ImportsContext>;
 }
 
 export function useImports(): ImportsContextValue {

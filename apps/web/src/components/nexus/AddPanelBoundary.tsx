@@ -2,7 +2,7 @@
 
 import { Component, createRef, type ReactNode } from "react";
 import Button from "@/components/ui/Button";
-import Dialog from "@/components/ui/Dialog";
+import { AddDismissalDialog } from "./AddPanel";
 import type { AddContentSessionController } from "./useAddContentSession";
 import type { NexusController } from "./useNexusController";
 import styles from "./AddPanel.module.css";
@@ -20,6 +20,10 @@ interface AddPanelBoundaryProps {
   children: ReactNode;
 }
 
+/**
+ * A contract defect inside Add reads "Add needs attention" without losing the
+ * session: Continue Add, or stop the active work and review its status.
+ */
 export default class AddPanelBoundary extends Component<
   AddPanelBoundaryProps,
   { hasError: boolean }
@@ -36,18 +40,16 @@ export default class AddPanelBoundary extends Component<
   }
 
   componentDidUpdate(previous: AddPanelBoundaryProps) {
+    const { activeDefect, resetKey } = this.props;
     if (
       this.state.hasError &&
-      (previous.resetKey !== this.props.resetKey ||
-        (previous.activeDefect && !this.props.activeDefect))
+      (previous.resetKey !== resetKey ||
+        (previous.activeDefect && !activeDefect))
     ) {
       this.setState({ hasError: false });
       return;
     }
-    if (
-      (this.state.hasError || this.props.activeDefect) &&
-      !previous.activeDefect
-    ) {
+    if ((this.state.hasError || activeDefect) && !previous.activeDefect) {
       this.actionRef.current?.focus();
     }
   }
@@ -65,7 +67,7 @@ export default class AddPanelBoundary extends Component<
       return this.props.children;
     }
     const running = this.props.session.state.mutation.kind === "Running";
-    const confirmation = this.props.controller.dismissalConfirmation;
+    const { controller } = this.props;
     return (
       <section
         className={styles.addDefectBody}
@@ -89,43 +91,11 @@ export default class AddPanelBoundary extends Component<
             {running ? "Stop and review status" : "Continue Add"}
           </Button>
         </div>
-
-        <Dialog
-          open={confirmation !== null}
-          historyDismiss
-          title={
-            confirmation?.kind === "Stop"
-              ? "Stop active work?"
-              : "Discard unfinished work?"
-          }
-          onClose={this.props.controller.keepWorking}
-        >
-          {confirmation ? (
-            <div className={styles.addDefectBody}>
-              <p>
-                {confirmation.kind === "Stop"
-                  ? "Server changes that already committed may remain; unfinished upload bytes may not."
-                  : "Unsubmitted sources and unresolved outcomes will be lost."}
-              </p>
-              <div className={styles.addDefectActions}>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={this.props.controller.keepWorking}
-                >
-                  Keep working
-                </Button>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={this.props.controller.confirmDismissal}
-                >
-                  {confirmation.actionLabel}
-                </Button>
-              </div>
-            </div>
-          ) : null}
-        </Dialog>
+        <AddDismissalDialog
+          confirmation={controller.dismissalConfirmation}
+          onKeepWorking={controller.keepWorking}
+          onConfirm={controller.confirmDismissal}
+        />
       </section>
     );
   }

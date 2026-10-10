@@ -44,8 +44,8 @@ that would let the 3:1 large-text exception apply, so this is WCAG 1.4.3
 (Contrast Minimum, AA) wherever those two tones carry text.
 
 Why it is not a blocker for this cutover: the Imports pane paints only the
-warning, info and success tones (`ImportRow.tsx` `STATE_TONE`,
-`ImportsWorkspace.tsx` tab counts, `ImportsBadge.tsx`, `ImportInspector.tsx`), all
+warning, info and success tones (`lib/imports/copy.ts` `stateBadge`,
+`ImportsList.tsx` tab counts, `ImportsBadge.tsx`, `ImportInspector.tsx`), all
 three of which measured above 4.5:1 in the original browser check. The two
 remaining tones are painted by other surfaces (`CollectionRow`,
 `ConnectionsSurface`, `MediaPaneBody`, `EvidenceItemRow`), none of which is in this cutover's ownership.

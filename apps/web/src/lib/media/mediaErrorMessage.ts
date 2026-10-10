@@ -1,18 +1,18 @@
 /**
  * The reader-facing presentation of a media failure. It holds no reason
  * dictionary of its own: the one record per `SafeFailureCode` lives in
- * `lib/status/imports.ts`, and this module maps that record plus this viewer's
+ * `lib/imports/copy.ts`, and this module maps that record plus this viewer's
  * capabilities, source URL and retrieval status to what the screen shows.
  */
 
 import { RESOURCE_ACTION_CATALOG } from "@/lib/actions/resourceActions";
 import { assertNever } from "@/lib/assertNever";
-import { SAFE_FAILURE_CODES } from "@/lib/imports/importRef";
 import {
-  IMPORT_FAILURE_COPY,
-  type ImportFailureCopy,
-} from "@/lib/status/imports";
-import type { MediaProcessingProjectionStatus } from "./documentReadiness";
+  FAILURE_COPY,
+  isSafeFailureCode,
+  type FailureCopy,
+} from "@/lib/imports/copy";
+import type { MediaDetail } from "./mediaDetail";
 
 interface SourceCapabilities {
   can_retry: boolean;
@@ -21,7 +21,7 @@ interface SourceCapabilities {
 type MediaErrorInput =
   | {
       kind: "Source";
-      processingStatus: MediaProcessingProjectionStatus;
+      processingStatus: MediaDetail["processing_status"];
       lastErrorCode: string | null | undefined;
       capabilities: SourceCapabilities;
       sourceUrl: string | null;
@@ -32,9 +32,7 @@ type MediaErrorInput =
     };
 
 type MediaErrorAction =
-  | { kind: "None" }
-  | { kind: "Retry" }
-  | { kind: "OpenSource"; href: string };
+  { kind: "None" } | { kind: "Retry" } | { kind: "OpenSource"; href: string };
 
 export interface MediaErrorPresentation {
   kind: MediaErrorInput["kind"];
@@ -59,18 +57,17 @@ export function mediaErrorMessage(
  * A failed import whose owner recorded no code says only what the catalog says
  * about an import that stopped; it never invents a cause.
  */
-function failureCopy(raw: string | null | undefined): ImportFailureCopy {
-  if (raw === null || raw === undefined) return IMPORT_FAILURE_COPY.E_INGEST_FAILED;
-  const code = SAFE_FAILURE_CODES.find((candidate) => candidate === raw);
-  if (code === undefined) {
+function failureCopy(raw: string | null | undefined): FailureCopy {
+  if (raw === null || raw === undefined) return FAILURE_COPY.E_INGEST_FAILED;
+  if (!isSafeFailureCode(raw)) {
     // justify-defect: last_error_code is decoded same-system source state.
     throw new Error(`Unsupported media source error code: ${raw}`);
   }
-  return IMPORT_FAILURE_COPY[code];
+  return FAILURE_COPY[raw];
 }
 
 function sourceAction(
-  recovery: ImportFailureCopy["recovery"],
+  recovery: FailureCopy["recovery"],
   capabilities: SourceCapabilities,
   sourceUrl: string | null,
 ): MediaErrorAction {
@@ -81,7 +78,7 @@ function sourceAction(
       return sourceUrl === null
         ? { kind: "None" }
         : { kind: "OpenSource", href: sourceUrl };
-    case "None":
+    case undefined:
       return { kind: "None" };
     default:
       return assertNever(recovery, "Unreachable failure recovery");

@@ -204,14 +204,9 @@
   color: var(--ink-faint);
 }
 
-/* Touch keeps every command at a full target while the desktop toolbar and rows
-   stay compact (44 px targets on mobile). A switch and a labelled
-   select paint their target on the enclosing label, so labels are sized too and
-   the switch's own checkbox — screen-reader-only, and never the box a finger
-   lands on — is left alone. The inspector is published outside this subtree, so
-   it keeps naming its own actions. A target is a box, not a height: the
-   narrowest commands here (a chip's remove cross, a row's overflow trigger)
-   are sized by width in their own primitives, so both axes are set. */
+/* Touch gives every command a full 44 px target, both axes, while desktop stays
+   compact. A switch and a labelled select paint their target on the label; the
+   inspector is published outside this subtree, so it sizes its own actions. */
 @media (pointer: coarse) {
   .workspace :is(button, [role="button"], select, label),
   .workspace input:not([type="checkbox"]),

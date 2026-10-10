@@ -393,9 +393,7 @@ unexpected timeouts. See
 - [deferred] account / display-name bounds · 2026-10-05 source audit · web allows 80 UTF-16 units while native allows 100 code points; choose and align the product contract: [ticket](tickets/account-display-name-has-conflicting-length-bounds.md).
 - [verification credentials require owner rotation](tickets/connections-verification-credential-rotation.md).
 - [open] player / mini progress · 2026-10-09 web dead-code sweep · the mini player progress fill span has no class, so `.miniFill` never applies and no fill shows: [ticket](tickets/player-mini-progress-fill-is-unstyled.md).
-- [open] imports / typed wire · 2026-10-09 web dead-code sweep · `POST /media/{id}/repair` has no response model, so the web keeps two handwritten admission decoders: [ticket](tickets/media-repair-response-has-no-model.md).
 - [open] settings / typed wire · 2026-10-09 web dead-code sweep · `GET /generation-effects` returns an untyped body that the account pane re-declares by hand: [ticket](tickets/generation-effects-response-is-untyped.md).
-- [open] imports / failure vocabulary · 2026-10-09 web dead-code sweep · three historical-only failure codes await a data remap before python and web can drop them: [ticket](tickets/historical-import-failure-codes-need-remap.md).
 - [open] telemetry / client defects · 2026-10-09 web dead-code sweep · the python request schema still accepts `Admission`/`Read` phases and `command_id`/`run_id`, which the web no longer sends: [ticket](tickets/client-defect-schema-accepts-unsent-fields.md).
 - [open] search performance · 2026-10-10 search reauthor · the ivfflat index may hold centroids trained before the corpus arrived; semantic recall is unmeasured in production: [ticket](tickets/ivfflat-index-may-predate-corpus.md).
 - [deferred] search · 2026-10-10 search reauthor · ANN post-filtering can thin semantic hits under medium-selectivity scopes until iterative scans are enabled: [ticket](tickets/semantic-recall-under-filtered-scopes.md).
@@ -407,3 +405,7 @@ unexpected timeouts. See
 - [open] web / mobile viewport verification · 2026-10-10 app navigation reauthor · the nav harness has no playable episode, so the mini-player half of bottom clearance (M10) is unrun: [ticket](tickets/mobile-player-clearance-has-no-browser-proof.md).
 - [open] web / workspace · 2026-10-10 nav harness X1 · the stats pane re-activates itself after its in-place address rewrite, so a quick fork lands behind it: [ticket](tickets/stats-pane-reactivates-after-address-rewrite.md).
 - [open] web / find · 2026-10-10 app navigation reauthor · on webkit the mobile find bar sits 3px above its contextual row, over the top bar: [ticket](tickets/webkit-find-bar-overlaps-the-top-bar.md).
+- [open] add content / libraries · 2026-10-10 imports reauthor · Add keeps its own multi-target placement machine beside the shared placement overlay; unify in the libraries rewrite: [ticket](tickets/add-placement-duplicates-library-placement-overlay.md).
+- [open] api / typed wire · 2026-10-10 imports reauthor · `POST /media/{id}/refresh` returns an untyped body: [ticket](tickets/media-refresh-route-has-no-model.md).
+- [open] imports / inspector · 2026-10-10 imports reauthor · a failed "Load earlier events" read shows no notice and no retry: [ticket](tickets/import-history-load-more-failure-is-silent.md).
+- [open] imports / verification · 2026-10-10 imports reauthor · the imports harness does not drive browse preview Add or note-body attachments: [ticket](tickets/imports-harness-lacks-browse-and-note-attachment-journeys.md).

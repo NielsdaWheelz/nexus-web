@@ -3,8 +3,7 @@
 **Status:** open
 **Origin:** Imports workspace cutover, Track E residual round (E-fix5), 2026-09-09
 **Area:** `python/nexus/schemas/import_history.py`;
-`apps/web/src/lib/imports/importsClient.ts`;
-`apps/web/src/lib/status/imports.ts`
+`apps/web/src/lib/imports/copy.ts`
 
 ## What is wrong
 
@@ -17,18 +16,16 @@ refuses anything else (`:287-288`, `AssertionError("counted source progress has 
 invalid shape")`), and the browser decoder narrows it with
 `expectOneOf(value.unit, ["Page", "Chapter"])`
 (`apps/web/src/lib/media/sourceProgress.ts:77-80`). So `progressLine` in the copy
-owner switches exhaustively and `assertNever`s the impossible case
-(`apps/web/src/lib/status/imports.ts:447-463`).
+owner indexes a closed per-unit record
+(`apps/web/src/lib/imports/copy.ts`, `statusLine`).
 
 The progress recorded *at a failure* carries the same column and the same two
 values, but its schema declares it as text: `SourceFailureProgress.unit:
 Presence[str]` (`python/nexus/schemas/import_history.py:199-202`), filled from
 `attempt.progress_unit` without narrowing
-(`python/nexus/services/source_publication.py:55-71`). The browser decoder can
-therefore only assert it is a nonempty string
-(`apps/web/src/lib/imports/importsClient.ts:785-787`), and the copy owner cannot
-switch on it: `failureProgressLine`
-(`apps/web/src/lib/status/imports.ts:817-827`, used by `historyEventLine:877`) renders the
+(`python/nexus/services/source_publication.py:55-71`). The generated wire type is
+therefore a string, and the copy owner cannot switch on it: `failureProgress`
+(`apps/web/src/lib/imports/copy.ts`, used by `eventLine`) renders the
 recorded unit lowercased — `Stopped at page 480 of 712.` — which is correct for
 both live values but is not the exhaustive match the rules ask for
 (`docs/rules/control-flow.md`, `docs/rules/tagged-unions.md`), and would silently
@@ -36,8 +33,8 @@ render a future third unit rather than defecting.
 
 ## Prerequisites
 
-`schemas/import_history.py` is Track A's; `lib/imports/importsClient.ts` is
-Track D's. Track E owns only the copy owner and cannot narrow either.
+`schemas/import_history.py` owns the wire type; the web reads it through the
+generated contract, so narrowing it there narrows the copy owner's input.
 
 ## Proposed fix
 

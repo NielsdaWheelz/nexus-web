@@ -14,8 +14,8 @@ import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
 import { useCursorPagination, type CursorPage } from "@/lib/api/useCursorPagination";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { getFileUploadError, uploadIngestFile } from "@/lib/media/ingestionClient";
-import { mediaCaptureErrorMessage } from "@/lib/media/captureFeedback";
+import { captureErrorFeedback } from "@/lib/imports/copy";
+import { getFileUploadError, uploadIngestFile } from "@/lib/imports/ingest";
 import {
   connectionMutationErrorMessage,
   mutateConnection,
@@ -113,7 +113,7 @@ export default function ConnectionsSurface({ resourceRef, refreshKey = 0 }: {
         try { uploaded = await uploadIngestFile({ file, libraryIds: [] }); }
         catch (error) {
           if (handleUnauthenticatedApiError(error)) return;
-          feedback.publish({ kind: "Persistent", key: `connection-upload:${selfRef}:${file.name}`, announcement: "Polite", content: mediaCaptureErrorMessage(error, "AddAttachment") });
+          feedback.publish({ kind: "Persistent", key: `connection-upload:${selfRef}:${file.name}`, announcement: "Polite", content: captureErrorFeedback(error, "AddAttachment") });
           continue;
         }
         // The app-owned link session retains this saved media and frozen mutation

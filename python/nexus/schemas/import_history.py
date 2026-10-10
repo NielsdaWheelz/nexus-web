@@ -56,7 +56,6 @@ FailureOrigin = Literal["Execution", "Domain"]
 
 _OWNER_FAILURE_CODES = Literal[
     "E_ARCHIVE_UNSAFE",
-    "E_BILLING_REQUIRED",  # Historical import failures recorded before billing was deleted.
     "E_CAPTURE_TOO_LARGE",
     "E_FORBIDDEN",
     "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH",
@@ -66,14 +65,12 @@ _OWNER_FAILURE_CODES = Literal[
     "E_INVALID_CONTENT_TYPE",
     "E_INVALID_KIND",
     "E_INVALID_REQUEST",
-    "E_LLM_BAD_REQUEST",  # Historical import failures recorded before the provider cutover.
     "E_MEDIA_NOT_FOUND",
     "E_MEDIA_NOT_READY",
     "E_OWNER_REQUIRED",
     "E_PDF_PASSWORD_REQUIRED",
     "E_PDF_TEXT_UNAVAILABLE",
     "E_PODCAST_PROVIDER_UNAVAILABLE",
-    "E_PODCAST_QUOTA_EXCEEDED",  # Historical import failures recorded before billing was deleted.
     "E_REPAIR_NOT_ALLOWED",
     "E_RESOURCE_CONFLICT",
     "E_RESOURCE_LIMIT",
@@ -110,8 +107,7 @@ SafeFailureCode = UploadVerificationFailureCode | _OWNER_FAILURE_CODES
 
 Composed from the upload-verification alias plus the codes the source-ingest
 adapters, the object store, and the queue actually record, so widening either
-owner is a type error here. The catalog also retains observed historical import
-failures. It names every value of
+owner is a type error here. It names every value of
 `media_source_attempts.error_code` and
 `media_upload_sessions.verification_error_code`, and every value of
 `media.last_error_code` at the moments history reads it: when a source failure

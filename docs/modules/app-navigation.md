@@ -120,7 +120,7 @@ meaning from copy or identifiers.
 | Rail membership and order, accent, Imports, Account pair           | `NAV_RAIL`, `NAV_ACCENT`, `NAV_IMPORTS`, `NAV_STATS`/`NAV_SETTINGS` in `apps/web/src/components/appnav/navModel.ts` |
 | Rail collapse cookie name and its server read                     | `apps/web/src/lib/renderEnvironment/{types,server}.ts`                                                            |
 | Shared account membership and rendering                           | `apps/web/src/components/appnav/AccountMenu.tsx`                                                                  |
-| Imports badge count and its accessible name                       | `apps/web/src/components/imports/ImportsBadge.tsx` and `importsWorkspaceModel.ts`                                 |
+| Imports badge count and its accessible name                       | `apps/web/src/components/imports/ImportsBadge.tsx` and `lib/imports/copy.ts`                                 |
 | Nexus commands and typed intent                                  | `apps/web/src/lib/nexus/query.ts`                                                                                  |
 | Nexus sections, Places projection, ranking, caps, and stability  | `apps/web/src/lib/nexus/rows.ts`                                                                                   |
 | Nexus retrieval, latency gate, and history writes                | `apps/web/src/lib/nexus/useNexusFind.ts`                                                                           |

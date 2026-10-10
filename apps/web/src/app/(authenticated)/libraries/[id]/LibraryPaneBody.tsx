@@ -226,7 +226,6 @@ export default function LibraryPaneBody() {
               kind: "Add",
               seed: {
                 kind: "Content",
-                initialFocus: "Url",
                 initialDestinations: currentLibrary.isDefault
                   ? []
                   : [

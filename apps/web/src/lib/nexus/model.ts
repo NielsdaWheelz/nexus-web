@@ -15,7 +15,6 @@ export type NexusRecent = Schema<"NexusHistoryRecentOut">;
 
 export interface AddSeed {
   readonly kind: "Content";
-  readonly initialFocus: "Url" | "File";
   readonly initialDestinations: readonly LibraryDestinationSelection[];
   readonly initialUrlDraft?: string;
 }

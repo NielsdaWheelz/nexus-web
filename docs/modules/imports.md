@@ -1,28 +1,40 @@
-# imports reads
+# imports
 
-status: read boundary implemented; live qualification and final static gate passed.
-owner: `services/imports.py` classifies and reads; `schemas/imports.py` and `import_history.py` own output contracts; the imports pane presents those facts.
+status: reauthored (cleanup/imports-reauthor); live harness `campaign-artifacts/2026-10-09/imports/harness`.
+owner: `services/imports.py` classifies and reads; `schemas/imports.py` and `schemas/import_history.py` own the output contracts and the failure vocabulary; the web presents those facts through four modules under `apps/web/src/lib/imports/`.
 
-## behavior
+## reads
 
-four authenticated repeatable-read routes return their existing models through `Data`: `/imports/summary` (`ImportSummary`), `/imports` (`ImportPage`), `/imports/{ref}` (`ImportDetail`), and `/imports/{ref}/history` (`HistoryPage`). preserve existing snake-case json, always-sent fields, tagged presence, datetimes, arrays and valid serializer bytes. there are no nullable/factory output defaults or custom serializers in this graph.
+four authenticated repeatable-read routes return their models through `Data`: `/imports/summary` (`ImportSummary`), `/imports` (`ImportPage`), `/imports/{ref}` (`ImportDetail`) and `/imports/{ref}/history` (`HistoryPage`). snake-case json, tagged presence and always-sent fields; the web reads them as generated types (`lib/imports/api.ts`) and decodes nothing by hand. `ImportPage` owns its consistency checks (item count ≤ matched count, unique refs, grouped counts ≤ matched count, a continuing page is nonempty); `ImportDetail` owns issue-count equality.
 
-a published upload keeps its `upload:<handle>` identity; media visibility and import ownership remain separate. summary counts are global; filtered pages retain current classification/stage grouping, normalized-query cursor binding and limits. history is newest first, retaining all 22 upload/source/index fact variants, recovery/baseline subvariants and full/partial coverage. detail includes current readiness and publication-generation source issues. services keep existing viewer/shared-media filters and the same recovery policies.
+a published upload keeps its `upload:<handle>` identity; the server owns the ref grammar. the url decoder admits a `?selected=` only as `upload:` or `media:` and one path segment (no `/`), so it cannot reach `/imports/summary` or another route; anything else is absent. a ref the server rejects (400 `E_INVALID_REQUEST`) or does not know (404 `E_IMPORT_NOT_FOUND`) reads "This import is no longer available".
 
-`ImportPage` owns four existing consistency checks: item count cannot exceed matched count; refs are unique; grouped counts cannot exceed matched count; a continuing page is nonempty. `ImportDetail` owns issue-count/list equality. impossible construction raises `ValueError` before serialization; these checks formerly ran after transport in the browser.
+every read is a pane-free `usePaneFreeServerValue` (`lib/api/serverState.ts`): it loads on its key, refetches when its `stale` string changes, keeps its data while it refetches, coalesces (one queued run, never aborting the one in flight), keeps a failed refetch's error beside the last good data, retries transport failures three times, sends 401 to the sign-in handler and throws defects in render.
 
-## representation and consumers
+## observation (`lib/imports/ImportsProvider.tsx`)
 
-web reads use generated `ApiJson`/component types and native snake-case fields. `importsClient.ts` adapts only branded import/media refs, retaining invalid-identity classification as `E_INVALID_RESPONSE`. status, badge, stage grouping and inspector history use the existing presentation owners. no camel read replica or 22-case browser history decoder remains.
+- the summary read's `stale` is a wake counter. a wake is `visibilitychange` to visible, `focus` after a `blur`, `pageshow`, `online`, the pane opening, an in-tab `Imports.Invalidated` event, a library placement revision whose libraries became unknown, and Refresh.
+- the server stamps `observed_at` on every read; the newest successful summary's stamp is the only observation token. the list and the inspector put it in their `stale`, so they reread exactly when an observation lands.
+- polling: every 5 s while the newest summary read succeeded, `active_count > 0`, the document is visible, and the pane is open or a wake happened within the last 15 minutes. a failed summary read stops polling until the next wake or Refresh; the stale notice and Try again show.
+- invalidation is in-tab only: other tabs catch up on their next wake or poll.
+- upload commands (`dispatchUpload`) are pending per `handle|command`, so the row and the inspector both show "Starting…"; a duplicate in flight is ignored and a refusal is the caller's to report.
 
-the list/history hooks bridge native data to shared `CursorPage`; memoization follows the underlying page identity. unchanged row rereads preserve appended pages; query changes reset continuation. the provider's observation, last-good rows, polling, failures and retry remain their existing view-state contracts.
+## lists
 
-url/filter option catalogs remain genuine input ingress. the three recovery commands retain their request/admission/mutation-id behavior. [action snapshots](resource-actions.md) use generated camel-case media recovery offers; upload offers remain outside that union. upload capabilities, generation fencing, invalidation and persisted journals keep their existing owners.
+a view is the first `pages` server pages of its query (`lib/imports/query.ts` narrows it to what the view correlates, so `GET /imports` never answers 400). every observation rereads that prefix, so a refresh keeps the pages the reader loaded and a row removed anywhere in it disappears; Load more is one page longer (a reread of the whole prefix); a query change, including a return to an earlier one, starts again at one page (`usePagePrefix` in `lib/imports/api.ts`). a failed reread keeps the rows with "Couldn’t refresh imports · Showing the last update"; a failed Load more says "More imports couldn’t be loaded". the attempt history in the inspector is the same shape keyed by ref, rereading when the import's `updated_at` changes.
 
-current writers guarantee the retired scalar checks: owner-allocated uuids; positive upload generations/attempt numbers; nonnegative index revisions and pdf/epub counts; literal counted units; publication's 10,000-issue bound; nonempty signed continuation cursors. shared persisted history schemas are not tightened for this read cutover.
+## url
 
-## qualification and limits
+`/imports?view&q&media_kind&stage&failure_code&state&had_failures&from&before&selected`, by wire name, in one canonical order. decoding is tolerant (unknown or invalid values are absent) and keeps what the reader wrote, including History-only filters while another view is open. dates are UTC days, `[from, before)`. the first entry without a view lands on Needs attention, else In progress, else History with `from` = today − 30 local days, once; later counts never move the reader.
 
-candidate qualification: 46 real authenticated reads preserve baseline results, normalizing only moving `observed_at` and error request ids; 66 frozen-model envelopes preserve exact serializer bytes. actual old/new presentation outputs match across 25 rows, 52 history entries, all 22 facts and 15 nested alternatives. five malformed relational constructions reject at their model owner; camel action snapshots preserve accepted offers and upload refusal. unobserved history branches are declared model fixtures.
+## copy (`lib/imports/copy.ts`)
 
-real browser views, inspector and empty results match the baseline. signed list/history continuations survive unchanged five-second rereads; filter changes reset them. three recovery admissions return 202, replay without new rows and reject changed replay payloads with 409; queue and journal identity were observed. receipts: `/tmp/nexus-imports-{candidate-browser,candidate-continuation,recovery}-receipt.json`; presentation conservation: `/tmp/nexus-imports-presentation-receipt.json` (retained hash/count summary). no provider, worker, storage upload or background completion claim. this partial read cut removes 911 production lines, excluding generated wire and docs; remaining ingestion/imports reauthoring stays open.
+the one owner of every string a reader sees about an import, an upload or an acquisition. `FAILURE_COPY` is exhaustive over the generated `SafeFailureCode` and is also the runtime vocabulary (`isSafeFailureCode`, `SAFE_FAILURE_CODES`); its `recovery` fact is `SameSource`, `OpenOriginal` or absent, never `SameSource` for a same-source terminal code. beside it: stage copy, the state pill (`stateBadge`: one label and tone for row and inspector), the recovery sentence, history narration, dates, counts, notices, and the per-surface outcome tables for Imports commands, capture and attachments, and Add acceptance. `lib/media/mediaErrorMessage.ts` presents media failures from the same catalog.
+
+## acquisition (`lib/imports/ingest.ts`)
+
+`addMediaFromUrl`, `uploadIngestFile`, `retryUploadSession`, `removeUploadSession` and `captureSourceUrl`; see [add content](add-content.md) for the upload-session protocol. each endpoint's declared codes map to one `UploadSessionOutcome`; the outcomes that change what Imports owes invalidate it.
+
+## vocabulary history
+
+`E_BILLING_REQUIRED`, `E_LLM_BAD_REQUEST` and `E_PODCAST_QUOTA_EXCEEDED` left the catalog; migration `0272` rewrote every stored import failure that named one to `E_INGEST_FAILED` (media, source attempts, processing and upload events, baseline outcomes, and the queue rows imports reads). `media_transcript_states.last_error_code` keeps transcription's own reason.

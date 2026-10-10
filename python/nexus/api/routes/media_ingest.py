@@ -13,13 +13,14 @@ from fastapi import APIRouter, Depends, Request, Response
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import DbSession
-from nexus.responses import Data, ok
+from nexus.responses import Data
 from nexus.schemas.extension_capture import LocalFile
 from nexus.schemas.media import (
     ConfirmUploadSessionRequest,
     CreateUploadSessionRequest,
     FromUrlRequest,
     FromUrlResponse,
+    MediaRepairAdmission,
     MediaRepairRequest,
     NeedsAttention,
     Published,
@@ -181,29 +182,27 @@ def repair_media(
     body: MediaRepairRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
-) -> dict:
+) -> Data[MediaRepairAdmission]:
     """Requeue the exact dead job the viewer inspected: source or search."""
     actor = ViewerRecovery(viewer_id=viewer.user_id, client_mutation_id=body.client_mutation_id)
+    admission: MediaRepairAdmission
     match body:
         case SourceRepairRequest():
-            return ok(
-                media_source_ingest.repair_dead_source_execution(
-                    db,
-                    actor=actor,
-                    media_id=media_id,
-                    expected_attempt_id=body.expected_attempt_id,
-                    expected_job_id=body.expected_job_id,
-                )
+            admission = media_source_ingest.repair_dead_source_execution(
+                db,
+                actor=actor,
+                media_id=media_id,
+                expected_attempt_id=body.expected_attempt_id,
+                expected_job_id=body.expected_job_id,
             )
         case SearchRepairRequest():
-            return ok(
-                content_indexing.repair_dead_media_reindex(
-                    db,
-                    actor=actor,
-                    media_id=media_id,
-                    expected_revision=body.expected_revision,
-                    expected_job_id=body.expected_job_id,
-                )
+            admission = content_indexing.repair_dead_media_reindex(
+                db,
+                actor=actor,
+                media_id=media_id,
+                expected_revision=body.expected_revision,
+                expected_job_id=body.expected_job_id,
             )
         case _:
             assert_never(body)
+    return Data(data=admission)

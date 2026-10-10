@@ -43,10 +43,10 @@ import {
 } from "@/lib/notes/prosemirror/schema";
 import {
   getFileUploadError,
-  UploadSessionError,
   uploadIngestFile,
-} from "@/lib/media/ingestionClient";
-import { mediaCaptureErrorMessage } from "@/lib/media/captureFeedback";
+} from "@/lib/imports/ingest";
+import { UploadSessionError } from "@/lib/imports/api";
+import { captureErrorFeedback } from "@/lib/imports/copy";
 import { notePulseDecorations } from "@/lib/notes/prosemirror/notePulse";
 import { projectNoteBody } from "@/lib/notes/prosemirror/noteBodyProjection";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
@@ -374,7 +374,7 @@ export default function NoteBodyEditor(props: NoteBodyEditorProps) {
       if (handleUnauthenticatedApiError(caught)) return;
       if (caught instanceof UploadSessionError) {
         try {
-          inputs.current.onFeedback(mediaCaptureErrorMessage(caught, "AddAttachment"));
+          inputs.current.onFeedback(captureErrorFeedback(caught, "AddAttachment"));
         } catch (caughtDefect: unknown) {
           setDefect({ error: caughtDefect });
         }
