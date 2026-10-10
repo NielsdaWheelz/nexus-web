@@ -8,7 +8,6 @@ import {
   type MouseEvent,
 } from "react";
 import { useWorkspaceStore } from "@/lib/workspace/store";
-import { getWorkspacePrimaryPanes } from "@/lib/workspace/schema";
 import { activateTargetLink } from "@/lib/panes/targetLinkActivation";
 import { sectionDestinationIdForHref } from "@/lib/panes/paneRouteModel";
 import type { WorkspaceTargetActivationResult } from "@/lib/workspace/targetActivation";
@@ -24,7 +23,6 @@ import {
 } from "./navModel";
 import NavRail from "./NavRail";
 import MobilePaneBar from "./MobilePaneBar";
-import { pointerModality } from "@/lib/ui/pointerModality";
 
 const COLLAPSE_KEY = "nexus.nav.collapsed";
 
@@ -47,10 +45,9 @@ export default function AppNav() {
       return next;
     });
   }, []);
-  const primaryPanes = useMemo(() => getWorkspacePrimaryPanes(state), [state]);
   const activePane = useMemo(
-    () => primaryPanes.find((p) => p.id === state.activePrimaryPaneId) ?? null,
-    [primaryPanes, state.activePrimaryPaneId],
+    () => state.panes.find((p) => p.id === state.activePrimaryPaneId) ?? null,
+    [state],
   );
   const activeDestinationId = activePane
     ? sectionDestinationIdForHref(activePane.currentVisit.href)
@@ -75,7 +72,6 @@ export default function AppNav() {
               originPaneId: state.activePrimaryPaneId,
               target,
               disposition,
-              modality: pointerModality(event),
             });
           },
         },

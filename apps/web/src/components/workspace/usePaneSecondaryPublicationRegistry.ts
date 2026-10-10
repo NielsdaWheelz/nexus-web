@@ -24,9 +24,9 @@ interface PaneSecondaryPublicationInput {
 }
 
 function upsertOrDeletePaneSecondaryPublicationRecord(
-  current: Map<string, PaneSecondaryPublicationRecord>,
+  current: ReadonlyMap<string, PaneSecondaryPublicationRecord>,
   input: PaneSecondaryPublicationInput,
-): Map<string, PaneSecondaryPublicationRecord> {
+): ReadonlyMap<string, PaneSecondaryPublicationRecord> {
   const existing = current.get(input.paneId);
   if (!input.publication) {
     if (!existing || existing.routeKey !== input.routeKey) return current;
@@ -53,15 +53,15 @@ function upsertOrDeletePaneSecondaryPublicationRecord(
 
 export function usePaneSecondaryPublicationRegistry() {
   const [records, setRecords] = useState<
-    Map<string, PaneSecondaryPublicationRecord>
+    ReadonlyMap<string, PaneSecondaryPublicationRecord>
   >(() => new Map());
   const recordsRef = useRef(records);
 
   const commit = useCallback(
     (
       transform: (
-        current: Map<string, PaneSecondaryPublicationRecord>,
-      ) => Map<string, PaneSecondaryPublicationRecord>,
+        current: ReadonlyMap<string, PaneSecondaryPublicationRecord>,
+      ) => ReadonlyMap<string, PaneSecondaryPublicationRecord>,
     ) => {
       const next = transform(recordsRef.current);
       recordsRef.current = next;

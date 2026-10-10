@@ -1,790 +1,321 @@
 "use client";
 
+// What a pane body may know (its visit, route, params, Inspector) and do
+// (navigate its own history, open targets, publish its label). One provider
+// per pane, rendered by the workspace host. Commands are stable for the pane's
+// lifetime and act on its latest facts.
 import {
   createContext,
-  useCallback,
   useContext,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
+  type ReactNode,
 } from "react";
-import {
-  normalizePaneLabel,
-  type PaneVisitId,
-  type WorkspaceAttachedSecondaryPaneState,
-} from "@/lib/workspace/schema";
-import {
-  PaneReturnVisitScope,
-  type PaneNavigationModality,
-} from "@/lib/workspace/paneReturnMemento";
-import {
-  normalizeWorkspaceHref,
-  parseWorkspaceHref,
-} from "@/lib/workspace/workspaceHref";
-import type { ResourceItem } from "@/lib/resources/resourceItems";
-import { normalizePaneRouteKeyHref } from "@/lib/panes/paneIdentity";
 import { preloadPane } from "@/lib/panes/paneRenderRegistry";
-import type { PaneRuntimeLayout } from "@/lib/workspace/paneSizing";
-import type {
-  PaneEntryDelivery,
-  WorkspaceTarget,
-  WorkspaceTargetActivationRequest,
-  WorkspaceTargetActivationResult,
-  WorkspaceTargetDisposition,
-} from "@/lib/workspace/targetActivation";
+import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import type {
   PaneTransientSecondarySurfaceId,
   WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
 import {
-  resolvePaneRouteModel,
-  type PaneRouteId,
-} from "@/lib/panes/paneRouteModel";
-import {
   clearMediaReaderViewTransition,
   startSameDocumentViewTransition,
   type PaneViewTransitionIntent,
 } from "@/lib/ui/viewTransitions";
+import type {
+  WorkspacePane,
+  WorkspaceSecondaryPane,
+} from "@/lib/workspace/model";
+import { PaneReturnVisitScope } from "@/lib/workspace/paneReturnMemento";
+import type { PaneRuntimeLayout } from "@/lib/workspace/paneSizing";
 import { useWorkspaceStore } from "@/lib/workspace/store";
+import type {
+  PaneDailyPage,
+  PaneEntryDelivery,
+  WorkspaceTarget,
+  WorkspaceTargetActivationResult,
+  WorkspaceTargetDisposition,
+} from "@/lib/workspace/targetActivation";
+import {
+  normalizeWorkspaceHref,
+  parseWorkspaceHref,
+} from "@/lib/workspace/workspaceHref";
 
 export interface PaneRouterOptions {
   labelHint?: string;
   viewTransition?: PaneViewTransitionIntent;
   activate?: boolean;
 }
-
-export interface PaneNavigationCommandOptions {
-  readonly labelHint?: string;
-  readonly modality: PaneNavigationModality;
-  readonly activate?: boolean;
-}
-
 export interface PaneScopedRouter {
-  canGoBack: boolean;
-  canGoForward: boolean;
-  push: (href: string, options?: PaneRouterOptions) => void;
-  replace: (href: string, options?: PaneRouterOptions) => void;
-  back: () => void;
-  forward: () => void;
+  readonly canGoBack: boolean;
+  readonly canGoForward: boolean;
+  push(href: string, options?: PaneRouterOptions): void;
+  replace(href: string, options?: PaneRouterOptions): void;
+  back(): void;
+  forward(): void;
 }
-
-export interface PaneRuntimeLayoutPublication {
-  paneId: string;
-  routeKey: string;
-  layout: PaneRuntimeLayout | null;
-}
-
-export type PaneResourceStatus =
-  | "none"
-  | "pending"
-  | "ready"
-  | "missing"
-  | "unauthorized"
-  | "invalid"
-  | "error";
-
 export interface PaneSecondarySurfaceRequestOptions {
   readonly returnFocusTo?: HTMLElement | null;
 }
 
-export interface PaneRuntimeTransientSecondarySurface {
-  readonly id: PaneTransientSecondarySurfaceId;
-  readonly expanded: boolean;
-}
-
-export interface PaneRuntimeContextValue {
+/** What a body knows that its href alone does not say, and what it may do. */
+export type PaneRuntimeContextValue = PaneRuntimeFacts & PaneRuntimeCommands;
+interface PaneRuntimeFacts {
   paneId: string;
-  visitId: PaneVisitId;
+  visitId: string;
   href: string;
   pathname: string;
   routeId: string;
   routeKey: string;
-  resourceItem: ResourceItem | null;
-  resourceRef: string | null;
-  resourceKey: string | null;
-  resourceStatus: PaneResourceStatus;
-  secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
-  paneEntryDelivery: PaneEntryDelivery | null;
-  transientSecondarySurface: PaneRuntimeTransientSecondarySurface | null;
   pathParams: Record<string, string>;
   searchParams: URLSearchParams;
-  /** The pane-local URL hash (e.g. the reader-Highlight intent
-   *  `#mediaId=...&highlightId=...`). Excluded from pane identity/routeKey so a
-   *  pending intent never forks the pane. Components read it here, never from
-   *  ambient `window.location`. */
+  /** The pane-local hash (a reader target); never read `window.location`. */
   hash: string;
+  /** The route's own resource ref (`media:<id>` …); null for authors. */
+  resourceRef: string | null;
+  secondaryPane: WorkspaceSecondaryPane | null;
+  transientSecondarySurface: {
+    id: PaneTransientSecondarySurfaceId;
+    expanded: boolean;
+  } | null;
+  paneEntryDelivery: PaneEntryDelivery | null;
+}
+interface PaneRuntimeCommands {
   router: PaneScopedRouter;
-  activateTarget: (input: {
+  activateTarget(input: {
     target: WorkspaceTarget;
     disposition: WorkspaceTargetDisposition;
-  }) => WorkspaceTargetActivationResult;
-  setPaneLabel: (label: string | null) => void;
-  setPaneLayout: (layout: PaneRuntimeLayout | null) => void;
-  requestSecondarySurface: (
+  }): WorkspaceTargetActivationResult;
+  setPaneLabel(label: string | null): void;
+  setPaneDailyPage(page: PaneDailyPage | null): void;
+  acknowledgePaneEntryDelivery(delivery: PaneEntryDelivery): void;
+  // host-owned, bound to this pane by the host:
+  setPaneLayout(layout: PaneRuntimeLayout | null): void;
+  requestSecondarySurface(
     surfaceId: WorkspaceSecondarySurfaceId,
     options?: PaneSecondarySurfaceRequestOptions,
-  ) => void;
-  closeSecondaryPane: (options?: { focusAfterClose?: HTMLElement | null }) => void;
-  requestTransientSecondarySurface: (
+  ): void;
+  closeSecondaryPane(options?: { focusAfterClose?: HTMLElement | null }): void;
+  requestTransientSecondarySurface(
     surfaceId: PaneTransientSecondarySurfaceId,
     options?: PaneSecondarySurfaceRequestOptions,
-  ) => void;
-  closeTransientSecondarySurface: () => void;
-  previewTransientSecondaryResult: () => void;
-  acknowledgePaneEntryDelivery: (delivery: PaneEntryDelivery) => void;
-  setPaneAliases: (aliases: readonly string[]) => void;
+  ): void;
+  closeTransientSecondarySurface(): void;
+  previewTransientSecondaryResult(): void;
 }
+export type PaneHostCommands = Pick<
+  PaneRuntimeCommands,
+  | "setPaneLayout"
+  | "requestSecondarySurface"
+  | "closeSecondaryPane"
+  | "requestTransientSecondarySurface"
+  | "closeTransientSecondarySurface"
+  | "previewTransientSecondaryResult"
+>;
 
-const PaneRuntimeContext = createContext<PaneRuntimeContextValue | null>(null);
-const PaneActivityContext = createContext<boolean | null>(null);
-const PaneRouterNavigationContext = createContext<{
-  canGoBack: boolean;
-  canGoForward: boolean;
-} | null>(null);
-const PaneNavigationModalityContext = createContext<
-  ((modality: Exclude<PaneNavigationModality, "Programmatic">) => void) | null
->(null);
+const RuntimeContext = createContext<PaneRuntimeContextValue | null>(null);
+const ActiveContext = createContext<boolean | null>(null);
 
-interface PaneRuntimeProviderProps {
-  paneId: string;
-  visitId: PaneVisitId;
+export function PaneRuntimeProvider(props: {
+  pane: WorkspacePane;
   isActive: boolean;
-  href: string;
-  routeId: string;
-  routeKey?: string;
-  resourceItem?: ResourceItem | null;
-  resourceStatus?: PaneResourceStatus;
-  secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
-  paneEntryDelivery?: PaneEntryDelivery | null;
-  transientSecondarySurface?: PaneRuntimeTransientSecondarySurface | null;
-  pathParams?: Record<string, string>;
-  canGoBack: boolean;
-  canGoForward: boolean;
-  onNavigatePane: (
-    paneId: string,
-    href: string,
-    options: PaneNavigationCommandOptions,
-  ) => void;
-  onReplacePane: (
-    paneId: string,
-    href: string,
-    options: PaneNavigationCommandOptions,
-  ) => void;
-  onActivateWorkspaceTarget: (
-    request: WorkspaceTargetActivationRequest,
-  ) => WorkspaceTargetActivationResult;
-  onGoBackPane: (paneId: string, modality: PaneNavigationModality) => void;
-  onGoForwardPane: (paneId: string, modality: PaneNavigationModality) => void;
-  onSetPaneLabel: (input: {
-    paneId: string;
-    routeKey: string;
-    label: string | null;
-  }) => void;
-  onSetPaneLayout: (input: PaneRuntimeLayoutPublication) => void;
-  onRequestSecondarySurface: (
-    primaryPaneId: string,
-    surfaceId: WorkspaceSecondarySurfaceId,
-    returnFocusTo?: HTMLElement | null,
-  ) => void;
-  onCloseSecondaryPane: (secondaryPaneId: string, focusAfterClose?: HTMLElement | null) => void;
-  onRequestTransientSecondarySurface: (
-    paneId: string,
-    routeKey: string,
-    surfaceId: PaneTransientSecondarySurfaceId,
-    returnFocusTo?: HTMLElement | null,
-  ) => void;
-  onCloseTransientSecondarySurface: (paneId: string, routeKey: string) => void;
-  onPreviewTransientSecondaryResult: (
-    paneId: string,
-    routeKey: string,
-  ) => void;
-  onAcknowledgePaneEntryDelivery: (delivery: PaneEntryDelivery) => void;
-  onSetPaneAliases: (input: {
-    paneId: string;
-    visitId: string;
-    aliases: readonly string[];
-  }) => void;
-  children: React.ReactNode;
-}
-
-function parsePaneHref(href: string): {
-  pathname: string;
-  searchParams: URLSearchParams;
-  hash: string;
-} {
-  const parsed = parseWorkspaceHref(href);
-  if (!parsed) {
-    return {
-      pathname: "/",
-      searchParams: new URLSearchParams(),
-      hash: "",
-    };
+  secondaryPane: WorkspaceSecondaryPane | null;
+  transientSecondarySurface: PaneRuntimeContextValue["transientSecondarySurface"];
+  host: PaneHostCommands;
+  children: ReactNode;
+}) {
+  const { pane, host } = props;
+  const store = useWorkspaceStore();
+  const { href, id: visitId } = pane.currentVisit;
+  const route = useMemo(() => resolvePaneRouteModel(href), [href]);
+  const url = parseWorkspaceHref(href);
+  const search = url?.search ?? "";
+  const searchParams = useMemo(() => new URLSearchParams(search), [search]);
+  const pending = store.pendingPaneEntryDeliveryByPaneId.get(pane.id);
+  const delivery = pending?.visitId === visitId ? pending : null;
+  // The host re-mints the Inspector projection; keep it while it is equal.
+  const secondaryRef = useRef(props.secondaryPane);
+  if (JSON.stringify(secondaryRef.current) !== JSON.stringify(props.secondaryPane)) {
+    secondaryRef.current = props.secondaryPane;
   }
-  return {
-    pathname: parsed.pathname,
-    searchParams: new URLSearchParams(parsed.search),
-    hash: parsed.hash,
-  };
-}
+  const secondaryPane = secondaryRef.current;
+  const latest = useRef({ pane, route, secondaryPane, store, host });
+  latest.current = { pane, route, secondaryPane, store, host };
 
-function buildPaneRouteKey(routeId: string, href: string): string {
-  return `${routeId}:${normalizePaneRouteKeyHref(href)}`;
-}
-
-function resourceKeyForItem(resourceItem: ResourceItem | null): string | null {
-  return resourceItem ? `resource:${resourceItem.ref}` : null;
-}
-
-function panePreloadForHref(
-  href: string,
-): (() => Promise<unknown>) | undefined {
-  const route = resolvePaneRouteModel(href);
-  if (route.id === "unsupported") return undefined;
-  const routeId: PaneRouteId = route.id;
-  return () => preloadPane(routeId);
-}
-
-function runPaneNavigation(
-  href: string,
-  viewTransition: PaneViewTransitionIntent | undefined,
-  navigate: () => void,
-): void {
-  if (!viewTransition) {
-    navigate();
-    return;
-  }
-
-  startSameDocumentViewTransition(navigate, {
-    preload:
-      viewTransition.kind === "media-reader"
-        ? panePreloadForHref(href)
-        : undefined,
-    onFinish:
-      viewTransition.kind === "media-reader"
-        ? () => clearMediaReaderViewTransition(viewTransition.mediaId)
-        : undefined,
-  });
-}
-
-export function PaneRuntimeProvider({
-  paneId,
-  visitId,
-  isActive,
-  href,
-  routeId,
-  routeKey: routeKeyProp,
-  resourceItem = null,
-  resourceStatus = "none",
-  secondaryPane = null,
-  paneEntryDelivery = null,
-  transientSecondarySurface = null,
-  pathParams = {},
-  canGoBack,
-  canGoForward,
-  onNavigatePane,
-  onReplacePane,
-  onActivateWorkspaceTarget,
-  onGoBackPane,
-  onGoForwardPane,
-  onSetPaneLabel,
-  onSetPaneLayout,
-  onRequestSecondarySurface,
-  onCloseSecondaryPane,
-  onRequestTransientSecondarySurface,
-  onCloseTransientSecondarySurface,
-  onPreviewTransientSecondaryResult,
-  onAcknowledgePaneEntryDelivery,
-  onSetPaneAliases,
-  children,
-}: PaneRuntimeProviderProps) {
-  const pendingNavigationModalityRef = useRef<{
-    readonly modality: PaneNavigationModality;
-    readonly token: symbol;
-  } | null>(null);
-  const recordNavigationModality = useCallback(
-    (modality: Exclude<PaneNavigationModality, "Programmatic">) => {
-      const pending = { modality, token: Symbol("PaneNavigationModality") };
-      pendingNavigationModalityRef.current = pending;
-      queueMicrotask(() => {
-        if (pendingNavigationModalityRef.current?.token === pending.token) {
-          pendingNavigationModalityRef.current = null;
-        }
+  const commands = useMemo(() => {
+    const now = () => latest.current;
+    const go = (target: string, replace: boolean, options: PaneRouterOptions = {}) => {
+      const next = normalizeWorkspaceHref(target);
+      if (!next) return;
+      const { labelHint, activate, viewTransition: transition } = options;
+      const navigate = () =>
+        now().store.navigatePane(pane.id, next, { replace, activate, labelHint });
+      if (!transition) return navigate();
+      const id = resolvePaneRouteModel(next).id;
+      const reader = transition.kind === "media-reader";
+      startSameDocumentViewTransition(navigate, {
+        preload: reader && id !== "unsupported" ? () => preloadPane(id) : undefined,
+        onFinish: reader
+          ? () => clearMediaReaderViewTransition(transition.mediaId)
+          : undefined,
       });
-    },
-    [],
-  );
-  const consumeNavigationModality = useCallback((): PaneNavigationModality => {
-    const modality =
-      pendingNavigationModalityRef.current?.modality ?? "Programmatic";
-    pendingNavigationModalityRef.current = null;
-    return modality;
-  }, []);
-  const parsed = useMemo(() => parsePaneHref(href), [href]);
-  const routeKey = routeKeyProp ?? buildPaneRouteKey(routeId, href);
-  const resourceRef = resourceItem?.ref ?? null;
-  const resourceKey = resourceKeyForItem(resourceItem);
-  const hasResolvedStatus =
-    resourceStatus === "ready" || resourceStatus === "missing";
-  if (hasResolvedStatus !== (resourceItem !== null)) {
-    throw new Error(
-      "Pane resource status and resource item must settle as one tagged state",
-    );
-  }
-  if (
-    resourceItem !== null &&
-    ((resourceItem.missing && resourceStatus !== "missing") ||
-      (!resourceItem.missing && resourceStatus !== "ready"))
-  ) {
-    throw new Error(
-      "Pane resource status must match resource item availability",
-    );
-  }
-  const effectiveResourceStatus = resourceStatus;
-  // The host re-mints its secondary and transient projections on renders that
-  // change neither (e.g. the inline `{ id, expanded }` literal). Key both by
-  // value so the runtime value below changes identity only when the pane's
-  // runtime facts change; every pane body consumes it, and a spurious change
-  // re-renders the pane's publishers into another host render.
-  const runtimeSecondaryPane = useMemo(
-    (): WorkspaceAttachedSecondaryPaneState | null =>
-      secondaryPane?.id === undefined
-        ? null
-        : {
-            id: secondaryPane.id,
-            parentPrimaryPaneId: secondaryPane.parentPrimaryPaneId,
-            groupId: secondaryPane.groupId,
-            activeSurfaceId: secondaryPane.activeSurfaceId,
-            widthPx: secondaryPane.widthPx,
-            visibility: secondaryPane.visibility,
-          },
-    [
-      secondaryPane?.id,
-      secondaryPane?.parentPrimaryPaneId,
-      secondaryPane?.groupId,
-      secondaryPane?.activeSurfaceId,
-      secondaryPane?.widthPx,
-      secondaryPane?.visibility,
-    ],
-  );
-  const transientSurfaceId = transientSecondarySurface?.id ?? null;
-  const transientSurfaceExpanded = transientSecondarySurface?.expanded ?? false;
-  const runtimeTransientSecondarySurface = useMemo(
-    () =>
-      transientSurfaceId === null
-        ? null
-        : { id: transientSurfaceId, expanded: transientSurfaceExpanded },
-    [transientSurfaceExpanded, transientSurfaceId],
-  );
-  const secondaryPaneId = secondaryPane?.id ?? null;
-  const commands = {
-    paneId,
-    routeKey,
-    secondaryPaneId,
-    onNavigatePane,
-    onReplacePane,
-    onActivateWorkspaceTarget,
-    onGoBackPane,
-    onGoForwardPane,
-    onSetPaneLabel,
-    onSetPaneLayout,
-    onRequestSecondarySurface,
-    onCloseSecondaryPane,
-    onRequestTransientSecondarySurface,
-    onCloseTransientSecondarySurface,
-    onPreviewTransientSecondaryResult,
-    onAcknowledgePaneEntryDelivery,
-    onSetPaneAliases,
-    paneEntryDelivery,
-  };
-  const commandsRef = useRef(commands);
-  commandsRef.current = commands;
-  const navigationStateRef = useRef({ canGoBack, canGoForward });
-  navigationStateRef.current = { canGoBack, canGoForward };
-  const navigationState = useMemo(
-    () => ({ canGoBack, canGoForward }),
-    [canGoBack, canGoForward],
-  );
-  const router = useMemo<PaneScopedRouter>(
-    () => ({
+    };
+    const router: PaneScopedRouter = {
       get canGoBack() {
-        return navigationStateRef.current.canGoBack;
+        return now().pane.history.back.length > 0;
       },
       get canGoForward() {
-        return navigationStateRef.current.canGoForward;
+        return now().pane.history.forward.length > 0;
       },
-      push: (nextHref: string, options?: PaneRouterOptions) => {
-        const normalized = normalizeWorkspaceHref(nextHref);
-        if (!normalized) {
-          return;
-        }
-        const current = commandsRef.current;
-        const navigationOptions: PaneNavigationCommandOptions = {
-          ...(options?.labelHint ? { labelHint: options.labelHint } : {}),
-          ...(options?.activate !== undefined
-            ? { activate: options.activate }
-            : {}),
-          modality: consumeNavigationModality(),
-        };
-        runPaneNavigation(normalized, options?.viewTransition, () => {
-          current.onNavigatePane(current.paneId, normalized, navigationOptions);
-        });
-      },
-      replace: (nextHref: string, options?: PaneRouterOptions) => {
-        const normalized = normalizeWorkspaceHref(nextHref);
-        if (!normalized) {
-          return;
-        }
-        const current = commandsRef.current;
-        const navigationOptions: PaneNavigationCommandOptions = {
-          ...(options?.labelHint ? { labelHint: options.labelHint } : {}),
-          ...(options?.activate !== undefined
-            ? { activate: options.activate }
-            : {}),
-          modality: consumeNavigationModality(),
-        };
-        runPaneNavigation(normalized, options?.viewTransition, () => {
-          current.onReplacePane(current.paneId, normalized, navigationOptions);
-        });
-      },
-      back: () => {
-        const current = commandsRef.current;
-        current.onGoBackPane(current.paneId, consumeNavigationModality());
-      },
-      forward: () => {
-        const current = commandsRef.current;
-        current.onGoForwardPane(current.paneId, consumeNavigationModality());
-      },
-    }),
-    [consumeNavigationModality],
-  );
-  const activateTarget = useCallback(
-    (input: {
-      target: WorkspaceTarget;
-      disposition: WorkspaceTargetDisposition;
-    }): WorkspaceTargetActivationResult => {
-      const current = commandsRef.current;
-      return current.onActivateWorkspaceTarget({
-        originPaneId: current.paneId,
-        target: input.target,
-        disposition: input.disposition,
-        modality: consumeNavigationModality(),
-      });
-    },
-    [consumeNavigationModality],
-  );
-  const setPaneLabel = useCallback((label: string | null) => {
-    const current = commandsRef.current;
-    current.onSetPaneLabel({
-      paneId: current.paneId,
-      routeKey: current.routeKey,
-      label,
-    });
-  }, []);
-  const setPaneLayout = useCallback(
-    (layout: PaneRuntimeLayout | null) => {
-      onSetPaneLayout({
-        paneId,
-        routeKey,
-        layout,
-      });
-    },
-    [onSetPaneLayout, paneId, routeKey],
-  );
-  const requestSecondarySurface = useCallback(
-    (
-      surfaceId: WorkspaceSecondarySurfaceId,
-      options?: PaneSecondarySurfaceRequestOptions,
-    ) => {
-      const current = commandsRef.current;
-      current.onRequestSecondarySurface(
-        current.paneId,
-        surfaceId,
-        options?.returnFocusTo,
-      );
-    },
-    [],
-  );
-  const closeSecondaryPane = useCallback((options?: { focusAfterClose?: HTMLElement | null }) => {
-    const current = commandsRef.current;
-    if (current.secondaryPaneId) {
-      current.onCloseSecondaryPane(current.secondaryPaneId, options?.focusAfterClose);
-    }
-  }, []);
-  const requestTransientSecondarySurface = useCallback(
-    (
-      surfaceId: PaneTransientSecondarySurfaceId,
-      options?: PaneSecondarySurfaceRequestOptions,
-    ) => {
-      const current = commandsRef.current;
-      current.onRequestTransientSecondarySurface(
-        current.paneId,
-        current.routeKey,
-        surfaceId,
-        options?.returnFocusTo,
-      );
-    },
-    [],
-  );
-  const closeTransientSecondarySurface = useCallback(() => {
-    const current = commandsRef.current;
-    current.onCloseTransientSecondarySurface(
-      current.paneId,
-      current.routeKey,
-    );
-  }, []);
-  const previewTransientSecondaryResult = useCallback(() => {
-    const current = commandsRef.current;
-    current.onPreviewTransientSecondaryResult(
-      current.paneId,
-      current.routeKey,
-    );
-  }, []);
-  const acknowledgePaneEntryDelivery = useCallback(
-    (delivery: PaneEntryDelivery) => {
-      const current = commandsRef.current;
-      current.onAcknowledgePaneEntryDelivery(delivery);
-    },
-    [],
-  );
-  const setPaneAliases = useCallback(
-    (aliases: readonly string[]) => {
-      const current = commandsRef.current;
-      current.onSetPaneAliases({
-        paneId: current.paneId,
-        visitId,
-        aliases,
-      });
-    },
-    [visitId],
-  );
+      push: (target, options) => go(target, false, options),
+      replace: (target, options) => go(target, true, options),
+      back: () => now().store.goBackPane(pane.id),
+      forward: () => now().store.goForwardPane(pane.id),
+    };
+    const routeKey = () => now().route.routeKey;
+    const commands: PaneRuntimeCommands = {
+      router,
+      activateTarget: (input) =>
+        now().store.activateWorkspaceTarget({ originPaneId: pane.id, ...input }),
+      setPaneLabel: (label) =>
+        now().store.publishPaneLabel(pane.id, routeKey(), label),
+      setPaneDailyPage: (page) =>
+        now().store.publishPaneDailyPage(pane.id, routeKey(), page),
+      acknowledgePaneEntryDelivery: (delivery) =>
+        now().store.acknowledgePaneEntryDelivery(delivery),
+      setPaneLayout: (layout) => now().host.setPaneLayout(layout),
+      requestSecondarySurface: (surfaceId, options) =>
+        now().host.requestSecondarySurface(surfaceId, options),
+      closeSecondaryPane: (options) => now().host.closeSecondaryPane(options),
+      requestTransientSecondarySurface: (surfaceId, options) =>
+        now().host.requestTransientSecondarySurface(surfaceId, options),
+      closeTransientSecondarySurface: () =>
+        now().host.closeTransientSecondarySurface(),
+      previewTransientSecondaryResult: () =>
+        now().host.previewTransientSecondaryResult(),
+    };
+    return commands;
+  }, [pane.id]);
+
+  const transientId = props.transientSecondarySurface?.id ?? null;
+  const transientExpanded = props.transientSecondarySurface?.expanded ?? false;
+  const hash = url?.hash ?? "";
   const value = useMemo<PaneRuntimeContextValue>(
     () => ({
-      paneId,
+      ...commands,
+      paneId: pane.id,
       visitId,
       href,
-      pathname: parsed.pathname,
-      routeId,
-      routeKey,
-      resourceItem,
-      resourceRef,
-      resourceKey,
-      resourceStatus: effectiveResourceStatus,
-      secondaryPane: runtimeSecondaryPane,
-      paneEntryDelivery,
-      transientSecondarySurface: runtimeTransientSecondarySurface,
-      pathParams,
-      searchParams: parsed.searchParams,
-      hash: parsed.hash,
-      router,
-      activateTarget,
-      setPaneLabel,
-      setPaneLayout,
-      requestSecondarySurface,
-      closeSecondaryPane,
-      requestTransientSecondarySurface,
-      closeTransientSecondarySurface,
-      previewTransientSecondaryResult,
-      acknowledgePaneEntryDelivery,
-      setPaneAliases,
+      pathname: route.pathname,
+      routeId: route.id,
+      routeKey: route.routeKey,
+      pathParams: route.params,
+      searchParams,
+      hash,
+      resourceRef:
+        route.locator?.kind === "resource_ref" ? route.locator.ref : null,
+      secondaryPane,
+      transientSecondarySurface: transientId
+        ? { id: transientId, expanded: transientExpanded }
+        : null,
+      paneEntryDelivery: delivery,
     }),
     [
-      href,
-      router,
-      activateTarget,
-      setPaneLabel,
-      setPaneLayout,
-      requestSecondarySurface,
-      closeSecondaryPane,
-      acknowledgePaneEntryDelivery,
-      setPaneAliases,
-      paneId,
+      commands,
+      pane.id,
       visitId,
-      parsed.pathname,
-      parsed.searchParams,
-      parsed.hash,
-      pathParams,
-      resourceItem,
-      resourceRef,
-      resourceKey,
-      effectiveResourceStatus,
-      runtimeSecondaryPane,
-      paneEntryDelivery,
-      runtimeTransientSecondarySurface,
-      routeKey,
-      routeId,
-      requestTransientSecondarySurface,
-      closeTransientSecondarySurface,
-      previewTransientSecondaryResult,
+      href,
+      route,
+      searchParams,
+      hash,
+      secondaryPane,
+      transientId,
+      transientExpanded,
+      delivery,
     ],
   );
-
   return (
-    <PaneReturnVisitScope visitId={visitId} routeKey={routeKey}>
-      <PaneActivityContext.Provider value={isActive}>
-        <PaneRuntimeContext.Provider value={value}>
-          <PaneRouterNavigationContext.Provider value={navigationState}>
-            <PaneNavigationModalityContext.Provider
-              value={recordNavigationModality}
-            >
-              {children}
-            </PaneNavigationModalityContext.Provider>
-          </PaneRouterNavigationContext.Provider>
-        </PaneRuntimeContext.Provider>
-      </PaneActivityContext.Provider>
+    <PaneReturnVisitScope paneId={pane.id} visitId={visitId} routeKey={route.routeKey}>
+      <ActiveContext value={props.isActive}>
+        <RuntimeContext value={value}>{props.children}</RuntimeContext>
+      </ActiveContext>
     </PaneReturnVisitScope>
   );
 }
 
 export function usePaneRuntime(): PaneRuntimeContextValue | null {
-  return useContext(PaneRuntimeContext);
+  return useContext(RuntimeContext);
 }
 
-/** Workspace-host pane activity for behavior that changes with activation. */
-export function usePaneIsActive(): boolean {
-  const isActive = useContext(PaneActivityContext);
-  if (isActive === null) {
-    throw new Error("usePaneIsActive must be used inside PaneRuntimeProvider");
-  }
-  return isActive;
-}
-
-/** Visibility differs from focus; minimized panes remain mounted in the host. */
-export function usePaneIsVisible(): boolean {
-  const runtime = requirePaneRuntime(usePaneRuntime(), "usePaneIsVisible");
-  const { state } = useWorkspaceStore();
-  return state.primaryPanesById[runtime.paneId]?.visibility === "visible";
-}
-
-/**
- * Converts an optional ambient pane runtime into the hard owner contract used
- * by surfaces that cannot perform their requested action outside a pane.
- */
+/** The runtime, for surfaces that cannot act outside a pane. */
 export function requirePaneRuntime(
   runtime: PaneRuntimeContextValue | null,
   owner: string,
 ): PaneRuntimeContextValue {
-  if (!runtime) {
-    throw new Error(`${owner} requires a pane runtime`);
-  }
+  if (!runtime) throw new Error(`${owner} requires a pane runtime`);
   return runtime;
 }
 
+export function usePaneIsActive(): boolean {
+  const active = useContext(ActiveContext);
+  if (active === null) throw new Error("usePaneIsActive requires a pane runtime");
+  return active;
+}
+
+/** Minimized panes stay mounted; this is whether the pane is on screen. */
+export function usePaneIsVisible(): boolean {
+  const { paneId } = requirePaneRuntime(usePaneRuntime(), "usePaneIsVisible");
+  const { state } = useWorkspaceStore();
+  return state.panes.find((p) => p.id === paneId)?.visibility === "visible";
+}
+
 export function usePaneRouter(): PaneScopedRouter {
-  const paneRuntime = usePaneRuntime();
-  const navigationState = useContext(PaneRouterNavigationContext);
-  if (!paneRuntime || !navigationState) {
-    throw new Error("usePaneRouter must be used inside PaneRuntimeProvider");
-  }
-  return paneRuntime.router;
+  return requirePaneRuntime(usePaneRuntime(), "usePaneRouter").router;
 }
 
-export function useRecordPaneNavigationModality(): (
-  modality: Exclude<PaneNavigationModality, "Programmatic">,
-) => void {
-  const record = useContext(PaneNavigationModalityContext);
-  if (!record) {
-    throw new Error(
-      "useRecordPaneNavigationModality must be used inside PaneRuntimeProvider",
-    );
-  }
-  return record;
-}
-
+/** Stable while the pane's search string is. */
 export function usePaneSearchParams(): URLSearchParams {
-  const paneRuntime = usePaneRuntime();
-  const paneSearch = paneRuntime?.searchParams.toString() ?? "";
-  if (!paneRuntime) {
-    throw new Error(
-      "usePaneSearchParams must be used inside PaneRuntimeProvider",
-    );
-  }
-  return useMemo(() => new URLSearchParams(paneSearch), [paneSearch]);
+  return requirePaneRuntime(usePaneRuntime(), "usePaneSearchParams").searchParams;
 }
 
-/** The pane-local URL hash string (including the leading `#`, or `""`). The one
- *  sanctioned read of a pane's hash — components never touch ambient
- *  `window.location`. */
 export function usePaneHash(): string {
-  const paneRuntime = usePaneRuntime();
-  if (!paneRuntime) {
-    throw new Error("usePaneHash must be used inside PaneRuntimeProvider");
-  }
-  return paneRuntime.hash;
+  return requirePaneRuntime(usePaneRuntime(), "usePaneHash").hash;
 }
 
-export function usePaneParam(paramName: string): string | null {
-  const paneRuntime = usePaneRuntime();
-  if (!paneRuntime) {
-    throw new Error("usePaneParam must be used inside PaneRuntimeProvider");
-  }
-  return typeof paneRuntime.pathParams[paramName] === "string"
-    ? paneRuntime.pathParams[paramName]
-    : null;
+export function usePaneParam(name: string): string | null {
+  const runtime = requirePaneRuntime(usePaneRuntime(), "usePaneParam");
+  return runtime.pathParams[name] ?? null;
 }
 
+/** The pane's title; it commits with the header, before paint. */
 export function useSetPaneLabel(label: string | null | undefined): void {
-  const paneRuntime = usePaneRuntime();
-  const normalizedLabel = normalizePaneLabel(label);
-  const lastPublishedLabelRef = useRef<{
-    paneId: string;
-    routeKey: string;
-    label: string | null;
-  } | null>(null);
-  const paneId = paneRuntime?.paneId ?? null;
-  const routeKey = paneRuntime?.routeKey ?? null;
-  const setPaneLabel = paneRuntime?.setPaneLabel;
-
-  // The label is the pane's canonical title, so it and the header publication
-  // are one UI contract and must commit in the same phase. A passive effect
-  // here would paint one frame of the route placeholder beside an already-ready
-  // header — a confident wrong identity.
+  const runtime = usePaneRuntime();
+  const setPaneLabel = runtime?.setPaneLabel;
+  const routeKey = runtime?.routeKey;
   useLayoutEffect(() => {
-    if (!paneId || !routeKey || !setPaneLabel) {
-      return;
-    }
-    const lastPublished = lastPublishedLabelRef.current;
-    if (
-      lastPublished &&
-      lastPublished.paneId === paneId &&
-      lastPublished.routeKey === routeKey &&
-      lastPublished.label === normalizedLabel
-    ) {
-      return;
-    }
-    setPaneLabel(normalizedLabel);
-    lastPublishedLabelRef.current = {
-      paneId,
-      routeKey,
-      label: normalizedLabel,
-    };
-  }, [normalizedLabel, paneId, routeKey, setPaneLabel]);
+    if (routeKey) setPaneLabel?.(label ?? null);
+  }, [setPaneLabel, routeKey, label]);
 }
 
-export function useSetPaneAliases(aliases: readonly string[]): void {
-  const paneRuntime = usePaneRuntime();
-  const aliasKey = [...new Set(aliases)].sort().join("\u0000");
-  const setPaneAliases = paneRuntime?.setPaneAliases;
-  useEffect(() => {
-    if (!setPaneAliases) {
-      return;
-    }
-    setPaneAliases(aliasKey.length === 0 ? [] : aliasKey.split("\u0000"));
-  }, [aliasKey, setPaneAliases]);
+/** A daily page's identity, so Today finds this pane under either href (D7). */
+export function usePaneDailyPage(page: PaneDailyPage | null): void {
+  const runtime = requirePaneRuntime(usePaneRuntime(), "usePaneDailyPage");
+  const { setPaneDailyPage, routeKey } = runtime;
+  const localDate = page?.localDate ?? null;
+  const pageId = page?.pageId ?? null;
+  useLayoutEffect(() => {
+    if (routeKey) setPaneDailyPage(localDate ? { localDate, pageId } : null);
+  }, [setPaneDailyPage, routeKey, localDate, pageId]);
 }
 
 export function usePaneEntryDelivery(): {
   delivery: PaneEntryDelivery | null;
   acknowledge: (delivery: PaneEntryDelivery) => void;
 } {
-  const paneRuntime = usePaneRuntime();
-  if (!paneRuntime) {
-    throw new Error(
-      "usePaneEntryDelivery must be used inside PaneRuntimeProvider",
-    );
-  }
+  const runtime = requirePaneRuntime(usePaneRuntime(), "usePaneEntryDelivery");
   return {
-    delivery: paneRuntime.paneEntryDelivery,
-    acknowledge: paneRuntime.acknowledgePaneEntryDelivery,
+    delivery: runtime.paneEntryDelivery,
+    acknowledge: runtime.acknowledgePaneEntryDelivery,
   };
 }

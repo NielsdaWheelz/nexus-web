@@ -1,28 +1,20 @@
-import { hasSamePaneRoute } from "@/lib/panes/paneIdentity";
+// Where a link lands: one pure planner over the open panes. The store
+// executes the plan; callers never choose or create panes themselves.
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
-import type { PaneNavigationModality } from "@/lib/workspace/paneReturnMemento";
+import { MAX_PANES, type WorkspaceState } from "@/lib/workspace/model";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
 export interface WorkspaceTarget {
   href: string;
   labelHint?: string;
   secondaryActivation?: WorkspaceSecondaryActivation;
-  aliases?: readonly string[];
 }
 
 export type WorkspaceTargetDisposition =
   | { kind: "Follow" }
   | { kind: "Fork" }
   | { kind: "Adopt" };
-
-export interface WorkspaceTargetActivationRequest {
-  originPaneId: string;
-  target: WorkspaceTarget;
-  disposition: WorkspaceTargetDisposition;
-  modality: PaneNavigationModality;
-  paneEntryActivation?: WorkspacePaneEntryActivation;
-}
 
 export interface WorkspacePaneEntry {
   kind: "AppendNote";
@@ -31,9 +23,15 @@ export interface WorkspacePaneEntry {
   initialText: string;
 }
 
-export interface WorkspacePaneEntryActivation {
-  activationId: string;
-  entry: WorkspacePaneEntry | null;
+export interface WorkspaceTargetActivationRequest {
+  originPaneId: string;
+  target: WorkspaceTarget;
+  disposition: WorkspaceTargetDisposition;
+  /** Daily Today/quick note: hand `entry` to the exact visit the target lands on. */
+  paneEntryActivation?: {
+    activationId: string;
+    entry: WorkspacePaneEntry | null;
+  };
 }
 
 export interface PaneEntryDelivery {
@@ -43,159 +41,74 @@ export interface PaneEntryDelivery {
   entry: WorkspacePaneEntry;
 }
 
+/** A daily page pane's identity, published by its body (under either href). */
+export interface PaneDailyPage {
+  localDate: string;
+  pageId: string | null;
+}
+
+type Landed =
+  | "Unchanged"
+  | "ActivatedExisting"
+  | "NavigatedOrigin"
+  | "NavigatedExisting"
+  | "CreatedPane";
 export type WorkspaceTargetActivationResult =
-  | {
-      kind:
-        | "Unchanged"
-        | "NavigatedOrigin"
-        | "ActivatedExisting"
-        | "NavigatedExisting"
-        | "CreatedPane";
-      paneId: string;
-    }
+  | { kind: Landed; paneId: string }
+  | { kind: "Rejected"; reason: "PaneLimitReached" };
+/** CreatedPane names the origin; the store mints the new pane after it. */
+export type WorkspaceTargetPlan =
+  | { kind: Landed; paneId: string; href: string }
   | { kind: "Rejected"; reason: "PaneLimitReached" };
 
-export type WorkspaceTargetActivationPlan =
-  | { kind: "Unchanged"; paneId: string }
-  | { kind: "NavigateOrigin"; paneId: string; href: string }
-  | { kind: "ActivateExisting"; paneId: string }
-  | { kind: "NavigateExisting"; paneId: string; href: string }
-  | { kind: "CreateAfterOrigin"; originPaneId: string; target: WorkspaceTarget }
-  | { kind: "Reject"; reason: "PaneLimitReached" };
-
-export interface WorkspaceTargetActivationPane {
-  paneId: string;
-  href: string;
-  minimized: boolean;
-  aliases?: readonly string[];
-}
-
-export interface WorkspaceTargetActivationPlannerInput {
-  originPaneId: string;
-  target: WorkspaceTarget;
-  disposition: WorkspaceTargetDisposition;
-  panes: readonly WorkspaceTargetActivationPane[];
-  maxPanes: number;
-}
-
-function requireSupportedTarget(target: WorkspaceTarget): WorkspaceTarget {
-  const href = normalizeWorkspaceHref(target.href);
-  if (!href || resolvePaneRouteModel(href).id === "unsupported") {
-    // justify-defect: this in-process capability accepts only targets already
-    // validated by its caller-side adapter or named workflow.
-    throw new Error(`Unsupported workspace target: ${target.href}`);
+/**
+ * An open pane matches on route plus query (never hash), or as the same daily
+ * page under its other href. Preference: origin, first visible, first. Fork
+ * always creates; without a match Follow navigates the origin and Adopt
+ * creates. Creation at the cap is rejected, never evicts.
+ */
+export function planWorkspaceTarget(
+  state: WorkspaceState,
+  dailyPages: ReadonlyMap<string, { routeKey: string; value: PaneDailyPage }>,
+  request: WorkspaceTargetActivationRequest,
+): WorkspaceTargetPlan {
+  const href = normalizeWorkspaceHref(request.target.href);
+  const origin = state.panes.find((pane) => pane.id === request.originPaneId);
+  if (!href || !origin) {
+    // justify-defect: callers pass same-origin hrefs from a live pane.
+    throw new Error(`Invalid workspace target: ${request.target.href}`);
   }
-  return { ...target, href };
-}
-
-function canonicalRouteAliases(
-  route: ReturnType<typeof resolvePaneRouteModel>,
-): readonly string[] {
-  if (route.id === "dailyDate" && route.params.localDate) {
-    return [`daily:${route.params.localDate}`];
-  }
-  if (route.id === "page" && route.params.pageId) {
-    return [`page:${route.params.pageId}`];
-  }
-  return [];
-}
-
-function selectMatchingPane(
-  panes: readonly WorkspaceTargetActivationPane[],
-  originPaneId: string,
-  target: WorkspaceTarget,
-): { pane: WorkspaceTargetActivationPane; kind: "Route" | "Alias" } | null {
-  const targetRoute = resolvePaneRouteModel(target.href);
-  const targetAliases = new Set([
-    ...canonicalRouteAliases(targetRoute),
-    ...(target.aliases ?? []),
-  ]);
-  const matches = panes
-    .map((pane) => {
-      const paneRoute = resolvePaneRouteModel(pane.href);
-      const isAlias =
-        paneRoute.id !== targetRoute.id &&
-        [...canonicalRouteAliases(paneRoute), ...(pane.aliases ?? [])].some(
-          (alias) => targetAliases.has(alias),
-        );
-      return {
-        pane,
-        kind: hasSamePaneRoute(pane.href, target.href)
-          ? ("Route" as const)
-          : isAlias
-            ? ("Alias" as const)
-            : null,
-      };
-    })
-    .filter(
-      (
-        match,
-      ): match is {
-        pane: WorkspaceTargetActivationPane;
-        kind: "Route" | "Alias";
-      } => match.kind !== null,
-    );
-  return (
-    matches.find((match) => match.pane.paneId === originPaneId) ??
-    matches.find((match) => !match.pane.minimized) ??
-    matches[0] ??
-    null
-  );
-}
-
-export function planWorkspaceTargetActivation(
-  input: WorkspaceTargetActivationPlannerInput,
-): WorkspaceTargetActivationPlan {
-  const target = requireSupportedTarget(input.target);
-  const origin = input.panes.find((pane) => pane.paneId === input.originPaneId);
-  if (!origin) {
-    // justify-defect: a pane runtime always binds an extant workspace pane.
-    throw new Error(`Unknown workspace origin pane: ${input.originPaneId}`);
-  }
-
-  const create = (): WorkspaceTargetActivationPlan =>
-    input.panes.length >= input.maxPanes
-      ? { kind: "Reject", reason: "PaneLimitReached" }
-      : {
-          kind: "CreateAfterOrigin",
-          originPaneId: input.originPaneId,
-          target,
-        };
-
-  const match = selectMatchingPane(input.panes, input.originPaneId, target);
-  const exactPane = match?.pane ?? null;
-
-  let noMatch: WorkspaceTargetActivationPlan;
-  switch (input.disposition.kind) {
-    case "Fork":
-      return create();
-    case "Follow":
-      noMatch = {
-        kind: "NavigateOrigin",
-        paneId: origin.paneId,
-        href: target.href,
-      };
-      break;
-    case "Adopt":
-      noMatch = create();
-      break;
-    default: {
-      const exhaustiveDisposition: never = input.disposition;
-      return exhaustiveDisposition;
-    }
-  }
-
-  if (!exactPane) {
-    return noMatch;
-  }
-  if (match?.kind === "Alias" || exactPane.href === target.href) {
-    return exactPane.paneId === origin.paneId
-      ? { kind: "Unchanged", paneId: exactPane.paneId }
-      : { kind: "ActivateExisting", paneId: exactPane.paneId };
-  }
-  return {
-    kind: "NavigateExisting",
-    paneId: exactPane.paneId,
-    href: target.href,
+  const target = resolvePaneRouteModel(href);
+  const sameDay = (paneId: string, route: { id: string; routeKey: string }) => {
+    const daily = dailyPages.get(paneId);
+    if (route.id === target.id || daily?.routeKey !== route.routeKey) return false;
+    return target.id === "dailyDate"
+      ? daily.value.localDate === target.params.localDate
+      : target.id === "page" && daily.value.pageId === target.params.pageId;
   };
+  const matches = state.panes.flatMap((pane) => {
+    const route = resolvePaneRouteModel(pane.currentVisit.href);
+    if (route.routeKey === target.routeKey) return [{ pane, exact: false }];
+    return sameDay(pane.id, route) ? [{ pane, exact: true }] : [];
+  });
+  const match =
+    matches.find((m) => m.pane === origin) ??
+    matches.find((m) => m.pane.visibility === "visible") ??
+    matches[0];
+  const create: WorkspaceTargetPlan =
+    state.panes.length >= MAX_PANES
+      ? { kind: "Rejected", reason: "PaneLimitReached" }
+      : { kind: "CreatedPane", paneId: origin.id, href };
+  if (request.disposition.kind === "Fork") return create;
+  if (!match) {
+    return request.disposition.kind === "Follow"
+      ? { kind: "NavigatedOrigin", paneId: origin.id, href }
+      : create;
+  }
+  const { pane } = match;
+  if (!match.exact && pane.currentVisit.href !== href) {
+    return { kind: "NavigatedExisting", paneId: pane.id, href };
+  }
+  const kind = pane === origin ? "Unchanged" : "ActivatedExisting";
+  return { kind, paneId: pane.id, href };
 }

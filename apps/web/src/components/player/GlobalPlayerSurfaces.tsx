@@ -355,7 +355,6 @@ export default function GlobalPlayerSurfaces() {
         labelHint: source.descriptor.title,
       },
       disposition: { kind: "Follow" },
-      modality: "Programmatic",
     });
   };
   const identityButton = (

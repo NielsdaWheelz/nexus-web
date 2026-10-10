@@ -31,3 +31,12 @@ workspace defect; repair it where the pane loads its media.
 
 acceptance: the reproduction renders the other panes and a not-found pane for
 X; the offline harness J7 passes repeatedly.
+
+2026-10-09 workspace reauthoring (cleanup/workspace-reauthor): the pane
+resource-resolution registry, which ran in `WorkspaceHost` outside every pane
+boundary and threw same-system failures there, is deleted; a pane's resource is
+now its route's own locator and nothing resolves open panes' locators. the
+desktop harness journey (J11.deleted-media-in-saved-workspace: open media X,
+delete it through the api, reload) passes, but it passed before the rewrite
+too, so it does not reproduce the android failure. still needed: the android
+webview reproduction above, now without the registry.

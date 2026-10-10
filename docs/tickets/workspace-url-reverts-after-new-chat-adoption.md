@@ -19,3 +19,14 @@ resolved when: qualify the historical overwriting call or an equivalent failing 
 2026-10-04 chat rewrite: new-chat adoption still calls the pane router's
 `replace` (`apps/web/src/components/chat/Conversation.tsx`, `onAccepted`), now
 with `{ activate: false }`. the race is not claimed fixed.
+
+2026-10-09 workspace reauthoring (cleanup/workspace-reauthor): the store now
+projects the address through next's patched `history.replaceState(null, "",
+href)`, so next's router url (`canonicalUrl`) follows every projection,
+including the first one after hydration (re-projected on the next frame once
+next has installed its patch). the source-supported hypothesis above — next
+re-asserting a stale canonical url on a later app-router commit — is therefore
+removed by construction, and harness journeys L2.address-survives-server-action
+and L2.cold-resume-address-survives-server-action (server actions after an
+in-pane navigation and after a cold resume) pass. the new-chat ordering itself
+was not replayed (the harness runs no model).

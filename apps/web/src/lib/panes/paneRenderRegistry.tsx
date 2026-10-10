@@ -1,19 +1,14 @@
 "use client";
 
 import { lazy, Suspense, type ComponentType, type ReactNode } from "react";
-import {
-  PANE_ROUTE_MODELS,
-  type PaneRouteId,
-} from "@/lib/panes/paneRouteModel";
-import { usePaneResolvedBodyReady } from "@/lib/workspace/paneReturnMemento";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
 
-type PaneLoader = () => Promise<{ default: ComponentType }>;
+type Module = { default: ComponentType };
 
-// pane bodies are lazy entrypoints for rendering and explicit preloads.
-// loader callbacks defer body imports until a pane is requested.
-// rendering and preloading share each module's registry promise.
-const PANE_LOADERS: Record<PaneRouteId, PaneLoader> = {
+// Pane bodies are lazy chunks; the server and the always-loaded shell never
+// import them. Two bodies serve two routes each: chats, and pages/daily pages.
+const LOADERS: Record<PaneRouteId, () => Promise<Module>> = {
   lectern: () => import("@/app/(authenticated)/lectern/LecternPaneBody"),
   libraries: () => import("@/app/(authenticated)/libraries/LibrariesPaneBody"),
   library: () => import("@/app/(authenticated)/libraries/[id]/LibraryPaneBody"),
@@ -23,11 +18,13 @@ const PANE_LOADERS: Record<PaneRouteId, PaneLoader> = {
   media: () => import("@/app/(authenticated)/media/[id]/MediaPaneBody"),
   artifact: () =>
     import("@/app/(authenticated)/artifacts/[artifactRef]/ArtifactPaneBody"),
-  conversations: () => import("@/app/(authenticated)/conversations/ConversationsPaneBody"),
+  conversations: () =>
+    import("@/app/(authenticated)/conversations/ConversationsPaneBody"),
   conversationNew: () => import("@/components/chat/Conversation"),
   conversation: () => import("@/components/chat/Conversation"),
   podcasts: () => import("@/app/(authenticated)/podcasts/PodcastsPaneBody"),
-  podcastDetail: () => import("@/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody"),
+  podcastDetail: () =>
+    import("@/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody"),
   search: () => import("@/app/(authenticated)/search/SearchPaneBody"),
   author: () => import("@/app/(authenticated)/authors/[handle]/AuthorPaneBody"),
   notes: () => import("@/app/(authenticated)/notes/NotesPaneBody"),
@@ -37,12 +34,18 @@ const PANE_LOADERS: Record<PaneRouteId, PaneLoader> = {
   imports: () => import("@/app/(authenticated)/imports/ImportsPaneBody"),
   stats: () => import("@/app/(authenticated)/stats/StatsPaneBody"),
   settings: () => import("@/app/(authenticated)/settings/SettingsPaneBody"),
-  settingsAccount: () => import("@/app/(authenticated)/settings/account/SettingsAccountPaneBody"),
-  settingsReader: () => import("@/app/(authenticated)/settings/reader/SettingsReaderPaneBody"),
+  settingsAccount: () =>
+    import("@/app/(authenticated)/settings/account/SettingsAccountPaneBody"),
+  settingsReader: () =>
+    import("@/app/(authenticated)/settings/reader/SettingsReaderPaneBody"),
   settingsAppearance: () =>
-    import("@/app/(authenticated)/settings/appearance/SettingsAppearancePaneBody"),
+    import(
+      "@/app/(authenticated)/settings/appearance/SettingsAppearancePaneBody"
+    ),
   settingsIdentities: () =>
-    import("@/app/(authenticated)/settings/identities/SettingsIdentitiesPaneBody"),
+    import(
+      "@/app/(authenticated)/settings/identities/SettingsIdentitiesPaneBody"
+    ),
   settingsKeybindings: () =>
     import("@/app/(authenticated)/settings/keybindings/KeybindingsPaneBody"),
   atlas: () => import("@/app/(authenticated)/atlas/GrandAtlasPaneBody"),
@@ -50,78 +53,41 @@ const PANE_LOADERS: Record<PaneRouteId, PaneLoader> = {
   oracleReading: () =>
     import("@/app/(authenticated)/oracle/[readingId]/OracleReadingPaneBody"),
 };
-const modulePromises = new Map<PaneRouteId, Promise<{ default: ComponentType }>>();
 
-/**
- * Owns one in-flight/resolved module promise per pane. Intent preloads and
- * React.lazy must adopt the exact same promise; relying on a bundler to dedupe
- * separate import() calls leaves Suspense ownership runtime-dependent.
- *
- * A rejected promise is evicted after, and only after, that exact attempt
- * settles so a later navigation can retry without an older failure deleting a
- * newer attempt.
- */
-function loadPaneModule(id: PaneRouteId): Promise<{ default: ComponentType }> {
-  const existing = modulePromises.get(id);
-  if (existing) return existing;
+// One import and one lazy body per route, shared by render and preload. A
+// failed import forgets both, so "Retry pane" imports again: React.lazy
+// caches a rejection forever.
+const modules = new Map<PaneRouteId, Promise<Module>>();
+const bodies = new Map<PaneRouteId, ComponentType>();
 
-  let promise: Promise<{ default: ComponentType }>;
-  try {
-    promise = PANE_LOADERS[id]();
-  } catch (error) {
-    promise = Promise.reject(error);
+function load(id: PaneRouteId): Promise<Module> {
+  let loaded = modules.get(id);
+  if (!loaded) {
+    loaded = LOADERS[id]().catch((error: unknown) => {
+      modules.delete(id);
+      bodies.delete(id);
+      throw error;
+    });
+    modules.set(id, loaded);
   }
-  modulePromises.set(id, promise);
-  void promise.catch(() => {
-    if (modulePromises.get(id) === promise) {
-      modulePromises.delete(id);
-    }
-  });
-  return promise;
+  return loaded;
 }
 
-const PANE_BODIES = (Object.keys(PANE_LOADERS) as PaneRouteId[]).reduce(
-  (bodies, id) => {
-    bodies[id] = lazy(() => loadPaneModule(id));
-    return bodies;
-  },
-  {} as Record<PaneRouteId, ComponentType>,
-);
-const SHELL_SCROLL_ROUTE_IDS = new Set<PaneRouteId>(
-  PANE_ROUTE_MODELS.filter(
-    (route) => route.returnMemento.kind === "ShellScroll",
-  ).map((route) => route.id),
-);
-
-export function ResolvedPaneBodyMarker({ children }: { children: ReactNode }) {
-  usePaneResolvedBodyReady();
-  return children;
+export function preloadPane(id: PaneRouteId): Promise<void> {
+  return load(id).then(() => undefined);
 }
 
 export function renderPane(id: PaneRouteId): ReactNode {
-  const Body = PANE_BODIES[id];
+  let Body = bodies.get(id);
+  if (!Body) {
+    Body = lazy(() => load(id));
+    bodies.set(id, Body);
+  }
   return (
     <Suspense
       fallback={<PaneLoadingState label="Loading pane…" announcement="Polite" />}
     >
-      {SHELL_SCROLL_ROUTE_IDS.has(id) ? (
-        <ResolvedPaneBodyMarker>
-          <Body />
-        </ResolvedPaneBodyMarker>
-      ) : (
-        <Body />
-      )}
+      <Body />
     </Suspense>
   );
-}
-
-// Start fetching the initial pane's chunk at shell mount, via the Next runtime's
-// own (CSP-trusted) module loader, so the download overlaps hydration instead of
-// waiting for the Suspense boundary to commit (D-7). We deliberately do NOT
-// server-emit a <link rel="modulepreload">: under strict-dynamic nonce-CSP that
-// preload is script-src-governed and the chunk URL isn't known server-side — the
-// same constraint that bans next/dynamic (D-3). The owned module registry gives
-// lazy() the exact promise started here and evicts rejected attempts for retry.
-export function preloadPane(id: PaneRouteId): Promise<void> {
-  return loadPaneModule(id).then(() => undefined);
 }

@@ -119,7 +119,7 @@ export default function LibraryPaneBody() {
   const isPaneActive = usePaneIsActive();
   const paneId = paneRuntime?.paneId ?? `library-${id}`;
   const listRegionRef = useRef<HTMLDivElement | null>(null);
-  const owner = useLibraryEntries({ id, active: isPaneActive, regionRef: listRegionRef });
+  const owner = useLibraryEntries({ id, active: isPaneActive });
   const {
     committed, view: decodedView, state, exhaustion: entryExhaustion,
     reorderBusy, setView, adoptLibrary, revalidate: revalidateLibraryEntries,

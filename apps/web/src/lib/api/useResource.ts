@@ -37,8 +37,8 @@ type LoadResourceArgs<T> = {
 };
 
 // The one async-resource hook: a keyed GET-or-custom-load with 3× retry/backoff
-// and abort. When the server seed or a client prefetch put the initial cacheKey
-// into the resource cache, it consumes that value once and skips the first fetch.
+// and abort. When the server seeded the initial cacheKey into the resource cache,
+// it consumes that value once and skips the first fetch.
 export function useResource<T, P>(
   args: DescriptorResourceArgs<T, P>,
 ): AsyncResource<T>;
@@ -80,10 +80,8 @@ export function useResource<T, P>(
 
   const cache = useContext(ResourceCacheContext);
   const handleUnauthenticatedApiError = useUnauthenticatedApiHandler();
-  // Peek the seeded/prefetched entry for the initial cacheKey (read-only — safe in
-  // render). A ready entry (server seed or settled prefetch) paints synchronously and
-  // skips the first fetch; a pending entry (prefetch still in flight) is awaited in the
-  // load effect instead of starting a second fetch. consume() runs post-commit.
+  // Peek the seeded entry for the initial cacheKey (read-only — safe in render): it
+  // paints synchronously and skips the first fetch. consume() runs post-commit.
   const seededRef = useRef<{ key: string; entry: ResourceCacheEntry } | null>(null);
   if (seededRef.current === null && cacheKey !== null && cache !== null) {
     const entry = cache.peek(cacheKey);
@@ -99,7 +97,7 @@ export function useResource<T, P>(
     key: string | null;
     resource: AsyncResource<T>;
   }>(() => {
-    if (seeded !== null && seeded.entry.status === "ready") {
+    if (seeded !== null) {
       return {
         key: cacheKey,
         resource: { status: "ready", data: seeded.entry.data as T },
@@ -135,41 +133,6 @@ export function useResource<T, P>(
     }
     if (skipKeyRef.current === cacheKey) {
       skipKeyRef.current = null;
-      // A pending prefetch is in flight for this key: adopt its promise (no second
-      // fetch). On success → ready; on failure → re-run this effect to fetch fresh.
-      const seededEntry = seededRef.current;
-      if (seededEntry !== null && seededEntry.entry.status === "pending") {
-        // Adopt the in-flight prefetch's promise; do NOT abort its (cache-owned, possibly
-        // shared) controller on unmount — just ignore a late result. The cache's LRU owns
-        // cancellation; a background completion is harmless (the entry is already consumed).
-        const { promise } = seededEntry.entry;
-        let cancelled = false;
-        promise.then(
-          (data) => {
-            if (!cancelled) {
-              setResourceState({
-                key: cacheKey,
-                resource: { status: "ready", data: data as T },
-              });
-            }
-          },
-          (error) => {
-            // justify-ignore-error: a cancelled adoption or an aborted
-            // in-flight prefetch is framework cancellation, not a modelable
-            // failure; the fresh fetch below (or the owning consumer) reports.
-            if (cancelled || isAbortError(error)) return;
-            if (handleUnauthenticatedApiError(error)) return;
-            if (!isApiError(error) || isSameSystemApiDefect(error)) {
-              setDefect({ key: cacheKey, error });
-              return;
-            }
-            retry();
-          },
-        );
-        return () => {
-          cancelled = true;
-        };
-      }
       // A ready seed was already applied synchronously in the useState initializer.
       return;
     }

@@ -1,16 +1,10 @@
 import type { PaneWidthContract } from "@/lib/panes/paneRouteModel";
 import type { ReaderProfile } from "@/lib/reader/ReaderContext";
 
-export interface WorkspacePrimaryMetrics {
-  primaryMinWidthPx: number;
-  primaryDefaultWidthPx: number;
-}
-
-// First-paint primary-column width estimate: column_width_ch glyphs at ~0.5em advance plus
-// --space-4 (1rem = 16px) inline padding on both sides. Shared by the client probe seed
-// (useWorkspacePrimaryMetrics) and the server data root, so server-restored and client
-// first-paint metrics match — the restored widths need no settle. The client probe refines
-// this to the measured width before paint.
+// First-paint reader-column width estimate: column_width_ch glyphs at ~0.5em advance plus
+// --space-4 (1rem = 16px) inline padding on both sides. It seeds the shell's column probe
+// (AuthenticatedShell), so the server render and the first client paint agree; the probe
+// refines it to the measured width before paint.
 export function estimatePrimaryWidthPx(profile: ReaderProfile): number {
   return Math.ceil(
     profile.column_width_ch * profile.font_size_px * 0.5 + 2 * 16,
@@ -71,7 +65,7 @@ export function normalizePaneRuntimeLayout(
 
 export function resolveEffectivePaneSizing(input: {
   storedWidthPx: number;
-  workspacePrimaryMetrics: WorkspacePrimaryMetrics;
+  columnWidthPx: number;
   routeWidth: PaneWidthContract;
   runtimeLayout: PaneRuntimeLayout;
   runtimeLayoutResolved: boolean;
@@ -81,9 +75,7 @@ export function resolveEffectivePaneSizing(input: {
   const runtimeLayout = input.isMobile
     ? DEFAULT_PANE_RUNTIME_LAYOUT
     : normalizePaneRuntimeLayout(input.runtimeLayout);
-  const workspaceMinWidthPx = Math.ceil(
-    input.workspacePrimaryMetrics.primaryMinWidthPx,
-  );
+  const workspaceMinWidthPx = Math.ceil(input.columnWidthPx);
   const intrinsicWidthPx =
     !input.isMobile &&
     input.routeWidth.allowsIntrinsicPrimaryWidth &&
@@ -97,7 +89,7 @@ export function resolveEffectivePaneSizing(input: {
   );
   const storedWidthPx = Number.isFinite(input.storedWidthPx)
     ? Math.round(input.storedWidthPx)
-    : Math.ceil(input.workspacePrimaryMetrics.primaryDefaultWidthPx);
+    : workspaceMinWidthPx;
   const primaryWidthPx = Math.min(
     primaryMaxWidthPx,
     Math.max(primaryMinWidthPx, storedWidthPx),

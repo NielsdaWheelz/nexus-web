@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Query
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.config import Settings, get_settings
 from nexus.db.session import DbSession
-from nexus.responses import Data, success_response
+from nexus.responses import Data
 from nexus.schemas.nexus_history import (
     NexusHistoryOut,
     NexusSelectionRecordOut,
@@ -19,10 +19,9 @@ from nexus.schemas.nexus_history import (
 from nexus.schemas.reader import ReaderProfileOut, ReaderProfilePatch
 from nexus.schemas.user import UpdateProfileRequest, UserProfileOut
 from nexus.schemas.workspace_session import (
-    WORKSPACE_SESSION_DEVICE_ID_MAX_LENGTH,
-    WORKSPACE_SESSION_DEVICE_ID_MIN_LENGTH,
-    WorkspaceSessionOut,
-    WorkspaceSessionPutRequest,
+    DEVICE_ID_MAX_LENGTH,
+    WorkspaceSessionsOut,
+    WorkspaceState,
 )
 from nexus.services import nexus_history as nexus_history_service
 from nexus.services import reader_profile as reader_profile_service
@@ -30,11 +29,6 @@ from nexus.services import users as users_service
 from nexus.services import workspace_sessions as workspace_sessions_service
 
 router = APIRouter(tags=["user"])
-
-
-def _workspace_session_payload(session: WorkspaceSessionOut | None) -> dict | None:
-    """Serialize a workspace session projection for the API, or None when absent."""
-    return session.model_dump(mode="json") if session is not None else None
 
 
 @router.get("/me")
@@ -119,39 +113,25 @@ def post_nexus_selection(
     )
 
 
+DeviceId = Annotated[str, Query(min_length=1, max_length=DEVICE_ID_MAX_LENGTH)]
+
+
 @router.get("/me/workspace-session")
 def get_workspace_session(
-    device_id: Annotated[
-        str,
-        Query(
-            min_length=WORKSPACE_SESSION_DEVICE_ID_MIN_LENGTH,
-            max_length=WORKSPACE_SESSION_DEVICE_ID_MAX_LENGTH,
-        ),
-    ],
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: DbSession,
-) -> dict:
-    """Get this device's own workspace session and the most recent one elsewhere."""
-    own = workspace_sessions_service.get_workspace_session(db, viewer.user_id, device_id)
-    other = workspace_sessions_service.get_most_recent_session_elsewhere(
-        db, viewer.user_id, device_id
-    )
-    return success_response(
-        {
-            "own": _workspace_session_payload(own),
-            "most_recent_elsewhere": _workspace_session_payload(other),
-        }
+    device_id: DeviceId, viewer: Annotated[Viewer, Depends(get_viewer)], db: DbSession
+) -> Data[WorkspaceSessionsOut]:
+    """This device's own workspace session and the newest one saved elsewhere."""
+    return Data(
+        data=workspace_sessions_service.get_workspace_sessions(db, viewer.user_id, device_id)
     )
 
 
-@router.put("/me/workspace-session")
+@router.put("/me/workspace-session", status_code=204)
 def put_workspace_session(
-    body: WorkspaceSessionPutRequest,
+    device_id: DeviceId,
+    state: WorkspaceState,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: DbSession,
-) -> dict:
-    """Upsert this device's workspace session (last-write-wins)."""
-    result = workspace_sessions_service.upsert_workspace_session(
-        db, viewer.user_id, body.device_id, body.state
-    )
-    return success_response(_workspace_session_payload(result))
+) -> None:
+    """Replace this device's workspace session (last write wins)."""
+    workspace_sessions_service.put_workspace_session(db, viewer.user_id, device_id, state)

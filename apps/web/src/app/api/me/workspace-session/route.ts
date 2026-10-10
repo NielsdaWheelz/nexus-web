@@ -2,78 +2,27 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { proxyToFastAPI } from "@/lib/api/proxy";
 import { readDeviceId } from "@/lib/auth/deviceCookie";
-import {
-  InvalidWorkspaceStateError,
-  parsePersistedWorkspaceState,
-  type WorkspaceState,
-} from "@/lib/workspace/schema";
-import { isRecord } from "@/lib/validation";
 
 export const runtime = "nodejs";
 
-// The device id is a server-owned httpOnly cookie (lib/auth/deviceCookie), never trusted from
-// the client: PUT injects it into the body, and the boundary accepts only the exact
-// client-owned `{ state }` envelope, so a client-supplied device id is rejected rather than
-// ignored. Restore happens on the server (bootstrap.server.ts), which calls FastAPI directly.
-
-// The cookie is minted in middleware on the authenticated page load that necessarily precedes
-// any workspace-session call, so its absence on an authenticated request here is a broken
-// invariant, not a recoverable client error.
-function deviceCookieMissingDefect(): NextResponse {
-  // justify-defect: server-minted device identity is absent on an authenticated request.
-  console.error("workspace_session_device_cookie_missing");
-  return NextResponse.json(
-    { error: { code: "E_INTERNAL", message: "Device cookie missing" } },
-    { status: 500 }
-  );
-}
-
-function invalidWorkspaceState(message: string): NextResponse {
-  return NextResponse.json(
-    { error: { code: "E_INVALID_WORKSPACE_STATE", message } },
-    { status: 400 },
-  );
-}
-
-async function readWorkspaceState(req: Request): Promise<WorkspaceState> {
-  let payload: unknown;
-  try {
-    payload = await req.json();
-  } catch {
-    throw new InvalidWorkspaceStateError("Request body must be valid JSON");
-  }
-  if (
-    !isRecord(payload) ||
-    Object.keys(payload).length !== 1 ||
-    !Object.hasOwn(payload, "state")
-  ) {
-    throw new InvalidWorkspaceStateError(
-      "Request body must contain exactly [state]",
-    );
-  }
-  return parsePersistedWorkspaceState(payload.state, {
-    baseOrigin: new URL(req.url).origin,
-  });
-}
-
+// Saves this device's workspace. The api validates the body; the device is
+// the server-owned httpOnly cookie, put in the query so a client cannot name one.
 export async function PUT(req: Request) {
   const deviceId = readDeviceId(await cookies());
   if (!deviceId) {
-    return deviceCookieMissingDefect();
+    // justify-defect: middleware mints the cookie on the page load that precedes any save.
+    console.error("workspace_session_device_cookie_missing");
+    return NextResponse.json(
+      { error: { code: "E_INTERNAL", message: "Device cookie missing" } },
+      { status: 500 },
+    );
   }
-  let state: WorkspaceState;
-  try {
-    state = await readWorkspaceState(req);
-  } catch (error) {
-    if (error instanceof InvalidWorkspaceStateError) {
-      return invalidWorkspaceState(error.message);
-    }
-    throw error;
-  }
-  const forwarded = new Request(req.url, {
+  const url = new URL(req.url);
+  url.search = new URLSearchParams({ device_id: deviceId }).toString();
+  const forwarded = new Request(url, {
     method: "PUT",
     headers: req.headers,
-    body: JSON.stringify({ state, device_id: deviceId }),
+    body: await req.arrayBuffer(),
   });
   return proxyToFastAPI(forwarded, "/me/workspace-session");
 }

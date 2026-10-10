@@ -1,3 +1,7 @@
+// One loader per pane whose first-paint data is fetched by route params alone:
+// the server bootstrap seeds it and the pane's client mount loads it, through
+// the same code with a different transport (`ResourceFetcher`). Panes keyed by
+// mutable ui state (filters, search, editor scope) or streamed are absent.
 import type { ApiJson } from "@/lib/api/wire";
 import {
   AUTHOR_WORKS_LIMIT,
@@ -13,22 +17,21 @@ import {
   settingsAccountResource,
   type ConversationIndexResourceParams,
 } from "@/lib/api/resource";
+import type { CollectionCursor, CollectionRevision } from "@/lib/api/collectionPage";
+import type { Presence } from "@/lib/api/presence";
 import type { ResourceFetcher } from "@/lib/api/resourceTransport";
-import type { PaneRouteId, RouteParams } from "@/lib/panes/paneRouteModel";
-import { loadNotePages } from "@/lib/notes/pageContract";
 import {
-  mediaDetailFromResponse,
-  type MediaDetail,
-} from "@/lib/media/mediaDetail";
+  conversationIndexPage,
+  type ConversationListItem,
+} from "@/lib/chat/conversationIndex";
 import {
   contributorDetailFromWire,
   contributorWorksPageFromWire,
 } from "@/lib/contributors/api";
-import {
-  type CollectionCursor,
-  type CollectionRevision,
-} from "@/lib/api/collectionPage";
-import type { Presence } from "@/lib/api/presence";
+import type {
+  ContributorDetail,
+  ContributorWorkItem,
+} from "@/lib/contributors/types";
 import {
   librariesPageFromWire,
   libraryOutForId,
@@ -38,51 +41,32 @@ import {
   libraryEntryPageFromWire,
   type LibraryEntryListItem,
 } from "@/lib/libraries/entryListItem";
-import type {
-  ContributorDetail,
-  ContributorWorkItem,
-} from "@/lib/contributors/types";
-import {
-  conversationIndexPage,
-  type ConversationListItem,
-} from "@/lib/chat/conversationIndex";
+import { mediaDetailFromResponse, type MediaDetail } from "@/lib/media/mediaDetail";
+import { loadNotePages } from "@/lib/notes/pageContract";
+import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
 
-// The author pane's composed first-paint seed: the lightweight contributor
-// detail plus the canonical oldest-first page of distinct works (D-25 cursor
-// pagination). Decoded here so server seed, client mount, and prefetch agree on
-// the typed, brand-checked shape (D-45 — handle parsed at this boundary).
-export interface AuthorPaneSeed {
+type Params = Record<string, string>;
+
+export interface PaneResourceLoader {
+  cacheKey: (params: Params) => string;
+  load: (request: ResourceFetcher, params: Params) => Promise<unknown>;
+}
+
+interface CollectionSeed {
+  collectionRevision: CollectionRevision;
+  nextCursor: Presence<CollectionCursor>;
+}
+export interface AuthorPaneSeed extends CollectionSeed {
   detail: ContributorDetail;
   works: readonly ContributorWorkItem[];
-  collectionRevision: CollectionRevision;
-  nextCursor: Presence<CollectionCursor>;
 }
-
-export interface ConversationsPaneSeed {
+export interface ConversationsPaneSeed extends CollectionSeed {
   conversations: readonly ConversationListItem[];
-  collectionRevision: CollectionRevision;
-  nextCursor: Presence<CollectionCursor>;
 }
-
-export interface LibraryPaneSeed {
+export interface LibraryPaneSeed extends CollectionSeed {
   library: LibraryOut;
   entries: readonly LibraryEntryListItem[];
-  collectionRevision: CollectionRevision;
-  nextCursor: Presence<CollectionCursor>;
 }
-
-// One transport-agnostic loader per prefetchable pane — the single definition of
-// "fetch and compose this pane's first-paint data." The server bootstrap seed, the
-// client `useResource` mount, and prefetch-on-intent all call it; only the transport
-// (serverResourceFetcher vs clientResourceFetcher) is injected as `request`, so
-// server-seed ≡ client-load ≡ prefetch holds by construction. Loaders call only the
-// request port and shared projections; author projections share their api module
-// with HTTP helpers.
-export interface PaneResourceLoader {
-  cacheKey: (params: RouteParams) => string;
-  load: (request: ResourceFetcher, params: RouteParams) => Promise<unknown>;
-}
-
 export interface MediaPaneSeed {
   readonly media: MediaDetail;
 }
@@ -91,123 +75,96 @@ export async function loadMediaPane(
   request: ResourceFetcher,
   params: { id: string },
 ): Promise<MediaPaneSeed> {
-  const media = mediaDetailFromResponse(
-    await request<{ id: string }, ApiJson<"/media/{media_id}", "get">>(
-      mediaResource,
-      params,
-    ),
-    params.id,
-  );
-  return { media };
+  const response = await request<
+    { id: string },
+    ApiJson<"/media/{media_id}", "get">
+  >(mediaResource, params);
+  return { media: mediaDetailFromResponse(response, params.id) };
 }
 
-// Only panes whose primary first-paint resource is FastAPI-backed AND
-// deterministically keyed by the route params appear here. Deliberately NOT
-// prefetched (client-fetch on open): page
-// (cacheKey embeds the editor saveScope), conversation (streaming, multi-fetch
-// snapshot), podcastDetail / podcasts (cacheKey embeds mutable filter/sort/search UI
-// state), settingsIdentities (Supabase server action, no FastAPI path),
-// search (query-driven, no route-keyed primary). Lectern's canonical ordered queue remains exclusively
-// owned by the shell-mounted LecternProvider; only its independent Suggestions read is
-// seeded here.
 export const paneResourceLoaders: Partial<
   Record<PaneRouteId, PaneResourceLoader>
 > = {
   lectern: {
     cacheKey: () => lecternSuggestionsResource.cacheKey({ refreshVersion: 0 }),
-    load: async (request) =>
-      (
-        await request<{ refreshVersion: number }, ApiJson<"/lectern/suggestions", "get">>(
-          lecternSuggestionsResource,
-          { refreshVersion: 0 },
-        )
-      ).data,
+    load: async (request) => {
+      const response = await request<
+        { refreshVersion: number },
+        ApiJson<"/lectern/suggestions", "get">
+      >(lecternSuggestionsResource, { refreshVersion: 0 });
+      return response.data;
+    },
   },
-
   libraries: {
     cacheKey: () => librariesResource.cacheKey({ refreshVersion: 0 }),
-    load: async (request) =>
-      librariesPageFromWire((
-        await request<
-          { refreshVersion: number; limit: number },
-          ApiJson<"/libraries", "get">
-        >(
-          librariesResource,
-          { refreshVersion: 0, limit: 100 },
-        )
-      ).data),
+    load: async (request) => {
+      const response = await request<
+        { refreshVersion: number; limit: number },
+        ApiJson<"/libraries", "get">
+      >(librariesResource, { refreshVersion: 0, limit: 100 });
+      return librariesPageFromWire(response.data);
+    },
   },
-
   library: {
-    cacheKey: (p) => libraryResource.cacheKey({ id: p.id }),
-    load: async (request, p): Promise<LibraryPaneSeed> => {
-      const params = { id: p.id };
-      const [library, entriesEnvelope] = await Promise.all([
+    cacheKey: ({ id }) => libraryResource.cacheKey({ id }),
+    load: async (request, { id }): Promise<LibraryPaneSeed> => {
+      const [library, entries] = await Promise.all([
         request<{ id: string }, ApiJson<"/libraries/{library_id}", "get">>(
-          libraryResource, params,
+          libraryResource,
+          { id },
         ),
-        request<{ id: string }, ApiJson<"/libraries/{library_id}/entries", "get">>(
-          libraryEntriesResource, params,
-        ),
+        request<
+          { id: string },
+          ApiJson<"/libraries/{library_id}/entries", "get">
+        >(libraryEntriesResource, { id }),
       ]);
-      const page = libraryEntryPageFromWire(entriesEnvelope.data);
+      const page = libraryEntryPageFromWire(entries.data);
       return {
-        library: libraryOutForId(
-          library.data,
-          p.id,
-          "Library pane response.data",
-        ),
+        library: libraryOutForId(library.data, id, "Library pane response.data"),
         entries: page.items,
         collectionRevision: page.collectionRevision,
         nextCursor: page.nextCursor,
       };
     },
   },
-
   media: {
-    cacheKey: (p) => mediaResource.cacheKey({ id: p.id }),
-    load: (request, p) => loadMediaPane(request, { id: p.id }),
+    cacheKey: ({ id }) => mediaResource.cacheKey({ id }),
+    load: (request, { id }) => loadMediaPane(request, { id }),
   },
-
   author: {
-    cacheKey: (p) => contributorResource.cacheKey({ handle: p.handle }),
-    load: async (request, p): Promise<AuthorPaneSeed> => {
-      const [detailEnv, worksEnv] = await Promise.all([
+    cacheKey: ({ handle }) => contributorResource.cacheKey({ handle }),
+    load: async (request, { handle }): Promise<AuthorPaneSeed> => {
+      const [detail, works] = await Promise.all([
         request<
           { handle: string },
           ApiJson<"/contributors/{contributor_handle}", "get">
-        >(contributorResource, { handle: p.handle }),
+        >(contributorResource, { handle }),
         request<
           { handle: string; limit: number },
           ApiJson<"/contributors/{contributor_handle}/works", "get">
-        >(
-          contributorWorksResource,
-          { handle: p.handle, limit: AUTHOR_WORKS_LIMIT },
-        ),
+        >(contributorWorksResource, { handle, limit: AUTHOR_WORKS_LIMIT }),
       ]);
-      const page = contributorWorksPageFromWire(worksEnv.data);
+      const page = contributorWorksPageFromWire(works.data);
       return {
-        detail: contributorDetailFromWire(detailEnv.data),
+        detail: contributorDetailFromWire(detail.data),
         works: page.items,
         collectionRevision: page.collectionRevision,
         nextCursor: page.nextCursor,
       };
     },
   },
-
   notes: {
     cacheKey: () => notePagesResource.cacheKey({}),
     load: (request) => loadNotePages(request, {}),
   },
-
   conversations: {
     cacheKey: () => conversationsInitialResource.cacheKey({}),
     load: async (request): Promise<ConversationsPaneSeed> => {
       const page = conversationIndexPage(
-        await request<ConversationIndexResourceParams, ApiJson<"/conversations", "get">>(
-          conversationsInitialResource,
-          {},
-        ),
+        await request<
+          ConversationIndexResourceParams,
+          ApiJson<"/conversations", "get">
+        >(conversationsInitialResource, {}),
       );
       return {
         conversations: page.items,
@@ -216,7 +173,6 @@ export const paneResourceLoaders: Partial<
       };
     },
   },
-
   settingsAccount: {
     cacheKey: () => settingsAccountResource.cacheKey({}),
     load: (request) => request(settingsAccountResource, {}),

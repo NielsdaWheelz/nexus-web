@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect } from "react";
-import { assertNever } from "@/lib/assertNever";
 import { matchesKeyEvent } from "@/lib/keybindings";
 import { useKeybindings } from "@/lib/keybindingsProvider";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 
+/** pane-next / pane-previous move to the adjacent visible pane (clamped). */
 export function useAdjacentPaneKeybindings({
   onActivated,
 }: {
@@ -16,35 +16,19 @@ export function useAdjacentPaneKeybindings({
   const keybindings = useKeybindings();
 
   useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) {
-        return;
-      }
-      if (isEditableTarget(event.target)) {
-        return;
-      }
-      const nextCombo = keybindings["pane-next"];
-      const previousCombo = keybindings["pane-previous"];
-      const isNext = Boolean(nextCombo) && matchesKeyEvent(nextCombo, event);
-      const isPrevious =
-        Boolean(previousCombo) && matchesKeyEvent(previousCombo, event);
-      if (!isNext && !isPrevious) {
-        return;
-      }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || isEditableTarget(event.target)) return;
+      const next = keybindings["pane-next"];
+      const previous = keybindings["pane-previous"];
+      const isNext = Boolean(next) && matchesKeyEvent(next, event);
+      if (!isNext && !(previous && matchesKeyEvent(previous, event))) return;
       event.preventDefault();
       const result = activateAdjacentPane({
         direction: isNext ? "Next" : "Previous",
       });
-      switch (result.kind) {
-        case "Activated":
-          onActivated(result.paneId);
-          return;
-        case "Unchanged":
-          return;
-      }
-      return assertNever(result, "Unreachable adjacent pane activation result");
+      if (result.kind === "Activated") onActivated(result.paneId);
     };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
   }, [activateAdjacentPane, keybindings, onActivated]);
 }

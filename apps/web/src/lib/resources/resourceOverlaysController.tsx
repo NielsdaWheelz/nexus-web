@@ -44,7 +44,6 @@ import type {
   MediaAuthorCredit,
 } from "@/lib/contributors/types";
 import { PaneReturnVisitScope } from "@/lib/workspace/paneReturnMemento";
-import { createPaneVisitId } from "@/lib/workspace/schema";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 
 // The single app-level owner of the resource overlays the canonical
@@ -273,7 +272,7 @@ export function ResourceActionOverlays() {
   // the settings overlays has a scope to read. The Subscribe overlay mints its
   // OWN fresh per-session scope (below) because its acquisition control stages
   // library selections that must not leak across sessions.
-  const [visitId] = useState(() => createPaneVisitId());
+  const [visitId] = useState(() => crypto.randomUUID());
 
   return (
     <PaneReturnVisitScope visitId={visitId} routeKey="resource-action-overlays">
@@ -579,7 +578,7 @@ function SubscribeOverlay({
   // shared scope would leak the previous Subscribe session's staged selection
   // into the next open. This overlay is keyed by the subscribe session, so a
   // fresh visit id per mount scopes that staged state to one session only.
-  const [visitId] = useState(() => createPaneVisitId());
+  const [visitId] = useState(() => crypto.randomUUID());
   const leaseRef = useRef<ResourceActionMutationLease | null>(null);
   return (
     <PaneReturnVisitScope

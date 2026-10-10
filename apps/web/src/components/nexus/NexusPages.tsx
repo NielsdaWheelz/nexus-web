@@ -7,7 +7,6 @@ import { FeedbackNotice } from "@/components/feedback/Feedback";
 import CreateLibraryPanel from "@/components/switchboard/CreateLibraryPanel";
 import type { Retained } from "@/lib/nexus/model";
 import { tabState } from "@/lib/nexus/rows";
-import { pointerModality } from "@/lib/ui/pointerModality";
 import AddPanel from "./AddPanel";
 import AddPanelBoundary from "./AddPanelBoundary";
 import type { NexusController } from "./useNexusController";
@@ -66,7 +65,7 @@ function Page({ controller, mobile }: { controller: NexusController; mobile: boo
                 onClick={(event) =>
                   controller.activate(
                     row.action,
-                    { disposition: { kind: "Follow" }, modality: pointerModality(event) },
+                    { disposition: { kind: "Follow" } },
                     event.currentTarget,
                   )
                 }

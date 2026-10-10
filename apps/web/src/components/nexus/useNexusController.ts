@@ -35,17 +35,15 @@ import { createNotePage } from "@/lib/notes/api";
 import { DailyDraftStorageError, readDailyDraft, subscribeDailyDraft } from "@/lib/notes/dailyDraftStore";
 import { resolveDailyLocalDate, useOpenDailyPage } from "@/lib/notes/openDailyPage";
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
-import { usePaneWarm } from "@/lib/panes/paneWarm";
 import { playingEpisode, usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
 import { useViewportState } from "@/lib/renderEnvironment/provider";
 import { dailyDraftAcceptsText } from "@/lib/resourceSurface/dailySurfacePersistence";
 import type { DismissDecision } from "@/lib/ui/useHistoryDismiss";
-import { getWorkspacePrimaryPanes } from "@/lib/workspace/schema";
 import { resolveWorkspacePaneLabel, useWorkspaceStore } from "@/lib/workspace/store";
 import { resolveAddPanelInitialFocus, type AddDismissalConfirmation } from "./AddPanel";
 import { useAddContentSession } from "./useAddContentSession";
 
-const ADOPT: NexusTargetActivation = { disposition: { kind: "Adopt" }, modality: "Programmatic" };
+const ADOPT: NexusTargetActivation = { disposition: { kind: "Adopt" } };
 const TODAY_DRAFT_OPEN = "Open Today to finish the current embedded draft";
 const STORAGE_UNAVAILABLE = "Device storage is unavailable. Open Today to review any unsaved text.";
 const CREATE_CODES = [...TRANSPORT_CODES, "E_FORBIDDEN", "E_LIBRARY_FORBIDDEN", "E_INVALID_REQUEST", "E_RESOURCE_CONFLICT"];
@@ -83,7 +81,6 @@ export function useNexusController() {
   const viewport = useViewportState();
   const keybindings = useKeybindings();
   const { labelFor } = useKeybindingsController();
-  const warmPane = usePaneWarm();
   const player = usePlayerSession();
   const playerCommands = usePlayerCommands();
   const openDailyPage = useOpenDailyPage();
@@ -110,7 +107,7 @@ export function useNexusController() {
   const find = useNexusFind({ open, query: parsed });
   const panes = useMemo<NexusPane[]>(
     () =>
-      getWorkspacePrimaryPanes(state).map((pane) => ({
+      state.panes.map((pane) => ({
         id: pane.id,
         href: pane.currentVisit.href,
         visibility: pane.visibility,
@@ -147,7 +144,7 @@ export function useNexusController() {
 
   // A navigation that lands while the Nexus is open (a resource menu's Open or Chat, closing
   // the current tab) must not sit behind it: close, and let focus follow the new pane.
-  const activePane = getWorkspacePrimaryPanes(state).find((pane) => pane.id === state.activePrimaryPaneId);
+  const activePane = state.panes.find((pane) => pane.id === state.activePrimaryPaneId);
   const navigationToken = `${state.activePrimaryPaneId}\0${activePane?.currentVisit.id ?? ""}`;
   const navigationBaseline = useRef(navigationToken);
   useEffect(() => {
@@ -193,7 +190,6 @@ export function useNexusController() {
       originPaneId: state.activePrimaryPaneId,
       target: { href: target.href, labelHint: target.labelHint },
       disposition: activation.disposition,
-      modality: activation.modality,
     });
     return result.kind === "Rejected" ? { kind: "Rejected", target } : { kind: "Accepted" };
   }
@@ -365,9 +361,6 @@ export function useNexusController() {
 
   function setActive(key: string) {
     setList((current) => (current.active === key && current.moved ? current : { ...current, active: key, moved: true }));
-    // Warm only remembered destinations (places, recents, resources): not Ask, Chat or Browse.
-    const row = rows.find((candidate) => candidate.key === key);
-    if (row?.source && row.action.kind === "Available" && row.action.target.kind === "InternalHref") warmPane(row.action.target.href);
   }
 
   function openMenu(key: string) {

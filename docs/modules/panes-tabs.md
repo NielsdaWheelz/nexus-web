@@ -17,8 +17,8 @@ pane directly and relies on app-level navigation plus pane chrome actions.
 
 ## Sequential Traversal
 
-Across all viewport modes, sequential traversal follows visible panes in stable
-`primaryPaneOrder`, skips minimized panes, clamps at the first and last visible
+Across all viewport modes, sequential traversal follows visible panes in
+`state.panes` order, skips minimized panes, clamps at the first and last visible
 pane, and never wraps. The workspace store is its sole owner, and the
 `pane-next` / `pane-previous` keybindings invoke that store command on every
 viewport. Mobile additionally maps a primary-touch horizontal swipe on the

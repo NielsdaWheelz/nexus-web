@@ -166,7 +166,6 @@ function activate(
         originPaneId: ports.activePaneId,
         target,
         disposition: targetDisposition,
-        modality: "Programmatic",
       });
     },
   });
@@ -702,7 +701,6 @@ export function resourceActionDescriptors({
                   labelHint: "Chat",
                 },
                 disposition: { kind: "Adopt" },
-                modality: "Programmatic",
               });
             },
           });
@@ -922,7 +920,6 @@ export function resourceActionDescriptors({
                 labelHint: "Dossier",
               },
               disposition: { kind: "Follow" },
-              modality: "Programmatic",
             });
           },
         );

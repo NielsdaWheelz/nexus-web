@@ -5,7 +5,6 @@ import type { Schema } from "@/lib/api/wire";
 import type { LibraryDestinationSelection } from "@/lib/libraries/destinationContract";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
-import type { PaneNavigationModality } from "@/lib/workspace/paneReturnMemento";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 
 export type NexusIcon = ComponentType<{ size?: number; "aria-hidden"?: boolean | "true" | "false" }>;
@@ -61,12 +60,10 @@ export type MaterializedNexusTarget =
 
 export interface NexusTargetActivation {
   readonly disposition: WorkspaceTargetDisposition;
-  readonly modality: PaneNavigationModality;
 }
 
 export const PROGRAMMATIC_NEXUS_TARGET_ACTIVATION: NexusTargetActivation = {
   disposition: { kind: "Follow" },
-  modality: "Programmatic",
 };
 
 export type RetainedTarget = Extract<MaterializedNexusTarget, { kind: "InternalHref" | "OpenDailyPage" }>;

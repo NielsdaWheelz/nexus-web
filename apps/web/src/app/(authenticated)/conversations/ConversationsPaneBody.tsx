@@ -42,13 +42,13 @@ import {
 } from "@/lib/panes/paneRuntime";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
-import usePaneScrollRetention from "@/lib/panes/usePaneScrollRetention";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
 import {
   definePaneVisitDataKey,
   useClearAllPaneVisitData,
   usePaneReturnReady,
+  usePaneScrollRetention,
   usePaneVisitData,
 } from "@/lib/workspace/paneReturnMemento";
 
@@ -106,8 +106,7 @@ export default function ConversationsPaneBody() {
     setCommitted(next);
   }, []);
   const [version, setVersion] = useState(restored?.version ?? 0);
-  const listRef = useRef<HTMLDivElement | null>(null);
-  const captureScroll = usePaneScrollRetention(listRef, committed);
+  const captureScroll = usePaneScrollRetention(committed);
   const clearVisitData = useClearAllPaneVisitData();
   const stale =
     committed?.version !== version || keyOf(committed.view) !== viewKey;
@@ -354,7 +353,7 @@ export default function ConversationsPaneBody() {
       />
     );
   return (
-    <div ref={listRef}>
+    <div>
       <CollectionView
         returnScope="Conversations.Items"
         rows={rows.filter((row) =>

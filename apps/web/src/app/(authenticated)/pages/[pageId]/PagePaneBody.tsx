@@ -23,10 +23,10 @@ import type {
 import { shiftLocalDate } from "@/lib/localDate";
 import {
   requirePaneRuntime,
+  usePaneDailyPage,
   usePaneEntryDelivery,
   usePaneParam,
   usePaneRuntime,
-  useSetPaneAliases,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
@@ -275,10 +275,7 @@ export default function PagePaneBody({
     },
     [titleIntentController],
   );
-  useSetPaneAliases([
-    ...(dailyLocalDate ? [`daily:${dailyLocalDate}`] : []),
-    ...(pageId ? [`page:${pageId}`] : []),
-  ]);
+  usePaneDailyPage(dailyLocalDate ? { localDate: dailyLocalDate, pageId } : null);
   const openDatedPage = useCallback(
     (localDate: string) => {
       activateTarget({

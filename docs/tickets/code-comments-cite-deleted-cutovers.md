@@ -3,7 +3,10 @@
 status: open · origin: 2026-09-28 pr-06 library placement reauthoring (cleanup/library-placement, claude session); narrowed 2026-10-09 web dead-code sweep · area: python comments and the capabilities generator
 
 `docs/cutovers/` does not exist. the hand-written web citations were rewritten
-on 2026-10-09 (cleanup/web-dead-code). these remain, by path or by name:
+on 2026-10-09 (cleanup/web-dead-code), and the workspace reauthoring
+(cleanup/workspace-reauthor) dropped the slice's citations of deleted decision
+ids (D-3, D-5, D-7, D-8, D-25, D-26, D-45, AC-4, S4/R1, §159/§3h). these remain,
+by path or by name:
 
 - `python/scripts/generate_resource_capabilities.py:93` emits
   `// docs/cutovers/resource-inspector-and-universal-dossiers-hard-cutover.md`

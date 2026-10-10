@@ -1,702 +1,355 @@
-// Pure path→pane-route resolution (segment matching, no React/DOM), so the
-// server data root resolves the initial pane with the SAME resolver the client
-// uses (D-5: one resolver). No "use client" — this module is isomorphic.
-import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
-import type { DestinationId } from "@/lib/navigation/destinations";
+// The pane router: href -> pane kind. One table of routes, a few trait sets,
+// and one resolver that derives every identity (routeKey, resource, mount key).
+// Isomorphic: the server bootstrap and the client resolve alike.
 import {
-  getSecondaryGroupForSurface,
-  type WorkspaceSecondaryGroupId,
-  type WorkspaceSecondarySurfaceId,
-} from "@/lib/panes/paneSecondaryModel";
+  BookOpen,
+  ChartColumn,
+  Compass,
+  FileText,
+  Globe,
+  Keyboard,
+  Library,
+  Link2,
+  ListMusic,
+  ListTodo,
+  Map,
+  MessageSquare,
+  Mic,
+  Palette,
+  Search,
+  Settings,
+  Sparkles,
+  UserCog,
+  UserRound,
+  type LucideIcon,
+} from "lucide-react";
 import { RESERVED_CONTRIBUTOR_HANDLE_SEGMENTS } from "@/lib/contributors/handle";
-import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import type { DestinationId } from "@/lib/navigation/destinations";
+import type { WorkspaceSecondaryGroupId } from "@/lib/panes/paneSecondaryModel";
+import {
+  formatResourceRef,
+  parseResourceRef,
+  type ResourceScheme,
+} from "@/lib/resourceGraph/resourceRef";
+import { routeShareTarget } from "@/lib/sharing/targets";
+import type { ShareTarget } from "@/lib/sharing/types";
+import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
-export const MAX_STANDARD_PANE_WIDTH_PX = 1400;
-export const MAX_MEDIA_PANE_WIDTH_PX = 2400;
+// path, default label, icon. The first match wins.
+const ROUTES = {
+  lectern: ["lectern", "Lectern", ListMusic],
+  libraries: ["libraries", "Libraries", Library],
+  library: ["libraries/:id", "Library", Library],
+  browse: ["browse", "Browse", Compass],
+  browsePreview: ["browse/preview", "Preview", Compass],
+  media: ["media/:id", "Media", FileText],
+  artifact: ["artifacts/:artifactRef", "Dossier", BookOpen],
+  conversations: ["conversations", "Chats", MessageSquare],
+  conversationNew: ["conversations/new", "New chat", MessageSquare],
+  conversation: ["conversations/:id", "Chat", MessageSquare],
+  podcasts: ["podcasts", "Podcasts", Mic],
+  podcastDetail: ["podcasts/:podcastId", "Podcast", Mic],
+  search: ["search", "Search", Search],
+  author: ["authors/:handle", "Author", UserRound],
+  notes: ["notes", "Notes", FileText],
+  page: ["pages/:pageId", "Page", FileText],
+  dailyDate: ["daily/:localDate", "Daily Page", FileText],
+  note: ["notes/:blockId", "Note", FileText],
+  imports: ["imports", "Imports", ListTodo],
+  stats: ["stats", "Stats", ChartColumn],
+  settings: ["settings", "Settings", Settings],
+  settingsAccount: ["settings/account", "Account", UserCog],
+  settingsReader: ["settings/reader", "Reader settings", BookOpen],
+  settingsAppearance: ["settings/appearance", "Appearance", Palette],
+  settingsIdentities: ["settings/identities", "Linked identities", Link2],
+  settingsKeybindings: ["settings/keybindings", "Keyboard shortcuts", Keyboard],
+  atlas: ["atlas", "The Atlas", Map],
+  oracle: ["oracle", "Oracle", Sparkles],
+  oracleReading: ["oracle/:readingId", "Reading", Sparkles],
+} as const satisfies Record<string, readonly [string, string, LucideIcon]>;
 
+export type PaneRouteId = keyof typeof ROUTES;
+type Traits<T> = Partial<Record<PaneRouteId, T>>;
+
+// The resource a route names: [scheme, path param]. Its body publishes the label.
+const RESOURCE: Traits<[ResourceScheme | "contributor_handle", string]> = {
+  library: ["library", "id"],
+  media: ["media", "id"],
+  artifact: ["artifact", "artifactRef"],
+  conversation: ["conversation", "id"],
+  podcastDetail: ["podcast", "podcastId"],
+  author: ["contributor_handle", "handle"],
+  page: ["page", "pageId"],
+  note: ["note_block", "blockId"],
+  oracleReading: ["oracle_reading", "readingId"],
+};
+// Query changes keep the mounted body (url-owned filters, sort, selection).
+const IN_PLACE = new Set<PaneRouteId>([
+  "lectern",
+  "libraries",
+  "library",
+  "browse",
+  "conversations",
+  "podcasts",
+  "podcastDetail",
+  "search",
+  "author",
+  "notes",
+  "imports",
+  "stats",
+]);
+// Not shareable by pathname: private or transient routes (resource panes
+// share their resource instead).
+const UNSHARED = new Set<PaneRouteId>(["conversationNew", "search", "dailyDate"]);
+// Section, where it is not the first path segment.
+const SECTION: Traits<DestinationId> = {
+  media: "libraries",
+  artifact: "libraries",
+  conversations: "chats",
+  conversationNew: "chats",
+  conversation: "chats",
+  page: "notes",
+  dailyDate: "notes",
+};
+// Resource headers show this until the body resolves its title.
+const PENDING_LABEL: Traits<string> = {
+  browsePreview: "Loading preview…",
+  media: "Loading media…",
+  artifact: "Loading dossier…",
+};
+export type PaneReturnKind = "ShellScroll" | "NoVerticalScroll" | "Reader" | "Chat";
+const RETURN_KIND: Traits<PaneReturnKind> = {
+  media: "Reader",
+  conversationNew: "Chat",
+  conversation: "Chat",
+  atlas: "NoVerticalScroll",
+};
+const BODY_MODE = {
+  ShellScroll: "standard",
+  NoVerticalScroll: "document",
+  Reader: "document",
+  Chat: "contained",
+} as const;
+const STANDARD_WIDTH = { maxWidthPx: 1400, allowsIntrinsicPrimaryWidth: false };
+const READER_WIDTH = { maxWidthPx: 2400, allowsIntrinsicPrimaryWidth: true };
+
+export type PaneBodyMode = (typeof BODY_MODE)[PaneReturnKind];
+/** Section context `None`: the title is the destination (index routes, unsupported). */
+export type PaneRouteHeaderContract =
+  | { readonly kind: "Section"; readonly context: "None" }
+  | {
+      readonly kind: "Section";
+      readonly context: "Destination";
+      readonly destinationId: DestinationId;
+    }
+  | { readonly kind: "Resource"; readonly pendingLabel: string };
 export interface PaneWidthContract {
   maxWidthPx: number;
   allowsIntrinsicPrimaryWidth: boolean;
 }
+export type PaneResourceLocator =
+  | { kind: "resource_ref"; ref: string }
+  | { kind: "contributor_handle"; handle: string };
+export type PaneRouteShareIdentity = Extract<ShareTarget, { kind: "Route" }>;
 
-export type PaneBodyMode = "standard" | "document" | "contained";
-export type RouteParams = Record<string, string>;
-export type RoutePattern = readonly string[];
-
-export type PaneRouteHeaderContract =
-  | {
-      readonly kind: "Section";
-      readonly destinationId: DestinationId;
-      /**
-       * Whether the destination label appears beside the pane title. Index
-       * routes whose title already *is* the destination declare `None`; the
-       * routes below a destination declare `Destination` so a chat, page, or
-       * library reads with the section it belongs to.
-       */
-      readonly context: "None" | "Destination";
-    }
-  | {
-      readonly kind: "Resource";
-      readonly pendingLabel: string;
-    };
-
-interface PaneRouteModelDefinitionCommon extends PaneWidthContract {
-  id: string;
-  pattern: RoutePattern;
+interface PaneRouteTraits {
   defaultLabel: string;
   labelMode: "static" | "dynamic";
-  /**
-   * An opt-in query policy for URL-owned pane state. Omitted routes preserve
-   * the normal route-keyed mount behavior; opted-in routes retain their body
-   * while replacing their query so controls, focus, and scroll stay continuous.
-   */
-  queryNavigation?: "in-place";
-  secondaryGroups?: readonly WorkspaceSecondaryGroupId[];
+  icon: LucideIcon;
+  section: DestinationId | null;
+  header: PaneRouteHeaderContract;
+  returnKind: PaneReturnKind;
+  bodyMode: PaneBodyMode;
+  queryNavigation: "in-place" | null;
+  width: PaneWidthContract;
+  groups: readonly WorkspaceSecondaryGroupId[];
+  shareByRoute: boolean;
 }
 
-export type PaneRouteReturnContract =
-  | {
-      readonly returnMemento: { readonly kind: "ShellScroll" };
-      readonly bodyMode: "standard";
-    }
-  | {
-      readonly returnMemento: { readonly kind: "NoVerticalScroll" };
-      readonly bodyMode: "document";
-    }
-  | {
-      readonly returnMemento: {
-        readonly kind: "Excluded";
-        readonly owner: "Reader";
-      };
-      readonly bodyMode: "document";
-    }
-  | {
-      readonly returnMemento: {
-        readonly kind: "Excluded";
-        readonly owner: "Chat";
-      };
-      readonly bodyMode: "contained";
-    };
-
-type PaneRouteModelDefinitionBase = PaneRouteModelDefinitionCommon &
-  PaneRouteReturnContract &
-  (
-    | {
-        header: Extract<PaneRouteHeaderContract, { kind: "Section" }>;
-        sectionDestinationId?: never;
-      }
-    | {
-        header: Extract<PaneRouteHeaderContract, { kind: "Resource" }>;
-        sectionDestinationId: DestinationId;
-      }
-  );
-
-const STANDARD_WIDTH_CONTRACT: PaneWidthContract = {
-  maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
-  allowsIntrinsicPrimaryWidth: false,
-};
-
-const MEDIA_READER_WIDTH_CONTRACT: PaneWidthContract = {
-  maxWidthPx: MAX_MEDIA_PANE_WIDTH_PX,
-  allowsIntrinsicPrimaryWidth: true,
-};
-
-function route<const Definition extends PaneRouteModelDefinitionBase>(
-  definition: Definition,
-): Definition {
-  return definition;
-}
-
-export const PANE_ROUTE_MODELS = [
-  route({
-    id: "lectern",
-    header: {
-      kind: "Section",
-      destinationId: "lectern",
-      context: "None",
-    },
-    pattern: ["lectern"],
-    defaultLabel: "Lectern",
-    labelMode: "static",
-    queryNavigation: "in-place",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "libraries",
-    header: {
-      kind: "Section",
-      destinationId: "libraries",
-      context: "None",
-    },
-    pattern: ["libraries"],
-    defaultLabel: "Libraries",
-    labelMode: "static",
-    queryNavigation: "in-place",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "library",
-    header: {
-      kind: "Section",
-      destinationId: "libraries",
-      context: "Destination",
-    },
-    pattern: ["libraries", ":id"],
-    defaultLabel: "Library",
-    labelMode: "dynamic",
-    queryNavigation: "in-place",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    secondaryGroups: ["resource-inspector"],
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "browse",
-    header: {
-      kind: "Section",
-      destinationId: "browse",
-      context: "None",
-    },
-    pattern: ["browse"],
-    defaultLabel: "Browse",
-    labelMode: "static",
-    queryNavigation: "in-place",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "browsePreview",
-    sectionDestinationId: "browse",
-    header: { kind: "Resource", pendingLabel: "Loading preview…" },
-    pattern: ["browse", "preview"],
-    defaultLabel: "Preview",
-    labelMode: "dynamic",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "media",
-    sectionDestinationId: "libraries",
-    header: { kind: "Resource", pendingLabel: "Loading media…" },
-    pattern: ["media", ":id"],
-    defaultLabel: "Media",
-    labelMode: "dynamic",
-    returnMemento: { kind: "Excluded", owner: "Reader" },
-    bodyMode: "document",
-    secondaryGroups: ["resource-inspector"],
-    ...MEDIA_READER_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "artifact",
-    sectionDestinationId: "libraries",
-    header: { kind: "Resource", pendingLabel: "Loading dossier…" },
-    pattern: ["artifacts", ":artifactRef"],
-    defaultLabel: "Dossier",
-    labelMode: "dynamic",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    secondaryGroups: ["resource-inspector"],
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "conversations",
-    header: {
-      kind: "Section",
-      destinationId: "chats",
-      context: "None",
-    },
-    pattern: ["conversations"],
-    defaultLabel: "Chats",
-    labelMode: "static",
-    queryNavigation: "in-place",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "conversationNew",
-    header: {
-      kind: "Section",
-      destinationId: "chats",
-      context: "Destination",
-    },
-    pattern: ["conversations", "new"],
-    defaultLabel: "New chat",
-    labelMode: "static",
-    returnMemento: { kind: "Excluded", owner: "Chat" },
-    bodyMode: "contained",
-    // No Inspector until a conversation exists (A13); the resource-inspector group
-    // is published only by the resolved `conversation` route below.
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "conversation",
-    header: {
-      kind: "Section",
-      destinationId: "chats",
-      context: "Destination",
-    },
-    pattern: ["conversations", ":id"],
-    defaultLabel: "Chat",
-    labelMode: "dynamic",
-    returnMemento: { kind: "Excluded", owner: "Chat" },
-    bodyMode: "contained",
-    secondaryGroups: ["resource-inspector"],
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "podcasts",
-    header: {
-      kind: "Section",
-      destinationId: "podcasts",
-      context: "None",
-    },
-    pattern: ["podcasts"],
-    defaultLabel: "Podcasts",
-    labelMode: "static",
-    queryNavigation: "in-place",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "podcastDetail",
-    header: {
-      kind: "Section",
-      destinationId: "podcasts",
-      context: "Destination",
-    },
-    pattern: ["podcasts", ":podcastId"],
-    defaultLabel: "Podcast",
-    labelMode: "dynamic",
-    queryNavigation: "in-place",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    secondaryGroups: ["resource-inspector"],
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "search",
-    header: {
-      kind: "Section",
-      destinationId: "search",
-      context: "None",
-    },
-    pattern: ["search"],
-    defaultLabel: "Search",
-    labelMode: "static",
-    queryNavigation: "in-place",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "author",
-    header: {
-      kind: "Section",
-      destinationId: "authors",
-      context: "Destination",
-    },
-    pattern: ["authors", ":handle"],
-    defaultLabel: "Author",
-    labelMode: "dynamic",
-    queryNavigation: "in-place",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    secondaryGroups: ["resource-inspector"],
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "notes",
-    header: {
-      kind: "Section",
-      destinationId: "notes",
-      context: "None",
-    },
-    pattern: ["notes"],
-    defaultLabel: "Notes",
-    labelMode: "static",
-    queryNavigation: "in-place",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "page",
-    header: {
-      kind: "Section",
-      destinationId: "notes",
-      context: "Destination",
-    },
-    pattern: ["pages", ":pageId"],
-    defaultLabel: "Page",
-    labelMode: "dynamic",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    secondaryGroups: ["resource-inspector"],
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "dailyDate",
-    header: {
-      kind: "Section",
-      destinationId: "notes",
-      context: "Destination",
-    },
-    pattern: ["daily", ":localDate"],
-    defaultLabel: "Daily Page",
-    labelMode: "dynamic",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    secondaryGroups: ["resource-inspector"],
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "note",
-    header: {
-      kind: "Section",
-      destinationId: "notes",
-      context: "Destination",
-    },
-    pattern: ["notes", ":blockId"],
-    defaultLabel: "Note",
-    labelMode: "dynamic",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    secondaryGroups: ["resource-inspector"],
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "imports",
-    header: {
-      kind: "Section",
-      destinationId: "imports",
-      context: "None",
-    },
-    pattern: ["imports"],
-    defaultLabel: "Imports",
-    labelMode: "static",
-    queryNavigation: "in-place",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    secondaryGroups: ["imports-inspector"],
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "stats",
-    header: {
-      kind: "Section",
-      destinationId: "stats",
-      context: "None",
-    },
-    pattern: ["stats"],
-    defaultLabel: "Stats",
-    labelMode: "static",
-    queryNavigation: "in-place",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "settings",
-    header: {
-      kind: "Section",
-      destinationId: "settings",
-      context: "None",
-    },
-    pattern: ["settings"],
-    defaultLabel: "Settings",
-    labelMode: "static",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "settingsAccount",
-    header: {
-      kind: "Section",
-      destinationId: "settings",
-      context: "Destination",
-    },
-    pattern: ["settings", "account"],
-    defaultLabel: "Account",
-    labelMode: "static",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "settingsReader",
-    header: {
-      kind: "Section",
-      destinationId: "settings",
-      context: "Destination",
-    },
-    pattern: ["settings", "reader"],
-    defaultLabel: "Reader settings",
-    labelMode: "static",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "settingsAppearance",
-    header: {
-      kind: "Section",
-      destinationId: "settings",
-      context: "Destination",
-    },
-    pattern: ["settings", "appearance"],
-    defaultLabel: "Appearance",
-    labelMode: "static",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "settingsIdentities",
-    header: {
-      kind: "Section",
-      destinationId: "settings",
-      context: "Destination",
-    },
-    pattern: ["settings", "identities"],
-    defaultLabel: "Linked identities",
-    labelMode: "static",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "settingsKeybindings",
-    header: {
-      kind: "Section",
-      destinationId: "settings",
-      context: "Destination",
-    },
-    pattern: ["settings", "keybindings"],
-    defaultLabel: "Keyboard shortcuts",
-    labelMode: "static",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "atlas",
-    header: {
-      kind: "Section",
-      destinationId: "atlas",
-      context: "None",
-    },
-    pattern: ["atlas"],
-    defaultLabel: "The Atlas",
-    labelMode: "static",
-    returnMemento: { kind: "NoVerticalScroll" },
-    bodyMode: "document",
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "oracle",
-    header: {
-      kind: "Section",
-      destinationId: "oracle",
-      context: "None",
-    },
-    pattern: ["oracle"],
-    defaultLabel: "Oracle",
-    labelMode: "static",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "oracleReading",
-    header: {
-      kind: "Section",
-      destinationId: "oracle",
-      context: "Destination",
-    },
-    pattern: ["oracle", ":readingId"],
-    defaultLabel: "Reading",
-    // The reading body publishes the exact question as the pane label.
-    labelMode: "dynamic",
-    returnMemento: { kind: "ShellScroll" },
-    bodyMode: "standard",
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-] as const satisfies readonly PaneRouteModelDefinitionBase[];
-
-/** Route identity is derived from the one literal registry and cannot drift. */
-export type PaneRouteId = (typeof PANE_ROUTE_MODELS)[number]["id"];
-
-export type PaneRouteModelDefinition = PaneRouteModelDefinitionBase & {
-  id: PaneRouteId;
-};
-
-interface ResolvedPaneRouteModelCommon {
+export interface ResolvedPaneRouteModel extends PaneRouteTraits {
+  id: PaneRouteId | "unsupported";
   pathname: string;
-  params: RouteParams;
-  defaultLabel: string;
-  labelMode: "static" | "dynamic";
+  params: Record<string, string>;
+  /** `${id}:${pathname}${search}`; the hash never takes part in identity. */
+  routeKey: string;
+  locator: PaneResourceLocator | null;
+  /** e.g. `resource_ref:media:<id>`; null when the route names no resource. */
+  resourceKey: string | null;
 }
 
-export type ResolvedPaneRouteModel = ResolvedPaneRouteModelCommon &
-  (
-    | {
-        id: PaneRouteId;
-        header: PaneRouteHeaderContract;
-        definition: PaneRouteModelDefinition;
-      }
-    | {
-        id: "unsupported";
-        header: null;
-        definition: null;
-      }
-  );
+const TABLE = (Object.keys(ROUTES) as PaneRouteId[]).map((id) => {
+  const [path, defaultLabel, icon] = ROUTES[id];
+  const pattern = path.split("/");
+  const section = SECTION[id] ?? (pattern[0] as DestinationId);
+  const pendingLabel = PENDING_LABEL[id];
+  const returnKind = RETURN_KIND[id] ?? "ShellScroll";
+  const traits: PaneRouteTraits = {
+    defaultLabel,
+    labelMode:
+      RESOURCE[id] || id === "browsePreview" || id === "dailyDate"
+        ? "dynamic"
+        : "static",
+    icon,
+    section,
+    header: pendingLabel
+      ? { kind: "Resource", pendingLabel }
+      : pattern.length === 1
+        ? { kind: "Section", context: "None" }
+        : { kind: "Section", context: "Destination", destinationId: section },
+    returnKind,
+    bodyMode: BODY_MODE[returnKind],
+    queryNavigation: IN_PLACE.has(id) ? "in-place" : null,
+    width: returnKind === "Reader" ? READER_WIDTH : STANDARD_WIDTH,
+    // Resource panes (but the oracle reading) and the latent daily page offer
+    // the Resource Inspector; imports offers its own.
+    groups:
+      id === "imports"
+        ? ["imports-inspector"]
+        : (RESOURCE[id] && id !== "oracleReading") || id === "dailyDate"
+          ? ["resource-inspector"]
+          : [],
+    shareByRoute: !RESOURCE[id] && !UNSHARED.has(id) && pattern[0] !== "settings",
+  };
+  return { id, pattern, traits };
+});
 
-function sectionDestinationIdForDefinition(
-  definition: PaneRouteModelDefinition,
-): DestinationId {
-  if (definition.header.kind === "Section") {
-    return definition.header.destinationId;
-  }
-  if (!definition.sectionDestinationId) {
-    throw new Error(
-      `Resource pane route ${definition.id} has no navigation destination`,
-    );
-  }
-  return definition.sectionDestinationId;
-}
-
-function toPathSegments(pathname: string): string[] {
-  return pathname
-    .split("/")
-    .map((segment) => segment.trim())
-    .filter((segment) => segment.length > 0);
-}
+const UNSUPPORTED: PaneRouteTraits = {
+  defaultLabel: "Tab",
+  labelMode: "static",
+  icon: Globe,
+  section: null,
+  // A pane on a path no route renders still has its header, so Back works.
+  header: { kind: "Section", context: "None" },
+  returnKind: "ShellScroll",
+  bodyMode: "standard",
+  queryNavigation: null,
+  width: STANDARD_WIDTH,
+  groups: [],
+  shareByRoute: false,
+};
 
 function matchPattern(
-  pathname: string,
-  pattern: RoutePattern,
-): RouteParams | null {
-  const segments = toPathSegments(pathname);
-  if (segments.length !== pattern.length) {
-    return null;
-  }
-  const params: RouteParams = {};
-  for (let index = 0; index < pattern.length; index += 1) {
-    const segment = segments[index] ?? "";
-    const token = pattern[index] ?? "";
-    if (token.startsWith(":")) {
-      const paramName = token.slice(1);
-      if (!paramName || !segment) {
-        return null;
-      }
-      try {
-        params[paramName] = decodeURIComponent(segment);
-      } catch {
-        return null;
-      }
+  pattern: readonly string[],
+  segments: readonly string[],
+): Record<string, string> | null {
+  if (pattern.length !== segments.length) return null;
+  const params: Record<string, string> = {};
+  for (const [index, token] of pattern.entries()) {
+    if (!token.startsWith(":")) {
+      if (token !== segments[index]) return null;
       continue;
     }
-    if (token !== segment) {
+    try {
+      params[token.slice(1)] = decodeURIComponent(segments[index]!);
+    } catch {
       return null;
     }
   }
   return params;
 }
 
-function parseHrefPathname(href: string): string {
-  return parseWorkspaceHref(href)?.pathname ?? "/";
+function locatorFor(
+  id: PaneRouteId,
+  params: Record<string, string>,
+): PaneResourceLocator | null {
+  const [scheme, param] = RESOURCE[id] ?? [];
+  const value = param ? params[param]! : "";
+  if (!scheme) return null;
+  if (scheme === "contributor_handle") {
+    const handle = value.trim();
+    return handle ? { kind: "contributor_handle", handle } : null;
+  }
+  // artifact refs arrive namespaced; every other param is a bare id.
+  const ref =
+    scheme === "artifact" ? value : formatResourceRef({ scheme, id: value });
+  return parseResourceRef(ref)?.scheme === scheme
+    ? { kind: "resource_ref", ref }
+    : null;
+}
+
+export function paneResourceLocatorKey(
+  locator: PaneResourceLocator | null,
+): string | null {
+  if (!locator) return null;
+  return locator.kind === "resource_ref"
+    ? `resource_ref:${locator.ref}`
+    : `contributor_handle:${locator.handle}`;
 }
 
 export function resolvePaneRouteModel(href: string): ResolvedPaneRouteModel {
-  const pathname = parseHrefPathname(href);
-  for (const definition of PANE_ROUTE_MODELS) {
-    const params = matchPattern(pathname, definition.pattern);
-    if (!params) {
-      continue;
-    }
-    // The `/authors/{handle}` space shadows the reserved collection segments the
-    // deleted directory/reconciliation surfaces used; they are not author panes
-    // (author-dedup §7 / D-26) — fall through to the unsupported placeholder.
+  const url = parseWorkspaceHref(href);
+  const pathname = url?.pathname ?? "/";
+  const search = url?.search ?? "";
+  const segments = pathname.split("/").filter(Boolean);
+  for (const { id, pattern, traits } of TABLE) {
+    const params = matchPattern(pattern, segments);
+    if (!params) continue;
+    const locator = locatorFor(id, params);
+    // Reserved collection segments are not handles, and a reading id must be
+    // a resource ref, so retired literal paths stay unsupported.
     if (
-      definition.id === "author" &&
-      RESERVED_CONTRIBUTOR_HANDLE_SEGMENTS.has(params.handle ?? "")
+      (id === "author" &&
+        RESERVED_CONTRIBUTOR_HANDLE_SEGMENTS.has(params.handle!)) ||
+      (id === "oracleReading" && !locator)
     ) {
       continue;
     }
-    // Oracle reading routes are resource routes, not an open-ended slug space.
-    // Requiring the canonical resource-ref grammar keeps retired literal routes
-    // from falling through to `:readingId`.
-    if (
-      definition.id === "oracleReading" &&
-      parseResourceRef(`oracle_reading:${params.readingId ?? ""}`) === null
-    ) {
-      continue;
-    }
-    return {
-      id: definition.id,
-      pathname,
-      params,
-      defaultLabel: definition.defaultLabel,
-      labelMode: definition.labelMode,
-      header: definition.header,
-      definition,
-    };
+    const routeKey = `${id}:${pathname}${search}`;
+    const resourceKey = paneResourceLocatorKey(locator);
+    return { ...traits, id, pathname, params, routeKey, locator, resourceKey };
   }
   return {
+    ...UNSUPPORTED,
     id: "unsupported",
     pathname,
     params: {},
-    defaultLabel: "Tab",
-    labelMode: "static",
-    header: null,
-    definition: null,
+    routeKey: `unsupported:${pathname}${search}`,
+    locator: null,
+    resourceKey: null,
   };
 }
 
 export function sectionDestinationIdForHref(
   href: string,
 ): DestinationId | null {
-  const definition = resolvePaneRouteModel(href).definition;
-  return definition ? sectionDestinationIdForDefinition(definition) : null;
+  return resolvePaneRouteModel(href).section;
 }
 
-export function resolvePaneRouteWidthContract(href: string): PaneWidthContract {
-  const definition = resolvePaneRouteModel(href).definition;
-  if (!definition) {
-    return STANDARD_WIDTH_CONTRACT;
-  }
-  return {
-    maxWidthPx: definition.maxWidthPx,
-    allowsIntrinsicPrimaryWidth: definition.allowsIntrinsicPrimaryWidth,
-  };
+export function getPaneRouteIcon(href: string): LucideIcon {
+  return resolvePaneRouteModel(href).icon;
 }
 
-export function paneRouteAllowsSecondaryGroup(
-  href: string,
-  groupId: WorkspaceSecondaryGroupId,
-): boolean {
-  return (
-    resolvePaneRouteModel(href).definition?.secondaryGroups?.includes(
-      groupId,
-    ) ?? false
-  );
+/** Same resource identity; false when either href names no resource. */
+export function hasSamePaneResource(left: string, right: string): boolean {
+  const key = resolvePaneRouteModel(left).resourceKey;
+  return key !== null && key === resolvePaneRouteModel(right).resourceKey;
 }
 
-export function paneRouteAllowsSecondarySurface(
-  href: string,
-  surfaceId: WorkspaceSecondarySurfaceId,
-): boolean {
-  return paneRouteAllowsSecondaryGroup(
-    href,
-    getSecondaryGroupForSurface(surfaceId),
-  );
+/** One key per openable destination: its resource when it has one, else its route. */
+export function resolveWorkspaceActivationRouteId(href: string): string {
+  const route = resolvePaneRouteModel(href);
+  return route.resourceKey ? `${route.id}:${route.resourceKey}` : route.routeKey;
+}
+
+/**
+ * The body instance a visit mounts: in-place routes keep it across query
+ * changes, scroll-restoring routes remount per visit and route, readers and
+ * chats keep it for their resource across pushes and hash changes.
+ */
+export function paneMountKey(
+  route: ResolvedPaneRouteModel,
+  visitId: string,
+): string {
+  if (route.queryNavigation) return `${visitId}:${route.id}:${route.pathname}`;
+  if (route.returnKind === "ShellScroll") return `${visitId}:${route.routeKey}`;
+  return route.resourceKey ? `${route.id}:${route.resourceKey}` : route.routeKey;
+}
+
+export function resolvePaneRouteShareIdentity(
+  route: ResolvedPaneRouteModel,
+  label: string,
+): PaneRouteShareIdentity | null {
+  if (!route.shareByRoute) return null;
+  const target = routeShareTarget({ href: route.pathname, label });
+  return target.kind === "Route" ? target : null;
 }

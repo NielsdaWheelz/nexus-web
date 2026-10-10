@@ -3,7 +3,7 @@ import {
   getDestination,
   type DestinationId,
 } from "@/lib/navigation/destinations";
-import { getPaneRouteIcon } from "@/lib/panes/paneRouteTable";
+import { getPaneRouteIcon } from "@/lib/panes/paneRouteModel";
 
 /** The resolved shape the rail and sheet render. */
 export interface NavItem {

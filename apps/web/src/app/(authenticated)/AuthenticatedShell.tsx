@@ -1,71 +1,64 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import AppNav from "@/components/appnav/AppNav";
 import Nexus from "@/components/nexus/Nexus";
-import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 import GlobalPlayerSurfaces from "@/components/player/GlobalPlayerSurfaces";
-import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
-import { GlobalPlayerProvider } from "@/lib/player/playerRuntime";
-import { connectOffline } from "@/lib/offline/bridge";
-import { ImportsProvider } from "@/lib/imports/ImportsProvider";
-import { MediaSummaryProvider } from "@/lib/media/MediaSummaryProvider";
-import { LecternProvider } from "@/lib/lectern/LecternProvider";
-import { ReaderProvider, type ReaderProfile } from "@/lib/reader/ReaderContext";
-import { KeybindingsProvider } from "@/lib/keybindingsProvider";
-import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
-import ActivityCaptureLifecycle from "@/lib/consumption/ActivityCaptureLifecycle";
-import { WorkspaceStoreProvider } from "@/lib/workspace/store";
-import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
-import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
-import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
-import { useWorkspacePrimaryMetrics } from "@/lib/workspace/useWorkspacePrimaryMetrics";
-import { getWorkspacePrimaryPanes, type WorkspaceState } from "@/lib/workspace/schema";
-import { resolvePaneRouteModel, type PaneRouteId } from "@/lib/panes/paneRouteModel";
-import { preloadPane } from "@/lib/panes/paneRenderRegistry";
+import WorkspaceHost from "@/components/workspace/WorkspaceHost";
+import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
+import type { AuthenticatedAccount } from "@/lib/account/contract";
+import { ResourceActionRuntimeProvider } from "@/lib/actions/resourceActionRuntime";
 import {
   ResourceCacheProvider,
   type DehydratedResources,
 } from "@/lib/api/resourceCache";
-import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
+import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
+import ActivityCaptureLifecycle from "@/lib/consumption/ActivityCaptureLifecycle";
+import { readerSurfaceStyle } from "@/lib/documentReader/DocumentReader";
+import { ImportsProvider } from "@/lib/imports/ImportsProvider";
+import { KeybindingsProvider } from "@/lib/keybindingsProvider";
+import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
-import { ShareControllerProvider } from "@/lib/sharing/controller";
-import { ResourceActionRuntimeProvider } from "@/lib/actions/resourceActionRuntime";
+import { MediaSummaryProvider } from "@/lib/media/MediaSummaryProvider";
+import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
+import { connectOffline } from "@/lib/offline/bridge";
+import { GlobalPlayerProvider } from "@/lib/player/playerRuntime";
+import {
+  ReaderProvider,
+  useReaderContext,
+  type ReaderProfile,
+} from "@/lib/reader/ReaderContext";
+import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
+import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import {
   ResourceActionOverlays,
   ResourceOverlaysProvider,
 } from "@/lib/resources/resourceOverlaysController";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
+import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
+import type { WorkspaceState } from "@/lib/workspace/model";
+import { estimatePrimaryWidthPx } from "@/lib/workspace/paneSizing";
+import { WorkspaceStoreProvider } from "@/lib/workspace/store";
 import styles from "./layout.module.css";
-import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
-import type { AuthenticatedAccount } from "@/lib/account/contract";
 
-export default function AuthenticatedShell({
-  account,
-  readerProfile,
-  renderEnvironment,
-  initialState,
-  persistInitialState,
-  resources,
-}: {
+export default function AuthenticatedShell(props: {
   account: AuthenticatedAccount;
   readerProfile: ReaderProfile;
   renderEnvironment: RenderEnvironment;
   initialState: WorkspaceState;
-  persistInitialState: boolean;
   resources: DehydratedResources;
 }) {
   return (
-    <AuthenticatedAccountProvider account={account}>
-      <RenderEnvironmentProvider value={renderEnvironment}>
+    <AuthenticatedAccountProvider account={props.account}>
+      <RenderEnvironmentProvider value={props.renderEnvironment}>
         <UnauthenticatedApiBoundary>
           <ActivityCaptureLifecycle />
-          <ResourceCacheProvider value={resources}>
+          <ResourceCacheProvider value={props.resources}>
             <KeybindingsProvider>
-              <ReaderProvider initialProfile={readerProfile}>
-                <AuthenticatedWorkspace
-                  accountId={account.accountId}
-                  initialState={initialState}
-                  persistInitialState={persistInitialState}
+              <ReaderProvider initialProfile={props.readerProfile}>
+                <Workspace
+                  accountId={props.account.accountId}
+                  initialState={props.initialState}
                 />
               </ReaderProvider>
             </KeybindingsProvider>
@@ -76,78 +69,52 @@ export default function AuthenticatedShell({
   );
 }
 
-function AuthenticatedWorkspace({
-  accountId,
-  initialState,
-  persistInitialState,
-}: {
-  accountId: string;
-  initialState: WorkspaceState;
-  persistInitialState: boolean;
-}) {
-  const { workspacePrimaryMetrics, probe } = useWorkspacePrimaryMetrics();
-
-  // Binds Android's offline store to this account (a different account wipes it first).
-  useEffect(() => {
-    connectOffline(accountId);
-  }, [accountId]);
-
-  // Interactivity fact for the workspace root: absent in server HTML, stamped
-  // by the first client commit. Input dispatched before hydration lands on
-  // dead SSR markup (React re-renders over it), so anything driving the UI
-  // programmatically must be able to await this.
+function Workspace(props: { accountId: string; initialState: WorkspaceState }) {
+  const { accountId } = props;
+  const { profile } = useReaderContext();
+  // The reader column is every pane's minimum and default width: the server
+  // estimates it from the profile, and this hidden probe measures it.
+  const probe = useRef<HTMLDivElement>(null);
+  const [columnWidthPx, setColumnWidthPx] = useState(() =>
+    estimatePrimaryWidthPx(profile),
+  );
+  useLayoutEffect(() => {
+    const node = probe.current!;
+    const measure = () => {
+      const width = Math.ceil(node.getBoundingClientRect().width);
+      if (width > 0) setColumnWidthPx(width);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [profile]);
+  // Binds Android's offline store to this account.
+  useEffect(() => connectOffline(accountId), [accountId]);
+  // Harnesses wait for data-hydrated: input before hydration lands on dead markup.
   const [hydrated, setHydrated] = useState(false);
-  useEffect(() => {
-    setHydrated(true);
-  }, []);
-
-  // Warm every restored visible pane's chunk as soon as the shell mounts so the downloads
-  // overlap hydration instead of waiting for each WorkspaceHost Suspense to commit (D-7).
-  // resolvePaneRouteModel is the same resolver the store uses, so this targets exactly the
-  // panes about to render.
-  useEffect(() => {
-    const ids = new Set<PaneRouteId>();
-    for (const pane of getWorkspacePrimaryPanes(initialState)) {
-      if (pane.visibility !== "visible") {
-        continue;
-      }
-      const { id } = resolvePaneRouteModel(pane.currentVisit.href);
-      if (id !== "unsupported") {
-        ids.add(id);
-      }
-    }
-    for (const id of ids) {
-      preloadPane(id);
-    }
-  }, [initialState]);
-
+  useEffect(() => setHydrated(true), []);
   return (
     <>
-      {probe}
-      <PaneReturnMementoProvider>
-        <WorkspaceStoreProvider
-          workspacePrimaryMetrics={workspacePrimaryMetrics}
-          initialState={initialState}
-          persistInitialState={persistInitialState}
-        >
-          <MobileViewportProvider>
-            <MobileChromeProvider>
-              {/* One Lectern owner wraps the workspace leaves and player
-                  runtime: LecternProvider -> GlobalPlayerProvider -> workspace
-                  + the shell-owned player surfaces. */}
-              <MediaSummaryProvider key={accountId}>
+      <div
+        ref={probe}
+        aria-hidden="true"
+        className={styles.columnProbe}
+        style={readerSurfaceStyle(profile)}
+      />
+      <WorkspaceStoreProvider
+        initialState={props.initialState}
+        columnWidthPx={columnWidthPx}
+      >
+        <MobileViewportProvider>
+          <MobileChromeProvider>
+            {/* One Lectern owner wraps the workspace leaves and the player
+                runtime. The resource-action runtime reads every provider
+                above it; its overlays render inside the player runtime. */}
+            <MediaSummaryProvider key={accountId}>
               <LecternProvider>
                 <LibraryPlacementControllerProvider>
                   <ShareControllerProvider>
-                    {/* The resource-action runtime reads Lectern, offline
-                        state, share, library-placement, resource overlays,
-                        workspace, and feedback from these ancestors and owns
-                        the shared snapshot cache / busy state / dispatch for
-                        every resource dropdown in the workspace subtree
-                        below. ResourceOverlaysProvider is an ancestor so the
-                        runtime can call its openers; ResourceActionOverlays
-                        renders the single overlay copy deep inside the player
-                        runtime and a synthetic pane-visit scope. */}
                     <ResourceOverlaysProvider>
                       <GlobalPlayerProvider accountId={accountId}>
                         <ResourceActionRuntimeProvider>
@@ -171,11 +138,10 @@ function AuthenticatedWorkspace({
                   </ShareControllerProvider>
                 </LibraryPlacementControllerProvider>
               </LecternProvider>
-              </MediaSummaryProvider>
-            </MobileChromeProvider>
-          </MobileViewportProvider>
-        </WorkspaceStoreProvider>
-      </PaneReturnMementoProvider>
+            </MediaSummaryProvider>
+          </MobileChromeProvider>
+        </MobileViewportProvider>
+      </WorkspaceStoreProvider>
     </>
   );
 }

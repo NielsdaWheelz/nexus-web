@@ -28,7 +28,10 @@ import {
   usePaneRuntime,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
-import { usePaneReturnReady } from "@/lib/workspace/paneReturnMemento";
+import {
+  usePaneReturnReady,
+  usePaneScrollRetention,
+} from "@/lib/workspace/paneReturnMemento";
 import { createNotePage } from "@/lib/notes/api";
 import { useOpenDailyPage } from "@/lib/notes/openDailyPage";
 import {
@@ -52,7 +55,6 @@ import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { useResource } from "@/lib/api/useResource";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
-import usePaneScrollRetention from "@/lib/panes/usePaneScrollRetention";
 import { presentNote } from "@/lib/collections/presenters/note";
 import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput";
 import styles from "./notes.module.css";
@@ -193,8 +195,7 @@ export default function NotesPaneBody() {
   const [viewInvalid, setViewInvalid] = useState(false);
   const invalidView = decodedView.kind === "Invalid" || viewInvalid;
   const [committed, setCommitted] = useState<CommittedPagesView | null>(null);
-  const listRegionRef = useRef<HTMLDivElement | null>(null);
-  const capturePaneScroll = usePaneScrollRetention(listRegionRef, committed);
+  const capturePaneScroll = usePaneScrollRetention(committed);
   const sortSelectRef = useRef<HTMLSelectElement | null>(null);
   // A view replacement only writes the URL: the committed rows stay rendered
   // until the requested/committed mismatch it creates is answered.
@@ -527,7 +528,7 @@ export default function NotesPaneBody() {
       : null);
 
   return (
-    <div ref={listRegionRef}>
+    <div>
     <CollectionView
       returnScope="Notes.Pages"
       rows={filteredPages.map((page) => presentNote(page))}

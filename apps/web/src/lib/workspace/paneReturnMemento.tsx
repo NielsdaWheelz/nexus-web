@@ -1,5 +1,9 @@
 "use client";
 
+// Back feels like back: per visit, where the pane was scrolled (and which row
+// sat at the eye line), which row had keyboard focus, and the list data the
+// body had loaded. Captured when a visit leaves the screen, restored when its
+// body reports ready, forgotten when the visit leaves every history stack.
 import {
   createContext,
   useCallback,
@@ -10,1185 +14,385 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import type { PaneVisitId } from "@/lib/workspace/schema";
+import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 
-export type PaneNavigationModality = "Keyboard" | "Pointer" | "Programmatic";
+const ANCHORS = "[data-collection-row-id], [data-note-block-id]";
+const SCROLL_KEY = /^(Arrow(Up|Down)|Page(Up|Down)|Home|End| )$/;
 
-export interface ReturnAnchorKey {
-  readonly scope: string;
-  readonly id: string;
+interface Anchor {
+  scope: string;
+  id: string;
+}
+interface Memento {
+  routeKey: string;
+  scrollTop: number;
+  eyeLine: (Anchor & { offset: number }) | null;
+  /** Set when the visit was left by keyboard: the focused row, if any. */
+  focus: { anchor: Anchor | null } | null;
+}
+interface Scrollport {
+  visitId: string;
+  routeKey: string;
+  element: HTMLElement;
+  content: HTMLElement;
+}
+interface Readiness {
+  kind: "Body" | "Descendant";
+  ready: boolean;
+  root: HTMLElement | null;
+}
+interface PendingRestore {
+  visitId: string;
+  routeKey: string;
+  frame: number | null;
+  stop: () => void;
 }
 
-interface ReturnAnchor {
-  readonly key: ReturnAnchorKey;
-  readonly viewportOffsetPx: number;
+/** The store's half: remember a pane's visit before it leaves; forget dead visits. */
+export interface PaneReturnMemento {
+  capture(paneId: string): void;
+  forget(reachableVisitIds: ReadonlySet<string>): void;
 }
-
-type FocusReturn =
-  | { readonly kind: "None" }
-  | {
-      readonly kind: "Keyboard";
-      readonly anchor: ReturnAnchorKey | null;
-    };
-
-interface ReturnMemento {
-  readonly routeKey: string;
-  readonly scrollTopPx: number;
-  readonly anchor: ReturnAnchor | null;
-  readonly focusReturn: FocusReturn;
-}
-
-export interface PaneReturnPaneTopology {
-  readonly paneId: string;
-  readonly currentVisitId: PaneVisitId;
-  readonly backVisitIds: readonly PaneVisitId[];
-  readonly forwardVisitIds: readonly PaneVisitId[];
-}
-
-export interface PaneReturnVisitTopology {
-  readonly activePaneId: string;
-  readonly panes: readonly PaneReturnPaneTopology[];
-}
-
-export interface PaneReturnMementoCommands {
-  capturePane(input: {
-    paneId: string;
-    visitId: PaneVisitId;
-    routeKey: string;
-    modality: PaneNavigationModality;
-  }): void;
-  requestRestore(input: {
-    paneId: string;
-    visitId: PaneVisitId;
-    routeKey: string;
-  }): void;
-  clearVisit(visitId: PaneVisitId): void;
-  reconcileVisitTopology(input: PaneReturnVisitTopology): void;
-}
-
-declare const PANE_VISIT_DATA_VALUE: unique symbol;
-
 export interface PaneVisitDataKey<T> {
-  readonly diagnosticName: string;
-  readonly [PANE_VISIT_DATA_VALUE]?: (value: T) => T;
+  readonly name: string;
+  readonly __value?: T;
 }
 
-const visitDataKeyIdentities = new WeakMap<object, symbol>();
-
-export function definePaneVisitDataKey<T>(
-  diagnosticName: string,
-): PaneVisitDataKey<T> {
-  if (!/^[A-Z][A-Za-z0-9]*(?:\.[A-Z][A-Za-z0-9]*)+$/.test(diagnosticName)) {
-    throw new Error(
-      `Pane visit data key must use Pascal.Dot naming: ${JSON.stringify(diagnosticName)}`,
-    );
-  }
-  const key: PaneVisitDataKey<T> = Object.freeze({ diagnosticName });
-  visitDataKeyIdentities.set(key, Symbol(diagnosticName));
-  return key;
-}
-
-function visitDataKeyIdentity<T>(key: PaneVisitDataKey<T>): symbol {
-  const identity = visitDataKeyIdentities.get(key);
-  if (!identity) {
-    throw new Error("Pane visit data key was not created by definePaneVisitDataKey");
-  }
-  return identity;
-}
-
-type ReadinessKind = "ResolvedBody" | "Body" | "Descendant";
-
-interface VisitScope {
-  readonly visitId: PaneVisitId;
-  readonly routeKey: string;
-}
-
-interface ScrollportRegistration extends VisitScope {
-  readonly token: symbol;
-  readonly scrollport: HTMLElement;
-  readonly contentRoot: HTMLElement;
-}
-
-interface CaptureGetterRegistration {
-  readonly token: symbol;
-  readonly routeKey: string;
-  readonly keyIdentity: symbol;
-  readonly capture: () => unknown | null;
-}
-
-interface ReadinessRegistration extends VisitScope {
-  readonly token: symbol;
-  readonly kind: ReadinessKind;
-  readonly ready: boolean;
-  readonly root: HTMLElement | null;
-}
-
-interface VisitDataSlot {
-  readonly value: unknown;
-}
-
-interface VisitDataRecord {
-  readonly routeKey: string;
-  readonly slots: Map<symbol, VisitDataSlot>;
-}
-
-interface PendingRestore extends VisitScope {
-  readonly token: symbol;
-  readonly paneId: string;
-  boundScrollportToken: symbol | null;
-  finalizeFrame: number | null;
-  observer: ResizeObserver | null;
-  removeIntentListeners: (() => void) | null;
-}
-
-interface RuntimeState {
-  readonly mementos: Map<PaneVisitId, ReturnMemento>;
-  readonly visitData: Map<PaneVisitId, VisitDataRecord>;
-  readonly scrollports: Map<string, ScrollportRegistration>;
-  readonly captureGetters: Map<
-    PaneVisitId,
-    Map<symbol, CaptureGetterRegistration>
-  >;
-  readonly blockedCaptureVisits: Set<PaneVisitId>;
-  readonly readiness: Map<string, Map<symbol, ReadinessRegistration>>;
-  readonly pendingRestores: Map<string, PendingRestore>;
-}
-
-interface PaneReturnMementoService extends PaneReturnMementoCommands {
-  clearAllVisitData(originVisitId: PaneVisitId): void;
-  registerScrollport(input: {
-    paneId: string;
-    visitId: PaneVisitId;
-    routeKey: string;
-    scrollport: HTMLElement;
-    contentRoot: HTMLElement;
-  }): () => void;
-  registerCaptureGetter<T>(input: {
-    visitId: PaneVisitId;
-    routeKey: string;
-    key: PaneVisitDataKey<T>;
-    capture: () => T | null;
-  }): () => void;
-  publishVisitData<T>(input: {
-    visitId: PaneVisitId;
-    routeKey: string;
-    key: PaneVisitDataKey<T>;
-    value: T | null;
-  }): void;
-  readVisitData<T>(input: {
-    visitId: PaneVisitId;
-    routeKey: string;
-    key: PaneVisitDataKey<T>;
-  }): T | null;
-  registerReadiness(input: {
-    visitId: PaneVisitId;
-    routeKey: string;
-    kind: ReadinessKind;
-    ready: boolean;
-    root?: HTMLElement;
-  }): () => void;
-}
-
-const PaneReturnMementoContext =
-  createContext<PaneReturnMementoService | null>(null);
-const PaneReturnVisitContext = createContext<VisitScope | null>(null);
-
-function routeReadinessKey(visitId: PaneVisitId, routeKey: string): string {
-  return `${visitId}\u001f${routeKey}`;
-}
-
-function isScrollingKey(key: string): boolean {
-  switch (key) {
-    case "ArrowDown":
-    case "ArrowUp":
-    case "End":
-    case "Home":
-    case "PageDown":
-    case "PageUp":
-    case " ":
-      return true;
-    default:
-      return false;
-  }
-}
-
-function clampScrollTop(scrollport: HTMLElement, value: number): number {
-  return Math.min(
-    Math.max(0, value),
-    Math.max(0, scrollport.scrollHeight - scrollport.clientHeight),
-  );
-}
-
-function scopeForAnchor(anchor: Element, contentRoot: HTMLElement): HTMLElement | null {
-  const scope = anchor.closest<HTMLElement>("[data-pane-return-scope]");
-  return scope && contentRoot.contains(scope) ? scope : null;
-}
-
-function anchorKey(
-  anchor: Element,
-  contentRoot: HTMLElement,
-): ReturnAnchorKey | null {
-  const scope = scopeForAnchor(anchor, contentRoot);
-  const scopeName = scope?.dataset.paneReturnScope;
+function anchorOf(element: Element, content: HTMLElement): Anchor | null {
+  const scope = element.closest<HTMLElement>("[data-pane-return-scope]");
   const id =
-    anchor.getAttribute("data-collection-row-id") ??
-    anchor.getAttribute("data-note-block-id");
-  return scopeName && id ? { scope: scopeName, id } : null;
-}
-
-function anchorsIn(contentRoot: HTMLElement): HTMLElement[] {
-  return Array.from(
-    contentRoot.querySelectorAll<HTMLElement>(
-      "[data-collection-row-id], [data-note-block-id]",
-    ),
-  );
-}
-
-function captureEyeLine(
-  scrollport: HTMLElement,
-  contentRoot: HTMLElement,
-): ReturnAnchor | null {
-  const viewport = scrollport.getBoundingClientRect();
-  for (const anchor of anchorsIn(contentRoot)) {
-    const rect = anchor.getBoundingClientRect();
-    if (rect.bottom <= viewport.top || rect.top >= viewport.bottom) {
-      continue;
-    }
-    const key = anchorKey(anchor, contentRoot);
-    if (key) {
-      return { key, viewportOffsetPx: rect.top - viewport.top };
-    }
-  }
-  return null;
-}
-
-function captureFocusedAnchor(contentRoot: HTMLElement): ReturnAnchorKey | null {
-  const activeElement = document.activeElement;
-  if (!(activeElement instanceof Element) || !contentRoot.contains(activeElement)) {
-    return null;
-  }
-  const anchor = activeElement.closest(
-    "[data-collection-row-id], [data-note-block-id]",
-  );
-  return anchor ? anchorKey(anchor, contentRoot) : null;
-}
-
-function findScope(
-  contentRoot: HTMLElement,
-  scopeName: string,
-): HTMLElement | null {
-  if (contentRoot.dataset.paneReturnScope === scopeName) {
-    return contentRoot;
-  }
-  for (const scope of contentRoot.querySelectorAll<HTMLElement>(
-    "[data-pane-return-scope]",
-  )) {
-    if (scope.dataset.paneReturnScope === scopeName) {
-      return scope;
-    }
-  }
-  return null;
-}
-
-function findAnchor(
-  contentRoot: HTMLElement,
-  key: ReturnAnchorKey,
-): HTMLElement | null {
-  const scope = findScope(contentRoot, key.scope);
-  if (!scope) {
-    return null;
-  }
-  for (const anchor of scope.querySelectorAll<HTMLElement>(
-    "[data-collection-row-id], [data-note-block-id]",
-  )) {
-    if (
-      scopeForAnchor(anchor, contentRoot) === scope &&
-      (anchor.getAttribute("data-collection-row-id") === key.id ||
-        anchor.getAttribute("data-note-block-id") === key.id)
-    ) {
-      return anchor;
-    }
-  }
-  return null;
-}
-
-function applyAnchorPosition(
-  scrollport: HTMLElement,
-  anchor: HTMLElement,
-  viewportOffsetPx: number,
-): void {
-  const viewport = scrollport.getBoundingClientRect();
-  const rect = anchor.getBoundingClientRect();
-  scrollport.scrollTop = clampScrollTop(
-    scrollport,
-    scrollport.scrollTop + rect.top - viewport.top - viewportOffsetPx,
-  );
-}
-
-function focusAfterRestore(
-  registration: ScrollportRegistration,
-  focusReturn: FocusReturn,
-): void {
-  if (focusReturn.kind === "None") {
-    return;
-  }
-  const anchor = focusReturn.anchor
-    ? findAnchor(registration.contentRoot, focusReturn.anchor)
+    element.getAttribute("data-collection-row-id") ??
+    element.getAttribute("data-note-block-id");
+  return scope && content.contains(scope) && id
+    ? { scope: scope.dataset.paneReturnScope!, id }
     : null;
-  const anchorControl =
-    anchor?.matches("[data-row-focusable]") === true
-      ? anchor
-      : anchor?.querySelector<HTMLElement>("[data-row-focusable]");
-  const paneLandmark = registration.scrollport.closest<HTMLElement>(
-    "[data-pane-shell]",
-  );
-  (anchorControl ?? paneLandmark)?.focus({ preventScroll: true });
 }
 
-export function PaneReturnMementoProvider({
-  children,
-}: {
+function findAnchor(content: HTMLElement, anchor: Anchor): HTMLElement | null {
+  for (const element of content.querySelectorAll<HTMLElement>(ANCHORS)) {
+    const found = anchorOf(element, content);
+    if (found?.scope === anchor.scope && found.id === anchor.id) return element;
+  }
+  return null;
+}
+
+/** The eye-line row back at its offset, else the clamped scroll offset. */
+function place(port: Scrollport, memento: Memento): void {
+  const { element } = port;
+  const row = memento.eyeLine && findAnchor(port.content, memento.eyeLine);
+  const top = row
+    ? element.scrollTop +
+      row.getBoundingClientRect().top -
+      element.getBoundingClientRect().top -
+      memento.eyeLine!.offset
+    : memento.scrollTop;
+  const max = Math.max(0, element.scrollHeight - element.clientHeight);
+  element.scrollTop = Math.min(max, Math.max(0, top));
+}
+
+export function createPaneReturnMemento() {
+  const mementos = new Map<string, Memento>();
+  const visitData = new Map<string, { routeKey: string; values: Map<string, unknown> }>();
+  const scrollports = new Map<string, Scrollport>(); // by pane
+  const readiness = new Map<string, Set<Readiness>>(); // by `${visit}|${route}`
+  const pending = new Map<string, PendingRestore>(); // by pane
+  const cleared = { epoch: 0, origin: "" };
+
+  function isReady(port: Scrollport): boolean {
+    const entries = [...(readiness.get(`${port.visitId}|${port.routeKey}`) ?? [])];
+    const counted = entries.filter(
+      (entry) => entry.kind === "Body" || port.content.contains(entry.root),
+    );
+    return counted.some((entry) => entry.kind === "Body") && counted.every((e) => e.ready);
+  }
+
+  function finish(paneId: string, restoreFocus: boolean): void {
+    const restore = pending.get(paneId);
+    if (!restore) return;
+    pending.delete(paneId);
+    if (restore.frame !== null) cancelAnimationFrame(restore.frame);
+    restore.stop();
+    const port = scrollports.get(paneId);
+    const focus = mementos.get(restore.visitId)?.focus;
+    if (!restoreFocus || !focus || port?.visitId !== restore.visitId) return;
+    const row = focus.anchor && findAnchor(port.content, focus.anchor);
+    const control = row?.matches("[data-row-focusable]")
+      ? row
+      : row?.querySelector<HTMLElement>("[data-row-focusable]");
+    const landmark = port.element.closest<HTMLElement>("[data-pane-shell]");
+    (control ?? landmark)?.focus({ preventScroll: true });
+  }
+
+  function attempt(paneId: string): void {
+    const restore = pending.get(paneId);
+    const port = scrollports.get(paneId);
+    if (!restore || !port || port.visitId !== restore.visitId) return;
+    const memento = mementos.get(restore.visitId);
+    if (memento?.routeKey !== restore.routeKey) {
+      port.element.scrollTop = 0;
+      return finish(paneId, false);
+    }
+    place(port, memento);
+    if (restore.frame !== null || !isReady(port)) return;
+    // Committed rows lay out over the next frames: place again, then focus.
+    restore.frame = requestAnimationFrame(() => {
+      place(port, memento);
+      restore.frame = requestAnimationFrame(() => {
+        place(port, memento);
+        finish(paneId, true);
+      });
+    });
+  }
+
+  function requestRestore(paneId: string, port: Scrollport): void {
+    finish(paneId, false);
+    // The reader's own scrolling wins over a restore still waiting for rows.
+    const cancel = (event: Event) => {
+      if (!(event instanceof KeyboardEvent) || SCROLL_KEY.test(event.key)) {
+        finish(paneId, false);
+      }
+    };
+    const intents = ["wheel", "touchstart", "pointerdown", "keydown"];
+    for (const type of intents) {
+      port.element.addEventListener(type, cancel, { capture: true, passive: true });
+    }
+    pending.set(paneId, {
+      visitId: port.visitId,
+      routeKey: port.routeKey,
+      frame: null,
+      stop: () => {
+        for (const type of intents) {
+          port.element.removeEventListener(type, cancel, { capture: true });
+        }
+      },
+    });
+    attempt(paneId);
+  }
+
+  return {
+    capture(paneId: string): void {
+      const port = scrollports.get(paneId);
+      // A pending restore's memento is still the truth for its visit.
+      if (!port || pending.get(paneId)?.visitId === port.visitId) return;
+      const { element, content } = port;
+      const viewport = element.getBoundingClientRect();
+      let eyeLine: Memento["eyeLine"] = null;
+      for (const row of content.querySelectorAll<HTMLElement>(ANCHORS)) {
+        const rect = row.getBoundingClientRect();
+        if (rect.bottom <= viewport.top || rect.top >= viewport.bottom) continue;
+        const anchor = anchorOf(row, content);
+        if (anchor) {
+          eyeLine = { ...anchor, offset: rect.top - viewport.top };
+          break;
+        }
+      }
+      // Leaving by keyboard is read now (D6): a visible focus ring inside the pane.
+      const active = document.activeElement;
+      const keyboard =
+        active instanceof HTMLElement &&
+        element.closest("[data-pane-shell]")?.contains(active) === true &&
+        active.matches(":focus-visible") &&
+        !isEditableTarget(active);
+      const row = keyboard ? active.closest(ANCHORS) : null;
+      mementos.set(port.visitId, {
+        routeKey: port.routeKey,
+        scrollTop: element.scrollTop,
+        eyeLine,
+        focus: keyboard ? { anchor: row && anchorOf(row, content) } : null,
+      });
+    },
+    forget(reachable: ReadonlySet<string>): void {
+      for (const visitId of mementos.keys()) {
+        if (!reachable.has(visitId)) mementos.delete(visitId);
+      }
+      for (const visitId of visitData.keys()) {
+        if (!reachable.has(visitId)) visitData.delete(visitId);
+      }
+    },
+    register(paneId: string, port: Scrollport, restore: boolean): () => void {
+      scrollports.set(paneId, port);
+      if (restore) requestRestore(paneId, port);
+      return () => {
+        if (scrollports.get(paneId) !== port) return;
+        if (pending.get(paneId)?.visitId === port.visitId) finish(paneId, false);
+        scrollports.delete(paneId);
+      };
+    },
+    ready(visitId: string, routeKey: string, entry: Readiness): () => void {
+      const key = `${visitId}|${routeKey}`;
+      const entries = readiness.get(key) ?? new Set();
+      readiness.set(key, entries.add(entry));
+      for (const [paneId, restore] of pending) {
+        if (restore.visitId === visitId) attempt(paneId);
+      }
+      return () => {
+        entries.delete(entry);
+        if (entries.size === 0) readiness.delete(key);
+      };
+    },
+    read(visitId: string, routeKey: string, name: string): unknown {
+      const record = visitData.get(visitId);
+      return record?.routeKey === routeKey ? (record.values.get(name) ?? null) : null;
+    },
+    write(visitId: string, routeKey: string, name: string, value: unknown, epoch: number) {
+      // After a clear-all, only its origin visit and newly sampled hooks write.
+      if (epoch !== cleared.epoch && visitId !== cleared.origin) return;
+      const current = visitData.get(visitId);
+      const values = current?.routeKey === routeKey ? current.values : new Map();
+      if (value === null) values.delete(name);
+      else values.set(name, value);
+      if (values.size) visitData.set(visitId, { routeKey, values });
+      else visitData.delete(visitId);
+    },
+    epoch: () => cleared.epoch,
+    clearAll(originVisitId: string): void {
+      visitData.clear();
+      cleared.epoch += 1;
+      cleared.origin = originVisitId;
+    },
+    /** Keeps the live offset across a same-path view swap (filters, sort). */
+    hold(paneId: string): (() => void) | null {
+      finish(paneId, false);
+      const port = scrollports.get(paneId);
+      const top = port?.element.scrollTop ?? 0;
+      return port ? () => void (port.element.scrollTop = top) : null;
+    },
+  };
+}
+
+type Memory = ReturnType<typeof createPaneReturnMemento>;
+export const PaneReturnMementoContext = createContext<Memory | null>(null);
+const VisitScopeContext = createContext<{
+  paneId: string | null;
+  visitId: string;
+  routeKey: string;
+} | null>(null);
+
+/** Gives a subtree its visit: panes, and shell overlays with a synthetic one. */
+export function PaneReturnVisitScope(props: {
+  paneId?: string;
+  visitId: string;
+  routeKey: string;
   children: ReactNode;
 }) {
-  const stateRef = useRef<RuntimeState>({
-    mementos: new Map(),
-    visitData: new Map(),
-    scrollports: new Map(),
-    captureGetters: new Map(),
-    blockedCaptureVisits: new Set(),
-    readiness: new Map(),
-    pendingRestores: new Map(),
-  });
-
-  const publishVisitData = useCallback(
-    <T,>(input: {
-      visitId: PaneVisitId;
-      routeKey: string;
-      key: PaneVisitDataKey<T>;
-      value: T | null;
-    }) => {
-      const state = stateRef.current;
-      if (state.blockedCaptureVisits.has(input.visitId)) {
-        return;
-      }
-      const previous = state.visitData.get(input.visitId);
-      const slots = new Map(
-        previous?.routeKey === input.routeKey ? previous.slots : [],
-      );
-      const keyIdentity = visitDataKeyIdentity(input.key);
-      if (input.value === null) {
-        slots.delete(keyIdentity);
-      } else {
-        slots.set(keyIdentity, { value: input.value });
-      }
-      if (slots.size === 0) {
-        state.visitData.delete(input.visitId);
-        return;
-      }
-      state.visitData.set(input.visitId, {
-        routeKey: input.routeKey,
-        slots,
-      });
-    },
-    [],
+  const { paneId = null, visitId, routeKey } = props;
+  const value = useMemo(
+    () => ({ paneId, visitId, routeKey }),
+    [paneId, visitId, routeKey],
   );
-
-  const routeIsReady = useCallback(
-    (visitId: PaneVisitId, routeKey: string): boolean => {
-      const registrations = stateRef.current.readiness.get(
-        routeReadinessKey(visitId, routeKey),
-      );
-      if (!registrations) {
-        return false;
-      }
-      let resolvedBodyCount = 0;
-      let bodyCount = 0;
-      const scrollport = Array.from(
-        stateRef.current.scrollports.values(),
-      ).find(
-        (registration) =>
-          registration.visitId === visitId &&
-          registration.routeKey === routeKey,
-      );
-      for (const registration of registrations.values()) {
-        if (
-          registration.kind === "Descendant" &&
-          (!registration.root ||
-            !scrollport?.contentRoot.contains(registration.root))
-        ) {
-          continue;
-        }
-        if (registration.kind === "ResolvedBody") {
-          resolvedBodyCount += 1;
-        } else if (registration.kind === "Body") {
-          bodyCount += 1;
-        }
-        if (!registration.ready) {
-          return false;
-        }
-      }
-      return resolvedBodyCount === 1 && bodyCount === 1;
-    },
-    [],
-  );
-
-  const finishPendingRestore = useCallback(
-    (pending: PendingRestore, restoreFocus: boolean) => {
-      const state = stateRef.current;
-      if (state.pendingRestores.get(pending.paneId)?.token !== pending.token) {
-        return;
-      }
-      const registration = state.scrollports.get(pending.paneId);
-      const memento = state.mementos.get(pending.visitId);
-      if (pending.finalizeFrame !== null) {
-        cancelAnimationFrame(pending.finalizeFrame);
-        pending.finalizeFrame = null;
-      }
-      pending.observer?.disconnect();
-      pending.removeIntentListeners?.();
-      state.pendingRestores.delete(pending.paneId);
-      if (
-        restoreFocus &&
-        registration?.visitId === pending.visitId &&
-        registration.routeKey === pending.routeKey &&
-        memento?.routeKey === pending.routeKey
-      ) {
-        focusAfterRestore(registration, memento.focusReturn);
-      }
-    },
-    [],
-  );
-
-  const attemptPendingRestoreRef = useRef<(pending: PendingRestore) => void>(
-    () => {},
-  );
-
-  const bindPendingRestore = useCallback(
-    (pending: PendingRestore, registration: ScrollportRegistration) => {
-      if (pending.boundScrollportToken === registration.token) {
-        return;
-      }
-      pending.observer?.disconnect();
-      pending.removeIntentListeners?.();
-      pending.boundScrollportToken = registration.token;
-      const cancel = () => finishPendingRestore(pending, false);
-      const cancelOnKey = (event: KeyboardEvent) => {
-        if (isScrollingKey(event.key)) {
-          cancel();
-        }
-      };
-      registration.scrollport.addEventListener("wheel", cancel, {
-        capture: true,
-        passive: true,
-      });
-      registration.scrollport.addEventListener("touchstart", cancel, {
-        capture: true,
-        passive: true,
-      });
-      registration.scrollport.addEventListener("pointerdown", cancel, true);
-      registration.scrollport.addEventListener("keydown", cancelOnKey, true);
-      pending.removeIntentListeners = () => {
-        registration.scrollport.removeEventListener("wheel", cancel, true);
-        registration.scrollport.removeEventListener("touchstart", cancel, true);
-        registration.scrollport.removeEventListener("pointerdown", cancel, true);
-        registration.scrollport.removeEventListener("keydown", cancelOnKey, true);
-      };
-      pending.observer = new ResizeObserver(() => {
-        attemptPendingRestoreRef.current(pending);
-      });
-      pending.observer.observe(registration.contentRoot);
-    },
-    [finishPendingRestore],
-  );
-
-  const attemptPendingRestore = useCallback(
-    (pending: PendingRestore) => {
-      const state = stateRef.current;
-      if (state.pendingRestores.get(pending.paneId)?.token !== pending.token) {
-        return;
-      }
-      const registration = state.scrollports.get(pending.paneId);
-      if (
-        !registration ||
-        registration.visitId !== pending.visitId ||
-        registration.routeKey !== pending.routeKey
-      ) {
-        return;
-      }
-      bindPendingRestore(pending, registration);
-      const memento = state.mementos.get(pending.visitId);
-      if (!memento || memento.routeKey !== pending.routeKey) {
-        registration.scrollport.scrollTop = 0;
-        finishPendingRestore(pending, false);
-        return;
-      }
-      const ready = routeIsReady(pending.visitId, pending.routeKey);
-      if (memento.anchor) {
-        const anchor = findAnchor(registration.contentRoot, memento.anchor.key);
-        if (anchor) {
-          applyAnchorPosition(
-            registration.scrollport,
-            anchor,
-            memento.anchor.viewportOffsetPx,
-          );
-          if (ready) {
-            if (pending.finalizeFrame === null) {
-              const finalize = () => {
-                pending.finalizeFrame = null;
-                if (
-                  state.pendingRestores.get(pending.paneId)?.token !==
-                  pending.token
-                ) {
-                  return;
-                }
-                const latestRegistration = state.scrollports.get(
-                  pending.paneId,
-                );
-                const latestMemento = state.mementos.get(pending.visitId);
-                if (
-                  !latestRegistration ||
-                  latestRegistration.visitId !== pending.visitId ||
-                  latestRegistration.routeKey !== pending.routeKey ||
-                  latestMemento?.routeKey !== pending.routeKey ||
-                  !routeIsReady(pending.visitId, pending.routeKey)
-                ) {
-                  return;
-                }
-                const latestAnchor = latestMemento.anchor
-                  ? findAnchor(
-                      latestRegistration.contentRoot,
-                      latestMemento.anchor.key,
-                    )
-                  : null;
-                if (latestAnchor && latestMemento.anchor) {
-                  applyAnchorPosition(
-                    latestRegistration.scrollport,
-                    latestAnchor,
-                    latestMemento.anchor.viewportOffsetPx,
-                  );
-                } else {
-                  latestRegistration.scrollport.scrollTop = clampScrollTop(
-                    latestRegistration.scrollport,
-                    latestMemento.scrollTopPx,
-                  );
-                }
-                finishPendingRestore(pending, true);
-              };
-              pending.finalizeFrame = requestAnimationFrame(() => {
-                pending.finalizeFrame = requestAnimationFrame(finalize);
-              });
-            }
-          }
-          return;
-        }
-        if (!ready) {
-          return;
-        }
-        registration.scrollport.scrollTop = clampScrollTop(
-          registration.scrollport,
-          memento.scrollTopPx,
-        );
-        finishPendingRestore(pending, true);
-        return;
-      }
-      const maxScrollTop = Math.max(
-        0,
-        registration.scrollport.scrollHeight -
-          registration.scrollport.clientHeight,
-      );
-      if (memento.scrollTopPx <= maxScrollTop) {
-        registration.scrollport.scrollTop = memento.scrollTopPx;
-        if (memento.focusReturn.kind === "None") {
-          finishPendingRestore(pending, false);
-        } else if (ready) {
-          finishPendingRestore(pending, true);
-        }
-        return;
-      }
-      if (ready) {
-        registration.scrollport.scrollTop = maxScrollTop;
-        finishPendingRestore(pending, true);
-      }
-    },
-    [bindPendingRestore, finishPendingRestore, routeIsReady],
-  );
-  attemptPendingRestoreRef.current = attemptPendingRestore;
-
-  const captureVisitData = useCallback(
-    (visitId: PaneVisitId, routeKey: string) => {
-      const state = stateRef.current;
-      if (!routeIsReady(visitId, routeKey)) {
-        return;
-      }
-      if (state.blockedCaptureVisits.has(visitId)) {
-        return;
-      }
-      const registrations = state.captureGetters.get(visitId);
-      if (!registrations) {
-        return;
-      }
-      const slots = new Map<symbol, VisitDataSlot>();
-      for (const registration of registrations.values()) {
-        if (registration.routeKey !== routeKey) {
-          continue;
-        }
-        const value = registration.capture();
-        if (value === null) {
-          continue;
-        }
-        slots.set(registration.keyIdentity, { value });
-      }
-      if (slots.size === 0) {
-        state.visitData.delete(visitId);
-        return;
-      }
-      state.visitData.set(visitId, { routeKey, slots });
-    },
-    [routeIsReady],
-  );
-
-  const capturePane = useCallback(
-    (input: {
-      paneId: string;
-      visitId: PaneVisitId;
-      routeKey: string;
-      modality: PaneNavigationModality;
-    }) => {
-      const state = stateRef.current;
-      const registration = state.scrollports.get(input.paneId);
-      if (
-        registration &&
-        registration.visitId === input.visitId &&
-        registration.routeKey === input.routeKey
-      ) {
-        state.mementos.set(input.visitId, {
-          routeKey: input.routeKey,
-          scrollTopPx: registration.scrollport.scrollTop,
-          anchor: captureEyeLine(
-            registration.scrollport,
-            registration.contentRoot,
-          ),
-          focusReturn:
-            input.modality === "Keyboard"
-              ? {
-                  kind: "Keyboard",
-                  anchor: captureFocusedAnchor(registration.contentRoot),
-                }
-              : { kind: "None" },
-        });
-      }
-      captureVisitData(input.visitId, input.routeKey);
-    },
-    [captureVisitData],
-  );
-
-  const requestRestore = useCallback(
-    (input: {
-      paneId: string;
-      visitId: PaneVisitId;
-      routeKey: string;
-    }) => {
-      const state = stateRef.current;
-      const previous = state.pendingRestores.get(input.paneId);
-      if (previous) {
-        finishPendingRestore(previous, false);
-      }
-      const pending: PendingRestore = {
-        ...input,
-        token: Symbol("PaneReturnRestore"),
-        boundScrollportToken: null,
-        finalizeFrame: null,
-        observer: null,
-        removeIntentListeners: null,
-      };
-      state.pendingRestores.set(input.paneId, pending);
-      attemptPendingRestore(pending);
-    },
-    [attemptPendingRestore, finishPendingRestore],
-  );
-
-  const clearVisit = useCallback(
-    (visitId: PaneVisitId) => {
-      const state = stateRef.current;
-      state.mementos.delete(visitId);
-      state.visitData.delete(visitId);
-      state.captureGetters.delete(visitId);
-      state.blockedCaptureVisits.delete(visitId);
-      for (const [key, registrations] of state.readiness) {
-        if (
-          Array.from(registrations.values()).some(
-            (registration) => registration.visitId === visitId,
-          )
-        ) {
-          state.readiness.delete(key);
-        }
-      }
-      for (const pending of state.pendingRestores.values()) {
-        if (pending.visitId === visitId) {
-          finishPendingRestore(pending, false);
-        }
-      }
-      for (const [paneId, registration] of state.scrollports) {
-        if (registration.visitId === visitId) {
-          state.scrollports.delete(paneId);
-        }
-      }
-    },
-    [finishPendingRestore],
-  );
-
-  const clearAllVisitData = useCallback((originVisitId: PaneVisitId) => {
-    const state = stateRef.current;
-    state.visitData.clear();
-    state.blockedCaptureVisits.delete(originVisitId);
-    for (const visitId of state.captureGetters.keys()) {
-      if (visitId !== originVisitId) {
-        state.blockedCaptureVisits.add(visitId);
-      }
-    }
-  }, []);
-
-  const reconcileVisitTopology = useCallback(
-    (input: PaneReturnVisitTopology) => {
-      const state = stateRef.current;
-      const reachable = new Set<PaneVisitId>();
-      for (const pane of input.panes) {
-        reachable.add(pane.currentVisitId);
-        pane.backVisitIds.forEach((visitId) => reachable.add(visitId));
-        pane.forwardVisitIds.forEach((visitId) => reachable.add(visitId));
-      }
-      for (const visitId of state.mementos.keys()) {
-        if (!reachable.has(visitId)) {
-          state.mementos.delete(visitId);
-        }
-      }
-      for (const visitId of state.visitData.keys()) {
-        if (!reachable.has(visitId)) {
-          state.visitData.delete(visitId);
-        }
-      }
-      for (const visitId of state.captureGetters.keys()) {
-        if (!reachable.has(visitId)) {
-          state.captureGetters.delete(visitId);
-        }
-      }
-      for (const visitId of state.blockedCaptureVisits) {
-        if (!reachable.has(visitId)) {
-          state.blockedCaptureVisits.delete(visitId);
-        }
-      }
-      for (const pending of state.pendingRestores.values()) {
-        if (!reachable.has(pending.visitId)) {
-          finishPendingRestore(pending, false);
-        }
-      }
-    },
-    [finishPendingRestore],
-  );
-
-  const registerScrollport = useCallback(
-    (input: {
-      paneId: string;
-      visitId: PaneVisitId;
-      routeKey: string;
-      scrollport: HTMLElement;
-      contentRoot: HTMLElement;
-    }) => {
-      const state = stateRef.current;
-      const registration: ScrollportRegistration = {
-        visitId: input.visitId,
-        routeKey: input.routeKey,
-        scrollport: input.scrollport,
-        contentRoot: input.contentRoot,
-        token: Symbol("PaneReturnScrollport"),
-      };
-      state.scrollports.set(input.paneId, registration);
-      const pending = state.pendingRestores.get(input.paneId);
-      if (pending) {
-        attemptPendingRestore(pending);
-      }
-      return () => {
-        if (state.scrollports.get(input.paneId)?.token === registration.token) {
-          const pending = state.pendingRestores.get(input.paneId);
-          if (pending?.boundScrollportToken === registration.token) {
-            finishPendingRestore(pending, false);
-          }
-          state.scrollports.delete(input.paneId);
-        }
-      };
-    },
-    [attemptPendingRestore, finishPendingRestore],
-  );
-
-  const registerCaptureGetter = useCallback(
-    <T,>(input: {
-      visitId: PaneVisitId;
-      routeKey: string;
-      key: PaneVisitDataKey<T>;
-      capture: () => T | null;
-    }) => {
-      const state = stateRef.current;
-      const keyIdentity = visitDataKeyIdentity(input.key);
-      const registration: CaptureGetterRegistration = {
-        routeKey: input.routeKey,
-        keyIdentity,
-        capture: input.capture,
-        token: Symbol("PaneVisitDataCapture"),
-      };
-      const registrations =
-        state.captureGetters.get(input.visitId) ?? new Map();
-      registrations.set(keyIdentity, registration);
-      state.captureGetters.set(input.visitId, registrations);
-      state.blockedCaptureVisits.delete(input.visitId);
-      return () => {
-        const current = state.captureGetters.get(input.visitId);
-        if (current?.get(keyIdentity)?.token !== registration.token) {
-          return;
-        }
-        current.delete(keyIdentity);
-        if (current.size === 0) {
-          state.captureGetters.delete(input.visitId);
-        }
-      };
-    },
-    [],
-  );
-
-  const readVisitData = useCallback(
-    <T,>(input: {
-      visitId: PaneVisitId;
-      routeKey: string;
-      key: PaneVisitDataKey<T>;
-    }): T | null => {
-      const record = stateRef.current.visitData.get(input.visitId);
-      if (!record || record.routeKey !== input.routeKey) {
-        return null;
-      }
-      const slot = record.slots.get(visitDataKeyIdentity(input.key));
-      return slot ? (slot.value as T) : null;
-    },
-    [],
-  );
-
-  const registerReadiness = useCallback(
-    (input: {
-      visitId: PaneVisitId;
-      routeKey: string;
-      kind: ReadinessKind;
-      ready: boolean;
-      root?: HTMLElement;
-    }) => {
-      const state = stateRef.current;
-      const key = routeReadinessKey(input.visitId, input.routeKey);
-      const registrations = state.readiness.get(key) ?? new Map();
-      if (
-        input.kind !== "Descendant" &&
-        Array.from(registrations.values()).some(
-          (registration) => registration.kind === input.kind,
-        )
-      ) {
-        throw new Error(
-          `Pane return route registered more than one ${input.kind} token`,
-        );
-      }
-      if (
-        input.kind === "ResolvedBody" &&
-        !Array.from(registrations.values()).some(
-          (registration) => registration.kind === "Body",
-        )
-      ) {
-        throw new Error(
-          "Resolved ShellScroll pane body omitted its route readiness token",
-        );
-      }
-      const registration: ReadinessRegistration = {
-        ...input,
-        root: input.root ?? null,
-        token: Symbol(`PaneReturn${input.kind}`),
-      };
-      registrations.set(registration.token, registration);
-      state.readiness.set(key, registrations);
-      if (input.ready) {
-        const pending = Array.from(state.pendingRestores.values()).find(
-          (candidate) =>
-            candidate.visitId === input.visitId &&
-            candidate.routeKey === input.routeKey,
-        );
-        if (pending) {
-          attemptPendingRestore(pending);
-        }
-      }
-      return () => {
-        const current = state.readiness.get(key);
-        if (!current?.has(registration.token)) {
-          return;
-        }
-        current.delete(registration.token);
-        if (current.size === 0) {
-          state.readiness.delete(key);
-        }
-      };
-    },
-    [attemptPendingRestore],
-  );
-
-  const service = useMemo<PaneReturnMementoService>(
-    () => ({
-      capturePane,
-      requestRestore,
-      clearVisit,
-      clearAllVisitData,
-      reconcileVisitTopology,
-      registerScrollport,
-      registerCaptureGetter,
-      publishVisitData,
-      readVisitData,
-      registerReadiness,
-    }),
-    [
-      capturePane,
-      clearAllVisitData,
-      clearVisit,
-      readVisitData,
-      reconcileVisitTopology,
-      publishVisitData,
-      registerCaptureGetter,
-      registerReadiness,
-      registerScrollport,
-      requestRestore,
-    ],
-  );
-
-  return (
-    <PaneReturnMementoContext.Provider value={service}>
-      {children}
-    </PaneReturnMementoContext.Provider>
-  );
+  return <VisitScopeContext value={value}>{props.children}</VisitScopeContext>;
 }
 
-export function PaneReturnVisitScope({
-  visitId,
-  routeKey,
-  children,
-}: VisitScope & { children: ReactNode }) {
-  const value = useMemo(() => ({ visitId, routeKey }), [routeKey, visitId]);
-  return (
-    <PaneReturnVisitContext.Provider value={value}>
-      {children}
-    </PaneReturnVisitContext.Provider>
-  );
+function useScope() {
+  const memory = useContext(PaneReturnMementoContext);
+  const scope = useContext(VisitScopeContext);
+  if (!memory || !scope) throw new Error("Pane return hooks require a pane visit");
+  return { memory, ...scope };
 }
 
-function usePaneReturnMementoService(): PaneReturnMementoService {
-  const service = useContext(PaneReturnMementoContext);
-  if (!service) {
-    throw new Error(
-      "Pane return capability must be used inside PaneReturnMementoProvider",
-    );
-  }
-  return service;
-}
-
-function usePaneReturnVisitScope(): VisitScope {
-  const scope = useContext(PaneReturnVisitContext);
-  if (!scope) {
-    throw new Error(
-      "Pane return capability must be used inside PaneReturnVisitScope",
-    );
-  }
-  return scope;
-}
-
-export function usePaneReturnMementoCommands(): PaneReturnMementoCommands {
-  return usePaneReturnMementoService();
-}
-
+/** PaneShell's scrollport; a new visit or route restores into it. */
 export function usePaneReturnScrollport(input: {
-  paneId: string;
   enabled: boolean;
   scrollportRef: RefObject<HTMLElement | null>;
-  routeContinuityKey?: string | null;
+  continuityKey: string | null;
 }): void {
-  const service = usePaneReturnMementoService();
-  const scope = usePaneReturnVisitScope();
-  const previousRegistrationRef = useRef<{
-    readonly routeContinuityKey: string;
-    readonly scrollport: HTMLElement;
-  } | null>(null);
+  const { memory, paneId, visitId, routeKey } = useScope();
+  const { enabled, scrollportRef, continuityKey } = input;
+  const previous = useRef<string | null>(null);
   useLayoutEffect(() => {
-    if (!input.enabled) {
-      previousRegistrationRef.current = null;
+    const element = scrollportRef.current;
+    const content = element?.firstElementChild;
+    if (!enabled || !paneId || !element || !(content instanceof HTMLElement)) {
+      previous.current = null;
       return;
     }
-    const scrollport = input.scrollportRef.current;
-    const contentRoot = scrollport?.firstElementChild;
-    if (!scrollport || !(contentRoot instanceof HTMLElement)) {
-      throw new Error("ShellScroll PaneShell requires a committed content root");
-    }
-    const preservesLiveScroll =
-      input.routeContinuityKey !== null &&
-      input.routeContinuityKey !== undefined &&
-      previousRegistrationRef.current?.routeContinuityKey ===
-        input.routeContinuityKey &&
-      previousRegistrationRef.current.scrollport === scrollport;
-    previousRegistrationRef.current =
-      input.routeContinuityKey === null ||
-      input.routeContinuityKey === undefined
-        ? null
-        : {
-            routeContinuityKey: input.routeContinuityKey,
-            scrollport,
-          };
-    const unregister = service.registerScrollport({
-      paneId: input.paneId,
-      visitId: scope.visitId,
-      routeKey: scope.routeKey,
-      scrollport,
-      contentRoot,
-    });
-    if (!preservesLiveScroll) {
-      service.requestRestore({
-        paneId: input.paneId,
-        visitId: scope.visitId,
-        routeKey: scope.routeKey,
-      });
-    }
-    return unregister;
-  }, [
-    input.enabled,
-    input.paneId,
-    input.routeContinuityKey,
-    input.scrollportRef,
-    scope.routeKey,
-    scope.visitId,
-    service,
-  ]);
+    // An in-place query change (same continuity key) keeps the live scroll.
+    const restore = continuityKey === null || previous.current !== continuityKey;
+    previous.current = continuityKey;
+    const port = { visitId, routeKey, element, content };
+    return memory.register(paneId, port, restore);
+  }, [enabled, scrollportRef, continuityKey, memory, paneId, visitId, routeKey]);
 }
 
-function useReadiness(
-  kind: Exclude<ReadinessKind, "Descendant">,
-  ready: boolean,
-): void {
-  const service = usePaneReturnMementoService();
-  const scope = usePaneReturnVisitScope();
+/** Every scroll-restoring body reports when its first content is on screen. */
+export function usePaneReturnReady(ready: boolean): void {
+  const { memory, visitId, routeKey } = useScope();
   useLayoutEffect(
-    () =>
-      service.registerReadiness({
-        visitId: scope.visitId,
-        routeKey: scope.routeKey,
-        kind,
-        ready,
-      }),
-    [kind, ready, scope.routeKey, scope.visitId, service],
+    () => memory.ready(visitId, routeKey, { kind: "Body", ready, root: null }),
+    [memory, visitId, routeKey, ready],
   );
 }
 
-export function usePaneResolvedBodyReady(): void {
-  useReadiness("ResolvedBody", true);
-}
-
-export function usePaneReturnReady(ready: boolean): void {
-  useReadiness("Body", ready);
-}
-
+/** A self-loading list inside a body holds the restore until it has rows too. */
 export function usePaneReturnDescendantReady(input: {
-  readonly rootRef: RefObject<HTMLElement | null>;
-  readonly ready: boolean;
+  rootRef: RefObject<HTMLElement | null>;
+  ready: boolean;
 }): void {
-  const service = usePaneReturnMementoService();
-  const scope = usePaneReturnVisitScope();
-  useLayoutEffect(() => {
-    const root = input.rootRef.current;
-    if (!root) {
-      throw new Error(
-        "Pane return descendant readiness requires a committed DOM root",
-      );
-    }
-    return service.registerReadiness({
-      visitId: scope.visitId,
-      routeKey: scope.routeKey,
-      kind: "Descendant",
-      ready: input.ready,
-      root,
-    });
-  }, [
-    input.ready,
-    input.rootRef,
-    scope.routeKey,
-    scope.visitId,
-    service,
-  ]);
+  const { memory, visitId, routeKey } = useScope();
+  const { rootRef, ready } = input;
+  useLayoutEffect(
+    () =>
+      memory.ready(visitId, routeKey, {
+        kind: "Descendant",
+        ready,
+        root: rootRef.current,
+      }),
+    [memory, visitId, routeKey, ready, rootRef],
+  );
+}
+
+/** Names are unique per key. */
+export function definePaneVisitDataKey<T>(name: string): PaneVisitDataKey<T> {
+  return { name };
 }
 
 /**
- * Returns the restoration sampled for this exact mounted ownership epoch.
- * Live publications remain available to a later composition remount without
- * feeding the owner's current commit back as a new restoration event.
+ * What this visit had loaded when it was last on screen (null on a first
+ * visit); every commit records `captureCommitted()` for the next return.
  */
 export function usePaneVisitData<T>(
   key: PaneVisitDataKey<T>,
   captureCommitted: () => T | null,
 ): T | null {
-  const service = usePaneReturnMementoService();
-  const scope = usePaneReturnVisitScope();
-  const restorationRef = useRef<{
-    readonly service: PaneReturnMementoService;
-    readonly visitId: PaneVisitId;
-    readonly routeKey: string;
-    readonly key: PaneVisitDataKey<T>;
-    readonly value: T | null;
+  const { memory, visitId, routeKey } = useScope();
+  const sample = useRef<{
+    scope: string;
+    value: T | null;
+    epoch: number;
   } | null>(null);
-  let restoration = restorationRef.current;
-  if (
-    restoration === null ||
-    restoration.service !== service ||
-    restoration.visitId !== scope.visitId ||
-    restoration.routeKey !== scope.routeKey ||
-    restoration.key !== key
-  ) {
-    restoration = {
-      service,
-      visitId: scope.visitId,
-      routeKey: scope.routeKey,
-      key,
-      value: service.readVisitData({
-        visitId: scope.visitId,
-        routeKey: scope.routeKey,
-        key,
-      }),
-    };
-    restorationRef.current = restoration;
+  const scope = `${visitId}|${routeKey}|${key.name}`;
+  if (sample.current?.scope !== scope) {
+    const value = memory.read(visitId, routeKey, key.name) as T | null;
+    sample.current = { scope, value, epoch: memory.epoch() };
   }
-  const committedCaptureRef = useRef(captureCommitted);
+  const { epoch } = sample.current;
   useLayoutEffect(() => {
-    committedCaptureRef.current = captureCommitted;
-  }, [captureCommitted]);
-  useLayoutEffect(
-    () =>
-      service.registerCaptureGetter({
-        visitId: scope.visitId,
-        routeKey: scope.routeKey,
-        key,
-        capture: () => committedCaptureRef.current(),
-      }),
-    [key, scope.routeKey, scope.visitId, service],
-  );
-  useLayoutEffect(() => {
-    service.publishVisitData({
-      visitId: scope.visitId,
-      routeKey: scope.routeKey,
-      key,
-      value: committedCaptureRef.current(),
-    });
+    memory.write(visitId, routeKey, key.name, captureCommitted(), epoch);
   });
-  return restoration.value;
+  return sample.current.value;
 }
 
+/** After a mutation, the retained list data of every other visit is stale. */
 export function useClearAllPaneVisitData(): () => void {
-  const service = usePaneReturnMementoService();
-  const scope = usePaneReturnVisitScope();
-  return useCallback(
-    () => service.clearAllVisitData(scope.visitId),
-    [scope.visitId, service],
-  );
+  const { memory, visitId } = useScope();
+  return useCallback(() => memory.clearAll(visitId), [memory, visitId]);
+}
+
+/** Call before a same-path view swap; the offset returns once `commitToken` changes. */
+export function usePaneScrollRetention(commitToken: unknown): () => void {
+  const { memory, paneId } = useScope();
+  const restore = useRef<(() => void) | null>(null);
+  useLayoutEffect(() => {
+    const apply = restore.current;
+    if (!apply) return;
+    apply();
+    const frame = requestAnimationFrame(() => {
+      apply();
+      restore.current = null;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [commitToken]);
+  return useCallback(() => {
+    if (paneId) restore.current = memory.hold(paneId);
+  }, [memory, paneId]);
 }

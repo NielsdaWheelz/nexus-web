@@ -8,7 +8,6 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type RefObject,
 } from "react";
 import {
   type ApiError,
@@ -38,11 +37,11 @@ import { isAbortError } from "@/lib/errors";
 import { usePaneRouter } from "@/lib/panes/paneRuntime";
 import { paneResourceLoaders, type LibraryPaneSeed } from "@/lib/panes/paneResourceLoaders";
 import { useRevalidationSettlement } from "@/lib/panes/useRevalidationSettlement";
-import usePaneScrollRetention from "@/lib/panes/usePaneScrollRetention";
 import {
   definePaneVisitDataKey,
   useClearAllPaneVisitData,
   usePaneReturnReady,
+  usePaneScrollRetention,
   usePaneVisitData,
 } from "@/lib/workspace/paneReturnMemento";
 import {
@@ -108,10 +107,9 @@ const VISIT_DATA = definePaneVisitDataKey<Snapshot>("Library.Entries");
 const targetId = (entry: LibraryEntryListItem) =>
   entry.kind === "media" ? entry.media.id : entry.podcast.id;
 
-export function useLibraryEntries({ id, active, regionRef }: {
+export function useLibraryEntries({ id, active }: {
   readonly id: string;
   readonly active: boolean;
-  readonly regionRef: RefObject<HTMLElement | null>;
 }) {
   const router = usePaneRouter();
   const { accountId } = useAuthenticatedAccount();
@@ -163,7 +161,7 @@ export function useLibraryEntries({ id, active, regionRef }: {
   const completedRefresh = useRef<number | null>(null);
 
   const clearVisitData = useClearAllPaneVisitData();
-  const scroll = usePaneScrollRetention(regionRef, snapshot);
+  const scroll = usePaneScrollRetention(snapshot);
   const settlement = useRevalidationSettlement();
   const bootstrap = useResource<LibraryPaneSeed, { id: string }>({
     descriptor: libraryResource,
