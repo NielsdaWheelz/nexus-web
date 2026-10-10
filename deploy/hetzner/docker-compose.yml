@@ -5,6 +5,30 @@ x-logging: &default-logging
   options:
     tag: "{{.Name}}"
 
+# The Codex host's only network peer. Its /etc/hosts pins exactly these names to
+# the proxy (extra_hosts on nexus-codex-agent-host; keep the two lists equal). A
+# TLS stream is forwarded, still encrypted, only when its SNI is listed; any
+# other is sent to a closed port and dropped. Upstream names resolve through
+# Docker's DNS on codex_proxy_egress; the host itself resolves nothing else.
+x-codex-egress-conf: &codex-egress-conf |
+  pid /tmp/nginx.pid;
+  events {}
+  stream {
+      resolver 127.0.0.11 ipv6=off valid=30s;
+      map $$ssl_preread_server_name $$upstream {
+          chatgpt.com     chatgpt.com:443;
+          auth.openai.com auth.openai.com:443;
+          default         127.0.0.1:1;
+      }
+      server {
+          listen 443;
+          ssl_preread on;
+          proxy_pass $$upstream;
+          proxy_connect_timeout 10s;
+          proxy_timeout 20m;
+      }
+  }
+
 services:
   postgres:
     image: ${POSTGRES_IMAGE:?set an immutable production digest}
@@ -201,22 +225,26 @@ services:
     logging: *default-logging
 
   codex-egress-policy:
-    image: ${WORKER_IMAGE:?set an immutable candidate digest}
+    # Stock image pinned by digest: the allowlist is reviewed policy, so its
+    # bytes are pinned where its configuration is.
+    image: nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94
     restart: unless-stopped
-    init: true
-    mem_reservation: 32m
+    mem_reservation: 16m
     mem_limit: 64m
     memswap_limit: 64m
     pids_limit: 32
-    command: ["python", "-m", "apps.codex_agent.egress_policy"]
-    user: "10002:10002"
+    user: "101:101"
     environment:
-      NEXUS_CODEX_EGRESS_PROXY_IP: 172.30.0.2
+      NGINX_CONF: *codex-egress-conf
+    # Skips the image's entrypoint scripts; the configuration is this file's,
+    # written to tmpfs (compose refuses inline configs for a read-only service).
+    entrypoint:
+      - sh
+      - -c
+      - printf '%s' "$$NGINX_CONF" > /tmp/nginx.conf && exec nginx -e stderr -c /tmp/nginx.conf -g 'daemon off;'
     read_only: true
     cap_drop:
       - ALL
-    cap_add:
-      - NET_BIND_SERVICE
     security_opt:
       - no-new-privileges:true
     tmpfs:
@@ -226,7 +254,7 @@ services:
         ipv4_address: 172.30.0.2
       codex_proxy_egress: {}
     healthcheck:
-      test: ["CMD", "python", "-m", "apps.codex_agent.egress_policy", "health"]
+      test: ["CMD", "nc", "-z", "127.0.0.1", "443"]
       interval: 5s
       timeout: 3s
       retries: 6
@@ -235,11 +263,11 @@ services:
 
   nexus-codex-agent-host:
     image: ${WORKER_IMAGE:?set an immutable candidate digest}
-    # The encrypted credential filesystem is unlocked manually after reboot.
-    # Never let Docker restart this container against the protected underlay.
-    # Host-only account state permits native atomic auth refresh. Workers never
-    # receive this mount; they share only the private socket and read-only cwds.
-    restart: "no"
+    # Docker cannot create this container while the LUKS state is locked: the
+    # bind source does not exist on the guarded underlay (create_host_path:
+    # false). A crashed app-server restarts; a clean stop or a manual kill stays
+    # down. Workers never receive the account mount; they share only the socket.
+    restart: on-failure:3
     mem_reservation: 256m
     mem_limit: 448m
     memswap_limit: 448m
@@ -259,19 +287,22 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    dns:
-      - 172.30.0.2
+    # The egress allowlist's names (keep equal to x-codex-egress-conf). Nothing
+    # else resolves: an internal network gets no external DNS.
+    extra_hosts:
+      - "chatgpt.com:172.30.0.2"
+      - "auth.openai.com:172.30.0.2"
     networks:
       codex_private:
         ipv4_address: 172.30.0.3
     init: true
-    # Covers native process-group TERM/KILL and an exit margin.
     stop_grace_period: 45s
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=16m
     ulimits:
       core: 0
-      nofile: 64
+      # codex 0.160.0 holds ~65 descriptors idle and up to 89 with four turns at once.
+      nofile: 1024
     volumes:
       - type: bind
         source: /srv/nexus/codex-state/codex/codex-personal
@@ -282,11 +313,7 @@ services:
           propagation: rprivate
       - nexus_codex_run:/tmp/codex-daemon-10001
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "python -m apps.codex_agent.health",
-        ]
+      test: ["CMD", "python", "-m", "apps.codex_agent.health"]
       interval: 5s
       timeout: 5s
       retries: 6

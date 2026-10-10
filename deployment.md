@@ -319,10 +319,11 @@ The isolation is **declared**, not re-derived:
 |---|---|
 | non-root, read-only rootfs, `cap_drop: ALL`, `no-new-privileges`, private pid/ipc, no ports | `deploy/hetzner/docker-compose.yml` |
 | default docker apparmor/seccomp confinement | same |
-| internal, gateway-less private bridge; DNS to the egress proxy only | same, `networks.codex_private` |
-| tmpfs layout, ulimits, cgroup limits, 45 s stop grace, `restart: "no"` | same |
+| internal, gateway-less private bridge whose only other member is the egress proxy | same, `networks.codex_private` |
+| egress allowlist `chatgpt.com:443`, `auth.openai.com:443`: names pinned with `extra_hosts`; stock nginx forwards only those SNIs | same, `x-codex-egress-conf`, `codex-egress-policy` |
+| tmpfs layout, ulimits, cgroup limits, 45 s stop grace, `restart: on-failure:3` | same |
 | exactly one host bind: the private account directory inside the LUKS volume | same |
-| uid/gid 10001; shared native socket volume `0700`, resolved socket `0660`; workers receive no account state | same; `apps/codex_agent/native_server.py` |
+| uid/gid 10001; shared native socket volume `0700`, socket `0600`; workers receive no account state | same; `docker/Dockerfile.backend` |
 | the credential underlay is closed before Docker starts | `codex-state-boot-guard.sh`, `nexus-codex-state-boot-guard.service`, `docker-codex-state-guard.conf` |
 | `kernel.apparmor_restrict_unprivileged_userns=1` | `deploy/hetzner/cloud-init.yml` |
 
@@ -331,10 +332,12 @@ is enabled; `/srv/nexus/codex-state` is a mountpoint with `rw,nosuid,nodev,noexe
 `nexus_codex_private` is internal, gateway-less and has exactly the agent host
 and the egress proxy on it; the container reports default docker apparmor, a
 read-only rootfs, `CapDrop == [ALL]`, no added capabilities, not privileged, and
-only that one network; its only host bind is the account directory; and
-`apps.codex_agent.network_health` proves the native host cannot reach the private
-bridge, application api, Postgres, Caddy or metadata. native portable callbacks
-run in the worker; the host has no application-service authority.
+only that one network; and its only host bind is the account directory. the
+host's only network peer is the proxy, so what it can reach is the proxy's
+declared policy; the release does not probe it, the codex host harness proves
+it behaves (allowlisted names reachable; other names, private addresses and the
+proxy's other ports not). native portable callbacks run in the worker; the host
+has no application-service authority.
 
 Compose recreates a service whose declaration changed, so a limit or option
 edited in `docker-compose.yml` is applied by the next release. Nothing reapplies

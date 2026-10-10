@@ -57,7 +57,6 @@ CODEX_CREDENTIAL = f"{CODEX_STATE}/codex/codex-personal/auth.json"
 CODEX_ACCOUNT_ROOT = f"{CODEX_STATE}/codex/codex-personal"
 CODEX_AGENT_HOST = "nexus-codex-agent-host"
 CODEX_PRIVATE_NETWORK = "nexus_codex_private"
-CODEX_PRIVATE_BRIDGE_IP = "172.30.0.1"
 BACKUP_STATE_ROOT = "/var/backups/nexus/r2"
 PRE_MODEL_HISTORY_CUTOVER_REVISIONS = frozenset(f"{number:04d}" for number in range(236, 246))
 PRE_ORACLE_ONE_ROW_REVISIONS = frozenset(f"{number:04d}" for number in range(236, 262))
@@ -547,7 +546,8 @@ def health(candidate: CandidateManifest) -> None:
     if ready != {"data": {"status": "ready"}}:
         raise Failure(f"the API is not ready: {ready}")
     for service in SERVICES:
-        if service in {"postgres", "caddy"}:
+        # Stock images, not built from this SHA (the proxy is pinned in the compose file).
+        if service in {"postgres", "caddy", "codex-egress-policy"}:
             continue
         image = inspect(container(service))["Config"]["Image"]
         wanted = candidate.images.api if service == "api" else candidate.images.worker
@@ -564,18 +564,11 @@ def health(candidate: CandidateManifest) -> None:
 
 # ---------------------------------------------------------------------------
 # Guarantee: the Codex agent host stays isolated. Every property below is
-# DECLARED in docker-compose.yml or the boot-guard unit;
-# this asserts that the kernel and Docker actually applied the declaration,
-# and that the sandbox cannot reach the data plane.
+# DECLARED in docker-compose.yml or the boot-guard unit; this asserts that the
+# kernel and Docker applied it to the host and its network. The host's only
+# peer is the egress proxy, whose pinned image and allowlist compose applies
+# from the same file and nothing here re-inspects (the harness proves them).
 # ---------------------------------------------------------------------------
-
-
-def service_address(service: str) -> str:
-    networks = inspect(container(service))["NetworkSettings"]["Networks"]
-    addresses = sorted({value["IPAddress"] for value in networks.values() if value["IPAddress"]})
-    if len(addresses) != 1:
-        raise Failure(f"{service} has no single IPv4 address: {addresses}")
-    return addresses[0]
 
 
 def assert_isolation() -> None:
@@ -613,19 +606,7 @@ def assert_isolation() -> None:
     host_paths = [mount["Source"] for mount in inspected["Mounts"] if mount["Type"] == "bind"]
     if host_paths != [CODEX_ACCOUNT_ROOT]:
         raise Failure(f"the Codex agent host has unexpected host mounts: {host_paths}")
-
-    denied = (
-        f"{CODEX_PRIVATE_BRIDGE_IP}:80 {CODEX_PRIVATE_BRIDGE_IP}:443"
-        f" {service_address('postgres')}:5432 {service_address('caddy')}:443"
-        f" {service_address('api')}:8000"
-        " 169.254.169.254:80"
-    )
-    inside(
-        CODEX_AGENT_HOST,
-        "python -m apps.codex_agent.network_health"
-        f" --allowed-target 172.30.0.2:443 --denied-targets {denied}",
-    )
-    note(f"agent host confined; {denied} unreachable from it")
+    note("agent host confined: internal network, its egress proxy the only peer")
 
 
 # ---------------------------------------------------------------------------
