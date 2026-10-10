@@ -119,10 +119,6 @@
   pointer-events: none;
 }
 
-.providerForm {
-  display: contents;
-}
-
 .providerDisabled {
   opacity: 0.5;
   cursor: not-allowed;
