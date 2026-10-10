@@ -1,9 +1,7 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
-import HoverPreview, {
-  HOVER_PREVIEW_DELAY_MS,
-} from "@/components/ui/HoverPreview";
+import { useCallback, useMemo, useState } from "react";
+import { useHoverPreview } from "@/components/ui/HoverPreview";
 import { truncateText } from "@/lib/display/format";
 import type {
   ReaderCitationPreview,
@@ -42,50 +40,28 @@ export default function ReaderCitation({
   const feedback = useFeedback();
   const paneRuntime = usePaneRuntime();
   const href = activation.href;
-  const [showPreview, setShowPreview] = useState(false);
-  const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
   const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(
     null,
   );
   const [copyFailure, setCopyFailure] = useState(false);
-  const hoverTimerRef = useRef<number | null>(null);
-  const citationRef = useRef<HTMLElement | null>(null);
   const activationTarget = useMemo(
     () =>
       target && href && target.href !== href ? { ...target, href } : target,
     [href, target],
   );
 
-  const captureAnchor = useCallback(() => {
-    const element = citationRef.current;
-    if (!element) return null;
-    const rect = element.getBoundingClientRect();
-    return { x: rect.left + rect.width / 2, y: rect.top };
-  }, []);
-
-  const cancelHoverTimer = useCallback(() => {
-    if (hoverTimerRef.current !== null) {
-      window.clearTimeout(hoverTimerRef.current);
-      hoverTimerRef.current = null;
-    }
-  }, []);
-
-  const openWithDelay = useCallback(() => {
-    cancelHoverTimer();
-    hoverTimerRef.current = window.setTimeout(() => {
-      const next = captureAnchor();
-      setAnchor(next);
-      setShowPreview(true);
-    }, HOVER_PREVIEW_DELAY_MS);
-  }, [cancelHoverTimer, captureAnchor]);
-
-  const closePreview = useCallback(() => {
-    cancelHoverTimer();
-    setShowPreview(false);
-  }, [cancelHoverTimer]);
-
   const copyText = preview.copyText;
   const hasPreviewActions = Boolean(activationTarget || href || copyText);
+  const hover = useHoverPreview(
+    Boolean(
+      preview.title ||
+      preview.summary ||
+      preview.excerpt ||
+      (preview.meta && preview.meta.length > 0) ||
+      hasPreviewActions,
+    ),
+  );
+  const closePreview = hover.close;
   const externalHref =
     href?.startsWith("http://") || href?.startsWith("https://");
   const copyCitation = useCallback(async () => {
@@ -110,81 +86,76 @@ export default function ReaderCitation({
     }
   }, [closePreview, copyText, feedback]);
 
-  const previewBody =
-    preview.title ||
-    preview.summary ||
-    preview.excerpt ||
-    (preview.meta && preview.meta.length > 0) ||
-    hasPreviewActions ? (
-      <>
-        {preview.title ? (
-          <div className={styles.previewTitle}>
-            {truncateText(preview.title, 96)}
-          </div>
-        ) : null}
-        {preview.summary ? (
-          <div className={styles.previewSummary}>
-            {truncateText(preview.summary, 140)}
-          </div>
-        ) : null}
-        {preview.excerpt ? (
-          <div className={styles.previewExcerpt}>{preview.excerpt}</div>
-        ) : null}
-        {preview.meta?.map((entry, i) => (
-          <div key={i} className={styles.previewMeta}>
-            {entry}
-          </div>
-        ))}
-        {hasPreviewActions ? (
-          <div className={styles.previewActions}>
-            {activationTarget ? (
-              <button
-                type="button"
-                className={styles.previewAction}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onActivate(activation, activationTarget, event);
-                  closePreview();
-                }}
-              >
-                Open in context
-              </button>
-            ) : href ? (
-              <button
-                type="button"
-                className={styles.previewAction}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onActivate(activation, null, event);
-                  closePreview();
-                }}
-              >
-                Open source
-              </button>
-            ) : null}
-            {copyText && !copyFailure ? (
-              <button
-                type="button"
-                className={styles.previewAction}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void copyCitation();
-                }}
-              >
-                Copy citation
-              </button>
-            ) : null}
-          </div>
-        ) : null}
-        {copyFailure ? (
-          <FeedbackNotice
-            content={{ tone: "Danger", title: "Citation wasn’t copied" }}
-            announcement="Assertive"
-            actions={[{ label: "Retry", onClick: () => void copyCitation() }]}
-          />
-        ) : null}
-      </>
-    ) : null;
+  const previewNode = hover.render(
+    <>
+      {preview.title ? (
+        <div className={styles.previewTitle}>
+          {truncateText(preview.title, 96)}
+        </div>
+      ) : null}
+      {preview.summary ? (
+        <div className={styles.previewSummary}>
+          {truncateText(preview.summary, 140)}
+        </div>
+      ) : null}
+      {preview.excerpt ? (
+        <div className={styles.previewExcerpt}>{preview.excerpt}</div>
+      ) : null}
+      {preview.meta?.map((entry, i) => (
+        <div key={i} className={styles.previewMeta}>
+          {entry}
+        </div>
+      ))}
+      {hasPreviewActions ? (
+        <div className={styles.previewActions}>
+          {activationTarget ? (
+            <button
+              type="button"
+              className={styles.previewAction}
+              onClick={(event) => {
+                event.stopPropagation();
+                onActivate(activation, activationTarget, event);
+                closePreview();
+              }}
+            >
+              Open in context
+            </button>
+          ) : href ? (
+            <button
+              type="button"
+              className={styles.previewAction}
+              onClick={(event) => {
+                event.stopPropagation();
+                onActivate(activation, null, event);
+                closePreview();
+              }}
+            >
+              Open source
+            </button>
+          ) : null}
+          {copyText && !copyFailure ? (
+            <button
+              type="button"
+              className={styles.previewAction}
+              onClick={(event) => {
+                event.stopPropagation();
+                void copyCitation();
+              }}
+            >
+              Copy citation
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {copyFailure ? (
+        <FeedbackNotice
+          content={{ tone: "Danger", title: "Citation wasn’t copied" }}
+          announcement="Assertive"
+          actions={[{ label: "Retry", onClick: () => void copyCitation() }]}
+        />
+      ) : null}
+    </>,
+  );
 
   const className = `${styles.citation} ${
     activationTarget || href ? "" : styles.unavailable
@@ -192,30 +163,18 @@ export default function ReaderCitation({
 
   const label =
     activationTarget || href ? `Open citation ${index}` : `Citation ${index}`;
-  const previewNode =
-    showPreview && anchor && previewBody ? (
-      <HoverPreview anchor={anchor} onClose={closePreview}>
-        {previewBody}
-      </HoverPreview>
-    ) : null;
-
   if (asyncDefect !== null) throw asyncDefect.error;
 
   if (href && !target) {
     return (
       <>
         <a
-          ref={(element) => {
-            citationRef.current = element;
-          }}
           className={className}
           href={href}
           target={externalHref ? "_blank" : undefined}
           rel={externalHref ? "noopener noreferrer" : undefined}
           aria-label={label}
-          onPointerEnter={openWithDelay}
-          onPointerLeave={cancelHoverTimer}
-          onFocus={openWithDelay}
+          {...hover.trigger}
           onClick={(event) => {
             onActivate(activation, null, event);
             if (event.defaultPrevented) return;
@@ -242,15 +201,10 @@ export default function ReaderCitation({
       return (
         <>
           <button
-            ref={(element) => {
-              citationRef.current = element;
-            }}
             type="button"
             className={className}
             aria-label={label}
-            onPointerEnter={openWithDelay}
-            onPointerLeave={cancelHoverTimer}
-            onFocus={openWithDelay}
+            {...hover.trigger}
             onClick={(event) => {
               onActivate(activation, activationTarget, event);
             }}
@@ -265,15 +219,10 @@ export default function ReaderCitation({
     return (
       <>
         <a
-          ref={(element) => {
-            citationRef.current = element;
-          }}
           className={className}
           href={targetHref}
           aria-label={label}
-          onPointerEnter={openWithDelay}
-          onPointerLeave={cancelHoverTimer}
-          onFocus={openWithDelay}
+          {...hover.trigger}
           onClick={(event) => {
             onActivate(activation, activationTarget, event);
             if (event.defaultPrevented) return;
@@ -298,11 +247,10 @@ export default function ReaderCitation({
   return (
     <>
       <sup
-        ref={citationRef}
         className={className}
         aria-label={label}
-        onPointerEnter={openWithDelay}
-        onPointerLeave={cancelHoverTimer}
+        {...hover.trigger}
+        onClick={(event) => hover.show(event.currentTarget)}
         data-pane-find-exclude="true"
       >
         {index}

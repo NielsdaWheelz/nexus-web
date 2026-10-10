@@ -1,5 +1,5 @@
 import type { Presence } from "@/lib/api/presence";
-import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
+import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 
 export type ShareMode =
   | "None"

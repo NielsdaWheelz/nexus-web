@@ -2,7 +2,8 @@
 
 status: open · origin: 2026-10-10 app navigation reauthor (cleanup/appnav-reauthor) · area: web / mobile viewport
 
-`useMobileModalLifecycle` reports an open sheet's keyboard inset to
+`useKeyboardReport` (`apps/web/src/lib/ui/useKeyboardInset.ts`) reports an
+open sheet's or task's keyboard inset to
 `MobileViewport.reportMobileOverlayKeyboardInset` (`apps/web/src/lib/mobileShell/viewport.tsx`),
 a token stack whose newest report becomes `--mobile-overlay-keyboard-inset` and
 joins `--mobile-content-bottom-clearance`. playwright cannot raise a soft

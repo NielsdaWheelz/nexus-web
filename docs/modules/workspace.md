@@ -362,8 +362,9 @@ desktop and as a sheet on mobile, and owns every Companion command
 `requestSecondarySurface(id | null)`, `closeSecondaryPane` and
 `toggleSecondaryPane`, the Inspector action's toggle). On mobile it is
 modal sheet chrome, not a workspace column: the shared `MobileSheet`
-(`scrim="soft"`, `layer="overlay"`) owns the portal, scrim, grabber, keyboard
-avoidance, back-button dismissal and the `useDialogOverlay` contract (see
+(`scrim="soft"`, `panelId` = the region id, which is also its interaction
+scope) owns the portal, scrim, grabber, keyboard avoidance, back-button
+dismissal and the modal contract of the overlay stack (see
 `docs/modules/overlays.md`); `Companion` owns only its header (tabs or a solo
 title, the pane's resource Actions menu, ✕), tab state and bodies. Do not
 introduce another workspace mobile drawer or sheet owner.
@@ -511,7 +512,7 @@ provider itself). The active mobile pane body registers through
 `registerContentSurface(element)`; mobile renders one pane, so there is one.
 Every cleanup is idempotent, removes the element-local variable and recomputes
 immediately; one lazily created `ResizeObserver` (border box) watches every
-registered element. `useMobileModalLifecycle` reports an active sheet's or
+registered element. `useKeyboardReport` (`lib/ui/useKeyboardInset.ts`) reports an active sheet's or
 full-screen task's keyboard inset as a token stack: the newest report wins and
 releasing it restores the one before. `useRootTextEntryFocused()` recognizes a
 focused text-entry target outside modal layers; while it holds, the mounted

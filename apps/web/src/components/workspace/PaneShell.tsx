@@ -57,7 +57,7 @@ import {
 import { activateTargetAnchor } from "@/lib/panes/targetLinkActivation";
 import { useShareController } from "@/lib/sharing/controller";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import { hasActiveInteractionOwner } from "@/lib/ui/useEscapeKey";
+import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
 import type { WorkspacePane } from "@/lib/workspace/model";
 import {
   findPaneChromeFocusTarget,

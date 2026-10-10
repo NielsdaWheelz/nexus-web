@@ -32,7 +32,7 @@ import {
   type MetadataEnrichmentView,
 } from "@/lib/media/mediaMetadataOperations";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
+import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 import { definePaneVisitDataKey } from "@/lib/workspace/paneReturnMemento";
 import styles from "./MediaInfoOverlay.module.css";
 

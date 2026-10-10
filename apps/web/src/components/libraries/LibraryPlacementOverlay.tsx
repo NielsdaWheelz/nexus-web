@@ -41,7 +41,6 @@ export default function LibraryPlacementOverlay({
     <LibraryChooserSurface
       active={session !== null}
       onClose={onClose}
-      layer="modal"
       anchor={session ? session.options.anchor : () => null}
       returnFocusFallback={fallback?.kind === "Present" ? fallback.value : undefined}
       title="Libraries"

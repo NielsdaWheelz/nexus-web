@@ -23,7 +23,7 @@ import {
 import { usePaneReturnDescendantReady } from "@/lib/workspace/paneReturnMemento";
 import CollectionRow from "./CollectionRow";
 import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
-import { getFocusableElements } from "@/lib/ui/getFocusableElements";
+import { focusableElements } from "@/lib/ui/overlay";
 
 function followingRowIds(root: HTMLElement, target: HTMLElement): string[] {
   const row = target.closest("[data-collection-row-id]");
@@ -113,7 +113,7 @@ export default function CollectionView({
     const sameRow = remaining.find((item) => item.dataset.collectionRowId === focus.rowId);
     const control = sameRow?.querySelector<HTMLElement>(focus.controlSelector ?? "[data-row-focusable]:not([disabled])");
     const sameControl = control?.hasAttribute("data-row-primary-control")
-      ? getFocusableElements(control)[0] : control;
+      ? focusableElements(control)[0] : control;
     const followingRow = focus.followingIds.map((id) => remaining.find((item) => item.dataset.collectionRowId === id))
       .find((item) => item !== undefined);
     const target = sameControl ?? sameRow?.querySelector<HTMLElement>("[data-row-focusable]:not([disabled])") ??

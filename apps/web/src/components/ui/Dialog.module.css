@@ -1,7 +1,6 @@
 .backdrop {
   position: fixed;
   inset: 0;
-  z-index: var(--z-nexus);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -10,6 +9,8 @@
 }
 
 .dialog {
+  display: flex;
+  flex-direction: column;
   max-width: 560px;
   width: 100%;
   max-height: calc(100vh - var(--space-8));
@@ -20,12 +21,6 @@
   padding: 0;
   overflow: hidden;
   box-shadow: var(--shadow-3);
-}
-
-.inner {
-  display: flex;
-  flex-direction: column;
-  max-height: calc(100vh - var(--space-8));
 }
 
 .header {

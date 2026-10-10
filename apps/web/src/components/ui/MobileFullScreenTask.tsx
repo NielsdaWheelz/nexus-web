@@ -1,89 +1,44 @@
 "use client";
 
-import { useRef, type ReactNode } from "react";
-import { createPortal } from "react-dom";
-import type { DismissDecision } from "@/lib/ui/useHistoryDismiss";
-import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
-import {
-  ModalLayerProvider,
-  modalBackdropProjection,
-} from "@/lib/ui/useModalLayer";
+import type { ReactNode } from "react";
+import { useKeyboardInset, useKeyboardReport } from "@/lib/ui/useKeyboardInset";
+import ModalFrame, { type ModalProps } from "./ModalFrame";
 import styles from "./MobileFullScreenTask.module.css";
-import { useMobileModalLifecycle } from "./useMobileModalLifecycle";
-
-interface MobileFullScreenTaskProps {
-  /** Stay mounted; gate behavior and portal rendering with active. */
-  active: boolean;
-  /** Called only after the dismissal request is accepted. */
-  onDismiss(): void;
-  /** Owns Back/Escape safety and may perform an internal pop. */
-  onDismissRequest(): DismissDecision;
-  ariaLabel: string;
-  children: ReactNode;
-  initialFocus(container: HTMLElement): HTMLElement | null;
-  returnFocusTo?: ReturnFocusTarget;
-  skipReturnFocus?: () => boolean;
-  focusKey: unknown;
-}
 
 /**
- * Opaque, visual-viewport-sized mobile task presentation.
- *
- * The feature owns the task's header, content, scrolling, and state. This
- * primitive owns only modal lifecycle and the fixed full-screen frame.
+ * The opaque mobile task, fixed to the unobscured visual viewport: its top
+ * follows the iOS viewport pan, its bottom clears the keyboard. Content stays
+ * mounted after the first open, so task state survives close and reopen.
  */
 export default function MobileFullScreenTask({
   active,
-  onDismiss,
-  onDismissRequest,
   ariaLabel,
   children,
-  initialFocus,
-  returnFocusTo,
-  skipReturnFocus,
-  focusKey,
-}: MobileFullScreenTaskProps) {
-  const panelRef = useRef<HTMLElement>(null);
-  const hasOpenedRef = useRef(false);
-  if (active) {
-    hasOpenedRef.current = true;
-  }
-  const lifecycle = useMobileModalLifecycle({
-    panelRef,
-    active,
-    onDismiss,
-    onDismissRequest,
-    initialFocus,
-    returnFocusTo,
-    skipReturnFocus,
-    focusKey,
-  });
-
-  if (!hasOpenedRef.current) return null;
-  return createPortal(
-    <ModalLayerProvider token={lifecycle.layerToken}>
-      <div
-        className={styles.projection}
-        {...modalBackdropProjection(lifecycle.isTopmost)}
-        role="presentation"
-        hidden={!active}
-        inert={!active ? true : undefined}
-        style={{
-          top: `${lifecycle.visualViewportTopPx}px`,
-          bottom: `${lifecycle.keyboardBottomInsetPx}px`,
-        }}
-      >
-        <section
-          ref={panelRef}
-          className={styles.frame}
-          role="dialog"
-          aria-label={ariaLabel}
-          tabIndex={-1}
-        >
-          <div className={styles.content}>{children}</div>
-        </section>
-      </div>
-    </ModalLayerProvider>,
-    document.body,
+  ...modal
+}: Omit<ModalProps, "open" | "onDismissRequest" | "initialFocus"> & {
+  readonly active: boolean;
+  readonly onDismissRequest: NonNullable<ModalProps["onDismissRequest"]>;
+  readonly initialFocus: NonNullable<ModalProps["initialFocus"]>;
+  readonly focusKey: unknown;
+  readonly ariaLabel: string;
+  readonly children: ReactNode;
+}) {
+  const { keyboardBottomInsetPx, visualViewportTopPx } = useKeyboardInset();
+  useKeyboardReport(active);
+  return (
+    <ModalFrame
+      {...modal}
+      open={active}
+      label={ariaLabel}
+      keepMounted
+      backdropClassName={styles.projection}
+      backdropStyle={{
+        top: visualViewportTopPx,
+        bottom: keyboardBottomInsetPx,
+      }}
+      className={styles.frame}
+    >
+      <div className={styles.content}>{children}</div>
+    </ModalFrame>
   );
 }

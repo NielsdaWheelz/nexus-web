@@ -5,7 +5,7 @@ import Button from "@/components/ui/Button";
 import MachineText from "@/components/ui/MachineText";
 import type { Message } from "@/lib/chat/wire";
 import type { PaneRuntimeContextValue } from "@/lib/panes/paneRuntime";
-import { hasActiveInteractionOwner } from "@/lib/ui/useEscapeKey";
+import { hasActiveInteractionOwner } from "@/lib/ui/overlay";
 import styles from "./ChatPanels.module.css";
 
 // "Walk the sources": step through an answer's citations, driving the pane to

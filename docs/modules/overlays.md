@@ -1,214 +1,206 @@
-# Mobile Modal Surfaces
+# overlays
 
-## Scope
+## scope
 
-The overlays module owns the named mobile bottom-sheet and full-screen-task
-presentations plus the modal lifecycle they share. Owners live under
-`apps/web/src/components/ui/{MobileSheet,MobileFullScreenTask}.tsx`, their
-stylesheets, `apps/web/src/components/ui/useMobileModalLifecycle.ts`, and
-`apps/web/src/lib/ui/{useDialogOverlay,useModalLayer,useEscapeKey,useBodyOverflowLock,useHistoryDismiss,useKeyboardInset}.ts`.
+the overlay kernel lets any surface float over the workspace without anyone
+losing their place. owners, under `apps/web/src/`:
 
-Established by `docs/cutovers/mobile-sheet-keyboard-unification-hard-cutover.md`;
-the mobile Nexus projection came from
-`docs/cutovers/mobile-nexus-full-screen-task-hard-cutover.md` and
-`docs/cutovers/daily-pages-quick-capture-hard-cutover.md` (all at `ebd648197`).
+- `lib/ui/overlay.ts`: the overlay stack. who owns Escape, Back and global
+  commands, light dismiss, the scrim rule, the Tab trap, return focus, the
+  synthetic history entry.
+- `lib/ui/useAnchoredPosition.ts`: where a floating box goes (an element, a
+  rect or a text selection's lines; flip, clamp, re-measure on scroll and
+  resize). a captured rect does not move with a scroll, so the selection
+  surfaces stay put ([ticket](../tickets/selection-dock-does-not-follow-scroll.md)).
+- `lib/ui/useKeyboardInset.ts`: the ios keyboard geometry and its report to the
+  mobile viewport (`lib/mobileShell/viewport.tsx` keeps the report stack).
+- `components/ui/ModalFrame.tsx`: the scrim + `role="dialog"` panel every modal
+  renders through, with initial focus, the dismissal guard, depth z-index and
+  suspension. its skins: `Dialog` (centred, titled), `MobileSheet` (bottom
+  sheet, drag to dismiss), `MobileFullScreenTask` (opaque task on the visual
+  viewport).
+- `components/ui/ActionMenu.tsx` (menu semantics),
+  `components/ui/FloatingActionSurface.tsx` (the non-modal action surface),
+  `components/ui/HoverPreview.tsx` (`useHoverPreview`: hover intent and the
+  preview card or sheet).
 
-## MobileSheet Capability Contract
+## the stack
 
-`MobileSheet` is the single mobile bottom-sheet owner. It composes
-`useMobileModalLifecycle` and owns:
+every open dialog, sheet, task, menu, chooser, floating surface and preview is a
+layer pushed by `useOverlay(open, options)`, in activation order. a layer is a
+**modal** (an exclusive task, always a `ModalFrame`) or a **transient** (a brief
+choice). a transient belongs to the modal it renders inside (react context from
+the frame) or to the page.
 
-- portal to `document.body`
-- backdrop scrim with tap-to-dismiss
-- grabber + drag-to-dismiss (96 px threshold, inert under reduced motion)
-- keyboard avoidance: shrink + lift via `--keyboard-inset` on the panel
-- reporting of that keyboard inset to the shell-owned mobile viewport
-  capability through a scoped release; the newest active sheet owns the channel
-  and releasing it restores the preceding sheet
-- safe-area bottom padding
-- the `useDialogOverlay` modal contract (body scroll lock, focus trap, initial
-  focus, return focus, Escape)
-- back-button dismissal via `useHistoryDismiss` (on by default)
+the **owner** answers Escape, Back and global commands: the newest eligible
+transient of the newest modal, else that modal; with no modal, the newest
+eligible page transient. a transient of a covered modal never outranks a newer
+modal, and a page transient never outranks a modal. `eligible()` is read at
+dispatch (the author search owns keys only while focus is inside it).
+`hasActiveInteractionOwner()` and `isTopmostInteractionOwner(scope)` read the
+same rule; a sheet's scope is its `panelId`.
 
-It does not own open/close state, content, desktop variants, side-drawer
-geometry, non-modal surfaces, or snap points.
+every dismissal is `onDismiss(reason)` with reason `escape`, `back` or
+`outside`; the feature closes by changing its state. a modal asks its
+`onDismissRequest()` first: `"blocked"` keeps it open (the feature shows its
+confirmation) and Back re-arms. Escape, Back, the scrim, the frame's close
+button and the sheet's drag all take that path.
 
-`MobileSheet.module.css` is the only stylesheet allowed to contain bottom-sheet
-geometry. Callers pass content and state only; size budgets are tuned via
-`--mobile-sheet-max-size` / `--mobile-sheet-max-size-cap` in a `panelClassName`,
-never with new geometry.
+## presses
 
-## MobileFullScreenTask Capability Contract
+**light dismiss.** a pointerdown (capture phase) closes, newest first, every
+transient of the top modal (or of the page) until one whose `inside()` boxes
+contain the press. a transient's anchor element is inside it, so pressing a
+trigger never closes and reopens its own surface. a transient without `inside`
+is never closed by a press.
 
-`MobileFullScreenTask` is the semantic owner for temporary sustained mobile
-work. It owns one opaque child dialog frame fixed to the unobscured visual
-viewport, modal projection, and the shared mobile modal lifecycle. Its
-projection wrapper is unpainted; the child frame owns the canvas so suspending
-the wrapper for a nested modal never exposes the workspace.
+**the scrim.** a modal closes from its scrim only on a click that starts and
+ends on the scrim and closed no transient on the way: a scrim press with a menu
+open closes only the menu, and selecting text in a dialog and releasing over the
+scrim keeps the dialog. the frame stops a click from reaching its owner through
+the react tree.
 
-It has no scrim, backdrop action, grabber, rounded sheet edge, max-height,
-detent, or drag dismissal. It adds no title, toolbar, scroll region, route, or
-business state. The feature supplies one page-owned header and one content
-scroll owner; those owners apply the exact top/side/bottom safe-area padding.
+## focus
 
-`MobileFullScreenTask` and `MobileSheet` are separate semantic primitives. Do
-not add a full-screen variant to `MobileSheet` or options for layer, scrim,
-geometry, edge, axis, detents, or gestures to the task.
+only the topmost frame is `aria-modal` and interactive; a covered frame's panel
+is `inert` and its scrim `data-suspended="true"` (clear, no pointer events). Tab
+wraps inside the top modal's panel (a handler that prevented Tab keeps it;
+`contenteditable` counts as focusable). a frame focuses `initialFocus(panel)`,
+else its first focusable, else the panel, one frame after it becomes topmost,
+once per open and `focusKey`.
 
-## Mount Contract
+**return focus.** at open a layer records its trigger: `returnFocusTo()`, else
+the focused element, else (safari never focuses a clicked button) the focusable
+element the last press landed on. at close, focus goes to the live
+`returnFocusTo()`, else the trigger, else `returnFocusFallback()`, only for the
+layer being exposed: a modal that was topmost, or a transient that opted in
+(`returnFocus`) whose modal is topmost and that no outside press closed.
+`skipReturnFocus()` vetoes (a navigating close already put focus at the
+destination). the last modal's restore runs again after its history traversal
+if focus fell to the body. a menu returns focus before its chosen command runs,
+so whatever the command opens names the trigger, not the vanishing item, as its
+opener; a menu anchored at a clicked highlight returns it to what had focus at
+open without scrolling the reader.
 
-`MobileSheet` and `MobileFullScreenTask` must stay mounted across the open/close
-cycle and be driven with `active`. Never conditionally mount either active
-surface. `useHistoryDismiss` (its C7 doc comment) must observe `active` going
-false to pop its synthetic history entry; conditional rendering breaks
-back-button dismissal.
+## history
 
-## Shared Mobile Modal Lifecycle
+while any modal is open exactly one synthetic entry exists
+(`history.state.__nexusOverlay`), so Back means "dismiss" on every engine and
+in the android app, whose Back is `webView.goBack()`. a Back press dispatches
+`back` to the owner; if a modal remains (a blocked guard, a closed menu inside
+a sheet), a fresh entry is pushed. when the last modal closes by ui the entry is
+traversed off; if the address moved meanwhile (the workspace replaces it after a
+navigating close), the landed entry keeps the destination's address, so no dead
+entry is left behind. a modal opening during that traversal gets a fresh entry,
+and a modal closing as another opens in the same commit keeps the entry (one
+sync per commit). with no modal open there is no entry: page menus, floating
+surfaces and previews never own Back.
 
-`useMobileModalLifecycle` is the sole mobile-modal composition owner. It
-combines `useDialogOverlay`, `useHistoryDismiss`, and `useKeyboardInset`, and
-publishes active keyboard obstruction to `MobileViewportProvider`
-(`lib/mobileShell/viewport.tsx`), which every route that mounts a mobile modal
-provides: the authenticated shell, and `/share` for its library picker. It renders
-no markup and owns no CSS, scrim, gesture, z-index, geometry application, or
-semantic surface choice.
+the costs of one entry per modal, desktop included: opening a modal discards
+the browser's forward history; a ui close leaves the traversed-off entry ahead
+as a forward entry, so Forward lands on a no-op entry and the next Back is dead;
+reloading with a modal open leaves its entry behind as one dead Back press (no
+modal reopens on load). giving them up means giving up Back on desktop.
 
-Its guarded dismissal path calls the feature's dismissal handler only after an
-accepted request. History always uses that path; Escape uses `onEscape` when
-supplied and otherwise uses the guarded request. Inactive mounted surfaces
-consume no viewport context and publish no keyboard report; active surfaces
-still require the provider. Releasing the newest active report restores the
-preceding report.
+## rendering
 
-## Shared Overlay-Layer Contract
+frames render in `document.body` and stack at `calc(var(--z-modal) + depth)`,
+depth being the frame's index among open modals: activation order alone decides
+which is on top. transients render in their containing modal's panel
+(`useOverlayContainer()`), else in the body at `--z-popover` (900): above mobile
+chrome (`--z-overlay`), below every modal. the feedback HUD (`--z-toast`) stays
+above everything and the quick-note handoff input (`--z-nexus`) above every
+frame. a page's own fixed shell (the `/share` card) takes no z-index, or it
+buries them. the app's body never scrolls (panes do); where a bundle lets it
+scroll (the android shelf), css locks it while any frame is open
+(`body:has([data-modal-backdrop="true"]:not([hidden]))`).
 
-`useDialogOverlay` is the only modal behavior facade. Active modals register
-with `useModalLayer`; only the activation-topmost modal carries `aria-modal`,
-accepts focus, traps Tab, and owns Escape. Every lower modal panel is `inert`,
-and every modal backdrop consumes the shared `modalBackdropProjection`, which
-suppresses its lower scrim and pointer handling with stateful inline styles
-that cannot lose to component stylesheet order. A stable optional layer scope
-lets feature commands identify their
-own top interaction layer without mistaking a nested modal or menu for it.
+frames may be mount-gated or driven by `open`; either way a close pops the
+layer and syncs history. `MobileFullScreenTask` keeps its content mounted after
+the first open (`keepMounted`), so task state survives close, reopen and
+rotation. sheet and dialog content unmount when closed.
 
-The supporting registries are browser-local and composition-safe:
+## listener order
 
-- `useEscapeKey` has one document listener; transient owners are associated
-  with and outrank only their containing modal, peers are LIFO, and a transient
-  in a suspended modal cannot steal Escape from a newer modal;
-- `useBodyOverflowLock` changes body overflow only on zero-to-one and
-  one-to-zero owner transitions;
-- `useHistoryDismiss` keeps one marker/listener for the nonempty history-owner
-  stack, dismisses only its topmost eligible owner, and safely handles blocked,
-  nested, non-LIFO, simultaneous, delayed-pop, and owner-handoff closes;
-- return focus is permitted only for the layer being exposed and is deferred
-  while its explicit target remains inside an inert underlay.
+the kernel's document listeners are installed with the first layer, after
+react's root listeners: a component's own key handler runs first and keeps a
+key by preventing its default (the Nexus inputs own Escape this way). a
+feature's own global Escape command must yield while
+`hasActiveInteractionOwner()`; the reader (`media/[id]/chrome.tsx`) does, so
+Escape with its inspector sheet on top closes only the sheet. react listens on
+every portal container too: a portaled component that stops a key's
+propagation hides it from the document. `ActionMenu` stops every key, since
+react bubbles a portaled menu's keys through its owners (the linked-notes
+editor's block keys would take Escape and Delete), and so answers Escape itself
+(focus in the menu makes it the owner).
 
-A modal-local `ActionMenu` derives that ownership from modal context, portals
-into its containing dialog, becomes a transient Escape/history owner, and does
-not claim `aria-modal`. Escape closes the top menu or modal one layer at a
-time. Back closes a modal-local menu and then the top history-enabled dialog,
-sheet, or drawer. Dialog owners opt into history only when their product
-contract requires platform Back; player-owned subordinate dialogs do so, which
-prevents Back from reaching full-screen Now Playing first.
+## surfaces
 
-Shared `Dialog` uses the `--z-nexus` top-modal band so activation order places a
-dialog opened by opaque Nexus above it; `ActionMenu` remains at 1200. `Dialog`
-defaults to no history ownership; product flows that require platform Back, such
-as Nexus Add's dirty-work confirmation, opt into `historyDismiss`.
+**MobileSheet**: scrim (`"default"`, or `"soft"` for in-context companion sheets),
+grabber drag past 96 px asks the guard (not under reduced motion), lift above
+the ios keyboard via `--keyboard-inset` and safe-area padding. its geometry
+lives only in `MobileSheet.module.css`.
 
-## Keyboard Geometry Ownership
+**MobileFullScreenTask**: one opaque frame fixed to the visual viewport (top
+follows the ios viewport pan, bottom clears the keyboard); no scrim, grabber or
+drag. Back and Escape go through the feature's guard. mobile Nexus is its one
+user: nonblank Root clears its query first, a nested page returns to Root, dirty
+work keeps its confirmation, blank Root closes.
 
-`useKeyboardInset` is the single modal keyboard-geometry source and is
-importable only by `useMobileModalLifecycle` (ESLint-enforced). It returns the
-thresholded bottom keyboard inset and the raw nonnegative visual-viewport top
-offset. The lifecycle publishes active bottom inset through
-`reportMobileOverlayKeyboardInset`; `MobileFullScreenTask` consumes the top
-offset locally. No other modal reads `visualViewport` to infer keyboard
-geometry.
+**ActionMenu**: a "…" or custom trigger, or a menu anchored at a clicked rect.
+Enter, Space and ArrowDown open on the first item, ArrowUp on the last; arrows
+wrap, Home/End, typeahead, Tab wraps inside; disabled items stay focusable and
+say why. focus moves to the first (or last) item once, after the first
+placement, so a moving anchor never resets the keyboard position. choosing an
+item closes the menu and returns focus unless the item opts out; an outside
+press closes without moving focus; scrolling closes an anchored menu.
+`onOpenChange` reports each open and each close once (mobile chrome holds on
+it).
 
-The platform layer is `interactiveWidget: "resizes-content"` in the root
-`viewport` export (`apps/web/src/app/layout.tsx`): Android/Firefox resize the
-layout viewport with zero JS, the measured inset is ~0 there, and the hook is
-the iOS-only shim. No code branches on user agent.
+**FloatingActionSurface**: the text-selection toolbar (above the first visible
+line, below the last on phones, beside the selection, else pinned to the
+nearest edge, with a caret at the selection), clicked-highlight choosers,
+composers and action-bar popovers. Escape, an outside press and, inside a
+modal, Back dismiss it; `preservePointerSelection` keeps a live selection when
+pressed.
 
-`FloatingActionSurface` is the separate, documented non-modal owner
-(`docs/modules/chat.md`). It keeps its own raw `visualViewport` clamping — a
-different concern — and must not migrate to `MobileSheet`.
+**useHoverPreview**: mouse or pen hover, or keyboard focus while focus is
+visible, opens a card above the citation after 150 ms; leaving the citation
+closes it 150 ms later unless the pointer reaches the card; a press on the
+citation, Escape, an outside press and focus moving away close it. touch never
+hover-opens; `show()` opens at once, and on a touch screen the preview is a
+modal sheet that Back closes.
 
-## Scrim Rule
+## why no native dialog
 
-Scrim is a two-value semantic choice:
+the platform floor would allow `<dialog>.showModal()` and the `popover`
+attribute, and the kernel uses neither. a blocking modal dialog makes everything
+outside it inert and paints it below: the feedback HUD, which toasts while modal
+sheets are open, would sink under them, stop taking presses and leave the
+accessibility tree; the quick-note handoff, which focuses a textarea outside the
+open mobile Nexus task as the first effect of a gesture, could not focus it; and
+chromium's close watcher would let a second Back force-close a guarded sheet.
+the cost is a javascript Tab trap, the `inert`/`aria-modal` projection and depth
+z-indices.
 
-- `soft` (`--overlay-scrim-soft`): in-context companion sheets — workspace
-  secondary surfaces, model settings
-- `default` (`--overlay-scrim`): app-level sheet modals
+## browser floor
 
-Full-screen Nexus and full-screen Now Playing own opaque canvases rather than
-scrims. Now Playing composes the underlying modal primitives directly; it is
-not `MobileSheet` or `MobileFullScreenTask`.
-
-## Mobile Nexus
-
-Mobile Nexus is the sole mobile global-access task. One mounted
-`SwitchboardTask` uses `MobileFullScreenTask` for the autofocused Root,
-Choose Create, Choose Browse, Manage Tabs, Add, and recovery pages; those pages
-replace one another inside the task. Root owns query and canonical Nexus groups;
-there is no separate Find page or scope state. Each page's header is the only
-header and its content region is the only vertical scroll owner. Quick Note
-uses the task-owned typed gesture-time handoff only until the destination Page
-editor claims input. Mobile Nexus has no global navigation drawer, bottom
-sheet, outside-click target, swipe dismissal, or stacked workflow task.
-
-Nested Back, Escape, browser Back, and Android Back request the Nexus
-controller's guarded transition: nonblank Root clears its query first; blank
-Root dismisses; a nested page restores the exact Root query and active identity;
-dirty or running work remains open behind its existing confirmation. Ordinary
-dismissal restores the Nexus control; accepted workspace activation leaves
-focus with the destination. Rotation and mobile/desktop breakpoint changes
-preserve controller state.
-
-## Player Surfaces
-
-Full-screen Now Playing is a shell-owned modal mode, not a bottom sheet. It
-stays mounted, composes `useDialogOverlay`, `useHistoryDismiss`, and
-`ModalLayerProvider`, and uses the shared backdrop projection. Its short
-subordinate tasks—Contents, speed/effects, menus, and capture review—reuse the
-named overlay primitives and own one-layer Back/Escape dismissal.
-
-## Underlying Primitives
-
-- `useMobileModalLifecycle` is the shared mobile composition owner for dialog,
-  history, keyboard, viewport publication, and return focus. It renders no
-  markup and owns no geometry.
-- `useDialogOverlay` is the modal contract for all modal overlays, mobile and
-  desktop. It owns modal-stack projection, shared scroll locking, focus entry,
-  trapping/return, and topmost Escape. Backdrop-click dismissal stays
-  caller-side (`MobileSheet` is that caller for bottom sheets).
-- `useMobileModalLifecycle` is the one composition of dialog, history, and
-  keyboard mechanics for the two named mobile modal presentations.
-- `useHistoryDismiss` owns the one shared synthetic history marker, topmost
-  Back dismissal, blocked-dismiss rearming, delayed-pop drain, and
-  navigating-close guard. It carries the stay-mounted contract above.
-- anchored nonmodal popovers remain in their owner's dom subtree and use a
-  manual native popover when they must escape clipping. `useAnchoredPosition`
-  owns viewport clamping, optional side flipping, and opt-in live-anchor
-  tracking. the feature owner must compare its containing modal token with the
-  registry's current top token, and must own dismissal, history and focus
-  return. these popovers add no backdrop, focus trap or scroll lock.
-
-## Rejected Hacks
-
-None of these may appear in the implementation:
-
-- `--vh`-style `window.innerHeight` CSS polyfills
-- `setTimeout`-after-focus `scrollIntoView`
-- `maximum-scale=1` zoom suppression
-- global `touchmove` `preventDefault`
-- user-agent sniffing
-- the VirtualKeyboard API
+chromium 110+, firefox 121+ (esr 128), safari 16+ and the android system
+webview (it tracks chrome), for `inert`, `:has()`, `findLast`/`toReversed`,
+`:focus-visible` and `visualViewport`.
 
 ## verification
 
-when their behavior changes, manually check keyboard geometry, focus return,
-back/escape dismissal, and nested overlays on the affected browser or device.
+the overlay harness (playwright-managed chromium, firefox and webkit; desktop
+and phone viewports) drives Back as a history traversal. unproven there: the
+soft keyboard ([ticket](../tickets/mobile-keyboard-inset-has-no-browser-proof.md)),
+the real android webview, ime composition, a floating surface inside a modal
+([ticket](../tickets/action-bar-popover-has-no-producer.md)) and the touch
+preview sheet (no fixture cites an unavailable source). when their behaviour
+changes, check those by hand on a handset.
+
+## rejected hacks
+
+`--vh`-style `innerHeight` polyfills, `setTimeout`-after-focus
+`scrollIntoView`, `maximum-scale=1`, global `touchmove` `preventDefault`,
+user-agent sniffing, the VirtualKeyboard API.

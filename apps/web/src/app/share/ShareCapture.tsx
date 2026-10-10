@@ -291,7 +291,6 @@ export default function ShareCapture({
               setCreatingDestination(false);
             }
           }}
-          layer="modal"
         />
         <div className={styles.actions}>
           <button

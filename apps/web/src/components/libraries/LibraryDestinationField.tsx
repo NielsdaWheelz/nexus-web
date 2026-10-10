@@ -17,7 +17,6 @@ export interface LibraryDestinationFieldProps {
     | { kind: "Disabled" }
     | { kind: "Creating" };
   onCreateDestination: (name: string) => Promise<LibraryDestinationSelection>;
-  layer: "modal" | "palette";
 }
 
 /**
@@ -33,7 +32,6 @@ export default function LibraryDestinationField({
   onChange,
   interaction,
   onCreateDestination,
-  layer,
 }: LibraryDestinationFieldProps) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -57,7 +55,6 @@ export default function LibraryDestinationField({
           if (!creating) setOpen(false);
         }}
         anchor={() => triggerRef.current}
-        layer={layer}
         title={label}
         selectedGroupLabel="Selected"
         selected={selected}

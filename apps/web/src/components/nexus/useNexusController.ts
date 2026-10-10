@@ -38,7 +38,7 @@ import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { playingEpisode, usePlayerCommands, usePlayerSession } from "@/lib/player/playerRuntime";
 import { useViewportState } from "@/lib/renderEnvironment/provider";
 import { dailyDraftAcceptsText } from "@/lib/resourceSurface/dailySurfacePersistence";
-import type { DismissDecision } from "@/lib/ui/useHistoryDismiss";
+import type { DismissDecision } from "@/lib/ui/overlay";
 import { resolveWorkspacePaneLabel, useWorkspaceStore } from "@/lib/workspace/store";
 import { resolveAddPanelInitialFocus, type AddDismissalConfirmation } from "./AddPanel";
 import { useAddContentSession } from "./useAddContentSession";

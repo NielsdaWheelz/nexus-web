@@ -28,7 +28,7 @@ import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { executeResourceChat } from "@/lib/resources/resourceActionExecution";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import { hasActiveInteractionOwner, isTopmostInteractionOwner } from "@/lib/ui/useEscapeKey";
+import { hasActiveInteractionOwner, isTopmostInteractionOwner } from "@/lib/ui/overlay";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 import styles from "./media.module.css";
 
@@ -284,7 +284,9 @@ export function useReaderChrome(input: {
         event.preventDefault();
         return setFocusMode(FOCUS_CYCLE[profile.focus_mode]);
       }
-      if (event.key === "Escape" && owned) {
+      // Escape belongs to an open layer (the inspector sheet included): one press, one action.
+      if (event.key === "Escape") {
+        if (hasActiveInteractionOwner()) return;
         if (event.shiftKey && profile.focus_mode !== "off") {
           event.preventDefault();
           setFocusMode("off");

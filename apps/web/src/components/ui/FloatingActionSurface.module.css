@@ -9,7 +9,7 @@
   border: var(--stroke-hairline) solid var(--edge);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-3);
-  z-index: var(--z-modal);
+  z-index: var(--z-popover);
 }
 
 .surface[data-positioned="true"] {

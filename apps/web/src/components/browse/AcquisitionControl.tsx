@@ -349,7 +349,6 @@ export default function AcquisitionControl({
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
         anchor={() => chevronRef.current}
-        layer="modal"
         title="Also add to"
         selectedGroupLabel="Selected"
         selected={selected}

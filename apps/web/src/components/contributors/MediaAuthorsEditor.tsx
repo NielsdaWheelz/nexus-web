@@ -35,8 +35,7 @@ import { createRandomId } from "@/lib/createRandomId";
 import { useMediaBibliographyInvalidation } from "@/lib/media/MediaSummaryProvider";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import type { DismissDecision } from "@/lib/ui/useHistoryDismiss";
-import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
+import type { DismissDecision, ReturnFocusTarget } from "@/lib/ui/overlay";
 import AuthorSearchField from "./AuthorSearchField";
 import styles from "./MediaAuthorsEditor.module.css";
 

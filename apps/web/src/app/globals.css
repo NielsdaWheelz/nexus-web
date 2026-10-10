@@ -101,10 +101,10 @@
   --size-xl: 44px;
 
   /* Z-index */
-  --z-raised: 10;
-  --z-overlay: 100;
-  --z-modal: 1000;
-  --z-nexus: 1100; /* Nexus: above modal sheets, below ActionMenu (1200) */
+  --z-overlay: 100; /* mobile chrome */
+  --z-popover: 900; /* page menus, floating surfaces, previews */
+  --z-modal: 1000; /* modal frames stack at calc(var(--z-modal) + depth) */
+  --z-nexus: 1100; /* the quick-note handoff input, above every frame */
   --z-toast: 10000;
 
   /* Overlay scrims */
@@ -550,8 +550,19 @@ textarea {
   }
 }
 
-/* Higher specificity than every component scrim selector, independent of
-   stylesheet load order. */
+/* A kept-mounted closed frame (the mobile task) takes no space. */
+[data-modal-backdrop="true"][hidden] {
+  display: none;
+}
+
+/* The page behind an open modal does not scroll. The app's body never does
+   (panes scroll); the shelf's does (src/shelf/shelf.module.css). */
+body:has([data-modal-backdrop="true"]:not([hidden])) {
+  overflow: hidden;
+}
+
+/* A covered frame's scrim: higher specificity than every component scrim
+   selector, independent of stylesheet load order. */
 body [data-modal-backdrop="true"][data-suspended="true"] {
   pointer-events: none;
   background: transparent;

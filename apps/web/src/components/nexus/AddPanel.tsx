@@ -67,7 +67,6 @@ export function AddDismissalDialog({
   return (
     <Dialog
       open={confirmation !== null}
-      historyDismiss
       title={
         confirmation?.kind === "Stop"
           ? "Stop active work?"
@@ -343,7 +342,6 @@ export default function AddPanel({
               : { kind: "Enabled" }
         }
         onCreateDestination={createDestination}
-        layer="palette"
       />
     );
   }
@@ -801,7 +799,6 @@ export default function AddPanel({
           setEditor(null);
           setCreationError(null);
         }}
-        layer="palette"
         anchor={() => editor?.anchorEl ?? null}
         returnFocusFallback={() => headingRef.current}
         title={editor?.title ?? "Libraries"}

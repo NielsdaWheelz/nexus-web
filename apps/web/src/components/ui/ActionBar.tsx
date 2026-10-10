@@ -157,11 +157,8 @@ function PopoverAction({
       <FloatingActionSurface
         open={open}
         anchor={triggerRef.current}
-        placement="below"
         align="start"
         flip
-        dismissIgnore
-        additionalDismissRefs={[triggerRef]}
         className={styles.popover}
         onDismiss={() => setOpen(false)}
       >

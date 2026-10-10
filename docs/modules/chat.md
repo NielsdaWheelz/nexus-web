@@ -399,9 +399,10 @@ citation, and not a context ref.
 - clicked-highlight actions
 - nested action-bar render popovers
 
-It owns fixed positioning, viewport clamping, mobile visual-viewport handling, text-selection
-line-rect placement, Escape/outside-pointer dismissal, scroll dismissal/reposition policy,
-`data-dismiss-ignore`, and pointerdown prevention for preserving live text selections.
+It is a transient layer of the overlay stack (`docs/modules/overlays.md`): Escape, a press
+outside it and its anchor element and, inside a modal, Back dismiss it. Placement comes from
+`useAnchoredPosition` (text-selection line placement with a caret, viewport clamping, mobile
+bottom clearance, re-measuring on scroll and resize); pointerdown prevention keeps a live selection.
 
 Fresh reader selection is the icon toolbar: `SelectionPopover` sequences
 Highlight-first chat creation and `SelectionActionDock` renders **Ask** as a
@@ -411,13 +412,12 @@ behavior. Both actions create or reuse the default-yellow Highlight before
 launch, and neither creates a Conversation before the first send.
 
 `ActionMenu` remains separate because it owns menu semantics: roving keyboard behavior,
-menu roles, focus restoration, and menuitem rendering. Its portaled `<ul role="menu">` carries
-`data-dismiss-ignore`, because a portaled menu is logically inside its trigger: an enclosing
-floating surface must not read a menu-item pointerdown as an outside dismissal.
+menu roles, focus restoration, and menuitem rendering. A menu opened inside a floating
+surface is the newer transient, so a press inside the surface closes only the menu and a
+press on the menu closes nothing.
 
-`FloatingActionSurface` is the documented non-modal action-surface owner. It
-keeps its own visual-viewport handling and must not migrate to `MobileSheet`
-(`docs/modules/overlays.md`).
+`FloatingActionSurface` is the documented non-modal action-surface owner and must not migrate
+to `MobileSheet`.
 
 ## Reader Quote-To-Chat: Immutable Snapshot
 

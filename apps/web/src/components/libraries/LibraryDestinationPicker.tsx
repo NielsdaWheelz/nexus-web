@@ -17,7 +17,7 @@ import {
   isReservedLibraryName,
   RESERVED_LIBRARY_NAME_MESSAGE,
 } from "@/lib/libraries/presentation";
-import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
+import type { ReturnFocusTarget } from "@/lib/ui/overlay";
 
 const DESTINATION_PAGE_LIMIT = 25;
 
@@ -25,7 +25,6 @@ export interface LibraryDestinationPickerProps {
   open: boolean;
   onClose: () => void;
   anchor: ReturnFocusTarget;
-  layer: "modal" | "palette";
   title: string;
   selectedGroupLabel: string;
   selected: readonly LibraryDestinationSelection[];
@@ -62,7 +61,6 @@ export default function LibraryDestinationPicker({
   open,
   onClose,
   anchor,
-  layer,
   title,
   selectedGroupLabel,
   selected,
@@ -215,7 +213,6 @@ export default function LibraryDestinationPicker({
     <LibraryChooserSurface
       active={open}
       onClose={onClose}
-      layer={layer}
       anchor={anchor}
       title={title}
       panelId={panelId}

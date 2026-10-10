@@ -162,9 +162,7 @@ export default function SelectionDock({
         <FloatingActionSurface
           open
           anchor={composer!.rect}
-          placement="below"
           flip
-          scrollBehavior="reposition"
           role="dialog"
           label="Add note to highlight"
           onDismiss={verbs.closeComposer}
